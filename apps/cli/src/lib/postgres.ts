@@ -5,6 +5,118 @@ import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
 
 /**
+ * The postmaster PID recorded in `<dataDir>/postmaster.pid`, or null when the
+ * lockfile is absent or unreadable. Says nothing about whether that process is
+ * still alive — see `livePostmasterPid` for that.
+ */
+export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
+  const pidFile = join(dataDir, 'postmaster.pid');
+  if (!existsSync(pidFile)) return null;
+  try {
+    const firstLine = readFileSync(pidFile, 'utf-8').split('\n')[0]?.trim() ?? '';
+    const pid = Number.parseInt(firstLine, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The PID of a postmaster that is BOTH recorded for this data dir AND still
+ * alive, or null.
+ *
+ * This is the only reliable way to see a dead-but-not-gone Postgres. Detection
+ * by listening port cannot: a postmaster that crashed its startup (or is mid
+ * shutdown) holds no socket, so `netstat` shows nothing — while its Win32
+ * shared-memory section, which is keyed to the DATA DIR and not the port, is
+ * still attached. That is exactly the orphan whose next `up` dies with FATAL
+ * "pre-existing shared memory block is still in use", and exactly the one a
+ * port scan reports as absent (field-confirmed 2026-08-20).
+ */
+export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
+  const pid = readPostmasterPid(dataDir);
+  if (pid === null) return null;
+  // process.kill(pid, 0) is the canonical "is this PID alive?" probe — sends
+  // no signal, throws ESRCH if the process doesn't exist.
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (err) {
+    // EPERM = alive but owned by another user: still a live process.
+    return (err as NodeJS.ErrnoException).code === 'ESRCH' ? null : pid;
+  }
+}
+
+/**
+ * Postgres processes whose command line points at `dataDir`, found by asking
+ * the OS rather than by reading our own bookkeeping.
+ *
+ * The last resort, and it earned its place: on 2026-08-20 a postmaster survived
+ * with NO listening socket and NO `postmaster.pid` — the lockfile had been
+ * removed while the process lived on holding the shared-memory block. Detection
+ * by port could not see it (nothing to see) and detection by data dir could not
+ * either (nothing to read), so `up` failed on the opaque FATAL with no orphan
+ * reported. Both earlier probes rely on state the crash can destroy; this one
+ * relies on the process table, which it cannot.
+ *
+ * Windows-only (WMI). Returns [] elsewhere and on any failure: this is an extra
+ * chance to notice, never a reason to fail a boot.
+ */
+export async function postgresPidsForDataDir(dataDir: string = PG_DATA_DIR): Promise<number[]> {
+  if (process.platform !== 'win32') return [];
+  const { execa } = await import('execa');
+  try {
+    const { stdout } = await execa(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        // CommandLine is where the -D <dataDir> argument lives. Matching on it
+        // is what ties a bare `postgres.exe` to OUR cluster rather than to some
+        // other Postgres the user runs.
+        'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
+          'Select-Object -ExpandProperty ProcessId,CommandLine | Out-Null; ' +
+          'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
+          'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }',
+      ],
+      { reject: false, timeout: 10_000 },
+    );
+    // TWO ways to recognise one of ours, and the second is the one that
+    // matters in practice.
+    //
+    //   · the data dir — present only on the POSTMASTER's command line
+    //     (`postgres.exe -D <dataDir>`).
+    //   · the embedded binary path — present on EVERY process of the cluster.
+    //
+    // Matching the data dir alone missed the case that actually blocks a boot.
+    // Seen live on 2026-08-21: the survivor was
+    //     postgres.exe --forkchild="io_worker" 5856
+    // an internal I/O worker of PostgreSQL 18. No data dir on its command line,
+    // so the probe returned [] and `up` died on the opaque FATAL with no orphan
+    // reported — the very failure this function was written to prevent.
+    //
+    // The binary path cannot be spoofed by accident: it points inside this
+    // install's node_modules, so anything running from it is ours by
+    // construction, postmaster or worker.
+    const dataNeedle = dataDir.toLowerCase().replace(/\\/g, '/');
+    const binNeedle = '@embedded-postgres';
+    const pids: number[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      const tab = line.indexOf('\t');
+      if (tab < 0) continue;
+      const pid = Number.parseInt(line.slice(0, tab), 10);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      const cmd = line.slice(tab + 1).toLowerCase().replace(/\\/g, '/');
+      if (cmd.includes(dataNeedle) || cmd.includes(binNeedle)) pids.push(pid);
+    }
+    return pids;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Remove a stale postmaster.pid file when the recorded PID is no longer
  * alive. Postgres refuses to start when the lockfile exists, even if the
  * owning process is dead — common after an unclean shutdown on Windows.
@@ -16,23 +128,9 @@ import { PG_DATA_DIR } from './config.ts';
 function clearStalePostmasterPid(dataDir: string): void {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return;
-  let pid: number;
-  try {
-    const firstLine = readFileSync(pidFile, 'utf-8').split('\n')[0]?.trim() ?? '';
-    pid = Number.parseInt(firstLine, 10);
-    if (!Number.isInteger(pid) || pid <= 0) return;
-  } catch {
-    return;
-  }
-  // process.kill(pid, 0) is the canonical "is this PID alive?" probe — sends
-  // no signal, throws ESRCH if the process doesn't exist.
-  try {
-    process.kill(pid, 0);
-    // PID is alive — Postgres really is running, do NOT touch the lockfile.
-    return;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') return;
-  }
+  if (readPostmasterPid(dataDir) === null) return;
+  // Alive (or unprovable) — Postgres really is running, do NOT touch the lockfile.
+  if (livePostmasterPid(dataDir) !== null) return;
   try {
     unlinkSync(pidFile);
   } catch {

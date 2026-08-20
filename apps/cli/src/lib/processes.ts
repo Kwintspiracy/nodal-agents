@@ -38,8 +38,77 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
  * held, and the next `up` failed on a port it had just been told was free. Kill
  * the tree instead, on both platforms.
  */
+/**
+ * Every descendant PID of `root`, at any depth (Windows only).
+ *
+ * Built from one snapshot of the process table: WMI gives (pid, parentPid) for
+ * everything running, and the tree is walked in memory. Returns [] on any
+ * failure — this exists to catch stragglers, never to block a shutdown.
+ *
+ * Deliberately excludes `root` itself: the caller kills that one directly.
+ */
+export async function descendantPidsWin(root: number): Promise<number[]> {
+  if (process.platform !== 'win32') return [];
+  try {
+    const { stdout } = await execa(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+      ],
+      { reject: false, timeout: 10_000 },
+    );
+
+    const childrenOf = new Map<number, number[]>();
+    for (const line of stdout.split(/\r?\n/)) {
+      const [a, b] = line.trim().split(/\s+/);
+      const pid = Number.parseInt(a ?? '', 10);
+      const parent = Number.parseInt(b ?? '', 10);
+      if (!Number.isInteger(pid) || !Number.isInteger(parent)) continue;
+      const list = childrenOf.get(parent) ?? [];
+      list.push(pid);
+      childrenOf.set(parent, list);
+    }
+
+    // Breadth-first, with a seen-set: a corrupt parent chain must not loop.
+    const out: number[] = [];
+    const seen = new Set<number>([root]);
+    let frontier = [root];
+    while (frontier.length > 0) {
+      const next: number[] = [];
+      for (const p of frontier) {
+        for (const child of childrenOf.get(p) ?? []) {
+          if (seen.has(child)) continue;
+          seen.add(child);
+          out.push(child);
+          next.push(child);
+        }
+      }
+      frontier = next;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export async function killPidTree(pid: number): Promise<void> {
   if (process.platform === 'win32') {
+    // Snapshot the descendants BEFORE killing anything.
+    //
+    // `taskkill /T` walks the tree at the moment it runs, and that is not always
+    // enough: `next dev` spawns Turbopack workers, and a worker whose parent has
+    // already gone (or which re-parented) is no longer in the tree taskkill can
+    // see. It survives, keeps :3000 held, and the next `up` reports it as an
+    // orphan — reproduced live on 2026-08-21 by interrupting `up` during the
+    // health wait (Codex, case CLI-03).
+    //
+    // Once the parent is dead the parent/child link is gone with it, so the list
+    // has to be taken first. Cheap: one WMI call, and only on the shutdown path.
+    const descendants = await descendantPidsWin(pid);
+
     try {
       // /T = kill children too. /F = force. We don't care if it failed (the
       // process may already be gone); the next call site already handles
@@ -47,6 +116,17 @@ export async function killPidTree(pid: number): Promise<void> {
       await execa('taskkill', ['/T', '/F', '/PID', String(pid)], { reject: false });
     } catch {
       /* best-effort */
+    }
+
+    // Then sweep whatever the tree walk missed. Each of these was a descendant
+    // of OUR process when we looked, so killing it is never someone else's work.
+    for (const child of descendants) {
+      if (!isPidAlive(child)) continue;
+      try {
+        await execa('taskkill', ['/F', '/PID', String(child)], { reject: false });
+      } catch {
+        /* best-effort */
+      }
     }
     return;
   }

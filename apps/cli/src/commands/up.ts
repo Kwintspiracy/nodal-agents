@@ -4,11 +4,15 @@ import chalk from 'chalk';
 import ora from 'ora';
 import open from 'open';
 import { randomBytes } from 'crypto';
-import { readConfig, writeConfig, type Config } from '../lib/config.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { readConfig, writeConfig, LOG_DIR, type Config } from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
   runMigrations,
   stopOrphanPostgres,
+  livePostmasterPid,
+  postgresPidsForDataDir,
   LEGACY_PG_PASSWORD,
 } from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
@@ -26,7 +30,9 @@ import {
   assertWebRenders,
   writePids,
   clearPids,
+  readPids,
   killProcessTree,
+  descendantPidsWin,
   isPidAlive,
   waitForPidDead,
   type SpawnResult,
@@ -38,6 +44,37 @@ async function killSilent(child: SpawnResult): Promise<void> {
   // rationale (cmd.exe wrapper would otherwise leave node.exe orphaned and
   // the listener port held).
   await killProcessTree(child);
+}
+
+/**
+ * Print the tail of a service's log file, or say plainly that there is nothing
+ * to show. Called on the health-check failure path, where the log holds the
+ * actual diagnosis and the timeout message holds none of it.
+ *
+ * Never throws: this runs while we are already failing, and a missing or
+ * unreadable log must not replace the original error with a second one.
+ */
+function printLogTail(service: 'runner' | 'web' | string, lines: number): void {
+  const logFile = join(LOG_DIR, `${service}.log`);
+  try {
+    if (!existsSync(logFile)) {
+      console.error(chalk.gray(`\n  ${service}: no log at ${logFile}`));
+      return;
+    }
+    const tail = readFileSync(logFile, 'utf-8')
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== '')
+      .slice(-lines);
+    if (tail.length === 0) {
+      console.error(chalk.gray(`\n  ${service}: log is empty (${logFile})`));
+      return;
+    }
+    console.error(chalk.yellow(`\n  Last ${tail.length} lines of ${service}.log:`));
+    for (const line of tail) console.error(chalk.gray(`    ${line}`));
+    console.error(chalk.gray(`  Full log: ${logFile}`));
+  } catch {
+    console.error(chalk.gray(`\n  ${service}: could not read ${logFile}`));
+  }
 }
 
 /**
@@ -133,14 +170,79 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // Sweep orphans automatically. If we detect any of our configured ports
   // are held, kill those PIDs and continue. The user shouldn't have to
   // copy-paste taskkill commands every time their terminal closes badly.
+  // A PID holding one of our ports is NOT automatically ours.
+  //
+  // This swept every listener and killed it. On 2026-08-21 an unrelated dev
+  // server sat on :3000; `up` called it an "orphan", killed it, and started
+  // normally — destroying someone else's work to free a port we merely wanted.
+  //
+  // A process counts as ours only if we can show it: either it is a PID we
+  // recorded ourselves in ~/.nodalai/pids/processes.json, or it descends from
+  // one. Anything else is a stranger — we refuse to start and say so, which is
+  // recoverable, instead of killing it, which is not.
+  const known = readPids();
+  const ourPids = new Set<number>(
+    [known?.runner, known?.web].filter((p): p is number => typeof p === 'number' && p > 0),
+  );
+  for (const rooted of await Promise.all([...ourPids].map((p) => descendantPidsWin(p)))) {
+    for (const child of rooted) ourPids.add(child);
+  }
+
   const orphans: Array<{ name: string; port: number; pid: number }> = [];
+  const strangers: Array<{ name: string; port: number; pid: number }> = [];
   for (const [name, port] of [
     ['web', config.ports.web],
     ['runner', config.ports.runner],
     ['postgres', config.ports.postgres],
   ] as const) {
     const pid = await pidListeningOnPort(port);
-    if (pid !== null) orphans.push({ name, port, pid });
+    if (pid === null) continue;
+    // Postgres is judged separately, by data dir, further down: its postmaster
+    // is not in our pid file (pg_ctl owns it), so the ownership test above
+    // cannot speak for it.
+    if (ourPids.has(pid) || name === 'postgres') orphans.push({ name, port, pid });
+    else strangers.push({ name, port, pid });
+  }
+
+  if (strangers.length > 0) {
+    const lines = strangers
+      .map((s) => `  - :${s.port} is held by pid ${s.pid}, which Nodal-Agents did not start`)
+      .join('\n');
+    throw new Error(
+      `Port conflict with a process that is not ours:\n${lines}\n\n` +
+        `  Nodal-Agents will not kill a process it did not start — it could be your own\n` +
+        `  work. Stop it yourself, or change the port in ~/.nodalai/config.json.`,
+    );
+  }
+
+  // Postgres gets a SECOND probe, by DATA DIR. A port scan only sees a process
+  // holding a socket, and the orphan that actually hurts holds none: a
+  // postmaster that died during startup, or is stuck mid-shutdown, has no
+  // listener left but still owns the Win32 shared-memory section — which is
+  // keyed to the data dir, not the port. `up` would then sail past this
+  // pre-flight and fail further down with the opaque FATAL "pre-existing
+  // shared memory block is still in use", which is precisely what happened on
+  // a live machine on 2026-08-20 (rebooting did not clear it; the port scan
+  // reported all ports free throughout).
+  if (!orphans.some((o) => o.name === 'postgres')) {
+    const pgPid = livePostmasterPid();
+    if (pgPid !== null) {
+      orphans.push({ name: 'postgres', port: config.ports.postgres, pid: pgPid });
+    }
+  }
+
+  // THIRD probe, when the first two came up empty: ask the OS which postgres
+  // processes are running against our data dir.
+  //
+  // Both probes above read state a crash can destroy — a listening socket, and
+  // our own lockfile. Seen live on 2026-08-20: a postmaster alive with neither,
+  // still holding the shared-memory block, so `up` sailed past this pre-flight
+  // and died on the opaque FATAL while reporting no orphan at all. The process
+  // table is the one thing that cannot be erased by whatever killed it.
+  if (!orphans.some((o) => o.name === 'postgres')) {
+    for (const pid of await postgresPidsForDataDir()) {
+      orphans.push({ name: 'postgres', port: config.ports.postgres, pid });
+    }
   }
 
   if (orphans.length > 0) {
@@ -300,6 +402,41 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     throw err;
   }
 
+  // ── 2b. Shutdown handlers — registered HERE, not at the end ───────────────
+  // The moment Postgres is up there is something that must be torn down on
+  // Ctrl+C, and from here to the ready message there is a lot of waiting:
+  // migrations, seed, and above all the health wait, whose budget is FIVE
+  // MINUTES. These handlers used to be registered after all of it, so a Ctrl+C
+  // during that window killed the CLI and left the postmaster running — with
+  // its shared-memory section attached to the data dir, which is what makes the
+  // next `up` fail on FATAL "pre-existing shared memory block is still in use".
+  // The one window that is genuinely impatient is therefore the one that had no
+  // handler at all.
+  let shuttingDown = false;
+  const running: { runner: SpawnResult | null; web: SpawnResult | null } = {
+    runner: null,
+    web: null,
+  };
+
+  /** Tear down whatever is up, in reverse order of start. Idempotent. */
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log('\n' + chalk.yellow('  Stopping Nodal-Agents…'));
+    await Promise.allSettled(
+      [running.runner, running.web].filter((c): c is SpawnResult => c !== null).map(killSilent),
+    );
+    // Graceful, always: pg.stop() runs `pg_ctl stop -m fast`, which releases the
+    // Win32 shared-memory section. A hard kill here would leak it.
+    await pg.stop();
+    clearPids();
+    console.log(chalk.green('  Stopped. Goodbye!'));
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
+
   let effectivePgPassword = pgPassword;
   if (pendingRotation) {
     // ORDER MATTERS: persist first, then ALTER, then revert on failure. The
@@ -388,6 +525,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const runnerEnv = buildEnvForRunner(config, databaseUrl);
   const runnerSpinner = ora('Starting runner…').start();
   const runnerProcess = spawnRunner(runnerEnv, { detach: opts.detach });
+  running.runner = runnerProcess;
   const runnerPid = runnerProcess.pid ?? 0;
   runnerSpinner.succeed(chalk.green(`Runner started (pid ${runnerPid})`));
 
@@ -397,6 +535,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const webSpinnerLabel = opts.dev ? 'Starting web (dev — HMR)…' : 'Starting web…';
   const webSpinner = ora(webSpinnerLabel).start();
   const webProcess = spawnWeb(webEnv, { dev: opts.dev, detach: opts.detach });
+  running.web = webProcess;
   const webPid = webProcess.pid ?? 0;
   webSpinner.succeed(chalk.green(`Web started (pid ${webPid})`));
 
@@ -418,20 +557,60 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // and env-overridable for very slow disks/connections.
   const webHealthMs = Number(process.env['NODALAI_WEB_HEALTH_MS']) || 300_000;
   const runnerHealthMs = Number(process.env['NODALAI_RUNNER_HEALTH_MS']) || 300_000;
+
+  // A five-minute budget behind a spinner that only ever says "Waiting for
+  // services to be healthy…" is indistinguishable from a hang, and it hides the
+  // one fact that identifies the fault: WHICH service never answered. Track
+  // each one, name what is still outstanding, and count the seconds.
+  const pending = new Set(['runner', 'web']);
+  const startedAt = Date.now();
+  const describeWait = (): string => {
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    const budget = Math.round(Math.max(runnerHealthMs, webHealthMs) / 1000);
+    return `Waiting for ${[...pending].join(' + ')} — ${secs}s of ${budget}s`;
+  };
+  const ticker = setInterval(() => {
+    healthSpinner.text = describeWait();
+  }, 1000);
+  // A stray interval would keep the event loop alive and hold the terminal
+  // after everything else is done.
+  ticker.unref?.();
+
   try {
     await Promise.all([
-      waitForHealth(runnerUrl, runnerHealthMs),
-      waitForHealth(webUrl, webHealthMs),
+      waitForHealth(runnerUrl, runnerHealthMs).then(() => {
+        pending.delete('runner');
+      }),
+      waitForHealth(webUrl, webHealthMs).then(() => {
+        pending.delete('web');
+      }),
     ]);
     // /api/health alone is NOT proof the dashboard renders — see
     // assertWebRenders' doc (0.7.8 ritual: every page 500'd on a missing
     // standalone dependency while both health endpoints stayed green).
     // Same generous budget as the health wait above — dev's first Turbopack
     // compile of `/` can take minutes on a cold cache (see assertWebRenders).
+    pending.add('web page render');
+    healthSpinner.text = describeWait();
     await assertWebRenders(webUrl, webHealthMs);
+    pending.delete('web page render');
+    clearInterval(ticker);
     healthSpinner.succeed(chalk.green('All services healthy'));
   } catch (err) {
-    healthSpinner.fail('Health check timed out');
+    clearInterval(ticker);
+    healthSpinner.fail(
+      `Health check timed out — still waiting for ${[...pending].join(' + ')} after ` +
+        `${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
+    // The answer is almost always in the failing service's own log, and until
+    // now the user was never told it existed. On 2026-08-20 the log said
+    // "TypeError: Cannot read properties of undefined (reading 'validationLevel')"
+    // — the exact root cause — while the CLI only reported a timeout, sending
+    // the diagnosis off after Postgres instead.
+    for (const svc of pending) {
+      const name = svc === 'web page render' ? 'web' : svc;
+      printLogTail(name, 20);
+    }
     // IMPORTANT: tree-kill BOTH children (and await) so no orphan node.exe
     // survives to hold the port. Skipping this is what causes the next
     // `nodal-agents up` to fail at health check: the new runner can't bind on
@@ -520,19 +699,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   console.log(chalk.gray('  Ctrl+C to stop all services'));
   console.log('');
 
-  // ── 10. Graceful shutdown on SIGINT ───────────────────────────────────────
-
-  const shutdown = async (): Promise<void> => {
-    console.log('\n' + chalk.yellow('  Stopping Nodal-Agents…'));
-    await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
-    await pg.stop();
-    clearPids();
-    console.log(chalk.green('  Stopped. Goodbye!'));
-    process.exit(0);
-  };
-
-  process.on('SIGINT', () => void shutdown());
-  process.on('SIGTERM', () => void shutdown());
+  // ── 10. Stay up until a child exits ───────────────────────────────────────
+  // SIGINT/SIGTERM are already handled — the handlers were registered back at
+  // step 2b, as soon as Postgres came up, so the whole startup window is
+  // covered and not just this point onwards.
 
   // Keep process alive until a child exits, then shut down
   await Promise.race([runnerProcess, webProcess]);

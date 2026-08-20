@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readPids, clearPids, isPidAlive, killPidTree } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
+import { readPostmasterPid } from '../lib/postgres.ts';
 
 /**
  * Stop one service by pid, tree and all, and report what actually happened.
@@ -43,6 +44,10 @@ async function stopPostgresGracefully(): Promise<boolean> {
   const pidFile = join(PG_DATA_DIR, 'postmaster.pid');
   if (!existsSync(pidFile)) return false;
 
+  // Captured BEFORE the stop: pg.stop() removes the lockfile, so afterwards
+  // there is nothing left to read the pid from.
+  const pgPid = readPostmasterPid(PG_DATA_DIR);
+
   try {
     const EmbeddedPostgres = (await import('embedded-postgres')).default;
     // Re-create the handle pointing at the existing data dir. The constructor
@@ -60,6 +65,32 @@ async function stopPostgresGracefully(): Promise<boolean> {
       onLog: () => {},
     });
     await pg.stop();
+
+    // RE-PROBE before claiming anything. `pg.stop()` resolving means pg_ctl was
+    // invoked, not that the postmaster is gone — and this is the one service
+    // whose survival poisons the NEXT boot, because a live postmaster keeps the
+    // Win32 shared-memory section attached to the data dir and the next `up`
+    // then dies on FATAL "pre-existing shared memory block is still in use".
+    // Claiming "Stopped postgres (graceful)" over a postgres that is still
+    // running is exactly the lie this file's header says was fixed for
+    // runner/web, and it sent a real diagnosis down the wrong path on
+    // 2026-08-20. Same discipline as killPid above: verify, then speak.
+    if (pgPid !== null && isPidAlive(pgPid)) {
+      const killCmd =
+        process.platform === 'win32'
+          ? `powershell Stop-Process -Id ${pgPid} -Force`
+          : `kill -9 ${pgPid}`;
+      console.log(
+        chalk.red(
+          `  postgres (pid ${pgPid}) is STILL RUNNING after a graceful stop\n` +
+            `    It holds the shared-memory block for the data dir, so the next ` +
+            `\`up\` will fail.\n` +
+            `    Fix: ${killCmd}`,
+        ),
+      );
+      return false;
+    }
+
     console.log(chalk.green('  Stopped postgres (graceful)'));
     return true;
   } catch (err) {
