@@ -177,6 +177,85 @@ describe('listCodingProcessesAction', () => {
     expect(row?.agentId).toBe(agentId);
   });
 
+  it('a pipeline whose ONLY writes were refused reports 0 files changed', async () => {
+    const agentId = await makeAgent('Audit Refused Write Agent');
+    const jobId = await makeJob(agentId, 'completed');
+
+    // The exact shape recorded for Dev C (read-only runtime agent, 20/08):
+    // the CLI removes the tool from the palette and answers with an error
+    // envelope. Nine of these used to read as nine files changed.
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: '/repo/src/ghost.ts', content: 'never written' },
+        toolOutput:
+          '<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Read',
+        toolInput: { file_path: '/repo/src/real.ts' },
+        toolOutput: 'file contents',
+      },
+    ]);
+
+    const { listCodingProcessesAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
+    const list = await listCodingProcessesAction();
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    // It still surfaces (the CLI ran) — but claims NOTHING was changed.
+    expect(list.data.find((r) => r.id === jobId)?.filesChanged).toBe(0);
+
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) return;
+    expect(detail.data.changes).toHaveLength(0);
+    expect(detail.data.header.filesChanged).toBe(0);
+  });
+
+  it('a refused write alongside a real one counts only the real one', async () => {
+    const agentId = await makeAgent('Audit Mixed Writes Agent');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: '/repo/src/ghost.ts', content: 'never written' },
+        toolOutput: '<tool_use_error>Error: No such tool available: Write.</tool_use_error>',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: '/repo/src/real.ts', content: 'written for real' },
+        toolOutput: 'File created successfully.',
+      },
+    ]);
+
+    const { listCodingProcessesAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
+    const list = await listCodingProcessesAction();
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    expect(list.data.find((r) => r.id === jobId)?.filesChanged).toBe(1);
+
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) return;
+    expect(detail.data.changes).toHaveLength(1);
+    expect(detail.data.changes[0]!.filePath).toBe('/repo/src/real.ts');
+    // The refused attempt still exists in the timeline — it is the signal
+    // that the agent's posture is wrong, not something to hide.
+    const calls = detail.data.activity.filter((a) => a.kind === 'call');
+    expect(calls).toHaveLength(2);
+  });
+
   it('the CLI absolute path and the Nodal workspace-relative path of the SAME file count as ONE (job cbdbfc6c)', async () => {
     const agentId = await makeAgent('Audit Path Canon Agent');
     // The agent's workspace root — the prefix the canonicalizer must strip.

@@ -495,9 +495,23 @@ function dotColorForTool(toolName: string): string {
   return 'bg-ink-3';
 }
 
+/**
+ * A call the harness REFUSED — it did nothing. Detected from the CLI's
+ * `<tool_use_error>` envelope (or a Nodal builtin's `{"ok":false}`). Kept
+ * VISIBLE and flagged rather than hidden: "this agent tried to write and was
+ * blocked" is the signal that tells you its posture is wrong — the one that
+ * was missing while a read-only agent looked like it was coding for a day.
+ */
+function isRefusedCall(toolOutput: string | null): boolean {
+  if (!toolOutput) return false;
+  const head = toolOutput.slice(0, 400);
+  return head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head);
+}
+
 function ActivityRow({ tc }: { tc: CodingToolCallView }) {
   const [open, setOpen] = useState(false);
   const { shortName, summary, isPath } = summarizeToolCall(tc);
+  const refused = isRefusedCall(tc.toolOutput);
   return (
     <div className="border-b border-rule-2 last:border-0">
       <DisclosureButton open={open} onClick={() => setOpen((v) => !v)}>
@@ -515,6 +529,11 @@ function ActivityRow({ tc }: { tc: CodingToolCallView }) {
           >
             {summary}
           </span>
+        )}
+        {refused && (
+          <MonoMicroTag tone="err" className="shrink-0">
+            refused
+          </MonoMicroTag>
         )}
         {tc.delegatedFrom && (
           <MonoMicroTag tone="agent" className="shrink-0">

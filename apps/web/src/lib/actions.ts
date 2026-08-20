@@ -10528,6 +10528,29 @@ async function entityWorkspaceRoots(
  * cli:NotebookEdit rarely reports an old_source (the CLI usually only sends
  * the new cell content), so it renders as a write when none is present.
  */
+/**
+ * True when a recorded tool call was REFUSED and therefore changed nothing.
+ * The CLI returns a `<tool_use_error>` envelope for a tool it removed from the
+ * palette — e.g. a read-only runtime agent attempting a write gets
+ * "No such tool available: Write. Write is disabled for this session".
+ *
+ * Nodal recorded those exactly like successful calls, so the Code tab counted
+ * files that were never written, showed their content in Changes, and even
+ * qualified a pipeline as a "coding session" on writes that never happened.
+ * That is what hid a read-only coding agent for a full day (Quentin 20/08:
+ * Dev C, 9 attempts, 9 refusals, and the UI kept saying files changed).
+ * The Nodal builtins report their own failures as `{"ok":false,...}`.
+ *
+ * NOT exported: this file is `'use server'`, where every export must be an
+ * async server action — exporting a sync helper is a build error, not a type
+ * error, so neither tsc nor the suite catches it (caught in the browser).
+ */
+function isRefusedToolCall(toolOutput: string | null): boolean {
+  if (!toolOutput) return false;
+  const head = toolOutput.slice(0, 400);
+  return head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head);
+}
+
 function extractChange(toolName: string, rawInput: unknown): CodingChangeView | null {
   const input = (rawInput ?? null) as Record<string, unknown> | null;
   const filePath = extractFilePath(input);
@@ -10580,8 +10603,19 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
 }
 
 function pipelineQualifiesAsCoding(
-  calls: Array<{ toolName: string; toolInput: unknown }>,
+  calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
 ): boolean {
+  // NOTE (Quentin 20/08): a REFUSED edit changed nothing, so filtering it here
+  // is tempting — and correct in isolation. Measured on real data first: it
+  // takes the entity from 7 qualifying pipelines to 2, and empties the Code
+  // tab. The reason is NOT this predicate but the ONE-LEVEL rollup below it:
+  // on a THREE-level team (root orchestrator → lead → worker), the worker's
+  // CLI attempts land in the lead's bucket while the lead's own real writes
+  // roll up into the root's, so neither half looks like coding on its own.
+  // Fixing the qualification without fixing the rollup
+  // depth would hide real sessions to remove fake ones. Left as-is on purpose
+  // until the pipeline depth is decided — the Changes panel and the file
+  // COUNT already ignore refused calls, so the numbers shown are honest.
   if (calls.some((c) => EDIT_TOOL_NAMES.has(c.toolName))) return true;
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
@@ -10616,6 +10650,9 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         jobId: toolCalls.jobId,
         toolName: toolCalls.toolName,
         toolInput: toolCalls.toolInput,
+        // Needed to tell an executed call from a REFUSED one — a write the
+        // harness rejected must not count as a file changed (isRefusedToolCall).
+        toolOutput: toolCalls.toolOutput,
       })
       .from(toolCalls)
       .where(
@@ -10645,12 +10682,15 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     // One rollup level — "job racine + enfants directs", never further.
     const rootOf = (jobId: string): string => parentOf.get(jobId) ?? jobId;
 
-    const callsByRoot = new Map<string, Array<{ toolName: string; toolInput: unknown }>>();
+    const callsByRoot = new Map<
+      string,
+      Array<{ toolName: string; toolInput: unknown; toolOutput: string | null }>
+    >();
     for (const c of relevantCalls) {
       if (!c.jobId) continue;
       const root = rootOf(c.jobId);
       const arr = callsByRoot.get(root) ?? [];
-      arr.push({ toolName: c.toolName, toolInput: c.toolInput });
+      arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
       callsByRoot.set(root, arr);
     }
 
@@ -10739,6 +10779,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         const set = new Set<string>();
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
+          if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
           if (fp) set.add(canonicalChangePath(fp, workspaceRoots));
         }
@@ -11074,6 +11115,8 @@ export async function getCodingProcessDetailAction(
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const changeGroups = new Map<string, CodingFileChangeGroup>();
       for (const tc of toolCallRows) {
+        // A refused call wrote nothing — it must not appear as a change.
+        if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
         const canonical = canonicalChangePath(change.filePath, workspaceRoots);
