@@ -79,3 +79,8 @@ audit/inventory.json
 
 # Diagnostic screenshots dropped by local Playwright runs
 apps/web/tests/e2e/.artifacts/
+
+# pnpm's content-addressable store. Lands here when a machine is configured
+# with a repo-local store-dir; it is a CACHE, rebuilt from the lockfile, and
+# has no business in version control.
+.pnpm-store/
