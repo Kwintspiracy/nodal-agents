@@ -68,7 +68,33 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
  * was just written to prevent.
  */
 export async function descendantPidsWin(root: number): Promise<number[]> {
-  if (process.platform !== 'win32') return [];
+  const snapshot = await processSnapshotWin();
+  return walkDescendants(snapshot, root).map((p) => p.pid);
+}
+
+/** One process as WMI reports it. `startedAt` is CreationDate in .NET ticks. */
+export interface ProcessRecord {
+  pid: number;
+  ppid: number;
+  startedAt: string;
+}
+
+/**
+ * The whole Windows process table in one WMI call: pid, parent pid, and the
+ * creation timestamp.
+ *
+ * `startedAt` is what makes a PID safe to act on later. Windows recycles PIDs,
+ * so a number recorded minutes ago may name a completely different process by
+ * the time we use it — and killing it would mean killing a stranger's work.
+ * The creation tick is effectively an identity: same pid AND same tick is the
+ * same process, no exception.
+ *
+ * Returns an empty map on any failure. This exists to catch stragglers, never
+ * to block a shutdown.
+ */
+export async function processSnapshotWin(): Promise<Map<number, ProcessRecord>> {
+  const out = new Map<number, ProcessRecord>();
+  if (process.platform !== 'win32') return out;
   try {
     const { stdout, timedOut } = await execa(
       'powershell',
@@ -77,8 +103,8 @@ export async function descendantPidsWin(root: number): Promise<number[]> {
         '-NonInteractive',
         '-Command',
         // -Property keeps WMI from materialising every column of every process.
-        'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId | ' +
-          'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+        'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
+          'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.Ticks)" }',
       ],
       { reject: false, timeout: 6_000 },
     );
@@ -89,40 +115,54 @@ export async function descendantPidsWin(root: number): Promise<number[]> {
           '  plain tree kill. A background worker may survive and hold its port; if the\n' +
           '  next start reports an orphan, that is why.\x1b[0m\n',
       );
-      return [];
+      return out;
     }
 
-    const childrenOf = new Map<number, number[]>();
     for (const line of stdout.split(/\r?\n/)) {
-      const [a, b] = line.trim().split(/\s+/);
+      const [a, b, c] = line.trim().split(/\s+/);
       const pid = Number.parseInt(a ?? '', 10);
-      const parent = Number.parseInt(b ?? '', 10);
-      if (!Number.isInteger(pid) || !Number.isInteger(parent)) continue;
-      const list = childrenOf.get(parent) ?? [];
-      list.push(pid);
-      childrenOf.set(parent, list);
-    }
-
-    // Breadth-first, with a seen-set: a corrupt parent chain must not loop.
-    const out: number[] = [];
-    const seen = new Set<number>([root]);
-    let frontier = [root];
-    while (frontier.length > 0) {
-      const next: number[] = [];
-      for (const p of frontier) {
-        for (const child of childrenOf.get(p) ?? []) {
-          if (seen.has(child)) continue;
-          seen.add(child);
-          out.push(child);
-          next.push(child);
-        }
-      }
-      frontier = next;
+      const ppid = Number.parseInt(b ?? '', 10);
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+      out.set(pid, { pid, ppid, startedAt: c ?? '' });
     }
     return out;
   } catch {
-    return [];
+    return out;
   }
+}
+
+/**
+ * Breadth-first walk of `snapshot` from `root`, excluding `root` itself: the
+ * caller kills that one directly. The seen-set keeps a corrupt parent chain
+ * from looping.
+ */
+export function walkDescendants(
+  snapshot: Map<number, ProcessRecord>,
+  root: number,
+): ProcessRecord[] {
+  const childrenOf = new Map<number, ProcessRecord[]>();
+  for (const rec of snapshot.values()) {
+    const list = childrenOf.get(rec.ppid) ?? [];
+    list.push(rec);
+    childrenOf.set(rec.ppid, list);
+  }
+
+  const out: ProcessRecord[] = [];
+  const seen = new Set<number>([root]);
+  let frontier = [root];
+  while (frontier.length > 0) {
+    const next: number[] = [];
+    for (const p of frontier) {
+      for (const child of childrenOf.get(p) ?? []) {
+        if (seen.has(child.pid)) continue;
+        seen.add(child.pid);
+        out.push(child);
+        next.push(child.pid);
+      }
+    }
+    frontier = next;
+  }
+  return out;
 }
 
 export async function killPidTree(pid: number): Promise<void> {
@@ -455,6 +495,92 @@ function resolveLocalBin(packageDir: string, binName: string): string {
 export interface PidFile {
   runner?: number;
   web?: number;
+  /**
+   * Every process our services spawned underneath themselves, captured while
+   * the tree was still intact. See `recordServiceTree`.
+   */
+  children?: ProcessRecord[];
+}
+
+/**
+ * Record the full descendant tree of the running services, for a shutdown that
+ * happens later.
+ *
+ * ## Why this cannot be done at shutdown time
+ *
+ * `killPidTree` snapshots descendants just before killing, which works when we
+ * are the ones initiating the stop. It does NOT work for Ctrl+C, and that is
+ * the case that kept stranding a Next server:
+ *
+ * Ctrl+C is delivered by Windows to every process in the console group at once,
+ * not to us first. So by the time our SIGINT handler runs and asks WMI for the
+ * tree, the intermediate links are already dying. In dev the chain is
+ * cmd.exe → `next dev` → start-server.js; the middle process exits, and a walk
+ * from the cmd.exe pid then finds nothing, because a dead parent leaves no
+ * parent/child edge behind. The grandchild survives holding :3000, and the next
+ * `up` reports it as an orphan.
+ *
+ * Reproduced by an external validator on 2026-08-21 (case 3a): the survivor was
+ * `next/dist/server/lib/start-server.js` pid 57924, whose recorded parent 26256
+ * was neither of the pids we had announced — proof there had been a middle link
+ * and that it was already gone.
+ *
+ * So the tree is captured right after the services report healthy, while every
+ * link still exists, and persisted next to the pids. Shutdown then sweeps a list
+ * it already holds instead of trying to rebuild one from a collapsing tree.
+ *
+ * Cost sits at startup, off the shutdown path — which also removes the seconds
+ * a cold WMI call was adding to every stop.
+ */
+export async function recordServiceTree(pids: PidFile): Promise<void> {
+  if (process.platform !== 'win32') return;
+  const snapshot = await processSnapshotWin();
+  if (snapshot.size === 0) return;
+
+  const children: ProcessRecord[] = [];
+  const seen = new Set<number>();
+  for (const root of [pids.runner, pids.web]) {
+    if (!root) continue;
+    for (const rec of walkDescendants(snapshot, root)) {
+      if (seen.has(rec.pid)) continue;
+      seen.add(rec.pid);
+      children.push(rec);
+    }
+  }
+  writePids({ ...pids, children });
+}
+
+/**
+ * Kill anything `recordServiceTree` saw that is still alive.
+ *
+ * Identity is checked before killing: a recorded pid is only killed when the
+ * process now carrying that number was created at the same tick. Windows
+ * recycles pids, and a list minutes old would otherwise be a licence to kill an
+ * unrelated process — the same mistake the ownership guard in `up` exists to
+ * prevent, arrived at from the other direction.
+ *
+ * Returns the pids actually killed, so the caller can say what it did.
+ */
+export async function sweepRecordedChildren(children: ProcessRecord[]): Promise<number[]> {
+  if (process.platform !== 'win32' || children.length === 0) return [];
+  const alive = children.filter((c) => isPidAlive(c.pid));
+  if (alive.length === 0) return [];
+
+  const snapshot = await processSnapshotWin();
+  const killed: number[] = [];
+  for (const rec of alive) {
+    const now = snapshot.get(rec.pid);
+    // No entry means it died between the two probes. A different creation tick
+    // means the number was recycled and belongs to someone else now.
+    if (!now || now.startedAt !== rec.startedAt) continue;
+    try {
+      await execa('taskkill', ['/F', '/PID', String(rec.pid)], { reject: false });
+      killed.push(rec.pid);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return killed;
 }
 
 export function writePids(pids: PidFile): void {

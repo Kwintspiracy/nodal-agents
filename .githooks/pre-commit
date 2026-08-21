@@ -1,0 +1,26 @@
+#!/bin/sh
+# Versioned pre-commit hook. Enabled by `pnpm hooks:install`, which `prepare`
+# runs automatically after `pnpm install`.
+#
+# Two gates, both cheap enough to run on every commit and both closing a real
+# incident rather than a hypothetical one:
+#
+#   hygiene — damaged or stray files (2026-08-21: a source file committed with
+#             16 NUL bytes took out 8 test suites; a report at the repo root
+#             was swept in by `git add -A` and failed the secret scan)
+#   secrets — hardcoded credentials
+#
+# Both inspect the STAGED set only, so an unrelated mess in the working tree
+# never blocks a clean commit.
+#
+# Escape hatch, for the rare intended case: NODAL_SKIP_HYGIENE=1 git commit …
+
+set -e
+
+if [ "$NODAL_SKIP_HYGIENE" = "1" ]; then
+  echo "pre-commit: skipped (NODAL_SKIP_HYGIENE=1)"
+  exit 0
+fi
+
+node scripts/check-commit-hygiene.mjs
+node scripts/check-no-secrets.mjs

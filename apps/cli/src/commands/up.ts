@@ -31,6 +31,8 @@ import {
   writePids,
   clearPids,
   readPids,
+  recordServiceTree,
+  sweepRecordedChildren,
   killProcessTree,
   descendantPidsWin,
   isPidAlive,
@@ -423,9 +425,19 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\n' + chalk.yellow('  Stopping Nodal-Agents…'));
+    // Read the tree BEFORE killing: clearPids() wipes it at the end, and on
+    // Ctrl+C the live parent/child links are already collapsing (see
+    // recordServiceTree for the full account).
+    const recorded = readPids()?.children ?? [];
     await Promise.allSettled(
       [running.runner, running.web].filter((c): c is SpawnResult => c !== null).map(killSilent),
     );
+    // Whatever the tree walk could no longer reach — in dev that is the Next
+    // server behind the `next dev` launcher, which outlives its own parent.
+    const swept = await sweepRecordedChildren(recorded);
+    if (swept.length > 0) {
+      console.log(chalk.gray(`  Also stopped ${swept.length} background worker(s) they had left`));
+    }
     // Graceful, always: pg.stop() runs `pg_ctl stop -m fast`, which releases the
     // Win32 shared-memory section. A hard kill here would leak it.
     await pg.stop();
@@ -596,6 +608,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     pending.delete('web page render');
     clearInterval(ticker);
     healthSpinner.succeed(chalk.green('All services healthy'));
+
+    // Everything is up and the process tree is fully formed — the only moment
+    // where it can be read reliably. Ctrl+C tears the links down faster than a
+    // shutdown handler can walk them (see recordServiceTree).
+    await recordServiceTree({ runner: runnerPid, web: webPid });
   } catch (err) {
     clearInterval(ticker);
     healthSpinner.fail(

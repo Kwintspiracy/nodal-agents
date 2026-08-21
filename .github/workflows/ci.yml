@@ -54,6 +54,14 @@ jobs:
       - name: Secret scan
         run: pnpm secrets:check
 
+      # The pre-commit hook already runs this on staged files, but a hook lives
+      # on a developer's machine and can be skipped. This is the copy nobody
+      # can bypass. It catches damaged content (NUL bytes, UTF-16) and files
+      # that drifted into the tree — see scripts/check-commit-hygiene.mjs for
+      # the two 2026-08-21 incidents that motivated each check.
+      - name: Commit hygiene
+        run: pnpm hygiene:check
+
       - name: Architecture check
         run: pnpm deps:check
 

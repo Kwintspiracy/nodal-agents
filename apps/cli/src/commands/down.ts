@@ -3,7 +3,14 @@
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { readPids, clearPids, isPidAlive, killPidTree } from '../lib/processes.ts';
+import {
+  readPids,
+  clearPids,
+  isPidAlive,
+  killPidTree,
+  waitForPidDead,
+  sweepRecordedChildren,
+} from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
 import { readPostmasterPid } from '../lib/postgres.ts';
 
@@ -75,7 +82,19 @@ async function stopPostgresGracefully(): Promise<boolean> {
     // running is exactly the lie this file's header says was fixed for
     // runner/web, and it sent a real diagnosis down the wrong path on
     // 2026-08-20. Same discipline as killPid above: verify, then speak.
-    if (pgPid !== null && isPidAlive(pgPid)) {
+    // …but give it a moment to actually go. `pg_ctl stop -m fast` returns once
+    // the signal is delivered, not once the postmaster has finished rolling back
+    // and detaching its shared memory — a second or two on a busy machine, more
+    // while background workers wind down. Probing the instant it returns made
+    // `down` announce a stuck Postgres, in red, with a Stop-Process command to
+    // run, three times out of three in an external validation on 2026-08-21 —
+    // and all three pids were gone seconds later.
+    //
+    // A warning that cries wolf is worse than none: this same message DOES
+    // report a real, boot-poisoning failure, and it only keeps that weight if it
+    // never fires on a Postgres that was merely still on its way out.
+    const pgGone = pgPid === null || (await waitForPidDead(pgPid, 15_000));
+    if (!pgGone) {
       const killCmd =
         process.platform === 'win32'
           ? `powershell Stop-Process -Id ${pgPid} -Force`
@@ -111,6 +130,16 @@ export async function runDown(): Promise<void> {
 
   if (pids?.runner) stopped += (await killPid(pids.runner, 'runner')) ? 1 : 0;
   if (pids?.web) stopped += (await killPid(pids.web, 'web')) ? 1 : 0;
+
+  // The tree recorded at startup, when every parent/child link still existed.
+  // `down` usually reaches everything through killPidTree, but not always: a
+  // Next dev server outlives the launcher that spawned it, and after
+  // `up --detach` the CLI that owned the tree is long gone.
+  const swept = await sweepRecordedChildren(pids?.children ?? []);
+  if (swept.length > 0) {
+    console.log(chalk.green(`  Stopped ${swept.length} background worker(s) left behind`));
+    stopped += swept.length;
+  }
 
   if (await stopPostgresGracefully()) stopped++;
 
