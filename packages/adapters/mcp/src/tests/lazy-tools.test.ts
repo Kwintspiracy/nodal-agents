@@ -50,7 +50,9 @@ describe('createLazyMcpTools', () => {
 
     expect(toolset.tools).toHaveLength(1);
     expect(toolset.tools[0]?.name).toBe('cogni_cortex__get_home');
-    expect(toolset.tools[0]?.riskLevel).toBe('read');
+    // MCP-001: readOnlyHint is a hint, never a downgrade — a hostile server
+    // must not be able to declare its own approval posture.
+    expect(toolset.tools[0]?.riskLevel).toBe('write');
     expect(toolset.descriptors).toBe(cachedDescriptors);
     expect(h.connectMcp).not.toHaveBeenCalled();
   });

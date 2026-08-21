@@ -6,6 +6,7 @@ import {
   uuid,
   boolean,
   integer,
+  real,
   bigint,
   timestamp,
   jsonb,
@@ -66,6 +67,41 @@ export const agents = pgTable(
     // (Memory Sprint 2). Pure char budget — token estimation done at call site
     // (length/4). 1500 chars ≈ ~375 tokens, similar to Hermes' 2200+1375 split.
     memoryTokenBudget: integer('memory_token_budget').default(1500).notNull(),
+    // Daily budget for coding-CLI runs (code_task, étape B of the
+    // subscription-runtimes plan), in NOTIONAL USD — the cost the claude CLI
+    // reports even under subscription (codex reports none; its runs count 0
+    // against this cap, bounded by the per-call timeout instead). 0 = no cap.
+    // Enforced in the code_task builtin against SUM(cli_runs.cost_usd) today.
+    cliDailyBudgetUsd: real('cli_daily_budget_usd').default(10).notNull(),
+    // Per-provider defaults for code_task runs (étape B-bis): which model and
+    // reasoning effort each coding CLI uses BY DEFAULT for this agent. The
+    // LLM may still override per task (code_task's optional model/effort
+    // inputs). NULL / absent key = the CLI's own default (pre-feature
+    // behavior). Values are free strings — the CLI is the source of truth for
+    // what it accepts, and a bad value fails loud at run time.
+    // `enabled` (demande Quentin, 20/08): the owner can restrict WHICH
+    // providers this agent may call through code_task. Absent/true = allowed
+    // (back-compat); `false` = code_task refuses that provider loud. The
+    // action layer guarantees at least one provider stays enabled.
+    cliDefaults: jsonb('cli_defaults').$type<{
+      claude?: { model?: string; effort?: string; enabled?: boolean };
+      codex?: { model?: string; effort?: string; enabled?: boolean };
+    } | null>(),
+    // Which harness drives this agent (étape E). 'nodal' (default) = the
+    // Nodal runner loop. 'claude-code' = the agent IS a Claude Code session:
+    // persona from DB via --append-system-prompt, channels/cron/workspaces/
+    // budget/approvals stay Nodal's, but the LOOP, tools and context are the
+    // CLI's — said as-is to the user (dispatcher, not brain). 'codex' is
+    // reserved (fails loud runtime_not_supported until implemented). A DATA
+    // field, never a hardcoded per-agent branch (invariant #1).
+    runtime: text('runtime').default('nodal').notNull(),
+    // Runtime-agent permission posture, as DATA: mode 'read' (default when
+    // NULL) hides the CLI's write tools; 'write' allows workspace edits
+    // (acceptEdits). extraDisallowed adds CLI tool names on top of either.
+    cliPermissions: jsonb('cli_permissions').$type<{
+      mode?: 'read' | 'write';
+      extraDisallowed?: string[];
+    } | null>(),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user
@@ -83,6 +119,7 @@ export const agents = pgTable(
       sql`${table.orchestratorMode} IN ('router', 'planner') OR ${table.orchestratorMode} IS NULL`,
     ),
     check('agents_max_tokens_per_job_check', sql`${table.maxTokensPerJob} >= 0`),
+    check('agents_runtime_check', sql`${table.runtime} IN ('nodal', 'claude-code', 'codex')`),
     // F-6 (audit #2): slug was UNIQUE GLOBALLY, so a 2nd workspace/entity
     // installing the same community skill's companion agent (or any agent
     // sharing a slug with another entity's agent) would crash the insert —

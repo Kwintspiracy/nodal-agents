@@ -9,6 +9,7 @@ export {
   installCommunitySkill,
   uninstallCommunitySkill,
   applySkillUpdate,
+  previewSkillUpdate,
   acknowledgeSkillUpdate,
   SkillInstallError,
 } from './install';

@@ -29,7 +29,15 @@ import {
   deleteWorkspaceFileAction,
   listAgentApprovalRulesAction,
   setAgentApprovalRuleAction,
+  listInternalToolsAction,
   setRunCommandYoloAction,
+  setCodeTaskYoloAction,
+  setCliDailyBudgetAction,
+  getCliUsageTodayAction,
+  setCliDefaultsAction,
+  setReviewerReadOnlyPresetAction,
+  setAgentRuntimeAction,
+  setCliRuntimeModeAction,
   setSkillScriptsAuthorizedAction,
   setSkillFilesWritableAction,
   assignSkillAction,
@@ -62,7 +70,7 @@ import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
-import Tabs from '@/components/ui/Tabs';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
 import AgentPill from '@/components/ui/AgentPill';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -82,7 +90,18 @@ import ConnectorsTabContent from './ConnectorsTabContent.tsx';
 import ChannelsTabContent from './ChannelsTabContent.tsx';
 import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
+import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
+
+/**
+ * One built-in tool as returned by listInternalToolsAction.
+ *
+ * `requiresApproval` is omitted on the wire — none of these ships an approval
+ * gate of its own — so it is filled in at render rather than sent sixteen times.
+ */
+type InternalToolUiRow = Omit<OperationDescriptor, 'requiresApproval'> & {
+  unblockableReason?: string;
+};
 import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
 
 /**
@@ -274,6 +293,22 @@ export default function AgentComposer({
   // '' = Auto (provider default). Levels offered come from the catalog.
   const [reasoningEffort, setReasoningEffort] = useState<string>(agent.reasoningEffort ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
+  // Runtime (étape E): 'nodal' | 'claude-code'. Saved immediately via its own
+  // action (setAgentRuntimeAction) — not part of the Save/Reset dirty flow.
+  // Lifted here (not local to SettingsTab) because Skills/Tools/Autonomy also
+  // need it, to show the "does not apply" banner without a full page reload.
+  const [runtime, setRuntime] = useState<string>(agent.runtime ?? 'nodal');
+  // Any non-'nodal' runtime is a coding CLI harness: the runner hands it only
+  // the personality, so the Nodal-loop settings below are inert for it.
+  // Written against the runtime being ≠ 'nodal' rather than === 'claude-code'
+  // so the codex runtime inherits the same honesty for free when it ships.
+  const isCliRuntime = runtime !== 'nodal';
+  // Lifted like `runtime` above: the CLI posture (read vs write) is edited in
+  // the runtime card but SHOWN in the hero, so both must read one state.
+  // Before this it lived only inside the card — buried under the LLM config in
+  // Settings — and a coding agent silently stuck read-only was invisible
+  // (Quentin 20/08: Dev C attempted 9 writes, all refused, for a full day).
+  const [cliMode, setCliMode] = useState<'read' | 'write'>(agent.cliPermissions?.mode ?? 'read');
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
   const [liveModelsCache, setLiveModelsCache] = useState<Record<string, string[]>>({});
@@ -487,6 +522,8 @@ export default function AgentComposer({
           role={initialRole}
           slug={agent.slug}
           model={agent.model}
+          isCliRuntime={isCliRuntime}
+          cliMode={cliMode}
           provider={llmKeys.find((k) => k.id === agent.llmKeyId)?.provider ?? null}
           llmKeyLabel={
             llmKeys.find((k) => k.id === agent.llmKeyId)?.nickname ??
@@ -518,7 +555,15 @@ export default function AgentComposer({
             connectors: assignedConnectors + assignedMcps,
             runs: totalRuns,
           }}
+          isCliRuntime={isCliRuntime}
         />
+
+        {/* A CLI-runtime agent reads none of these — show WHY instead of
+            controls that would silently do nothing (retour Quentin 20/08).
+            Reachable via a `?tab=` deep link or a runtime switch mid-edit. */}
+        {isCliRuntime && RUNTIME_INERT_TABS.has(tab) && (
+          <RuntimeInertTabPanel onOpenOverview={() => setTab('overview')} />
+        )}
 
         {tab === 'overview' && (
           <OverviewTab
@@ -526,8 +571,9 @@ export default function AgentComposer({
             attachedSkills={attachedNonToolSkills}
             connectorsAssigned={assignedConnectorRows}
             mcpsAssignedCount={assignedMcps}
-            onOpenSkills={() => setTab('skills')}
-            onOpenConnectors={() => setTab('connectors')}
+            // The Overview CTAs must not point at a tab this agent can't use.
+            onOpenSkills={isCliRuntime ? null : () => setTab('skills')}
+            onOpenConnectors={isCliRuntime ? null : () => setTab('connectors')}
           />
         )}
         {tab === 'channels' && (
@@ -545,22 +591,27 @@ export default function AgentComposer({
             whatsappAllowedConversations={whatsappAllowedConversations}
           />
         )}
-        {tab === 'skills' && (
-          <SkillsTab
-            agentId={agent.id}
-            attachedSkills={attachedNonToolSkills}
-            allSkills={nonToolSkills}
-          />
+        {tab === 'skills' && !isCliRuntime && (
+          <>
+            <SkillsTab
+              agentId={agent.id}
+              attachedSkills={attachedNonToolSkills}
+              allSkills={nonToolSkills}
+            />
+          </>
         )}
-        {tab === 'tools' && (
-          <ToolsTab
-            agentId={agent.id}
-            attachedSkills={attachedSkills}
-            allSkills={allSkills}
-            onChanged={() => router.refresh()}
-          />
+        {tab === 'tools' && !isCliRuntime && (
+          <>
+            <ToolsTab
+              agentId={agent.id}
+              attachedSkills={attachedSkills}
+              allSkills={allSkills}
+              cliDefaults={agent.cliDefaults}
+              onChanged={() => router.refresh()}
+            />
+          </>
         )}
-        {tab === 'connectors' && (
+        {tab === 'connectors' && !isCliRuntime && (
           <SectionCard>
             <ConnectorsTabContent
               key={agent.id}
@@ -577,15 +628,19 @@ export default function AgentComposer({
             agentId={agent.id}
           />
         )}
-        {tab === 'autonomy' && (
-          <AutonomyTab
-            agentId={agent.id}
-            connectors={connectors}
-            hasTelegramBot={!!agent.telegramBotToken}
-            attachedSkills={attachedSkills}
-            lanCommandYolo={lanCommandYolo}
-            isOwner={isOwner}
-          />
+        {tab === 'autonomy' && !isCliRuntime && (
+          <>
+            <AutonomyTab
+              agentId={agent.id}
+              connectors={connectors}
+              mcpServers={mcpServers}
+              hasTelegramBot={!!agent.telegramBotToken}
+              attachedSkills={attachedSkills}
+              lanCommandYolo={lanCommandYolo}
+              isOwner={isOwner}
+              cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+            />
+          </>
         )}
         {tab === 'settings' && (
           <SettingsTab
@@ -627,6 +682,13 @@ export default function AgentComposer({
             onReset={handleReset}
             liveModelsCache={liveModelsCache}
             liveModelsLoading={liveModelsLoading}
+            runtime={runtime}
+            onChangeRuntime={setRuntime}
+            cliMode={cliMode}
+            onChangeCliMode={setCliMode}
+            cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+            cliDefaults={agent.cliDefaults}
+            isOwner={isOwner}
           />
         )}
       </div>
@@ -678,6 +740,8 @@ function HeroCard({
   model,
   provider,
   llmKeyLabel,
+  isCliRuntime,
+  cliMode,
   stats,
 }: {
   initial: string;
@@ -690,6 +754,15 @@ function HeroCard({
   /** The saved LLM key's provider slug — drives the tools-capability badge. */
   provider: string | null;
   llmKeyLabel: string | null;
+  /**
+   * true ⇒ the agent runs on a coding CLI. Its stored Nodal model/LLM key are
+   * kept for a switch back but drive nothing — showing them here read as "this
+   * agent runs on glm-5.2" while it was actually running Claude Code (retour
+   * Quentin 20/08, same fix as the /agents list).
+   */
+  isCliRuntime: boolean;
+  /** CLI posture, surfaced here so a coding agent stuck read-only is obvious. */
+  cliMode: 'read' | 'write';
   stats: {
     connectors: number;
     mcps: number;
@@ -722,23 +795,52 @@ function HeroCard({
         {/* Title + meta */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="m-0 text-display-22 leading-none! tracking-[-0.01em] text-ink">
+            {/* h2, pas h1 : la page porte déjà « Edit agent » comme h1. Deux h1
+                sur une même page privent un lecteur d'écran du repère qui dit
+                DE QUELLE page il s'agit. La classe porte la taille, donc rien
+                ne bouge à l'écran. */}
+            <h2 className="m-0 text-display-22 leading-none! tracking-[-0.01em] text-ink">
               {name}
-            </h1>
+            </h2>
             <StatusPill variant="idle" label="Idle" />
           </div>
           <p className="mt-2 text-body-14 leading-[1.55]! text-ink-3">{personaPreview}</p>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body-12 text-ink-3">
-            {model && (
+            {isCliRuntime ? (
               <span className="inline-flex items-center gap-1.5">
-                <span className="text-ink-4">Model:</span>{' '}
+                <span className="text-ink-4">Engine:</span>{' '}
                 <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 text-mono-12 text-ink-2">
-                  {model}
+                  Claude Code (subscription)
                 </code>
-                <ModelToolsBadge support={modelToolsSupport(provider ?? '', model)} />
+                {/* The posture, at a glance: a coding agent left read-only
+                    cannot write a single file, and used to be invisible. */}
+                <span
+                  title={
+                    cliMode === 'write'
+                      ? 'Can edit files in its workspace.'
+                      : 'Read-only: every write it attempts is refused by the harness.'
+                  }
+                  className={`rounded border px-1.5 py-0.5 text-mono-11 ${
+                    cliMode === 'write'
+                      ? 'border-ok/30 bg-ok-bg text-ok'
+                      : 'border-warn/30 bg-warn-bg text-warn'
+                  }`}
+                >
+                  {cliMode === 'write' ? 'write' : 'read-only'}
+                </span>
               </span>
+            ) : (
+              model && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-ink-4">Model:</span>{' '}
+                  <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 text-mono-12 text-ink-2">
+                    {model}
+                  </code>
+                  <ModelToolsBadge support={modelToolsSupport(provider ?? '', model)} />
+                </span>
+              )
             )}
-            {llmKeyLabel && (
+            {!isCliRuntime && llmKeyLabel && (
               <>
                 <Sep />
                 <span>
@@ -809,19 +911,38 @@ function StatCell({ label, value, dim }: { label: string; value: string; dim?: b
 
 // ─── Tabs bar ─────────────────────────────────────────────────────────────────
 
+/**
+ * Tabs whose settings a CLI-runtime agent NEVER reads (retour Quentin 20/08).
+ * A runtime agent is handed exactly one thing by the runner — its personality,
+ * written to the CLI's persona file (apps/runner/src/cli-runtime/run-job.ts).
+ * No skills block, no tools, no connectors, no MCP, no per-tool approval
+ * rules, no memories. Everything that DOES apply to it lives in the
+ * "Claude Code runtime" card instead (write mode, model/effort, daily budget),
+ * plus Channels, Runs and Settings — so nothing reachable is lost by disabling
+ * these four.
+ */
+const RUNTIME_INERT_TABS: ReadonlySet<Tab> = new Set(['skills', 'tools', 'connectors', 'autonomy']);
+
+const RUNTIME_INERT_HINT =
+  'Not used: this agent runs on the Claude Code harness, which reads only its personality. ' +
+  'Its runtime settings are in the Model section on Overview.';
+
 function TabsBar({
   tab,
   onChange,
   counts,
+  isCliRuntime,
 }: {
   tab: Tab;
   onChange: (t: Tab) => void;
   counts: { skills: number; tools: number; connectors: number; runs: number };
+  /** true ⇒ the agent runs on a coding CLI, not the Nodal loop. */
+  isCliRuntime: boolean;
 }) {
   // Configure was removed entirely — it only ever jumped to the Settings tab
   // already sitting right here. Memory stays a header CTA (see HeroCard),
   // not a tab.
-  const TABS: { id: Tab; label: string; count?: number }[] = [
+  const BASE_TABS: TabItem<Tab>[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'channels', label: 'Channels' },
     { id: 'skills', label: 'Skills', count: counts.skills },
@@ -831,7 +952,39 @@ function TabsBar({
     { id: 'autonomy', label: 'Autonomy' },
     { id: 'settings', label: 'Settings' },
   ];
+  const TABS: TabItem<Tab>[] = BASE_TABS.map((t) =>
+    isCliRuntime && RUNTIME_INERT_TABS.has(t.id)
+      ? { ...t, disabled: true, disabledHint: RUNTIME_INERT_HINT }
+      : t,
+  );
   return <Tabs tabs={TABS} value={tab} onChange={onChange} />;
+}
+
+/**
+ * Shown INSTEAD of an inert tab's controls when the user still lands on one —
+ * a `?tab=skills` deep link, or the runtime being switched while the tab was
+ * open. Says plainly that nothing here reaches the agent and where the real
+ * settings are, rather than accepting edits that silently do nothing.
+ */
+function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }) {
+  return (
+    <SectionCard>
+      <p className="text-body-14 text-ink">
+        This agent runs on the Claude Code harness, not the Nodal loop.
+      </p>
+      <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
+        The harness receives only this agent&apos;s personality — skills, tool groups, connectors,
+        MCP servers, per-tool approvals and memories are never sent to it, so changing them here
+        would have no effect. Put anything it must follow in its personality (Settings), and
+        configure the run itself — write mode, model, effort, daily budget — in the Model section.
+      </p>
+      <div className="mt-4">
+        <PrimaryButton variant="neutral" type="button" onClick={onOpenOverview}>
+          Go to Model settings
+        </PrimaryButton>
+      </div>
+    </SectionCard>
+  );
 }
 
 // ─── Section card wrapper ────────────────────────────────────────────────────
@@ -839,6 +992,12 @@ function TabsBar({
 function SectionCard({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-rule-2 bg-paper p-6">{children}</div>;
 }
+
+// The v1 informational banner that used to sit on top of Skills / Tools /
+// Autonomy is gone (retour Quentin 20/08): it announced that the settings
+// below had no effect while still letting the user change them, which is the
+// trap it was supposed to prevent. Those tabs are now DISABLED for a CLI
+// runtime (RUNTIME_INERT_TABS), and RuntimeInertTabPanel explains why.
 
 function SectionHead({
   label,
@@ -874,8 +1033,9 @@ function OverviewTab({
   attachedSkills: SkillRow[];
   connectorsAssigned: AgentConnectorRow[];
   mcpsAssignedCount: number;
-  onOpenSkills: () => void;
-  onOpenConnectors: () => void;
+  /** null ⇒ that tab is inert for this agent (CLI runtime) — render no CTA. */
+  onOpenSkills: (() => void) | null;
+  onOpenConnectors: (() => void) | null;
 }) {
   const hasSkills = attachedSkills.length > 0;
   const hasConnectors = connectorsAssigned.length > 0;
@@ -894,7 +1054,7 @@ function OverviewTab({
           <SectionHead
             label={`Connectors used · ${connectorsAssigned.length}`}
             right={
-              hasConnectors ? (
+              hasConnectors && onOpenConnectors ? (
                 <RowActionButton onClick={onOpenConnectors}>Manage</RowActionButton>
               ) : undefined
             }
@@ -908,7 +1068,9 @@ function OverviewTab({
           ) : (
             <p className="text-body-13 text-ink-3">
               No connectors assigned yet.{' '}
-              <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
+              {onOpenConnectors && (
+                <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
+              )}
             </p>
           )}
           {mcpsAssignedCount > 0 && (
@@ -925,7 +1087,9 @@ function OverviewTab({
         <SectionHead
           label={`Skills attached · ${attachedSkills.length}`}
           right={
-            hasSkills ? <RowActionButton onClick={onOpenSkills}>Manage</RowActionButton> : undefined
+            hasSkills && onOpenSkills ? (
+              <RowActionButton onClick={onOpenSkills}>Manage</RowActionButton>
+            ) : undefined
           }
         />
         {hasSkills ? (
@@ -1352,24 +1516,38 @@ const TELEGRAM_SEND_OPERATION: OperationDescriptor = {
 
 type ApprovalAction = 'auto_approve' | 'require_approval' | 'block';
 
+/** `cogni-cortex` → `cogni_cortex`. Mirrors slugToPrefix in adapter-mcp. */
+function mcpSlugToPrefix(slug: string): string {
+  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+}
+
 function AutonomyTab({
   agentId,
   connectors,
+  mcpServers,
   hasTelegramBot,
   attachedSkills,
   lanCommandYolo,
   isOwner,
+  cliDailyBudgetUsd,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
+  mcpServers: AgentMcpServerRow[];
   hasTelegramBot: boolean;
   attachedSkills: SkillRow[];
   lanCommandYolo: boolean;
   isOwner: boolean;
+  cliDailyBudgetUsd: number;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState<Set<string>>(new Set());
+  // Fetched, not imported: the descriptors live in @nodal-agents/orchestration,
+  // and importing that from this 'use client' component pulls drizzle into the
+  // browser bundle and breaks the page build outright. See
+  // listInternalToolsAction.
+  const [internalTools, setInternalTools] = useState<InternalToolUiRow[]>([]);
 
   // Load current rules on mount
   useEffect(() => {
@@ -1378,6 +1556,12 @@ function AutonomyTab({
       setLoaded(true);
     });
   }, [agentId]);
+
+  useEffect(() => {
+    listInternalToolsAction().then((result) => {
+      if (result.ok) setInternalTools(result.data);
+    });
+  }, []);
 
   // Build the list of gateable tools from assigned connectors (write+destructive)
   // plus Telegram if a bot is wired.
@@ -1398,17 +1582,22 @@ function AutonomyTab({
     return ops;
   }, [connectors, hasTelegramBot]);
 
+  const attachedMcpServers = useMemo(() => mcpServers.filter((s) => s.assigned), [mcpServers]);
+
   function ruleFor(toolName: string): ApprovalAction {
     return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
   }
 
   function handleChange(toolName: string, action: ApprovalAction) {
-    // Optimistic update
-    setRules((prev) => {
-      const without = prev.filter((r) => r.toolName !== toolName);
-      if (action === 'auto_approve') return without;
-      return [...without, { id: '', toolName, action }];
-    });
+    // Optimistic update. The row is KEPT for auto_approve — it used to be
+    // dropped, mirroring the server action's old "no rule needed, the default
+    // is already auto_approve" branch. That stopped being true for MCP tools,
+    // which default to require_approval, so dropping it made the UI show "ask"
+    // on the next load for a server the owner had just trusted.
+    setRules((prev) => [
+      ...prev.filter((r) => r.toolName !== toolName),
+      { id: '', toolName, action },
+    ]);
 
     setSaving((prev) => new Set([...prev, toolName]));
     void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
@@ -1440,7 +1629,7 @@ function AutonomyTab({
       <SectionCard>
         <SectionHead
           label="Autonomy / Approvals"
-          hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Read-only tools are always autonomous and not shown."
+          hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Its built-in tools are listed separately, below."
         />
         {gateableTools.length === 0 ? (
           <p className="text-body-13 text-ink-3">
@@ -1464,10 +1653,94 @@ function AutonomyTab({
           </div>
         )}
         <p className="mt-4 text-body-12 text-ink-4">
-          Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>.
-          Rules take effect on the next job — already-running jobs are not affected.
+          Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>{' '}
+          for the tools above. Rules take effect on the next job — already-running jobs are not
+          affected.
         </p>
       </SectionCard>
+
+      {/*
+        The sixteen built-in tools every agent gets. They were always on and
+        never listed, so the only way to restrain one was the read-only preset,
+        which blocks five write tools at once — no way to say "may read files,
+        may not search the web". Same control and same vocabulary as the outward
+        tools above, so one row reads the same everywhere.
+
+        Descriptors come from @nodal-agents/orchestration, derived from the tool
+        definitions themselves: the text the owner reads before switching a tool
+        off cannot drift from what that tool actually does.
+      */}
+      <SectionCard>
+        <SectionHead
+          label="Built-in tools"
+          hint="Every agent gets these. Restrict any of them for this agent — memory, web search, workspace files."
+        />
+        <div
+          className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+          data-testid="autonomy-internal-list"
+        >
+          {internalTools.map((op) => (
+            <AutonomyToolRow
+              key={op.slug}
+              op={{ ...op, requiresApproval: false }}
+              value={ruleFor(op.slug)}
+              saving={saving.has(op.slug)}
+              onChange={(action) => handleChange(op.slug, action)}
+              {...(op.unblockableReason === undefined
+                ? {}
+                : { lockedReason: op.unblockableReason })}
+            />
+          ))}
+        </div>
+        <p className="mt-4 text-body-12 text-ink-4">
+          Blocking a tool leaves it visible to the agent but refuses the call, telling it the
+          restriction is deliberate — so it reports the limit instead of working around it.
+        </p>
+      </SectionCard>
+
+      {/*
+        MCP servers were absent from this screen entirely, which left no way to
+        say "stop asking" for a server already attached — the only surface was
+        the button on an approval card, i.e. you had to be interrupted first in
+        order to stop being interrupted. Reported live: repeated prompts just to
+        read a CHANGELOG.
+
+        One row per SERVER, not per tool: a server commonly exposes thirty, and
+        the decision the owner actually makes is about the server.
+      */}
+      {attachedMcpServers.length > 0 && (
+        <SectionCard>
+          <SectionHead
+            label="MCP servers"
+            hint="Tools from a third-party MCP server ask before running by default — the product cannot vouch for code it did not write. Trust a server here to stop being asked."
+          />
+          <div
+            className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+            data-testid="autonomy-mcp-list"
+          >
+            {attachedMcpServers.map((s) => {
+              const pattern = `${mcpSlugToPrefix(s.slug)}__*`;
+              return (
+                <AutonomyToolRow
+                  key={s.mcpServerId}
+                  op={{
+                    slug: pattern,
+                    name: s.label,
+                    risk: 'write',
+                    requiresApproval: true,
+                    description: `All ${s.availableTools.length} tools exposed by this server, including any it adds later.`,
+                  }}
+                  // Unlike the connector rows above, "no rule" here means ASK:
+                  // every MCP tool ships defaultApproval: 'require_approval'.
+                  value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
+                  saving={saving.has(pattern)}
+                  onChange={(action) => handleChange(pattern, action)}
+                />
+              );
+            })}
+          </div>
+        </SectionCard>
+      )}
 
       <CommandExecutionSection
         agentId={agentId}
@@ -1475,6 +1748,23 @@ function AutonomyTab({
         rules={rules}
         onRulesChange={setRules}
         lanCommandYolo={lanCommandYolo}
+        isOwner={isOwner}
+      />
+
+      <CodeTaskSection
+        agentId={agentId}
+        attachedSkills={attachedSkills}
+        rules={rules}
+        onRulesChange={setRules}
+        lanCommandYolo={lanCommandYolo}
+        isOwner={isOwner}
+        cliDailyBudgetUsd={cliDailyBudgetUsd}
+      />
+
+      <ReadOnlyAgentSection
+        agentId={agentId}
+        rules={rules}
+        onRulesChange={setRules}
         isOwner={isOwner}
       />
 
@@ -1669,6 +1959,381 @@ function CommandExecutionSection({
         message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
         confirmLabel="Enable Yolo"
         destructive
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </SectionCard>
+  );
+}
+
+// ─── Coding CLI (code_task) section ───────────────────────────────────────────
+//
+// Visible only when the agent has the `code-task` skill assigned. Mirrors
+// CommandExecutionSection's Yolo toggle (same gate, same dormant-rule copy)
+// plus the daily USD budget with today's spend. Model/effort defaults and the
+// per-provider health check are CAPABILITY CONFIGURATION, not an autonomy
+// setting — Quentin's correction moved those to the code-task tool group's
+// panel on the Tools tab (ToolsTabContent.tsx, CodeTaskConfigPanel).
+
+const CODE_TASK_SKILL_SLUG = 'code-task';
+const CODE_TASK_TOOL = 'code_task';
+
+function CodeTaskSection({
+  agentId,
+  attachedSkills,
+  rules,
+  onRulesChange,
+  lanCommandYolo,
+  isOwner,
+  cliDailyBudgetUsd,
+}: {
+  agentId: string;
+  attachedSkills: SkillRow[];
+  rules: ApprovalRuleUiRow[];
+  onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+  /** Whether the workspace owner has opted into Yolo in non-local-trust mode. */
+  lanCommandYolo: boolean;
+  /** Whether the current user is the workspace owner. */
+  isOwner: boolean;
+  /** agents.cli_daily_budget_usd — 0 means no cap. */
+  cliDailyBudgetUsd: number;
+}) {
+  const hasSkill = attachedSkills.some((s) => s.slug === CODE_TASK_SKILL_SLUG);
+
+  // Read auth mode client-side — mirrors CommandExecutionSection.
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const yoloAllowed = isLocalTrust || (lanCommandYolo && isOwner);
+
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const yoloEnabled = rules.some(
+    (r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve',
+  );
+  const canManage = isLocalTrust || isOwner;
+  const canToggle = yoloAllowed || (yoloEnabled && canManage);
+  const isDormant = yoloEnabled && !yoloAllowed;
+
+  function applyOptimistic(enabled: boolean) {
+    onRulesChange(
+      enabled
+        ? [
+            ...rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
+            { id: '', toolName: CODE_TASK_TOOL, action: 'auto_approve' as const },
+          ]
+        : rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
+    );
+  }
+
+  function handleToggle(next: boolean) {
+    if (next) {
+      setConfirmOpen(true);
+    } else {
+      void doSet(false);
+    }
+  }
+
+  async function doSet(enabled: boolean) {
+    setSaving(true);
+    applyOptimistic(enabled);
+    const result = await setCodeTaskYoloAction({ agentId, enabled });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      applyOptimistic(!enabled);
+    } else {
+      toast.success(
+        enabled
+          ? 'Yolo mode enabled. Coding tasks run without approval.'
+          : 'Yolo mode disabled. Coding tasks require approval again.',
+      );
+    }
+  }
+
+  // ── Daily budget + today's spend ───────────────────────────────────────────
+  const [budgetInput, setBudgetInput] = useState<string>(String(cliDailyBudgetUsd));
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [spentUsd, setSpentUsd] = useState<number | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasSkill) return;
+    getCliUsageTodayAction(agentId).then((result) => {
+      if (result.ok) setSpentUsd(result.data.spentUsd);
+      else setUsageError(result.message);
+    });
+  }, [agentId, hasSkill]);
+
+  async function handleSaveBudget() {
+    const parsed = Number(budgetInput);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000) {
+      toast.error('Enter a number between 0 and 1000');
+      return;
+    }
+    setSavingBudget(true);
+    const result = await setCliDailyBudgetAction({ agentId, budgetUsd: parsed });
+    setSavingBudget(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Daily budget saved');
+  }
+
+  if (!hasSkill) {
+    return null;
+  }
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Coding CLI"
+        hint="Runs delegate work to the coding CLI installed on this machine, under your subscription. Treat it the same as Command execution."
+      />
+
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-medium-14 text-ink">
+              Auto-run coding tasks without approval (Yolo)
+            </span>
+            <MonoMicroTag tone="err">irreversible</MonoMicroTag>
+          </div>
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+            When on, this agent runs coding CLI tasks immediately with no approval gate. Runs are
+            still logged and count against the daily budget below. Only enable for agents you fully
+            trust.
+          </p>
+          {isDormant && canManage && (
+            <p className="mt-2 text-body-12 text-warn">
+              This agent&apos;s Yolo is <b className="font-semibold">dormant</b>. Workspace Yolo is
+              off, so its coding tasks still require approval. Turn it off here to clear it, or
+              re-enable Yolo in{' '}
+              <Link
+                href="/settings"
+                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+              >
+                Settings → Command execution
+              </Link>
+              .
+            </p>
+          )}
+          {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
+            <p className="mt-2 text-body-12 text-ink-4">
+              Yolo is off for this workspace. The owner can enable it in{' '}
+              <Link
+                href="/settings"
+                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+              >
+                Settings → Command execution
+              </Link>
+              , or switch to loopback mode.
+            </p>
+          )}
+          {!yoloAllowed && lanCommandYolo && !isOwner && (
+            <p className="mt-2 text-body-12 text-ink-4">
+              The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
+              it per agent.
+            </p>
+          )}
+        </div>
+
+        <Switch
+          checked={yoloEnabled}
+          onChange={() => handleToggle(!yoloEnabled)}
+          disabled={saving || !canToggle}
+          trackClassName={
+            isDormant
+              ? 'mt-0.5 border-ink-4/40 bg-ink-4/20'
+              : yoloEnabled
+                ? 'mt-0.5 border-err/40 bg-err/20'
+                : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={[
+            yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
+            isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
+          ].join(' ')}
+        />
+      </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Enable Yolo mode?"
+        message="Yolo mode lets this agent run coding CLI tasks on this machine with no approval, using your subscription. Only enable for an agent you fully trust. Runs are still logged."
+        confirmLabel="Enable Yolo"
+        destructive
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+
+      <p className="mt-4 text-body-12 text-ink-4">
+        Model, effort and diagnostics live in the Tools tab.
+      </p>
+
+      <div className="mt-6">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+          Daily budget (USD)
+        </div>
+        <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
+        <div className="mt-2 flex items-center gap-2">
+          <TextInput
+            type="number"
+            min={0}
+            max={1000}
+            step={0.5}
+            value={budgetInput}
+            onChange={(e) => setBudgetInput(e.target.value)}
+            className="w-28 font-mono"
+          />
+          <PrimaryButton
+            variant="neutral"
+            type="button"
+            onClick={() => void handleSaveBudget()}
+            disabled={savingBudget}
+          >
+            {savingBudget ? 'Saving…' : 'Save'}
+          </PrimaryButton>
+        </div>
+        <p className="mt-2 text-body-13 text-ink-3">
+          {spentUsd !== null
+            ? `Spent today: $${spentUsd.toFixed(2)}`
+            : (usageError ?? 'Loading spend…')}
+        </p>
+      </div>
+    </SectionCard>
+  );
+}
+
+// ─── Read-only agent (reviewer preset) ────────────────────────────────────────
+//
+// Visible for EVERY agent — no skill gate, unlike CommandExecutionSection /
+// CodeTaskSection above. Read-only is a posture any agent can adopt, not a
+// capability that needs unlocking first. Blocking these 5 tools is exactly
+// what code_task's own read-only detection already keys off of
+// (assertNotReadOnlyAgent, packages/tools/src/builtin/code-task/db.ts, checks
+// file_write specifically) — this section is the UI affordance for that.
+
+const READONLY_PRESET_TOOLS = [
+  'file_write',
+  'file_edit',
+  'skill_file_write',
+  'run_command',
+  'run_skill_script',
+] as const;
+
+function ReadOnlyAgentSection({
+  agentId,
+  rules,
+  onRulesChange,
+  isOwner,
+}: {
+  agentId: string;
+  rules: ApprovalRuleUiRow[];
+  onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+  /** Whether the current user is the workspace owner. */
+  isOwner: boolean;
+}) {
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const canToggle = isLocalTrust || isOwner;
+
+  const blockedCount = READONLY_PRESET_TOOLS.filter((toolName) =>
+    rules.some((r) => r.toolName === toolName && r.action === 'block'),
+  ).length;
+  const allBlocked = blockedCount === READONLY_PRESET_TOOLS.length;
+  // Some, but not all, of the 5 tools are already blocked (set individually
+  // in the tool list above) — the toggle shows OFF (it didn't create this
+  // state) with a note explaining why, rather than a misleading partial ON.
+  const partiallyBlocked = blockedCount > 0 && !allBlocked;
+  const enabled = allBlocked;
+
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  function applyOptimistic(next: boolean) {
+    const presetTools: readonly string[] = READONLY_PRESET_TOOLS;
+    onRulesChange(
+      next
+        ? [
+            ...rules.filter((r) => !presetTools.includes(r.toolName)),
+            ...READONLY_PRESET_TOOLS.map((toolName) => ({
+              id: '',
+              toolName,
+              action: 'block' as const,
+            })),
+          ]
+        : rules.filter((r) => !(presetTools.includes(r.toolName) && r.action === 'block')),
+    );
+  }
+
+  function handleToggle(next: boolean) {
+    if (next) {
+      setConfirmOpen(true);
+    } else {
+      void doSet(false);
+    }
+  }
+
+  async function doSet(next: boolean) {
+    setSaving(true);
+    applyOptimistic(next);
+    const result = await setReviewerReadOnlyPresetAction({ agentId, enabled: next });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      applyOptimistic(!next);
+    } else {
+      toast.success(
+        next
+          ? 'Read-only agent enabled. Write tools are blocked.'
+          : 'Read-only agent disabled. Write tools are unblocked.',
+      );
+    }
+  }
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Read-only agent"
+        hint="Blocks all write tools for this agent. Meant for reviewer agents."
+      />
+
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <span className="text-medium-14 text-ink">Block write tools</span>
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+            Blocks file writes, shell commands, and skill scripts for this agent. Reversible any
+            time.
+          </p>
+          {partiallyBlocked && (
+            <p className="mt-2 text-body-12 text-ink-4">
+              Some write tools are already blocked individually.
+            </p>
+          )}
+        </div>
+
+        <Switch
+          checked={enabled}
+          onChange={() => handleToggle(!enabled)}
+          disabled={saving || !canToggle}
+          trackClassName={
+            enabled ? 'mt-0.5 border-ok/40 bg-ok/20' : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={enabled ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-3'}
+        />
+      </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Make this agent read-only?"
+        message="This blocks file writes, shell commands, and skill scripts for this agent. Meant for reviewer agents that should never modify anything."
+        confirmLabel="Make read-only"
+        destructive={false}
         onConfirm={() => {
           setConfirmOpen(false);
           void doSet(true);
@@ -1973,11 +2638,20 @@ function AutonomyToolRow({
   value,
   saving,
   onChange,
+  lockedReason,
 }: {
   op: OperationDescriptor;
   value: ApprovalAction;
   saving: boolean;
   onChange: (action: ApprovalAction) => void;
+  /**
+   * Set for a tool that may not be blocked (return_result). The row still
+   * renders — an owner who counts sixteen internal tools in the docs and finds
+   * fifteen here would rightly wonder what is being hidden — but the control is
+   * replaced by the reason. The server refuses the rule too; this is the
+   * affordance, not the guard.
+   */
+  lockedReason?: string;
 }) {
   const riskLabel: Record<string, string> = { write: 'write', destructive: 'irreversible' };
 
@@ -1990,7 +2664,11 @@ function AutonomyToolRow({
           <span
             className={[
               'inline-flex h-[18px] items-center rounded-full px-2 text-mono-11 uppercase tracking-[0.1em]',
-              op.risk === 'destructive' ? 'bg-err/10 text-err' : 'bg-warn/10 text-warn',
+              op.risk === 'destructive'
+                ? 'bg-err/10 text-err'
+                : op.risk === 'write'
+                  ? 'bg-warn/10 text-warn'
+                  : 'bg-hover text-ink-3',
             ].join(' ')}
           >
             {riskLabel[op.risk] ?? op.risk}
@@ -2002,33 +2680,42 @@ function AutonomyToolRow({
         <code className="mt-1 block text-mono-11 text-ink-4">{op.slug}</code>
       </div>
 
-      {/* 3-way control */}
-      <SegmentedControl
-        value={value}
-        onChange={onChange}
-        disabled={saving}
-        ariaLabel={`Approval policy for ${op.name}`}
-        options={[
-          {
-            value: 'auto_approve' as const,
-            label: 'Autonomous',
-            activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
-            testId: `autonomy-btn-${op.slug}-auto_approve`,
-          },
-          {
-            value: 'require_approval' as const,
-            label: 'Ask first',
-            activeClassName: 'bg-warn/15 text-warn border-warn/30',
-            testId: `autonomy-btn-${op.slug}-require_approval`,
-          },
-          {
-            value: 'block' as const,
-            label: 'Block',
-            activeClassName: 'bg-err/15 text-err border-err/30',
-            testId: `autonomy-btn-${op.slug}-block`,
-          },
-        ]}
-      />
+      {lockedReason !== undefined ? (
+        <p
+          className="max-w-xs text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
+          data-testid={`autonomy-locked-${op.slug}`}
+        >
+          Always on. {lockedReason}
+        </p>
+      ) : (
+        /* 3-way control */
+        <SegmentedControl
+          value={value}
+          onChange={onChange}
+          disabled={saving}
+          ariaLabel={`Approval policy for ${op.name}`}
+          options={[
+            {
+              value: 'auto_approve' as const,
+              label: 'Autonomous',
+              activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
+              testId: `autonomy-btn-${op.slug}-auto_approve`,
+            },
+            {
+              value: 'require_approval' as const,
+              label: 'Ask first',
+              activeClassName: 'bg-warn/15 text-warn border-warn/30',
+              testId: `autonomy-btn-${op.slug}-require_approval`,
+            },
+            {
+              value: 'block' as const,
+              label: 'Block',
+              activeClassName: 'bg-err/15 text-err border-err/30',
+              testId: `autonomy-btn-${op.slug}-block`,
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }
@@ -2074,6 +2761,15 @@ function SettingsTab(props: {
   onReset: () => void;
   liveModelsCache: Record<string, string[]>;
   liveModelsLoading: boolean;
+  /** 'nodal' | 'claude-code' (étape E) — lifted to AgentComposer, see its declaration. */
+  runtime: string;
+  onChangeRuntime: (v: string) => void;
+  /** CLI posture, lifted so the hero badge and the runtime card never disagree. */
+  cliMode: 'read' | 'write';
+  onChangeCliMode: (v: 'read' | 'write') => void;
+  cliDailyBudgetUsd: number;
+  cliDefaults: AgentRow['cliDefaults'];
+  isOwner: boolean;
 }) {
   const {
     name,
@@ -2114,7 +2810,59 @@ function SettingsTab(props: {
     onReset,
     liveModelsCache,
     liveModelsLoading,
+    runtime,
+    onChangeRuntime,
+    cliMode,
+    onChangeCliMode,
+    cliDailyBudgetUsd,
+    cliDefaults,
+    isOwner,
   } = props;
+
+  // ── Runtime picker (étape E) ───────────────────────────────────────────────
+  const isLocalTrustSettings =
+    (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const canChangeRuntime = isLocalTrustSettings || isOwner;
+  const [savingRuntime, setSavingRuntime] = useState(false);
+  const [confirmRuntimeOpen, setConfirmRuntimeOpen] = useState(false);
+
+  async function applyRuntime(next: 'nodal' | 'claude-code') {
+    setSavingRuntime(true);
+    const result = await setAgentRuntimeAction({ agentId, runtime: next });
+    if (!result.ok) {
+      setSavingRuntime(false);
+      toast.error(result.message);
+      return;
+    }
+    // Switching to a coding harness sets WRITE posture (Quentin 20/08). The
+    // read default was inherited from the code_task TOOL, where "analyse
+    // unless asked otherwise" is right; for a runtime agent the harness IS the
+    // agent, and shipping it unable to write produced exactly one outcome — an
+    // agent that attempted 9 writes, was refused 9 times, and looked healthy.
+    // The confirm dialog states this before it happens; read-only stays one
+    // toggle away in the runtime card, for a CLI reviewer agent.
+    if (next === 'claude-code') {
+      const modeResult = await setCliRuntimeModeAction({ agentId, mode: 'write' });
+      if (modeResult.ok) onChangeCliMode('write');
+      else toast.error(modeResult.message);
+    }
+    setSavingRuntime(false);
+    onChangeRuntime(next);
+    toast.success(
+      next === 'claude-code'
+        ? 'This agent now runs on Claude Code, in write mode.'
+        : 'This agent is back on its Nodal model.',
+    );
+  }
+
+  function handleRuntimeSelect(next: string) {
+    if (next === runtime) return;
+    if (next === 'claude-code') {
+      setConfirmRuntimeOpen(true);
+    } else {
+      void applyRuntime('nodal');
+    }
+  }
 
   // Candidate fallback keys = every active key except the current primary.
   const otherKeys = activeKeys.filter((k) => k.id !== llmKeyId);
@@ -2347,255 +3095,311 @@ function SettingsTab(props: {
 
       {/* Model */}
       <SectionCard>
-        <SectionHead label="Model" hint="LLM key + model identifier passed to the runner." />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="LLM provider">
-            {noLlmKeys ? (
-              <p className="text-body-13 text-warn">
-                No active LLM keys.{' '}
-                <Link href="/llm-providers" className="underline">
-                  Add one
-                </Link>
-                .
-              </p>
-            ) : (
-              <Select
-                value={llmKeyId}
-                onChange={(e) => onChangeLlmKey(e.target.value)}
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
-              >
-                {activeKeys.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {(k.nickname ?? prettyProviderName(k.provider)) +
-                      ' (' +
-                      prettyProviderName(k.provider) +
-                      ')'}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field
-            label={
-              liveModelsLoading &&
-              selectedKey?.id !== undefined &&
-              liveModelsCache[selectedKey.id] === undefined
-                ? 'Model (loading…)'
-                : 'Model'
-            }
+        <SectionHead
+          label="Model"
+          hint={
+            runtime === 'claude-code'
+              ? "This agent's loop is driven by the Claude Code harness, not a Nodal LLM key."
+              : 'LLM key + model identifier passed to the runner.'
+          }
+        />
+        <Field label="Runtime">
+          <Select
+            value={runtime}
+            onChange={(e) => handleRuntimeSelect(e.target.value)}
+            disabled={savingRuntime || !canChangeRuntime}
+            className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
           >
-            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <Select
-                value={modelInDropdown ? model : '__custom__'}
-                onChange={(e) =>
-                  onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
-                }
-                className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
-              >
-                {groupModelCatalog(modelCatalog).map(({ group, models }) =>
-                  group ? (
-                    <optgroup key={group} label={group}>
-                      {models.map((m) => (
-                        <option
-                          key={m.modelId}
-                          value={m.modelId}
-                          disabled={requireTools && !m.capabilities.tools}
-                          title={
-                            requireTools && !m.capabilities.tools
-                              ? "Can't use tools (required for a router/planner)"
-                              : undefined
-                          }
-                        >
-                          {modelOptionLabel(m)}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : (
-                    models.map((m) => (
-                      <option
-                        key={m.modelId}
-                        value={m.modelId}
-                        disabled={requireTools && !m.capabilities.tools}
-                        title={
-                          requireTools && !m.capabilities.tools
-                            ? "Can't use tools (required for a router/planner)"
-                            : undefined
-                        }
-                      >
-                        {modelOptionLabel(m)}
-                      </option>
-                    ))
-                  ),
-                )}
-                {extraLiveIds.length > 0 && (
-                  <optgroup label="Live from provider">
-                    {extraLiveIds.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
+            <option value="nodal">Nodal (this agent&apos;s own LLM)</option>
+            <optgroup label="Coding CLIs (subscription)">
+              <option value="claude-code">Claude Code (subscription)</option>
+            </optgroup>
+          </Select>
+          {!canChangeRuntime && (
+            <p className="mt-1.5 text-body-12 text-ink-4">
+              Only the workspace owner can change an agent&apos;s runtime.
+            </p>
+          )}
+        </Field>
+
+        <ConfirmDialog
+          open={confirmRuntimeOpen}
+          title="Switch to Claude Code?"
+          message={`${CLAUDE_CODE_DISCLAIMER} It starts in WRITE mode — it can edit files in this agent's workspace. Switch it to read-only below if you want a reviewer rather than a coder.`}
+          confirmLabel="Switch to Claude Code"
+          destructive={false}
+          onConfirm={() => {
+            setConfirmRuntimeOpen(false);
+            void applyRuntime('claude-code');
+          }}
+          onCancel={() => setConfirmRuntimeOpen(false)}
+        />
+
+        {runtime === 'nodal' && (
+          <>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="LLM provider">
+                {noLlmKeys ? (
+                  <p className="text-body-13 text-warn">
+                    No active LLM keys.{' '}
+                    <Link href="/llm-providers" className="underline">
+                      Add one
+                    </Link>
+                    .
+                  </p>
+                ) : (
+                  <Select
+                    value={llmKeyId}
+                    onChange={(e) => onChangeLlmKey(e.target.value)}
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    {activeKeys.map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {(k.nickname ?? prettyProviderName(k.provider)) +
+                          ' (' +
+                          prettyProviderName(k.provider) +
+                          ')'}
                       </option>
                     ))}
-                  </optgroup>
+                  </Select>
                 )}
-                <option value="__custom__">Custom…</option>
-              </Select>
-            )}
-            {!modelInDropdown && (
-              <TextInput
-                type="text"
-                value={model}
-                onChange={(e) => onChangeModel(e.target.value)}
-                placeholder={
-                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                  'e.g. claude-haiku-4-5-20251001'
+              </Field>
+              <Field
+                label={
+                  liveModelsLoading &&
+                  selectedKey?.id !== undefined &&
+                  liveModelsCache[selectedKey.id] === undefined
+                    ? 'Model (loading…)'
+                    : 'Model'
                 }
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
-              />
-            )}
-            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <ModelToolsLegend className="mt-1.5" />
-            )}
-          </Field>
-          {reasoningOptions.length > 0 && (
-            <Field label="Reasoning">
-              <Select
-                value={reasoningOptions.includes(reasoningEffort) ? reasoningEffort : ''}
-                onChange={(e) => onChangeReasoningEffort(e.target.value)}
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
               >
-                <option value="">Auto</option>
-                {reasoningOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {REASONING_LABELS[v] ?? v}
-                  </option>
-                ))}
-              </Select>
-              <p className="mt-1.5 text-body-13 text-ink-4">
-                How hard this model thinks before answering. Auto keeps the provider default.
-              </p>
-            </Field>
-          )}
-        </div>
-        {!noLlmKeys && (
-          <div className="mt-3">
-            <Field label="Fallback providers (failover order)">
-              {otherKeys.length === 0 ? (
-                <p className="text-body-13 text-ink-4">
-                  Add another LLM key in{' '}
-                  <Link href="/llm-providers" className="underline">
-                    LLM providers
-                  </Link>{' '}
-                  to enable failover.
-                </p>
-              ) : (
-                <div className="space-y-2.5">
-                  <p className="text-body-13 text-ink-4">
-                    If the primary is down (5xx / timeout / quota) mid-job, the runner fails over to
-                    these in order. Pick the model each fallback should run on.
-                  </p>
-                  {otherKeys.map((k) => {
-                    const order = fallbackChain.findIndex((l) => l.keyId === k.id);
-                    const checked = order !== -1;
-                    const fbCatalog = MODEL_CATALOG[k.provider] ?? [];
-                    const fbModel = checked ? (fallbackChain[order]?.model ?? '') : '';
-                    const fbEffort = checked ? (fallbackChain[order]?.reasoningEffort ?? '') : '';
-                    const fbReasoningOptions = checked
-                      ? reasoningOptionValues(k.provider, fbModel)
-                      : [];
-                    return (
-                      <div key={k.id} className="space-y-1.5">
-                        <label className="flex cursor-pointer items-center gap-2.5 select-none">
-                          <Checkbox
-                            tone="ink"
-                            checked={checked}
-                            onChange={() => onToggleFallback(k.id)}
-                          />
-                          <span className="text-body-14 text-ink-2">
-                            {(k.nickname ?? prettyProviderName(k.provider)) +
-                              ' (' +
-                              prettyProviderName(k.provider) +
-                              ')'}
-                          </span>
-                          {checked && (
-                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 text-ink-4">
-                              #{order + 1}
-                            </span>
-                          )}
-                        </label>
-                        {checked &&
-                          (fbCatalog.length > 0 ? (
-                            <Select
-                              value={fbModel}
-                              onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                  <Select
+                    value={modelInDropdown ? model : '__custom__'}
+                    onChange={(e) =>
+                      onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
+                    }
+                    className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                      group ? (
+                        <optgroup key={group} label={group}>
+                          {models.map((m) => (
+                            <option
+                              key={m.modelId}
+                              value={m.modelId}
+                              disabled={requireTools && !m.capabilities.tools}
+                              title={
+                                requireTools && !m.capabilities.tools
+                                  ? "Can't use tools (required for a router/planner)"
+                                  : undefined
+                              }
                             >
-                              {groupModelCatalog(fbCatalog).map(({ group, models }) =>
-                                group ? (
-                                  <optgroup key={group} label={group}>
-                                    {models.map((m) => (
-                                      <option
-                                        key={m.modelId}
-                                        value={m.modelId}
-                                        disabled={requireTools && !m.capabilities.tools}
-                                        title={
-                                          requireTools && !m.capabilities.tools
-                                            ? "Can't use tools (required for a router/planner)"
-                                            : undefined
-                                        }
-                                      >
-                                        {modelOptionLabel(m)}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                ) : (
-                                  models.map((m) => (
-                                    <option
-                                      key={m.modelId}
-                                      value={m.modelId}
-                                      disabled={requireTools && !m.capabilities.tools}
-                                      title={
-                                        requireTools && !m.capabilities.tools
-                                          ? "Can't use tools (required for a router/planner)"
-                                          : undefined
-                                      }
-                                    >
-                                      {modelOptionLabel(m)}
-                                    </option>
-                                  ))
-                                ),
-                              )}
-                            </Select>
-                          ) : (
-                            <TextInput
-                              type="text"
-                              value={fbModel}
-                              onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              placeholder="model id (e.g. llama-3.3-70b)"
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-mono-13"
-                            />
+                              {modelOptionLabel(m)}
+                            </option>
                           ))}
-                        {checked && fbReasoningOptions.length > 0 && (
-                          <Select
-                            value={fbReasoningOptions.includes(fbEffort) ? fbEffort : ''}
-                            onChange={(e) => onChangeFallbackEffort(k.id, e.target.value)}
-                            className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                        </optgroup>
+                      ) : (
+                        models.map((m) => (
+                          <option
+                            key={m.modelId}
+                            value={m.modelId}
+                            disabled={requireTools && !m.capabilities.tools}
+                            title={
+                              requireTools && !m.capabilities.tools
+                                ? "Can't use tools (required for a router/planner)"
+                                : undefined
+                            }
                           >
-                            <option value="">Reasoning: inherit agent setting</option>
-                            {fbReasoningOptions.map((v) => (
-                              <option key={v} value={v}>
-                                {'Reasoning: ' + (REASONING_LABELS[v] ?? v)}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                            {modelOptionLabel(m)}
+                          </option>
+                        ))
+                      ),
+                    )}
+                    {extraLiveIds.length > 0 && (
+                      <optgroup label="Live from provider">
+                        {extraLiveIds.map((id) => (
+                          <option key={id} value={id}>
+                            {id}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <option value="__custom__">Custom…</option>
+                  </Select>
+                )}
+                {!modelInDropdown && (
+                  <TextInput
+                    type="text"
+                    value={model}
+                    onChange={(e) => onChangeModel(e.target.value)}
+                    placeholder={
+                      MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                      'e.g. claude-haiku-4-5-20251001'
+                    }
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
+                  />
+                )}
+                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                  <ModelToolsLegend className="mt-1.5" />
+                )}
+              </Field>
+              {reasoningOptions.length > 0 && (
+                <Field label="Reasoning">
+                  <Select
+                    value={reasoningOptions.includes(reasoningEffort) ? reasoningEffort : ''}
+                    onChange={(e) => onChangeReasoningEffort(e.target.value)}
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    <option value="">Auto</option>
+                    {reasoningOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {REASONING_LABELS[v] ?? v}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="mt-1.5 text-body-13 text-ink-4">
+                    How hard this model thinks before answering. Auto keeps the provider default.
+                  </p>
+                </Field>
               )}
-            </Field>
-          </div>
+            </div>
+            {!noLlmKeys && (
+              <div className="mt-3">
+                <Field label="Fallback providers (failover order)">
+                  {otherKeys.length === 0 ? (
+                    <p className="text-body-13 text-ink-4">
+                      Add another LLM key in{' '}
+                      <Link href="/llm-providers" className="underline">
+                        LLM providers
+                      </Link>{' '}
+                      to enable failover.
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <p className="text-body-13 text-ink-4">
+                        If the primary is down (5xx / timeout / quota) mid-job, the runner fails
+                        over to these in order. Pick the model each fallback should run on.
+                      </p>
+                      {otherKeys.map((k) => {
+                        const order = fallbackChain.findIndex((l) => l.keyId === k.id);
+                        const checked = order !== -1;
+                        const fbCatalog = MODEL_CATALOG[k.provider] ?? [];
+                        const fbModel = checked ? (fallbackChain[order]?.model ?? '') : '';
+                        const fbEffort = checked
+                          ? (fallbackChain[order]?.reasoningEffort ?? '')
+                          : '';
+                        const fbReasoningOptions = checked
+                          ? reasoningOptionValues(k.provider, fbModel)
+                          : [];
+                        return (
+                          <div key={k.id} className="space-y-1.5">
+                            <label className="flex cursor-pointer items-center gap-2.5 select-none">
+                              <Checkbox
+                                tone="ink"
+                                checked={checked}
+                                onChange={() => onToggleFallback(k.id)}
+                              />
+                              <span className="text-body-14 text-ink-2">
+                                {(k.nickname ?? prettyProviderName(k.provider)) +
+                                  ' (' +
+                                  prettyProviderName(k.provider) +
+                                  ')'}
+                              </span>
+                              {checked && (
+                                <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 text-ink-4">
+                                  #{order + 1}
+                                </span>
+                              )}
+                            </label>
+                            {checked &&
+                              (fbCatalog.length > 0 ? (
+                                <Select
+                                  value={fbModel}
+                                  onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
+                                  className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                                >
+                                  {groupModelCatalog(fbCatalog).map(({ group, models }) =>
+                                    group ? (
+                                      <optgroup key={group} label={group}>
+                                        {models.map((m) => (
+                                          <option
+                                            key={m.modelId}
+                                            value={m.modelId}
+                                            disabled={requireTools && !m.capabilities.tools}
+                                            title={
+                                              requireTools && !m.capabilities.tools
+                                                ? "Can't use tools (required for a router/planner)"
+                                                : undefined
+                                            }
+                                          >
+                                            {modelOptionLabel(m)}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ) : (
+                                      models.map((m) => (
+                                        <option
+                                          key={m.modelId}
+                                          value={m.modelId}
+                                          disabled={requireTools && !m.capabilities.tools}
+                                          title={
+                                            requireTools && !m.capabilities.tools
+                                              ? "Can't use tools (required for a router/planner)"
+                                              : undefined
+                                          }
+                                        >
+                                          {modelOptionLabel(m)}
+                                        </option>
+                                      ))
+                                    ),
+                                  )}
+                                </Select>
+                              ) : (
+                                <TextInput
+                                  type="text"
+                                  value={fbModel}
+                                  onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
+                                  placeholder="model id (e.g. llama-3.3-70b)"
+                                  className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-mono-13"
+                                />
+                              ))}
+                            {checked && fbReasoningOptions.length > 0 && (
+                              <Select
+                                value={fbReasoningOptions.includes(fbEffort) ? fbEffort : ''}
+                                onChange={(e) => onChangeFallbackEffort(k.id, e.target.value)}
+                                className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                              >
+                                <option value="">Reasoning: inherit agent setting</option>
+                                {fbReasoningOptions.map((v) => (
+                                  <option key={v} value={v}>
+                                    {'Reasoning: ' + (REASONING_LABELS[v] ?? v)}
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Field>
+              </div>
+            )}
+          </>
         )}
       </SectionCard>
+
+      {runtime === 'claude-code' && (
+        <ClaudeCodeRuntimeCard
+          agentId={agentId}
+          mode={cliMode}
+          onChangeMode={onChangeCliMode}
+          cliDailyBudgetUsd={cliDailyBudgetUsd}
+          cliDefaults={cliDefaults}
+          workspaces={workspaces}
+        />
+      )}
 
       {/* Knowledge — folder list + file upload. MCP servers live in Connectors tab. */}
       <SectionCard>
@@ -2817,6 +3621,196 @@ function SettingsTab(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Claude Code runtime card ──────────────────────────────────────────────────
+//
+// Shown in place of the Nodal LLM config once agents.runtime === 'claude-code'
+// (étape E). Nodal no longer drives this agent's loop — only the perimeter
+// (channels/cron/workspaces/CLI daily budget/approvals) stays Nodal's, which is
+// exactly what CLAUDE_CODE_DISCLAIMER says (reused verbatim as both the
+// permanent disclaimer here and the switch-to confirmation message above).
+// Reuses the exact same building blocks as CodeTaskSection/ProviderRow —
+// nothing here is a fork, just a different agent-level gate (runtime vs a
+// skill assignment) around the same code_task machinery.
+
+const CLAUDE_CODE_DISCLAIMER =
+  'This agent is driven by the Claude Code harness on this machine. Nodal relays its messages and enforces the perimeter (workspace, budget, approvals) but does not drive its loop. Runs use your subscription.';
+
+function ClaudeCodeRuntimeCard({
+  agentId,
+  mode,
+  onChangeMode,
+  cliDailyBudgetUsd,
+  cliDefaults,
+  workspaces,
+}: {
+  agentId: string;
+  /** Lifted to AgentComposer — the hero badge renders the same value. */
+  mode: 'read' | 'write';
+  onChangeMode: (v: 'read' | 'write') => void;
+  cliDailyBudgetUsd: number;
+  cliDefaults: AgentRow['cliDefaults'];
+  workspaces: AgentWorkspaceRow[];
+}) {
+  const [savingMode, setSavingMode] = useState(false);
+  const [confirmWriteOpen, setConfirmWriteOpen] = useState(false);
+
+  async function applyMode(next: 'read' | 'write') {
+    setSavingMode(true);
+    const result = await setCliRuntimeModeAction({ agentId, mode: next });
+    setSavingMode(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    onChangeMode(next);
+    toast.success(next === 'write' ? 'Write mode enabled.' : 'Read only mode enabled.');
+  }
+
+  function handleModeToggle(next: 'read' | 'write') {
+    if (next === mode) return;
+    if (next === 'write') {
+      setConfirmWriteOpen(true);
+    } else {
+      void applyMode('read');
+    }
+  }
+
+  // ── Daily budget + today's spend — same actions as CodeTaskSection (Autonomy). ──
+  const [budgetInput, setBudgetInput] = useState<string>(String(cliDailyBudgetUsd));
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [spentUsd, setSpentUsd] = useState<number | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCliUsageTodayAction(agentId).then((result) => {
+      if (result.ok) setSpentUsd(result.data.spentUsd);
+      else setUsageError(result.message);
+    });
+  }, [agentId]);
+
+  async function handleSaveBudget() {
+    const parsed = Number(budgetInput);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000) {
+      toast.error('Enter a number between 0 and 1000');
+      return;
+    }
+    setSavingBudget(true);
+    const result = await setCliDailyBudgetAction({ agentId, budgetUsd: parsed });
+    setSavingBudget(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Daily budget saved');
+  }
+
+  async function handleSaveDefaults(model: string | null, effort: string | null) {
+    const result = await setCliDefaultsAction({ agentId, provider: 'claude', model, effort });
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Coding CLI defaults saved');
+  }
+
+  const hasWorkspace = workspaces.length > 0;
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Claude Code runtime"
+        hint="What Nodal still controls for an agent driven by the Claude Code harness."
+      />
+
+      <p className="text-body-13 leading-[1.5]! text-ink-3">{CLAUDE_CODE_DISCLAIMER}</p>
+
+      <div
+        className={`mt-3 rounded-md border px-3 py-2 text-body-13 ${
+          hasWorkspace ? 'border-ok/30 bg-ok-bg text-ok' : 'border-err/30 bg-warn-bg text-err'
+        }`}
+      >
+        {hasWorkspace ? 'Workspace configured.' : 'A workspace is required for a runtime agent.'}
+      </div>
+
+      <div className="mt-4 flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <span className="text-medium-14 text-ink">Write mode</span>
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+            Read only hides the CLI&apos;s write tools. Write lets it edit files in the workspace.
+          </p>
+        </div>
+        <Switch
+          checked={mode === 'write'}
+          onChange={() => handleModeToggle(mode === 'write' ? 'read' : 'write')}
+          disabled={savingMode}
+          trackClassName={
+            mode === 'write' ? 'mt-0.5 border-err/40 bg-err/20' : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={
+            mode === 'write' ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3'
+          }
+        />
+      </div>
+
+      <ConfirmDialog
+        open={confirmWriteOpen}
+        title="Allow Claude Code to write?"
+        message="Write mode lets the Claude Code harness edit files in this agent's workspace. Only enable for an agent you fully trust."
+        confirmLabel="Enable write mode"
+        destructive
+        onConfirm={() => {
+          setConfirmWriteOpen(false);
+          void applyMode('write');
+        }}
+        onCancel={() => setConfirmWriteOpen(false)}
+      />
+
+      <div className="mt-6 space-y-2.5">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+          Diagnostics and defaults
+        </div>
+        <ProviderRow
+          label="Claude Code"
+          provider="claude"
+          defaults={cliDefaults?.claude}
+          onSaveDefaults={(model, effort) => handleSaveDefaults(model, effort)}
+        />
+      </div>
+
+      <div className="mt-6">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+          Daily budget (USD)
+        </div>
+        <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
+        <div className="mt-2 flex items-center gap-2">
+          <TextInput
+            type="number"
+            min={0}
+            max={1000}
+            step={0.5}
+            value={budgetInput}
+            onChange={(e) => setBudgetInput(e.target.value)}
+            className="w-28 font-mono"
+          />
+          <PrimaryButton
+            variant="neutral"
+            type="button"
+            onClick={() => void handleSaveBudget()}
+            disabled={savingBudget}
+          >
+            {savingBudget ? 'Saving…' : 'Save'}
+          </PrimaryButton>
+        </div>
+        <p className="mt-2 text-body-13 text-ink-3">
+          {spentUsd !== null
+            ? `Spent today: $${spentUsd.toFixed(2)}`
+            : (usageError ?? 'Loading spend…')}
+        </p>
+      </div>
+    </SectionCard>
   );
 }
 

@@ -22,6 +22,7 @@ import {
 import type { ModelMessage } from 'ai';
 import { z } from 'zod';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
 
 const TRACE = '[memory-curator]';
 
@@ -121,6 +122,7 @@ export async function runMemoryCuration(
   // Resolve LLM client — root/any active agent's key, optional model override.
   const agentRows = await db
     .select({
+      id: agents.id,
       llmKeyId: agents.llmKeyId,
       fallbackChain: agents.fallbackChain,
       model: agents.model,
@@ -147,6 +149,9 @@ export async function runMemoryCuration(
             model: ag.model ?? '',
             reasoningEffort: ag.reasoningEffort ?? null,
           },
+      undefined,
+      // étape D: memory-curator passes were invisible LLM consumers.
+      makeLlmCallSink(db, { source: 'curator', entityId, agentId: ag.id }),
     );
     if (r.ok) {
       resolved = r;

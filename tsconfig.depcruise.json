@@ -1,0 +1,26 @@
+{
+  // tsconfig.depcruise.json — used ONLY by `pnpm deps:check`.
+  //
+  // dependency-cruiser resolves path aliases from the tsconfig it is handed,
+  // and the root one carries none. So every `@/lib/x` import in apps/web
+  // resolved to nothing, and a module imported ONLY through the alias looked
+  // orphaned: format-time.ts has ten importers and was reported as dead code.
+  // A warning that is wrong is worse than no warning — it teaches people to
+  // skip the report.
+  //
+  // apps/docs spells its own `@/` alias rooted at its package directory. Its
+  // modules are reached through relative paths in this cruise, so mapping the
+  // alias to apps/web here costs nothing (verified: 0 unresolvable modules).
+  // Kept separate from tsconfig.json so nothing in the build or typecheck path
+  // inherits a web-specific alias.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./apps/web/src/*"]
+    }
+  },
+  "include": [],
+  "files": []
+}

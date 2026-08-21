@@ -12,6 +12,8 @@ import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { runCliRuntimeChatTurn } from '../cli-runtime/run-chat.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
@@ -84,7 +86,7 @@ export type ChatTurnResult =
  * job's REAL outcome at read time. This replaces a static "Task dispatched."
  * that left the orchestrator permanently blind to completion: it could never
  * tell a finished delegation from a still-running one, so it re-launched tasks
- * and looped on sequential work (live: the Conciergus Cortex sequence). Now it
+ * and looped on sequential work (observed live on a sequential MCP chain). Now it
  * sees the signal (done / running / failed) AND the content. Pure: the job's
  * `result` is the single source of truth — `completeJob`/`failJob` already fill
  * it from the delegated children when the parent didn't re-publish, so there is
@@ -228,7 +230,11 @@ export async function runChatTurn(opts: {
     .where(and(eq(agents.id, agentId), eq(agents.entityId, entityId)))
     .limit(1);
   if (!agentRow || !agentRow.active) return { ok: false, error: 'agent_not_found' };
-  if (!agentRow.llmKeyId) return { ok: false, error: 'agent_no_llm_configured' };
+  const isRuntimeAgent = (agentRow.runtime ?? 'nodal') !== 'nodal';
+  // A runtime agent (étape E) needs no Nodal LLM key — its brain is the CLI.
+  if (!agentRow.llmKeyId && !isRuntimeAgent) {
+    return { ok: false, error: 'agent_no_llm_configured' };
+  }
 
   // 1a. Verify the conversation belongs to this entity (the sidebar entry).
   const [conv] = await db
@@ -251,14 +257,46 @@ export async function runChatTurn(opts: {
     await db.update(conversations).set({ title }).where(eq(conversations.id, conversationId));
   }
 
+  // 1c. Runtime divert (étape E): the reply comes from the agent's Claude
+  // Code session, resumed per conversation; the CLI's text is relayed
+  // verbatim. Everything below (Nodal LLM client, system prompt, run_task)
+  // does not apply to a runtime agent.
+  if (isRuntimeAgent) {
+    return await runCliRuntimeChatTurn({
+      db,
+      entityId,
+      agentRow: {
+        id: agentRow.id,
+        entityId: agentRow.entityId ?? null,
+        personality: agentRow.personality,
+        runtime: agentRow.runtime ?? 'nodal',
+        cliPermissions: agentRow.cliPermissions ?? null,
+        cliDefaults: agentRow.cliDefaults ?? null,
+      },
+      conversationId,
+      message,
+    });
+  }
+
   // 2. Resolve the per-agent LLM client + failover chain (shared with executeJob
   //    via resolveAgentLlmClient so the chain logic can't drift — Guard 2).
-  const resolved = await resolveAgentLlmClient(db, {
-    llmKeyId: agentRow.llmKeyId,
-    fallbackChain: agentRow.fallbackChain ?? null,
-    model: agentRow.model ?? DEFAULT_MODEL,
-    reasoningEffort: agentRow.reasoningEffort ?? null,
-  });
+  const resolved = await resolveAgentLlmClient(
+    db,
+    {
+      llmKeyId: agentRow.llmKeyId,
+      fallbackChain: agentRow.fallbackChain ?? null,
+      model: agentRow.model ?? DEFAULT_MODEL,
+      reasoningEffort: agentRow.reasoningEffort ?? null,
+    },
+    undefined,
+    // étape D: a chat turn makes up to 3 LLM calls (main, escalation recheck,
+    // no-tools retry) — all previously invisible. One sink covers them all.
+    makeLlmCallSink(db, {
+      source: 'chat',
+      entityId: agentRow.entityId ?? null,
+      agentId: agentRow.id,
+    }),
+  );
   if (!resolved.ok) {
     return {
       ok: false,
@@ -416,7 +454,7 @@ export async function runChatTurn(opts: {
       message;
     // SAFETY NET against intent drift: the worker must always see the USER's
     // actual words, not only the orchestrator's framing. If the instruction did
-    // not already carry them (Alfred reworded/compressed despite the steer), append
+    // not already carry them (an orchestrator reworded/compressed despite the steer), append
     // the user's exact message as the source of truth. Dedup when it's already in.
     const probe = message.trim().slice(0, 160);
     const workerContent =

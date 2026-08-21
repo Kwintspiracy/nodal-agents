@@ -353,10 +353,24 @@ export async function assertLocalSourceAllowed(source: string, ctx: ToolContext)
   };
   const normReal = normalize(real);
 
-  const isInside = roots.some((root) => {
-    const normRoot = normalize(root);
-    return normReal === normRoot || normReal.startsWith(normRoot + path.sep);
-  });
+  // Les racines doivent être résolues comme l'a été le candidat. `real` sort
+  // d'un realpath ; comparer à une racine non résolue fait échouer la
+  // containment dès que le même dossier s'écrit de deux façons :
+  //   - macOS : `tmpdir()` rend `/var/folders/…`, dont le realpath est
+  //     `/private/var/folders/…` — la garde refusait donc TOUTE source du
+  //     dossier temporaire sur Mac ;
+  //   - Windows : forme courte 8.3 contre forme longue, dès que le nom
+  //     d'utilisateur dépasse 8 caractères. C'est ce qu'a exposé le runner CI,
+  //     dont l'utilisateur est `runneradmin`.
+  // Une racine qui n'existe pas garde sa valeur d'origine : elle ne matchera
+  // simplement rien, ce qui est le comportement voulu.
+  const resolvedRoots = await Promise.all(
+    roots.map(async (root) => normalize(await realpath(root).catch(() => root))),
+  );
+
+  const isInside = resolvedRoots.some(
+    (normRoot) => normReal === normRoot || normReal.startsWith(normRoot + path.sep),
+  );
 
   if (!isInside) {
     const err = new Error(

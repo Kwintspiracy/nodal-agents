@@ -1,7 +1,7 @@
 // processes.ts — spawn runner and web as child processes
 
-import { execa, type ResultPromise } from 'execa';
-import { createWriteStream, writeFileSync, readFileSync, existsSync } from 'fs';
+import { execa, type Options, type ResultPromise } from 'execa';
+import { createWriteStream, openSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
@@ -23,8 +23,280 @@ export type SpawnResult = ResultPromise;
 export async function killProcessTree(child: ResultPromise): Promise<void> {
   const pid = child.pid;
   if (!pid) return;
+  await killPidTree(pid);
+}
 
+/**
+ * Same escalation as `killProcessTree`, driven by a bare PID rather than a live
+ * child handle.
+ *
+ * `nodal-agents down` needs exactly this: after `up --detach` the CLI that
+ * spawned the services is long gone, so all `down` has is the number in
+ * ~/.nodalai/pids/processes.json. It used to `process.kill(pid,'SIGTERM')`,
+ * which on Windows terminates ONLY that pid — and in dev layout that pid is the
+ * cmd.exe wrapper around the .CMD launcher, so node.exe survived it, kept :3000
+ * held, and the next `up` failed on a port it had just been told was free. Kill
+ * the tree instead, on both platforms.
+ */
+/**
+ * Every descendant PID of `root`, at any depth (Windows only).
+ *
+ * Built from one snapshot of the process table: WMI gives (pid, parentPid) for
+ * everything running, and the tree is walked in memory. Returns [] on any
+ * failure — this exists to catch stragglers, never to block a shutdown.
+ *
+ * Deliberately excludes `root` itself: the caller kills that one directly.
+ *
+ * Not cached across calls on purpose. A snapshot reused after the first kill can
+ * name a PID Windows has already recycled, and killing a recycled PID means
+ * killing a stranger's process — the exact failure the ownership guard in `up`
+ * was just written to prevent.
+ */
+export async function descendantPidsWin(root: number, timeoutMs?: number): Promise<number[]> {
+  const snapshot = await processSnapshotWin(timeoutMs);
+  return walkDescendants(snapshot, root).map((p) => p.pid);
+}
+
+/**
+ * How long a snapshot may take before we give up on it.
+ *
+ * Generous on purpose, and that is a correction. An earlier 6s budget was
+ * chosen to keep shutdowns snappy — a defensible goal, arrived at by measuring
+ * ~0.5s on a warm developer machine. It was wrong: the same call runs past 5s
+ * on a cold CI runner, so the budget sat right on the edge, expired, and
+ * returned an EMPTY table. The protection then switched itself off, silently,
+ * on precisely the slow and loaded machines where stranded processes actually
+ * happen. A slower stop is a far smaller cost than a guard that quietly stops
+ * guarding.
+ */
+const SNAPSHOT_BUDGET_MS = 20_000;
+
+/**
+ * The short budget used on the shutdown path, where waiting is felt.
+ *
+ * Affordable only because it is no longer the sole line of defence: anything a
+ * hurried walk misses is caught by `sweepRecordedChildren`, working from the
+ * tree recorded at startup. Before that record existed, cutting this short
+ * meant losing the process for good.
+ */
+const SHUTDOWN_SNAPSHOT_BUDGET_MS = 6_000;
+
+/** One process as WMI reports it. `startedAt` is CreationDate in .NET ticks. */
+export interface ProcessRecord {
+  pid: number;
+  ppid: number;
+  startedAt: string;
+}
+
+/**
+ * The whole Windows process table in one WMI call: pid, parent pid, and the
+ * creation timestamp.
+ *
+ * `startedAt` is what makes a PID safe to act on later. Windows recycles PIDs,
+ * so a number recorded minutes ago may name a completely different process by
+ * the time we use it — and killing it would mean killing a stranger's work.
+ * The creation tick is effectively an identity: same pid AND same tick is the
+ * same process, no exception.
+ *
+ * Returns an empty map on any failure. This exists to catch stragglers, never
+ * to block a shutdown.
+ */
+export async function processSnapshotWin(
+  timeoutMs: number = SNAPSHOT_BUDGET_MS,
+): Promise<Map<number, ProcessRecord>> {
+  if (process.platform !== 'win32') return new Map();
+
+  // Concurrent callers share one reading instead of racing for it.
+  //
+  // Not a cache — the promise is released the moment it settles, so a later
+  // call always takes a fresh reading. That distinction is the whole safety
+  // argument: a stored snapshot could name a pid Windows has since recycled,
+  // whereas callers joined to the SAME in-flight call all see one instant.
+  //
+  // It exists because the enumeration is expensive and does not parallelise:
+  // several at once on a two-core machine throttle each other until they all
+  // time out, which is exactly how Windows CI failed on 2026-08-21 — a dozen
+  // calls, every one expiring, each returning an empty table.
+  if (!inFlightSnapshot) {
+    inFlightSnapshot = readProcessTableWin(timeoutMs).finally(() => {
+      inFlightSnapshot = null;
+    });
+  }
+  return inFlightSnapshot;
+}
+
+let inFlightSnapshot: Promise<Map<number, ProcessRecord>> | null = null;
+
+async function readProcessTableWin(timeoutMs: number): Promise<Map<number, ProcessRecord>> {
+  const out = new Map<number, ProcessRecord>();
+
+  const fail = (reason: string): Map<number, ProcessRecord> => {
+    lastSnapshotFailure = reason;
+    process.stderr.write(
+      `\x1b[33m[nodalai] Could not read the process table (${reason}) — falling back to a\n` +
+        '  plain tree kill. A background worker may survive; the next start cleans up\n' +
+        '  what it recorded, so this costs a message, not a stuck port.\x1b[0m\n',
+    );
+    return out;
+  };
+
+  const attempts: string[] = [];
+  for (const query of PROCESS_TABLE_QUERIES) {
+    let rows: string;
+    try {
+      const { stdout, stderr, exitCode, timedOut } = await execa(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-Command', query.command],
+        { reject: false, timeout: timeoutMs },
+      );
+      if (timedOut) {
+        attempts.push(`${query.name}: timed out after ${timeoutMs}ms`);
+        continue;
+      }
+      if (exitCode !== 0) {
+        // Reported, never swallowed. Twice on 2026-08-21 an empty table was
+        // read as a timeout, because nothing else was available to read — and
+        // each guess cost a full CI cycle. WHY it failed travels with it now.
+        attempts.push(
+          `${query.name}: exited ${exitCode} — ${stderr.trim().split('\n')[0] ?? 'no stderr'}`,
+        );
+        continue;
+      }
+      rows = stdout;
+    } catch (err) {
+      attempts.push(`${query.name}: spawn failed — ${String(err).split('\n')[0]}`);
+      continue;
+    }
+
+    for (const line of rows.split(/\r?\n/)) {
+      // Split on an explicit delimiter, never on whitespace. A missing field —
+      // `Parent.Id` is empty for any process we may not inspect — collapses
+      // under a whitespace split, and the creation tick then slides into the
+      // parent column. That does not produce an empty tree; it produces a
+      // WRONG one, which is the failure mode worth fearing here: this list
+      // decides what gets killed.
+      const parts = line.trim().split('|');
+      if (parts.length !== 3) continue;
+      const pid = Number.parseInt(parts[0] ?? '', 10);
+      const ppid = Number.parseInt(parts[1] ?? '', 10);
+      const startedAt = (parts[2] ?? '').trim();
+      // No parent and no creation time means the row cannot serve either
+      // purpose — walking the tree, or proving identity before a kill.
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid) || startedAt === '') continue;
+      out.set(pid, { pid, ppid, startedAt });
+    }
+
+    if (out.size > 0) {
+      lastSnapshotFailure = null;
+      return out;
+    }
+    attempts.push(`${query.name}: exited 0 but produced no usable rows`);
+  }
+
+  return fail(attempts.join(' | '));
+}
+
+/**
+ * Two independent ways to read the process table, tried in order.
+ *
+ * They share no machinery on purpose. The CIM query is the better source — it
+ * sees every process and reports a precise creation time — but it depends on
+ * the WMI service, which a locked-down or freshly-booted machine may not have
+ * ready. `Get-Process` reaches the same information through a different path
+ * that needs no WMI at all, at the cost of skipping processes we lack rights to
+ * inspect. Ours are never among those.
+ *
+ * A single source that fails takes every guard built on it down with it, and
+ * silently: an empty table looks exactly like a machine with nothing to clean.
+ */
+const PROCESS_TABLE_QUERIES = [
+  {
+    name: 'Get-CimInstance',
+    // -Property keeps WMI from materialising every column of every process.
+    command:
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
+      'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)" }',
+  },
+  {
+    name: 'Get-WmiObject',
+    // The legacy WMI cmdlet, still present in Windows PowerShell 5.1 — which is
+    // what `powershell` resolves to on every machine this ships to. It reaches
+    // the same data over the older DCOM path rather than the CIM/WSMan one, so
+    // it can answer when Get-CimInstance cannot.
+    //
+    // ConvertToDateTime is not decoration: raw CreationDate here is a WMI
+    // datetime string, and recording a process under one format while verifying
+    // it under another would never match. The sweep would then quietly stop
+    // killing anything — safe, and useless. Both queries emit the same ticks,
+    // verified equal digit for digit on 2026-08-21.
+    //
+    // (The obvious alternative, Get-Process | $_.Parent, was tried first and
+    // does not exist before PowerShell 6. It returned empty parents for every
+    // row, which the parser correctly discarded.)
+    command:
+      'Get-WmiObject Win32_Process | ForEach-Object { ' +
+      '"$($_.ProcessId)|$($_.ParentProcessId)|$($_.ConvertToDateTime($_.CreationDate).Ticks)" }',
+  },
+] as const;
+
+/**
+ * Why the last `processSnapshotWin` came back empty, or null if it succeeded.
+ *
+ * Exists so a test can report the CAUSE rather than just the consequence. An
+ * assertion that only says "the table was empty" sends the reader guessing —
+ * timeout? missing binary? blocked query? — and each guess costs a CI cycle.
+ */
+export let lastSnapshotFailure: string | null = null;
+
+/**
+ * Breadth-first walk of `snapshot` from `root`, excluding `root` itself: the
+ * caller kills that one directly. The seen-set keeps a corrupt parent chain
+ * from looping.
+ */
+export function walkDescendants(
+  snapshot: Map<number, ProcessRecord>,
+  root: number,
+): ProcessRecord[] {
+  const childrenOf = new Map<number, ProcessRecord[]>();
+  for (const rec of snapshot.values()) {
+    const list = childrenOf.get(rec.ppid) ?? [];
+    list.push(rec);
+    childrenOf.set(rec.ppid, list);
+  }
+
+  const out: ProcessRecord[] = [];
+  const seen = new Set<number>([root]);
+  let frontier = [root];
+  while (frontier.length > 0) {
+    const next: number[] = [];
+    for (const p of frontier) {
+      for (const child of childrenOf.get(p) ?? []) {
+        if (seen.has(child.pid)) continue;
+        seen.add(child.pid);
+        out.push(child);
+        next.push(child.pid);
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
+export async function killPidTree(pid: number): Promise<void> {
   if (process.platform === 'win32') {
+    // Snapshot the descendants BEFORE killing anything.
+    //
+    // `taskkill /T` walks the tree at the moment it runs, and that is not always
+    // enough: `next dev` spawns Turbopack workers, and a worker whose parent has
+    // already gone (or which re-parented) is no longer in the tree taskkill can
+    // see. It survives, keeps :3000 held, and the next `up` reports it as an
+    // orphan — reproduced live on 2026-08-21 by interrupting `up` during the
+    // health wait (Codex, case CLI-03).
+    //
+    // Once the parent is dead the parent/child link is gone with it, so the list
+    // has to be taken first. Cheap: one WMI call, and only on the shutdown path.
+    const descendants = await descendantPidsWin(pid, SHUTDOWN_SNAPSHOT_BUDGET_MS);
+
     try {
       // /T = kill children too. /F = force. We don't care if it failed (the
       // process may already be gone); the next call site already handles
@@ -33,21 +305,39 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
     } catch {
       /* best-effort */
     }
+
+    // Then sweep whatever the tree walk missed. Each of these was a descendant
+    // of OUR process when we looked, so killing it is never someone else's work.
+    for (const child of descendants) {
+      if (!isPidAlive(child)) continue;
+      try {
+        await execa('taskkill', ['/F', '/PID', String(child)], { reject: false });
+      } catch {
+        /* best-effort */
+      }
+    }
     return;
   }
 
-  try {
-    child.kill('SIGTERM');
-    // Give it ~1.5s to flush, then escalate.
-    await new Promise((r) => setTimeout(r, 1500));
+  // A detached child leads its own process group (see spawnRunner/spawnWeb), so
+  // signalling -pid reaches every descendant. A non-detached child has no such
+  // group; the negative signal then throws ESRCH and we fall back to the pid.
+  const signalTree = (sig: NodeJS.Signals): void => {
     try {
-      child.kill('SIGKILL');
+      process.kill(-pid, sig);
     } catch {
-      /* already dead */
+      try {
+        process.kill(pid, sig);
+      } catch {
+        /* already dead */
+      }
     }
-  } catch {
-    /* already dead */
-  }
+  };
+
+  signalTree('SIGTERM');
+  // Give it ~1.5s to flush, then escalate.
+  await new Promise((r) => setTimeout(r, 1500));
+  if (isPidAlive(pid)) signalTree('SIGKILL');
 }
 
 /**
@@ -121,6 +411,56 @@ function resolveAppDir(appName: string): string {
 }
 
 /**
+ * How a spawned service is wired to its log file and to the CLI's lifetime.
+ *
+ * ATTACHED (the default, `nodal-agents up`): the child's stdout/stderr are
+ * pipes, forwarded into ~/.nodalai/logs/<svc>.log by the CLI itself. The CLI
+ * stays in the foreground and tears the children down on Ctrl+C.
+ *
+ * DETACHED (`up --detach`): the child must OUTLIVE the CLI, which changes both
+ * halves. Piping is no longer usable — the read end of a pipe belongs to the
+ * CLI, and once it exits the child's first write past the buffer takes EPIPE
+ * and the service dies minutes later for no visible reason. So the log file is
+ * opened here and handed to the child as its own fd. And `detached:true` +
+ * `unref()` gives the child its own process group (its own console on Windows,
+ * hidden), so closing the terminal no longer reaches it.
+ */
+export interface SpawnServiceOptions {
+  /** Survive the CLI process — see the interface doc for what that changes. */
+  detach?: boolean;
+}
+
+/**
+ * stdio + process-group wiring for one service, per the mode above.
+ *
+ * Detached opens the log file HERE and hands the raw descriptor to the child,
+ * so the write path involves nobody else once the CLI is gone. Two tempting
+ * alternatives both fail, and the second failed under test before this landed:
+ *
+ *   - `stdout: 'pipe'` + `child.stdout.pipe(file)` — the read end belongs to
+ *     the CLI; when it exits the child takes EPIPE on its next flush and dies.
+ *   - execa's `stdout: {file, append}` — reads like exactly what we want, but
+ *     it is mediated by a stream in the PARENT. `up --detach` then never
+ *     returned to the prompt at all: the launcher stayed alive holding that
+ *     stream open for as long as the service ran.
+ *
+ * 'a' matters too — `logs` and every previous run share this file, so a
+ * truncating open would erase the history at each start.
+ *
+ * The cast is on `stdio` alone: execa's types only admit the string forms, but
+ * the value is forwarded verbatim to child_process.spawn, which has taken raw
+ * descriptors since forever.
+ */
+export function spawnWiring(logFile: string, detach: boolean): Partial<Options> {
+  if (!detach) return { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', detached: false };
+  const fd = openSync(logFile, 'a');
+  return {
+    stdio: ['ignore', fd, fd] as unknown as Options['stdio'],
+    detached: true,
+  };
+}
+
+/**
  * Spawn the runner as a child process.
  *
  * - Bundled mode: `node <pack>/runner.js` (single-file esbuild bundle).
@@ -128,7 +468,10 @@ function resolveAppDir(appName: string): string {
  *   apps/runner's devDeps. On Windows we resolve the .CMD wrapper
  *   explicitly because Node's spawn doesn't auto-add the .CMD extension.
  */
-export function spawnRunner(env: Record<string, string>): ResultPromise {
+export function spawnRunner(
+  env: Record<string, string>,
+  opts: SpawnServiceOptions = {},
+): ResultPromise {
   const logFile = join(LOG_DIR, 'runner.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
@@ -155,23 +498,29 @@ export function spawnRunner(env: Record<string, string>): ResultPromise {
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
+  const wiring = spawnWiring(logFile, opts.detach === true);
   const child = execa(bin, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    ...wiring,
+    windowsHide: true,
     reject: false,
     // Only need a shell wrapper to invoke the .CMD tsx launcher on Windows.
     // process.execPath is the literal node binary, no shell needed.
     shell: !BUNDLED_ROOT && process.platform === 'win32',
   });
 
-  child.stdout?.pipe(outStream);
-  child.stderr?.pipe(outStream);
+  if (opts.detach) {
+    child.unref();
+  } else {
+    child.stdout?.pipe(outStream);
+    child.stderr?.pipe(outStream);
+  }
 
   return child;
 }
 
-export interface SpawnWebOptions {
+export interface SpawnWebOptions extends SpawnServiceOptions {
   /**
    * When true, spawn `next dev` (HMR enabled, no build required).
    * When false (default), spawn `next start` against a prebuilt `.next/` dir.
@@ -229,16 +578,22 @@ export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
+  const wiring = spawnWiring(logFile, opts.detach === true);
   const child = execa(bin, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    ...wiring,
+    windowsHide: true,
     reject: false,
     shell: !BUNDLED_ROOT && process.platform === 'win32',
   });
 
-  child.stdout?.pipe(outStream);
-  child.stderr?.pipe(outStream);
+  if (opts.detach) {
+    child.unref();
+  } else {
+    child.stdout?.pipe(outStream);
+    child.stderr?.pipe(outStream);
+  }
 
   return child;
 }
@@ -257,6 +612,92 @@ function resolveLocalBin(packageDir: string, binName: string): string {
 export interface PidFile {
   runner?: number;
   web?: number;
+  /**
+   * Every process our services spawned underneath themselves, captured while
+   * the tree was still intact. See `recordServiceTree`.
+   */
+  children?: ProcessRecord[];
+}
+
+/**
+ * Record the full descendant tree of the running services, for a shutdown that
+ * happens later.
+ *
+ * ## Why this cannot be done at shutdown time
+ *
+ * `killPidTree` snapshots descendants just before killing, which works when we
+ * are the ones initiating the stop. It does NOT work for Ctrl+C, and that is
+ * the case that kept stranding a Next server:
+ *
+ * Ctrl+C is delivered by Windows to every process in the console group at once,
+ * not to us first. So by the time our SIGINT handler runs and asks WMI for the
+ * tree, the intermediate links are already dying. In dev the chain is
+ * cmd.exe → `next dev` → start-server.js; the middle process exits, and a walk
+ * from the cmd.exe pid then finds nothing, because a dead parent leaves no
+ * parent/child edge behind. The grandchild survives holding :3000, and the next
+ * `up` reports it as an orphan.
+ *
+ * Reproduced by an external validator on 2026-08-21 (case 3a): the survivor was
+ * `next/dist/server/lib/start-server.js` pid 57924, whose recorded parent 26256
+ * was neither of the pids we had announced — proof there had been a middle link
+ * and that it was already gone.
+ *
+ * So the tree is captured right after the services report healthy, while every
+ * link still exists, and persisted next to the pids. Shutdown then sweeps a list
+ * it already holds instead of trying to rebuild one from a collapsing tree.
+ *
+ * Cost sits at startup, off the shutdown path — which also removes the seconds
+ * a cold WMI call was adding to every stop.
+ */
+export async function recordServiceTree(pids: PidFile): Promise<void> {
+  if (process.platform !== 'win32') return;
+  const snapshot = await processSnapshotWin();
+  if (snapshot.size === 0) return;
+
+  const children: ProcessRecord[] = [];
+  const seen = new Set<number>();
+  for (const root of [pids.runner, pids.web]) {
+    if (!root) continue;
+    for (const rec of walkDescendants(snapshot, root)) {
+      if (seen.has(rec.pid)) continue;
+      seen.add(rec.pid);
+      children.push(rec);
+    }
+  }
+  writePids({ ...pids, children });
+}
+
+/**
+ * Kill anything `recordServiceTree` saw that is still alive.
+ *
+ * Identity is checked before killing: a recorded pid is only killed when the
+ * process now carrying that number was created at the same tick. Windows
+ * recycles pids, and a list minutes old would otherwise be a licence to kill an
+ * unrelated process — the same mistake the ownership guard in `up` exists to
+ * prevent, arrived at from the other direction.
+ *
+ * Returns the pids actually killed, so the caller can say what it did.
+ */
+export async function sweepRecordedChildren(children: ProcessRecord[]): Promise<number[]> {
+  if (process.platform !== 'win32' || children.length === 0) return [];
+  const alive = children.filter((c) => isPidAlive(c.pid));
+  if (alive.length === 0) return [];
+
+  const snapshot = await processSnapshotWin();
+  const killed: number[] = [];
+  for (const rec of alive) {
+    const now = snapshot.get(rec.pid);
+    // No entry means it died between the two probes. A different creation tick
+    // means the number was recycled and belongs to someone else now.
+    if (!now || now.startedAt !== rec.startedAt) continue;
+    try {
+      await execa('taskkill', ['/F', '/PID', String(rec.pid)], { reject: false });
+      killed.push(rec.pid);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return killed;
 }
 
 export function writePids(pids: PidFile): void {

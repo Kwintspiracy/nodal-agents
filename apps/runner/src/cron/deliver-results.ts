@@ -27,6 +27,7 @@ import {
 } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
 
@@ -349,14 +350,20 @@ async function synthesizeForChannel(
   compiledResult: string,
 ): Promise<string> {
   try {
-    const resolved = await resolveAgentLlmClient(db, {
-      llmKeyId: agent.llmKeyId,
-      fallbackChain: (agent.fallbackChain ?? null) as
-        | readonly { keyId: string; model: string; reasoningEffort?: string }[]
-        | null,
-      model: agent.model ?? '',
-      reasoningEffort: agent.reasoningEffort ?? null,
-    });
+    const resolved = await resolveAgentLlmClient(
+      db,
+      {
+        llmKeyId: agent.llmKeyId,
+        fallbackChain: (agent.fallbackChain ?? null) as
+          | readonly { keyId: string; model: string; reasoningEffort?: string }[]
+          | null,
+        model: agent.model ?? '',
+        reasoningEffort: agent.reasoningEffort ?? null,
+      },
+      undefined,
+      // étape D: the delivery-synthesis call was an invisible LLM consumer.
+      makeLlmCallSink(db, { source: 'cron' }),
+    );
     if (!resolved.ok) return compiledResult;
     const result = await resolved.client.generateText({
       system:

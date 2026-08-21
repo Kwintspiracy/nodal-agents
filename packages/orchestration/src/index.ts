@@ -66,6 +66,10 @@ export {
   KNOWN_TOOL_NAME_UNIVERSE,
 } from './router/tool-availability';
 
+// ─── Router: internal (always-on) tool descriptors, for the Autonomy screen ──
+export { INTERNAL_TOOL_DESCRIPTORS, UNBLOCKABLE_TOOLS } from './router/internal-tools';
+export type { InternalToolDescriptor } from './router/internal-tools';
+
 // ─── Router: delegation ───────────────────────────────────────────────────────
 export { handleDelegation } from './router/delegate';
 

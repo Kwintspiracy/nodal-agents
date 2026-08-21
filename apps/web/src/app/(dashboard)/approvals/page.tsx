@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { Clock } from '@phosphor-icons/react/dist/ssr';
-import { computeApprovalImpactLine } from '@nodal-agents/shared';
 import { listApprovalsAction } from '@/lib/actions.ts';
 import ApprovalCard from '@/components/ui/ApprovalCard';
 import StatusPill from '@/components/ui/StatusPill';
@@ -88,24 +87,80 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
             <ApprovalCard
               key={a.id}
               icon={<Clock size={18} />}
-              title={<span className="font-mono text-sm text-conn-vivid">{a.toolName}</span>}
+              title={<span className="text-medium-14 text-ink">{a.explanation.what}</span>}
               agent={`${a.agentName ?? 'no agent'} · ${a.status}`}
               body={
                 <div className="space-y-1">
                   {(() => {
-                    // WHY first: the agent's own `purpose` (its voice, invariant #2
-                    // applies — shown verbatim or admitted missing, never invented),
-                    // then a deterministic, code-computed impact line (invariant #2
-                    // does NOT apply — platform UI describing what the action DOES).
-                    const ti = (a.toolInput ?? {}) as Record<string, unknown>;
-                    const purpose = typeof ti.purpose === 'string' ? ti.purpose.trim() : '';
-                    const impact = computeApprovalImpactLine(a.toolName, a.toolInput);
+                    // The agent's own words stay first and verbatim (invariant #2
+                    // applies — its voice), clearly quoted so they read as a claim
+                    // rather than a platform verdict. An ABSENT purpose is stated:
+                    // "the agent did not say why" is information.
+                    const x = a.explanation;
                     return (
-                      <div className="space-y-0.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
-                        <p className="text-body-13 text-ink">
-                          ➤ {purpose || 'Purpose not specified by the agent.'}
+                      <div className="space-y-1.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
+                        <p className="text-body-13 text-ink-2 italic">
+                          {x.purpose ? `« ${x.purpose} »` : "L'agent n'a pas expliqué pourquoi."}
                         </p>
-                        <p className="text-body-12 text-warn">⚠️ {impact}</p>
+
+                        <p className="text-body-12 text-warn">
+                          ⚠️ {x.effectLabel}
+                          {x.target && <span className="text-ink-2"> → {x.target}</span>}
+                        </p>
+
+                        {/* Provenance: WHOSE tool this is. For a third-party
+                            server this is the load-bearing fact — the product
+                            did not write this tool and says so. */}
+                        {x.provenance.kind === 'mcp' && (
+                          <div className="space-y-1 rounded border border-rule bg-paper px-2.5 py-1.5">
+                            <p className="text-body-12 text-ink-2">
+                              Serveur MCP{' '}
+                              <span className="text-ink">
+                                {x.provenance.name ?? x.provenance.slug}
+                              </span>
+                              {x.provenance.endpoint && (
+                                <span className="text-ink-3"> · {x.provenance.endpoint}</span>
+                              )}
+                            </p>
+                            {x.provenance.supplied && (
+                              <>
+                                <p className="text-micro-10 text-ink-3">
+                                  Description fournie par ce serveur — texte tiers, non vérifié
+                                </p>
+                                <p className="text-body-12 text-ink-2">{x.provenance.supplied}</p>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Deterministic impact, only for tools the product
+                            ships. Null for third-party tools, where it has no
+                            basis to claim anything. */}
+                        {x.impact && <p className="text-body-12 text-ink-2">{x.impact}</p>}
+
+                        {x.args.length > 0 && (
+                          <dl className="space-y-0.5 pt-0.5">
+                            {x.args.map((arg) => (
+                              <div key={arg.key} className="flex gap-2 text-mono-12">
+                                <dt className="shrink-0 text-ink-3">{arg.key}</dt>
+                                <dd className="min-w-0 break-all text-ink-2">
+                                  {arg.value}
+                                  {/* PRIVILEGE-003 : la longueur réelle, sinon
+                                      « tronqué » ne dit pas si 20 caractères
+                                      manquent ou 20 000. */}
+                                  {arg.truncated && (
+                                    <span className="text-ink-3">
+                                      {' '}
+                                      ({arg.fullLength} caractères, 300 affichés)
+                                    </span>
+                                  )}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
+
+                        <p className="text-micro-10 text-ink-3">{a.toolName}</p>
                       </div>
                     );
                   })()}
@@ -161,7 +216,20 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                   </Link>
                 </div>
               }
-              actions={a.status === 'pending' ? <ApprovalActions approvalId={a.id} /> : undefined}
+              // Five graduated-consent buttons do not fit a shrink-0 column —
+              // they squeezed the body into an unreadable strip.
+              actionsPlacement="below"
+              actions={
+                a.status === 'pending' ? (
+                  <ApprovalActions
+                    approvalId={a.id}
+                    toolName={a.toolName}
+                    agentId={a.agentId}
+                    mcpRulePattern={a.mcpRulePattern}
+                    mcpServerName={a.explanation.provenance.name ?? null}
+                  />
+                ) : undefined
+              }
             />
           ))}
         </div>

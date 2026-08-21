@@ -103,7 +103,7 @@ export async function handleApprovalCallback(
 
   // Resolve who SHOULD deliver/own this approval's chat. On a delegated chain the
   // approval's agent (e.g. director) has no bot — the card was sent via the
-  // orchestrator's bot (e.g. alfred). SECURITY: the card (and therefore the
+  // orchestrator's bot, not the worker's. SECURITY: the card (and therefore the
   // only chat a tap can be authorized from) always lives in the bot OWNER's
   // private chat, never the chat that triggered the gated job — a `member`
   // (authorized non-owner, H-1) must not be able to self-approve its own

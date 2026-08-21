@@ -11,6 +11,7 @@
     "event-triggers",
     "automations",
     "shell-commands",
+    "coding",
     "root-agent"
   ]
 }

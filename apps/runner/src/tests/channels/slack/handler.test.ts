@@ -71,6 +71,25 @@ const call = (agentId: string, message: SlackInboundMessage) =>
     tx: db as unknown as Parameters<typeof handleSlackMessage>[0]['tx'],
   });
 
+/**
+ * Bring an agent to "has an ACTIVE owner" — what a single bootstrap DM used to
+ * do by itself. Since CHANNEL-001 the first DM only RECORDS the claim
+ * (owner/pending); a human approves it in the dashboard.
+ */
+async function claimOwner(agentId: string, message: SlackInboundMessage): Promise<void> {
+  await call(agentId, message);
+  await db
+    .update(channelAllowedConversations)
+    .set({ status: 'active' })
+    .where(
+      and(
+        eq(channelAllowedConversations.agentId, agentId),
+        eq(channelAllowedConversations.conversationId, message.conversationId),
+        eq(channelAllowedConversations.role, 'owner'),
+      ),
+    );
+}
+
 describe('handleSlackMessage — bot-author hard rule', () => {
   it('always ignores a message whose author is a bot', async () => {
     const agentId = await freshBot();
@@ -88,15 +107,22 @@ describe('handleSlackMessage — bot-author hard rule', () => {
 });
 
 describe('handleSlackMessage — H-1 owner-claim / pending authorization', () => {
-  it('first DM with no owner claims ownership AND creates a job', async () => {
+  // CHANNEL-001: was "first DM claims ownership AND creates a job" — trust on
+  // first use. Slack is shielded by workspace membership, so the exposure here
+  // is far smaller than Telegram's, but the state machine is shared and the
+  // rule has to be the same everywhere.
+  it('first DM with no owner records a PENDING owner claim and creates NO job', async () => {
     const agentId = await freshBot();
     const result = await call(agentId, dm('hi', 'D-owner-1'));
-    expect(result.jobId).toBeDefined();
 
-    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
-    expect(job?.channel).toBe('slack');
-    expect(job?.chatId).toBe('D-owner-1');
-    expect(job?.task).toBe('hi');
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    expect(result.pendingAuth).toMatchObject({
+      ownerConversationId: null,
+      requesterConversationId: 'D-owner-1',
+    });
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.chatId, 'D-owner-1'));
+    expect(jobs).toHaveLength(0);
 
     const rows = await db
       .select()
@@ -108,13 +134,23 @@ describe('handleSlackMessage — H-1 owner-claim / pending authorization', () =>
       conversationId: 'D-owner-1',
       kind: 'private',
       role: 'owner',
-      status: 'active',
+      status: 'pending',
     });
+  });
+
+  it('once the owner claim is approved, that conversation creates jobs', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('hi', 'D-approved-1'));
+    const result = await call(agentId, dm('do something', 'D-approved-1'));
+    expect(result.jobId).toBeDefined();
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.channel).toBe('slack');
+    expect(job?.task).toBe('do something');
   });
 
   it('an unknown DM when an owner exists creates NO job and returns a pendingAuth card intent to the owner', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 'D-owner-2'));
+    await claimOwner(agentId, dm('owner here', 'D-owner-2'));
     const result = await call(agentId, dm('let me in', 'D-stranger-2'));
 
     expect(result.jobId).toBeUndefined();
@@ -138,7 +174,7 @@ describe('handleSlackMessage — H-1 owner-claim / pending authorization', () =>
 
   it('a repeat DM from an already-pending conversation does NOT re-ask the owner (no spam)', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 'D-owner-3'));
+    await claimOwner(agentId, dm('owner here', 'D-owner-3'));
     await call(agentId, dm('let me in', 'D-stranger-3')); // first ask
     const again = await call(agentId, dm('please?', 'D-stranger-3')); // repeat
 
@@ -149,7 +185,7 @@ describe('handleSlackMessage — H-1 owner-claim / pending authorization', () =>
 
   it('an active member conversation creates a job', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 'D-owner-4'));
+    await claimOwner(agentId, dm('owner here', 'D-owner-4'));
     await db.insert(channelAllowedConversations).values({
       entityId: seed.entityId,
       agentId,
@@ -167,7 +203,7 @@ describe('handleSlackMessage — H-1 owner-claim / pending authorization', () =>
 describe('handleSlackMessage — no content', () => {
   it('skips a message with only whitespace text', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('bootstrap owner', 'D-owner-empty'));
+    await claimOwner(agentId, dm('bootstrap owner', 'D-owner-empty'));
     const result = await call(agentId, dm('   ', 'D-owner-empty'));
     expect(result).toEqual({ skipped: 'no_content' });
   });
@@ -176,7 +212,7 @@ describe('handleSlackMessage — no content', () => {
 describe('handleSlackMessage — channel messages arrive only via app_mention (already gated)', () => {
   it('strips the mention token and prefixes the sender name', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('bootstrap owner', 'D-owner-guild-2'));
+    await claimOwner(agentId, dm('bootstrap owner', 'D-owner-guild-2'));
     // This test is about the mention/prefix behavior, not H-1 — pre-authorize
     // the channel itself (mirrors discord/handler.test.ts's pattern).
     await db.insert(channelAllowedConversations).values({
@@ -204,7 +240,7 @@ describe('handleSlackMessage — channel messages arrive only via app_mention (a
 
   it('also strips the labeled mention form `<@ID|name>`', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('bootstrap owner', 'D-owner-guild-labeled'));
+    await claimOwner(agentId, dm('bootstrap owner', 'D-owner-guild-labeled'));
     await db.insert(channelAllowedConversations).values({
       entityId: seed.entityId,
       agentId,
@@ -224,7 +260,7 @@ describe('handleSlackMessage — channel messages arrive only via app_mention (a
 
   it('a mention with no remaining text is skipped (mention_no_text)', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('bootstrap owner', 'D-owner-guild-empty'));
+    await claimOwner(agentId, dm('bootstrap owner', 'D-owner-guild-empty'));
     await db.insert(channelAllowedConversations).values({
       entityId: seed.entityId,
       agentId,
@@ -251,7 +287,7 @@ describe('handleSlackMessage — channel messages arrive only via app_mention (a
 describe('handleSlackMessage — /ask routing gated by the TARGET agent allowlist', () => {
   it('routes /ask <slug> <text> to the named agent when the conversation is already active for it', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'D-ask-1'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'D-ask-1'));
 
     const [otherAgent] = await db
       .insert(agents)
@@ -285,7 +321,7 @@ describe('handleSlackMessage — /ask routing gated by the TARGET agent allowlis
 
   it('/ask via an @mention in a channel routes to the named agent (mention stripped first)', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'D-ask-mention-owner'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'D-ask-mention-owner'));
     await db.insert(channelAllowedConversations).values({
       entityId: seed.entityId,
       agentId: receiverId,
@@ -329,7 +365,7 @@ describe('handleSlackMessage — /ask routing gated by the TARGET agent allowlis
 
   it('/ask to a sibling the conversation has never talked to: NO job, pending member created, owner notified', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'D-ask-2'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'D-ask-2'));
 
     const targetAgentId = await freshBot();
     await db.insert(channelAllowedConversations).values({
@@ -373,7 +409,7 @@ describe('handleSlackMessage — /ask routing gated by the TARGET agent allowlis
 
   it('skips /ask <unknown-slug> rather than blindly creating a job', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'D-ask-3'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'D-ask-3'));
     const result = await call(receiverId, dm('/ask not-a-real-agent please help', 'D-ask-3'));
     expect(result).toEqual({ skipped: 'ask_unknown_agent' });
   });

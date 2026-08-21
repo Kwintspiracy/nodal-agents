@@ -51,8 +51,8 @@ export class MessageStructureError extends Error {
  * Raised when a LLM call exceeds its timeout window. Retryable — the next
  * attempt gets a fresh timeout, so transient provider hangs (e.g. OpenRouter
  * spike) recover automatically. Without this, a stuck fetch hangs the job for
- * 5 minutes until `resetOrphanedJobs` cron tick gives up (caught live 2026-05-15
- * job `2461d25b-83ca-4874-a43c-955e88807e07`).
+ * 5 minutes until `resetOrphanedJobs` cron tick gives up (caught live
+ * 2026-05-15).
  */
 export class LLMTimeoutError extends Error {
   readonly code = 'llm_timeout' as const;

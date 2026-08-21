@@ -33,7 +33,7 @@ export {
 export { createToolRegistry } from './registry';
 
 // Execution wrapper
-export { executeTool, matchApprovalRule } from './execute';
+export { executeTool, matchApprovalRule, namespaceOf, namespaceRulePattern } from './execute';
 // Command classifiers moved to @nodal-agents/shared (2026-07-08) so the
 // approval-impact line (shared, rendered by runner AND web) can reuse the
 // SAME verdicts as the gate — re-exported here so existing consumers
@@ -57,6 +57,7 @@ export {
   registerBuiltins,
   ALWAYS_ON_TOOLS,
   ALWAYS_ON_TOOL_DOCS,
+  UNBLOCKABLE_TOOLS,
   returnResultTool,
   saveMemoryTool,
   queryMemoryTool,
@@ -65,8 +66,27 @@ export {
   dashboardPublishTool,
   DashboardPublishInputSchema,
   buildChildEnv,
+  runCliDoctor,
+  resolveCliPath,
+  buildSpawnArgv,
+  runCli,
+  assertWorkspacesConfigured,
+  resolveAndCheckPath,
+  extractClaudeUsage,
+  extractClaudeModelUsage,
+  CLAUDE_READONLY_DISALLOWED,
+  assertCliBudget,
+  recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+  WorkspaceLockedError,
 } from './builtin/index';
-export type { AlwaysOnTool, DashboardPublishInput } from './builtin/index';
+export type {
+  AlwaysOnTool,
+  DashboardPublishInput,
+  CliDoctorReport,
+  NormalizedCliResult,
+} from './builtin/index';
 
 // Communication tools (capability-driven — registered per-agent based on agent config)
 export {
@@ -86,7 +106,13 @@ export { createListConversationsTool } from './builtin/index';
 // Skill-authoring grounding: the real MCP tool names of a workspace, injected
 // into create_skill / update_skill descriptions by the runner so the ROOT agent
 // references real tools (not its training-prior conventions) BEFORE authoring.
-export { listWorkspaceMcpToolNames } from './builtin/meta-ops/lint-skill-content';
+export {
+  listWorkspaceMcpToolNames,
+  // SKILL-002: exported so the reflection loop lints on the SAME code path as
+  // the create_skill / update_skill tools. It used to be module-private, which
+  // is precisely what made bypassing it the path of least resistance.
+  lintSkillContent,
+} from './builtin/meta-ops/lint-skill-content';
 
 // Routine/schedule lint (H1b): pure warn-only check that a cron routine's
 // task text doesn't reference tools the target agent doesn't have, or

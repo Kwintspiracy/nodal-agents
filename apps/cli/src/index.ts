@@ -24,10 +24,11 @@ program
 
 program
   .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
-  .action(async (opts: { dev?: boolean }) => {
+  .option('-d, --detach', 'Return to the prompt once healthy — services keep running')
+  .action(async (opts: { dev?: boolean; detach?: boolean }) => {
     const { runUp } = await import('./commands/up.ts');
     try {
-      await runUp({ dev: opts.dev });
+      await runUp({ dev: opts.dev, detach: opts.detach });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -60,10 +61,11 @@ program
   .command('up')
   .description('Start Postgres, runner, and web — open browser when ready')
   .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
-  .action(async (opts: { dev?: boolean }) => {
+  .option('-d, --detach', 'Return to the prompt once healthy — services keep running')
+  .action(async (opts: { dev?: boolean; detach?: boolean }) => {
     const { runUp } = await import('./commands/up.ts');
     try {
-      await runUp({ dev: opts.dev });
+      await runUp({ dev: opts.dev, detach: opts.detach });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);

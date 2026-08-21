@@ -110,6 +110,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // riskLevel is 'write' (correct for the http case), which would otherwise
       // let this stdio spawn auto-approve. The http case keeps the 'write' path.
       else if (tool.name === 'create_mcp' && mcpTransport === 'stdio') isHeavy = true;
+      // MCP tools are judged like any other tool here — by their riskLevel.
+      //
+      // MCP-001's fix (2026-08-07, commit 5aba6b0) briefly added
+      // `else if (tool.name.includes('__')) isHeavy = true`, which put EVERY
+      // third-party tool in the heavy bucket. That silently redefined a setting
+      // the owner had chosen: `destructive_gate` says "gate the destructive",
+      // and it started gating `get_post` and a CHANGELOG fetch. Removed after
+      // the owner reported it — an autonomy level that does not mean what it
+      // says is worse than no autonomy level, because the next thing people do
+      // is grant a blanket `*` rule.
+      //
+      // The MCP-001 finding is still closed, at the layer where it belongs:
+      // every MCP tool ships `defaultApproval: 'require_approval'`, so a fresh
+      // install — shipped default autonomy, or `propose_confirm` — still gates
+      // foreign code on first use. What changes here is that an owner who
+      // EXPLICITLY chose "autonomous, gate destructive" gets that.
+      //
+      // The residual risk is real and belongs to that choice: `riskLevel` for
+      // an MCP tool comes from annotations the server supplies, so a hostile
+      // server can declare itself non-destructive. `destructiveHint` can only
+      // RAISE the level (riskFromAnnotations never honours `readOnlyHint` as a
+      // downgrade), and the catastrophic-command and stdio floors below still
+      // apply unconditionally.
       else isHeavy = tool.riskLevel === 'destructive';
       if (!isHeavy) effectiveAction = 'auto_approve';
     }
@@ -153,8 +176,41 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     effectiveAction = 'require_approval';
   }
 
+  // Second hardline floor: `create_mcp` with a STDIO transport (audit
+  // 2026-08-07). É-2 already judged this RCE-equivalent to run_command and gated
+  // it under `destructive_gate` (line ~112 above) — but that branch is only
+  // reached when `effectiveAction` is still 'require_approval', and
+  // `fully_autonomous` flips it to 'auto_approve' first. So the stdio gate
+  // existed in the middle tier and vanished in the top one, which is the
+  // opposite of what a hardline floor means.
+  //
+  // Scope is deliberately stdio-only: an `http` server spawns nothing locally,
+  // and É-2's decision to let it auto-approve under `destructive_gate` still
+  // holds — more so now that every tool such a server exposes carries
+  // `defaultApproval: 'require_approval'` of its own (MCP-001), so attaching one
+  // no longer hands the model anything it can run unattended.
+  if (
+    tool.name === 'create_mcp' &&
+    effectiveAction !== 'block' &&
+    effectiveAction !== 'require_approval' &&
+    String((validatedInput as { transport?: unknown })?.transport ?? '') === 'stdio'
+  ) {
+    effectiveAction = 'require_approval';
+  }
+
   if (effectiveAction === 'block') {
-    const result: ToolExecutionResult = { outcome: 'error', error: 'blocked' };
+    // Prescriptive, like the delegation refusals (delegation_depth_exceeded…):
+    // the bare word "blocked" gave the model nothing to correct with — it
+    // would retry the same tool or probe for workarounds (étape C, review
+    // loop: a read-only reviewer needs to be TOLD the posture is intentional).
+    const result: ToolExecutionResult = {
+      outcome: 'error',
+      error:
+        `blocked: an approval rule forbids "${tool.name}" for this agent. This is an ` +
+        `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
+        `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
+        `your result.`,
+    };
     await _writeToolCall(
       ctx,
       tool.name,
@@ -182,6 +238,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // Encrypting the secret fields at rest here (and decrypting on re-exec)
         // is the tracked follow-up.
         toolInput: validatedInput as Record<string, unknown>,
+        // étape D: the originating tool_use id — lets the resume path target
+        // the EXACT awaiting marker instead of matching by toolName alone.
+        toolCallId: ctx.toolCallId ?? null,
         status: 'pending',
       })
       .returning();
@@ -278,6 +337,23 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 // ─── Approval rule matcher ────────────────────────────────────────────────────
 
 /**
+ * The MCP server namespace of a tool name, or null for a built-in.
+ *
+ * `<serverPrefix>__<tool>` is the MCP naming convention; nothing else in the
+ * product puts `__` in a tool name (builtins and connector tools are bare
+ * snake_case — the same invariant lint-skill-content.ts relies on).
+ */
+export function namespaceOf(toolName: string): string | null {
+  const i = toolName.indexOf('__');
+  return i > 0 ? toolName.slice(0, i) : null;
+}
+
+/** The rule pattern that covers every tool of one MCP server. */
+export function namespaceRulePattern(serverPrefix: string): string {
+  return `${serverPrefix}__*`;
+}
+
+/**
  * Find the most specific matching approval rule.
  * Specificity: agent-scoped + tool-name > entity-scoped + tool-name > wildcard.
  * Returns undefined if no rule matches (default: execute without approval).
@@ -304,11 +380,35 @@ export function matchApprovalRule(
   );
   if (entityToolRule) return entityToolRule;
 
-  // Priority 3: agent-scoped wildcard (toolName = '*')
+  // Priority 3 & 4: NAMESPACE rules — `<serverPrefix>__*`, covering every tool
+  // one MCP server exposes.
+  //
+  // Without this, consenting to a server means creating one rule per tool: the
+  // a single server commonly exposes 30 tools, so one "I trust this server"
+  // decision turned into 30 identical rows. The owner has already made that
+  // decision once, when they attached the server — asking them to re-express it
+  // thirty times is how a gate becomes a rubber stamp.
+  //
+  // `__` is the MCP namespace marker (builtin and connector tools are bare
+  // snake_case), so a namespace rule can never accidentally cover a built-in.
+  // Deliberately BELOW exact-tool rules: a per-tool `require_approval` or
+  // `block` still overrides a per-server `auto_approve`.
+  const namespace = namespaceOf(toolName);
+  if (namespace) {
+    const pattern = `${namespace}__*`;
+    const agentNs = rules.find((r) => r.toolName === pattern && r.agentId === agentId);
+    if (agentNs) return agentNs;
+    const entityNs = rules.find(
+      (r) => r.toolName === pattern && r.agentId === null && r.entityId === entityId,
+    );
+    if (entityNs) return entityNs;
+  }
+
+  // Priority 5: agent-scoped wildcard (toolName = '*')
   const agentWild = rules.find((r) => r.toolName === '*' && r.agentId === agentId);
   if (agentWild) return agentWild;
 
-  // Priority 4: entity-scoped wildcard
+  // Priority 6: entity-scoped wildcard
   const entityWild = rules.find(
     (r) => r.toolName === '*' && r.agentId === null && r.entityId === entityId,
   );
@@ -337,10 +437,20 @@ async function _writeToolCall(
       toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
       toolOutput: output,
       durationMs,
+      // étape D: turn + tool_use id make this row joinable to the transcript
+      // and to llm_calls — the full-copy output was previously unlinkable.
+      turn: ctx.turn ?? null,
+      toolCallId: ctx.toolCallId ?? null,
     });
-  } catch {
-    // Audit write failure must never crash the tool execution path.
-    // The runner can detect missing audit rows via monitoring, not via exceptions.
+  } catch (err) {
+    // Audit write failure must never crash the tool execution path — but it
+    // must never be INVISIBLE either (reproducibility audit 2026-08-19: the
+    // silent catch made missing trace rows undiagnosable; no monitoring ever
+    // existed despite the old comment claiming so).
+    console.warn(
+      `[tools] tool_calls audit insert failed (job=${ctx.jobId}, tool=${toolName}):`,
+      err,
+    );
   }
 }
 

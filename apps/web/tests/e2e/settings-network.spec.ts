@@ -4,8 +4,8 @@
  * Covers the interactive network-settings section on /settings:
  *  - Section renders with correct elements
  *  - Toggling to LAN shows LAN IPs or "No LAN interface detected"
- *  - Drift hint appears when local state differs from runtime bind
- *  - Save triggers server action (success toast or documented failure path)
+ *  - Re-saving the running mode reports no restart needed
+ *  - Saving the other mode persists it, demands a restart, and is restored
  *
  * The stack (web + runner + DB) must be running before this suite.
  * If ~/.nodalai/config.json doesn't exist in the test env the save will
@@ -20,22 +20,19 @@ test.beforeAll(async () => {
 });
 
 /**
- * Locate the Network section container on /settings.
- * The page renders sections as <div> blocks, each with an <h2> heading.
- * We scope to the div that contains the "Network" h2 so we never
- * accidentally match the SecurityForm's "Save" button or drift hint.
- *
- * Strategy: find the h2 with text "Network", then walk up to its parent
- * section wrapper and use that as the scope for all child locators.
+ * Locate the Network section on /settings, so no locator below can reach
+ * another form's Save button.
  */
 function networkSection(
   page: Parameters<typeof test>[1] extends never ? never : import('@playwright/test').Page,
 ): Locator {
-  // The Network h2 lives inside a <div> whose next sibling is the form card.
-  // We scope via the closest wrapping div that contains both the heading and the form.
-  // page.tsx wraps them in: <div> <h2>Network</h2> <div card> <NetworkForm /> </div> <div card> App/Runner </div> </div>
+  // SetBlock renders each settings group as a real <section> carrying its own
+  // <h2>. Scoping on `div` instead matched the outermost wrapper that merely
+  // CONTAINS that heading — i.e. most of the page — so "the first Save button
+  // in the section" was whatever form happened to come first in the document,
+  // and this suite drove the wrong one. `section` is exact by construction.
   return page
-    .locator('div')
+    .locator('section')
     .filter({ has: page.getByRole('heading', { name: 'Network', level: 2 }) })
     .first();
 }
@@ -67,9 +64,15 @@ test.describe('NetworkForm — /settings', () => {
       timeout: 5_000,
     });
 
-    // App URL and Runner URL read-only fields live below the form, still inside the Network wrapper
-    await expect(section.getByText('App URL')).toBeVisible({ timeout: 5_000 });
-    await expect(section.getByText('Runner URL')).toBeVisible({ timeout: 5_000 });
+    // App URL and Runner URL moved out of the Network block into their own
+    // "URLs" section, so they are asserted where they now live rather than
+    // dropped — the page still has to show both.
+    const urls = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'URLs', level: 2 }) })
+      .first();
+    await expect(urls.getByText('App URL')).toBeVisible({ timeout: 5_000 });
+    await expect(urls.getByText('Runner URL')).toBeVisible({ timeout: 5_000 });
   });
 
   // ── Test 2 — Toggling LAN shows IPs or no-interface warning ──────────────
@@ -115,115 +118,116 @@ test.describe('NetworkForm — /settings', () => {
     // else: already visible, test passes
   });
 
-  // ── Test 3 — Drift hint appears before Save when local != runtime ─────────
-  test('drift hint appears when toggling bind from current runtime value', async ({ page }) => {
-    await page.goto('/settings');
+  /**
+   * Which mode is selected, read the way a screen reader reads it.
+   *
+   * `input[type="radio"]` stood here and matched NOTHING: the DS's OptionRadio
+   * draws its own dot and exposes `role="radio"` + `aria-checked`, with no
+   * native input in the tree. Both tests below had been timing out on that
+   * selector ever since — invisible, because the suite was never replayed.
+   */
+  async function selectedBind(section: Locator): Promise<'loopback' | 'lan'> {
+    const checked = await section.getByRole('radio').nth(0).getAttribute('aria-checked');
+    return checked === 'true' ? 'loopback' : 'lan';
+  }
 
-    const section = networkSection(page);
-
-    // Wait for the form to hydrate
-    await expect(section.getByText('Local only (127.0.0.1)', { exact: false })).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // NetworkForm renders loopback radio first, LAN second — scoped to section
-    const radios = section.locator('input[type="radio"]');
-    const loopbackRadio = radios.nth(0);
-    const lanRadio = radios.nth(1);
-
-    const isLoopbackChecked = await loopbackRadio.isChecked();
-
-    if (isLoopbackChecked) {
-      // Runtime = loopback → toggle to lan → drift shows
-      await lanRadio.click();
-    } else {
-      // Runtime = lan → toggle to loopback → drift shows
-      await loopbackRadio.click();
-    }
-
-    // Drift hint scoped to the Network section:
-    // "New bind `<value>` requires `nodal-agents down && nodal-agents up` to take effect."
-    await expect(section.getByText(/New bind .+ requires/i)).toBeVisible({ timeout: 5_000 });
-  });
-
-  // ── Test 4 — Save triggers server action, result verifiable via network ──
-  test('Save button triggers network settings action and server responds', async ({ page }) => {
-    await page.goto('/settings');
-
-    const section = networkSection(page);
-
-    // Wait for the form
-    await expect(section.getByText('Local only (127.0.0.1)', { exact: false })).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // Toggle to LAN (second radio inside the network section)
-    const lanRadio = section.locator('input[type="radio"]').nth(1);
-    await lanRadio.click();
-
-    // Intercept the RSC / server action POST before clicking.
-    // Next.js server actions are POSTed to the current page URL with
-    // Content-Type: text/plain and a Next-Action header.
-    // We capture the response to assert the action was actually called
-    // and returned a valid payload — this is immune to toast timing races.
-    const actionResponsePromise = page.waitForResponse(
-      (resp) =>
-        resp.url().includes('/settings') &&
-        resp.request().method() === 'POST' &&
-        !!resp.request().headers()['next-action'],
-      { timeout: 15_000 },
-    );
-
-    // Submit using the Save button scoped to the Network section
+  /**
+   * Pick a mode, submit, and wait for the save to have been ACKNOWLEDGED.
+   *
+   * The assertions below deliberately read the rendered result rather than the
+   * server-action wire payload. Two attempts at the payload both produced a
+   * green-looking parse of the wrong thing: /settings also fires a version-check
+   * action (the first capture asserted against `{"current":"0.8.1",…}`), and a
+   * Next action reply carries the revalidated page tree in the SAME response as
+   * the result, so "the body mentions requiresRestart" matches the re-render
+   * too. What the user sees, plus what survives a reload, is both stronger and
+   * unambiguous.
+   */
+  async function chooseAndSave(
+    page: import('@playwright/test').Page,
+    section: Locator,
+    bind: 'loopback' | 'lan',
+  ): Promise<void> {
+    await section
+      .getByRole('radio')
+      .nth(bind === 'loopback' ? 0 : 1)
+      .click();
     await section
       .getByRole('button', { name: /^save$/i })
       .first()
       .click();
+    // The success toast is the acknowledgement; a failure (cli_config_missing)
+    // raises an error toast instead and this wait fails loudly on it.
+    await expect(page.getByText(/network settings saved/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
+  }
 
-    const actionResponse = await actionResponsePromise;
-    // The server action always returns HTTP 200 (even for application-level errors);
-    // a non-200 means a server crash.
-    expect(
-      actionResponse.status(),
-      `Server action POST to /settings returned unexpected status`,
-    ).toBe(200);
+  async function readySection(page: import('@playwright/test').Page): Promise<Locator> {
+    const section = networkSection(page);
+    await expect(section.getByRole('radio').first()).toBeVisible({ timeout: 10_000 });
+    return section;
+  }
 
-    // Parse the RSC wire payload — it contains the serialized ActionResult.
-    // We look for the string markers from our ok/fail helpers:
-    //   ok path:   contains `"requiresRestart"` key
-    //   fail path: contains `"code"` + `"message"` (ActionResult failure shape)
-    const body = await actionResponse.text();
-    const isOk = body.includes('requiresRestart');
-    const isFail = body.includes('"code"') && body.includes('"message"');
+  // ── Test 3 — Saving the mode already in force asks for no restart ─────────
+  // The hint used to appear on TOGGLE, before saving, and this test asserted
+  // that. It moved into the post-save banner, driven by the action's
+  // `requiresRestart` — so the old assertion described a product that no longer
+  // exists. This one re-saves the CURRENT mode, which mutates nothing and pins
+  // the other half of the rule: same as the runtime → no restart demanded.
+  test('re-saving the mode already in force reports no restart needed', async ({ page }) => {
+    await page.goto('/settings');
+    const section = await readySection(page);
+    const current = await selectedBind(section);
 
-    expect(
-      isOk || isFail,
-      `Server action response body did not match ok or fail shape.\nBody (first 500 chars): ${body.slice(0, 500)}`,
-    ).toBe(true);
+    await chooseAndSave(page, section, current);
 
-    if (isOk) {
-      console.log('[settings-network] Server action returned ok — save succeeded.');
-      // Check if the post-save emerald banner appeared (requiresRestart=true path).
-      // Sonner toast has 4s default lifetime; the banner is permanent until next navigate.
-      // We allow 6s for RSC re-render + banner to appear.
-      const restartBanner = section.getByText(/saved.*restart with/i);
-      const bannerVisible = await restartBanner.isVisible().catch(() => false);
-      if (!bannerVisible) {
-        // Not a failure — requiresRestart=false means bind already matches runtime.
-        console.log(
-          '[settings-network] No restart banner — runtime bind matches saved bind, requiresRestart=false.',
-        );
-      }
-    } else {
-      // fail path — most likely cli_config_missing
-      console.log(
-        '[settings-network] Server action returned fail — likely cli_config_missing (config.json absent in test env).',
-      );
-      // The amber warning should already be visible in the rendered form.
-      const configMissingWarning = section.getByText(/config\.json.*wasn.*t found/i);
-      const warnVisible = await configMissingWarning.isVisible().catch(() => false);
-      if (warnVisible) {
-        console.log('[settings-network] config-missing amber warning visible — expected path.');
+    // requiresRestart=false is what the absence of this banner means.
+    await expect(section.getByText(/restart required/i)).toBeHidden();
+    // And the mode is unchanged — this test must leave nothing behind.
+    await page.reload();
+    expect(await selectedBind(await readySection(page)), 'bind after reload').toBe(current);
+  });
+
+  // ── Test 4 — Saving the OTHER mode persists it and demands a restart ─────
+  // This test used to click LAN, save, and then accept EITHER an ok or a fail
+  // response — it could not go red. Worse, it wrote `lan` into the real
+  // ~/.nodalai/config.json and never put it back: the next boot would have
+  // bound the dashboard to 0.0.0.0 and switched the auth mode to local-auth,
+  // i.e. a sign-in wall on a machine that had none. It only ever looked
+  // harmless because the radio selector above was broken, so the save never
+  // fired. Now it asserts the outcome, verifies the value survives a reload,
+  // and restores what it found in a finally.
+  test('saving the other mode persists it, demands a restart, and is put back', async ({
+    page,
+  }) => {
+    await page.goto('/settings');
+    let section = await readySection(page);
+    const original = await selectedBind(section);
+    const other = original === 'loopback' ? 'lan' : 'loopback';
+
+    try {
+      await chooseAndSave(page, section, other);
+      // Different from the running bind, so the restart is mandatory: the
+      // process is already bound to the old address and cannot rebind live.
+      await expect(
+        section.getByText(/restart required/i),
+        'a bind that differs from the runtime must demand a restart',
+      ).toBeVisible({ timeout: 10_000 });
+
+      // Persisted, not just rendered: reload and read the value back.
+      await page.reload();
+      expect(await selectedBind(await readySection(page)), 'bind after reload').toBe(other);
+    } finally {
+      await page.goto('/settings');
+      section = await readySection(page);
+      if ((await selectedBind(section)) !== original) {
+        await chooseAndSave(page, section, original);
+        await page.reload();
+        expect(
+          await selectedBind(await readySection(page)),
+          'FAILED TO RESTORE the original bind — check ~/.nodalai/config.json before the next boot',
+        ).toBe(original);
       }
     }
   });

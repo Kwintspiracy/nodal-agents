@@ -1,0 +1,67 @@
+{
+  "sectionId": "catalog",
+  "gitSha": "2805c3e",
+  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "metrics": [
+    {
+      "id": "providers",
+      "label": "Fournisseurs au catalogue",
+      "value": 9,
+      "unit": "fournisseurs",
+      "direction": "higher-is-better"
+    },
+    {
+      "id": "models",
+      "label": "Modèles au catalogue",
+      "value": 51,
+      "unit": "modèles",
+      "direction": "higher-is-better"
+    },
+    {
+      "id": "models_with_tools",
+      "label": "Modèles déclarant les outils",
+      "value": 51,
+      "unit": "modèles",
+      "direction": "higher-is-better"
+    },
+    {
+      "id": "models_reasoning",
+      "label": "Modèles à raisonnement",
+      "value": 28,
+      "unit": "modèles",
+      "direction": "higher-is-better"
+    },
+    {
+      "id": "missing_context_window",
+      "label": "Sans fenêtre de contexte",
+      "value": 0,
+      "unit": "modèles",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "missing_pricing",
+      "label": "Sans tarif",
+      "value": 2,
+      "unit": "modèles",
+      "direction": "lower-is-better",
+      "detail": ["groq/llama-3.3-70b-versatile", "mistral/mistral-large-latest"]
+    },
+    {
+      "id": "duplicate_ids",
+      "label": "Identifiants dupliqués chez un fournisseur",
+      "value": 0,
+      "unit": "doublons",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "context_on_fallback",
+      "label": "Contexte laissé sur la valeur par défaut",
+      "value": 2,
+      "unit": "modèles",
+      "direction": "lower-is-better",
+      "detail": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
+    }
+  ]
+}

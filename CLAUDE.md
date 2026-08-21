@@ -13,7 +13,20 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 - Vitest for unit tests, Playwright for e2e, dependency-cruiser for architecture
 - Better-auth for opt-in dashboard auth (local mode = no auth by default)
 
-## Non-negotiable invariants (enforced by CI)
+## Non-negotiable invariants
+
+**How each is actually enforced** (CODE-001, audit 2026-08-07 — the audit first
+claimed #1 and #2 were unenforced, having looked only for ESLint rules; they are
+enforced, by tests. Stating the mechanism here so the next reader does not have
+to rediscover it):
+
+| Invariant | Enforced by |
+|---|---|
+| #1, #2, #6 | `architecture.test.ts` in **28 packages**, all calling the shared scanners in `@nodal-agents/test-kit`. `pnpm bench --section architecture` reports the counts and the number of packages covered |
+| #10 (no native dialogs) | ESLint `no-restricted-globals` in `apps/web/eslint.config.mjs` |
+| Layering (adapters, db driver) | dependency-cruiser, `pnpm deps:check` |
+| #5 (tests assert real results) | review discipline — no mechanical check |
+| #3, #4, #7, #8, #9 | review discipline, plus the targeted suites named in each rule |
 
 1. **No hardcoded agent metadata.** Skills, routing, team blocks, sub-agent descriptions: 100% from DB.
 2. **No hardcoded user-facing text in runner.** LLM speaks or runner stays silent.

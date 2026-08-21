@@ -88,3 +88,44 @@ describe('withAnthropicPromptCaching', () => {
     expect(out.messages).toEqual([]);
   });
 });
+
+describe('withAnthropicPromptCaching — `prompt` shorthand (regression)', () => {
+  // Found by the model-conformance suite on its first run against the native
+  // Anthropic harness. The AI SDK accepts EITHER `prompt` OR `messages`, never
+  // both; this helper used to append `messages` unconditionally, so every call
+  // using the documented `prompt` shorthand failed outright with
+  // "Invalid prompt: prompt and messages cannot be defined at the same time".
+  //
+  // Latent rather than live — the runner always builds `messages` — but a trap
+  // for the next caller.
+
+  it('leaves a bare `prompt` untouched instead of adding an empty messages array', () => {
+    const out = withAnthropicPromptCaching({ prompt: 'Réponds: OK', maxOutputTokens: 16 }) as {
+      prompt?: unknown;
+      messages?: unknown;
+    };
+    expect(out.prompt).toBe('Réponds: OK');
+    expect(out.messages).toBeUndefined();
+  });
+
+  it('leaves a `prompt` + `system` pair untouched — no system promotion either', () => {
+    // Promoting `system` to a system MESSAGE would reintroduce the same
+    // conflict by another route.
+    const out = withAnthropicPromptCaching({ prompt: 'x', system: 'Tu es un agent.' }) as {
+      prompt?: unknown;
+      messages?: unknown;
+      system?: unknown;
+    };
+    expect(out.prompt).toBe('x');
+    expect(out.system).toBe('Tu es un agent.');
+    expect(out.messages).toBeUndefined();
+  });
+
+  it('still annotates when `messages` is present, even alongside a stray prompt key', () => {
+    const out = withAnthropicPromptCaching({
+      messages: [{ role: 'user', content: 'hi' }],
+    }) as { messages?: Array<{ providerOptions?: unknown }> };
+    expect(out.messages).toHaveLength(1);
+    expect(out.messages?.[0]?.providerOptions).toBeDefined();
+  });
+});

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
@@ -18,6 +19,13 @@ interface Props {
    *  (e.g. the agent's name) before the confirm button enables. Reserve it
    *  for the truly irreversible deletes. */
   typeToConfirm?: string;
+  /**
+   * Extra content under the message — for a choice that BELONGS to the
+   * decision being confirmed, e.g. how wide a standing grant should reach.
+   * Not a general slot: anything that is not part of this decision belongs in
+   * a form, not in a confirmation.
+   */
+  extra?: ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -38,6 +46,7 @@ export default function ConfirmDialog({
   cancelLabel = 'Cancel',
   destructive = true,
   typeToConfirm,
+  extra,
   onConfirm,
   onCancel,
 }: Props) {
@@ -94,6 +103,7 @@ export default function ConfirmDialog({
             {title}
           </h2>
           {message && <p className="mt-2 text-sm text-ink-3 leading-relaxed">{message}</p>}
+          {extra && <div className="mt-3">{extra}</div>}
           {typeToConfirm && (
             <div className="mt-4">
               <p className="text-body-13 text-ink-3">

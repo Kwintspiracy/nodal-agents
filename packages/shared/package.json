@@ -15,5 +15,8 @@
   },
   "dependencies": {
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@nodal-agents/test-kit": "workspace:*"
   }
 }

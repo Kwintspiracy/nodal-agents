@@ -1,0 +1,59 @@
+{
+  "sectionId": "gate",
+  "gitSha": "2805c3e",
+  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "metrics": [
+    {
+      "id": "decisions_total",
+      "label": "Décisions mesurées",
+      "value": 20,
+      "unit": "décisions",
+      "direction": "exact"
+    },
+    {
+      "id": "asks_human",
+      "label": "Suspend pour approbation",
+      "value": 10,
+      "unit": "décisions",
+      "direction": "exact",
+      "detail": [
+        "mcp_ordinaire@défaut → demande",
+        "mcp_ordinaire@propose_confirm → demande",
+        "mcp_declare_destructeur@défaut → demande",
+        "mcp_declare_destructeur@propose_confirm → demande",
+        "mcp_declare_destructeur@destructive_gate → demande",
+        "run_command_anodin@défaut → demande",
+        "run_command_anodin@propose_confirm → demande",
+        "run_command_destructeur@défaut → demande",
+        "run_command_destructeur@propose_confirm → demande",
+        "run_command_destructeur@destructive_gate → demande"
+      ]
+    },
+    {
+      "id": "runs_freely",
+      "label": "Passe sans demander",
+      "value": 10,
+      "unit": "décisions",
+      "direction": "exact",
+      "detail": [
+        "mcp_ordinaire@destructive_gate → passe",
+        "mcp_ordinaire@fully_autonomous → passe",
+        "mcp_declare_destructeur@fully_autonomous → passe",
+        "builtin_lecture@défaut → passe",
+        "builtin_lecture@propose_confirm → passe",
+        "builtin_lecture@destructive_gate → passe",
+        "builtin_lecture@fully_autonomous → passe",
+        "run_command_anodin@destructive_gate → passe",
+        "run_command_anodin@fully_autonomous → passe",
+        "run_command_destructeur@fully_autonomous → passe"
+      ]
+    },
+    {
+      "id": "blocked",
+      "label": "Refusé d’emblée",
+      "value": 0,
+      "unit": "décisions",
+      "direction": "exact"
+    }
+  ]
+}

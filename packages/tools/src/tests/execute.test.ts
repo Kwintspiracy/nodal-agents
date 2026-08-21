@@ -312,7 +312,8 @@ describe('executeTool', () => {
     const result = await executeTool(tool, { value: 'x' }, makeCtx(), makeOpts([rule]));
     expect(result.outcome).toBe('error');
     if (result.outcome === 'error') {
-      expect(result.error).toBe('blocked');
+      // Prescriptive since étape C: names the tool, forbids retry/workaround.
+      expect(result.error).toMatch(/^blocked: .*"blocked_tool"/);
     }
   });
 
@@ -448,7 +449,8 @@ describe('executeTool', () => {
 
     const result = await executeTool(tool, { value: 'x' }, makeCtx(), makeOpts([blockRule]));
     expect(result.outcome).toBe('error');
-    if (result.outcome === 'error') expect(result.error).toBe('blocked');
+    if (result.outcome === 'error')
+      expect(result.error).toMatch(/^blocked: .*"safe_default_blocked"/);
   });
 
   it('REGRESSION: a tool WITHOUT defaultApproval and no rule still executes (default unchanged)', async () => {

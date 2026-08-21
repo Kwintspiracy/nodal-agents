@@ -64,6 +64,18 @@ describe('MCP_CATALOG', () => {
     expect(stdio?.verifyToolName).toBeNull();
   });
 
+  it('contains the ComfyUI entry — official local stdio server via uvx, honestly pending', () => {
+    const comfy = MCP_CATALOG.find((e) => e.slug === 'comfyui');
+    expect(comfy).toBeDefined();
+    expect(comfy?.transport).toBe('stdio');
+    expect(comfy?.serverUrl).toBeNull();
+    expect(comfy?.command).toBe('uvx');
+    expect(comfy?.args).toEqual(['comfy-mcp']);
+    // Not live-verified on a real ComfyUI yet (needs uv + comfy-cli + a
+    // running instance) — the badge must say so, never claim verified.
+    expect(comfy?.status).toBe('pending');
+  });
+
   it('slugs are unique', () => {
     const slugs = MCP_CATALOG.map((e) => e.slug);
     expect(new Set(slugs).size).toBe(slugs.length);

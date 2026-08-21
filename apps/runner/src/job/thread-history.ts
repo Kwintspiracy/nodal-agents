@@ -382,7 +382,7 @@ export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  * message whose content equals `agent_jobs.task` — everything from that
  * index onwards is the job's own content. Empirically observed on job
  * 9c22d5b3 (2026-05-26) where 3 Stripe-related prior jobs all returned
- * the same stale Cortex pre-amble before this fix.
+ * the same stale MCP pre-amble before this fix.
  */
 function extractAssistantReply(row: {
   task: string;

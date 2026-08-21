@@ -195,6 +195,388 @@ describe('setRunCommandYoloAction — re-toggle never leaves a duplicate row —
   });
 });
 
+// ─── setCodeTaskYoloAction — mirrors setRunCommandYoloAction's R2 guarantee ───
+
+describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () => {
+  it('enable, then enable again (re-toggle race) leaves exactly ONE auto_approve row', async () => {
+    const agentId = await makeAgent('Audit2 CodeTask Yolo Agent');
+    const { setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
+
+    const first = await setCodeTaskYoloAction({ agentId, enabled: true });
+    expect(first.ok).toBe(true);
+    const second = await setCodeTaskYoloAction({ agentId, enabled: true });
+    expect(second.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ action: approvalRules.action })
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, _testEntityId),
+          eq(approvalRules.agentId, agentId),
+          eq(approvalRules.toolName, 'code_task'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.action).toBe('auto_approve');
+  });
+
+  it('disable removes the row', async () => {
+    const agentId = await makeAgent('Audit2 CodeTask Yolo Agent Off');
+    const { setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
+
+    await setCodeTaskYoloAction({ agentId, enabled: true });
+    const off = await setCodeTaskYoloAction({ agentId, enabled: false });
+    expect(off.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ action: approvalRules.action })
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, _testEntityId),
+          eq(approvalRules.agentId, agentId),
+          eq(approvalRules.toolName, 'code_task'),
+        ),
+      );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('does not touch a run_command rule on the same agent (distinct tool_name rows)', async () => {
+    const agentId = await makeAgent('Audit2 CodeTask And RunCommand Agent');
+    const { setRunCommandYoloAction, setCodeTaskYoloAction } =
+      await import('../src/lib/actions.ts');
+
+    await setRunCommandYoloAction({ agentId, enabled: true });
+    await setCodeTaskYoloAction({ agentId, enabled: true });
+
+    const rows = await _testDb!
+      .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
+
+    const toolNames = rows.map((r) => r.toolName).sort();
+    expect(toolNames).toEqual(['code_task', 'run_command']);
+    expect(rows.every((r) => r.action === 'auto_approve')).toBe(true);
+  });
+});
+
+// ─── setCliDefaultsAction — merge/clear semantics on agents.cli_defaults ─────
+
+describe('setCliDefaultsAction — merges per-provider, empty state collapses to NULL', () => {
+  it('sets model and effort for one provider', async () => {
+    const agentId = await makeAgent('Audit2 CliDefaults Agent');
+    const { setCliDefaultsAction } = await import('../src/lib/actions.ts');
+
+    const result = await setCliDefaultsAction({
+      agentId,
+      provider: 'claude',
+      model: 'claude-opus-5',
+      effort: 'high',
+    });
+    expect(result.ok).toBe(true);
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toEqual({ claude: { model: 'claude-opus-5', effort: 'high' } });
+  });
+
+  it('setting the second provider does not clobber the first', async () => {
+    const agentId = await makeAgent('Audit2 CliDefaults Both Agent');
+    const { setCliDefaultsAction } = await import('../src/lib/actions.ts');
+
+    await setCliDefaultsAction({
+      agentId,
+      provider: 'claude',
+      model: 'claude-opus-5',
+      effort: null,
+    });
+    await setCliDefaultsAction({
+      agentId,
+      provider: 'codex',
+      model: 'gpt-5-codex',
+      effort: 'medium',
+    });
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toEqual({
+      claude: { model: 'claude-opus-5' },
+      codex: { model: 'gpt-5-codex', effort: 'medium' },
+    });
+  });
+
+  it('clearing the only provider entry collapses cli_defaults to NULL, not {}', async () => {
+    const agentId = await makeAgent('Audit2 CliDefaults Clear Agent');
+    const { setCliDefaultsAction } = await import('../src/lib/actions.ts');
+
+    await setCliDefaultsAction({
+      agentId,
+      provider: 'claude',
+      model: 'claude-opus-5',
+      effort: 'high',
+    });
+    const cleared = await setCliDefaultsAction({
+      agentId,
+      provider: 'claude',
+      model: null,
+      effort: null,
+    });
+    expect(cleared.ok).toBe(true);
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toBeNull();
+  });
+
+  it('rejects a model value outside the allowed charset', async () => {
+    const agentId = await makeAgent('Audit2 CliDefaults Invalid Agent');
+    const { setCliDefaultsAction } = await import('../src/lib/actions.ts');
+
+    const result = await setCliDefaultsAction({
+      agentId,
+      provider: 'claude',
+      model: 'not a valid model!',
+      effort: null,
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+// ─── setCliProviderEnabledAction — owner allow-flag per coding-CLI provider ──
+
+describe('setCliProviderEnabledAction — per-provider allow-flag on cli_defaults', () => {
+  it('disabling stores enabled:false; re-enabling collapses back to NULL', async () => {
+    const agentId = await makeAgent('Audit2 CliEnabled Agent');
+    const { setCliProviderEnabledAction } = await import('../src/lib/actions.ts');
+
+    const off = await setCliProviderEnabledAction({ agentId, provider: 'codex', enabled: false });
+    expect(off.ok).toBe(true);
+    let [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toEqual({ codex: { enabled: false } });
+
+    const on = await setCliProviderEnabledAction({ agentId, provider: 'codex', enabled: true });
+    expect(on.ok).toBe(true);
+    [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    // true = absent: back to the pre-feature NULL, not `{codex:{enabled:true}}`.
+    expect(row?.cliDefaults).toBeNull();
+  });
+
+  it('REFUSES disabling the last enabled provider', async () => {
+    const agentId = await makeAgent('Audit2 CliEnabled Last Agent');
+    const { setCliProviderEnabledAction } = await import('../src/lib/actions.ts');
+
+    await setCliProviderEnabledAction({ agentId, provider: 'claude', enabled: false });
+    const result = await setCliProviderEnabledAction({
+      agentId,
+      provider: 'codex',
+      enabled: false,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain('At least one');
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    // codex untouched — only claude carries the flag.
+    expect(row?.cliDefaults).toEqual({ claude: { enabled: false } });
+  });
+
+  it('saving model/effort defaults PRESERVES a stored enabled:false', async () => {
+    const agentId = await makeAgent('Audit2 CliEnabled Preserve Agent');
+    const { setCliProviderEnabledAction, setCliDefaultsAction } =
+      await import('../src/lib/actions.ts');
+
+    await setCliProviderEnabledAction({ agentId, provider: 'claude', enabled: false });
+    await setCliDefaultsAction({ agentId, provider: 'claude', model: 'opus', effort: 'high' });
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toEqual({
+      claude: { model: 'opus', effort: 'high', enabled: false },
+    });
+  });
+});
+
+// ─── setReviewerReadOnlyPresetAction — bulk block, delete-only-block on off ───
+
+const READONLY_PRESET_TOOLS = [
+  'file_write',
+  'file_edit',
+  'skill_file_write',
+  'run_command',
+  'run_skill_script',
+];
+
+describe('setReviewerReadOnlyPresetAction', () => {
+  it('enable sets a block row on all 5 preset tools', async () => {
+    const agentId = await makeAgent('Audit2 ReadOnly Agent');
+    const { setReviewerReadOnlyPresetAction } = await import('../src/lib/actions.ts');
+
+    const result = await setReviewerReadOnlyPresetAction({ agentId, enabled: true });
+    expect(result.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
+
+    expect(rows.map((r) => r.toolName).sort()).toEqual([...READONLY_PRESET_TOOLS].sort());
+    expect(rows.every((r) => r.action === 'block')).toBe(true);
+  });
+
+  it('enable is idempotent — calling it twice still leaves exactly 5 rows', async () => {
+    const agentId = await makeAgent('Audit2 ReadOnly Idempotent Agent');
+    const { setReviewerReadOnlyPresetAction } = await import('../src/lib/actions.ts');
+
+    await setReviewerReadOnlyPresetAction({ agentId, enabled: true });
+    const second = await setReviewerReadOnlyPresetAction({ agentId, enabled: true });
+    expect(second.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
+
+    expect(rows).toHaveLength(READONLY_PRESET_TOOLS.length);
+    expect(rows.every((r) => r.action === 'block')).toBe(true);
+  });
+
+  it('disable removes only the block rows, a require_approval rule set by hand survives', async () => {
+    const agentId = await makeAgent('Audit2 ReadOnly Disable Agent');
+    const { setReviewerReadOnlyPresetAction, setAgentApprovalRuleAction } =
+      await import('../src/lib/actions.ts');
+
+    await setReviewerReadOnlyPresetAction({ agentId, enabled: true });
+    // A rule the user set by hand, on one of the same 5 tools, but a
+    // DIFFERENT action — must not be treated as "part of the preset".
+    await setAgentApprovalRuleAction({
+      agentId,
+      toolName: 'run_command',
+      action: 'require_approval',
+    });
+
+    const disable = await setReviewerReadOnlyPresetAction({ agentId, enabled: false });
+    expect(disable.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.toolName).toBe('run_command');
+    expect(rows[0]?.action).toBe('require_approval');
+  });
+
+  it('disable on an agent with no rules is a harmless no-op', async () => {
+    const agentId = await makeAgent('Audit2 ReadOnly Never Enabled Agent');
+    const { setReviewerReadOnlyPresetAction } = await import('../src/lib/actions.ts');
+
+    const result = await setReviewerReadOnlyPresetAction({ agentId, enabled: false });
+    expect(result.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ toolName: approvalRules.toolName })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
+    expect(rows).toHaveLength(0);
+  });
+});
+
+// ─── setAgentRuntimeAction — pose/repose runtime, refuses 'codex' ─────────────
+
+describe('setAgentRuntimeAction', () => {
+  it('sets runtime to claude-code, then back to nodal', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Agent');
+    const { setAgentRuntimeAction } = await import('../src/lib/actions.ts');
+
+    const toClaudeCode = await setAgentRuntimeAction({ agentId, runtime: 'claude-code' });
+    expect(toClaudeCode.ok).toBe(true);
+
+    const [afterSwitch] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(afterSwitch?.runtime).toBe('claude-code');
+
+    const backToNodal = await setAgentRuntimeAction({ agentId, runtime: 'nodal' });
+    expect(backToNodal.ok).toBe(true);
+
+    const [afterRevert] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(afterRevert?.runtime).toBe('nodal');
+  });
+
+  it('refuses "codex" at validation — the Zod enum only accepts nodal/claude-code', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Codex Refused Agent');
+    const { setAgentRuntimeAction } = await import('../src/lib/actions.ts');
+
+    const result = await setAgentRuntimeAction({ agentId, runtime: 'codex' });
+    expect(result.ok).toBe(false);
+
+    const [row] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.runtime).toBe('nodal');
+  });
+});
+
+// ─── setCliRuntimeModeAction — merges mode, never erases extraDisallowed ──────
+
+describe('setCliRuntimeModeAction', () => {
+  it('merges mode onto existing cli_permissions without touching extraDisallowed', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Mode Agent');
+    // Seed a pre-existing permission shape the action must preserve untouched.
+    await _testDb!
+      .update(agents)
+      .set({ cliPermissions: { mode: 'read', extraDisallowed: ['WebSearch'] } })
+      .where(eq(agents.id, agentId));
+
+    const { setCliRuntimeModeAction } = await import('../src/lib/actions.ts');
+    const result = await setCliRuntimeModeAction({ agentId, mode: 'write' });
+    expect(result.ok).toBe(true);
+
+    const [row] = await _testDb!
+      .select({ cliPermissions: agents.cliPermissions })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliPermissions).toEqual({ mode: 'write', extraDisallowed: ['WebSearch'] });
+  });
+
+  it('sets mode on an agent with no prior cli_permissions row', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Mode Fresh Agent');
+    const { setCliRuntimeModeAction } = await import('../src/lib/actions.ts');
+
+    const result = await setCliRuntimeModeAction({ agentId, mode: 'write' });
+    expect(result.ok).toBe(true);
+
+    const [row] = await _testDb!
+      .select({ cliPermissions: agents.cliPermissions })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliPermissions).toEqual({ mode: 'write' });
+  });
+});
+
 // ─── F-18/F-19: updateAgentAction sub-agent rewrite ───────────────────────────
 
 describe('updateAgentAction — sub-agent rewrite is atomic and deduped — F-18/F-19', () => {

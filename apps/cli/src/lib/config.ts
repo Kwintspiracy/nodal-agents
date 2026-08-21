@@ -29,6 +29,41 @@ function restrictFileToOwner(path: string): void {
   }
 }
 
+/**
+ * Same restriction, for a DIRECTORY and everything created inside it.
+ *
+ * SECRET-002 (audit 2026-08-07). The file-level hardening above works — verified
+ * with `icacls` on a real install: config.json and secrets.key each showed
+ * `<user>:(F)` alone, inheritance stripped. But it was only ever applied to
+ * those two files. The DIRECTORIES kept the profile's inherited ACL:
+ *
+ *   pg-data\  NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+ *             BUILTIN\Administrators:(I)(OI)(CI)(F)
+ *             <user>:(I)(OI)(CI)(F)
+ *
+ * pg-data holds the entire database — transcripts, memory, connector tokens — so
+ * a second standard account on the machine could read everything without ever
+ * touching secrets.key. `(OI)(CI)` makes the grant inheritable so files created
+ * later (new WAL segments, rotated logs) are covered too.
+ */
+function restrictDirToOwner(path: string): void {
+  try {
+    chmodSync(path, 0o700); // POSIX; no-op on Windows
+  } catch {
+    /* ignore */
+  }
+  if (process.platform !== 'win32') return;
+  const user = process.env['USERNAME'] || process.env['USER'];
+  if (!user) return;
+  try {
+    execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${user}:(OI)(CI)F`], {
+      stdio: 'ignore',
+    });
+  } catch {
+    /* best-effort: a directory we could not tighten is still usable */
+  }
+}
+
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
@@ -87,6 +122,21 @@ export const ConfigSchema = z.object({
    * re-login) — an acceptable one-time cost for closing the amplification.
    */
   authSecret: z.string().length(44).optional(),
+  /**
+   * Password for the embedded Postgres role, minted per install.
+   *
+   * SECRET-003 (audit 2026-08-07). Both the role and the password used to be the
+   * literal `nodalai`, hardcoded and identical on every installation, on a
+   * predictable port. Any process or second account on the machine could open
+   * the database directly — reading transcripts, memory and connector tokens —
+   * without going near the file ACLs that protect secrets.key.
+   *
+   * Optional for back-compat: an install created before this field exists has a
+   * cluster whose role still carries the old password. `up` rotates it on the
+   * next boot (see rotatePostgresPassword in lib/postgres.ts) and persists the
+   * new value here; until that succeeds, LEGACY_PG_PASSWORD is what works.
+   */
+  postgresPassword: z.string().min(16).optional(),
   bind: z.enum(['loopback', 'lan']).default('loopback'),
   bearerToken: z.string().optional(),
   /**
@@ -121,6 +171,10 @@ export function ensureConfigDir(): void {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
+    // SECRET-002: applied on every call, not only at creation — existing
+    // installs were made before this and would otherwise keep the inherited ACL
+    // forever. Idempotent and cheap.
+    restrictDirToOwner(dir);
   }
 }
 

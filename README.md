@@ -55,7 +55,7 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 - **A model per agent** — run Claude for the orchestrator and a cheap OSS model for the workers; setup is just one API key per provider.
 - **OSS frontier models, handled** — DeepSeek's non-spec tool args, Kimi/Qwen/GLM XML tool formats, and round-tripping a reasoning model's chain-of-thought (MiniMax M3, DeepSeek, Gemini 3) across tool calls — all automatic, so they don't degrade mid-task.
 - **Provider failover** — give an agent a backup key chain; on a 5xx, timeout, or quota mid-job the runner fails over to the next one and only fails loud when the whole chain is down.
-- **Guards against runaway, lies, and silent stops** — a real-dollar cost cap (from the provider's billed cost), a no-progress detector, an atomic job claim (never run the same job twice), and a no-false-success guard that refuses to report "done" when an action actually failed.
+- **Guards against runaway, lies, and silent stops** — a **token budget per job** that applies to every provider, a **dollar cap that applies only where the provider reports its billed cost** (today: OpenRouter with `usage:{include:true}` — elsewhere the cost reads `$0` and the token budget is the backstop), a no-progress detector, an atomic job claim (never run the same job twice), and a no-false-success guard that refuses to report "done" when an action actually failed.
 - **Diagnosable failures** — every failed job keeps its full transcript, the real upstream error, and a short, specific reason — propagated up through delegation, never a silent stop.
 
 ### 🤝 Agents that actually finish

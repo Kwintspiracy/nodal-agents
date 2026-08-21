@@ -58,11 +58,73 @@ export function testSlugSuffix(): string {
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
-const DB_URL = 'postgresql://nodalai:nodalai@localhost:25433/nodalai';
+/**
+ * The port the embedded Postgres is ACTUALLY listening on, read from its own
+ * lockfile (`postmaster.pid` line 4 — the standard layout: pid, data dir, start
+ * time, port, socket dir, listen address).
+ *
+ * This used to be the literal `25433`, and on 2026-08-11 that single number was
+ * failing THIRTEEN specs at once — a third of the suite. The cluster read as
+ * thirteen broken journeys ("Failed query: select id from users…", Drizzle
+ * hiding the ECONNREFUSED in `err.cause` as usual) when it was one wrong port:
+ * `up` walks upward from 25432 when the port is taken, and this machine had
+ * landed on 25436. Nobody could have noticed, because these specs had not been
+ * replayed since the port drifted.
+ *
+ * Reading the lockfile is also the only form that is correct on someone else's
+ * machine — a hardcoded port is invariant #6 (no per-user values) written in a
+ * test. NODALAI_E2E_DB_URL overrides for a stack running elsewhere.
+ *
+ * The PASSWORD had drifted the same way and for a better reason: SECRET-003
+ * (audit 2026-08-07) stopped shipping the literal `nodalai` to every install and
+ * mints one per machine into config.json. So the hardcoded credential had been
+ * dead since 8 August, and again nothing said so. It is read from the same
+ * config the runner uses, falling back to the legacy value only for a cluster
+ * created before the rotation — the same back-compat rule as the CLI's.
+ */
+function resolveDbUrl(): string {
+  const override = process.env['NODALAI_E2E_DB_URL'];
+  if (override) return override;
+
+  const pidFile = join(homedir(), '.nodalai', 'pg-data', 'postmaster.pid');
+  let port: number;
+  try {
+    const line = readFileSync(pidFile, 'utf8').split('\n')[3]?.trim() ?? '';
+    port = Number.parseInt(line, 10);
+  } catch (err) {
+    throw new Error(
+      `Cannot read the Postgres port from ${pidFile} (${(err as Error).message}). ` +
+        'Is the stack running? Start it with `nodal-agents up`, or point the tests at ' +
+        'another stack with NODALAI_E2E_DB_URL.',
+    );
+  }
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(
+      `${pidFile} line 4 is not a port ("${port}"). Refusing to guess — set NODALAI_E2E_DB_URL.`,
+    );
+  }
+
+  const configPath =
+    process.env['NODALAI_CONFIG_PATH'] ?? join(homedir(), '.nodalai', 'config.json');
+  let password = 'nodalai';
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, 'utf8')) as { postgresPassword?: unknown };
+    if (typeof cfg.postgresPassword === 'string' && cfg.postgresPassword.length > 0) {
+      password = cfg.postgresPassword;
+    }
+  } catch (err) {
+    throw new Error(
+      `Cannot read ${configPath} (${(err as Error).message}) — the Postgres password lives there ` +
+        'since SECRET-003. Set NODALAI_E2E_DB_URL to bypass.',
+    );
+  }
+
+  return `postgresql://nodalai:${encodeURIComponent(password)}@localhost:${port}/nodalai`;
+}
 
 /** Create a Drizzle client for the local embedded Postgres instance. */
 export function makeDbClient() {
-  return createClient(DB_URL);
+  return createClient(resolveDbUrl());
 }
 
 /**

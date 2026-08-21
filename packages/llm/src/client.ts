@@ -9,6 +9,8 @@ import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
+import { buildLlmCallObservation, emitLlmCall } from './observe';
+import type { LlmCallObserver, LlmClientMeta } from './observe';
 
 import { buildAnthropicModel } from './providers/anthropic';
 import { withAnthropicPromptCaching, stripSystemCacheBoundary } from './providers/anthropic-cache';
@@ -278,6 +280,15 @@ export interface CreateLlmClientOptions {
    * Set by createFailoverLlmClient; a standalone client never has a fallback.
    */
   hasFallback?: boolean;
+  /**
+   * Inference-trace observer (étape D): called once per generateText/
+   * generateObject invocation on THIS client (i.e. per failover-link attempt),
+   * on success AND on terminal failure. Injected by the runner (llm_calls
+   * sink) — packages/llm has no DB dependency. Never throws into the call.
+   */
+  onCall?: LlmCallObserver;
+  /** Caller-supplied link identity echoed into every observation. */
+  meta?: LlmClientMeta;
 }
 
 export function createLlmClient(
@@ -310,41 +321,77 @@ export function createLlmClient(
     capabilities.promptCaching &&
     config.cachingEnabled !== false;
 
+  // Observation plumbing (étape D): one observation per invocation of this
+  // client, success or terminal failure — the retry/stale/floor stack inside
+  // counts as ONE attempt from the trace's point of view (its outcome is what
+  // the caller saw). durationMs therefore spans the whole stack.
+  const observe = (
+    kind: 'generateText' | 'generateObject',
+    callArgs: unknown,
+    result: unknown | null,
+    error: unknown | null,
+    startedAt: number,
+  ): void => {
+    if (!opts.onCall) return;
+    emitLlmCall(
+      opts.onCall,
+      buildLlmCallObservation({
+        kind,
+        provider: config.provider,
+        modelConfigured: config.model,
+        reasoningEffort: config.reasoningEffort ?? null,
+        callArgs,
+        result,
+        error,
+        durationMs: Date.now() - startedAt,
+        meta: opts.meta ?? {},
+      }),
+    );
+  };
+
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
     // Caching path splits on the E1 boundary; non-caching path strips it so the
     // marker never leaks into a non-Anthropic provider's prompt.
     const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
-    // tool_choice floor: if the provider rejects a forced tool_choice value
-    // (some OpenRouter routes reject it), retry once with 'auto' — logged.
-    return generateWithToolChoiceFloor(
-      (override) =>
-        withRetry(
-          () =>
-            withStaleRetry(
-              (timeoutMs) =>
-                generateText({
-                  ...prepared,
-                  model,
-                  ...(override ? { toolChoice: override } : {}),
-                  // AI SDK native timeout via AbortSignal.timeout(). Survives
-                  // middleware wrapping unlike a passed-in abortSignal which their
-                  // internal retry can swallow. timeoutMs varies per attempt:
-                  // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
-                  // for subsequent fresh-connection stale retries.
-                  timeout: timeoutMs,
-                  // Disable AI SDK internal retry — we own retries via withRetry to
-                  // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
-                  maxRetries: 0,
-                } as Parameters<typeof generateText>[0]),
-              providerModel,
-            ),
-          retryOpts,
-        ),
-      toolChoice,
-      `${config.provider}/${config.model}`,
-    );
+    const startedAt = Date.now();
+    try {
+      // tool_choice floor: if the provider rejects a forced tool_choice value
+      // (some OpenRouter routes reject it), retry once with 'auto' — logged.
+      const result = await generateWithToolChoiceFloor(
+        (override) =>
+          withRetry(
+            () =>
+              withStaleRetry(
+                (timeoutMs) =>
+                  generateText({
+                    ...prepared,
+                    model,
+                    ...(override ? { toolChoice: override } : {}),
+                    // AI SDK native timeout via AbortSignal.timeout(). Survives
+                    // middleware wrapping unlike a passed-in abortSignal which their
+                    // internal retry can swallow. timeoutMs varies per attempt:
+                    // LLM_TIMEOUT_MS for the primary, LLM_STALE_RETRY_TIMEOUT_MS
+                    // for subsequent fresh-connection stale retries.
+                    timeout: timeoutMs,
+                    // Disable AI SDK internal retry — we own retries via withRetry to
+                    // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+                    maxRetries: 0,
+                  } as Parameters<typeof generateText>[0]),
+                providerModel,
+              ),
+            retryOpts,
+          ),
+        toolChoice,
+        `${config.provider}/${config.model}`,
+      );
+      observe('generateText', args, result, null, startedAt);
+      return result;
+    } catch (err) {
+      observe('generateText', args, null, err, startedAt);
+      throw err;
+    }
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (args) => {
@@ -361,20 +408,28 @@ export function createLlmClient(
   const clientGenerateObject: NodalLlmClient['generateObject'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
-    return withRetry(
-      () =>
-        withStaleRetry(
-          (timeoutMs) =>
-            generateObject({
-              ...prepared,
-              model,
-              timeout: timeoutMs,
-              maxRetries: 0,
-            } as Parameters<typeof generateObject>[0]),
-          providerModel,
-        ),
-      retryOpts,
-    );
+    const startedAt = Date.now();
+    try {
+      const result = await withRetry(
+        () =>
+          withStaleRetry(
+            (timeoutMs) =>
+              generateObject({
+                ...prepared,
+                model,
+                timeout: timeoutMs,
+                maxRetries: 0,
+              } as Parameters<typeof generateObject>[0]),
+            providerModel,
+          ),
+        retryOpts,
+      );
+      observe('generateObject', args, result, null, startedAt);
+      return result;
+    } catch (err) {
+      observe('generateObject', args, null, err, startedAt);
+      throw err;
+    }
   };
 
   return {

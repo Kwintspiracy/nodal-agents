@@ -104,10 +104,12 @@ const CONN_ICONS: Record<string, string> = {
   perplexity: '/connector-icons/perplexity.svg',
   linear: '/connector-icons/linear.svg',
   n8n: '/connector-icons/n8n.svg',
-  // API connectors — firecrawl (svgl), apify (official favicon), tavily (LobeHub).
+  // API connectors — firecrawl (svgl), apify (official favicon), tavily (LobeHub),
+  // cloudflare (design/app-icons, retour Quentin 20/08).
   firecrawl: '/connector-icons/firecrawl.svg',
   apify: '/connector-icons/apify.svg',
   tavily: '/connector-icons/tavily.svg',
+  cloudflare: '/connector-icons/cloudflare.svg',
   // Generic-tool + remaining brand icons: fetch → Lucide globe; keyshot favicon;
   // composio favicon (PNG — no public SVG).
   'mcp-fetch': '/connector-icons/fetch.svg',

@@ -19,6 +19,11 @@ export const approvalRequests = pgTable(
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
     toolName: text('tool_name').notNull(),
     toolInput: jsonb('tool_input').notNull(),
+    // The AI SDK tool-call id of the gated tool_use block (étape D). Lets the
+    // resume path replace the EXACT awaiting marker instead of matching by
+    // toolName alone (a fragility documented in the runner), and stamps the
+    // replayed tool_calls row with its original id.
+    toolCallId: text('tool_call_id'),
     status: text('status').default('pending'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),

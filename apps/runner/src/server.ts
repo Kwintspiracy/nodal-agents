@@ -14,10 +14,12 @@ import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { webhookRoute } from './routes/webhook.ts';
+import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import {
   installSkillRoute,
   uninstallSkillRoute,
   updateSkillRoute,
+  previewSkillUpdateRoute,
   acknowledgeSkillUpdateRoute,
 } from './routes/skills.ts';
 import {
@@ -34,7 +36,7 @@ import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
-import { AuthError } from '@nodal-agents/auth';
+import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
 import './lib/runner-auth-context.ts';
 import type { RunnerDeps } from './deps.ts';
@@ -66,6 +68,52 @@ export function createApp(
   whatsappManager: WhatsAppManagerHandle | null = null,
 ): Hono {
   const app = new Hono();
+
+  // ── requireTrustedOrigin ─────────────────────────────────────────────────────
+  //
+  // NETWORK-001 (audit 2026-08-07). Binding to 127.0.0.1 keeps the runner off the
+  // network but NOT out of the user's own browser: any page they visit can POST
+  // to http://127.0.0.1:3001/api/agent. Measured on a real install in the DEFAULT
+  // configuration (bind=loopback → local-trust): a request with no Authorization,
+  // a hostile Origin, a forged Host, or a `text/plain` body (a CORS "simple"
+  // request, so no preflight the server could refuse) all returned 202 and the
+  // log showed `[exec …] enter` — the agent actually ran.
+  //
+  // So `local-trust` must keep meaning "no user authentication", not "accept
+  // instructions from any web page". This gate runs BEFORE requireRunnerAuth and
+  // is independent of AUTH_MODE. See packages/auth/src/lib/request-origin.ts for
+  // why Origin and Host are both needed (Origin stops CSRF; Host stops DNS
+  // rebinding, where the two agree and an Origin-vs-Host comparison passes).
+  //
+  // Applied to /api/* only. `/webhooks/:slug/:secret` is deliberately excluded:
+  // it exists to be called by third-party services that legitimately arrive with
+  // an arbitrary Host (a tunnel hostname, a reverse proxy), and its auth is the
+  // slug+secret pair checked against the webhook_triggers row.
+  const requireTrustedOrigin = async (
+    c: Context,
+    next: () => Promise<void>,
+  ): Promise<Response | void> => {
+    // The authority can arrive two ways: the `Host` header on HTTP/1.1, or the
+    // `:authority` pseudo-header on HTTP/2 — where `Host` is absent entirely.
+    // Hono always reflects whichever one it got into `c.req.url`, so that is the
+    // reliable source; the header is preferred when present because it is the
+    // literal bytes the client sent.
+    const host = c.req.header('host') ?? new URL(c.req.url).host;
+    const rejection = checkRequestOrigin({
+      origin: c.req.header('origin'),
+      host,
+      appUrl: runnerEnv.APP_URL,
+    });
+    if (rejection) {
+      // Invariant 2: no user-facing prose from the runner — a machine-readable
+      // code only. 403 rather than 401: this is not about who is calling, it is
+      // about where the call came from, and no credential fixes it.
+      return c.json({ error: rejection }, 403);
+    }
+    await next();
+  };
+
+  app.use('/api/*', requireTrustedOrigin);
 
   // ── requireRunnerAuth ────────────────────────────────────────────────────────
   //
@@ -151,6 +199,7 @@ export function createApp(
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   app.use('/api/whatsapp/pairing', requireRunnerAuth);
+  app.use('/api/code-task/doctor', requireRunnerAuth);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -171,6 +220,7 @@ export function createApp(
   app.post('/api/skills/install', (c) => installSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/update', (c) => updateSkillRoute(c, deps, runnerEnv));
+  app.post('/api/skills/preview-update', (c) => previewSkillUpdateRoute(c, deps, runnerEnv));
   app.post('/api/skills/acknowledge-update', (c) =>
     acknowledgeSkillUpdateRoute(c, deps, runnerEnv),
   );
@@ -180,6 +230,10 @@ export function createApp(
   // one; the routes answer 503 rather than crash).
   app.get('/api/whatsapp/pairing', (c) => whatsappPairingStatusRoute(c, deps, whatsappManager));
   app.post('/api/whatsapp/pairing', (c) => whatsappPairingStartRoute(c, deps, whatsappManager));
+
+  // Coding-CLI doctor (étape B) — probes claude/codex health on this machine
+  // for the capability UI's "Tester" button. Free (no subscription usage).
+  app.post('/api/code-task/doctor', (c) => codeTaskDoctorRoute(c));
 
   // Inbound webhooks (Brique 5) — intentionally OUTSIDE requireRunnerAuth
   // (that gate is a literal-path app.use on the four /api/* routes above, so

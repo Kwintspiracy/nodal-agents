@@ -3,18 +3,27 @@
 // WeeklyActivityChart — 12-week rolling view of jobs, two decompositions at
 // once on one shared count axis:
 //
-//   • Stacked bars  → jobs by STATUS (completed / awaiting / pending /
+//   • Stacked bars  → JOBS by status (completed / awaiting / pending /
 //     cancelled / failed). Kept as a dimmed background layer so they read as
 //     context, not the headline.
-//   • Lines         → jobs by the LLM MODEL the agent ran. One line per
-//     distinct model seen in the window.
+//   • Lines         → LLM CALLS by the model that actually answered, one line
+//     per distinct model seen in the window.
 //
-// Both add up to the same weekly total (Σ status == total jobs == Σ models),
-// so the bars and the lines are two consistent cuts of the identical data —
-// you can read "how much ran" and "which model ran it" in a single glance.
+// The two do NOT add up to the same total, and that is deliberate. The lines
+// used to be jobs decomposed by `agents.model` — the model configured on the
+// agent TODAY — which meant switching an agent's model rewrote twelve weeks of
+// history (reported 2026-08-21: "the week of 22 June shows GLM 5.3, and GLM 5.3
+// came out yesterday"). They now come from `llm_calls.model_effective`, recorded
+// per call at the time of the call. A job makes several calls, so the unit
+// differs: bars answer "how much work ran", lines answer "which model did it".
 //
-// The legend is custom so the two cuts read as two SEPARATE groups ("Status"
-// vs "Models") rather than one undifferentiated row of swatches.
+// Weeks before 19/08/2026 carry no line at all: the effective model was never
+// persisted before migration 0075. A gap that says "not measured" beats a
+// plausible value that says something false.
+//
+// The legend is custom so the two cuts read as two SEPARATE groups — "Jobs by
+// status" vs "LLM calls by model" — rather than one undifferentiated row of
+// swatches. The labels name their unit on purpose, now that the two differ.
 //
 // Read-only: receives the pivot from `getWeeklyActivityAction` server-side
 // (no client fetch). The /stats page can re-render at any time and the
@@ -100,7 +109,7 @@ function WeeklyLegend({ payload }: { payload?: LegendItem[] }) {
       {statusItems.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="font-mono text-legacy-10 uppercase tracking-[0.14em] text-ink-4">
-            Status
+            Jobs by status
           </span>
           {statusItems.map((p) => (
             <span key={p.value} className="inline-flex items-center gap-1.5">
@@ -115,8 +124,11 @@ function WeeklyLegend({ payload }: { payload?: LegendItem[] }) {
       )}
       {modelItems.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {/* "LLM calls", not "Models": the lines count CALLS while the bars
+              count JOBS, and a job makes several calls. Saying only "Models"
+              invited reading both against the same axis. */}
           <span className="font-mono text-legacy-10 uppercase tracking-[0.14em] text-ink-4">
-            Models
+            LLM calls by model
           </span>
           {modelItems.map((p) => (
             <span key={p.value} className="inline-flex items-center gap-1.5">

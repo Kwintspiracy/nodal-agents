@@ -16,6 +16,7 @@
   "dependencies": {
     "@nodal-agents/adapter-airtable": "workspace:*",
     "@nodal-agents/adapter-apify": "workspace:*",
+    "@nodal-agents/adapter-cloudflare": "workspace:*",
     "@nodal-agents/adapter-firecrawl": "workspace:*",
     "@nodal-agents/adapter-gmail": "workspace:*",
     "@nodal-agents/adapter-google-calendar": "workspace:*",
@@ -31,6 +32,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.7.0"
+    "@types/node": "^25.7.0",
+    "@nodal-agents/test-kit": "workspace:*"
   }
 }

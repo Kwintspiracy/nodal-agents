@@ -89,6 +89,16 @@ const SECRET_NAME_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL|
 export function buildChildEnv(
   sourceEnv: Record<string, string | undefined>,
   extras?: Record<string, string>,
+  opts?: {
+    /**
+     * EXACT extra names allowed through DESPITE matching SECRET_NAME_PATTERN.
+     * The one legitimate use is deliberately handing a child a credential the
+     * runner owns — e.g. ANTHROPIC_API_KEY for a coding CLI's BYO-API-key mode
+     * (D0 of the subscription-runtimes plan). Named exemptions only — never a
+     * pattern, never a widening of the allowlist.
+     */
+    allowSecretExtras?: string[];
+  },
 ): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(sourceEnv)) {
@@ -102,11 +112,21 @@ export function buildChildEnv(
   }
   // Runner-authored additions (e.g. NODAL_SHARED_WORKSPACE — the shared
   // workspace path handed to scripts so generation artifacts land there, not
-  // in the skill bundle). These are paths/config the runner chooses to expose,
-  // never inherited secrets — so they bypass the allowlist but still go
-  // through the secret-shape guard as belt and braces.
+  // in the skill bundle). These are paths/config the caller chooses to expose,
+  // so they bypass the allowlist — but a secret-shaped NAME must be either
+  // EXPLICITLY exempted (allowSecretExtras) or a loud error. It used to be
+  // silently dropped, which turned "inject ANTHROPIC_API_KEY for API-billing
+  // mode" into "silently bill the subscription instead" — a textbook
+  // invariant-#4 violation (audit A-bis, 2026-08-19).
+  const exempt = new Set(opts?.allowSecretExtras ?? []);
   for (const [key, value] of Object.entries(extras ?? {})) {
-    if (SECRET_NAME_PATTERN.test(key)) continue;
+    if (SECRET_NAME_PATTERN.test(key) && !exempt.has(key)) {
+      throw new Error(
+        `buildChildEnv: extra "${key}" matches SECRET_NAME_PATTERN and is not in ` +
+          `allowSecretExtras — refusing to silently drop it. Either rename the variable ` +
+          `or exempt it BY NAME on purpose.`,
+      );
+    }
     result[key] = value;
   }
   return result;

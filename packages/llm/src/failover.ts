@@ -14,6 +14,7 @@
 // recovered primary is picked up on the next job, not mid-run.
 
 import type { ProviderConfig, NodalLlmClient } from './types';
+import type { LlmCallObserver, LlmClientMeta } from './observe';
 import {
   RetryExhaustedError,
   LLMTimeoutError,
@@ -164,7 +165,15 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
  * config is the primary; the rest are fallbacks tried in order. A single config
  * yields a plain client (zero overhead, identical behaviour).
  */
-export function createFailoverLlmClient(configs: ProviderConfig[]): NodalLlmClient {
+export function createFailoverLlmClient(
+  configs: ProviderConfig[],
+  opts: {
+    /** Shared inference-trace observer, one observation per link attempt (étape D). */
+    onCall?: LlmCallObserver;
+    /** Per-link identity (keyId, modelRequested) — index-aligned with configs. */
+    metas?: LlmClientMeta[];
+  } = {},
+): NodalLlmClient {
   if (configs.length === 0) {
     throw new ProviderConfigError('failover: at least one provider config is required');
   }
@@ -173,6 +182,14 @@ export function createFailoverLlmClient(configs: ProviderConfig[]): NodalLlmClie
   // congestion. The last provider keeps the patient policy: waiting is its
   // only remaining card (see RetryOptions.hasFallback).
   return createFailoverFromClients(
-    configs.map((c, i) => createLlmClient(c, { hasFallback: i < configs.length - 1 })),
+    configs.map((c, i) =>
+      createLlmClient(c, {
+        hasFallback: i < configs.length - 1,
+        onCall: opts.onCall,
+        // chainIndex identifies failover in the trace: any observation with
+        // chainIndex > 0 was served (or attempted) by a fallback link.
+        meta: { ...(opts.metas?.[i] ?? {}), chainIndex: i },
+      }),
+    ),
   );
 }

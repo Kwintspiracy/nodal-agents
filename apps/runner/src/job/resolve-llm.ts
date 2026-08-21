@@ -12,7 +12,12 @@
 
 import { inArray, entityLlmKeys, type AnyDrizzleDb } from '@nodal-agents/db';
 import { createLlmClient, createFailoverLlmClient } from '@nodal-agents/llm';
-import type { ProviderConfig, NodalLlmClient } from '@nodal-agents/llm';
+import type {
+  ProviderConfig,
+  NodalLlmClient,
+  LlmCallObserver,
+  LlmClientMeta,
+} from '@nodal-agents/llm';
 import {
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -78,6 +83,12 @@ export async function resolveAgentLlmClient(
     reasoningEffort?: string | null;
   },
   onSkip?: (info: { keyId: string; reason: string }) => void,
+  /**
+   * Inference-trace observer (étape D): injected into every chain link's
+   * client so each attempt lands in llm_calls. Built by the caller with its
+   * own context (source, jobId, turn getter) — see llm/call-sink.ts.
+   */
+  observe?: LlmCallObserver,
 ): Promise<ResolveLlmResult> {
   if (!agent.llmKeyId) return { ok: false, reason: 'agent_no_llm_configured' };
 
@@ -108,6 +119,10 @@ export async function resolveAgentLlmClient(
 
   try {
     const configs: ProviderConfig[] = [];
+    // Index-aligned with configs (étape D): what each link ASKED for + its key
+    // id, echoed into every observation so llm_calls records requested vs
+    // effective without re-resolution.
+    const metas: LlmClientMeta[] = [];
     for (const { keyId, model: requestedModel, effort } of requested) {
       const row = byId.get(keyId);
       if (!row || !row.isActive) {
@@ -145,6 +160,7 @@ export async function resolveAgentLlmClient(
         // undefined = Auto = pre-feature request bodies.
         reasoningEffort: effort,
       });
+      metas.push({ keyId, modelRequested: requestedModel.length > 0 ? requestedModel : null });
     }
 
     // No active key anywhere in the chain (primary disabled AND no usable
@@ -155,7 +171,12 @@ export async function resolveAgentLlmClient(
     // the first active fallback it failed over to.
     const effectivePrimary = configs[0]!;
     const client =
-      configs.length > 1 ? createFailoverLlmClient(configs) : createLlmClient(effectivePrimary);
+      configs.length > 1
+        ? createFailoverLlmClient(configs, { onCall: observe, metas })
+        : createLlmClient(effectivePrimary, {
+            onCall: observe,
+            meta: { ...metas[0], chainIndex: 0 },
+          });
     return {
       ok: true,
       client,

@@ -505,6 +505,55 @@
       "when": 1785200000000,
       "tag": "0072_connectors_entity_slug_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0073_cli_runs_and_workspace_locks",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0074_cli_defaults_model_effort",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1785700000000,
+      "tag": "0075_llm_calls_and_tool_call_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1785800000000,
+      "tag": "0076_agent_runtime_and_cli_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1785900000000,
+      "tag": "0077_cli_runs_cache_creation",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1785950000000,
+      "tag": "0078_cache_writes_and_codex_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0079_cli_runs_model_usage",
+      "breakpoints": true
     }
   ]
 }

@@ -21,6 +21,8 @@ import { OFFICE_TOOLS } from './office-ops';
 import { META_TOOLS } from './meta-ops';
 import { SKILL_TOOLS, skillFileWriteTool } from './skill-ops';
 import { runCommandTool } from './run-command';
+import { codeTaskTool } from './code-task';
+import { reviewVerdictTool } from './review-verdict';
 import { runSkillScriptTool } from './run-skill-script';
 import { skillViewTool } from './skill-view';
 import { listModelsTool } from './list-models';
@@ -69,6 +71,30 @@ export {
 } from './skill-ops';
 export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
+export { codeTaskTool, runCliDoctor } from './code-task';
+export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task';
+// CLI plumbing reused by the runner's runtime-agent path (étape E) and by
+// adapters that spawn an official CLI (adapter-cloudflare → wrangler).
+export {
+  resolveCliPath,
+  buildSpawnArgv,
+  runCli,
+  extractClaudeUsage,
+  extractClaudeModelUsage,
+  CLAUDE_READONLY_DISALLOWED,
+  assertCliBudget,
+  recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+  WorkspaceLockedError,
+} from './code-task';
+export type { NormalizedCliResult } from './code-task';
+// Workspace confinement, reused by adapters that touch workspace files
+// (adapter-cloudflare deploys a built directory) — ONE resolution/escape
+// check implementation, never a per-adapter copy.
+export { assertWorkspacesConfigured, resolveAndCheckPath } from './file-ops/workspace';
+export { reviewVerdictTool } from './review-verdict';
+export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
 export { buildChildEnv } from './child-env';
@@ -119,6 +145,17 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // NOT always-on. Safe-by-default (defaultApproval='require_approval'); a
   // per-agent auto_approve rule ("Yolo") overrides the human-in-the-loop gate.
   registry.register(runCommandTool);
+  // code_task — gated behind the "code-task" skill via requiredBuiltins, NOT
+  // always-on. Safe-by-default like run_command (defaultApproval
+  // 'require_approval'; per-agent Yolo rule overrides; LAN master-switch
+  // neutralizes Yolo outside local-trust — see CODE_EXECUTION_TOOLS in the
+  // runner). Spawns the owner's own coding CLI (claude/codex) under their
+  // subscription.
+  registry.register(codeTaskTool);
+  // review_verdict — gated behind the "code-review" skill via requiredBuiltins,
+  // NOT always-on. Pure validation/normalization of a structured review
+  // verdict (étape C) — writes nothing, riskLevel 'read'.
+  registry.register(reviewVerdictTool);
   // run_skill_script — gated by per-skill×agent script authorization
   // (agent_skill_assignments.scripts_authorized), NOT always-on and NOT via
   // requiredBuiltins. The runner adds it to the whitelist only when the agent
@@ -154,6 +191,26 @@ export const ALWAYS_ON_TOOLS = [
   'file_search',
 ] as const;
 export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
+
+/**
+ * Always-on tools an owner may NOT block, with the reason stated per tool.
+ *
+ * Every other always-on tool is a capability: switching it off narrows what the
+ * agent can do, which is the owner's call. `return_result` is not a capability
+ * — it is the state-machine signal that ENDS a job. Blocking it does not make
+ * the agent do less; it makes every one of its jobs unable to finish, and the
+ * agent has no way to report that, since reporting is the very tool it just
+ * lost. That is not a restriction, it is a trap.
+ *
+ * Enforced server-side (setAgentApprovalRuleAction), not only in the UI: a
+ * dashboard-only guard is one API call away from being bypassed. Fails loud
+ * (invariant #4) rather than silently ignoring the rule.
+ */
+export const UNBLOCKABLE_TOOLS: Readonly<Record<string, string>> = {
+  return_result:
+    'return_result is how a job reports that it finished or is stuck. Blocking it would leave ' +
+    'every job of this agent unable to end, with no way to tell you why.',
+};
 
 /**
  * Documentation for the always-on built-in tools.

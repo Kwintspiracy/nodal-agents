@@ -36,7 +36,7 @@
     "@phosphor-icons/react": "^2.1.10",
     "cron-parser": "^5.5.0",
     "ipaddr.js": "^2.4.0",
-    "next": "^16.2.6",
+    "next": "^16.3.0",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -47,6 +47,7 @@
   },
   "devDependencies": {
     "@figma/code-connect": "1.4.9",
+    "@nodal-agents/test-kit": "workspace:*",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4.3.0",
     "@types/qrcode": "^1.5.6",
@@ -54,7 +55,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.6",
+    "eslint-config-next": "^16.3.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.0",
     "vitest": "^4.1.6"

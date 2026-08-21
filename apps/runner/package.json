@@ -36,6 +36,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@nodal-agents/test-kit": "workspace:*",
     "ai": "^6.0.177",
     "esbuild": "^0.27.7",
     "tsx": "^4.19.2",

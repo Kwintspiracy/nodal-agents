@@ -2,13 +2,29 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { assignSkillAction, unassignSkillAction, type SkillRow } from '@/lib/actions.ts';
+import {
+  assignSkillAction,
+  unassignSkillAction,
+  setCliDefaultsAction,
+  setCliProviderEnabledAction,
+  type SkillRow,
+  type AgentRow,
+} from '@/lib/actions.ts';
 import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
 import Switch from '@/components/ui/Switch';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import MonoCode from '@/components/ui/MonoCode';
 import TextButton from '@/components/ui/TextButton';
 import Modal from '@/components/ui/Modal.tsx';
+import { ProviderRow } from './CodeTaskProviderRow.tsx';
+
+// The code-task tool group carries extra configuration (per-provider health
+// check + model/effort defaults) that the other tool groups don't need — see
+// CodeTaskConfigPanel below. Hardcoding this one slug here is the same
+// exception CodeTaskSection (Autonomy tab) already makes: isToolGroupSkill
+// stays generic for WHICH skills land on this tab, but a specific skill can
+// still own extra, feature-specific UI once it's here.
+const CODE_TASK_SKILL_SLUG = 'code-task';
 
 /**
  * ToolsTab — the Tools tab on the agent composer.
@@ -33,10 +49,18 @@ type Props = {
   agentId: string;
   attachedSkills: SkillRow[];
   allSkills: SkillRow[];
+  /** agents.cli_defaults — per-provider model/effort for the code-task group's panel. */
+  cliDefaults: AgentRow['cliDefaults'];
   onChanged: () => void;
 };
 
-export default function ToolsTab({ agentId, attachedSkills, allSkills, onChanged }: Props) {
+export default function ToolsTab({
+  agentId,
+  attachedSkills,
+  allSkills,
+  cliDefaults,
+  onChanged,
+}: Props) {
   const groups = allSkills.filter(isToolGroupSkill);
   const [assignedIds, setAssignedIds] = useState<Set<string>>(
     () => new Set(attachedSkills.filter(isToolGroupSkill).map((s) => s.id)),
@@ -89,6 +113,8 @@ export default function ToolsTab({ agentId, attachedSkills, allSkills, onChanged
           skill={skill}
           assigned={assignedIds.has(skill.id)}
           onToggle={(next) => toggle(skill, next)}
+          agentId={agentId}
+          cliDefaults={skill.slug === CODE_TASK_SKILL_SLUG ? cliDefaults : null}
         />
       ))}
     </div>
@@ -99,14 +125,20 @@ function ToolGroupCard({
   skill,
   assigned,
   onToggle,
+  agentId,
+  cliDefaults,
 }: {
   skill: SkillRow;
   assigned: boolean;
   onToggle: (next: boolean) => void;
+  agentId: string;
+  /** Non-null only for the code-task card — see the CODE_TASK_SKILL_SLUG filter above. */
+  cliDefaults: AgentRow['cliDefaults'];
 }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
   const tools = skill.requiredBuiltins;
+  const isCodeTask = skill.slug === CODE_TASK_SKILL_SLUG;
 
   return (
     <div
@@ -155,11 +187,90 @@ function ToolGroupCard({
         )}
       </div>
 
+      {isCodeTask && assigned && (
+        <CodeTaskConfigPanel agentId={agentId} cliDefaults={cliDefaults} />
+      )}
+
       <Modal open={guidanceOpen} onClose={() => setGuidanceOpen(false)} title={skill.name}>
         <div className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap text-body-13 leading-[1.6]! text-ink-2">
           {skill.content}
         </div>
       </Modal>
+    </div>
+  );
+}
+
+// ─── Coding CLI configuration panel (code-task tool group only) ───────────────
+//
+// Per-provider health check + model/effort defaults — moved here from the
+// Autonomy tab's CodeTaskSection (Quentin's correction, 19/08): those are
+// capability configuration, not an autonomy setting. Autonomy keeps only the
+// Yolo toggle and the daily budget.
+
+function CodeTaskConfigPanel({
+  agentId,
+  cliDefaults,
+}: {
+  agentId: string;
+  cliDefaults: AgentRow['cliDefaults'];
+}) {
+  // Optimistic view of the per-provider enabled flags — the server prop only
+  // refreshes on navigation, and the toggle must feel immediate.
+  const [enabledByProvider, setEnabledByProvider] = useState<{ claude: boolean; codex: boolean }>({
+    claude: cliDefaults?.claude?.enabled !== false,
+    codex: cliDefaults?.codex?.enabled !== false,
+  });
+
+  async function handleSaveDefaults(
+    provider: 'claude' | 'codex',
+    model: string | null,
+    effort: string | null,
+  ) {
+    const result = await setCliDefaultsAction({ agentId, provider, model, effort });
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Coding CLI defaults saved');
+  }
+
+  async function handleToggleEnabled(provider: 'claude' | 'codex', enabled: boolean) {
+    const previous = enabledByProvider;
+    setEnabledByProvider((s) => ({ ...s, [provider]: enabled }));
+    const result = await setCliProviderEnabledAction({ agentId, provider, enabled });
+    if (!result.ok) {
+      setEnabledByProvider(previous);
+      toast.error(result.message);
+      return;
+    }
+    toast.success(enabled ? `${provider} enabled for this agent` : `${provider} disabled`);
+  }
+
+  const enabledCount = Number(enabledByProvider.claude) + Number(enabledByProvider.codex);
+
+  return (
+    <div className="space-y-2.5 border-t border-rule-2 p-4">
+      <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+        Diagnostics and defaults
+      </div>
+      <ProviderRow
+        label="Claude Code"
+        provider="claude"
+        defaults={cliDefaults?.claude}
+        enabled={enabledByProvider.claude}
+        toggleLocked={enabledByProvider.claude && enabledCount === 1}
+        onToggleEnabled={(next) => handleToggleEnabled('claude', next)}
+        onSaveDefaults={(model, effort) => handleSaveDefaults('claude', model, effort)}
+      />
+      <ProviderRow
+        label="Codex"
+        provider="codex"
+        defaults={cliDefaults?.codex}
+        enabled={enabledByProvider.codex}
+        toggleLocked={enabledByProvider.codex && enabledCount === 1}
+        onToggleEnabled={(next) => handleToggleEnabled('codex', next)}
+        onSaveDefaults={(model, effort) => handleSaveDefaults('codex', model, effort)}
+      />
     </div>
   );
 }

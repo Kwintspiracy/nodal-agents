@@ -62,7 +62,14 @@ module.exports = {
       severity: 'error',
       comment:
         'packages/adapters/* may only import from packages/tools, packages/shared, and other adapters via shared.',
-      from: { path: '^packages/adapters/' },
+      from: {
+        path: '^packages/adapters/',
+        // Test files are exempt, as in `no-runner-delivery-direct` below: the
+        // rule is about what an adapter SHIPS, and a suite importing a test
+        // harness (@nodal-agents/test-kit) is not a production dependency.
+        // The harness itself imports no product package, so it adds no edge.
+        pathNot: '\\.(test|spec)\\.(ts|tsx|js|mjs)$',
+      },
       to: {
         path: '^packages/(?!tools|shared|adapters)',
       },
@@ -84,8 +91,15 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '(^|/)\\.next/' },
-    tsConfig: { fileName: 'tsconfig.json' },
+    // Build OUTPUT, not source. `.next/` was already excluded; `apps/docs/out/`
+    // is the same thing for the docs site's static export (`output: 'export'`)
+    // and was producing 25 of the 26 no-orphans warnings — every emitted chunk
+    // is by definition imported by nothing. Warnings nobody can act on train
+    // people to ignore the report.
+    exclude: { path: '(^|/)(\\.next|out)/' },
+    // Not tsconfig.json: this one adds apps/web's `@/*` path alias, which the
+    // root config does not carry. See tsconfig.depcruise.json for why.
+    tsConfig: { fileName: 'tsconfig.depcruise.json' },
     // Follow import type { ... } statements — otherwise type-only modules appear as orphans
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {

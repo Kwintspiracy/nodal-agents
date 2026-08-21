@@ -232,6 +232,27 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
   async function sendAuthConfirmation(
     pending: NonNullable<DiscordHandleResult['pendingAuth']>,
   ): Promise<void> {
+    // CHANNEL-001: no owner yet — this request IS the owner claim, and it is
+    // held pending until a human approves it in the dashboard. There is nobody
+    // to send a card to, so tell the claimant where the decision happens
+    // instead of failing silently on a missing recipient.
+    if (pending.ownerConversationId === null) {
+      const claimant = await client.channels
+        .fetch(pending.requesterConversationId)
+        .catch(() => null);
+      if (isSendable(claimant)) {
+        await claimant
+          .send({
+            content:
+              'Demande enregistrée. Ce bot n’a pas encore de propriétaire : ' +
+              'ouvrez son tableau de bord, onglet Channels de l’agent, et autorisez cette ' +
+              'conversation pour en prendre le contrôle.',
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+
     const ownerChannel = await client.channels.fetch(pending.ownerConversationId);
     if (!isSendable(ownerChannel)) {
       throw new Error(`owner conversation ${pending.ownerConversationId} is not sendable`);

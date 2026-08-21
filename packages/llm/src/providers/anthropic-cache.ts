@@ -31,7 +31,24 @@ const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' as const } } 
  * args type so tools / toolChoice / every other field passes through unchanged.
  */
 export function withAnthropicPromptCaching<T extends object>(args: T): T {
-  const view = args as { system?: unknown; messages?: unknown };
+  const view = args as { system?: unknown; messages?: unknown; prompt?: unknown };
+
+  // The AI SDK accepts EITHER `prompt` (a bare string) OR `messages`, never
+  // both — passing both is a hard rejection, not a degradation:
+  // "Invalid prompt: prompt and messages cannot be defined at the same time".
+  //
+  // This function used to append `messages` unconditionally, so a caller using
+  // the documented `prompt` shorthand against an Anthropic client had EVERY
+  // call fail. Nothing in the runner hits it today (it always builds
+  // `messages`), which is why it went unnoticed — the model-conformance suite
+  // found it on its first run against the native Anthropic harness.
+  //
+  // A bare `prompt` has no message array to hang a sliding breakpoint on, so
+  // there is nothing to annotate: pass it through untouched.
+  if (view.prompt !== undefined && !Array.isArray(view.messages)) {
+    return args;
+  }
+
   const original: ModelMessage[] = Array.isArray(view.messages)
     ? (view.messages as ModelMessage[])
     : [];

@@ -70,7 +70,7 @@ type ToolInfo = {
 // The MCP catalog still lives inside apps/web (it is a pure-data module with no
 // imports, so tsx resolves the relative path fine). Lift into a shared package
 // later if a second consumer appears.
-import { MCP_CATALOG } from '@nodal-agents/shared';
+import { MCP_CATALOG, OAUTH_PROVIDERS } from '@nodal-agents/shared';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');
@@ -162,8 +162,15 @@ const opsTable = (ops: OperationDescriptor[]): string => {
   for (const risk of RISK_ORDER) {
     const group = ops.filter((o) => o.risk === risk);
     if (group.length === 0) continue;
+    // The connectors pages are .mdx — a raw `<name>` token in a description
+    // (e.g. cloudflare's https://<name>.<account>.workers.dev) is parsed as an
+    // unclosed JSX tag and breaks the whole docs build. Same escape as the
+    // skill/MCP/builtin pages.
     const rows = group
-      .map((o) => `| \`${o.slug}\` | ${cell(o.name)} | ${cell(o.description ?? '')} |`)
+      .map(
+        (o) =>
+          `| \`${o.slug}\` | ${cell(o.name)} | ${escapeAnglesOutsideCode(cell(o.description ?? ''))} |`,
+      )
       .join('\n');
     sections.push(
       `### ${RISK_LABEL[risk]} (${group.length})\n\n` +
@@ -182,6 +189,16 @@ for (const c of CONNECTOR_CATALOG) {
     c.authType === 'oauth2'
       ? `**Auth:** OAuth 2.0${c.credentialType ? ` (credential type \`${c.credentialType}\`)` : ''}`
       : `**Auth:** API key`;
+  // CONNECTOR-001: the OAuth scopes this connector actually requests, and what
+  // they reach. Generated from the same registry the auth flow uses, so the
+  // docs cannot drift from what the consent screen asks for.
+  const provider = c.authType === 'oauth2' ? OAUTH_PROVIDERS[c.slug] : undefined;
+  const scopeList =
+    provider && provider.scopes.length > 0
+      ? `\n## Access requested\n\n${
+          c.scopeDisclosure ? `${escapeAnglesOutsideCode(c.scopeDisclosure)}\n\n` : ''
+        }OAuth scopes:\n\n${provider.scopes.map((sc) => `- \`${sc}\``).join('\n')}\n`
+      : '';
   const inventory =
     ops.length > 0
       ? `## Tools (${ops.length})\n\n${opsTable(ops)}`
@@ -197,8 +214,8 @@ ${authLine}
 
 **Slug:** \`${c.slug}\`
 
-**Setup:** ${c.docsHint}
-
+**Setup:** ${escapeAnglesOutsideCode(c.docsHint)}
+${scopeList}
 > **Destructive operations** (delete, overwrite) can be disabled per-agent: in
 > the agent's **Connectors** tab, the "enabled operations" allowlist controls
 > exactly which of the tools below an agent may call. Operations marked

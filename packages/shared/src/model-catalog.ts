@@ -86,6 +86,25 @@ export interface ModelCapabilities {
  * refresh manually when a vendor changes pricing). Used to DERIVE a call's
  * dollar cost for providers that don't self-report one (see `estimateModelCostUsd`
  * / Guard 1e in apps/runner/src/job/execute.ts). Standard/cache-miss rate.
+ *
+ * PROVENANCE of the rates written on 2026-08-11 (34 entries filled in one pass,
+ * taking the catalog from 15 priced out of 51 to 49): every number was read from
+ * OpenRouter's public `GET /api/v1/models`, whose `pricing.prompt` /
+ * `pricing.completion` are per-token — multiply by 1e6. For the `openrouter`
+ * block the id matches exactly, so the rate is the one actually billed. For the
+ * NATIVE blocks (anthropic / openai / google / minimax / moonshot) the rate is
+ * the same vendor model as listed by OpenRouter: OpenRouter passes the vendor's
+ * per-token rate through and takes its margin on credit purchase, and the
+ * catalog already followed this convention (native `claude-opus-5` was priced
+ * 5/25, identical to `anthropic/claude-opus-5`). That is a convention, not a
+ * quote from the vendor — if a native rate ever looks wrong, check the vendor's
+ * own page first, and correct HERE rather than in the guard.
+ *
+ * A wrong price is bounded in both directions: too high fails a job early, too
+ * low fires the cap late, and Guard 1a (token budget) stands behind either. A
+ * MISSING price is worse — it makes the cap silently unreachable, which is why
+ * `pricing-coverage.test.ts` names the two remaining holes instead of tolerating
+ * them quietly.
  */
 export interface ModelPricing {
   /** USD per 1M INPUT tokens. */
@@ -173,11 +192,9 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // forced tool_choice with a 400/404 (observed on M3 via OpenRouter); the
   // runtime completion floor covers it. Context windows are docs-sourced where
   // available, else a conservative 200K until a live probe confirms.
-  // No `pricing` yet (unlike deepseek above) — no confidently-current MiniMax
-  // rate card verified at write time. Left as documented debt (Fix #21): the
-  // derived-cost fallback returns 0 for these until pricing is added, same as
-  // every other unpriced entry in this catalog; Guard 1a (token budget) is the
-  // backstop meanwhile.
+  // Priced on 2026-08-11 from MiniMax's OpenRouter listing (see the PROVENANCE
+  // block on ModelPricing): m3 and m2.7 both 0.30/1.20, m2 0.255/1.02. Before
+  // that they carried no rate at all, so Guard 1e could never fire on MiniMax.
   minimax: [
     {
       modelId: 'MiniMax-M3',
@@ -195,6 +212,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.3, outputPerMillionUsd: 1.2 },
     },
     {
       modelId: 'MiniMax-M2.7',
@@ -202,6 +220,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Latest M2-series — non-reasoning per MiniMax docs.
       capabilities: { tools: true, forcedToolChoice: false },
       contextWindow: 200_000,
+      pricing: { inputPerMillionUsd: 0.3, outputPerMillionUsd: 1.2 },
     },
     {
       modelId: 'MiniMax-M2',
@@ -209,6 +228,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Stable previous-generation baseline — non-reasoning.
       capabilities: { tools: true, forcedToolChoice: false },
       contextWindow: 200_000,
+      pricing: { inputPerMillionUsd: 0.255, outputPerMillionUsd: 1.02 },
     },
   ],
   // ─── Native Moonshot / Kimi (api.moonshot.ai/v1) ────────────────────────────
@@ -220,8 +240,8 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // mention a `tool_choice` parameter at all — the runtime completion floor
   // covers it, same treatment as the other undocumented-tool_choice reasoning
   // models (MiniMax M3, GLM 5.2) in this catalog.
-  // No `pricing` — no native (non-OpenRouter) Moonshot rate card confirmed at
-  // write time; documented debt, same convention as the MiniMax entries above.
+  // Priced on 2026-08-11 from Moonshot's OpenRouter listing, same convention as
+  // the MiniMax entries above (see the PROVENANCE block on ModelPricing).
   // kimi-k2-thinking is deliberately NOT catalogued (discontinued by Moonshot).
   moonshot: [
     {
@@ -236,6 +256,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'onoff', mandatory: true },
       },
       contextWindow: 262_144,
+      pricing: { inputPerMillionUsd: 0.95, outputPerMillionUsd: 4 },
     },
     {
       modelId: 'kimi-k2.7-code',
@@ -247,6 +268,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'onoff', mandatory: true },
       },
       contextWindow: 262_144,
+      pricing: { inputPerMillionUsd: 0.7, outputPerMillionUsd: 3.5 },
     },
     {
       modelId: 'kimi-k3',
@@ -265,6 +287,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['max'], mandatory: true },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
     },
   ],
   // Anthropic — every current Claude supports extended thinking. Auto (no
@@ -272,6 +295,46 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // take the adaptive `output_config.effort`; Haiku 4.5 (<4.6) takes a
   // `thinking.budget_tokens` ladder (mirrors Hermes' anthropic_adapter table).
   anthropic: [
+    // ─── Claude 5 ─────────────────────────────────────────────────────────────
+    // Native ids, added 2026-08-09. Context window and price come from the same
+    // models the `anthropic/…` OpenRouter entries describe (1M context, and
+    // Opus 5 at $5/$25) — the routing differs, the model does not.
+    {
+      modelId: 'claude-opus-5',
+      label: 'Claude Opus 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+    },
+    {
+      modelId: 'claude-sonnet-5',
+      label: 'Claude Sonnet 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
+    },
+    {
+      modelId: 'claude-fable-5',
+      label: 'Claude Fable 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+    },
     {
       modelId: 'claude-opus-4-8',
       label: 'Claude Opus 4.8',
@@ -282,6 +345,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
     },
     {
       modelId: 'claude-sonnet-4-6',
@@ -293,6 +357,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
+      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
     },
     {
       modelId: 'claude-haiku-4-5-20251001',
@@ -307,6 +372,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 200_000,
+      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 5 },
     },
   ],
   // OpenAI — GPT-5 line takes `reasoning_effort`. Auto = today's behavior
@@ -323,6 +389,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 400_000,
+      pricing: { inputPerMillionUsd: 1.25, outputPerMillionUsd: 10 },
     },
     {
       modelId: 'gpt-5-mini',
@@ -334,6 +401,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 400_000,
+      pricing: { inputPerMillionUsd: 0.25, outputPerMillionUsd: 2 },
     },
   ],
   // ─── Native Google (generativelanguage.googleapis.com) ──────────────────────
@@ -363,6 +431,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 9 },
     },
     {
       modelId: 'gemini-3.1-pro-preview',
@@ -374,8 +443,18 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 12 },
     },
   ],
+  // The two entries below are the catalog's only remaining unpriced models, and
+  // `pricing-coverage.test.ts` pins that list so the hole can never grow in
+  // silence. Both were left out DELIBERATELY on 2026-08-11 rather than filled
+  // from a lookalike: Groq resells Llama on its own hardware at its own rate,
+  // which has nothing to do with `meta-llama/llama-3.3-70b-instruct`'s listing;
+  // and `mistral-large-latest` is a MOVING alias — OpenRouter lists both
+  // `mistral-large` (2/6) and `mistral-large-2512` (0.5/1.5), a fourfold gap,
+  // so no rate can be attached to the alias honestly. Fill either one from the
+  // vendor's own page, then delete it from the test's list.
   groq: [
     {
       modelId: 'llama-3.3-70b-versatile',
@@ -398,6 +477,92 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // MiniMax M3 does not (some of its OpenRouter endpoints reject the forced
   // value), so it runs on 'auto' + the runtime floor.
   openrouter: [
+    // ─── Claude 5 ─────────────────────────────────────────────────────────────
+    // Added 2026-08-09 from a live `GET /api/v1/models` — context windows,
+    // prices and `supported_parameters` copied from that response rather than
+    // from documentation, which lags. `pnpm bench --section catalog-drift
+    // --online` is what surfaced their absence.
+    {
+      modelId: 'anthropic/claude-opus-5',
+      label: 'Claude Opus 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+    },
+    {
+      modelId: 'anthropic/claude-opus-5-fast',
+      label: 'Claude Opus 5 (fast)',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+    },
+    {
+      modelId: 'anthropic/claude-sonnet-5',
+      label: 'Claude Sonnet 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
+    },
+    {
+      modelId: 'anthropic/claude-fable-5',
+      label: 'Claude Fable 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+    },
+    // ─── OpenAI ───────────────────────────────────────────────────────────────
+    // OpenAI was absent from the OpenRouter list entirely — not a curation
+    // choice, a gap: the native `openai` provider carried gpt-5 while anyone
+    // routing through OpenRouter had none.
+    {
+      modelId: 'openai/gpt-5.6-luna',
+      label: 'GPT-5.6 Luna',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.6 },
+    },
+    {
+      modelId: 'openai/gpt-5.6-luna-pro',
+      label: 'GPT-5.6 Luna Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.6 },
+    },
+    {
+      modelId: 'openai/gpt-5.6-terra-pro',
+      label: 'GPT-5.6 Terra Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 6 },
+    },
     // Anthropic — reasoningControl WITHOUT the `reasoning` flag, on purpose:
     // the flag would flip openrouter.ts's always-on default injection; here
     // thinking is engaged only when the agent explicitly sets an effort.
@@ -411,6 +576,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
+      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 5 },
     },
     {
       modelId: 'anthropic/claude-opus-4.7',
@@ -421,6 +587,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
     },
     {
       modelId: 'anthropic/claude-opus-4.7-fast',
@@ -431,6 +598,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 30, outputPerMillionUsd: 150 },
     },
     {
       modelId: 'anthropic/claude-opus-4.8',
@@ -441,6 +609,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
     },
     {
       modelId: 'anthropic/claude-opus-4.8-fast',
@@ -451,6 +620,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
     },
     {
       modelId: 'anthropic/claude-sonnet-4.6',
@@ -461,6 +631,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
     },
     // DeepSeek
     {
@@ -468,6 +639,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V3.2',
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 131_072,
+      pricing: { inputPerMillionUsd: 0.269, outputPerMillionUsd: 0.4 },
     },
     {
       modelId: 'deepseek/deepseek-v4-flash',
@@ -486,6 +658,23 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
+      pricing: { inputPerMillionUsd: 0.14, outputPerMillionUsd: 0.28 },
+    },
+    {
+      // Dated snapshot of V4 Flash, and currently the cheapest tool-capable
+      // million-token model upstream ($0.09 / $0.18). Same reasoning caveat as
+      // the undated alias above.
+      modelId: 'deepseek/deepseek-v4-flash-0731',
+      label: 'DeepSeek V4 Flash (0731)',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.09, outputPerMillionUsd: 0.18 },
+      providerOrder: ['deepseek'],
     },
     {
       modelId: 'deepseek/deepseek-v4-pro',
@@ -500,6 +689,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
+      pricing: { inputPerMillionUsd: 0.63168, outputPerMillionUsd: 1.26336 },
     },
     // Google — all three are thinking models on OpenRouter (supported_parameters
     // includes "reasoning", verified via openrouter.ai/google/… 2026-07-12).
@@ -521,6 +711,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.25, outputPerMillionUsd: 1.5 },
     },
     {
       modelId: 'google/gemini-3.1-pro-preview',
@@ -534,6 +725,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 12 },
     },
     {
       modelId: 'google/gemini-3.5-flash',
@@ -547,12 +739,26 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 9 },
+    },
+    {
+      modelId: 'google/gemini-3.6-flash',
+      label: 'Gemini 3.6 Flash',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 7.5 },
     },
     {
       modelId: 'google/gemma-4-31b-it',
       label: 'Gemma 4 31B-IT',
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 262_144,
+      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.34 },
     },
     // MiniMax
     {
@@ -569,6 +775,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.3, outputPerMillionUsd: 1.2 },
     },
     // Z.ai (GLM)
     {
@@ -591,6 +798,29 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.76, outputPerMillionUsd: 2.42 },
+    },
+    {
+      modelId: 'z-ai/glm-5.3',
+      label: 'GLM 5.3',
+      // Same family posture as 5.2: reasoning model, NATIVE OpenAI tool calls
+      // (no parser middleware — detectAgenticFamily only wraps glm-4.5/4.7),
+      // forcedToolChoice:false. Upstream accepts low/high/max efforts with
+      // max as ITS default; the four catalog levels stay the UI contract and
+      // OpenRouter normalizes 'medium' to the nearest supported level.
+      // Pricing/context verified on openrouter.ai/z-ai/glm-5.3 (2026-08-20).
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.4, outputPerMillionUsd: 4.4 },
     },
     // Moonshot (Kimi)
     {
@@ -599,10 +829,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Confirmed multimodal + reasoning via WebFetch (openrouter.ai, 2026-07).
       // K2.6 is below the K2.7 native-tool_calls cutoff in detectAgenticFamily
       // (openrouter.ts) — it emits Kimi's pipe-bracket textual tool-call markup,
-      // so it gets the kimiToolCallMiddleware parser. No pricing field: none of
-      // this file's other OpenRouter entries carry one (OpenRouter self-reports
-      // real cost via providerMetadata.openrouter.usage.cost — see
-      // estimateModelCostUsd's doc comment).
+      // so it gets the kimiToolCallMiddleware parser. Priced 2026-08-11 like the
+      // rest of the block: OpenRouter does self-report real cost via
+      // providerMetadata.openrouter.usage.cost, which takes precedence, but the
+      // rate is carried anyway so the same model reached through a native key
+      // (or a response that arrives without the usage block) still has a cost.
       capabilities: {
         tools: true,
         forcedToolChoice: false,
@@ -614,6 +845,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 262_144,
+      pricing: { inputPerMillionUsd: 0.95, outputPerMillionUsd: 4 },
     },
     {
       modelId: 'moonshotai/kimi-k2.7-code',
@@ -633,6 +865,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 262_144,
+      pricing: { inputPerMillionUsd: 0.7, outputPerMillionUsd: 3.5 },
     },
     // xAI — grok-4.5 verified via OpenRouter /api/v1/models (2026-07-20):
     // 500K context, text+image, tools + tool_choice + reasoning params.
@@ -653,6 +886,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 500_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
     },
     // Qwen — both verified via OpenRouter /api/v1/models (2026-07-20): 1M
     // context, tools + tool_choice + reasoning params (no native
@@ -663,6 +897,17 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // effort. Hermes catalogs both as plain OpenRouter models (no adapter).
     // qwen3.7-max is TEXT-ONLY (no image input); qwen3.7-plus is multimodal.
     {
+      modelId: 'qwen/qwen3.8-max',
+      label: 'Qwen 3.8 Max',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
+    },
+    {
       modelId: 'qwen/qwen3.7-max',
       label: 'Qwen 3.7 Max',
       capabilities: {
@@ -671,6 +916,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.475, outputPerMillionUsd: 4.425 },
     },
     {
       modelId: 'qwen/qwen3.7-plus',
@@ -681,6 +927,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.32, outputPerMillionUsd: 1.28 },
     },
     {
       modelId: 'moonshotai/kimi-k3',
@@ -702,6 +949,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
     },
   ],
 };

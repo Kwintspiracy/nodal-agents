@@ -29,6 +29,8 @@ import ipaddr from 'ipaddr.js';
 import {
   eq,
   and,
+  isNull,
+  isNotNull,
   or,
   desc,
   inArray,
@@ -50,6 +52,7 @@ import {
   mcpServers,
   agentMcpServers,
   toolCalls,
+  llmCalls,
   agentSchedules,
   webhookTriggers,
   entityLlmKeys,
@@ -70,6 +73,8 @@ import {
   channelAllowedConversations,
   listChannelBindings,
   getChannelBinding,
+  getMcpApprovalContext,
+  cliRuns,
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import {
@@ -92,16 +97,27 @@ import {
   MemoryDuplicateError,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
-import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import {
+  buildSystemPrompt,
+  UNBLOCKABLE_TOOLS,
+  INTERNAL_TOOL_DESCRIPTORS,
+} from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
-import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
+import type {
+  AgentMemory,
+  CliModelUsage,
+  CredentialType,
+  OperationDescriptor,
+} from '@nodal-agents/shared';
 import {
   type RootGrants,
   META_TOOL_NAMES,
   enabledMetaTools,
   parseRootGrants,
   redactSecretsForAudit,
+  explainApproval,
+  type ApprovalExplanation,
   findModelCatalogEntry,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
@@ -116,6 +132,7 @@ import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
+import { ROLLUP_MAX_DEPTH, rollupRoot, pipelineMembers } from './coding-rollup.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -486,6 +503,21 @@ export type AgentRow = {
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
   position: number;
+  /** Daily notional-USD cap on code_task (coding CLI) runs. 0 = no cap. */
+  cliDailyBudgetUsd: number;
+  /**
+   * Per-provider model/effort defaults for code_task. NULL/absent key = the
+   * CLI's own default. `enabled` false = the owner switched this provider off
+   * for the agent (absent/true = allowed).
+   */
+  cliDefaults: {
+    claude?: { model?: string; effort?: string; enabled?: boolean };
+    codex?: { model?: string; effort?: string; enabled?: boolean };
+  } | null;
+  /** 'nodal' (default) | 'claude-code' | 'codex' (reserved). See packages/db/src/schema/agents.ts. */
+  runtime: string;
+  /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
+  cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -1161,8 +1193,19 @@ export async function addAgentWorkspaceAction(
     return ok({ id: row.id });
   } catch (err: unknown) {
     console.error('[addAgentWorkspaceAction]', err);
-    const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('unique') || msg.includes('23505')) {
+    // Drizzle wraps the Postgres error: the outer message is only
+    // "Failed query: insert into ...", and the 23505 lives in err.cause.
+    // Testing the outer message alone made this branch dead — the user got
+    // "Failed to add workspace" instead of the label conflict. Same fix the
+    // repos in packages/db already carry.
+    const msg = err instanceof Error ? err.message : String(err);
+    const causeMsg = err instanceof Error && err.cause instanceof Error ? err.cause.message : '';
+    if (
+      msg.includes('unique') ||
+      msg.includes('23505') ||
+      causeMsg.includes('unique') ||
+      causeMsg.includes('23505')
+    ) {
       return fail('conflict', 'A workspace with this label already exists for this agent');
     }
     return fail('db_error', 'Failed to add workspace');
@@ -3609,6 +3652,8 @@ export type ConnectorCatalogItem = {
   authType: ConnectorAuthType;
   docsHint: string;
   credentialType: CredentialType | null;
+  /** CONNECTOR-001: how far this connector's token reaches, shown before consent. */
+  scopeDisclosure: string | null;
 };
 
 export type ConnectorsListResponse = {
@@ -3693,6 +3738,7 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
       authType: c.authType,
       docsHint: c.docsHint,
       credentialType: c.credentialType ?? null,
+      scopeDisclosure: c.scopeDisclosure ?? null,
     }));
 
     return ok({ instances, catalog });
@@ -5019,6 +5065,18 @@ export type ApprovalRow = {
   expiresAt: Date | null;
   notes: string | null;
   jobTask: string | null;
+  /**
+   * Structured, readable explanation of what is being approved. Computed
+   * server-side so the client renders it without another round trip, and so the
+   * dashboard and the channel cards say the SAME thing.
+   */
+  explanation: ApprovalExplanation;
+  /**
+   * `<serveur>__*` — the rule pattern covering every tool of the MCP server this
+   * call comes from. Null for a built-in. Drives the "always allow this server"
+   * button: one decision instead of one per tool.
+   */
+  mcpRulePattern: string | null;
 };
 
 export async function listApprovalsAction(
@@ -5057,17 +5115,56 @@ export async function listApprovalsAction(
       .orderBy(desc(approvalRequests.requestedAt))
       .limit(100);
 
+    // Resolve the MCP server behind each namespaced tool, so the card can say
+    // WHOSE tool this is. Without it the reviewer sees `mcp_fetch__fetch_markdown`
+    // and an "irreversible or destructive action" line that came from
+    // computeApprovalImpactLine's catch-all branch — reported live as
+    // "je ne comprends pas ce que j'approuve".
+    //
+    // Deduplicated by tool name: a page of 100 approvals from one server would
+    // otherwise issue 100 identical queries.
+    const mcpByTool = new Map<string, Awaited<ReturnType<typeof getMcpApprovalContext>>>();
+    for (const name of new Set(rows.map((r) => r.toolName))) {
+      if (!name.includes('__')) continue;
+      mcpByTool.set(
+        name,
+        await getMcpApprovalContext(db, session.entityId, name).catch(() => null),
+      );
+    }
+
     return ok(
-      rows.map((r) => ({
-        ...r,
+      rows.map((r) => {
         // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
         // runner re-reads it to re-run the approved call), but no display path
         // may leak a secret — create_connector/create_mcp API keys and stdio
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
-        toolInput: redactSecretsForAudit(r.toolInput) as typeof r.toolInput,
-        status: r.status ?? 'pending',
-      })) as ApprovalRow[],
+        const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
+        const ctx = mcpByTool.get(r.toolName) ?? null;
+        return {
+          ...r,
+          toolInput: safeInput,
+          status: r.status ?? 'pending',
+          explanation: explainApproval({
+            toolName: r.toolName,
+            toolInput: safeInput,
+            mcp: ctx
+              ? {
+                  slug: ctx.slug,
+                  name: ctx.ambiguous
+                    ? `${ctx.name} (attention : plusieurs serveurs partagent ce préfixe)`
+                    : ctx.name,
+                  endpoint: ctx.endpoint,
+                  ...(ctx.toolDescription ? { toolDescription: ctx.toolDescription } : {}),
+                  ...(ctx.readOnlyHint !== undefined ? { readOnlyHint: ctx.readOnlyHint } : {}),
+                }
+              : null,
+          }),
+          // The rule pattern that would cover this whole server — what the
+          // "always allow this server" button posts. Null for a built-in.
+          mcpRulePattern: ctx?.rulePattern ?? null,
+        };
+      }) as ApprovalRow[],
     );
   } catch (err) {
     console.error('[listApprovalsAction]', err);
@@ -5219,18 +5316,74 @@ export async function listAgentApprovalRulesAction(
 const SetApprovalRuleSchema = z.object({
   agentId: z.string().guid(),
   toolName: z.string().min(1).max(200),
-  // null = delete the rule (revert to default auto_approve)
+  // null = delete the rule (revert to each tool's own default)
   action: z.enum(['auto_approve', 'require_approval', 'block']).nullable(),
+  /**
+   * 'agent'  → the rule binds this agent only (agent_id = <agentId>).
+   * 'entity' → it binds every agent in the workspace (agent_id IS NULL).
+   *
+   * matchApprovalRule already ranks agent-scoped above entity-scoped at each
+   * specificity level, so a workspace-wide "trust this server" never overrides
+   * a per-agent `require_approval` or `block`.
+   */
+  scope: z.enum(['agent', 'entity']).default('agent'),
 });
 
 /**
- * Upsert or delete one approval_rules row for (entity, agent, toolName).
- * action=null → DELETE the row (reverts to runtime default: auto_approve).
- * action='auto_approve' → also deletes (no rule needed; default is already auto_approve).
- * action='require_approval'|'block' → upsert.
+ * Upsert or delete one approval_rules row for (entity, agent-or-null, toolName).
+ *
+ * action=null → DELETE the row (reverts to the tool's own default).
+ * action='auto_approve'|'require_approval'|'block' → upsert.
+ *
+ * `auto_approve` USED TO DELETE, on the reasoning that "no rule" already meant
+ * auto-approve. MCP-001 made that false: every tool from a third-party MCP
+ * server now ships `defaultApproval: 'require_approval'`, so for those tools
+ * "no rule" means GATED. The old branch turned the approvals card's "always
+ * allow this server" button into a no-op that reported success — the owner was
+ * told a standing rule existed, and kept being asked on every call. Reported
+ * live after twelve consecutive prompts for read-only calls.
  *
  * Ownership checked: agent must belong to the active entity.
  */
+/**
+ * The always-on built-in tools, for the Autonomy screen's per-tool controls.
+ *
+ * A server action rather than a plain import, and that distinction is
+ * load-bearing: AgentComposer is a `'use client'` component, so importing
+ * `@nodal-agents/orchestration` there drags `@nodal-agents/db` and drizzle into
+ * the browser bundle. Turbopack then fails to compile the page at all — the
+ * route 500s on a missing build manifest, with no type error and no failing
+ * unit test to warn you (learned the hard way, 2026-08-20). Same shape of trap
+ * as the `'use server'` sync-export rule noted elsewhere in this file.
+ */
+export async function listInternalToolsAction(): Promise<
+  ActionResult<
+    Array<{
+      slug: string;
+      name: string;
+      risk: 'read' | 'write' | 'destructive';
+      description?: string;
+      unblockableReason?: string;
+    }>
+  >
+> {
+  try {
+    await getSession();
+    return ok(
+      INTERNAL_TOOL_DESCRIPTORS.map((d) => ({
+        slug: d.slug,
+        name: d.name,
+        risk: d.risk,
+        ...(d.description === undefined ? {} : { description: d.description }),
+        ...(d.unblockableReason === undefined ? {} : { unblockableReason: d.unblockableReason }),
+      })),
+    );
+  } catch (err) {
+    console.error('[listInternalToolsAction]', err);
+    return fail('unexpected_error', 'Could not load the built-in tool list');
+  }
+}
+
 export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
@@ -5238,24 +5391,41 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, toolName, action } = parsed.data;
+    const { agentId, toolName, action, scope } = parsed.data;
+
+    // Some always-on tools are not capabilities but machinery — blocking them
+    // does not narrow what the agent can do, it breaks how it reports at all.
+    // Refused HERE, not just in the UI: the dashboard guard is one API call
+    // away from being bypassed. Loud, with the reason (invariant #4).
+    if (action === 'block' && UNBLOCKABLE_TOOLS[toolName]) {
+      return fail('validation_failed', UNBLOCKABLE_TOOLS[toolName]);
+    }
+
     const db = getDb();
 
-    // Verify agent ownership
+    // Verify agent ownership. Checked even for an entity-scoped rule: the
+    // caller reached this from an agent's screen, and an agent id that is not
+    // ours means the request is not ours either.
     const [agent] = await db
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    if (action === null || action === 'auto_approve') {
-      // DELETE: no rule needed for the default behaviour
+    // agent_id IS NULL is the workspace-wide scope (see the schema note on the
+    // NULLS NOT DISTINCT unique index — a plain UNIQUE would let duplicates in).
+    const ruleAgentId = scope === 'entity' ? null : agentId;
+    const scopeMatch =
+      ruleAgentId === null ? isNull(approvalRules.agentId) : eq(approvalRules.agentId, agentId);
+
+    if (action === null) {
+      // DELETE: revert to the tool's own default.
       await db
         .delete(approvalRules)
         .where(
           and(
             eq(approvalRules.entityId, session.entityId),
-            eq(approvalRules.agentId, agentId),
+            scopeMatch,
             eq(approvalRules.toolName, toolName),
           ),
         );
@@ -5270,7 +5440,7 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
         .insert(approvalRules)
         .values({
           entityId: session.entityId,
-          agentId,
+          agentId: ruleAgentId,
           toolName,
           action,
         })
@@ -5281,6 +5451,7 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     }
 
     revalidatePath(`/agents/${agentId}/edit`);
+    revalidatePath('/approvals');
     return ok(undefined);
   } catch (err) {
     console.error('[setAgentApprovalRuleAction]', err);
@@ -5387,6 +5558,637 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
   } catch (err) {
     console.error('[setRunCommandYoloAction]', err);
     return fail('db_error', 'Failed to save command execution setting');
+  }
+}
+
+// ─── Coding CLI (code_task) actions ──────────────────────────────────────────
+//
+// code_task hands a complete dev task to the coding CLI (Claude Code / Codex)
+// that the workspace owner has installed and logged in on the runner machine
+// (packages/tools/src/builtin/code-task). Same safety shape as run_command:
+// defaultApproval:'require_approval', so "Yolo mode" is an explicit
+// auto_approve row — see setRunCommandYoloAction above, which this mirrors
+// exactly (same gate, same transactional delete-then-insert on the
+// UNIQUE(entity_id, agent_id, tool_name) row).
+
+const SetCodeTaskYoloSchema = z.object({
+  agentId: z.string().guid(),
+  enabled: z.boolean(),
+});
+
+export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCodeTaskYoloSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, enabled } = parsed.data;
+
+    // Gate (non-local-trust only): only the workspace owner may change a
+    // per-agent Yolo rule — in EITHER direction, same reasoning as
+    // setRunCommandYoloAction. Enabling additionally requires the workspace
+    // opt-in (lan_command_yolo) — code_task reuses that same master switch
+    // rather than introducing a second one.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change coding CLI auto-run.');
+      }
+      if (enabled && !entityRow.lanCommandYolo) {
+        return fail(
+          'forbidden',
+          'Yolo mode is not enabled for this workspace. Enable it in Settings → Command execution first.',
+        );
+      }
+    }
+
+    const db = getDb();
+
+    // Verify agent belongs to active entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Delete-then-insert wrapped in a transaction (R2, mirrors
+    // setRunCommandYoloAction) — approval_rules carries a
+    // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
+    // calls could otherwise race on the insert.
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            eq(approvalRules.toolName, 'code_task'),
+          ),
+        );
+
+      if (enabled) {
+        await tx
+          .insert(approvalRules)
+          .values({
+            entityId: session.entityId,
+            agentId,
+            toolName: 'code_task',
+            action: 'auto_approve',
+          })
+          .onConflictDoUpdate({
+            target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+            set: { action: 'auto_approve', updatedAt: new Date() },
+          });
+      }
+    });
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCodeTaskYoloAction]', err);
+    return fail('db_error', 'Failed to save coding CLI auto-run setting');
+  }
+}
+
+// ─── Coding CLI doctor (runner probe) ────────────────────────────────────────
+//
+// Proxies the runner's POST /api/code-task/doctor — a read-only probe of the
+// CLI binary's presence/version/login state on the RUNNER machine (which may
+// not be this Next process — LAN mode). Never touches credentials (D0 red
+// line). The remote body is a typed CliDoctorReport we trust structurally,
+// but on a non-OK response we surface only our own message, never the raw
+// remote body — mirrors resolveApprovalAction / startWhatsAppPairingAction.
+
+const CodeTaskDoctorSchema = z.object({
+  provider: z.enum(['claude', 'codex']),
+});
+
+export type CliDoctorReportView = {
+  provider: 'claude' | 'codex';
+  binaryFound: boolean;
+  path: string | null;
+  version: string | null;
+  loggedIn: 'yes' | 'no' | 'unknown';
+  fix: string | null;
+  /** Model choices for the defaults dropdown. NULL = no catalog (free entry only). */
+  models: string[] | null;
+  /** Valid reasoning-effort levels for the defaults dropdown. */
+  efforts: string[];
+};
+
+export async function codeTaskDoctorAction(
+  raw: unknown,
+): Promise<ActionResult<CliDoctorReportView>> {
+  try {
+    await getSession();
+    const parsed = CodeTaskDoctorSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    if (!env.WORKER_SECRET) {
+      console.error('[codeTaskDoctorAction] WORKER_SECRET missing');
+      return fail('config_error', 'WORKER_SECRET is not set');
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/code-task/doctor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify(parsed.data),
+      });
+    } catch (fetchErr) {
+      console.error('[codeTaskDoctorAction] fetch failed', fetchErr);
+      return fail('runner_unreachable', 'Runner did not respond');
+    }
+
+    if (!res.ok) {
+      return fail('doctor_failed', `Runner rejected the check (${res.status})`);
+    }
+
+    const body = (await res.json()) as CliDoctorReportView;
+    return ok(body);
+  } catch (err) {
+    console.error('[codeTaskDoctorAction]', err);
+    return fail('db_error', 'Failed to check coding CLI status');
+  }
+}
+
+// ─── Coding CLI daily budget ──────────────────────────────────────────────────
+//
+// agents.cliDailyBudgetUsd (migration already shipped, default 10, 0 = no
+// cap) is what the code_task builtin enforces against SUM(cli_runs.cost_usd).
+// This action only writes the cap; getCliUsageTodayAction below reads today's
+// spend for the same agent so the UI can show both side by side.
+
+const SetCliDailyBudgetSchema = z.object({
+  agentId: z.string().guid(),
+  budgetUsd: z.number().finite().min(0).max(1000),
+});
+
+export async function setCliDailyBudgetAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliDailyBudgetSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, budgetUsd } = parsed.data;
+
+    // Owner-only (non-local-trust) — a spend-control knob, same gate shape as
+    // the Yolo enable path above.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the coding CLI budget.');
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ cliDailyBudgetUsd: budgetUsd, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliDailyBudgetAction]', err);
+    return fail('db_error', 'Failed to save daily budget');
+  }
+}
+
+export type CliUsageTodayView = { spentUsd: number };
+
+export async function getCliUsageTodayAction(
+  agentId: string,
+): Promise<ActionResult<CliUsageTodayView>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const [row] = await db
+      .select({ spent: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)` })
+      .from(cliRuns)
+      .where(
+        and(
+          eq(cliRuns.agentId, agentId),
+          eq(cliRuns.entityId, session.entityId),
+          sql`${cliRuns.createdAt} >= date_trunc('day', now())`,
+        ),
+      );
+
+    return ok({ spentUsd: Number(row?.spent ?? 0) });
+  } catch (err) {
+    console.error('[getCliUsageTodayAction]', err);
+    return fail('db_error', 'Failed to load coding CLI usage');
+  }
+}
+
+// ─── Coding CLI per-provider defaults (model / effort) ───────────────────────
+//
+// agents.cli_defaults (migration 0074) — { claude?: {model?, effort?}, codex?:
+// {model?, effort?} }. code_task resolves model/effort as: per-task input >
+// this agent default > the CLI's own default (NULL/absent key). Free strings —
+// the CLI is the source of truth for what it accepts; a bad value fails loud
+// at run time, so this deliberately has no catalog dropdown.
+//
+// The payload is the FULL desired state for one provider (both fields, either
+// may be null to clear). An empty resulting provider entry is dropped from the
+// object rather than stored as `{}`, and an empty resulting object is stored
+// as NULL rather than `{}` — mirrors the DB comment's "NULL = CLI's own
+// default" contract exactly (an empty object would be a different, untested
+// state for the runner to interpret).
+
+const CLI_MODEL_RE = /^[\w.:/-]{1,100}$/;
+const CLI_EFFORT_RE = /^[A-Za-z0-9_-]{1,20}$/;
+
+const SetCliDefaultsSchema = z.object({
+  agentId: z.string().guid(),
+  provider: z.enum(['claude', 'codex']),
+  model: z
+    .string()
+    .regex(CLI_MODEL_RE, 'Model may only contain letters, digits, . : / _ - (max 100 chars)')
+    .nullable(),
+  effort: z
+    .string()
+    .regex(CLI_EFFORT_RE, 'Effort may only contain letters, digits, _ - (max 20 chars)')
+    .nullable(),
+});
+
+type CliDefaults = {
+  claude?: { model?: string; effort?: string; enabled?: boolean };
+  codex?: { model?: string; effort?: string; enabled?: boolean };
+};
+
+export async function setCliDefaultsAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliDefaultsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, provider, model, effort } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as the budget/Yolo actions above.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the coding CLI defaults.');
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const current: CliDefaults = agent.cliDefaults ?? {};
+    const entry: { model?: string; effort?: string; enabled?: boolean } = {};
+    if (model) entry.model = model;
+    if (effort) entry.effort = effort;
+    // The payload is the full desired state for model/effort ONLY — the
+    // owner's enabled flag is managed by setCliProviderEnabledAction and must
+    // survive a defaults save (only `false` is ever stored; true = absent).
+    if (current[provider]?.enabled === false) entry.enabled = false;
+
+    const next: CliDefaults = { ...current };
+    if (Object.keys(entry).length > 0) {
+      next[provider] = entry;
+    } else {
+      delete next[provider];
+    }
+    const nextValue: CliDefaults | null = Object.keys(next).length > 0 ? next : null;
+
+    await db
+      .update(agents)
+      .set({ cliDefaults: nextValue, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliDefaultsAction]', err);
+    return fail('db_error', 'Failed to save coding CLI defaults');
+  }
+}
+
+// ─── Coding CLI per-provider allow-flag ──────────────────────────────────────
+//
+// Demande Quentin (20/08) : activer la capacité Coding CLI exposait TOUJOURS
+// les deux providers au choix de l'agent. Ce toggle stocke `enabled: false`
+// dans l'entrée cli_defaults du provider (true = absent, l'état d'origine) ;
+// code_task refuse un provider désactivé (assertCliProviderEnabled, fail
+// loud). Au moins un provider doit rester actif — désactiver le dernier est
+// refusé ici plutôt que laissé casser au runtime.
+
+const SetCliProviderEnabledSchema = z.object({
+  agentId: z.string().guid(),
+  provider: z.enum(['claude', 'codex']),
+  enabled: z.boolean(),
+});
+
+export async function setCliProviderEnabledAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliProviderEnabledSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, provider, enabled } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate as the defaults action above.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the coding CLI providers.');
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const current: CliDefaults = agent.cliDefaults ?? {};
+    if (!enabled) {
+      const other = provider === 'claude' ? 'codex' : 'claude';
+      if (current[other]?.enabled === false) {
+        return fail('validation_failed', 'At least one coding CLI provider must stay enabled.');
+      }
+    }
+
+    // true = absent (the pre-feature state); only `false` is ever stored.
+    const entry = { ...(current[provider] ?? {}) };
+    if (enabled) {
+      delete entry.enabled;
+    } else {
+      entry.enabled = false;
+    }
+
+    const next: CliDefaults = { ...current };
+    if (Object.keys(entry).length > 0) {
+      next[provider] = entry;
+    } else {
+      delete next[provider];
+    }
+    const nextValue: CliDefaults | null = Object.keys(next).length > 0 ? next : null;
+
+    await db
+      .update(agents)
+      .set({ cliDefaults: nextValue, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliProviderEnabledAction]', err);
+    return fail('db_error', 'Failed to update the coding CLI provider');
+  }
+}
+
+// ─── Reviewer read-only preset ────────────────────────────────────────────────
+//
+// A "read-only agent" = approval_rules action='block' on every write tool the
+// canonical preset covers. code_task's own read-only detection
+// (assertNotReadOnlyAgent, packages/tools/src/builtin/code-task/db.ts) keys
+// off exactly one of these — file_write blocked ⇒ mode "write" refused too —
+// so this preset is the UI affordance for a posture that tool already
+// understands; the list must stay a superset containing 'file_write'.
+//
+// enabled=true  → upsert a 'block' row per tool (bulk insert + onConflictDoUpdate,
+//                 same shape as setRootAgentAction's meta-tool sync above).
+// enabled=false → delete ONLY the rows this preset itself would have set
+//                 (action='block' on these exact tools) — a require_approval
+//                 or auto_approve rule the user set by hand on, say,
+//                 run_command is a separate, deliberate choice and survives.
+
+const READONLY_PRESET_TOOLS = [
+  'file_write',
+  'file_edit',
+  'skill_file_write',
+  'run_command',
+  'run_skill_script',
+] as const;
+
+const SetReviewerReadOnlyPresetSchema = z.object({
+  agentId: z.string().guid(),
+  enabled: z.boolean(),
+});
+
+export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetReviewerReadOnlyPresetSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, enabled } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as setCodeTaskYoloAction.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the read-only preset.');
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    if (enabled) {
+      await db
+        .insert(approvalRules)
+        .values(
+          READONLY_PRESET_TOOLS.map((toolName) => ({
+            entityId: session.entityId,
+            agentId,
+            toolName,
+            action: 'block' as const,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+          set: { action: 'block', updatedAt: new Date() },
+        });
+    } else {
+      await db
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            inArray(approvalRules.toolName, READONLY_PRESET_TOOLS as unknown as string[]),
+            eq(approvalRules.action, 'block'),
+          ),
+        );
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setReviewerReadOnlyPresetAction]', err);
+    return fail('db_error', 'Failed to save the read-only preset');
+  }
+}
+
+// ─── Agent runtime (étape E — Claude Code as an agent's own harness) ─────────
+//
+// agents.runtime: 'nodal' (default) | 'claude-code' | 'codex' (reserved,
+// refused here — the Zod enum only accepts 'nodal'/'claude-code', so a
+// request for 'codex' fails validation the same way the runner fails loud on
+// it today). Switching to 'claude-code' hands the agent's LOOP, tools and
+// context to the Claude Code harness on this machine; channels, cron,
+// workspaces, the CLI daily budget and approvals stay Nodal's — see the
+// column comment in packages/db/src/schema/agents.ts for the full contract.
+
+const SetAgentRuntimeSchema = z.object({
+  agentId: z.string().guid(),
+  runtime: z.enum(['nodal', 'claude-code']),
+});
+
+export async function setAgentRuntimeAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentRuntimeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, runtime } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as setCliDailyBudgetAction.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', "Only the workspace owner can change this agent's runtime.");
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ runtime, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentRuntimeAction]', err);
+    return fail('db_error', 'Failed to save the agent runtime');
+  }
+}
+
+// ─── Runtime-agent permission mode (read / write) ─────────────────────────────
+//
+// agents.cli_permissions.mode: 'read' (default when NULL) hides the CLI's
+// write tools; 'write' allows workspace edits. Merges onto the existing JSONB
+// value — extraDisallowed (not exposed by this UI yet) must survive a mode
+// change untouched, same merge shape as setCliDefaultsAction above.
+
+const SetCliRuntimeModeSchema = z.object({
+  agentId: z.string().guid(),
+  mode: z.enum(['read', 'write']),
+});
+
+export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliRuntimeModeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, mode } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as setCliDailyBudgetAction.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail(
+          'forbidden',
+          "Only the workspace owner can change this agent's runtime permissions.",
+        );
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, cliPermissions: agents.cliPermissions })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const nextPermissions = { ...(agent.cliPermissions ?? {}), mode };
+
+    await db
+      .update(agents)
+      .set({ cliPermissions: nextPermissions, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliRuntimeModeAction]', err);
+    return fail('db_error', 'Failed to save the runtime permission mode');
   }
 }
 
@@ -5874,8 +6676,70 @@ export type CommunitySkillUpdateResult = {
  * scripts_authorized grant for this skill — the caller surfaces that count so
  * the UI can warn the user to re-approve.
  */
+export type CommunitySkillUpdatePreview = {
+  currentContent: string;
+  upstreamContent: string;
+  contentChanged: boolean;
+  scriptsChanged: boolean;
+  scriptNames: string[];
+  upstreamContentHash: string;
+  contentOverridden: boolean;
+};
+
+/**
+ * SKILL-003: fetch the ACTUAL text an update would install, so the owner can
+ * read it before approving. Read-only. Pass the returned `upstreamContentHash`
+ * to `updateCommunitySkillAction` — the apply refuses if upstream moved since,
+ * rather than installing text nobody reviewed.
+ */
+export async function previewCommunitySkillUpdateAction(
+  slug: string,
+): Promise<ActionResult<CommunitySkillUpdatePreview>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[previewCommunitySkillUpdateAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/preview-update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[previewCommunitySkillUpdateAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | ({ ok: true } & CommunitySkillUpdatePreview)
+      | { ok: false; error: string; message: string };
+    if (!body.ok) return fail(body.error, body.message);
+    return ok({
+      currentContent: body.currentContent,
+      upstreamContent: body.upstreamContent,
+      contentChanged: body.contentChanged,
+      scriptsChanged: body.scriptsChanged,
+      scriptNames: body.scriptNames,
+      upstreamContentHash: body.upstreamContentHash,
+      contentOverridden: body.contentOverridden,
+    });
+  } catch (err) {
+    console.error('[previewCommunitySkillUpdateAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
 export async function updateCommunitySkillAction(
   slug: string,
+  expectedContentHash?: string,
 ): Promise<ActionResult<CommunitySkillUpdateResult>> {
   try {
     const session = await getSession();
@@ -5894,7 +6758,11 @@ export async function updateCommunitySkillAction(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ slug, entityId: session.entityId }),
+        body: JSON.stringify({
+          slug,
+          entityId: session.entityId,
+          ...(expectedContentHash === undefined ? {} : { expectedContentHash }),
+        }),
       });
     } catch (fetchErr) {
       console.error('[updateCommunitySkillAction] fetch failed:', fetchErr);
@@ -6829,23 +7697,54 @@ async function loadActivity(
         ? sql`${agentJobs.createdAt} > now() - interval '12 weeks'`
         : sql`${agentJobs.createdAt} > now() - interval '7 days'`;
 
-    // Single grouped query — pivot in JS. Bounded by created_at to keep the
-    // index `idx_agent_jobs_entity_created` efficient. Left-join agents (then
-    // its LLM key) so each bucket also decomposes by provider+model; LEFT (not
-    // inner) so jobs whose agent/key was deleted still count toward the totals.
+    // Jobs by status — the bars. One grouped query, bounded by created_at to
+    // keep `idx_agent_jobs_entity_created` efficient.
     const rows = await db
       .select({
         bucket: sql<string>`to_char(${truncExpr}, 'YYYY-MM-DD')`,
         status: agentJobs.status,
-        model: agents.model,
-        provider: entityLlmKeys.provider,
         count: sql<string>`count(*)`,
       })
       .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .leftJoin(entityLlmKeys, eq(entityLlmKeys.id, agents.llmKeyId))
       .where(and(eq(agentJobs.entityId, session.entityId), windowCond))
-      .groupBy(truncExpr, agentJobs.status, agents.model, entityLlmKeys.provider);
+      .groupBy(truncExpr, agentJobs.status);
+
+    // Models — the lines. From llm_calls, which records the model that ACTUALLY
+    // answered, per call, at the time of the call.
+    //
+    // This used to read `agents.model` through a join, i.e. the model configured
+    // on the agent TODAY, applied to jobs from any date. Switching an agent to a
+    // new model rewrote twelve weeks of history: reported live on 2026-08-21 —
+    // "the week of 22 June shows GLM 5.3 called 125 times, and GLM 5.3 came out
+    // yesterday". The jobs were real; the model attributed to them was not.
+    //
+    // The honest source only exists from migration 0075 (19/08/2026) onward.
+    // Before that the effective model was never persisted anywhere, so those
+    // weeks carry no model line at all — a gap that says "not measured" instead
+    // of a plausible value that says something false (invariant #4).
+    //
+    // Note the unit shift this forces: a job makes SEVERAL llm_calls, so the
+    // lines count CALLS while the bars count JOBS. They no longer sum to the
+    // same total, and the chart states that rather than implying otherwise.
+    const modelTruncExpr =
+      unit === 'week'
+        ? sql`date_trunc('week', ${llmCalls.createdAt})`
+        : sql`date_trunc('day', ${llmCalls.createdAt})`;
+    const modelWindowCond =
+      unit === 'week'
+        ? sql`${llmCalls.createdAt} > now() - interval '12 weeks'`
+        : sql`${llmCalls.createdAt} > now() - interval '7 days'`;
+
+    const modelRows = await db
+      .select({
+        bucket: sql<string>`to_char(${modelTruncExpr}, 'YYYY-MM-DD')`,
+        model: llmCalls.modelEffective,
+        provider: llmCalls.provider,
+        count: sql<string>`count(*)`,
+      })
+      .from(llmCalls)
+      .where(and(eq(llmCalls.entityId, session.entityId), modelWindowCond))
+      .groupBy(modelTruncExpr, llmCalls.modelEffective, llmCalls.provider);
 
     const buckets = new Map<string, WeeklyActivityRow>();
     for (const iso of bucketIsos) {
@@ -6874,9 +7773,15 @@ async function loadActivity(
       else if (status === 'cancelled') bucket.cancelled += n;
       else if (status === 'pending') bucket.pending += n;
       else bucket.awaiting += n; // processing + awaiting_approval + awaiting_delegation
+    }
 
-      // Per-model decomposition, keyed by the `provider/model` label. Jobs
-      // whose agent/key was deleted collapse to 'unknown' rather than dropped.
+    // Model lines, from the inference trace — never from the agent's current
+    // configuration. A bucket with no llm_calls rows keeps `models: {}` and
+    // simply draws no line there.
+    for (const r of modelRows) {
+      const bucket = buckets.get(r.bucket);
+      if (!bucket) continue;
+      const n = Number(r.count);
       const model = formatModelLabel(r.provider, r.model && r.model.trim() ? r.model : '');
       bucket.models[model] = (bucket.models[model] ?? 0) + n;
       modelTotals.set(model, (modelTotals.get(model) ?? 0) + n);
@@ -9616,5 +10521,1045 @@ export async function getChatJobStatusAction(jobId: string): Promise<ActionResul
   } catch (err) {
     console.error('[getChatJobStatusAction]', err);
     return fail('db_error', 'Failed to load job status');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Coding processes (Code tab — étape V, mission control for code_task /
+// claude-code runtime work). Unifies two DB-native shapes into one list:
+//   (a) JOBS that did coding — a cli_runs row points at them, or they carry a
+//       code_task tool_call (delegation to the CLI).
+//   (b) CHAT SESSIONS — cli_runs rows with job_id NULL (a runtime='claude-code'
+//       agent answering a chat turn outside the job pipeline), grouped by
+//       cli_runs.session_id.
+// tool_calls has no FK back to a chat session (only job_id, nullable for chat
+// turns) — a session's DETAIL view can therefore only show its cli_runs
+// history, never a tool-call/diff timeline. Documented at the
+// getCodingProcessDetailAction session branch below — not a shortcut, a real
+// schema gap.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type CodingProcessRow = {
+  /** agent_jobs.id for kind='job', cli_runs.session_id for kind='chat'. */
+  id: string;
+  kind: 'job' | 'chat';
+  agentId: string | null;
+  agentName: string | null;
+  /** job.channel ('api'|'telegram'|'internal'|…) or 'chat' for a runtime session. */
+  origin: string;
+  /** agent_jobs.status; null for chat sessions (no job status applies). */
+  status: string | null;
+  /** 'coding'|'delegated'|'review'|'done'|'done_approved'|'failed'|'chat'|(raw job status as fallback). */
+  stage: string;
+  task: string;
+  costUsd: number;
+  filesChanged: number;
+  activityAt: string | null;
+};
+
+const REVIEW_APPROVE_MARKER = '"verdict":"approve"';
+
+/** '<n chars>…' — a local copy of format-time.ts's truncate: this is server-only code, that helper is client-tagged-free but lives under lib/ for web components, not worth importing across the boundary for one string op. */
+function truncateForList(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+type VerdictJson = {
+  verdict?: string;
+  summary?: string;
+  findings?: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
+  counts?: Record<string, number>;
+};
+
+function parseVerdictJson(raw: string): VerdictJson | null {
+  try {
+    return JSON.parse(raw) as VerdictJson;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stage derivation (the plan's exact rules):
+ *   processing/pending            → 'coding'
+ *   awaiting_delegation           → 'review' if a CHILD job has a review_verdict
+ *                                    tool_call, else 'delegated'
+ *   completed                     → 'done_approved' if a review_verdict with
+ *                                    the approve marker exists on this job OR
+ *                                    a direct child, else 'done'
+ *   failed                        → 'failed'
+ *   anything else (cancelled, awaiting_approval, …) → passed through as-is
+ */
+function deriveJobStage(
+  status: string | null,
+  jobId: string,
+  childIds: string[],
+  verdictOutputsByJob: Map<string, string[]>,
+): string {
+  const s = status ?? 'pending';
+  if (s === 'processing' || s === 'pending') return 'coding';
+  if (s === 'awaiting_delegation') {
+    const hasChildVerdict = childIds.some((cid) => (verdictOutputsByJob.get(cid) ?? []).length > 0);
+    return hasChildVerdict ? 'review' : 'delegated';
+  }
+  if (s === 'completed') {
+    const outputs = [
+      ...(verdictOutputsByJob.get(jobId) ?? []),
+      ...childIds.flatMap((cid) => verdictOutputsByJob.get(cid) ?? []),
+    ];
+    return outputs.some((o) => o.includes(REVIEW_APPROVE_MARKER)) ? 'done_approved' : 'done';
+  }
+  if (s === 'failed') return 'failed';
+  return s;
+}
+
+// ── Coding qualification (v3, Quentin 19/08 second pass) ───────────────────
+//
+// "Une session de coding = des fichiers modifiés/créés dans un contexte de
+// dev." A PIPELINE (root job + its DIRECT children, one rollup level — same
+// as the stage rules below) qualifies iff:
+//   (A) it contains ≥1 real edit: cli:Edit/Write/MultiEdit/NotebookEdit; OR
+//   (B) it contains a code_task tool_call with tool_input.mode === 'write'
+//       (a code_task in read mode is analysis, not coding); OR
+//   (C) it contains ≥1 Nodal file_edit/file_write AND a dev marker elsewhere
+//       in the pipeline (any cli:*, code_task, or review_verdict) — the
+//       double condition so an Office agent writing a .pptx via file_write
+//       never becomes a "coding session" on file_write alone.
+// cli:Bash, cli:Read/Glob, review_verdict, and a read-mode code_task do NOT
+// qualify by themselves — nor does merely having a cli_runs row.
+const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:NotebookEdit']);
+const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
+
+/** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
+function extractFilePath(input: Record<string, unknown> | null): string | null {
+  if (!input) return null;
+  if (typeof input['file_path'] === 'string') return input['file_path'];
+  if (typeof input['notebook_path'] === 'string') return input['notebook_path'];
+  if (typeof input['path'] === 'string') return input['path'];
+  return null;
+}
+
+/**
+ * Canonicalize an edit path for file grouping/counting (retour Quentin
+ * 20/08, job cbdbfc6c) : the SAME file arrives as an ABSOLUTE path from the
+ * CLI's own tools (`C:\…\<ws-root>\outputs\app\index.html`) and as a
+ * WORKSPACE-RELATIVE path from the Nodal file tools
+ * (`outputs/app/index.html`) — raw-string grouping counted one file twice.
+ * Backslashes are normalized to `/` and a known workspace-root prefix is
+ * stripped (case-insensitively for Windows-style paths, whose filesystems
+ * are case-insensitive). Falls back to the slash-normalized original.
+ */
+function canonicalChangePath(rawPath: string, workspaceRoots: string[]): string {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+  const p = norm(rawPath.trim());
+  const isWindowsPath = /^[a-z]:\//i.test(p);
+  for (const root of workspaceRoots) {
+    const r = norm(root);
+    if (r === '') continue;
+    const matches = isWindowsPath
+      ? p.toLowerCase().startsWith(r.toLowerCase() + '/')
+      : p.startsWith(r + '/');
+    if (matches) return p.slice(r.length + 1);
+  }
+  return p.replace(/^\.\//, '');
+}
+
+/** All workspace roots of the entity's agents — one query, shared by the
+ *  coding list AND detail so both canonicalize edit paths identically. */
+async function entityWorkspaceRoots(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ path: agentWorkspaces.path })
+    .from(agentWorkspaces)
+    .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+    .where(eq(agents.entityId, entityId));
+  // Longest roots first, so a nested workspace strips before its parent.
+  return rows.map((r) => r.path).sort((a, b) => b.length - a.length);
+}
+
+/**
+ * A diff/change entry from one edit-shaped tool_call, for the detail view's
+ * Changes panel. cli:MultiEdit applies several old/new pairs to one file —
+ * concatenated (not merged into a real multi-hunk diff) so the card still
+ * shows every sub-edit's before/after without a bespoke multi-hunk renderer.
+ * cli:NotebookEdit rarely reports an old_source (the CLI usually only sends
+ * the new cell content), so it renders as a write when none is present.
+ */
+/**
+ * True when a recorded tool call was REFUSED and therefore changed nothing.
+ * The CLI returns a `<tool_use_error>` envelope for a tool it removed from the
+ * palette — e.g. a read-only runtime agent attempting a write gets
+ * "No such tool available: Write. Write is disabled for this session".
+ *
+ * Nodal recorded those exactly like successful calls, so the Code tab counted
+ * files that were never written, showed their content in Changes, and even
+ * qualified a pipeline as a "coding session" on writes that never happened.
+ * That is what hid a read-only coding agent for a full day (Quentin 20/08:
+ * Dev C, 9 attempts, 9 refusals, and the UI kept saying files changed).
+ * The Nodal builtins report their own failures as `{"ok":false,...}`.
+ *
+ * NOT exported: this file is `'use server'`, where every export must be an
+ * async server action — exporting a sync helper is a build error, not a type
+ * error, so neither tsc nor the suite catches it (caught in the browser).
+ */
+function isRefusedToolCall(toolOutput: string | null): boolean {
+  if (!toolOutput) return false;
+  const head = toolOutput.slice(0, 400);
+  return head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head);
+}
+
+function extractChange(toolName: string, rawInput: unknown): CodingChangeView | null {
+  const input = (rawInput ?? null) as Record<string, unknown> | null;
+  const filePath = extractFilePath(input);
+  if (!filePath || !input) return null;
+
+  if (toolName === 'cli:Edit' || toolName === 'file_edit') {
+    return {
+      filePath,
+      kind: 'edit',
+      oldText: typeof input['old_string'] === 'string' ? input['old_string'] : null,
+      newText: typeof input['new_string'] === 'string' ? input['new_string'] : null,
+    };
+  }
+  if (toolName === 'cli:Write' || toolName === 'file_write') {
+    return {
+      filePath,
+      kind: 'write',
+      oldText: null,
+      newText: typeof input['content'] === 'string' ? input['content'] : null,
+    };
+  }
+  if (toolName === 'cli:MultiEdit') {
+    const edits = Array.isArray(input['edits']) ? input['edits'] : [];
+    const olds: string[] = [];
+    const news: string[] = [];
+    for (const e of edits) {
+      if (!e || typeof e !== 'object') continue;
+      const rec = e as Record<string, unknown>;
+      if (typeof rec['old_string'] === 'string') olds.push(rec['old_string']);
+      if (typeof rec['new_string'] === 'string') news.push(rec['new_string']);
+    }
+    return {
+      filePath,
+      kind: 'edit',
+      oldText: olds.length > 0 ? olds.join('\n') : null,
+      newText: news.length > 0 ? news.join('\n') : null,
+    };
+  }
+  if (toolName === 'cli:NotebookEdit') {
+    const oldText = typeof input['old_source'] === 'string' ? input['old_source'] : null;
+    const newText =
+      typeof input['new_source'] === 'string'
+        ? input['new_source']
+        : typeof input['content'] === 'string'
+          ? input['content']
+          : null;
+    return { filePath, kind: oldText !== null ? 'edit' : 'write', oldText, newText };
+  }
+  return null;
+}
+
+function pipelineQualifiesAsCoding(
+  calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
+): boolean {
+  // REFUSED calls deliberately still QUALIFY a pipeline, even though they
+  // change nothing and are excluded from the file count and the Changes panel.
+  //
+  // Filtering them here was tried and reverted on 2026-08-20. It looks right —
+  // "an attempt is not a coding session" — and it is exactly wrong for the user
+  // this tab serves: a session where every write was refused is a read-only
+  // agent silently doing nothing, which is the single hardest failure to
+  // diagnose (Dev C, 9 attempts, 9 refusals, a full day lost). Hiding the row
+  // removes the only place that failure is visible. So the row stays, and it
+  // says 0 files changed — surfaced, and honest about having changed nothing.
+  // Pinned by `code-processes-actions.test.ts` ("still surfaces … but claims
+  // NOTHING was changed").
+  //
+  // The tab's real under-counting was never this predicate: it was the
+  // one-level rollup that split a three-level session in half. Measured live on
+  // the same data, one-level rollup showed 0 coding processes where the
+  // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
+  if (calls.some((c) => EDIT_TOOL_NAMES.has(c.toolName))) return true;
+  const hasWriteCodeTask = calls.some((c) => {
+    if (c.toolName !== 'code_task') return false;
+    const input = c.toolInput as { mode?: string } | null;
+    return input?.mode === 'write';
+  });
+  if (hasWriteCodeTask) return true;
+  const hasNodalFileWrite = calls.some(
+    (c) => c.toolName === 'file_edit' || c.toolName === 'file_write',
+  );
+  if (!hasNodalFileWrite) return false;
+  return calls.some(
+    (c) =>
+      c.toolName.startsWith('cli:') ||
+      c.toolName === 'code_task' ||
+      c.toolName === 'review_verdict',
+  );
+}
+
+export async function listCodingProcessesAction(): Promise<ActionResult<CodingProcessRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const entityId = session.entityId;
+
+    // ── One scan of the tool_calls that CAN carry a coding signal, rolled up
+    // to each pipeline's DELEGATION ROOT at any depth (see coding-rollup.ts).
+    // Bounded by a recency window (5000 rows) — a full unbounded entity-wide
+    // scan doesn't belong on a page that only ever shows the top ~50 anyway.
+    const relevantCalls = await db
+      .select({
+        jobId: toolCalls.jobId,
+        toolName: toolCalls.toolName,
+        toolInput: toolCalls.toolInput,
+        // Needed to tell an executed call from a REFUSED one — a write the
+        // harness rejected must not count as a file changed (isRefusedToolCall).
+        toolOutput: toolCalls.toolOutput,
+      })
+      .from(toolCalls)
+      .where(
+        and(
+          eq(toolCalls.entityId, entityId),
+          isNotNull(toolCalls.jobId),
+          or(
+            sql`${toolCalls.toolName} LIKE 'cli:%'`,
+            inArray(toolCalls.toolName, ['code_task', 'review_verdict', 'file_edit', 'file_write']),
+          ),
+        ),
+      )
+      .orderBy(desc(toolCalls.createdAt))
+      .limit(5000);
+
+    const referencedJobIds = Array.from(
+      new Set(relevantCalls.map((c) => c.jobId).filter((id): id is string => id !== null)),
+    );
+    // Ancestors are resolved TRANSITIVELY, level by level, until no unknown
+    // parent is left. One `IN (…)` query per level of delegation, and a real
+    // pipeline is at most 3 deep (invariant #8, maxDelegationDepth).
+    const parentOf = new Map<string, string | null>();
+    let toResolve = referencedJobIds;
+    for (let depth = 0; depth < ROLLUP_MAX_DEPTH && toResolve.length > 0; depth++) {
+      const rows = await db
+        .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, toResolve)));
+      for (const r of rows) parentOf.set(r.id, r.parentJobId);
+      // Parents we now know about but haven't looked up yet.
+      toResolve = Array.from(
+        new Set(
+          rows
+            .map((r) => r.parentJobId)
+            .filter((id): id is string => id !== null && !parentOf.has(id)),
+        ),
+      );
+    }
+    const rootOf = (jobId: string): string => rollupRoot(jobId, parentOf);
+
+    const callsByRoot = new Map<
+      string,
+      Array<{ toolName: string; toolInput: unknown; toolOutput: string | null }>
+    >();
+    for (const c of relevantCalls) {
+      if (!c.jobId) continue;
+      const root = rootOf(c.jobId);
+      const arr = callsByRoot.get(root) ?? [];
+      arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
+      callsByRoot.set(root, arr);
+    }
+
+    const candidateJobIds = Array.from(callsByRoot.entries())
+      .filter(([, calls]) => pipelineQualifiesAsCoding(calls))
+      .map(([root]) => root);
+
+    let jobRows: CodingProcessRow[] = [];
+    if (candidateJobIds.length > 0) {
+      const jobs = await db
+        .select({
+          id: agentJobs.id,
+          agentId: agentJobs.agentId,
+          agentName: agents.name,
+          channel: agentJobs.channel,
+          status: agentJobs.status,
+          task: agentJobs.task,
+          createdAt: agentJobs.createdAt,
+          updatedAt: agentJobs.updatedAt,
+        })
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, candidateJobIds)))
+        .orderBy(desc(agentJobs.createdAt))
+        .limit(50);
+
+      const jobIds = jobs.map((j) => j.id);
+
+      // Descendants at ANY depth, fetched level by level. Direct children alone
+      // are not enough: on a three-level team the work that proves a pipeline
+      // is coding sits at the bottom, and stopping at depth 1 leaves it out of
+      // the very pipeline it belongs to.
+      const childIdsByParent = new Map<string, string[]>();
+      {
+        let frontier = jobIds;
+        const fetched = new Set<string>(jobIds);
+        for (let depth = 0; depth < ROLLUP_MAX_DEPTH && frontier.length > 0; depth++) {
+          const rows = await db
+            .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+            .from(agentJobs)
+            .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)));
+          const next: string[] = [];
+          for (const r of rows) {
+            if (!r.parentJobId) continue;
+            const arr = childIdsByParent.get(r.parentJobId) ?? [];
+            arr.push(r.id);
+            childIdsByParent.set(r.parentJobId, arr);
+            if (!fetched.has(r.id)) {
+              fetched.add(r.id);
+              next.push(r.id);
+            }
+          }
+          frontier = next;
+        }
+      }
+
+      // Maps ANY pipeline member (the root, or a descendant at any depth) back
+      // to its root — used to fold cli_runs cost rows and file changes onto the
+      // right pipeline below.
+      const { memberIds: allRelevantIds, rootForMember: rootForPipelineMember } = pipelineMembers(
+        jobIds,
+        childIdsByParent,
+      );
+
+      // Cost = the PIPELINE's cost (root + its direct children), not the root
+      // job alone — a delegated child's own cli_runs rows (its own code_task
+      // calls) are part of the same coding session the user is looking at.
+      const costRows =
+        allRelevantIds.length > 0
+          ? await db
+              .select({
+                jobId: cliRuns.jobId,
+                cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)`,
+              })
+              .from(cliRuns)
+              .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)))
+              .groupBy(cliRuns.jobId)
+          : [];
+      const costByRoot = new Map<string, number>();
+      for (const r of costRows) {
+        if (!r.jobId) continue;
+        const root = rootForPipelineMember.get(r.jobId) ?? r.jobId;
+        costByRoot.set(root, (costByRoot.get(root) ?? 0) + Number(r.cost));
+      }
+
+      // Files touched = the PIPELINE's files (root + direct children), from
+      // callsByRoot — already rolled up above, already scoped to the tool
+      // names that can carry a file path. Read tool_input in JS, not jsonb
+      // SQL (the plan's call — simpler, and this list is bounded).
+      // Paths are CANONICALIZED (absolute CLI form vs workspace-relative
+      // Nodal form = the same file) so the count never doubles.
+      const workspaceRoots = await entityWorkspaceRoots(db, entityId);
+      const filesByRoot = new Map<string, Set<string>>();
+      for (const [root, calls] of callsByRoot) {
+        if (!candidateJobIds.includes(root)) continue;
+        const set = new Set<string>();
+        for (const c of calls) {
+          if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
+          if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
+          const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
+          if (fp) set.add(canonicalChangePath(fp, workspaceRoots));
+        }
+        filesByRoot.set(root, set);
+      }
+
+      // review_verdict outputs — for each job AND its direct children.
+      const verdictRows =
+        allRelevantIds.length > 0
+          ? await db
+              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .from(toolCalls)
+              .where(
+                and(
+                  eq(toolCalls.entityId, entityId),
+                  inArray(toolCalls.jobId, allRelevantIds),
+                  eq(toolCalls.toolName, 'review_verdict'),
+                ),
+              )
+          : [];
+      const verdictOutputsByJob = new Map<string, string[]>();
+      for (const v of verdictRows) {
+        if (!v.jobId || !v.toolOutput) continue;
+        const arr = verdictOutputsByJob.get(v.jobId) ?? [];
+        arr.push(v.toolOutput);
+        verdictOutputsByJob.set(v.jobId, arr);
+      }
+
+      jobRows = jobs.map((j) => ({
+        id: j.id,
+        kind: 'job' as const,
+        agentId: j.agentId,
+        agentName: j.agentName,
+        origin: j.channel,
+        status: j.status,
+        stage: deriveJobStage(
+          j.status,
+          j.id,
+          childIdsByParent.get(j.id) ?? [],
+          verdictOutputsByJob,
+        ),
+        task: truncateForList(j.task, 120),
+        costUsd: costByRoot.get(j.id) ?? 0,
+        filesChanged: filesByRoot.get(j.id)?.size ?? 0,
+        activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
+      }));
+    }
+
+    // Chat runtime sessions are EXCLUDED on purpose (Quentin, 19/08): the
+    // schema has no tool_calls↔session link, so a chat session cannot prove
+    // it did any coding — listing them all was exactly the "everything
+    // mixed in" noise this tab must not have. A chat that delegates real
+    // code work spawns a job, and that job qualifies through its signals.
+    const merged = [...jobRows]
+      .sort((a, b) => {
+        const at = a.activityAt ? Date.parse(a.activityAt) : 0;
+        const bt = b.activityAt ? Date.parse(b.activityAt) : 0;
+        return bt - at;
+      })
+      .slice(0, 50);
+
+    return ok(merged);
+  } catch (err) {
+    console.error('[listCodingProcessesAction]', err);
+    return fail('db_error', 'Failed to load coding processes');
+  }
+}
+
+export type CodingToolCallView = {
+  id: string;
+  toolName: string;
+  toolInput: unknown;
+  toolOutput: string | null;
+  durationMs: number | null;
+  createdAt: string | null;
+  /** Set when this call happened in a DIRECT CHILD job (a delegated worker), not the root itself. */
+  delegatedFrom: { jobId: string; agentName: string | null } | null;
+};
+
+export type CodingChangeView = {
+  filePath: string;
+  kind: 'edit' | 'write';
+  oldText: string | null;
+  newText: string | null;
+};
+
+/** One file's full edit history in this pipeline — the Changes panel's unit (v4, Quentin 19/08 third pass). */
+export type CodingFileChangeGroup = {
+  filePath: string;
+  /** Summed across every edit to this file — churn, not a single merged diff. */
+  addedLines: number;
+  removedLines: number;
+  /** Chronological, root + direct children merged. Each rendered as its own hunk — an edit acts on the PREVIOUS edit's result, so concatenating them into one blob would misrepresent the sequence. */
+  edits: CodingChangeView[];
+};
+
+export type CodingVerdictView = {
+  jobId: string;
+  verdict: string | null;
+  summary: string | null;
+  findings: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
+  counts: Record<string, number> | null;
+};
+
+/**
+ * One entry in the Activity trail: either a real tool_call (compact — no
+ * diff/output content, see CodeProcessDetail.tsx) or a turn marker giving the
+ * token/cost honest granularity (v4): 'call' events come from tool_calls;
+ * 'turn' events come from llm_calls (Nodal job turns, turn = the turn
+ * number) or cli_runs (a runtime CLI invocation, turn = null — the CLI has
+ * no Nodal turn concept). Never synthesized for a turn with no llm_calls/
+ * cli_runs row — an old job with no token data simply has no markers.
+ */
+export type CodingActivityItem =
+  | ({ kind: 'call' } & CodingToolCallView)
+  | {
+      kind: 'turn';
+      jobId: string;
+      /** null = a CLI invocation marker (cli_runs), not a Nodal job turn. */
+      turn: number | null;
+      /**
+       * EFFECTIVE input — hors cache (lectures ET écritures), quelle que soit
+       * la source : llm_calls.input_tokens INCLUT lectures + écritures
+       * (sémantique AI SDK), cli_runs.input_tokens exclut les deux (sémantique
+       * CLI). Normalisés ici pour qu'un tour Nodal et un tour CLI soient
+       * comparables dans la même liste (audit tokens 19-20/08).
+       */
+      inputTokens: number;
+      outputTokens: number;
+      /** Lectures de cache (~10 % du prix input). */
+      cachedTokens: number;
+      /**
+       * Écritures de cache (1,25× le prix input). null = donnée absente de la
+       * ligne source (provider sans la donnée, ou ligne pré-0077/0078) —
+       * jamais 0 deviné.
+       */
+      cacheCreationTokens: number | null;
+      /**
+       * Per-model split of a CLI turn (0079) — which model spent what, when
+       * the CLI spawned sub-agents on another tier. null = aggregate only
+       * (Nodal turns, codex, or a run older than 0079).
+       */
+      modelUsage: CliModelUsage[] | null;
+      costUsd: number;
+    };
+
+export type CodingProcessDetail = {
+  header: CodingProcessRow & {
+    durationMs: number | null;
+    /** EFFECTIVE input (hors cache, lectures ET écritures), root + direct children — même normalisation que les turn markers. */
+    inputTokens: number;
+    outputTokens: number;
+    /** Lectures de cache totales — affichées à côté de l'effectif, jamais mélangées dedans. */
+    cachedTokens: number;
+  };
+  activity: CodingActivityItem[];
+  verdicts: CodingVerdictView[];
+  changes: CodingFileChangeGroup[];
+};
+
+const CodingProcessDetailSchema = z.union([
+  z.object({ jobId: z.string().guid() }),
+  z.object({ sessionId: z.string().min(1).max(200) }),
+]);
+
+export async function getCodingProcessDetailAction(
+  raw: unknown,
+): Promise<ActionResult<CodingProcessDetail>> {
+  try {
+    const session = await getSession();
+    const parsed = CodingProcessDetailSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const entityId = session.entityId;
+
+    if ('jobId' in parsed.data) {
+      const { jobId } = parsed.data;
+      const [job] = await db
+        .select({
+          id: agentJobs.id,
+          agentId: agentJobs.agentId,
+          agentName: agents.name,
+          channel: agentJobs.channel,
+          status: agentJobs.status,
+          task: agentJobs.task,
+          createdAt: agentJobs.createdAt,
+          totalDurationMs: agentJobs.totalDurationMs,
+        })
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, entityId)));
+      if (!job) return fail('not_found', 'Process not found');
+
+      // Descendants at ANY depth, WITH agent name and their own duration.
+      //
+      // Direct children alone would contradict the list: `listCodingProcesses`
+      // rolls a pipeline up to its delegation root at any depth, so a
+      // three-level session shows 3 files there and would show 1 here. Same
+      // level-by-level walk, same ROLLUP_MAX_DEPTH bound.
+      const descendants: Array<{
+        id: string;
+        agentName: string | null;
+        totalDurationMs: number | null;
+        parentJobId: string | null;
+      }> = [];
+      {
+        let frontier = [jobId];
+        const seen = new Set<string>([jobId]);
+        for (let depth = 0; depth < ROLLUP_MAX_DEPTH && frontier.length > 0; depth++) {
+          const rows = await db
+            .select({
+              id: agentJobs.id,
+              agentName: agents.name,
+              totalDurationMs: agentJobs.totalDurationMs,
+              parentJobId: agentJobs.parentJobId,
+            })
+            .from(agentJobs)
+            .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+            .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)));
+          const next: string[] = [];
+          for (const r of rows) {
+            if (seen.has(r.id)) continue;
+            seen.add(r.id);
+            descendants.push(r);
+            next.push(r.id);
+          }
+          frontier = next;
+        }
+      }
+      // Direct children only — the stage rules are about what THIS job
+      // delegated, not about the whole subtree.
+      const childIds = descendants.filter((d) => d.parentJobId === jobId).map((d) => d.id);
+      const childAgentNameById = new Map(descendants.map((d) => [d.id, d.agentName]));
+      const allRelevantIds = [jobId, ...descendants.map((d) => d.id)];
+
+      // Timeline = the ROOT's tool_calls merged chronologically with its
+      // DIRECT children's — a delegated worker's edits/commands are part of
+      // the same coding session, not a separate hidden trail.
+      const toolCallRows = await db
+        .select({
+          id: toolCalls.id,
+          jobId: toolCalls.jobId,
+          toolName: toolCalls.toolName,
+          toolInput: toolCalls.toolInput,
+          toolOutput: toolCalls.toolOutput,
+          durationMs: toolCalls.durationMs,
+          createdAt: toolCalls.createdAt,
+        })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.jobId, allRelevantIds)))
+        .orderBy(toolCalls.createdAt);
+
+      // review_verdict — this job AND its direct children (same rule as the list).
+      const verdictRows =
+        allRelevantIds.length > 0
+          ? await db
+              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .from(toolCalls)
+              .where(
+                and(
+                  eq(toolCalls.entityId, entityId),
+                  inArray(toolCalls.jobId, allRelevantIds),
+                  eq(toolCalls.toolName, 'review_verdict'),
+                ),
+              )
+          : [];
+
+      // Tokens/cost, at the HONEST granularity (v4): per turn, never per
+      // tool — that data doesn't exist. llm_calls carries the Nodal job
+      // loop's inference cost (turn-tagged); cli_runs carries the coding
+      // CLI's own invocations (no Nodal turn concept — turn stays null).
+      // Both are pipeline-wide (root + direct children), matching the list.
+      const llmCallRows = await db
+        .select({
+          jobId: llmCalls.jobId,
+          turn: llmCalls.turn,
+          inputTokens: llmCalls.inputTokens,
+          outputTokens: llmCalls.outputTokens,
+          cachedTokens: llmCalls.cachedTokens,
+          cacheCreationTokens: llmCalls.cacheCreationTokens,
+          costUsd: llmCalls.costUsd,
+          createdAt: llmCalls.createdAt,
+        })
+        .from(llmCalls)
+        .where(and(eq(llmCalls.entityId, entityId), inArray(llmCalls.jobId, allRelevantIds)));
+
+      const cliRunRows = await db
+        .select({
+          jobId: cliRuns.jobId,
+          inputTokens: cliRuns.inputTokens,
+          outputTokens: cliRuns.outputTokens,
+          cachedTokens: cliRuns.cachedTokens,
+          cacheCreationTokens: cliRuns.cacheCreationTokens,
+          modelUsage: cliRuns.modelUsage,
+          costUsd: cliRuns.costUsd,
+          createdAt: cliRuns.createdAt,
+          durationMs: cliRuns.durationMs,
+        })
+        .from(cliRuns)
+        .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)));
+
+      // Normalisation (audit tokens 19-20/08) : llm_calls.input_tokens INCLUT
+      // le cache — lectures ET écritures (sémantique AI SDK / Anthropic) —
+      // quand cli_runs.input_tokens exclut les deux (sémantique CLI).
+      // L'effectif = hors cache, partout. UNE boucle par tableau : la seule
+      // asymétrie porteuse (normaliser llm, pas cli) est énoncée une fois.
+      const effectiveLlmInput = (r: {
+        inputTokens: number | null;
+        cachedTokens: number | null;
+        cacheCreationTokens: number | null;
+      }) =>
+        Math.max(0, (r.inputTokens ?? 0) - (r.cachedTokens ?? 0) - (r.cacheCreationTokens ?? 0));
+      let inputTokens = 0;
+      let cachedTokens = 0;
+      let outputTokens = 0;
+      let costUsd = 0;
+      for (const r of llmCallRows) {
+        inputTokens += effectiveLlmInput(r);
+        cachedTokens += r.cachedTokens ?? 0;
+        outputTokens += r.outputTokens ?? 0;
+        costUsd += r.costUsd ?? 0;
+      }
+      for (const r of cliRunRows) {
+        inputTokens += r.inputTokens ?? 0;
+        cachedTokens += r.cachedTokens ?? 0;
+        outputTokens += r.outputTokens ?? 0;
+        costUsd += r.costUsd ?? 0;
+      }
+
+      const verdictOutputsByJob = new Map<string, string[]>();
+      for (const v of verdictRows) {
+        if (!v.jobId || !v.toolOutput) continue;
+        const arr = verdictOutputsByJob.get(v.jobId) ?? [];
+        arr.push(v.toolOutput);
+        verdictOutputsByJob.set(v.jobId, arr);
+      }
+      const stage = deriveJobStage(job.status, job.id, childIds, verdictOutputsByJob);
+
+      const verdicts: CodingVerdictView[] = verdictRows
+        .filter((v): v is { jobId: string; toolOutput: string } => !!v.jobId && !!v.toolOutput)
+        .map((v) => {
+          const parsedVerdict = parseVerdictJson(v.toolOutput);
+          return {
+            jobId: v.jobId,
+            verdict: parsedVerdict?.verdict ?? null,
+            summary: parsedVerdict?.summary ?? null,
+            findings: parsedVerdict?.findings ?? [],
+            counts: parsedVerdict?.counts ?? null,
+          };
+        });
+
+      // Changes = the file-grouped view (v4 — Changes is now the MAIN
+      // content, not a sidebar). Every edit-shaped tool_call across the
+      // merged timeline: cli:Edit/Write/MultiEdit/NotebookEdit AND the
+      // Nodal file_edit/file_write tools (v3 — files modified/created is
+      // the coding definition, not just the CLI's own tools). Grouped by
+      // file, edits kept in order as separate hunks (never concatenated —
+      // edit N acts on edit N-1's result, not the original file).
+      // Grouping key = the CANONICAL path (see canonicalChangePath): the CLI's
+      // absolute form and the Nodal tools' workspace-relative form collapse
+      // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
+      const workspaceRoots = await entityWorkspaceRoots(db, entityId);
+      const changeGroups = new Map<string, CodingFileChangeGroup>();
+      for (const tc of toolCallRows) {
+        // A refused call wrote nothing — it must not appear as a change.
+        if (isRefusedToolCall(tc.toolOutput)) continue;
+        const change = extractChange(tc.toolName, tc.toolInput);
+        if (!change) continue;
+        const canonical = canonicalChangePath(change.filePath, workspaceRoots);
+        const group = changeGroups.get(canonical) ?? {
+          filePath: canonical,
+          addedLines: 0,
+          removedLines: 0,
+          edits: [],
+        };
+        group.addedLines += change.newText ? change.newText.split('\n').length : 0;
+        group.removedLines += change.oldText ? change.oldText.split('\n').length : 0;
+        group.edits.push({ ...change, filePath: canonical });
+        changeGroups.set(canonical, group);
+      }
+      const changes = Array.from(changeGroups.values());
+
+      // Activity = tool_calls + turn markers, one merged chronological trail.
+      // A marker is placed just before the first llm_calls/cli_runs row it
+      // summarizes (never guessed — no marker without a real row backing it).
+      const turnAgg = new Map<
+        string,
+        {
+          jobId: string;
+          turn: number;
+          inputTokens: number;
+          outputTokens: number;
+          cachedTokens: number;
+          cacheCreationTokens: number;
+          /** True once at least one row REPORTED the field — null otherwise (never 0 guessed). */
+          cacheCreationKnown: boolean;
+          costUsd: number;
+          firstAt: number;
+        }
+      >();
+      for (const r of llmCallRows) {
+        if (r.turn === null || !r.jobId) continue;
+        const key = `${r.jobId}:${r.turn}`;
+        const t = r.createdAt ? r.createdAt.getTime() : 0;
+        const cur = turnAgg.get(key) ?? {
+          jobId: r.jobId,
+          turn: r.turn,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          cacheCreationTokens: 0,
+          cacheCreationKnown: false,
+          costUsd: 0,
+          firstAt: t,
+        };
+        cur.inputTokens += effectiveLlmInput(r);
+        cur.outputTokens += r.outputTokens ?? 0;
+        cur.cachedTokens += r.cachedTokens ?? 0;
+        if (r.cacheCreationTokens !== null) {
+          cur.cacheCreationTokens += r.cacheCreationTokens;
+          cur.cacheCreationKnown = true;
+        }
+        cur.costUsd += r.costUsd ?? 0;
+        cur.firstAt = Math.min(cur.firstAt, t);
+        turnAgg.set(key, cur);
+      }
+
+      const events: Array<{ sortKey: number; item: CodingActivityItem }> = [];
+      for (const tc of toolCallRows) {
+        events.push({
+          sortKey: tc.createdAt ? tc.createdAt.getTime() : 0,
+          item: {
+            kind: 'call',
+            id: tc.id,
+            toolName: tc.toolName,
+            toolInput: tc.toolInput,
+            toolOutput: tc.toolOutput,
+            durationMs: tc.durationMs,
+            createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
+            delegatedFrom:
+              tc.jobId && tc.jobId !== jobId
+                ? { jobId: tc.jobId, agentName: childAgentNameById.get(tc.jobId) ?? null }
+                : null,
+          },
+        });
+      }
+      for (const agg of turnAgg.values()) {
+        events.push({
+          sortKey: agg.firstAt - 1, // sorts just before this turn's earliest llm_calls row
+          item: {
+            kind: 'turn',
+            jobId: agg.jobId,
+            turn: agg.turn,
+            inputTokens: agg.inputTokens,
+            outputTokens: agg.outputTokens,
+            cachedTokens: agg.cachedTokens,
+            cacheCreationTokens: agg.cacheCreationKnown ? agg.cacheCreationTokens : null,
+            // Nodal turns already carry their model per llm_calls row; the
+            // per-model split is a CLI-run concept only.
+            modelUsage: null,
+            costUsd: agg.costUsd,
+          },
+        });
+      }
+      for (const r of cliRunRows) {
+        if (!r.jobId) continue;
+        events.push({
+          sortKey: (r.createdAt ? r.createdAt.getTime() : 0) - 1,
+          item: {
+            kind: 'turn',
+            jobId: r.jobId,
+            turn: null,
+            inputTokens: r.inputTokens ?? 0,
+            outputTokens: r.outputTokens ?? 0,
+            cachedTokens: r.cachedTokens ?? 0,
+            cacheCreationTokens: r.cacheCreationTokens,
+            modelUsage: r.modelUsage,
+            costUsd: r.costUsd ?? 0,
+          },
+        });
+      }
+      events.sort((a, b) => a.sortKey - b.sortKey);
+      const activity = events.map((e) => e.item);
+
+      const filesChanged = changeGroups.size;
+
+      // Duration of the PIPELINE, not of the root job alone — which is what
+      // made the header read "0.0s" on real sessions (punch list V1.1).
+      //
+      // Preference order, and it matters: a job's own `total_duration_ms` is
+      // the authoritative measure and is summed across the whole pipeline. But
+      // a job whose loop is driven by a coding CLI never goes through the turn
+      // loop that writes it, so it lands at 0 while its `cli_runs` rows carry
+      // the real elapsed time. Falling back to those instead of showing zero is
+      // the difference between "we didn't measure it" and "it took no time".
+      // Never SUMMED with the job durations — a CLI run happens INSIDE its job,
+      // so adding both would double-count it.
+      const jobDurationMs =
+        (job.totalDurationMs ?? 0) +
+        descendants.reduce((sum, d) => sum + (d.totalDurationMs ?? 0), 0);
+      const cliDurationMs = cliRunRows.reduce((sum, r) => sum + (r.durationMs ?? 0), 0);
+      const pipelineDurationMs =
+        jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
+
+      return ok({
+        header: {
+          id: job.id,
+          kind: 'job',
+          agentId: job.agentId,
+          agentName: job.agentName,
+          origin: job.channel,
+          status: job.status,
+          stage,
+          task: job.task,
+          costUsd,
+          filesChanged,
+          activityAt: job.createdAt ? job.createdAt.toISOString() : null,
+          durationMs: pipelineDurationMs,
+          inputTokens,
+          outputTokens,
+          cachedTokens,
+        },
+        activity,
+        verdicts,
+        changes,
+      });
+    }
+
+    // ── Chat session detail ──────────────────────────────────────────────────
+    // tool_calls has NO foreign key back to a chat session (only job_id,
+    // nullable for chat turns) — so a session's detail can only ever show its
+    // cli_runs history, never a tool-call/diff timeline. Honest limitation of
+    // the schema, not a shortcut: toolCalls/changes/verdicts stay empty here.
+    const { sessionId } = parsed.data;
+    const runs = await db
+      .select({
+        agentId: cliRuns.agentId,
+        agentName: agents.name,
+        costUsd: cliRuns.costUsd,
+        inputTokens: cliRuns.inputTokens,
+        outputTokens: cliRuns.outputTokens,
+        cachedTokens: cliRuns.cachedTokens,
+        createdAt: cliRuns.createdAt,
+      })
+      .from(cliRuns)
+      .leftJoin(agents, eq(agents.id, cliRuns.agentId))
+      .where(
+        and(
+          eq(cliRuns.entityId, entityId),
+          eq(cliRuns.sessionId, sessionId),
+          isNull(cliRuns.jobId),
+        ),
+      )
+      .orderBy(desc(cliRuns.createdAt));
+    if (runs.length === 0) return fail('not_found', 'Process not found');
+
+    let totalCost = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCachedTokens = 0;
+    for (const r of runs) {
+      totalCost += r.costUsd ?? 0;
+      totalInputTokens += r.inputTokens ?? 0;
+      totalOutputTokens += r.outputTokens ?? 0;
+      totalCachedTokens += r.cachedTokens ?? 0;
+    }
+    const lastRun = runs[0]!;
+
+    return ok({
+      header: {
+        id: sessionId,
+        kind: 'chat',
+        agentId: lastRun.agentId,
+        agentName: lastRun.agentName,
+        origin: 'chat',
+        status: null,
+        stage: 'chat',
+        task: 'Runtime chat session',
+        costUsd: totalCost,
+        filesChanged: 0,
+        activityAt: lastRun.createdAt ? lastRun.createdAt.toISOString() : null,
+        durationMs: null,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cachedTokens: totalCachedTokens,
+      },
+      activity: [],
+      verdicts: [],
+      changes: [],
+    });
+  } catch (err) {
+    console.error('[getCodingProcessDetailAction]', err);
+    return fail('db_error', 'Failed to load process detail');
   }
 }

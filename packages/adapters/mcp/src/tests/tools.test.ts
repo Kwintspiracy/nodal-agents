@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpToolToToolDefinition, slugToPrefix } from '../tools.ts';
 import type { McpToolDescriptor } from '../client.ts';
@@ -31,13 +32,47 @@ describe('mcpToolToToolDefinition', () => {
     expect(def.name).toBe('cogni_cortex__get_home');
   });
 
-  it('maps readOnlyHint → riskLevel read', () => {
+  it('does NOT let a server downgrade itself with readOnlyHint (MCP-001)', () => {
+    // Annotations come FROM THE SERVER, so on a hostile one they are the
+    // attacker's claim about themselves. Measured during the audit: a tool named
+    // `purge_all_data`, described as deleting the whole workspace, carrying
+    // `readOnlyHint: true`, was assigned riskLevel 'read' — which under
+    // `destructive_gate` meant auto-approval. `destructiveHint` is still
+    // honoured (it can only RAISE the level); readOnlyHint can no longer lower it.
     const def = mcpToolToToolDefinition(
       clientWithCallTool(() => ({ content: [] })),
       descriptor,
       'c',
     );
-    expect(def.riskLevel).toBe('read');
+    expect(def.riskLevel).toBe('write');
+  });
+
+  it('frames the server-supplied description as untrusted (SKILL-001)', () => {
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      descriptor,
+      'cogni-cortex',
+    );
+    // The server's own text is preserved…
+    expect(def.description).toContain('Return the home view');
+    // …but never alone: it now carries its provenance, the same mitigation the
+    // webhook envelope applies to external payloads.
+    expect(def.description).toContain('cogni-cortex');
+    expect(def.description).toContain('untrusted');
+  });
+
+  it('caps an oversized description instead of passing it through verbatim', () => {
+    // Measured during the audit: a 371-char injection payload in a description
+    // reached the ToolDefinition byte-for-byte, with no cap of any kind — while
+    // tool RESULTS were already capped at 50k.
+    const long = 'x'.repeat(2_000);
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      { ...descriptor, description: long },
+      'c',
+    );
+    expect(def.description).toContain('truncated');
+    expect(def.description.length).toBeLessThan(long.length);
   });
 
   it('maps destructiveHint → riskLevel destructive', () => {
@@ -199,5 +234,86 @@ describe('mcpToolToToolDefinition', () => {
     const out = (await def.execute({}, {} as never)) as { truncated: boolean };
 
     expect(out.truncated).toBe(true);
+  });
+});
+
+// ─── Stated purpose ──────────────────────────────────────────────────────────
+//
+// Before this, `toolInput.purpose` was undefined for EVERY MCP tool — no
+// discovered tool declares that field — so the approval card printed "Purpose
+// not specified by the agent." on 100% of MCP approvals. Reported live, with
+// the only reasonable conclusion: "je ne les approuverai pas".
+
+describe('purpose injection', () => {
+  const shapeOf = (def: { inputSchema: unknown }) =>
+    (def.inputSchema as { shape: Record<string, unknown> }).shape;
+
+  it('adds a REQUIRED purpose to a discovered tool', () => {
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      descriptor,
+      'cogni-cortex',
+    );
+
+    // Present in the schema the LLM sees...
+    expect(Object.keys(shapeOf(def))).toContain('purpose');
+    // ...and genuinely required: an omitted purpose must not validate, or a
+    // model under pressure simply drops it and we are back to the bug.
+    const parsed = (def.inputSchema as z.ZodTypeAny).safeParse({ detail: true });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("does not forward purpose to the server — it is the product's field", async () => {
+    let sent: unknown;
+    const callTool = vi.fn(async (req: unknown) => {
+      sent = req;
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    const def = mcpToolToToolDefinition({ callTool } as unknown as Client, descriptor, 'c');
+
+    await def.execute({ detail: true, purpose: 'Vérifier le CHANGELOG' }, {} as never);
+
+    // The server never declared `purpose`; a strict server would reject it.
+    expect(sent).toEqual({ name: 'get_home', arguments: { detail: true } });
+  });
+
+  it('KEEPS a purpose the server itself declares, and does not re-describe it', async () => {
+    // The dangerous case: stripping unconditionally would delete a real
+    // argument the tool needs, and the call would silently do the wrong thing.
+    const ownPurpose: McpToolDescriptor = {
+      name: 'file_note',
+      description: 'Note something',
+      inputSchema: {
+        type: 'object',
+        properties: { purpose: { type: 'string', description: "the note's subject" } },
+        required: ['purpose'],
+      },
+    };
+    let sent: unknown;
+    const callTool = vi.fn(async (req: unknown) => {
+      sent = req;
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    const def = mcpToolToToolDefinition({ callTool } as unknown as Client, ownPurpose, 'c');
+
+    await def.execute({ purpose: 'quarterly report' }, {} as never);
+
+    expect(sent).toEqual({ name: 'file_note', arguments: { purpose: 'quarterly report' } });
+  });
+
+  it('leaves a non-object input schema alone rather than forcing one', () => {
+    const scalar: McpToolDescriptor = {
+      name: 'ping',
+      description: 'Ping',
+      inputSchema: { type: 'string' },
+    };
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      scalar,
+      'c',
+    );
+    // No shape to extend. The card keeps its honest "did not say why" line
+    // instead of the tool call failing validation forever.
+    expect((def.inputSchema as { shape?: unknown }).shape).toBeUndefined();
   });
 });

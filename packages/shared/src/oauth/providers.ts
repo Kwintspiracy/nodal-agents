@@ -49,6 +49,19 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Google Drive',
     authUrl: GOOGLE_AUTH_URL,
     tokenUrl: GOOGLE_TOKEN_URL,
+    // CONNECTOR-001 (audit vague D): this IS the broadest Drive scope, and it
+    // is deliberate — narrowing it would remove the connector's whole point.
+    // `drive.file` only ever sees files the app itself created or the user
+    // hand-picked in a Google Picker; every tool shipped here works on files
+    // that already exist (list, read, export, copy, move, rename, delete,
+    // share, permissions), so under `drive.file` they would all return "not
+    // found" on the user's real Drive. `drive.readonly` is not narrower in
+    // reach either — it still exposes every file, just without writes, and it
+    // would break upload/move/delete/share.
+    // What is fixed instead is DISCLOSURE: the connector UI now states the
+    // reach in plain language before the Google consent screen (see
+    // connector-catalog.ts / scopeDisclosure), rather than letting "connect
+    // Drive" read as "the files it needs".
     scopes: ['https://www.googleapis.com/auth/drive', ...GOOGLE_IDENTITY_SCOPES],
     pkce: 'pkce-s256',
     tokenAuth: 'body',
@@ -81,7 +94,24 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Google Calendar',
     authUrl: GOOGLE_AUTH_URL,
     tokenUrl: GOOGLE_TOKEN_URL,
-    scopes: ['https://www.googleapis.com/auth/calendar', ...GOOGLE_IDENTITY_SCOPES],
+    // CONNECTOR-001 (audit vague D): was the blanket `auth/calendar`, which
+    // also grants creating and DELETING calendars and editing their sharing
+    // ACLs — none of which this connector does. Its actual API surface is
+    // events.{list,get,insert,patch,delete}, calendarList.list and
+    // freebusy.query, so the narrow trio below covers it exactly:
+    //   - calendar.events            → every events.* call
+    //   - calendar.calendarlist.readonly → calendarList.list (events alone
+    //     does NOT grant it, which is why the list tool needs its own scope)
+    //   - calendar.freebusy         → freebusy.query, named explicitly rather
+    //     than relying on it being implied by calendar.events
+    // A stolen token can no longer delete a calendar; it can still change
+    // events, which is what the tools are for.
+    scopes: [
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      'https://www.googleapis.com/auth/calendar.freebusy',
+      ...GOOGLE_IDENTITY_SCOPES,
+    ],
     pkce: 'pkce-s256',
     tokenAuth: 'body',
     tokenBodyType: 'form',
@@ -95,6 +125,9 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Google Sheets',
     authUrl: GOOGLE_AUTH_URL,
     tokenUrl: GOOGLE_TOKEN_URL,
+    // CONNECTOR-001: `spreadsheets.readonly` is the only narrower scope and it
+    // would break every write tool this connector ships (values, structure,
+    // format, filters). Reach is disclosed in the UI instead.
     scopes: ['https://www.googleapis.com/auth/spreadsheets', ...GOOGLE_IDENTITY_SCOPES],
     pkce: 'pkce-s256',
     tokenAuth: 'body',
@@ -109,6 +142,8 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     label: 'Google Docs',
     authUrl: GOOGLE_AUTH_URL,
     tokenUrl: GOOGLE_TOKEN_URL,
+    // CONNECTOR-001: `documents.readonly` would break docs_create and every
+    // text/format/structure edit tool. Reach is disclosed in the UI instead.
     scopes: ['https://www.googleapis.com/auth/documents', ...GOOGLE_IDENTITY_SCOPES],
     pkce: 'pkce-s256',
     tokenAuth: 'body',

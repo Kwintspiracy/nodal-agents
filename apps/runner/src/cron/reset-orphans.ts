@@ -57,7 +57,7 @@ async function notifyJobFailure(db: AnyDrizzleDb, jobId: string, notice: string)
  * (completed / failed / cancelled) but were never marked — mirrors the job
  * outcome onto the task (done / blocked). It must NEVER reset such a task to
  * `todo`: re-running a task whose job already completed re-executes successful
- * work (live: the same agent posted to the Cortex 3x). With the per-job marking
+ * work (live: the same agent posted to its MCP endpoint 3x). With the per-job marking
  * in executeReadyTasks this is now a rare safety net (genuine crash between job
  * finish and task mark), not the common path.
  *

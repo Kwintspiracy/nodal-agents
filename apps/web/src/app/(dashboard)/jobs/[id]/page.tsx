@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getJobDetailAction } from '@/lib/actions.ts';
+import { redactTranscriptForDisplay, redactSecretsInText } from '@nodal-agents/shared';
 import StatusBadge from '@/components/StatusBadge.tsx';
 import JobMessages from '@/components/JobMessages.tsx';
 import JobStatusPoller from '@/components/JobStatusPoller.tsx';
@@ -35,7 +36,14 @@ export default async function JobDetailPage({ params }: Props) {
 
   const job = result.data;
   const isLive = !TERMINAL.has(job.status ?? '');
-  const messages = Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [];
+  // SECRET-001. Transcripts store tool results verbatim: a `file_read` on a
+  // `.env`, a command printing an environment, a query against a credentials
+  // table. Masked HERE, at display, never at write — the runner re-reads these
+  // messages to resume a job, and a resumed job must see what actually
+  // happened.
+  const messages = redactTranscriptForDisplay(
+    Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [],
+  );
 
   // Cron provenance (trigger_context, migration 0061) — null for non-cron jobs
   // and for cron rows predating that column.
@@ -133,7 +141,7 @@ export default async function JobDetailPage({ params }: Props) {
                     Result
                   </p>
                   <pre className="text-sm text-ink-2 whitespace-pre-wrap bg-canvas rounded-lg p-4 border border-rule-2 max-h-80 overflow-auto">
-                    {job.result}
+                    {redactSecretsInText(job.result)}
                   </pre>
                 </div>
               )}
@@ -143,7 +151,7 @@ export default async function JobDetailPage({ params }: Props) {
                     Error
                   </p>
                   <pre className="text-sm text-err whitespace-pre-wrap bg-warn-bg rounded-lg p-4 border border-err/30">
-                    {job.error}
+                    {redactSecretsInText(job.error)}
                   </pre>
                 </div>
               )}

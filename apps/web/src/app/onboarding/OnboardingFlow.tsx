@@ -25,6 +25,7 @@ import {
   createAgentAction,
   listSkillsAction,
   assignSkillAction,
+  codeTaskDoctorAction,
   createConversationAction,
   sendChatMessageAction,
   createMemoryAction,
@@ -292,6 +293,17 @@ export default function OnboardingFlow() {
   const [agentError, setAgentError] = useState('');
   const [agentId, setAgentId] = useState<string | null>(null);
 
+  // ── Step 3 — coding CLI capability detection (non-blocking) ─────────────
+  // Probes the runner machine for Claude Code / Codex once the agent exists.
+  // Presented as a capability the agent can pick up, never as an LLM provider —
+  // enabling it just attaches the `code-task` system skill (same mechanism as
+  // BASE_CONDUCT_SKILLS below), which is what gates the code_task builtin.
+  const [cliDetected, setCliDetected] = useState<{ claude: boolean; codex: boolean } | null>(null);
+  const [codeTaskSkillId, setCodeTaskSkillId] = useState<string | null>(null);
+  const [codeTaskEnabled, setCodeTaskEnabled] = useState(false);
+  const [enablingCodeTask, setEnablingCodeTask] = useState(false);
+  const codeTaskDetectStarted = useRef(false);
+
   // ── Step 4 — welcome interview ─────────────────────────────────────────
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<Array<{ role: 'agent' | 'user'; text: string }>>([]);
@@ -450,6 +462,38 @@ export default function OnboardingFlow() {
     setStep(3);
   }
 
+  // On reaching step 3: probe the runner machine for Claude Code / Codex.
+  // Best-effort and silent on failure — a doctor call that can't reach the
+  // runner (or finds nothing) just means the capability card doesn't show; it
+  // must never block or error the success screen.
+  useEffect(() => {
+    if (step !== 3 || codeTaskDetectStarted.current) return;
+    codeTaskDetectStarted.current = true;
+    void (async () => {
+      const [claudeRes, codexRes, skillsRes] = await Promise.all([
+        codeTaskDoctorAction({ provider: 'claude' }),
+        codeTaskDoctorAction({ provider: 'codex' }),
+        listSkillsAction(),
+      ]);
+      setCliDetected({
+        claude: claudeRes.ok && claudeRes.data.binaryFound,
+        codex: codexRes.ok && codexRes.data.binaryFound,
+      });
+      if (skillsRes.ok) {
+        const skill = skillsRes.data.find((s) => s.slug === 'code-task');
+        if (skill) setCodeTaskSkillId(skill.id);
+      }
+    })();
+  }, [step]);
+
+  async function handleEnableCodeTask() {
+    if (!codeTaskSkillId || !agentId || enablingCodeTask) return;
+    setEnablingCodeTask(true);
+    const res = await assignSkillAction({ skillId: codeTaskSkillId, agentId });
+    setEnablingCodeTask(false);
+    if (res.ok) setCodeTaskEnabled(true);
+  }
+
   // Strip the control marker, render the agent's text, and flip to "done" so the
   // Telegram step appears.
   function pushAgentReply(raw: string) {
@@ -602,8 +646,16 @@ export default function OnboardingFlow() {
                 sub="The brain your agent thinks with. Your key stays on this machine."
               />
 
-              <label className="mt-5 block text-medium-12 text-ink-3">Provider</label>
+              {/* Chaque champ de cet écran porte un id lié à son <label>. Ils
+                  n'en avaient aucun : un lecteur d'écran annonçait des champs
+                  anonymes sur le TOUT PREMIER écran d'une installation neuve,
+                  et rien ne pouvait le piloter — ni un test, ni un utilisateur
+                  au clavier cliquant le libellé. */}
+              <label className="mt-5 block text-medium-12 text-ink-3" htmlFor="onboarding-provider">
+                Provider
+              </label>
               <Select
+                id="onboarding-provider"
                 value={provider.value}
                 onChange={(e) => pickProvider(e.target.value)}
                 className="mt-1.5 bg-canvas text-body-14"
@@ -623,18 +675,22 @@ export default function OnboardingFlow() {
                 </p>
               )}
 
-              <label className="mt-4 block text-medium-12 text-ink-3">Base URL</label>
+              <label className="mt-4 block text-medium-12 text-ink-3" htmlFor="onboarding-base-url">
+                Base URL
+              </label>
               <TextInput
+                id="onboarding-base-url"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://…"
                 className="mt-1.5 bg-canvas text-body-14"
               />
 
-              <label className="mt-4 block text-medium-12 text-ink-3">
+              <label className="mt-4 block text-medium-12 text-ink-3" htmlFor="onboarding-api-key">
                 API key {provider.needsKey ? '' : '(optional for local)'}
               </label>
               <TextInput
+                id="onboarding-api-key"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 type="password"
@@ -683,16 +739,28 @@ export default function OnboardingFlow() {
                 sub="A name and a personality. It also ships with built-in codes of conduct (safe tool use, verify before done, task planning…)."
               />
 
-              <label className="mt-5 block text-medium-12 text-ink-3">Name</label>
+              <label
+                className="mt-5 block text-medium-12 text-ink-3"
+                htmlFor="onboarding-agent-name"
+              >
+                Name
+              </label>
               <TextInput
+                id="onboarding-agent-name"
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="e.g. Friday"
                 className="mt-1.5 bg-canvas text-body-14"
               />
 
-              <label className="mt-4 block text-medium-12 text-ink-3">Personality</label>
+              <label
+                className="mt-4 block text-medium-12 text-ink-3"
+                htmlFor="onboarding-personality"
+              >
+                Personality
+              </label>
               <TextArea
+                id="onboarding-personality"
                 value={personality}
                 onChange={(e) => setPersonality(e.target.value)}
                 rows={11}
@@ -759,6 +827,39 @@ export default function OnboardingFlow() {
                   Meet {agentName || 'your agent'} →
                 </PrimaryButton>
               </div>
+
+              {codeTaskSkillId && (cliDetected?.claude || cliDetected?.codex) && (
+                <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-rule-2 bg-paper p-4 text-left">
+                  <div className="text-body-13 font-medium text-ink">
+                    {cliDetected.claude && cliDetected.codex
+                      ? 'Claude Code and Codex detected'
+                      : cliDetected.claude
+                        ? 'Claude Code detected'
+                        : 'Codex detected'}{' '}
+                    on this machine
+                  </div>
+                  <p className="mt-1 text-body-12 leading-[1.5]! text-ink-3">
+                    Give {agentName || 'your agent'} the ability to hand off coding tasks to it.
+                    Runs use your subscription on this machine.
+                  </p>
+                  <div className="mt-3">
+                    {codeTaskEnabled ? (
+                      <span className="text-body-13 text-ok">
+                        Enabled for {agentName || 'your agent'}
+                      </span>
+                    ) : (
+                      <PrimaryButton
+                        variant="neutral"
+                        className="bg-canvas"
+                        onClick={() => void handleEnableCodeTask()}
+                        disabled={enablingCodeTask}
+                      >
+                        {enablingCodeTask ? 'Enabling…' : 'Enable coding tasks for this agent'}
+                      </PrimaryButton>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

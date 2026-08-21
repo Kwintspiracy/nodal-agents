@@ -187,3 +187,97 @@ describe('listSkillUpdatesAction', () => {
     expect(notice).toEqual({ slug: 'skill-with-update', name: 'Skill With Update' });
   });
 });
+
+// « Acquitter » veut dire : je garde ma version, arrête de me prévenir. C'est le
+// geste qui ÉTEINT une notification de mise à jour — donc celui qui, s'il vise
+// le mauvais espace, éteint la notification de quelqu'un d'autre. Comme pour les
+// deux autres relais, tout le contrat est dans la requête émise.
+describe('acknowledgeSkillUpdateAction', () => {
+  it('poste {slug, entityId de la session} et rend le verdict du runner', async () => {
+    const { acknowledgeSkillUpdateAction } = await import('../actions.ts');
+    await insertCommunitySkill({
+      slug: 'skill-a-acquitter',
+      name: 'Skill À Acquitter',
+      updateAvailable: true,
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true, contentChanged: false }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await acknowledgeSkillUpdateAction('skill-a-acquitter');
+
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+    if (result.ok) expect(result.data).toEqual({ contentChanged: false });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:3001/api/skills/acknowledge-update');
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer test-worker-secret',
+    );
+    expect(JSON.parse(init.body as string)).toEqual({
+      slug: 'skill-a-acquitter',
+      entityId: seed.entityId,
+    });
+  });
+
+  it('transmet contentChanged=true tel quel — le contenu avait bougé depuis', async () => {
+    const { acknowledgeSkillUpdateAction } = await import('../actions.ts');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ ok: true, contentChanged: true })),
+    );
+
+    const result = await acknowledgeSkillUpdateAction('peu-importe');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.contentChanged).toBe(true);
+  });
+
+  it('remonte l’erreur du runner sans la traduire', async () => {
+    const { acknowledgeSkillUpdateAction } = await import('../actions.ts');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          ok: false,
+          error: 'skill_has_no_source',
+          message: 'That skill has no source to re-align on.',
+        }),
+      ),
+    );
+
+    const result = await acknowledgeSkillUpdateAction('skill-sans-source');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('skill_has_no_source');
+      expect(result.message).toBe('That skill has no source to re-align on.');
+    }
+  });
+
+  it('annonce network_error quand le runner ne répond pas', async () => {
+    const { acknowledgeSkillUpdateAction } = await import('../actions.ts');
+
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+
+    const result = await acknowledgeSkillUpdateAction('skill-a-acquitter');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('network_error');
+  });
+
+  it('refuse un slug vide sans rien émettre', async () => {
+    const { acknowledgeSkillUpdateAction } = await import('../actions.ts');
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await acknowledgeSkillUpdateAction('');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('validation_failed');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

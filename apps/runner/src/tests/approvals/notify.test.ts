@@ -189,7 +189,7 @@ describe('notifyApprovalCreated', () => {
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { text: string };
-    expect(body.text).toContain('Purpose not specified by the agent.');
+    expect(body.text).toContain("L'agent n'a pas expliqué pourquoi.");
   });
 
   it('stays silent (no send) when the job has no chat', async () => {

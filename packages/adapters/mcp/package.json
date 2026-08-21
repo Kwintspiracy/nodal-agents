@@ -17,10 +17,11 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
-    "undici": "^7.25.0",
+    "undici": "^7.29.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.7.0"
+    "@types/node": "^25.7.0",
+    "@nodal-agents/test-kit": "workspace:*"
   }
 }

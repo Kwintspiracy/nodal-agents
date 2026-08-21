@@ -5,6 +5,121 @@ import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
 
 /**
+ * The postmaster PID recorded in `<dataDir>/postmaster.pid`, or null when the
+ * lockfile is absent or unreadable. Says nothing about whether that process is
+ * still alive — see `livePostmasterPid` for that.
+ */
+export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
+  const pidFile = join(dataDir, 'postmaster.pid');
+  if (!existsSync(pidFile)) return null;
+  try {
+    const firstLine = readFileSync(pidFile, 'utf-8').split('\n')[0]?.trim() ?? '';
+    const pid = Number.parseInt(firstLine, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The PID of a postmaster that is BOTH recorded for this data dir AND still
+ * alive, or null.
+ *
+ * This is the only reliable way to see a dead-but-not-gone Postgres. Detection
+ * by listening port cannot: a postmaster that crashed its startup (or is mid
+ * shutdown) holds no socket, so `netstat` shows nothing — while its Win32
+ * shared-memory section, which is keyed to the DATA DIR and not the port, is
+ * still attached. That is exactly the orphan whose next `up` dies with FATAL
+ * "pre-existing shared memory block is still in use", and exactly the one a
+ * port scan reports as absent (field-confirmed 2026-08-20).
+ */
+export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
+  const pid = readPostmasterPid(dataDir);
+  if (pid === null) return null;
+  // process.kill(pid, 0) is the canonical "is this PID alive?" probe — sends
+  // no signal, throws ESRCH if the process doesn't exist.
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (err) {
+    // EPERM = alive but owned by another user: still a live process.
+    return (err as NodeJS.ErrnoException).code === 'ESRCH' ? null : pid;
+  }
+}
+
+/**
+ * Postgres processes whose command line points at `dataDir`, found by asking
+ * the OS rather than by reading our own bookkeeping.
+ *
+ * The last resort, and it earned its place: on 2026-08-20 a postmaster survived
+ * with NO listening socket and NO `postmaster.pid` — the lockfile had been
+ * removed while the process lived on holding the shared-memory block. Detection
+ * by port could not see it (nothing to see) and detection by data dir could not
+ * either (nothing to read), so `up` failed on the opaque FATAL with no orphan
+ * reported. Both earlier probes rely on state the crash can destroy; this one
+ * relies on the process table, which it cannot.
+ *
+ * Windows-only (WMI). Returns [] elsewhere and on any failure: this is an extra
+ * chance to notice, never a reason to fail a boot.
+ */
+export async function postgresPidsForDataDir(dataDir: string = PG_DATA_DIR): Promise<number[]> {
+  if (process.platform !== 'win32') return [];
+  const { execa } = await import('execa');
+  try {
+    const { stdout } = await execa(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        // CommandLine is where the -D <dataDir> argument lives. Matching on it
+        // is what ties a bare `postgres.exe` to OUR cluster rather than to some
+        // other Postgres the user runs.
+        'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
+          'Select-Object -ExpandProperty ProcessId,CommandLine | Out-Null; ' +
+          'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
+          'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }',
+      ],
+      { reject: false, timeout: 10_000 },
+    );
+    // TWO ways to recognise one of ours, and the second is the one that
+    // matters in practice.
+    //
+    //   · the data dir — present only on the POSTMASTER's command line
+    //     (`postgres.exe -D <dataDir>`).
+    //   · the embedded binary path — present on EVERY process of the cluster.
+    //
+    // Matching the data dir alone missed the case that actually blocks a boot.
+    // Seen live on 2026-08-21: the survivor was
+    //     postgres.exe --forkchild="io_worker" 5856
+    // an internal I/O worker of PostgreSQL 18. No data dir on its command line,
+    // so the probe returned [] and `up` died on the opaque FATAL with no orphan
+    // reported — the very failure this function was written to prevent.
+    //
+    // The binary path cannot be spoofed by accident: it points inside this
+    // install's node_modules, so anything running from it is ours by
+    // construction, postmaster or worker.
+    const dataNeedle = dataDir.toLowerCase().replace(/\\/g, '/');
+    const binNeedle = '@embedded-postgres';
+    const pids: number[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      const tab = line.indexOf('\t');
+      if (tab < 0) continue;
+      const pid = Number.parseInt(line.slice(0, tab), 10);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      const cmd = line
+        .slice(tab + 1)
+        .toLowerCase()
+        .replace(/\\/g, '/');
+      if (cmd.includes(dataNeedle) || cmd.includes(binNeedle)) pids.push(pid);
+    }
+    return pids;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Remove a stale postmaster.pid file when the recorded PID is no longer
  * alive. Postgres refuses to start when the lockfile exists, even if the
  * owning process is dead — common after an unclean shutdown on Windows.
@@ -16,23 +131,9 @@ import { PG_DATA_DIR } from './config.ts';
 function clearStalePostmasterPid(dataDir: string): void {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return;
-  let pid: number;
-  try {
-    const firstLine = readFileSync(pidFile, 'utf-8').split('\n')[0]?.trim() ?? '';
-    pid = Number.parseInt(firstLine, 10);
-    if (!Number.isInteger(pid) || pid <= 0) return;
-  } catch {
-    return;
-  }
-  // process.kill(pid, 0) is the canonical "is this PID alive?" probe — sends
-  // no signal, throws ESRCH if the process doesn't exist.
-  try {
-    process.kill(pid, 0);
-    // PID is alive — Postgres really is running, do NOT touch the lockfile.
-    return;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') return;
-  }
+  if (readPostmasterPid(dataDir) === null) return;
+  // Alive (or unprovable) — Postgres really is running, do NOT touch the lockfile.
+  if (livePostmasterPid(dataDir) !== null) return;
   try {
     unlinkSync(pidFile);
   } catch {
@@ -44,6 +145,12 @@ export interface PostgresHandle {
   url: string;
   /** True when pgvector extension was successfully loaded; false when we fell back to keyword-only memory. */
   vectorAvailable: boolean;
+  /**
+   * Move the role to a new password on this running cluster (SECRET-003).
+   * Returns true on success. See the implementation for the required ordering:
+   * the caller persists the new value BEFORE calling, and reverts on false.
+   */
+  rotatePassword: (newPassword: string) => Promise<boolean>;
   stop: () => Promise<void>;
 }
 
@@ -59,6 +166,42 @@ export interface PostgresHandle {
  * was nothing to stop or the stop failed. The caller can then fall back to
  * a hard taskkill, accepting the SHM-leak risk over leaving the port held.
  */
+/**
+ * The password every install used before SECRET-003 (audit 2026-08-07): the role
+ * and the password were both the literal `nodalai`, identical everywhere, on a
+ * predictable port. Kept as the fallback for clusters initialised before the
+ * per-install password existed — `rotatePostgresPassword` replaces it on boot.
+ */
+export const LEGACY_PG_PASSWORD = 'nodalai';
+
+/** Postgres role name. Unchanged: rotating the role would orphan existing data. */
+export const PG_USER = 'nodalai';
+
+/** Database name. Same value as the role, historically. */
+export const PG_DATABASE = 'nodalai';
+
+/**
+ * Connection URL for the embedded cluster.
+ *
+ * The password is percent-encoded: a minted one is base64url and safe today, but
+ * a hand-edited config.json could contain `@` or `:` and silently produce a URL
+ * pointing at the wrong host.
+ */
+export function buildPgUrl(port: number, password: string): string {
+  return `postgresql://${PG_USER}:${encodeURIComponent(password)}@localhost:${port}/${PG_DATABASE}`;
+}
+
+/**
+ * Escape a password for use as a Postgres string literal.
+ *
+ * ALTER USER does not accept a bind parameter for the password, so the value has
+ * to be inlined. Doubling single quotes is the standard escape; the minted value
+ * is base64url and contains none, but a hand-edited config.json might.
+ */
+function quotePgLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise<boolean> {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return false;
@@ -70,8 +213,10 @@ export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise
     // before the postmaster exits.
     const pg = new EmbeddedPostgres({
       databaseDir: dataDir,
-      user: 'nodalai',
-      password: 'nodalai',
+      user: PG_USER,
+      // stop() only reads postmaster.pid and signals pg_ctl — it never
+      // authenticates, so the value here is irrelevant.
+      password: LEGACY_PG_PASSWORD,
       port: 25432, // unused for stop()
       persistent: true,
       onError: () => {},
@@ -102,6 +247,7 @@ export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise
 export async function startEmbeddedPostgres(
   dataDir: string = PG_DATA_DIR,
   port: number = 25432,
+  password: string = LEGACY_PG_PASSWORD,
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep
   const EmbeddedPostgres = (await import('embedded-postgres')).default;
@@ -125,8 +271,11 @@ export async function startEmbeddedPostgres(
 
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
-    user: 'nodalai',
-    password: 'nodalai',
+    user: PG_USER,
+    // On FIRST boot this is what initdb sets the role's password to. On later
+    // boots the cluster already exists and this value is only used to build
+    // connection strings — which is why rotation has to go through ALTER USER.
+    password,
     port,
     persistent: true,
     createPostgresUser: isRoot,
@@ -189,17 +338,17 @@ export async function startEmbeddedPostgres(
 
   // Create the database if it doesn't exist
   try {
-    await pg.createDatabase('nodalai');
+    await pg.createDatabase(PG_DATABASE);
   } catch {
     // Database already exists — ignore
   }
 
-  const url = `postgresql://nodalai:nodalai@localhost:${port}/nodalai`;
+  const url = buildPgUrl(port, password);
 
   // Try to enable pgvector; if unavailable, warn and continue
   let vectorAvailable = false;
   try {
-    const client = pg.getPgClient('nodalai');
+    const client = pg.getPgClient(PG_DATABASE);
     await client.connect();
     await client.query('CREATE EXTENSION IF NOT EXISTS vector');
     await client.end();
@@ -215,6 +364,35 @@ export async function startEmbeddedPostgres(
   return {
     url,
     vectorAvailable,
+    /**
+     * Move the role to `newPassword` on this running cluster (SECRET-003).
+     *
+     * A cluster initialised before the per-install password exists still carries
+     * the shipped default: initdb sets the password once, so the only way
+     * forward is ALTER USER against the live server.
+     *
+     * ORDER MATTERS, and it is the CALLER's job: persist `newPassword` to
+     * config.json BEFORE calling this, and revert if it returns false. The
+     * reverse order leaves a window where the role has changed and nothing on
+     * disk knows the new value — an install that cannot open its own database.
+     * This way the worst case is a config naming a password the role does not
+     * have yet, which the next boot simply retries.
+     *
+     * Uses embedded-postgres' own client rather than importing `pg` directly:
+     * only packages/db may depend on a driver (dep-cruiser `only-db-imports-pg`).
+     */
+    rotatePassword: async (newPassword: string): Promise<boolean> => {
+      const client = pg.getPgClient(PG_DATABASE);
+      try {
+        await client.connect();
+        await client.query(`ALTER USER ${PG_USER} WITH PASSWORD ${quotePgLiteral(newPassword)}`);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        await client.end().catch(() => {});
+      }
+    },
     stop: async () => {
       await pg.stop();
     },

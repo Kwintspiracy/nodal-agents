@@ -11,7 +11,8 @@
   "scripts": {
     "lint": "eslint src",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "conformance": "tsx src/conformance/cli.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.76",
@@ -29,6 +30,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.7.0"
+    "@types/node": "^25.7.0",
+    "tsx": "^4.23.10",
+    "@nodal-agents/test-kit": "workspace:*"
   }
 }

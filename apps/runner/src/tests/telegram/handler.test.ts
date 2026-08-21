@@ -167,6 +167,38 @@ const call = (agentId: string, update: TelegramUpdate) =>
     tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
   });
 
+/**
+ * Bring an agent to "has an ACTIVE owner" — what a single bootstrap DM used to
+ * do by itself. Since CHANNEL-001 the first DM only RECORDS the claim
+ * (owner/pending) on BOTH tables (legacy + the neutral mirror); a human
+ * approves it in the dashboard. Tests needing an established owner do both
+ * halves, exactly like a real setup now does.
+ */
+async function claimOwner(agentId: string, update: TelegramUpdate): Promise<void> {
+  await call(agentId, update);
+  const chatId = String(update.message?.chat?.id ?? '');
+  await db
+    .update(telegramAllowedChats)
+    .set({ status: 'active' })
+    .where(
+      and(
+        eq(telegramAllowedChats.agentId, agentId),
+        eq(telegramAllowedChats.chatId, chatId),
+        eq(telegramAllowedChats.role, 'owner'),
+      ),
+    );
+  await db
+    .update(channelAllowedConversations)
+    .set({ status: 'active' })
+    .where(
+      and(
+        eq(channelAllowedConversations.agentId, agentId),
+        eq(channelAllowedConversations.conversationId, chatId),
+        eq(channelAllowedConversations.role, 'owner'),
+      ),
+    );
+}
+
 describe('handleTelegramUpdate — private chats', () => {
   it('creates a telegram-channel job for the receiving agent', async () => {
     const result = await handleTelegramUpdate({
@@ -755,10 +787,25 @@ describe('handleTelegramUpdate — H-1 inbound authorization', () => {
   // freshBot/dm/call are shared module-level helpers (also used by the F-1/F-4
   // describe blocks below).
 
-  it('first private DM with no owner claims ownership AND creates a job', async () => {
+  // CHANNEL-001 — this is THE case the finding was about. A Telegram bot's
+  // @username is public and globally searchable, and the setup order this
+  // product documents is "paste the token, then DM the bot": between those two
+  // steps, trust-on-first-use let any stranger who found the bot become its
+  // owner, task the agent, and receive its approval cards.
+  it('first private DM with no owner records a PENDING owner claim and creates NO job', async () => {
     const agentId = await freshBot();
     const result = await call(agentId, dm('hi', 4001));
-    expect(result.jobId).toBeDefined();
+
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    // No owner to card: this DM IS the claim, so the claimant is pointed at
+    // the dashboard where a human decides.
+    expect(result.pendingAuth).toMatchObject({
+      ownerChatId: null,
+      requesterChatId: '4001',
+    });
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.chatId, '4001'));
+    expect(jobs).toHaveLength(0);
 
     const rows = await db
       .select()
@@ -766,14 +813,32 @@ describe('handleTelegramUpdate — H-1 inbound authorization', () => {
       .where(eq(telegramAllowedChats.agentId, agentId));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.role).toBe('owner');
-    expect(rows[0]?.status).toBe('active');
+    expect(rows[0]?.status).toBe('pending');
     expect(rows[0]?.chatId).toBe('4001');
+  });
+
+  it('a stranger who DMs first cannot take over: the claim stays pending and unapproved', async () => {
+    const agentId = await freshBot();
+    // The attacker gets there before the real owner.
+    await call(agentId, dm('me first', 4901));
+    // Nothing runs for them, ever, until a human approves in the dashboard.
+    const again = await call(agentId, dm('do something dangerous', 4901));
+    expect(again.jobId).toBeUndefined();
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.chatId, '4901'));
+    expect(jobs).toHaveLength(0);
+  });
+
+  it('once the owner claim is approved, that chat creates jobs', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('hi', 4801));
+    const result = await call(agentId, dm('do something', 4801));
+    expect(result.jobId).toBeDefined();
   });
 
   it('an unknown chat when an owner exists creates NO job and asks the owner', async () => {
     const agentId = await freshBot();
     // Owner claims first.
-    await call(agentId, dm('owner here', 4001));
+    await claimOwner(agentId, dm('owner here', 4001));
     // A stranger DMs.
     const result = await call(agentId, dm('let me in', 4002));
 
@@ -797,7 +862,7 @@ describe('handleTelegramUpdate — H-1 inbound authorization', () => {
 
   it('a repeat DM from an already-pending chat does NOT re-ask the owner', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 4001));
+    await claimOwner(agentId, dm('owner here', 4001));
     await call(agentId, dm('let me in', 4002)); // first ask
     const again = await call(agentId, dm('please?', 4002)); // repeat
 
@@ -862,13 +927,13 @@ describe('handleTelegramUpdate — S3 dual-write (channel_allowed_conversations)
       conversationId: '5001',
       kind: 'private',
       role: 'owner',
-      status: 'active',
+      status: 'pending',
     });
   });
 
   it('a pending member insert mirrors into channel_allowed_conversations as pending', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 5101));
+    await claimOwner(agentId, dm('owner here', 5101));
     await call(agentId, dm('let me in', 5102));
 
     const [mirrored] = await db
@@ -922,15 +987,18 @@ describe('handleTelegramUpdate — S3 dual-write (channel_allowed_conversations)
       .select()
       .from(channelAllowedConversations)
       .where(eq(channelAllowedConversations.agentId, agentId));
-    const owners = mirrored.filter((r) => r.role === 'owner' && r.status === 'active');
+    // owner/PENDING since CHANNEL-001; the "exactly one owner" invariant the
+    // mirror has to preserve is unchanged.
+    const owners = mirrored.filter((r) => r.role === 'owner');
     const pendingMembers = mirrored.filter((r) => r.role === 'member' && r.status === 'pending');
     expect(owners).toHaveLength(1);
+    expect(owners[0]?.status).toBe('pending');
     expect(pendingMembers).toHaveLength(1);
   });
 
   it('a group message mirrors kind="group"', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 5401)); // bootstrap an owner first
+    await claimOwner(agentId, dm('owner here', 5401)); // bootstrap an owner first
     const result = await handleTelegramUpdate({
       update: {
         update_id: 1,
@@ -978,23 +1046,28 @@ describe('handleTelegramUpdate — F-4 owner-claim race safety', () => {
       .from(telegramAllowedChats)
       .where(eq(telegramAllowedChats.agentId, agentId));
 
-    const owners = rows.filter((r) => r.role === 'owner' && r.status === 'active');
+    // Since CHANNEL-001 the winning claim is owner/PENDING, not owner/active —
+    // the race invariant is unchanged (never two owner rows), only the status
+    // the winner lands in.
+    const owners = rows.filter((r) => r.role === 'owner');
     const pendingMembers = rows.filter((r) => r.role === 'member' && r.status === 'pending');
 
     // Never two owners — that's the invariant F-4 protects.
     expect(owners).toHaveLength(1);
+    expect(owners[0]?.status).toBe('pending');
     expect(pendingMembers).toHaveLength(1);
 
-    const winnerResult = owners[0]?.chatId === '9001' ? resultA : resultB;
-    const loserResult = owners[0]?.chatId === '9001' ? resultB : resultA;
-    expect(winnerResult.jobId).toBeDefined();
-    expect(loserResult.jobId).toBeUndefined();
-    expect(loserResult.skipped).toBe('awaiting_authorization');
+    // NEITHER side runs a job now: the winner holds an unconfirmed claim, the
+    // loser is a pending member. Both wait on a human.
+    expect(resultA.jobId).toBeUndefined();
+    expect(resultB.jobId).toBeUndefined();
+    expect(resultA.skipped).toBe('awaiting_authorization');
+    expect(resultB.skipped).toBe('awaiting_authorization');
   });
 
   it('a chat that loses the owner race still gets its message through once the owner approves it (unaffected by the race path)', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner claims first', 9101));
+    await claimOwner(agentId, dm('owner claims first', 9101));
     const loser = await call(agentId, dm('me too', 9102));
     expect(loser.jobId).toBeUndefined();
 
@@ -1022,8 +1095,11 @@ describe('handleTelegramUpdate — L2 sender name sanitation', () => {
 
   it('a forged multi-line name with bidi/zero-width chars is stored sanitized on the owner row', async () => {
     const agentId = await freshBot();
+    // The claim is now pending (CHANNEL-001), so no job — but the name is
+    // still stored on the row, and it is still sanitized. That is what this
+    // test is about.
     const result = await call(agentId, dmFrom('hi', 4101, FORGED_NAME));
-    expect(result.jobId).toBeDefined();
+    expect(result.skipped).toBe('awaiting_authorization');
 
     const [row] = await db
       .select()
@@ -1039,7 +1115,7 @@ describe('handleTelegramUpdate — L2 sender name sanitation', () => {
     const agentId = await freshBot();
     const longName = 'A'.repeat(200);
     const result = await call(agentId, dmFrom('hi', 4102, longName));
-    expect(result.jobId).toBeDefined();
+    expect(result.skipped).toBe('awaiting_authorization');
 
     const [row] = await db
       .select()
@@ -1068,7 +1144,7 @@ describe('handleTelegramUpdate — L2 sender name sanitation', () => {
   it('regression: a normal name like "Mathilde" passes through unchanged end-to-end', async () => {
     const agentId = await freshBot();
     const dmResult = await call(agentId, dmFrom('hi', 4103, 'Mathilde'));
-    expect(dmResult.jobId).toBeDefined();
+    expect(dmResult.skipped).toBe('awaiting_authorization');
 
     const [row] = await db
       .select()

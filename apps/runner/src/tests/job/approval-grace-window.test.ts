@@ -269,6 +269,31 @@ function scanToolResults(
   return { foundAwaiting, foundRejected, foundMarker };
 }
 
+/**
+ * Wait until the gate has actually written the approval row, instead of betting
+ * on a fixed delay.
+ *
+ * The three inline-decision tests below used to `setTimeout(80)` and then assert
+ * the row existed. That held locally and flaked on CI (run 31399305424: "expected
+ * undefined to be defined"), where a saturated runner needs well over 80ms to
+ * reach the gate — the row simply wasn't there yet.
+ *
+ * Polling costs the window nothing: `approvalGraceMs` starts its countdown
+ * inside `suspendForApproval`, which runs AFTER the row is written
+ * (execute.ts §"Approval grace window"). So waiting for the row to appear
+ * happens before the clock starts, not during it.
+ */
+async function waitForApprovalRow(jobId: string, toolName = 'run_command') {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const rows = await db.select().from(approvalRequests).where(eq(approvalRequests.jobId, jobId));
+    const row = rows.find((r) => r.toolName === toolName);
+    if (row) return row;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`no "${toolName}" approval row for job ${jobId} after 20s`);
+}
+
 describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
   it('approval resolved inside the window: job completes WITHOUT ever suspending, executed_at stamped, real output lands', async () => {
     const MARKER = `grace-marker-${Date.now()}-approve`;
@@ -286,7 +311,7 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
       },
       { toolCalls: [{ toolCallId: 'g2', toolName: 'return_result', args: { status: 'success' } }] },
     ]);
-    const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 1000 };
+    const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 2000 };
 
     // Single executeJob call for this job. If the gate had actually suspended
     // (grace disabled / expired), this ONE call would have returned
@@ -295,20 +320,14 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
     // possible via the grace-window inline resume.
     const jobPromise = executeJob(job.id as JobId, makeDeps(llm), graceEnv);
 
-    // Approve WELL inside the 1000ms window (poll interval 250ms) — mirrors a
-    // human still at the screen. Real timer, no fake timers.
-    await new Promise((r) => setTimeout(r, 80));
-    const approvalRows = await db
-      .select()
-      .from(approvalRequests)
-      .where(eq(approvalRequests.jobId, job.id));
-    const approvalRow = approvalRows.find((r) => r.toolName === 'run_command');
-    expect(approvalRow).toBeDefined();
-    expect(approvalRow!.status).toBe('pending');
+    // Approve WELL inside the window — mirrors a human still at the screen.
+    // Real timer, no fake timers.
+    const approvalRow = await waitForApprovalRow(job.id as string);
+    expect(approvalRow.status).toBe('pending');
     await db
       .update(approvalRequests)
       .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
-      .where(eq(approvalRequests.id, approvalRow!.id));
+      .where(eq(approvalRequests.id, approvalRow.id));
 
     const res = await jobPromise;
     expect(res.status).toBe('completed');
@@ -316,7 +335,7 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
     const executedApproval = await db
       .select({ executedAt: approvalRequests.executedAt })
       .from(approvalRequests)
-      .where(eq(approvalRequests.id, approvalRow!.id));
+      .where(eq(approvalRequests.id, approvalRow.id));
     expect(executedApproval[0]?.executedAt).not.toBeNull();
 
     const jobRow = await db
@@ -347,17 +366,11 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
         toolCalls: [{ toolCallId: 'gr2', toolName: 'return_result', args: { status: 'success' } }],
       },
     ]);
-    const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 1000 };
+    const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 2000 };
 
     const jobPromise = executeJob(job.id as JobId, makeDeps(llm), graceEnv);
 
-    await new Promise((r) => setTimeout(r, 80));
-    const approvalRows = await db
-      .select()
-      .from(approvalRequests)
-      .where(eq(approvalRequests.jobId, job.id));
-    const approvalRow = approvalRows.find((r) => r.toolName === 'run_command');
-    expect(approvalRow).toBeDefined();
+    const approvalRow = await waitForApprovalRow(job.id as string);
     await db
       .update(approvalRequests)
       .set({
@@ -366,7 +379,7 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
         resolvedBy: 'test',
         notes: 'not authorized for this test',
       })
-      .where(eq(approvalRequests.id, approvalRow!.id));
+      .where(eq(approvalRequests.id, approvalRow.id));
 
     const res = await jobPromise;
     expect(res.status).toBe('completed');
@@ -374,7 +387,7 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
     const executedApproval = await db
       .select({ executedAt: approvalRequests.executedAt })
       .from(approvalRequests)
-      .where(eq(approvalRequests.id, approvalRow!.id));
+      .where(eq(approvalRequests.id, approvalRow.id));
     expect(executedApproval[0]?.executedAt).not.toBeNull();
 
     const jobRow = await db
@@ -443,17 +456,11 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
         ],
       },
     ]);
-    const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 1000 };
+    const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 2000 };
 
     const jobPromise = executeJob(job.id as JobId, makeDeps(llm), graceEnv);
 
-    await new Promise((r) => setTimeout(r, 80));
-    const approvalRows = await db
-      .select()
-      .from(approvalRequests)
-      .where(eq(approvalRequests.jobId, job.id));
-    const approvalRow = approvalRows.find((r) => r.toolName === 'run_command');
-    expect(approvalRow).toBeDefined();
+    const approvalRow = await waitForApprovalRow(job.id as string);
 
     // Cancel WITHOUT ever resolving the approval — mirrors the user hitting
     // cancel while the gate sits open.
@@ -465,7 +472,7 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
     const executedApproval = await db
       .select({ status: approvalRequests.status, executedAt: approvalRequests.executedAt })
       .from(approvalRequests)
-      .where(eq(approvalRequests.id, approvalRow!.id));
+      .where(eq(approvalRequests.id, approvalRow.id));
     expect(executedApproval[0]?.status).toBe('pending'); // never approved/rejected
     expect(executedApproval[0]?.executedAt).toBeNull(); // never executed
 

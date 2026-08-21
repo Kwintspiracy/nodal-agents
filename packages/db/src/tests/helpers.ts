@@ -117,6 +117,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
       memory_token_budget integer NOT NULL DEFAULT 1500,
+      cli_daily_budget_usd real NOT NULL DEFAULT 10,
+      cli_defaults jsonb,
+      runtime text NOT NULL DEFAULT 'nodal' CHECK (runtime IN ('nodal', 'claude-code', 'codex')),
+      cli_permissions jsonb,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
@@ -262,6 +266,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_output text,
       duration_ms integer,
       turn integer,
+      tool_call_id text,
       created_at timestamptz DEFAULT now()
     );
 
@@ -272,6 +277,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
       tool_name text NOT NULL,
       tool_input jsonb NOT NULL,
+      tool_call_id text,
       status text DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
       requested_at timestamptz DEFAULT now(),
       resolved_at timestamptz,
@@ -646,6 +652,77 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       expires_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    -- code_task (étape B, subscription-runtimes plan) — mirrors migration 0073
+    CREATE TABLE IF NOT EXISTS cli_runs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      provider text NOT NULL CHECK (provider IN ('claude', 'codex')),
+      mode text NOT NULL CHECK (mode IN ('read', 'write')),
+      source text NOT NULL DEFAULT 'subscription' CHECK (source IN ('subscription', 'api')),
+      session_id text,
+      model text,
+      effort text,
+      cost_usd real,
+      input_tokens integer,
+      output_tokens integer,
+      cached_tokens integer,
+      cache_creation_tokens integer,
+      model_usage jsonb,
+      duration_ms integer,
+      cli_version text,
+      exit_code integer,
+      created_at timestamptz DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_locks (
+      workspace_path text PRIMARY KEY,
+      job_id uuid NOT NULL,
+      agent_id uuid,
+      acquired_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    -- cli_sessions (étape E) — mirrors migration 0076
+    CREATE TABLE IF NOT EXISTS cli_sessions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      conversation_key text NOT NULL,
+      provider text NOT NULL,
+      session_id text NOT NULL,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE (agent_id, conversation_key)
+    );
+
+    -- llm_calls (étape D) — mirrors migration 0075
+    CREATE TABLE IF NOT EXISTS llm_calls (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      source text NOT NULL,
+      turn integer,
+      model_requested text,
+      model_effective text NOT NULL,
+      provider text NOT NULL,
+      llm_key_id uuid,
+      reasoning_effort text,
+      tool_choice text,
+      tool_names text[],
+      tools_hash text,
+      input_tokens integer,
+      output_tokens integer,
+      cached_tokens integer,
+      cache_creation_tokens integer,
+      cost_usd real,
+      duration_ms integer,
+      failover boolean NOT NULL DEFAULT false,
+      error text,
+      created_at timestamptz DEFAULT now()
     );
   `);
 

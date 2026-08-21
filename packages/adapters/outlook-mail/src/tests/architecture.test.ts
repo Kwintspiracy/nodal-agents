@@ -1,103 +1,89 @@
-// @nodal-agents/adapter-outlook-mail — architecture invariant tests
-// Invariant 1: No agent slugs (ender, pavel, boris, etc.) hardcoded in src/
-// Invariant 6: No per-user values (UUIDs, folder URLs, hardcoded IDs) in src/
-// Invariant 7: Official SDK only (@microsoft/microsoft-graph-client)
+// @nodal-agents/adapter-outlook-mail — architecture invariant tests.
+//
+// The three invariants EVERY adapter shares — no agent slug, no per-user UUID,
+// no reach into db/llm/auth/memory — now come from @nodal-agents/test-kit.
+//
+// They used to be a local copy here and in eleven sibling packages, and all
+// twelve copies checked FOUR slugs where the shared list checks twelve, so
+// "cortex", "tatooine", "alfred", "sputnik", "displacer", "jennie", "stanley"
+// and "sherlock" were unchecked in every adapter. Measured when folding them
+// in: zero violations were hiding there, so this is prevention — unlike the
+// runner, where the same divergence had hidden nine.
+//
+// Rules specific to this connector stay in this file, because they are about
+// THIS third party, but they use the kit's walker rather than a local readdir.
 
 import { describe, it, expect } from 'vitest';
-import { readdir, readFile } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  scanForAgentSlugs,
+  scanForHardcodedUuids,
+  scanForForbiddenPackageImports,
+  scanForPattern,
+  assertNoViolations,
+  readSource,
+} from '@nodal-agents/test-kit';
 
-const __filename = fileURLToPath(import.meta.url);
-const srcDir = join(__filename, '..', '..'); // packages/adapters/outlook-mail/src
+const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
 
-async function collectSourceFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory() && entry.name !== 'tests') {
-      files.push(...(await collectSourceFiles(fullPath)));
-    } else if (entry.isFile() && (extname(entry.name) === '.ts' || extname(entry.name) === '.js')) {
-      files.push(fullPath);
-    }
-  }
-  return files;
-}
-
-async function readAll(files: string[]): Promise<string> {
-  const contents = await Promise.all(files.map((f) => readFile(f, 'utf-8')));
-  return contents.join('\n');
-}
+/** An adapter talks to its third party, and to nothing else in the monorepo. */
+const FORBIDDEN_LAYERS = [
+  '@nodal-agents/db',
+  '@nodal-agents/llm',
+  '@nodal-agents/auth',
+  '@nodal-agents/memory',
+];
 
 describe('architecture invariants', () => {
-  it('no agent slugs hardcoded in source files', async () => {
-    const files = await collectSourceFiles(srcDir);
-    const source = await readAll(files);
-
-    const agentSlugs = ['ender', 'pavel', 'boris', 'kwint'];
-    const found: string[] = [];
-    for (const slug of agentSlugs) {
-      const regex = new RegExp(`\\b${slug}\\b`, 'i');
-      if (regex.test(source)) found.push(slug);
-    }
-    expect(found, `Found agent slugs in src: ${found.join(', ')}`).toHaveLength(0);
+  it('no agent slugs hardcoded in source files', () => {
+    assertNoViolations('slugs d’agent', scanForAgentSlugs({ srcDir }));
   });
 
-  it('no hardcoded UUIDs (per-user values) in source files', async () => {
-    const files = await collectSourceFiles(srcDir);
-    const source = await readAll(files);
-
-    const uuidRegex = /['"`][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['"`]/gi;
-    const matches = source.match(uuidRegex) ?? [];
-    expect(matches, `Found hardcoded UUIDs: ${matches.join(', ')}`).toHaveLength(0);
+  it('no hardcoded UUIDs (per-user values) in source files', () => {
+    assertNoViolations('UUID en dur', scanForHardcodedUuids({ srcDir }));
   });
 
-  it('no direct imports from @nodal-agents/db, @nodal-agents/llm, @nodal-agents/auth, @nodal-agents/memory', async () => {
-    const files = await collectSourceFiles(srcDir);
-    const source = await readAll(files);
-
-    const forbidden = [
-      '@nodal-agents/db',
-      '@nodal-agents/llm',
-      '@nodal-agents/auth',
-      '@nodal-agents/memory',
-    ];
-    const found: string[] = [];
-    for (const pkg of forbidden) {
-      if (source.includes(`from '${pkg}'`) || source.includes(`from "${pkg}"`)) found.push(pkg);
-    }
-    expect(found, `Forbidden imports found: ${found.join(', ')}`).toHaveLength(0);
-  });
-
-  it('uses the official @microsoft/microsoft-graph-client SDK — no hand-rolled fetch wrapping', async () => {
-    const files = await collectSourceFiles(srcDir);
-    const source = await readAll(files);
-
-    expect(source).toContain("from '@microsoft/microsoft-graph-client'");
-    // Should NOT have manual fetch calls to Graph or the Microsoft identity endpoint.
-    expect(source).not.toContain('https://graph.microsoft.com');
-    expect(source).not.toContain('login.microsoftonline.com');
-    expect(source).not.toMatch(/\bfetch\(\s*['"`]https:\/\/graph\.microsoft\.com/);
-  });
-
-  it('no hardcoded email addresses in source files', async () => {
-    const files = await collectSourceFiles(srcDir);
-    const source = await readAll(files);
-
-    const emailRegex = /['"`][a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}['"`]/g;
-    const matches = (source.match(emailRegex) ?? []).filter(
-      (m) => !m.includes('example.com') && !m.includes('test.com'),
+  it('no direct imports from @nodal-agents/db, /llm, /auth, /memory', () => {
+    assertNoViolations(
+      'imports interdits',
+      scanForForbiddenPackageImports({ srcDir }, FORBIDDEN_LAYERS),
     );
-    expect(matches, `Found hardcoded email addresses: ${matches.join(', ')}`).toHaveLength(0);
   });
 
-  it('no hardcoded user-facing error strings (typed error codes only)', async () => {
-    const files = await collectSourceFiles(srcDir);
-    const source = await readAll(files);
+  it('uses the official @microsoft/microsoft-graph-client SDK — no hand-rolled fetch wrapping', () => {
+    // Positive assertion. A violation scanner reports what must NOT be present;
+    // this one is about what MUST be — invariant #7, official SDKs only.
+    const source = readSource({ srcDir });
+    expect(source).toContain("from '@microsoft/microsoft-graph-client'");
+    expect(source).not.toContain('https://graph.microsoft.com/v1.0/me/messages');
+  });
 
-    expect(source).not.toContain('[AUTH_FAILED]');
-    expect(source).not.toContain('Re-authenticate in the dashboard');
-    expect(source).not.toContain('Outlook connector is not authenticated');
+  it('no hardcoded email addresses in source files', () => {
+    assertNoViolations(
+      'adresse e-mail en dur',
+      scanForPattern(
+        { srcDir },
+        {
+          pattern: /['"`][a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}['"`]/,
+          rule: 'hardcoded-email',
+          allowMatch: (m) => m.includes('example.com') || m.includes('test.com'),
+        },
+      ),
+    );
+  });
+
+  it('no AUTH_FAILED or hardcoded user-facing error strings', () => {
+    assertNoViolations(
+      'texte utilisateur en dur',
+      scanForPattern(
+        { srcDir },
+        {
+          pattern:
+            /\[AUTH_FAILED\]|Re-authenticate in the dashboard|Outlook connector is not authenticated/,
+          rule: 'user-facing-string',
+        },
+      ),
+    );
   });
 });

@@ -5,7 +5,7 @@
 //   - With a path ("notes/a/b") → list inside the resolved workspace (same security
 //     guarantees as before).
 
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
@@ -105,7 +105,21 @@ export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOu
 
       // Use the workspace root that the requested path resolves under for
       // computing relative display paths (the 'name' field in entries).
-      const workspaceRoot = getWorkspaceRootForDisplay(ctx, input.path) ?? targetPath;
+      //
+      // It must be REALPATH'd first. `resolveAndCheckPath` hands back a resolved
+      // path (workspace.ts realpaths the root to close symlink escapes), while
+      // the display root comes from config exactly as the user typed it. When
+      // the two forms of the same directory differ, `relative()` walks up out of
+      // the tree and every entry comes back as
+      // `../../../../../Temp/ws/sub/note.md` instead of `sub/note.md`.
+      //
+      // Two real cases, neither visible on Linux nor on a machine where the
+      // forms happen to match: a Windows user whose name exceeds 8 characters
+      // (short 8.3 form vs long form — this is what the CI runner exposed, its
+      // user being `runneradmin`), and macOS, where `/var` is a symlink to
+      // `/private/var`.
+      const declaredRoot = getWorkspaceRootForDisplay(ctx, input.path) ?? targetPath;
+      const workspaceRoot = await realpath(declaredRoot).catch(() => declaredRoot);
       const matcher = input.glob ? globToRegex(input.glob) : null;
       const entries: FileListEntry[] = [];
       let truncated = false;

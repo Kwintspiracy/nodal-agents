@@ -31,6 +31,8 @@ import {
   modelContextWindow,
   modelCanSeeImages,
   estimateModelCostUsd,
+  isUntrustedTool,
+  wrapUntrusted,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -51,6 +53,8 @@ import {
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import {
   computeToolWhitelist,
@@ -893,6 +897,35 @@ async function runJob(
     }
   }
 
+  // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
+  // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude
+  // Code): the whole Nodal LLM loop below is skipped and the turn is served
+  // by the user's own CLI under their subscription. Returning through runJob's
+  // normal exit keeps the wrapper semantics intact (maybeResumeParent — a
+  // runtime agent can be a delegated worker in a team).
+  if ((agentRow.runtime ?? 'nodal') !== 'nodal') {
+    return await runCliRuntimeJob({
+      db,
+      jobId: jobId as string,
+      job: {
+        entityId: job.entityId ?? null,
+        chatId: job.chatId ?? null,
+        channel: job.channel ?? null,
+        conversationId: job.conversationId ?? null,
+        task: job.task ?? null,
+      },
+      agentRow: {
+        id: agentRow.id,
+        entityId: agentRow.entityId ?? null,
+        personality: agentRow.personality,
+        runtime: agentRow.runtime ?? 'nodal',
+        cliPermissions: agentRow.cliPermissions ?? null,
+        cliDefaults: agentRow.cliDefaults ?? null,
+      },
+      workspaces: agentWorkspacesList,
+    });
+  }
+
   // ── 3.6 Skill-file access context ─────────────────────────────────────────
   // Slugs of skills assigned to this agent + the store root, so the
   // skill_file_* builtins can read an installed (community) skill's bundled
@@ -961,6 +994,15 @@ async function runJob(
         reasoningEffort: agentRow.reasoningEffort ?? null,
       },
       (info) => trace('fallback_key_skipped', info),
+      // étape D: every LLM attempt of this job lands in llm_calls. getTurn
+      // reads the loop counter lexically — the client outlives many turns.
+      makeLlmCallSink(db, {
+        source: 'job',
+        entityId: job.entityId ?? null,
+        agentId: agentRow.id,
+        getJobId: () => jobId as string,
+        getTurn: () => turn,
+      }),
     );
     if (!resolved.ok) {
       const code =
@@ -1613,6 +1655,10 @@ async function runJob(
   if (authMode !== 'local-trust') {
     const CODE_EXECUTION_TOOLS = [
       'run_command',
+      // code_task spawns the owner's coding CLI (claude/codex) — same trust
+      // class as a shell (étape B, subscription-runtimes plan): a LAN caller
+      // must not benefit from a Yolo rule the master-switch has not blessed.
+      'code_task',
       'run_skill_script',
       'skill_file_write',
       'create_mcp',
@@ -1726,9 +1772,27 @@ async function runJob(
   // AI SDK v6 ToolResultPart.output is a discriminated union; we coerce all raw
   // tool outputs here so every writer uses the same canonical shape.
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
-  const toResultOutput = (raw: unknown): ToolResultOutput => {
-    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(raw) };
+  //
+  // INJECT-001. `toolName` is what decides whether the payload gets framed as
+  // external data (see `wrapUntrusted`). It is OPTIONAL on purpose: the callers
+  // that pass no name are the ones writing the product's OWN markers —
+  // `[DEFERRED]`, `[REJECTED]`, whitelist refusals — which are not third-party
+  // content and must not be framed as if they were. Safe by omission.
+  //
+  // Framing happens BEFORE truncation so the closing delimiter cannot be cut
+  // off: a payload framed with an opening tag and no closing one is worse than
+  // an unframed one, because everything after it reads as inside the boundary.
+  const toResultOutput = (raw: unknown, toolName?: string): ToolResultOutput => {
+    const frame = (text: string): string =>
+      isUntrustedTool(toolName) ? wrapUntrusted(toolName as string, text) : text;
+
+    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(frame(raw)) };
     const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
+    // A framed result is text by necessity — the frame is prose around the
+    // payload, and there is no way to express it in the `json` variant.
+    if (isUntrustedTool(toolName)) {
+      return { type: 'text', value: truncateForContext(frame(JSON.stringify(json))) };
+    }
     const serialized = JSON.stringify(json);
     if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
     return { type: 'text', value: truncateForContext(serialized) };
@@ -1819,37 +1883,60 @@ async function runJob(
                 action: 'auto_approve',
               },
             ];
-            const execResult = await executeTool(
-              toolDef,
-              req.toolInput,
-              {
-                jobId: jobId as string,
-                agentId: agentRow.id,
-                entityId: job.entityId ?? '',
-                db,
-                jobChatId: job.chatId ?? null,
-                jobChannel: job.channel,
-                activeChannels,
-                notifyChannelOverride,
-                embeddingClient: deps.embeddingClient,
-                workspaces: agentWorkspacesList,
-                skillStoreDir: skillStore,
-                assignedSkillSlugs,
-                scriptAuthorizedSkillSlugs,
-                fileWritableSkillSlugs,
-                provisioning: TOOL_PROVISIONING,
-                searchBackend,
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
-              },
-              {
-                approvalRules: resumeApprovalRules,
-                autonomy: workspaceAutonomy,
-                onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
-              },
-            );
+            // Heartbeat during the resume-replay too: the serial/parallel tool
+            // paths keep updated_at fresh via a 60 s touchJob interval, but this
+            // replay path historically had NONE — an approved long tool (a
+            // 10-minute code_task, a slow run_command) was reaped at 5 min by
+            // resetOrphanedJobs precisely BECAUSE the human approved it. Same
+            // idiom as the serial path; cleared in `finally` so it never leaks.
+            const resumeHbInterval = setInterval(() => {
+              void touchJob(db, jobId as string).catch(() => {});
+            }, 60_000);
+            let execResult!: Awaited<ReturnType<typeof executeTool>>;
+            try {
+              execResult = await executeTool(
+                toolDef,
+                req.toolInput,
+                {
+                  jobId: jobId as string,
+                  agentId: agentRow.id,
+                  entityId: job.entityId ?? '',
+                  db,
+                  // étape D: the replayed call keeps its ORIGINAL tool_use id
+                  // (stamped on the approval_requests row at gate time) so the
+                  // audit row joins back to the transcript block it answers.
+                  turn,
+                  toolCallId: req.toolCallId ?? undefined,
+                  jobChatId: job.chatId ?? null,
+                  jobChannel: job.channel,
+                  activeChannels,
+                  notifyChannelOverride,
+                  embeddingClient: deps.embeddingClient,
+                  workspaces: agentWorkspacesList,
+                  skillStoreDir: skillStore,
+                  assignedSkillSlugs,
+                  scriptAuthorizedSkillSlugs,
+                  fileWritableSkillSlugs,
+                  provisioning: TOOL_PROVISIONING,
+                  searchBackend,
+                  resolveAgentToolNames: (targetAgentId: string) =>
+                    resolveAgentToolNames(db, targetAgentId),
+                },
+                {
+                  approvalRules: resumeApprovalRules,
+                  autonomy: workspaceAutonomy,
+                  onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
+                },
+              );
+            } finally {
+              clearInterval(resumeHbInterval);
+            }
             if (execResult.outcome === 'success') {
-              replacementOutput = toResultOutput(execResult.output);
+              // INJECT-001: the resume path executes the SAME tool the gate
+              // suspended, so it needs the same framing. A boundary that is
+              // framed on first call and bare after a human approval would be
+              // framed exactly when nobody is looking at it.
+              replacementOutput = toResultOutput(execResult.output, req.toolName);
             } else if (execResult.outcome === 'error') {
               replacementOutput = toResultOutput({ error: execResult.error });
             } else {
@@ -2523,10 +2610,24 @@ async function runJob(
       // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
       // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
       // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
-      // and @openrouter/ai-sdk-provider. Effective (fresh) input = total − cached.
+      // and @openrouter/ai-sdk-provider. For Anthropic the total ALSO includes
+      // cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
+      // verified on @ai-sdk/anthropic 3.0.76) — effective (fresh) input =
+      // total − cache reads − cache writes (review 2026-08-20: without the
+      // writes term, a cache-priming turn inflated effective input by its
+      // entire system prompt).
       const cachedT = Number(usage?.cachedInputTokens ?? 0);
+      const antMeta = (
+        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+      )?.['anthropic'];
+      const cacheWriteRaw = antMeta?.['cacheCreationInputTokens'];
+      const cacheWriteT =
+        typeof cacheWriteRaw === 'number' && Number.isFinite(cacheWriteRaw) ? cacheWriteRaw : 0;
       const promptTok = Number.isFinite(promptT) ? promptT : 0;
-      const effectiveT = Math.max(0, promptTok - (Number.isFinite(cachedT) ? cachedT : 0));
+      const effectiveT = Math.max(
+        0,
+        promptTok - (Number.isFinite(cachedT) ? cachedT : 0) - cacheWriteT,
+      );
       inputTokens += promptTok;
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
       effectiveInputTokens += effectiveT;
@@ -2928,6 +3029,9 @@ async function runJob(
         agentId: agentRow.id,
         entityId: job.entityId ?? '',
         db,
+        // étape D: stamp every tool_calls row of this turn with the turn
+        // number; the per-call toolCallId is spread at each executeTool site.
+        turn,
         jobChatId: job.chatId ?? null,
         jobChannel: job.channel,
         activeChannels,
@@ -2988,7 +3092,12 @@ async function runJob(
                 if (!def) return { id: c.id, r: null };
                 return {
                   id: c.id,
-                  r: await executeTool(def, c.input, sharedToolCtx, sharedToolOpts),
+                  r: await executeTool(
+                    def,
+                    c.input,
+                    { ...sharedToolCtx, toolCallId: c.id },
+                    sharedToolOpts,
+                  ),
                 };
               }),
             );
@@ -3210,6 +3319,8 @@ async function runJob(
                 agentId: agentRow.id,
                 entityId: job.entityId ?? '',
                 db,
+                turn,
+                toolCallId: call.id,
                 jobChatId: job.chatId ?? null,
                 jobChannel: job.channel,
                 activeChannels,
@@ -3393,7 +3504,12 @@ async function runJob(
             void touchJob(db, jobId as string).catch(() => {});
           }, 60_000);
           try {
-            toolResult = await executeTool(toolDef, call.input, sharedToolCtx, sharedToolOpts);
+            toolResult = await executeTool(
+              toolDef,
+              call.input,
+              { ...sharedToolCtx, toolCallId: call.id },
+              sharedToolOpts,
+            );
           } finally {
             clearInterval(toolHbInterval);
           }
@@ -3497,6 +3613,11 @@ async function runJob(
                   // to prevent).
                   { error: toolResult.error, mayHaveDelivered: true }
                 : { error: toolResult.error },
+            // INJECT-001. The name is passed ONLY on the success path: an
+            // error string is the product's own text, and framing it as
+            // untrusted third-party data would be a lie the model has to
+            // reason about.
+            toolResult.outcome === 'success' ? call.name : undefined,
           ),
         });
       }
@@ -3765,7 +3886,7 @@ async function runJob(
           // OWN content) while the agent HAS delivered are NOT a false success:
           // the deliverable is honest and the failures stay visible in the
           // persisted transcript. Hard-failing those turned complete, productive
-          // jobs into false FAILURES (live: Java/Cortex sessions did all the work,
+          // jobs into false FAILURES (observed live: the sessions did all the work,
           // then died on unresolved_tool_failure over a self-vote/dedup rejection
           // the agent literally cannot retry to success). The telegram-delivery
           // guard below independently catches "nothing delivered on a tool-only

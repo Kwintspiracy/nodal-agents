@@ -48,7 +48,8 @@ export interface SlackHandleResult {
    */
   pendingAuth?: {
     conversationRowId: string;
-    ownerConversationId: string;
+    /** null when this pending row IS the owner claim — decided in the dashboard (CHANNEL-001). */
+    ownerConversationId: string | null;
     requesterConversationId: string;
     requesterName: string;
     targetAgentName?: string;

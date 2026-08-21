@@ -47,6 +47,24 @@ export type CatalogEntry = {
    * makes the omission a compile error instead.
    */
   category: ConnectorCategory;
+  /**
+   * CONNECTOR-001 (audit vague D): plain-language statement of how far this
+   * connector's OAuth token actually reaches, shown BEFORE the provider's
+   * consent screen.
+   *
+   * Three Google connectors ask for the broadest scope in their family because
+   * their tools genuinely need it — `drive.file` cannot see files the user
+   * already has, and the `.readonly` variants cannot write. That is defensible;
+   * letting "connect Google Drive" read as "the files it needs" is not. So the
+   * scope stays and the reach is said out loud, in the product's own words,
+   * while the user can still walk away.
+   *
+   * Enforced by packages/shared/src/tests/oauth-scopes.test.ts: a provider
+   * requesting a blanket scope with no disclosure fails the suite.
+   *
+   * Only set where the reach is wider than the connector's name implies.
+   */
+  scopeDisclosure?: string;
 };
 
 /**
@@ -79,6 +97,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'google-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to your ENTIRE Google Drive — every file, read and write — not only the files agents create. Google offers no narrower scope that still lets an agent open a file you already have.',
   },
   {
     slug: 'gmail',
@@ -95,6 +115,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'google-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants event access on your calendars (create, edit, delete events) and the ability to list them. It cannot create or delete calendars themselves.',
   },
   {
     slug: 'google-sheets',
@@ -103,6 +125,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'google-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to ALL your spreadsheets, read and write. A read-only scope exists but would disable every editing tool.',
   },
   {
     slug: 'google-docs',
@@ -111,6 +135,8 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     credentialType: 'google-oauth',
     category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+    scopeDisclosure:
+      'Grants access to ALL your documents, read and write. A read-only scope exists but would disable document creation and editing.',
   },
   {
     slug: 'airtable-oauth',
@@ -148,6 +174,16 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     authType: 'api_key',
     category: 'Data',
     docsHint: 'Firecrawl API key — firecrawl.dev/account.',
+  },
+  {
+    slug: 'cloudflare',
+    label: 'Cloudflare',
+    authType: 'api_key',
+    category: 'DevTools',
+    docsHint:
+      'Cloudflare API Token — dash.cloudflare.com → My Profile → API Tokens → template ' +
+      '"Edit Cloudflare Workers" (includes Workers Scripts:Write, Account Settings:Read). ' +
+      'Scope it to ONE account.',
   },
   {
     slug: 'tavily',

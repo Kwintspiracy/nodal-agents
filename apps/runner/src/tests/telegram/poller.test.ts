@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } fr
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agents, agentJobs, channelBindings } from '@nodal-agents/db';
+import { agents, agentJobs, channelBindings, telegramAllowedChats } from '@nodal-agents/db';
 import { runTelegramPoller } from '../../telegram/poller.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -89,6 +89,18 @@ describe('runTelegramPoller', () => {
     db = result.db;
     const minimal = await seedMinimal(db);
     seed = { entityId: minimal.entityId, agentId: minimal.agentId };
+    // These tests are about polling mechanics — batching, offsets, dead-letter
+    // — not about inbound authorization. Give chat 555 (makeUpdate's default)
+    // an already-approved owner row so updates reach job creation at all: since
+    // CHANNEL-001 a first DM only records a pending owner claim and creates no
+    // job, which would otherwise make every assertion here vacuous.
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '555',
+      role: 'owner',
+      status: 'active',
+    });
     fetchSpy = vi.spyOn(globalThis, 'fetch');
   });
 

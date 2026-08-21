@@ -23,6 +23,8 @@ export { probeContextWindow } from './probe-context';
 
 // Provider failover (opt-in chain: primary + fallbacks)
 export { createFailoverLlmClient } from './failover';
+export { buildLlmCallObservation, emitLlmCall } from './observe';
+export type { LlmCallObservation, LlmCallObserver, LlmClientMeta } from './observe';
 
 // Message structure validation
 export { validateMessageStructure } from './message-structure';

@@ -19,7 +19,10 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 → 20 (2026-08-19): the job crept up to 14-15 min as the codebase grew
+    # (code_task + runtime agents + Code tab) and a slow runner tipped the
+    # Build step over the cap with every check already green.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -51,6 +54,14 @@ jobs:
       - name: Secret scan
         run: pnpm secrets:check
 
+      # The pre-commit hook already runs this on staged files, but a hook lives
+      # on a developer's machine and can be skipped. This is the copy nobody
+      # can bypass. It catches damaged content (NUL bytes, UTF-16) and files
+      # that drifted into the tree — see scripts/check-commit-hygiene.mjs for
+      # the two 2026-08-21 incidents that motivated each check.
+      - name: Commit hygiene
+        run: pnpm hygiene:check
+
       - name: Architecture check
         run: pnpm deps:check
 
@@ -67,6 +78,14 @@ jobs:
       - name: Script tests
         run: pnpm test:scripts
 
+      # SUPPLY-002 (audit 2026-08-07): nothing in CI ever looked at whether a
+      # dependency had a known vulnerability. Non-blocking on purpose — on a
+      # 5600-dependency tree a blocking gate produces noise a single maintainer
+      # will end up disabling, and a disabled gate is worse than none because it
+      # reads as coverage. `high` and above only, so the signal stays readable.
+      - name: Dependency audit (advisory)
+        run: pnpm audit --audit-level=high || true
+
       # Audit finding: CI never actually built the apps (typecheck/lint catch
       # type/style errors but not a broken `next build` — e.g. a bad server
       # action boundary, an invalid import only webpack's build graph catches).
@@ -74,3 +93,157 @@ jobs:
       # only surfacing on deploy.
       - name: Build
         run: pnpm build
+
+  # ── Pack smoke test ─────────────────────────────────────────────────────────
+  # SUPPLY-001 (audit 2026-08-07). `pnpm build` builds the WORKSPACE; it says
+  # nothing about the TARBALL. Two releases shipped a dead dashboard because
+  # nothing ever started the packed product before publish:
+  #   0.8.0 — 7 server chunks lost by Next's standalone copy;
+  #   0.8.1 — `next: "^16.2.6"` re-resolved to 16.3.0 at install time, so the
+  #           tarball broke with no commit, no release and no signal.
+  # This packs, installs clean into an isolated HOME, and BOOTS it. The CLI's own
+  # assertWebRenders makes `up` exit non-zero when the dashboard does not render,
+  # so a broken tarball fails here instead of on a user's machine.
+  #
+  # Its own job, in parallel with `ci`: it runs a full `next build` plus a real
+  # Postgres boot (~15 min), and folding that into `ci` would double the feedback
+  # loop for every typo-level failure.
+  # Quentin développe et fait tourner Nodal sur Windows ; la CI ne voyait que
+  # Linux. Les pièges qui lui coûtent le plus — arbres de processus, ports
+  # tenus, séparateurs de chemin, casse du système de fichiers — n'étaient donc
+  # vus par personne avant lui.
+  #
+  # BLOQUANT depuis le 11/08, sur décision de Quentin. Il a été vert dès son
+  # premier passage utile — après avoir rendu deux défauts réels de comparaison
+  # de chemins, dont un qui cassait la livraison de fichiers temporaires sur
+  # macOS. La série est courte : si ce job se met à flaker, la réponse n'est PAS
+  # de remettre `continue-on-error` mais de traiter la cause, sinon on retombe
+  # dans l'angle mort qu'il vient de fermer.
+  ci-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
+      # les refaire ici doublerait le coût sans rien apprendre.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # `--concurrency` est un drapeau TURBO : le passer par `pnpm test -- …`
+      # le transmet à vitest, qui le refuse (`Unknown option --concurrency`).
+      # Le job Linux le dit déjà en commentaire ; j'ai copié la ligne sans le
+      # lire, et le premier passage Windows est mort là-dessus.
+      - name: Unit tests
+        run: pnpm exec turbo run test --concurrency=3
+
+  pack-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pack, install clean, boot
+        run: node scripts/smoke-pack.mjs
+
+  # PERF-001 (audit 2026-08-07). 31 spec files, 85 tests, never run by CI —
+  # so every UI regression this suite could catch had to be found by hand.
+  #
+  # BLOQUANT depuis le 11/08, sur décision de Quentin — après quatre passages
+  # verts d'affilée. Il gate désormais au lieu de seulement rapporter.
+  #
+  # Ce qu'il a fallu pour en arriver là : le job n'avait JAMAIS dépassé son
+  # global-setup depuis sa création. Il réclamait une authentification que le
+  # mode par défaut ne sert pas, puis butait sur une installation neuve qui n'a
+  # aucun agent et part en onboarding. Deux de ses trois parcours décrivaient
+  # en plus un produit disparu depuis deux refontes d'UI.
+  #
+  # Si ce job flake, la cause est à traiter — pas le drapeau à remettre.
+  #
+  # Deux parcours, pas trois : l'app démarre et se navigue, l'onglet Autonomie
+  # répond. Le troisième du plan (agent-flows) est sorti le 10/08 — il sonde un
+  # LLM local sur localhost:1234, qu'aucun runner n'aura jamais. Lancer les 31
+  # fichiers coûterait un ordre de grandeur de plus que ce que ça rapporte
+  # aujourd'hui.
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `--with-deps` shells out to apt-get, which can hang forever on a stuck
+      # mirror (2026-08-19: two consecutive 25-min hangs ate the whole job
+      # budget). Bound each attempt to 5 min and retry once — fail LOUD and
+      # fast instead of timing out the job.
+      - name: Install Playwright browsers
+        timeout-minutes: 12
+        run: |
+          for i in 1 2; do
+            timeout 300 pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium && exit 0
+            echo "playwright install attempt $i failed or hung — retrying"
+          done
+          exit 1
+
+      # NOT `pnpm --filter @nodal-agents/web e2e:up`: that wrapper shells out to
+      # a globally-installed `nodal-agents` binary, which does not exist on a
+      # runner checking out source. First attempt died on `spawn ENOENT`.
+      # The dev stack from source brings up embedded Postgres + runner + web.
+      - name: Boot the stack
+        run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
+
+      - name: Wait for the dashboard
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/ > /dev/null; then echo "web up"; exit 0; fi
+            sleep 5
+          done
+          echo "dashboard never answered on :3000"; exit 1
+
+      # agent-flows.spec.ts is deliberately NOT in this list. It calls
+      # requireLmStudio(), which probes a local LLM server on localhost:1234 —
+      # it cannot exist on a GitHub runner, so the spec fails at its first line
+      # ("LM_Studio_unresponsive") no matter how healthy the stack is. It stays
+      # a local-only suite until those journeys run against a stubbed LLM.
+      - name: Two journeys — boot/navigation and the autonomy tab
+        run: >
+          pnpm --filter @nodal-agents/web exec playwright test
+          tests/e2e/smoke.spec.ts
+          tests/e2e/autonomy-approvals.spec.ts
+
+      - name: Upload the report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
