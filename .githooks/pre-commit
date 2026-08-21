@@ -2,16 +2,21 @@
 # Versioned pre-commit hook. Enabled by `pnpm hooks:install`, which `prepare`
 # runs automatically after `pnpm install`.
 #
-# Two gates, both cheap enough to run on every commit and both closing a real
+# Three gates, all cheap enough to run on every commit and each closing a real
 # incident rather than a hypothetical one:
 #
 #   hygiene — damaged or stray files (2026-08-21: a source file committed with
 #             16 NUL bytes took out 8 test suites; a report at the repo root
 #             was swept in by `git add -A` and failed the secret scan)
 #   secrets — hardcoded credentials
+#   format  — Prettier on the STAGED files (2026-08-21: a script was pushed to
+#             main unformatted and turned CI red; the written rule to run the
+#             gates before pushing existed, and was not followed. A rule that
+#             depends on remembering is not a gate)
 #
-# Both inspect the STAGED set only, so an unrelated mess in the working tree
-# never blocks a clean commit.
+# All three inspect the STAGED set only, so an unrelated mess in the working
+# tree never blocks a clean commit. Format is checked, never rewritten: a hook
+# that edits files behind you turns `git commit` into a surprise.
 #
 # Escape hatch, for the rare intended case: NODAL_SKIP_HYGIENE=1 git commit …
 
@@ -24,3 +29,23 @@ fi
 
 node scripts/check-commit-hygiene.mjs
 node scripts/check-no-secrets.mjs
+
+# Only the staged files, and only those Prettier actually handles — running the
+# whole repo would cost seconds on every commit and flag files nobody touched.
+#
+# NUL-delimited end to end (-z / -0 / -d ''). A newline-separated list through
+# plain `xargs` splits on spaces too, so `docs/a b.md` arrives as two arguments
+# — and because --no-error-on-unmatched-pattern forgives both fragments, the
+# real file is silently never checked and the gate reports success. Found in the
+# PR #6 review, 2026-08-21.
+if git diff --cached --name-only --diff-filter=ACMR -z \
+  | grep -z -E '\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml)$' \
+  | xargs -0 -r npx prettier --check; then
+  : # formatted, or nothing to check
+else
+  echo ""
+  echo "Commit blocked — the files above are not formatted."
+  echo "  Fix: pnpm format   (then re-stage and commit)"
+  echo ""
+  exit 1
+fi

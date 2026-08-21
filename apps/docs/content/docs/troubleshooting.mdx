@@ -196,6 +196,34 @@ Windows has since recycled is never mistaken for one of ours.
 **Fix.** Nothing to do. To avoid it entirely, stop with `nodal-agents down`
 rather than `Ctrl+C`.
 
+### A Codex task wrote files in read mode
+
+**Symptom.** `code_task` ran with `provider: "codex"` and `mode: "read"` — which
+the approval card describes as analysis only — and files were modified anyway.
+
+**Cause.** Your own `~/.codex/config.toml` disabled the sandbox, and Nodal was
+loading it. One key was enough: `[windows] sandbox = "elevated"` turned
+`--sandbox read-only` into no confinement at all. Measured 2026-08-21 — same
+directory, same command, one flag apart: without `--ignore-user-config` the CLI
+spawned PowerShell and wrote the file; with it, "the filesystem is read-only"
+and nothing was written.
+
+**Fixed since.** Nodal now always passes `--ignore-user-config`, so no setting in
+that file can weaken the confinement stated on the approval card. Your
+subscription still authenticates — auth lives outside the file. The side effect
+is that model and reasoning-effort defaults set there no longer apply; set them
+per agent in Nodal instead.
+
+**To verify on your machine**, or after a Codex upgrade:
+
+```bash
+node scripts/probe-codex-sandbox.mjs
+```
+
+It attempts a real write with the arguments Nodal passes. Exit 0 means confined,
+1 means not, 2 means it could not tell — and it never reports "confined" without
+positive proof that a command was attempted and refused.
+
 ### "Could not read the process table"
 
 **Symptom.** A yellow warning during shutdown, naming a timeout or an error from

@@ -68,6 +68,44 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 
   const validatedInput = parsed.data as z.infer<typeof tool.inputSchema>;
 
+  // ── 1.4 An explicit `block` rule wins over everything ──────────────────────
+  // Resolved here, ahead of preflight, and this order was argued for rather
+  // than assumed (PR #6 review nº2). Three reasons:
+  //
+  //   - `block` is the owner's explicit decision; a capability diagnosis must
+  //     not override it or overwrite its message.
+  //   - the canonical `blocked:` text tells the model the restriction is
+  //     INTENTIONAL and not to work around it. A preflight error instead offers
+  //     an alternative the owner may have forbidden too.
+  //   - `preflight` receives the full ToolContext and may run async code or
+  //     touch the DB. A blocked tool should execute NONE of its own code, and a
+  //     doc comment is not a guarantee that some future preflight stays pure.
+  const blockingRule = matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
+  if (blockingRule?.action !== 'block' && tool.preflight) {
+    // ── 1.5 Preflight — refuse BEFORE anyone is asked to approve ─────────────
+    // Ordering is the whole point. Everything below writes an approval request
+    // and hands a human a card describing what is about to happen; a call that
+    // cannot honour that description must be stopped before the card exists,
+    // not after it is approved. See ToolDefinition.preflight for the review
+    // finding that put this here.
+    try {
+      await tool.preflight(validatedInput, ctx);
+    } catch (err) {
+      const result: ToolExecutionResult = {
+        outcome: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      };
+      await _writeToolCall(
+        ctx,
+        tool.name,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+  }
+
   // ── 2. Approval gate ───────────────────────────────────────────────────────
   const matchedRule = matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
   // An explicit rule always wins. With no matching rule, fall back to the tool's

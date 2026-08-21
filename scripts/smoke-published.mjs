@@ -115,7 +115,9 @@ try {
 
   // /api/health proved nothing in 0.8.0: it stayed green while every page 500'd.
   step('Fetching a real dashboard page');
-  const res = await fetch(`http://localhost:${PORTS.web}/`, { signal: AbortSignal.timeout(30_000) });
+  const res = await fetch(`http://localhost:${PORTS.web}/`, {
+    signal: AbortSignal.timeout(30_000),
+  });
   const html = await res.text();
   if (!res.ok || !html.includes('<h1')) {
     throw new Error(`the dashboard did not render (HTTP ${res.status})`);

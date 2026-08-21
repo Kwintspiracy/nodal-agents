@@ -53,6 +53,46 @@ itself rather than by us:
 An agent that only needs to answer "where is X handled" never needs `write`. The
 mode travels with the approval request, so you see which one you are approving.
 
+**The two mechanisms are not equally strong.** Claude Code _removes_ the write
+tools from the model, so there is nothing to escape. Codex _sandboxes_ them at
+the OS level, which is a real boundary but a more fragile one — as the section
+below explains, it was silently disabled on this machine until 2026-08-21.
+
+## Codex runs ignore your `~/.codex/config.toml`
+
+Nodal starts Codex with `--ignore-user-config`. Your subscription still
+authenticates — auth lives outside that file — but nothing else in it applies.
+
+This is a security boundary, not a preference. Two things were coming through
+that file into every Nodal-spawned run:
+
+- **Your personal MCP servers**, with the credentials in their env blocks. The
+  narrower fix, an empty `mcp_servers` override, does not work: an empty TOML
+  table _merges_ with your config instead of replacing it, so the servers came
+  through anyway.
+- **Your sandbox settings.** A single key — `[windows] sandbox = "elevated"` —
+  was enough to turn `--sandbox read-only` into no confinement at all. Same
+  directory, same command, one flag apart: without `--ignore-user-config` the
+  CLI spawned a shell and wrote the file; with it, "the filesystem is read-only"
+  and nothing was written.
+
+That second one is the important one, and it is not Windows-specific in
+principle: any setting in a file Nodal does not control could weaken the
+confinement its approval card promises, on any OS, without a trace.
+
+**The trade-off, stated plainly:** defaults you set in `config.toml` — model,
+reasoning effort, features — no longer apply to Nodal runs. Set the model and
+effort **per agent in Nodal** if you do not want the CLI's built-in defaults.
+
+**To check confinement yourself**, on any machine, after any Codex upgrade:
+
+```bash
+node scripts/probe-codex-sandbox.mjs
+```
+
+It attempts a real write with the exact arguments Nodal passes and reports
+whether the bytes landed.
+
 ## Approval
 
 The agent proposes the task; the job suspends; you see the full task text, the

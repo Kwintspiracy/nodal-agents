@@ -246,6 +246,31 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    */
   defaultApproval?: 'require_approval';
   /**
+   * Optional check that runs BEFORE the approval gate — the only hook that can
+   * refuse a call without a human ever being asked about it.
+   *
+   * Throw to refuse. The message travels back as the tool's error, no approval
+   * request is created, and `execute` is never reached.
+   *
+   * Why this exists (PR #6 review, 2026-08-21): `code_task` refuses codex on
+   * platforms where its sandbox is not enforced, and justified that refusal by
+   * "the choice is not offered rather than offered on false terms". It WAS
+   * offered: the guard sat in `execute()`, which `executeTool` only reaches
+   * AFTER writing an approval request and getting a human's approval. The card
+   * stated a promise the run could not keep, the human approved it, and only
+   * then did the refusal appear.
+   *
+   * `computeApproval` cannot serve this purpose — it is skipped whenever an
+   * approval rule matches, whenever the posture is already 'require_approval'
+   * (which is exactly the safe-by-default tools that need this most), and under
+   * fully_autonomous. A refusal must not depend on any of those.
+   *
+   * Reserve it for "this call is impossible here, whoever approves it" —
+   * platform, configuration, missing prerequisite. Not for per-call risk, which
+   * is `computeApproval`'s job.
+   */
+  preflight?: (input: z.infer<TInput>, ctx: ToolContext) => Promise<void> | void;
+  /**
    * Optional PER-CALL destructiveness check, complementing the static
    * `defaultApproval` above for tools where gating depends on the call's
    * actual TARGET, not the tool's identity — e.g. `file_write`/`file_edit`
