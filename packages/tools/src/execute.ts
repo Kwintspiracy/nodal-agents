@@ -68,6 +68,31 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 
   const validatedInput = parsed.data as z.infer<typeof tool.inputSchema>;
 
+  // ── 1.5 Preflight — refuse BEFORE anyone is asked to approve ───────────────
+  // Ordering is the whole point. Everything below writes an approval request
+  // and hands a human a card describing what is about to happen; a call that
+  // cannot honour that description must be stopped before the card exists, not
+  // after it is approved. See ToolDefinition.preflight for the PR #6 review
+  // finding that put this here.
+  if (tool.preflight) {
+    try {
+      await tool.preflight(validatedInput, ctx);
+    } catch (err) {
+      const result: ToolExecutionResult = {
+        outcome: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      };
+      await _writeToolCall(
+        ctx,
+        tool.name,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+  }
+
   // ── 2. Approval gate ───────────────────────────────────────────────────────
   const matchedRule = matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
   // An explicit rule always wins. With no matching rule, fall back to the tool's

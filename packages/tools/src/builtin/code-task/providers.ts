@@ -95,9 +95,12 @@ export const CLAUDE_READONLY_DISALLOWED = 'Write,Edit,MultiEdit,NotebookEdit,Bas
  * injection (see process.ts CMD_UNSAFE_CHARS). Proven live on both CLIs
  * (2026-08-20).
  *
- * --strict-mcp-config (claude) / mcp_servers={} (codex): a Nodal-spawned run
- * must NEVER inherit the user's personal MCP servers / claude.ai connectors
- * (A-bis finding 5, étape-A finding 5).
+ * --strict-mcp-config (claude) / --ignore-user-config (codex): a Nodal-spawned
+ * run must NEVER inherit the user's personal MCP servers / claude.ai connectors
+ * (A-bis finding 5, étape-A finding 5). The codex half of that claim was FALSE
+ * until 2026-08-21: it used `-c 'mcp_servers={}'`, and an empty TOML table
+ * merges rather than replaces — the servers, and their secrets, came through
+ * anyway. Found by the PR #6 review; see the flag's comment below.
  */
 export interface ProviderRunOptions {
   /**
@@ -140,8 +143,22 @@ export function buildProviderArgs(
     '--sandbox',
     mode === 'read' ? 'read-only' : 'workspace-write',
     '--skip-git-repo-check',
-    '-c',
-    'mcp_servers={}',
+    // Do NOT load the owner's ~/.codex/config.toml. Auth still resolves from
+    // CODEX_HOME, so the subscription keeps working — the flag's own help says
+    // so, and a live run confirmed it.
+    //
+    // This replaces `-c 'mcp_servers={}'`, which did NOT do the job: an empty
+    // TOML table MERGES with the user's config instead of replacing it. Verified
+    // 2026-08-21 (PR #6 review) — `codex mcp list` and
+    // `codex -c 'mcp_servers={}' mcp list` print the same servers, and a run
+    // through the old argv still opened the owner's personal MCP connections,
+    // secrets and all. A Nodal-spawned run must never inherit them: buildChildEnv
+    // strips *KEY*/*TOKEN* from the environment, but an MCP server carries its
+    // own credentials in the config file the flag now ignores.
+    //
+    // Measured after the change: zero MCP lines in the run's output, against two
+    // before, and the turn still completed.
+    '--ignore-user-config',
   ];
   if (opts.model) args.push('-m', opts.model);
   if (opts.effort) args.push('-c', `model_reasoning_effort="${opts.effort}"`);

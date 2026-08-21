@@ -32,15 +32,20 @@ node scripts/check-no-secrets.mjs
 
 # Only the staged files, and only those Prettier actually handles — running the
 # whole repo would cost seconds on every commit and flag files nobody touched.
-staged=$(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml)$' || true)
-
-if [ -n "$staged" ]; then
-  if ! echo "$staged" | xargs npx prettier --check --no-error-on-unmatched-pattern; then
-    echo ""
-    echo "Commit blocked — the files above are not formatted."
-    echo "  Fix: pnpm format   (then re-stage and commit)"
-    echo ""
-    exit 1
-  fi
+#
+# NUL-delimited end to end (-z / -0 / -d ''). A newline-separated list through
+# plain `xargs` splits on spaces too, so `docs/a b.md` arrives as two arguments
+# — and because --no-error-on-unmatched-pattern forgives both fragments, the
+# real file is silently never checked and the gate reports success. Found in the
+# PR #6 review, 2026-08-21.
+if git diff --cached --name-only --diff-filter=ACMR -z \
+  | grep -z -E '\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml)$' \
+  | xargs -0 -r npx prettier --check; then
+  : # formatted, or nothing to check
+else
+  echo ""
+  echo "Commit blocked — the files above are not formatted."
+  echo "  Fix: pnpm format   (then re-stage and commit)"
+  echo ""
+  exit 1
 fi

@@ -198,6 +198,13 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   inputSchema: codeTaskSchema,
   riskLevel: 'destructive',
   defaultApproval: 'require_approval',
+  // Runs BEFORE the approval card is written. The refusal below exists because
+  // the card would otherwise state a confinement promise this run cannot keep —
+  // so it has to happen while there is still no card. Putting it in `execute`
+  // (the first version of this fix) refused only AFTER a human had approved.
+  preflight: (input) => {
+    assertSandboxEnforced(input.provider, input.mode);
+  },
   execute: async (input, ctx) => {
     // Same workspace contract as run_command: no workspace → fail loud.
     assertWorkspacesConfigured(ctx);
@@ -210,10 +217,9 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     // BEFORE resolving the binary (invariant #9 at the provider level).
     assertCliProviderEnabled(cliConfig.defaults, input.provider);
 
-    // Confinement we cannot honour is refused before anything is spawned.
-    // On Windows `codex exec --sandbox` does not confine the CLI at all — see
-    // sandbox.ts for the five reproductions and why this refuses rather than
-    // warns (the approval card cannot carry a caveat).
+    // Belt and braces: `preflight` above already refused this, before any
+    // approval card existed. Repeated here so a caller that invokes the tool
+    // directly — bypassing executeTool — cannot reach a CLI we cannot confine.
     assertSandboxEnforced(input.provider, input.mode);
 
     // Resolve the binary — "absent" and "not logged in" are different

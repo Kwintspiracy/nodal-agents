@@ -82,8 +82,7 @@ describe('buildProviderArgs', () => {
       '--sandbox',
       'read-only',
       '--skip-git-repo-check',
-      '-c',
-      'mcp_servers={}',
+      '--ignore-user-config',
       '-',
     ]);
   });
@@ -91,6 +90,26 @@ describe('buildProviderArgs', () => {
   it('codex write: sandbox workspace-write', () => {
     const args = buildProviderArgs('codex', 'write');
     expect(args).toContain('workspace-write');
+  });
+
+  it('codex never re-introduces the mcp_servers override that did not work', () => {
+    // `-c 'mcp_servers={}'` looked like it isolated the run and did not: an
+    // empty TOML table MERGES with the owner's config, so their personal MCP
+    // servers — and the secrets in their env blocks — came through anyway.
+    // Verified 2026-08-21 via `codex mcp list` vs
+    // `codex -c 'mcp_servers={}' mcp list`: identical output.
+    //
+    // Pinned as a NEGATIVE assertion because the failure was invisible: the
+    // argv looked protective, and only a live run showed MCP traffic.
+    for (const mode of ['read', 'write'] as const) {
+      const args = buildProviderArgs('codex', mode);
+      expect(args.join(' '), `codex/${mode} still passes the merging override`).not.toContain(
+        'mcp_servers',
+      );
+      expect(args, `codex/${mode} must isolate from ~/.codex/config.toml`).toContain(
+        '--ignore-user-config',
+      );
+    }
   });
 
   it('model/effort overrides land as flags — claude native, codex TOML override', () => {
