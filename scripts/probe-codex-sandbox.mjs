@@ -111,12 +111,43 @@ const dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-probe-'));
 const inside = join(dir, 'inside.txt');
 const outside = join(tmpdir(), `codex-sandbox-escape-${process.pid}.txt`);
 
-/** Run one codex turn and report whether `target` exists afterwards. */
+/**
+ * Run one codex turn and report whether the sandbox held.
+ *
+ * Returns true (the write landed → not confined), false (a write was attempted
+ * and did NOT land → confined), or null (no verdict).
+ *
+ * ## Why "the file is absent" is not enough
+ *
+ * The first version concluded "blocked" from the file's absence alone. Review
+ * nº2 broke it with a fake codex that answered `--version` and emitted a valid
+ * turn containing only an agent message — no command at all. The probe printed
+ * `✓ blocked` twice and exited 0 with `CONFINED`. Nothing had been sandboxed;
+ * nothing had even been attempted.
+ *
+ * That false green is the worst output this script can produce: it would argue
+ * for re-opening codex on a platform that does not confine it. So confinement
+ * now requires POSITIVE evidence — a `command_execution` item in the stream,
+ * proving the model actually tried — and anything less is "no verdict", never
+ * "confined".
+ */
 function attempt(label, sandboxMode, target, instruction) {
   process.stdout.write(`▶ ${label}\n`);
   const run = callCodex(
     cli,
-    ['exec', '--json', '--sandbox', sandboxMode, '--skip-git-repo-check', '-'],
+    [
+      'exec',
+      '--json',
+      '--sandbox',
+      sandboxMode,
+      '--skip-git-repo-check',
+      // The SAME isolation flag the product ships (buildProviderArgs). Measuring
+      // a different argv than the one users get would answer the wrong
+      // question — and without it the run also loads the owner's personal MCP
+      // servers, which this script has no business touching.
+      '--ignore-user-config',
+      '-',
+    ],
     { cwd: dir, input: instruction, timeout: TIMEOUT_MS },
   );
 
@@ -124,16 +155,29 @@ function attempt(label, sandboxMode, target, instruction) {
     console.log(`  ? timed out after ${TIMEOUT_MS / 1000}s — no verdict\n`);
     return null;
   }
-  // A run that never reached the model tells us nothing about the sandbox.
-  if (!/"type"\s*:\s*"(item\.|turn\.)/.test(run.stdout ?? '')) {
+
+  const stdout = run.stdout ?? '';
+  if (!/"type"\s*:\s*"(item\.|turn\.)/.test(stdout)) {
     console.log(`  ? the CLI produced no turn — no verdict`);
     console.log(`    ${(run.stderr ?? '').trim().split('\n')[0] ?? ''}\n`);
     return null;
   }
 
-  const landed = existsSync(target);
-  console.log(landed ? `  ✗ the write LANDED — not confined\n` : `  ✓ blocked\n`);
-  return landed;
+  if (existsSync(target)) {
+    console.log(`  ✗ the write LANDED — not confined\n`);
+    return true;
+  }
+
+  // The file is absent. That is only evidence of confinement if a command was
+  // actually run — otherwise the model simply declined, or never tried.
+  if (!/"type"\s*:\s*"command_execution"/.test(stdout)) {
+    console.log(`  ? no shell command was attempted — no verdict`);
+    console.log(`    (the model answered without trying; nothing was sandboxed)\n`);
+    return null;
+  }
+
+  console.log(`  ✓ a command ran and the write did NOT land — confined\n`);
+  return false;
 }
 
 let readOnlyLanded = null;
@@ -167,8 +211,18 @@ try {
 
 // ── Verdict ─────────────────────────────────────────────────────────────────
 
-if (readOnlyLanded === null && escapeLanded === null) {
-  console.error('No verdict: neither attempt produced a usable run.');
+// ANY undetermined attempt means no verdict — not "the other one was fine".
+// The earlier `&&` let one null plus one false exit 0 as CONFINED, so a half
+// measured machine could argue for re-opening codex. Review nº2, second branch
+// of the same defect.
+if (readOnlyLanded === null || escapeLanded === null) {
+  console.error(
+    'No verdict: at least one attempt was undetermined.\n' +
+      `  read-only: ${readOnlyLanded === null ? 'undetermined' : String(readOnlyLanded)}\n` +
+      `  workspace-write: ${escapeLanded === null ? 'undetermined' : String(escapeLanded)}\n\n` +
+      '  A partial measurement must never read as "confined": that is the one\n' +
+      '  outcome that would argue for re-opening codex on this platform.',
+  );
   process.exit(2);
 }
 

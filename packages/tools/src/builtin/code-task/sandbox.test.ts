@@ -98,3 +98,49 @@ describe('assertSandboxEnforced', () => {
     }
   });
 });
+
+// ─── Le câblage, pas seulement la garde ──────────────────────────────────────
+
+describe('the real codeTaskTool, through the real executeTool', () => {
+  it('refuses codex on an unenforced platform without ever asking a human', async () => {
+    // Review nº2 killed the previous version of this suite with one mutation:
+    // delete `preflight` from codeTaskTool and all 50 tests stayed green. The
+    // cases above call the guard directly; preflight-order.test.ts builds its
+    // OWN tool that declares a preflight. Neither notices that the shipped tool
+    // stopped declaring one.
+    //
+    // That is the second time in this PR the same gap appeared: testing the
+    // pieces, never the wiring. This case drives the tool that actually ships.
+    if (process.platform !== 'win32') return; // only meaningful where the guard fires
+
+    const { executeTool } = await import('../../execute');
+    const { codeTaskTool } = await import('./index');
+    const { spinUpTestDb, seedMinimal } = await import('@nodal-agents/db/test-utils');
+
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+
+    const asked: unknown[] = [];
+    const result = await executeTool(
+      codeTaskTool,
+      {
+        purpose: 'analyse read-only',
+        provider: 'codex',
+        task: 'inspect the repository',
+        mode: 'read',
+      },
+      { db, entityId: seed.entityId, agentId: seed.agentId, jobId: seed.jobId } as never,
+      {
+        approvalRules: [],
+        onApprovalRequired: async (req: unknown) => {
+          asked.push(req);
+        },
+      } as never,
+    );
+
+    expect(result.outcome, 'the shipped tool did not refuse').toBe('error');
+    if (result.outcome !== 'error') return;
+    expect(result.error).toMatch(/codex_sandbox_unenforced/);
+    expect(asked, 'a human was asked to approve an unconfinable run').toHaveLength(0);
+  }, 30_000);
+});

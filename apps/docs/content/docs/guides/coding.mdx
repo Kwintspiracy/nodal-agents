@@ -61,6 +61,21 @@ still spawned a shell and wrote files. Rather than present an approval that
 promises confinement it cannot deliver, **Nodal refuses `provider: "codex"` on
 Windows** with a precise error. Use `claude` there.
 
+## Codex runs ignore your `~/.codex/config.toml`
+
+Nodal starts Codex with `--ignore-user-config`. Your subscription still
+authenticates — auth lives outside that file — but nothing else in it applies.
+
+This exists to stop a Nodal-spawned run from inheriting **your personal MCP
+servers**, which carry their own credentials in that file. The narrower option,
+an empty `mcp_servers` override, does not work: an empty TOML table _merges_
+with your config instead of replacing it, so the servers came through anyway
+(measured 2026-08-21; several narrower alternatives were tried and none held).
+
+**The trade-off, stated plainly:** defaults you set in `config.toml` — model,
+reasoning effort, features — no longer apply to Nodal runs. Set the model and
+effort **per agent in Nodal** if you do not want the CLI's built-in defaults.
+
 ## Approval
 
 The agent proposes the task; the job suspends; you see the full task text, the
