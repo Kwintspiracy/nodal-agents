@@ -34,7 +34,24 @@ export async function runMigrations(
   connectionString: string,
   opts: RunMigrationsOptions = {},
 ): Promise<void> {
-  const sql = postgres(connectionString, { max: 1 });
+  // postgres.js prints every server NOTICE to the console when no handler is
+  // set, and Drizzle's own bootstrap raises two on any database that already
+  // has migrations: `schema "drizzle" already exists` and `relation
+  // "__drizzle_migrations" already exists`. Both are the CREATE ... IF NOT
+  // EXISTS working as intended — but they arrive as multi-line objects with a
+  // `file`/`line`/`routine` trailer, so an upgrade looks like it just crashed.
+  // Observed 2026-08-21 during the 0.8.1 → 0.8.5 upgrade smoke.
+  //
+  // NOTICE is dropped; anything more severe still goes through, so a real
+  // warning from the server is never hidden (invariant #4). Failures were never
+  // routed here at all — they reject, and `up` stops on them.
+  const sql = postgres(connectionString, {
+    max: 1,
+    onnotice: (notice) => {
+      if (notice.severity === 'NOTICE') return;
+      console.warn(`[db] ${notice.severity}: ${notice.message}`);
+    },
+  });
   const db = drizzle(sql);
 
   // Two layouts to support:
