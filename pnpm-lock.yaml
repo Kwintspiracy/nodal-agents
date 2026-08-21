@@ -47,6 +47,9 @@ importers:
       '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@nodal-agents/checkpoints':
+        specifier: workspace:*
+        version: link:../../packages/checkpoints
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -166,6 +169,9 @@ importers:
       '@nodal-agents/catalog':
         specifier: workspace:*
         version: link:../../packages/catalog
+      '@nodal-agents/checkpoints':
+        specifier: workspace:*
+        version: link:../../packages/checkpoints
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -722,6 +728,12 @@ importers:
         specifier: workspace:*
         version: link:../test-kit
 
+  packages/checkpoints:
+    devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+
   packages/db:
     dependencies:
       '@nodal-agents/secrets':
@@ -978,6 +990,9 @@ importers:
       '@nodal-agents/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@nodal-agents/checkpoints':
+        specifier: workspace:*
+        version: link:../checkpoints
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db

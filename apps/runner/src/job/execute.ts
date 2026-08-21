@@ -133,6 +133,7 @@ import { triggerWorker } from '../routes/agent.ts';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
+import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -1920,6 +1921,7 @@ async function runJob(
                   embeddingClient: deps.embeddingClient,
                   workspaces: agentWorkspacesList,
                   skillStoreDir: skillStore,
+                  checkpointsRoot: checkpointsRoot(),
                   assignedSkillSlugs,
                   scriptAuthorizedSkillSlugs,
                   fileWritableSkillSlugs,
@@ -3045,6 +3047,7 @@ async function runJob(
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
         skillStoreDir: skillStore,
+        checkpointsRoot: checkpointsRoot(),
         assignedSkillSlugs,
         scriptAuthorizedSkillSlugs,
         fileWritableSkillSlugs,
@@ -3334,6 +3337,7 @@ async function runJob(
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
+                checkpointsRoot: checkpointsRoot(),
                 assignedSkillSlugs,
                 scriptAuthorizedSkillSlugs,
                 fileWritableSkillSlugs,
