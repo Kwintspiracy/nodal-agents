@@ -20,9 +20,8 @@ const onWindows = process.platform === 'win32';
 // ~0.5s on a warm developer machine and over 5s on a cold CI runner, which is
 // how the first version of this file went red on Windows CI while passing
 // locally. The budgets below are sized for the cold runner, not for the machine
-// they were written on; the function itself gives up at 6s, so no case here can
-// hang for longer than its own timeout.
-const WMI_BUDGET_MS = 30_000;
+// they were written on.
+const WMI_BUDGET_MS = 60_000;
 
 /** Wait until `check()` is true, or give up. Avoids a fixed sleep. */
 async function until(check: () => boolean | Promise<boolean>, budgetMs = 8000): Promise<boolean> {

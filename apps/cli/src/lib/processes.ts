@@ -47,30 +47,39 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
  *
  * Deliberately excludes `root` itself: the caller kills that one directly.
  *
- * ## Cost, and why the timeout is what it is
- *
- * This spends a PowerShell start-up plus a full WMI enumeration, and it sits on
- * the shutdown path. Measured 2026-08-21: ~0.5s on a warm developer machine,
- * but **over 5s on a cold CI runner** — where it blew the 10s hook budget of a
- * pre-existing test and turned a green suite red. That red was accurate: a
- * shutdown that stops two services was paying the cost twice, and a slow or
- * loaded machine is exactly where "Nodal takes forever to stop" gets reported.
- *
- * So the budget is 6s, not 10s. Past that we return [] and the caller falls
- * back to plain `taskkill /T` — the behaviour that shipped before this function
- * existed. It is a real degradation (a stranded Turbopack worker can survive),
- * so it is announced rather than swallowed: a silent fallback here would show up
- * later as an unexplained orphan on the next `up`.
- *
  * Not cached across calls on purpose. A snapshot reused after the first kill can
  * name a PID Windows has already recycled, and killing a recycled PID means
  * killing a stranger's process — the exact failure the ownership guard in `up`
  * was just written to prevent.
  */
-export async function descendantPidsWin(root: number): Promise<number[]> {
-  const snapshot = await processSnapshotWin();
+export async function descendantPidsWin(root: number, timeoutMs?: number): Promise<number[]> {
+  const snapshot = await processSnapshotWin(timeoutMs);
   return walkDescendants(snapshot, root).map((p) => p.pid);
 }
+
+/**
+ * How long a snapshot may take before we give up on it.
+ *
+ * Generous on purpose, and that is a correction. An earlier 6s budget was
+ * chosen to keep shutdowns snappy — a defensible goal, arrived at by measuring
+ * ~0.5s on a warm developer machine. It was wrong: the same call runs past 5s
+ * on a cold CI runner, so the budget sat right on the edge, expired, and
+ * returned an EMPTY table. The protection then switched itself off, silently,
+ * on precisely the slow and loaded machines where stranded processes actually
+ * happen. A slower stop is a far smaller cost than a guard that quietly stops
+ * guarding.
+ */
+const SNAPSHOT_BUDGET_MS = 20_000;
+
+/**
+ * The short budget used on the shutdown path, where waiting is felt.
+ *
+ * Affordable only because it is no longer the sole line of defence: anything a
+ * hurried walk misses is caught by `sweepRecordedChildren`, working from the
+ * tree recorded at startup. Before that record existed, cutting this short
+ * meant losing the process for good.
+ */
+const SHUTDOWN_SNAPSHOT_BUDGET_MS = 6_000;
 
 /** One process as WMI reports it. `startedAt` is CreationDate in .NET ticks. */
 export interface ProcessRecord {
@@ -92,7 +101,9 @@ export interface ProcessRecord {
  * Returns an empty map on any failure. This exists to catch stragglers, never
  * to block a shutdown.
  */
-export async function processSnapshotWin(): Promise<Map<number, ProcessRecord>> {
+export async function processSnapshotWin(
+  timeoutMs: number = SNAPSHOT_BUDGET_MS,
+): Promise<Map<number, ProcessRecord>> {
   const out = new Map<number, ProcessRecord>();
   if (process.platform !== 'win32') return out;
   try {
@@ -106,14 +117,14 @@ export async function processSnapshotWin(): Promise<Map<number, ProcessRecord>> 
         'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
           'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.Ticks)" }',
       ],
-      { reject: false, timeout: 6_000 },
+      { reject: false, timeout: timeoutMs },
     );
 
     if (timedOut) {
       process.stderr.write(
         '\x1b[33m[nodalai] Could not enumerate child processes in time — falling back to a\n' +
-          '  plain tree kill. A background worker may survive and hold its port; if the\n' +
-          '  next start reports an orphan, that is why.\x1b[0m\n',
+          '  plain tree kill. A background worker may survive; the next start cleans up\n' +
+          '  what it recorded, so this costs a message, not a stuck port.\x1b[0m\n',
       );
       return out;
     }
@@ -178,7 +189,7 @@ export async function killPidTree(pid: number): Promise<void> {
     //
     // Once the parent is dead the parent/child link is gone with it, so the list
     // has to be taken first. Cheap: one WMI call, and only on the shutdown path.
-    const descendants = await descendantPidsWin(pid);
+    const descendants = await descendantPidsWin(pid, SHUTDOWN_SNAPSHOT_BUDGET_MS);
 
     try {
       // /T = kill children too. /F = force. We don't care if it failed (the

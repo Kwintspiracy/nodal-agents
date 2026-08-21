@@ -30,7 +30,7 @@ const onWindows = process.platform === 'win32';
 
 // A PowerShell start-up plus a WMI enumeration runs ~0.5s warm and past 5s on a
 // cold CI runner. Budgets are sized for the cold runner.
-const WMI_BUDGET_MS = 30_000;
+const WMI_BUDGET_MS = 60_000;
 
 /** Wait until `check()` is true, or give up. */
 async function until(check: () => boolean | Promise<boolean>, budgetMs: number): Promise<boolean> {
@@ -57,8 +57,24 @@ describe('processSnapshotWin', () => {
       const child = spawnIdle();
       try {
         const snapshot = await processSnapshotWin();
+        // Separate the two ways this can fail, because they need opposite
+        // fixes and the assertion below cannot tell them apart on its own.
+        // An EMPTY map means the WMI call never delivered — a budget too tight
+        // for the machine (exactly what turned Windows CI red on 2026-08-21,
+        // where a 6s budget expired and the snapshot came back empty). A
+        // populated map missing this pid would be a parsing or walk fault.
+        expect(
+          snapshot.size,
+          'the process table came back EMPTY — the WMI call failed or timed out, ' +
+            'this is not a logic fault',
+        ).toBeGreaterThan(0);
+
         const rec = snapshot.get(child.pid!);
-        expect(rec, 'the freshly spawned process was not in the snapshot').toBeDefined();
+        expect(
+          rec,
+          `the process table has ${snapshot.size} entries but not our pid ${child.pid} ` +
+            '— parsing or the query itself is wrong',
+        ).toBeDefined();
         // The tick is what makes a recorded pid safe to act on later; without
         // it the sweep has no way to tell a survivor from a recycled number.
         expect(rec!.startedAt, 'no creation tick — identity check impossible').toMatch(/^\d+$/);
