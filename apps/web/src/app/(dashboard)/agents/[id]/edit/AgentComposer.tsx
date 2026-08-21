@@ -29,6 +29,7 @@ import {
   deleteWorkspaceFileAction,
   listAgentApprovalRulesAction,
   setAgentApprovalRuleAction,
+  listInternalToolsAction,
   setRunCommandYoloAction,
   setCodeTaskYoloAction,
   setCliDailyBudgetAction,
@@ -91,6 +92,16 @@ import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
 import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
+
+/**
+ * One built-in tool as returned by listInternalToolsAction.
+ *
+ * `requiresApproval` is omitted on the wire — none of these ships an approval
+ * gate of its own — so it is filled in at render rather than sent sixteen times.
+ */
+type InternalToolUiRow = Omit<OperationDescriptor, 'requiresApproval'> & {
+  unblockableReason?: string;
+};
 import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
 
 /**
@@ -675,7 +686,6 @@ export default function AgentComposer({
             onChangeRuntime={setRuntime}
             cliMode={cliMode}
             onChangeCliMode={setCliMode}
-            cliPermissions={agent.cliPermissions}
             cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
             cliDefaults={agent.cliDefaults}
             isOwner={isOwner}
@@ -1533,6 +1543,11 @@ function AutonomyTab({
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState<Set<string>>(new Set());
+  // Fetched, not imported: the descriptors live in @nodal-agents/orchestration,
+  // and importing that from this 'use client' component pulls drizzle into the
+  // browser bundle and breaks the page build outright. See
+  // listInternalToolsAction.
+  const [internalTools, setInternalTools] = useState<InternalToolUiRow[]>([]);
 
   // Load current rules on mount
   useEffect(() => {
@@ -1541,6 +1556,12 @@ function AutonomyTab({
       setLoaded(true);
     });
   }, [agentId]);
+
+  useEffect(() => {
+    listInternalToolsAction().then((result) => {
+      if (result.ok) setInternalTools(result.data);
+    });
+  }, []);
 
   // Build the list of gateable tools from assigned connectors (write+destructive)
   // plus Telegram if a bot is wired.
@@ -1608,7 +1629,7 @@ function AutonomyTab({
       <SectionCard>
         <SectionHead
           label="Autonomy / Approvals"
-          hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Read-only tools are always autonomous and not shown."
+          hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Its built-in tools are listed separately, below."
         />
         {gateableTools.length === 0 ? (
           <p className="text-body-13 text-ink-3">
@@ -1635,6 +1656,45 @@ function AutonomyTab({
           Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>{' '}
           for the tools above. Rules take effect on the next job — already-running jobs are not
           affected.
+        </p>
+      </SectionCard>
+
+      {/*
+        The sixteen built-in tools every agent gets. They were always on and
+        never listed, so the only way to restrain one was the read-only preset,
+        which blocks five write tools at once — no way to say "may read files,
+        may not search the web". Same control and same vocabulary as the outward
+        tools above, so one row reads the same everywhere.
+
+        Descriptors come from @nodal-agents/orchestration, derived from the tool
+        definitions themselves: the text the owner reads before switching a tool
+        off cannot drift from what that tool actually does.
+      */}
+      <SectionCard>
+        <SectionHead
+          label="Built-in tools"
+          hint="Every agent gets these. Restrict any of them for this agent — memory, web search, workspace files."
+        />
+        <div
+          className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+          data-testid="autonomy-internal-list"
+        >
+          {internalTools.map((op) => (
+            <AutonomyToolRow
+              key={op.slug}
+              op={{ ...op, requiresApproval: false }}
+              value={ruleFor(op.slug)}
+              saving={saving.has(op.slug)}
+              onChange={(action) => handleChange(op.slug, action)}
+              {...(op.unblockableReason === undefined
+                ? {}
+                : { lockedReason: op.unblockableReason })}
+            />
+          ))}
+        </div>
+        <p className="mt-4 text-body-12 text-ink-4">
+          Blocking a tool leaves it visible to the agent but refuses the call, telling it the
+          restriction is deliberate — so it reports the limit instead of working around it.
         </p>
       </SectionCard>
 
@@ -2578,11 +2638,20 @@ function AutonomyToolRow({
   value,
   saving,
   onChange,
+  lockedReason,
 }: {
   op: OperationDescriptor;
   value: ApprovalAction;
   saving: boolean;
   onChange: (action: ApprovalAction) => void;
+  /**
+   * Set for a tool that may not be blocked (return_result). The row still
+   * renders — an owner who counts sixteen internal tools in the docs and finds
+   * fifteen here would rightly wonder what is being hidden — but the control is
+   * replaced by the reason. The server refuses the rule too; this is the
+   * affordance, not the guard.
+   */
+  lockedReason?: string;
 }) {
   const riskLabel: Record<string, string> = { write: 'write', destructive: 'irreversible' };
 
@@ -2595,7 +2664,11 @@ function AutonomyToolRow({
           <span
             className={[
               'inline-flex h-[18px] items-center rounded-full px-2 text-mono-11 uppercase tracking-[0.1em]',
-              op.risk === 'destructive' ? 'bg-err/10 text-err' : 'bg-warn/10 text-warn',
+              op.risk === 'destructive'
+                ? 'bg-err/10 text-err'
+                : op.risk === 'write'
+                  ? 'bg-warn/10 text-warn'
+                  : 'bg-hover text-ink-3',
             ].join(' ')}
           >
             {riskLabel[op.risk] ?? op.risk}
@@ -2607,33 +2680,42 @@ function AutonomyToolRow({
         <code className="mt-1 block text-mono-11 text-ink-4">{op.slug}</code>
       </div>
 
-      {/* 3-way control */}
-      <SegmentedControl
-        value={value}
-        onChange={onChange}
-        disabled={saving}
-        ariaLabel={`Approval policy for ${op.name}`}
-        options={[
-          {
-            value: 'auto_approve' as const,
-            label: 'Autonomous',
-            activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
-            testId: `autonomy-btn-${op.slug}-auto_approve`,
-          },
-          {
-            value: 'require_approval' as const,
-            label: 'Ask first',
-            activeClassName: 'bg-warn/15 text-warn border-warn/30',
-            testId: `autonomy-btn-${op.slug}-require_approval`,
-          },
-          {
-            value: 'block' as const,
-            label: 'Block',
-            activeClassName: 'bg-err/15 text-err border-err/30',
-            testId: `autonomy-btn-${op.slug}-block`,
-          },
-        ]}
-      />
+      {lockedReason !== undefined ? (
+        <p
+          className="max-w-xs text-body-12 leading-[1.4]! text-ink-4 sm:text-right"
+          data-testid={`autonomy-locked-${op.slug}`}
+        >
+          Always on. {lockedReason}
+        </p>
+      ) : (
+        /* 3-way control */
+        <SegmentedControl
+          value={value}
+          onChange={onChange}
+          disabled={saving}
+          ariaLabel={`Approval policy for ${op.name}`}
+          options={[
+            {
+              value: 'auto_approve' as const,
+              label: 'Autonomous',
+              activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
+              testId: `autonomy-btn-${op.slug}-auto_approve`,
+            },
+            {
+              value: 'require_approval' as const,
+              label: 'Ask first',
+              activeClassName: 'bg-warn/15 text-warn border-warn/30',
+              testId: `autonomy-btn-${op.slug}-require_approval`,
+            },
+            {
+              value: 'block' as const,
+              label: 'Block',
+              activeClassName: 'bg-err/15 text-err border-err/30',
+              testId: `autonomy-btn-${op.slug}-block`,
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }
@@ -2685,7 +2767,6 @@ function SettingsTab(props: {
   /** CLI posture, lifted so the hero badge and the runtime card never disagree. */
   cliMode: 'read' | 'write';
   onChangeCliMode: (v: 'read' | 'write') => void;
-  cliPermissions: AgentRow['cliPermissions'];
   cliDailyBudgetUsd: number;
   cliDefaults: AgentRow['cliDefaults'];
   isOwner: boolean;
@@ -2733,7 +2814,6 @@ function SettingsTab(props: {
     onChangeRuntime,
     cliMode,
     onChangeCliMode,
-    cliPermissions,
     cliDailyBudgetUsd,
     cliDefaults,
     isOwner,

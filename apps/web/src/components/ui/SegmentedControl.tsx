@@ -59,6 +59,11 @@ export default function SegmentedControl<T extends string>({
             disabled={disabled}
             onClick={() => onChange(opt.value)}
             data-testid={opt.testId}
+            // Which segment is selected was only ever expressed as a background
+            // colour: unreadable to a screen reader, and testable only by
+            // asserting on a Tailwind class, which couples a behaviour test to
+            // the palette. `aria-pressed` states it once, for both.
+            aria-pressed={isActive}
             className={[
               'relative h-[32px] px-3 text-medium-13 transition-colors',
               idx > 0 ? 'border-l border-rule-2' : '',

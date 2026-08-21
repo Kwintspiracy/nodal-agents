@@ -193,6 +193,26 @@ export const ALWAYS_ON_TOOLS = [
 export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
 
 /**
+ * Always-on tools an owner may NOT block, with the reason stated per tool.
+ *
+ * Every other always-on tool is a capability: switching it off narrows what the
+ * agent can do, which is the owner's call. `return_result` is not a capability
+ * — it is the state-machine signal that ENDS a job. Blocking it does not make
+ * the agent do less; it makes every one of its jobs unable to finish, and the
+ * agent has no way to report that, since reporting is the very tool it just
+ * lost. That is not a restriction, it is a trap.
+ *
+ * Enforced server-side (setAgentApprovalRuleAction), not only in the UI: a
+ * dashboard-only guard is one API call away from being bypassed. Fails loud
+ * (invariant #4) rather than silently ignoring the rule.
+ */
+export const UNBLOCKABLE_TOOLS: Readonly<Record<string, string>> = {
+  return_result:
+    'return_result is how a job reports that it finished or is stuck. Blocking it would leave ' +
+    'every job of this agent unable to end, with no way to tell you why.',
+};
+
+/**
  * Documentation for the always-on built-in tools.
  * Source of truth for the "Built-in capabilities" block injected into every
  * agent's system prompt by buildSystemPrompt() in @nodal-agents/orchestration.

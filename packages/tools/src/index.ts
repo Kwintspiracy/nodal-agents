@@ -57,6 +57,7 @@ export {
   registerBuiltins,
   ALWAYS_ON_TOOLS,
   ALWAYS_ON_TOOL_DOCS,
+  UNBLOCKABLE_TOOLS,
   returnResultTool,
   saveMemoryTool,
   queryMemoryTool,
