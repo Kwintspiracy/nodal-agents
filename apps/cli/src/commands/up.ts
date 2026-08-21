@@ -183,9 +183,40 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // one. Anything else is a stranger — we refuse to start and say so, which is
   // recoverable, instead of killing it, which is not.
   const known = readPids();
+
+  // FIRST, sweep what the previous run recorded — before any port is probed.
+  //
+  // This is the only cleanup that survives a hard kill, and a hard kill is what
+  // Ctrl+C actually is here. Under a .cmd launcher, cmd.exe answers Ctrl+C with
+  // "Terminate batch job (Y/N)?" and then destroys the whole tree at once — our
+  // CLI included, in the middle of its own shutdown handler. Verified live on
+  // 2026-08-21: the terminal showed the prompt returning BEFORE the handler's
+  // own "Stopping Nodal-Agents…" line, and the CLI process was simply gone,
+  // leaving three web-side processes behind.
+  //
+  // No amount of care inside that handler helps — it does not get to finish.
+  // What does survive is the tree recorded on disk while everything was
+  // healthy, so recovery belongs on the NEXT start, reading that record.
+  //
+  // It also reaches what a port scan never will: the deepest Turbopack worker
+  // listens on nothing, so it is invisible to the probe below and would
+  // otherwise accumulate, one per interrupted session, until the next reboot.
+  const leftovers = await sweepRecordedChildren(known?.children ?? []);
+  if (leftovers.length > 0) {
+    console.log(
+      chalk.gray(`  Cleaned up ${leftovers.length} process(es) left by the previous session`),
+    );
+  }
+
+  // Ownership, for the port probe below. The recorded children count as ours:
+  // after a hard kill their parents are gone, so a live descendant walk finds
+  // nothing and a survivor holding :3000 would be misjudged a stranger — which
+  // would make `up` refuse to start rather than recover, a worse outcome than
+  // the orphan it replaced.
   const ourPids = new Set<number>(
     [known?.runner, known?.web].filter((p): p is number => typeof p === 'number' && p > 0),
   );
+  for (const child of known?.children ?? []) ourPids.add(child.pid);
   for (const rooted of await Promise.all([...ourPids].map((p) => descendantPidsWin(p)))) {
     for (const child of rooted) ourPids.add(child);
   }
