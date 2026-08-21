@@ -1,8 +1,15 @@
-# Protocole install / mise à jour — 0.8.5
+# Protocole install / mise à jour
 
-Destiné à un agent de validation (Codex ou autre) travaillant sur une copie du
-dépôt. Objectif unique : décider si un utilisateur peut installer la 0.8.5, ou
-passer de la 0.8.1 à la 0.8.5, **sans que Nodal refuse de démarrer**.
+À rejouer avant **chaque** publication. Destiné à un agent de validation (Codex
+ou autre) travaillant sur une copie du dépôt, ou à toi.
+
+Objectif unique : décider si un utilisateur peut installer la version qu'on
+s'apprête à publier, ou y passer depuis celle qui est en ligne, **sans que Nodal
+refuse de démarrer**.
+
+Les numéros de version dans les commandes ci-dessous sont ceux du 21/08/2026
+(0.8.1 → 0.8.5). Remplace-les par la version publiée du moment et celle que tu
+prépares ; le reste ne bouge pas.
 
 C'est le seul terrain où ce produit s'est cassé jusqu'ici. La 0.8.0 est partie
 sans sept chunks serveur ; la 0.8.1 a re-résolu son propre runtime trois jours

@@ -72,12 +72,14 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 
 **Models** — Anthropic · OpenAI · Google · Groq · Mistral · OpenRouter · **native DeepSeek** (`api.deepseek.com`) · **native MiniMax** (`api.minimax.io`) · **native Moonshot / Kimi** (`api.moonshot.ai`) · any local model (LM Studio, Ollama). One key per provider; each agent picks its own model.
 
+**Coding under your own subscription** — hand a complete dev task (analyse, review, debug, implement) to **Claude Code** or **Codex** running on your machine, under your subscription rather than an API key. Read-only by default, approval-gated, with a per-agent daily cap. The **Code** tab shows the files touched, the diff, the turn-by-turn trail, and token accounting per model.
+
 **Connectors** — multi-instance (Gmail perso *and* boulot on one install), managed from the dashboard:
 - *OAuth* — Airtable · Calendar · Docs · Gmail · Google Drive · Notion · Sheets
-- *API key* — Airtable · Apify · Firecrawl · Notion · Poyo · Tavily
+- *API key* — Airtable · Apify · **Cloudflare** (deploy to Workers) · Firecrawl · Notion · Poyo · Tavily
 
 **MCP servers** — over Streamable HTTP *and* stdio, plus add/edit your own:
-Apify · Blender · Cogni Cortex · Composio · Fetch · Filesystem · Git · GitHub · KeyShot · Linear · n8n · Notion · Perplexity · Photoshop · Playwright · PostgreSQL · Sentry · Stripe · Supabase · Unity · Unreal Engine
+Apify · Blender · Cogni Cortex · ComfyUI · Composio · Fetch · Filesystem · Git · GitHub · KeyShot · Linear · n8n · Notion · Perplexity · Photoshop · Playwright · PostgreSQL · Sentry · Stripe · Supabase · Unity · Unreal Engine
 
 **Skills** — built-in: office editing (Excel/Word/PowerPoint), shell execution, Obsidian, Telegram etiquette, task planning, markdown output, citation discipline, research methodology, results delivery, language mirroring, HTML design. Plus **install any community `SKILL.md`** from GitHub / skills.sh / ClawHub — and agents can **write their own**.
 

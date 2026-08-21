@@ -72,7 +72,25 @@ if (existsSync(packDir)) {
 const webNext = resolve(repoRoot, 'apps/web/.next');
 if (existsSync(webNext)) {
   console.log('▶ Purging apps/web/.next so the build starts from a known state…');
-  rmSync(webNext, { recursive: true, force: true });
+  try {
+    rmSync(webNext, { recursive: true, force: true });
+  } catch (err) {
+    // ENOTEMPTY here has one overwhelmingly likely cause, and the raw error
+    // names none of it: a dev server is running and holding files open. Seen
+    // 2026-08-21 while cutting the 0.8.5 pack — the stack trace pointed at
+    // node:fs and said nothing about the cause or the cure.
+    if (err.code === 'ENOTEMPTY' || err.code === 'EBUSY' || err.code === 'EPERM') {
+      throw new Error(
+        `Could not purge ${webNext} (${err.code}).\n\n` +
+          '  Something is holding files in it — almost always a running dev server.\n' +
+          '  Stop it first:  nodal-agents down\n\n' +
+          '  This purge is not optional: `next build` traces whatever .next already\n' +
+          '  holds, so a directory left by `next dev` produces a different pack from\n' +
+          '  the same commit. A release build has to start from a known state.',
+      );
+    }
+    throw err;
+  }
 }
 
 run('pnpm --filter @nodal-agents/runner build');
