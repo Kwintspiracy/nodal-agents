@@ -83,14 +83,30 @@ test.describe('agent → task → job flow', () => {
     await slugInput.fill(slug);
     await page.locator('#agent-name').fill(agentName);
     await page.locator('#agent-personality').fill('You are helpful.');
-    // Model select: pick the first available option (configured by CLI).
-    const modelSelect = page.locator('#agent-model');
-    if (await modelSelect.isVisible()) {
-      const options = await modelSelect.locator('option').all();
-      if (options.length > 0) {
-        const value = await options[0]!.getAttribute('value');
-        if (value) await modelSelect.selectOption(value);
-      }
+    // Model: the field is a DROPDOWN only when the selected provider ships a
+    // model catalog. With a provider that has none — "Local LLM", for instance —
+    // the same `#agent-model` id belongs to a free-text input instead
+    // (AgentForm.tsx: `modelInDropdown`).
+    //
+    // This used to assume a <select> unconditionally: it found zero <option>,
+    // filled nothing, and the browser's own "Please fill out this field"
+    // blocked submit. The test then failed on the agent never appearing — a
+    // fixture problem wearing the mask of a product bug. It passed in CI only
+    // because that environment has no LLM key at all, so it went down a
+    // different path (diagnosed from the failure screenshot, 2026-08-21).
+    const modelField = page.locator('#agent-model');
+    await expect(modelField).toBeVisible({ timeout: 5_000 });
+    const isSelect = (await modelField.evaluate((el) => el.tagName)) === 'SELECT';
+    if (isSelect) {
+      const values = await modelField.locator('option').evaluateAll((opts) =>
+        opts.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v !== '__custom__'),
+      );
+      expect(values.length, 'the model dropdown offered nothing to pick').toBeGreaterThan(0);
+      await modelField.selectOption(values[0]!);
+    } else {
+      // Free-text: any non-empty id satisfies the form. The job never runs in
+      // this test, so the model only has to be syntactically acceptable.
+      await modelField.fill('e2e-test-model');
     }
     await page.getByRole('button', { name: /create agent/i }).click();
 

@@ -91,8 +91,15 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '(^|/)\\.next/' },
-    tsConfig: { fileName: 'tsconfig.json' },
+    // Build OUTPUT, not source. `.next/` was already excluded; `apps/docs/out/`
+    // is the same thing for the docs site's static export (`output: 'export'`)
+    // and was producing 25 of the 26 no-orphans warnings — every emitted chunk
+    // is by definition imported by nothing. Warnings nobody can act on train
+    // people to ignore the report.
+    exclude: { path: '(^|/)(\\.next|out)/' },
+    // Not tsconfig.json: this one adds apps/web's `@/*` path alias, which the
+    // root config does not carry. See tsconfig.depcruise.json for why.
+    tsConfig: { fileName: 'tsconfig.depcruise.json' },
     // Follow import type { ... } statements — otherwise type-only modules appear as orphans
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {

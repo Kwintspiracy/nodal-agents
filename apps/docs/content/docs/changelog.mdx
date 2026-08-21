@@ -7,6 +7,82 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.8.5 — Aug 20, 2026
+
+Fixes a package that broke itself weeks after it was published. **If you installed
+0.8.0 or 0.8.1, upgrade — a fresh install of either is dead on arrival today.**
+
+- **Every install since Aug 3 got a dashboard that crashed before it rendered.** The
+  published package ships a _pre-compiled_ Next.js bundle, but declared 43 of its 46
+  runtime dependencies as floating `^` ranges. The day `next@16.3.0` was published,
+  npm started pairing a 16.3 runtime with a 16.2.6 build, and the server died on
+  `TypeError: Cannot read properties of undefined (reading 'validationLevel')` before
+  any application code ran. Installs of 0.8.1 made _before_ Aug 3 were unaffected.
+- **A pre-compiled bundle now ships pinned to the exact versions it was built
+  against.** `build-pack` rewrites all 46 runtime dependencies to their exact
+  installed versions and fails the build if any range survives. A published package
+  can no longer re-resolve its own runtime months later.
+- **Next.js 16.3.** The workspace, the pack and the docs site all move to 16.3.0, and
+  the pack was booted from an isolated install before release — every dashboard page
+  served, not just `/api/health`.
+
+**Coding under your subscription**
+
+- **Agents can delegate development work to a coding CLI.** A new `code_task` tool
+  hands a scoped task to Claude Code or Codex running under your own subscription,
+  streams the work back, and records what was actually changed. Which CLI provider
+  an agent uses is set per agent.
+- **A Code tab.** Mission control for everything your agents write: files touched,
+  the diff of the selected file, the activity trail per turn, and token accounting
+  broken down per model.
+- **Inference is now traceable.** Every LLM call and tool call is persisted and wired
+  to the transcript, so a run can be read back after the fact instead of guessed at.
+
+**Connectors and skills**
+
+- **Cloudflare connector.** Deploy what your agents build straight to Workers, with
+  the compatibility date pinned on every deploy.
+- **ComfyUI in the MCP catalog**, via the official local `comfy-mcp` server.
+- **The review loop closes.** Agents can request a review of their own work, and the
+  verify-before-done skill picked up what the community version did better.
+
+**Security — the audit is fully closed**
+
+- **A stranger can no longer take over your bot.** A bot's username is public, and
+  whoever messaged it first used to become its owner — so between pasting the token
+  and sending your own first message, anyone who had found the bot could take your
+  place, task your agent, and receive its approval cards. The first message now only
+  _requests_ ownership; you approve it from the dashboard. Telegram, Discord, Slack
+  and WhatsApp.
+- **You see a skill update before it reaches your agents.** Updating a community
+  skill used to show a category ("content changes") for text that goes straight into
+  the system prompt of every agent holding it. You now get the actual diff, and the
+  install refuses if upstream changed after you read it — consent applies to the text
+  you saw, not to whatever the repo holds at click time.
+- **Narrower Google access, and honest about the rest.** Google Calendar no longer
+  asks for permission to delete your calendars. Drive, Sheets and Docs still need
+  full access for their tools to work at all — so the product now says exactly how
+  far that reaches, in plain language, before Google's consent screen.
+- **Command injection through `cmd.exe` closed** — prompts are passed over stdin,
+  never through a shell argument. Two independent reviews were run to closure.
+
+**Reliability**
+
+- **Office tools, one format at a time.** Spreadsheet, Document and Presentation
+  editing are now separate skills. An agent that only touches workbooks stops
+  carrying the Word and PowerPoint tool definitions — roughly 3,000 tokens off every
+  turn, and 5,800 for a documents-only agent. The all-formats skill still exists.
+- **A failed start now tells you what failed.** When a service doesn't come up, the
+  CLI names which one it is still waiting for, how long it has waited, and prints the
+  tail of that service's own log — where the actual cause has been sitting all along.
+  `down` also verifies Postgres actually stopped before saying it did, and an
+  orphaned Postgres is detected by its data directory rather than by an open port,
+  which is the only way to see one that crashed during startup.
+- **Ctrl+C is honoured from the moment Postgres starts**, not five minutes later —
+  interrupting a slow first boot no longer leaves a database running behind.
+- **Windows is in CI**, along with Playwright e2e and the route-parameter smoke
+  tests, all blocking. Every finding from the 0.8.1 audit is now closed.
+
 ## v0.8.1 — Jul 31, 2026
 
 Fixes a broken 0.8.0 package: on a fresh machine the dashboard could not render at

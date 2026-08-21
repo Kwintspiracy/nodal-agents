@@ -56,6 +56,25 @@ if (existsSync(packDir)) {
 }
 
 // ─── 2. Build everything ────────────────────────────────────────────────────
+
+// Purge apps/web/.next FIRST. A release build must not depend on what it finds.
+//
+// 2026-08-21: an independent validation run failed here with
+//   Failed to copy traced files … .next\standalone\C:\Users\… ENOENT
+// then a Windows crash (3221226505) — while the same command succeeded on a
+// machine that happened to have purged the directory beforehand. The trace step
+// of `next build` walks whatever `.next` already holds; a directory left behind
+// by `next dev` (or by a previous crashed build) makes it chase paths that no
+// longer exist. Same command, same commit, different outcome — which is exactly
+// what a release script must never allow.
+//
+// Also keeps the dev cache from being shipped: it reached 89 GB on this machine.
+const webNext = resolve(repoRoot, 'apps/web/.next');
+if (existsSync(webNext)) {
+  console.log('▶ Purging apps/web/.next so the build starts from a known state…');
+  rmSync(webNext, { recursive: true, force: true });
+}
+
 run('pnpm --filter @nodal-agents/runner build');
 run('pnpm --filter nodal-agents build');
 run('pnpm --filter @nodal-agents/web build');
