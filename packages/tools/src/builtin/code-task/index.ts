@@ -35,6 +35,9 @@ import {
   recordCliRun,
   acquireWorkspaceLock,
   releaseWorkspaceLock,
+  codeTaskSessionKey,
+  findResumableSession,
+  rememberSession,
 } from './db';
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
@@ -140,6 +143,17 @@ const codeTaskSchema = z.object({
     .describe(
       'Optional reasoning-effort override for THIS run (e.g. "low", "medium", "high"). Omit to ' +
         "use the agent's configured default, or the CLI's own default.",
+    ),
+  fresh: z
+    .boolean()
+    .default(false)
+    .describe(
+      'OPTIONAL. Start a COLD session instead of continuing the one from your earlier ' +
+        'code_task calls in this job. Several calls in the same job normally continue the same ' +
+        'CLI session, so the CLI keeps what it already learned about the code instead of ' +
+        're-exploring it. Set true only when the new task is unrelated to the previous ones — ' +
+        'a resumed session carries its earlier conclusions, which is the point, and the ' +
+        'liability when the subject changes.',
     ),
   cwd: z
     .string()
@@ -264,7 +278,21 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     const providerDefaults = cliConfig.defaults?.[input.provider];
     const model = input.model ?? providerDefaults?.model;
     const effort = input.effort ?? providerDefaults?.effort;
-    const args = buildProviderArgs(input.provider, mode, { model, effort });
+    // Session continuity. Several code_task calls inside one job are one thread
+    // of work; the CLI keeps what it already learned instead of re-reading the
+    // tree. Keyed by job AND cwd — see codeTaskSessionKey for why the key is
+    // namespaced rather than a bare conversation id.
+    const sessionKey = codeTaskSessionKey(ctx.jobId, cwd);
+    const resumeSessionId = input.fresh
+      ? undefined
+      : ((await findResumableSession(ctx.db, ctx.agentId, input.provider, sessionKey)) ??
+        undefined);
+
+    const args = buildProviderArgs(input.provider, mode, {
+      model,
+      effort,
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+    });
     const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
 
     // One WRITE run per workspace at a time. The lock key is the workspace
@@ -344,6 +372,27 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         model,
         effort,
       );
+
+      // Remember the thread so the next code_task in this job continues it.
+      // Only on a run that actually produced one — a failed spawn has no
+      // session, and storing an unusable id would make every later call spend a
+      // `--resume` that the CLI rejects.
+      if (parsed.sessionId) {
+        try {
+          await rememberSession(ctx.db, {
+            entityId: ctx.entityId ?? null,
+            agentId: ctx.agentId,
+            provider: input.provider,
+            key: sessionKey,
+            sessionId: parsed.sessionId,
+          });
+        } catch (err) {
+          // Continuity is an optimisation; losing it must never fail a run that
+          // already succeeded. Logged rather than swallowed (invariant #4): the
+          // symptom otherwise is "every call starts cold" with no explanation.
+          console.warn('[code_task] could not persist the CLI session for resume:', err);
+        }
+      }
 
       return {
         provider: input.provider,

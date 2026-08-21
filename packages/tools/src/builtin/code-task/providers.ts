@@ -111,6 +111,22 @@ export interface ProviderRunOptions {
    */
   model?: string;
   effort?: string;
+  /**
+   * Resume a previous CLI session instead of starting cold.
+   *
+   * The two CLIs express this differently, and the difference is structural
+   * rather than cosmetic — verified live 2026-08-21, not read off a help page:
+   *
+   *   - **claude**: a flag, `--resume <id>`, and it works in `-p` print mode
+   *     (the runtime path in `claude-turn.ts` has relied on it for a while).
+   *   - **codex**: a SUBCOMMAND, `codex exec resume <id>`, which changes the
+   *     shape of the whole argv. It also refuses `--sandbox`, so the sandbox
+   *     travels as `-c 'sandbox_mode=…'` — accepted, and worth watching: the
+   *     same key was measured as ACCEPTED-AND-IGNORED on a run that loaded the
+   *     user's config. With `--ignore-user-config` in place the default sandbox
+   *     applies, which is the posture we want anyway.
+   */
+  resumeSessionId?: string;
 }
 
 export function buildProviderArgs(
@@ -121,6 +137,9 @@ export function buildProviderArgs(
   if (provider === 'claude') {
     // `-p` with no inline prompt: claude reads the prompt from stdin.
     const args = ['-p', '--output-format', 'json', '--strict-mcp-config'];
+    // A flag, and it works in print mode — the runtime path (claude-turn.ts)
+    // has shipped it for a while, which is what made this half cheap.
+    if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
     if (opts.model) args.push('--model', opts.model);
     if (opts.effort) args.push('--effort', opts.effort);
     if (mode === 'read') {
@@ -137,29 +156,43 @@ export function buildProviderArgs(
   // (codex exec --help). Effort is a TOML config override
   // (`-c model_reasoning_effort="high"`); the quotes are part of the TOML
   // string value and travel inside ONE argv element.
-  const args = [
-    'exec',
-    '--json',
-    '--sandbox',
-    mode === 'read' ? 'read-only' : 'workspace-write',
-    '--skip-git-repo-check',
-    // Do NOT load the owner's ~/.codex/config.toml. Auth still resolves from
-    // CODEX_HOME, so the subscription keeps working — the flag's own help says
-    // so, and a live run confirmed it.
-    //
-    // This replaces `-c 'mcp_servers={}'`, which did NOT do the job: an empty
-    // TOML table MERGES with the user's config instead of replacing it. Verified
-    // 2026-08-21 (PR #6 review) — `codex mcp list` and
-    // `codex -c 'mcp_servers={}' mcp list` print the same servers, and a run
-    // through the old argv still opened the owner's personal MCP connections,
-    // secrets and all. A Nodal-spawned run must never inherit them: buildChildEnv
-    // strips *KEY*/*TOKEN* from the environment, but an MCP server carries its
-    // own credentials in the config file the flag now ignores.
-    //
-    // Measured after the change: zero MCP lines in the run's output, against two
-    // before, and the turn still completed.
-    '--ignore-user-config',
-  ];
+  //
+  // Resuming changes the SHAPE of the argv, not just its content: `resume` is a
+  // subcommand, and it does not accept `--sandbox`. The sandbox therefore
+  // travels as a `-c` override there.
+  //
+  // That override was measured ACCEPTED-AND-IGNORED on 2026-08-21 — but on a
+  // run that loaded the owner's config.toml, which was itself disabling the
+  // sandbox. Re-measured with `--ignore-user-config` in place: a resumed
+  // read-only turn answers "le système de fichiers est en lecture seule" and
+  // writes nothing. The confinement holds across a resume.
+  const sandboxMode = mode === 'read' ? 'read-only' : 'workspace-write';
+
+  // Do NOT load the owner's ~/.codex/config.toml, on either shape. Auth still
+  // resolves from CODEX_HOME, so the subscription keeps working.
+  //
+  // This replaced `-c 'mcp_servers={}'`, which did NOT do the job: an empty TOML
+  // table MERGES with the user's config instead of replacing it. Verified
+  // 2026-08-21 — `codex mcp list` and `codex -c 'mcp_servers={}' mcp list` print
+  // the same servers, and a run through the old argv opened the owner's personal
+  // MCP connections, secrets and all. buildChildEnv strips *KEY*/*TOKEN* from
+  // the environment, but an MCP server carries its own credentials in this file.
+  //
+  // It also turned out to be what makes the SANDBOX hold: `[windows] sandbox =
+  // "elevated"` in that same file was silently disabling confinement.
+  const args = opts.resumeSessionId
+    ? [
+        'exec',
+        'resume',
+        opts.resumeSessionId,
+        '--json',
+        '-c',
+        `sandbox_mode="${sandboxMode}"`,
+        '--skip-git-repo-check',
+        '--ignore-user-config',
+      ]
+    : ['exec', '--json', '--sandbox', sandboxMode, '--skip-git-repo-check', '--ignore-user-config'];
+
   if (opts.model) args.push('-m', opts.model);
   if (opts.effort) args.push('-c', `model_reasoning_effort="${opts.effort}"`);
   args.push('-');

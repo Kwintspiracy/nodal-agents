@@ -7,6 +7,7 @@
 import {
   agents,
   cliRuns,
+  cliSessions,
   workspaceLocks,
   approvalRules,
   eq,
@@ -202,4 +203,68 @@ export async function releaseWorkspaceLock(
   await db
     .delete(workspaceLocks)
     .where(and(eq(workspaceLocks.workspacePath, workspacePath), eq(workspaceLocks.jobId, jobId)));
+}
+
+// ─── Session continuity (manque 1 du lot « poste de développement ») ─────────
+
+/**
+ * The `cli_sessions` key a `code_task` run uses to find its own thread.
+ *
+ * NAMESPACED on purpose. `cli_sessions` is keyed `(agentId, conversationKey)`
+ * and the runtime path already owns that space: `run-job.ts` stores its session
+ * under `conversationId ?? chatId`. Writing a code_task session under a bare
+ * conversation id would collide on the unique index — one row, two different
+ * CLI sessions, whichever wrote last winning.
+ *
+ * Scoped to the JOB, not the conversation: several `code_task` calls inside one
+ * job are one thread of work; a new job starts cold. The `cwd` is part of the
+ * key because resuming a session that explored a different directory is worse
+ * than starting fresh — it would answer confidently about the wrong tree.
+ */
+export function codeTaskSessionKey(jobId: string, cwd: string): string {
+  return `code_task:${jobId}:${cwd}`;
+}
+
+/** The CLI session to resume for this (agent, job, cwd, provider), if any. */
+export async function findResumableSession(
+  db: AnyDrizzleDb,
+  agentId: string,
+  provider: string,
+  key: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ sessionId: cliSessions.sessionId, provider: cliSessions.provider })
+    .from(cliSessions)
+    .where(and(eq(cliSessions.agentId, agentId), eq(cliSessions.conversationKey, key)))
+    .limit(1);
+  // A session belongs to the CLI that created it: resuming a claude session id
+  // through codex (or the reverse) fails at the CLI, loudly but pointlessly.
+  if (!row || row.provider !== provider) return null;
+  return row.sessionId;
+}
+
+/** Remember this run's session so the next call in the same job can resume it. */
+export async function rememberSession(
+  db: AnyDrizzleDb,
+  args: {
+    entityId: string | null;
+    agentId: string;
+    provider: string;
+    key: string;
+    sessionId: string;
+  },
+): Promise<void> {
+  await db
+    .insert(cliSessions)
+    .values({
+      entityId: args.entityId,
+      agentId: args.agentId,
+      conversationKey: args.key,
+      provider: args.provider,
+      sessionId: args.sessionId,
+    })
+    .onConflictDoUpdate({
+      target: [cliSessions.agentId, cliSessions.conversationKey],
+      set: { sessionId: args.sessionId, provider: args.provider, updatedAt: new Date() },
+    });
 }
