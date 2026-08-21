@@ -27,7 +27,12 @@ import {
   type ProcessRecord,
 } from '../lib/processes.ts';
 
+import { processTable } from './process-table-available.ts';
+
 const onWindows = process.platform === 'win32';
+// Needs BOTH: the right OS, and an OS that will actually answer. See
+// process-table-available.ts — GitHub's Windows runner will not.
+const canReadProcessTable = onWindows && processTable.available;
 
 // A PowerShell start-up plus a WMI enumeration runs ~0.5s warm and past 5s on a
 // cold CI runner. Budgets are sized for the cold runner.
@@ -52,7 +57,7 @@ function spawnIdle(): ChildProcess {
 }
 
 describe('processSnapshotWin', () => {
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'reports a creation tick for a process we just started',
     async () => {
       const child = spawnIdle();
@@ -131,7 +136,7 @@ describe('walkDescendants', () => {
 });
 
 describe('sweepRecordedChildren', () => {
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'kills a recorded process that is still the same process',
     async () => {
       const child = spawnIdle();
@@ -150,7 +155,7 @@ describe('sweepRecordedChildren', () => {
     WMI_BUDGET_MS,
   );
 
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'refuses to kill a live process whose pid was recycled',
     async () => {
       // THE case that makes a recorded list dangerous. A pid recorded minutes
@@ -184,7 +189,7 @@ describe('sweepRecordedChildren', () => {
     expect(await sweepRecordedChildren([])).toEqual([]);
   });
 
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'skips pids that already died without touching anything else',
     async () => {
       const child = spawnIdle();

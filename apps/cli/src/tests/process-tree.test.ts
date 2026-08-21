@@ -14,7 +14,12 @@ import { describe, it, expect } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { descendantPidsWin } from '../lib/processes.ts';
 
+import { processTable } from './process-table-available.ts';
+
 const onWindows = process.platform === 'win32';
+// Needs BOTH: the right OS, and an OS that will actually answer. See
+// process-table-available.ts — GitHub's Windows runner will not.
+const canReadProcessTable = onWindows && processTable.available;
 
 // Every case here pays a PowerShell start-up plus a WMI enumeration. That is
 // ~0.5s on a warm developer machine and over 5s on a cold CI runner, which is
@@ -34,7 +39,7 @@ async function until(check: () => boolean | Promise<boolean>, budgetMs = 8000): 
 }
 
 describe('descendantPidsWin', () => {
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'returns [] for a PID that has no children',
     async () => {
       // The test runner itself may have children, so use a PID that cannot:
@@ -48,7 +53,7 @@ describe('descendantPidsWin', () => {
     expect(await descendantPidsWin(process.pid)).toEqual([]);
   });
 
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'finds a grandchild that a dying parent would strand',
     async () => {
       // node → node → node. The middle one stands in for the .CMD launcher
@@ -91,7 +96,7 @@ describe('descendantPidsWin', () => {
     60_000,
   );
 
-  it.skipIf(!onWindows)(
+  it.skipIf(!canReadProcessTable)(
     'never returns the root, even when it has children',
     async () => {
       const descendants = await descendantPidsWin(process.pid);

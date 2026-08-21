@@ -94,6 +94,22 @@ un répertoire écrit par l'ancienne ? », pas « l'ancienne marchait-elle ? ».
 Les scripts couvrent le parcours nominal. Ce cas-ci demande des mains, parce
 qu'aucun script ne peut envoyer un vrai Ctrl+C à un groupe de processus Windows.
 
+> **Cette étape n'est couverte par aucune CI, et ne peut pas l'être.**
+>
+> Deux raisons, toutes deux définitives. D'abord, Ctrl+C est un signal émis par
+> la console à ses processus attachés : un programme peut tuer un processus, il
+> ne peut pas produire ce signal-là. Ensuite, le runner Windows de GitHub est
+> incapable d'énumérer sa propre table de processus — les deux chemins
+> PowerShell (CIM et WMI) expirent, à 6 comme à 20 secondes, sans concurrence à
+> blâmer. Établi sur quatre passages le 21/08/2026.
+>
+> Les cas de test qui en dépendent s'ignorent donc automatiquement sur une
+> machine qui ne répond pas, en annonçant la raison. La logique de parcours
+> d'arbre reste testée partout ; c'est l'accès à la table réelle qui saute.
+>
+> **Cette étape manuelle est donc la seule couverture réelle de ce
+> comportement.** Ne pas la sauter.
+
 1. Depuis le dépôt : `pnpm --filter nodal-agents exec tsx src/index.ts --dev`
 2. Attendre `All services healthy`.
 3. **Ctrl+C** dans le terminal.
