@@ -46,20 +46,51 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
  * failure — this exists to catch stragglers, never to block a shutdown.
  *
  * Deliberately excludes `root` itself: the caller kills that one directly.
+ *
+ * ## Cost, and why the timeout is what it is
+ *
+ * This spends a PowerShell start-up plus a full WMI enumeration, and it sits on
+ * the shutdown path. Measured 2026-08-21: ~0.5s on a warm developer machine,
+ * but **over 5s on a cold CI runner** — where it blew the 10s hook budget of a
+ * pre-existing test and turned a green suite red. That red was accurate: a
+ * shutdown that stops two services was paying the cost twice, and a slow or
+ * loaded machine is exactly where "Nodal takes forever to stop" gets reported.
+ *
+ * So the budget is 6s, not 10s. Past that we return [] and the caller falls
+ * back to plain `taskkill /T` — the behaviour that shipped before this function
+ * existed. It is a real degradation (a stranded Turbopack worker can survive),
+ * so it is announced rather than swallowed: a silent fallback here would show up
+ * later as an unexplained orphan on the next `up`.
+ *
+ * Not cached across calls on purpose. A snapshot reused after the first kill can
+ * name a PID Windows has already recycled, and killing a recycled PID means
+ * killing a stranger's process — the exact failure the ownership guard in `up`
+ * was just written to prevent.
  */
 export async function descendantPidsWin(root: number): Promise<number[]> {
   if (process.platform !== 'win32') return [];
   try {
-    const { stdout } = await execa(
+    const { stdout, timedOut } = await execa(
       'powershell',
       [
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+        // -Property keeps WMI from materialising every column of every process.
+        'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId | ' +
+          'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
       ],
-      { reject: false, timeout: 10_000 },
+      { reject: false, timeout: 6_000 },
     );
+
+    if (timedOut) {
+      process.stderr.write(
+        '\x1b[33m[nodalai] Could not enumerate child processes in time — falling back to a\n' +
+          '  plain tree kill. A background worker may survive and hold its port; if the\n' +
+          '  next start reports an orphan, that is why.\x1b[0m\n',
+      );
+      return [];
+    }
 
     const childrenOf = new Map<number, number[]>();
     for (const line of stdout.split(/\r?\n/)) {

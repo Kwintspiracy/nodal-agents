@@ -16,6 +16,14 @@ import { descendantPidsWin } from '../lib/processes.ts';
 
 const onWindows = process.platform === 'win32';
 
+// Every case here pays a PowerShell start-up plus a WMI enumeration. That is
+// ~0.5s on a warm developer machine and over 5s on a cold CI runner, which is
+// how the first version of this file went red on Windows CI while passing
+// locally. The budgets below are sized for the cold runner, not for the machine
+// they were written on; the function itself gives up at 6s, so no case here can
+// hang for longer than its own timeout.
+const WMI_BUDGET_MS = 30_000;
+
 /** Wait until `check()` is true, or give up. Avoids a fixed sleep. */
 async function until(check: () => boolean | Promise<boolean>, budgetMs = 8000): Promise<boolean> {
   const deadline = Date.now() + budgetMs;
@@ -27,11 +35,15 @@ async function until(check: () => boolean | Promise<boolean>, budgetMs = 8000): 
 }
 
 describe('descendantPidsWin', () => {
-  it.skipIf(!onWindows)('returns [] for a PID that has no children', async () => {
-    // The test runner itself may have children, so use a PID that cannot:
-    // one that does not exist at all.
-    expect(await descendantPidsWin(2_147_483_646)).toEqual([]);
-  });
+  it.skipIf(!onWindows)(
+    'returns [] for a PID that has no children',
+    async () => {
+      // The test runner itself may have children, so use a PID that cannot:
+      // one that does not exist at all.
+      expect(await descendantPidsWin(2_147_483_646)).toEqual([]);
+    },
+    WMI_BUDGET_MS,
+  );
 
   it.skipIf(onWindows)('returns [] off Windows rather than throwing', async () => {
     expect(await descendantPidsWin(process.pid)).toEqual([]);
@@ -49,7 +61,8 @@ describe('descendantPidsWin', () => {
       // reasons that have nothing to do with the tree walk (learned by
       // measuring — the first version of this test found nothing because the
       // process it was looking for had never started).
-      const grandchild = 'require("child_process").spawn(process.execPath,["-e","setTimeout(()=>{},60000)"],{stdio:"ignore"});setTimeout(()=>{},60000)';
+      const grandchild =
+        'require("child_process").spawn(process.execPath,["-e","setTimeout(()=>{},60000)"],{stdio:"ignore"});setTimeout(()=>{},60000)';
       let child: ChildProcess | null = null;
       try {
         child = spawn(process.execPath, ['-e', grandchild], {
@@ -60,7 +73,12 @@ describe('descendantPidsWin', () => {
         expect(rootPid, 'spawn returned no pid').toBeDefined();
 
         // Two levels deep, so wait for 2 — that is the case taskkill can miss.
-        const found = await until(async () => (await descendantPidsWin(rootPid!)).length >= 2);
+        // Each probe costs a full WMI call, so the budget has to hold several
+        // of them on a slow machine — 8s used to allow barely one.
+        const found = await until(
+          async () => (await descendantPidsWin(rootPid!)).length >= 2,
+          40_000,
+        );
         expect(found, 'the grandchild was never reported').toBe(true);
 
         const descendants = await descendantPidsWin(rootPid!);
@@ -71,11 +89,15 @@ describe('descendantPidsWin', () => {
         child?.kill();
       }
     },
-    20_000,
+    60_000,
   );
 
-  it.skipIf(!onWindows)('never returns the root, even when it has children', async () => {
-    const descendants = await descendantPidsWin(process.pid);
-    expect(descendants).not.toContain(process.pid);
-  });
+  it.skipIf(!onWindows)(
+    'never returns the root, even when it has children',
+    async () => {
+      const descendants = await descendantPidsWin(process.pid);
+      expect(descendants).not.toContain(process.pid);
+    },
+    WMI_BUDGET_MS,
+  );
 });

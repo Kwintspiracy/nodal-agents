@@ -44,7 +44,11 @@ afterEach(async () => {
   for (const pid of spawned.splice(0)) {
     if (isPidAlive(pid)) await killPidTree(pid);
   }
-});
+  // 10s (the default) was enough until `killPidTree` began snapshotting
+  // descendants through WMI: that call alone runs past 5s on a cold CI runner,
+  // and this hook makes one per spawned process. The hook did not become
+  // flaky — the shutdown path genuinely got slower, and it said so.
+}, 60_000);
 
 describe('up --detach — the flag reaches the action', () => {
   // Mirrors index.ts's registration exactly (see dev-flag.test.ts for why the

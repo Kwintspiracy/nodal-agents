@@ -76,7 +76,10 @@ test.describe('Connector scope disclosure', () => {
         page.getByRole('dialog').getByText(/what this connector can reach/i),
         `${label} shows no disclosure`,
       ).toBeVisible({ timeout: 10_000 });
-      await page.getByRole('dialog').getByRole('button', { name: /cancel/i }).click();
+      await page
+        .getByRole('dialog')
+        .getByRole('button', { name: /cancel/i })
+        .click();
     }
   });
 

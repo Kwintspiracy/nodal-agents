@@ -98,9 +98,11 @@ test.describe('agent → task → job flow', () => {
     await expect(modelField).toBeVisible({ timeout: 5_000 });
     const isSelect = (await modelField.evaluate((el) => el.tagName)) === 'SELECT';
     if (isSelect) {
-      const values = await modelField.locator('option').evaluateAll((opts) =>
-        opts.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v !== '__custom__'),
-      );
+      const values = await modelField
+        .locator('option')
+        .evaluateAll((opts) =>
+          opts.map((o) => (o as HTMLOptionElement).value).filter((v) => v && v !== '__custom__'),
+        );
       expect(values.length, 'the model dropdown offered nothing to pick').toBeGreaterThan(0);
       await modelField.selectOption(values[0]!);
     } else {

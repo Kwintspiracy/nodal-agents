@@ -107,7 +107,10 @@ export async function postgresPidsForDataDir(dataDir: string = PG_DATA_DIR): Pro
       if (tab < 0) continue;
       const pid = Number.parseInt(line.slice(0, tab), 10);
       if (!Number.isInteger(pid) || pid <= 0) continue;
-      const cmd = line.slice(tab + 1).toLowerCase().replace(/\\/g, '/');
+      const cmd = line
+        .slice(tab + 1)
+        .toLowerCase()
+        .replace(/\\/g, '/');
       if (cmd.includes(dataNeedle) || cmd.includes(binNeedle)) pids.push(pid);
     }
     return pids;
