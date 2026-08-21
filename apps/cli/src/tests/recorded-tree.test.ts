@@ -23,6 +23,7 @@ import {
   walkDescendants,
   sweepRecordedChildren,
   isPidAlive,
+  lastSnapshotFailure,
   type ProcessRecord,
 } from '../lib/processes.ts';
 
@@ -57,16 +58,18 @@ describe('processSnapshotWin', () => {
       const child = spawnIdle();
       try {
         const snapshot = await processSnapshotWin();
-        // Separate the two ways this can fail, because they need opposite
-        // fixes and the assertion below cannot tell them apart on its own.
-        // An EMPTY map means the WMI call never delivered — a budget too tight
-        // for the machine (exactly what turned Windows CI red on 2026-08-21,
-        // where a 6s budget expired and the snapshot came back empty). A
-        // populated map missing this pid would be a parsing or walk fault.
+        // Separate the ways this can fail, because they need opposite fixes and
+        // the assertion below cannot tell them apart. An EMPTY map means the
+        // query never delivered — and `lastSnapshotFailure` says which of
+        // timeout, non-zero exit, unreadable output, or a failed spawn it was.
+        // A populated map missing this pid would instead be a parsing fault.
+        //
+        // The reason is quoted rather than described: two rounds on 2026-08-21
+        // were spent inferring the cause from "the table was empty", and both
+        // inferences were wrong.
         expect(
           snapshot.size,
-          'the process table came back EMPTY — the WMI call failed or timed out, ' +
-            'this is not a logic fault',
+          `the process table came back EMPTY — reason: ${lastSnapshotFailure ?? 'not reported'}`,
         ).toBeGreaterThan(0);
 
         const rec = snapshot.get(child.pid!);

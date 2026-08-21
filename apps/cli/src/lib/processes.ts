@@ -106,41 +106,124 @@ export async function processSnapshotWin(
 ): Promise<Map<number, ProcessRecord>> {
   const out = new Map<number, ProcessRecord>();
   if (process.platform !== 'win32') return out;
-  try {
-    const { stdout, timedOut } = await execa(
-      'powershell',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        // -Property keeps WMI from materialising every column of every process.
-        'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
-          'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.Ticks)" }',
-      ],
-      { reject: false, timeout: timeoutMs },
-    );
 
-    if (timedOut) {
-      process.stderr.write(
-        '\x1b[33m[nodalai] Could not enumerate child processes in time — falling back to a\n' +
-          '  plain tree kill. A background worker may survive; the next start cleans up\n' +
-          '  what it recorded, so this costs a message, not a stuck port.\x1b[0m\n',
+  const fail = (reason: string): Map<number, ProcessRecord> => {
+    lastSnapshotFailure = reason;
+    process.stderr.write(
+      `\x1b[33m[nodalai] Could not read the process table (${reason}) — falling back to a\n` +
+        '  plain tree kill. A background worker may survive; the next start cleans up\n' +
+        '  what it recorded, so this costs a message, not a stuck port.\x1b[0m\n',
+    );
+    return out;
+  };
+
+  const attempts: string[] = [];
+  for (const query of PROCESS_TABLE_QUERIES) {
+    let rows: string;
+    try {
+      const { stdout, stderr, exitCode, timedOut } = await execa(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-Command', query.command],
+        { reject: false, timeout: timeoutMs },
       );
+      if (timedOut) {
+        attempts.push(`${query.name}: timed out after ${timeoutMs}ms`);
+        continue;
+      }
+      if (exitCode !== 0) {
+        // Reported, never swallowed. Twice on 2026-08-21 an empty table was
+        // read as a timeout, because nothing else was available to read — and
+        // each guess cost a full CI cycle. WHY it failed travels with it now.
+        attempts.push(
+          `${query.name}: exited ${exitCode} — ${stderr.trim().split('\n')[0] ?? 'no stderr'}`,
+        );
+        continue;
+      }
+      rows = stdout;
+    } catch (err) {
+      attempts.push(`${query.name}: spawn failed — ${String(err).split('\n')[0]}`);
+      continue;
+    }
+
+    for (const line of rows.split(/\r?\n/)) {
+      // Split on an explicit delimiter, never on whitespace. A missing field —
+      // `Parent.Id` is empty for any process we may not inspect — collapses
+      // under a whitespace split, and the creation tick then slides into the
+      // parent column. That does not produce an empty tree; it produces a
+      // WRONG one, which is the failure mode worth fearing here: this list
+      // decides what gets killed.
+      const parts = line.trim().split('|');
+      if (parts.length !== 3) continue;
+      const pid = Number.parseInt(parts[0] ?? '', 10);
+      const ppid = Number.parseInt(parts[1] ?? '', 10);
+      const startedAt = (parts[2] ?? '').trim();
+      // No parent and no creation time means the row cannot serve either
+      // purpose — walking the tree, or proving identity before a kill.
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid) || startedAt === '') continue;
+      out.set(pid, { pid, ppid, startedAt });
+    }
+
+    if (out.size > 0) {
+      lastSnapshotFailure = null;
       return out;
     }
-
-    for (const line of stdout.split(/\r?\n/)) {
-      const [a, b, c] = line.trim().split(/\s+/);
-      const pid = Number.parseInt(a ?? '', 10);
-      const ppid = Number.parseInt(b ?? '', 10);
-      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      out.set(pid, { pid, ppid, startedAt: c ?? '' });
-    }
-    return out;
-  } catch {
-    return out;
+    attempts.push(`${query.name}: exited 0 but produced no usable rows`);
   }
+
+  return fail(attempts.join(' | '));
 }
+
+/**
+ * Two independent ways to read the process table, tried in order.
+ *
+ * They share no machinery on purpose. The CIM query is the better source — it
+ * sees every process and reports a precise creation time — but it depends on
+ * the WMI service, which a locked-down or freshly-booted machine may not have
+ * ready. `Get-Process` reaches the same information through a different path
+ * that needs no WMI at all, at the cost of skipping processes we lack rights to
+ * inspect. Ours are never among those.
+ *
+ * A single source that fails takes every guard built on it down with it, and
+ * silently: an empty table looks exactly like a machine with nothing to clean.
+ */
+const PROCESS_TABLE_QUERIES = [
+  {
+    name: 'Get-CimInstance',
+    // -Property keeps WMI from materialising every column of every process.
+    command:
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
+      'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)" }',
+  },
+  {
+    name: 'Get-WmiObject',
+    // The legacy WMI cmdlet, still present in Windows PowerShell 5.1 — which is
+    // what `powershell` resolves to on every machine this ships to. It reaches
+    // the same data over the older DCOM path rather than the CIM/WSMan one, so
+    // it can answer when Get-CimInstance cannot.
+    //
+    // ConvertToDateTime is not decoration: raw CreationDate here is a WMI
+    // datetime string, and recording a process under one format while verifying
+    // it under another would never match. The sweep would then quietly stop
+    // killing anything — safe, and useless. Both queries emit the same ticks,
+    // verified equal digit for digit on 2026-08-21.
+    //
+    // (The obvious alternative, Get-Process | $_.Parent, was tried first and
+    // does not exist before PowerShell 6. It returned empty parents for every
+    // row, which the parser correctly discarded.)
+    command:
+      'Get-WmiObject Win32_Process | ForEach-Object { ' +
+      '"$($_.ProcessId)|$($_.ParentProcessId)|$($_.ConvertToDateTime($_.CreationDate).Ticks)" }',
+  },
+] as const;
+
+/**
+ * Why the last `processSnapshotWin` came back empty, or null if it succeeded.
+ *
+ * Exists so a test can report the CAUSE rather than just the consequence. An
+ * assertion that only says "the table was empty" sends the reader guessing —
+ * timeout? missing binary? blocked query? — and each guess costs a CI cycle.
+ */
+export let lastSnapshotFailure: string | null = null;
 
 /**
  * Breadth-first walk of `snapshot` from `root`, excluding `root` itself: the
