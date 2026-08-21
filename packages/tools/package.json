@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@nodal-agents/catalog": "workspace:*",
+    "@nodal-agents/checkpoints": "workspace:*",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/delivery": "workspace:*",
     "@nodal-agents/llm": "workspace:*",

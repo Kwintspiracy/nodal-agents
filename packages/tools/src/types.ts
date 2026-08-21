@@ -113,6 +113,17 @@ export interface ToolContext {
    */
   skillStoreDir?: string;
   /**
+   * Absolute path to the shadow checkpoint store (e.g. `~/.nodalai/checkpoints`),
+   * injected by the runner — same pattern as `skillStoreDir`, and for the same
+   * reason: `packages/tools` must not decide where the user's data lives.
+   *
+   * Absent ⇒ no checkpoint is taken. That is the correct behaviour for
+   * lightweight contexts (tests, chat turns) and it is stated rather than
+   * silent: `executeTool` says so once per call when a mutating tool runs
+   * unprotected.
+   */
+  checkpointsRoot?: string;
+  /**
    * Slugs of the skills assigned to this agent. The `skill_file_*` tools only
    * allow reading the bundle of a skill the agent actually holds — an agent
    * cannot read another skill's files. Loaded by the runner from
@@ -270,6 +281,25 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * is `computeApproval`'s job.
    */
   preflight?: (input: z.infer<TInput>, ctx: ToolContext) => Promise<void> | void;
+  /**
+   * This tool can change files in the agent's workspace.
+   *
+   * Drives the checkpoint taken before execution (see `checkpoints.ts`). It is
+   * an EXPLICIT flag rather than something inferred, because every available
+   * proxy is wrong in both directions:
+   *
+   *   - `riskLevel: 'destructive'` is a blanket safe-by-default posture, not a
+   *     statement about the filesystem.
+   *   - approval config is worse than useless here: `file_write` and
+   *     `file_edit` declare no `defaultApproval` at all (they gate dynamically,
+   *     only on a shared-workspace overwrite), while `attach_connector` does
+   *     require approval and touches no file. Inferring from it would checkpoint
+   *     connector edits and skip the actual writes — exactly backwards.
+   *
+   * Set it on tools that write to disk, and only those: an over-broad flag
+   * makes every turn pay a snapshot it does not need.
+   */
+  mutatesWorkspace?: boolean;
   /**
    * Optional PER-CALL destructiveness check, complementing the static
    * `defaultApproval` above for tools where gating depends on the call's

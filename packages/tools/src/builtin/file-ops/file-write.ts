@@ -50,6 +50,7 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     'lines you do not touch. Max 1 MiB per write.',
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
+  mutatesWorkspace: true,
   // D1: gate ONLY the destructive case — overwriting a file that already
   // exists in the entity-wide SHARED workspace. A brand-new file, or a write
   // into an attached/private workspace, never gates (see computeSharedOverwriteApproval).

@@ -16,6 +16,7 @@ import type {
   ApprovalGateRequest,
 } from './types';
 import { InvalidInputError } from './errors';
+import { snapshot } from '@nodal-agents/checkpoints';
 
 // ─── executeTool ──────────────────────────────────────────────────────────────
 
@@ -321,6 +322,31 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     return approvalResult;
   }
 
+  // ── 2.9 Checkpoint — a net under anything that writes ──────────────────────
+  //
+  // Taken AFTER approval and BEFORE execution: the point is to capture the tree
+  // the owner agreed to change, as it was at the instant before the change.
+  // Once per turn, not per call — a turn with eight edits is one unit of work,
+  // and eight snapshots of it would bury the useful one.
+  //
+  // A failure here REFUSES the write. That is deliberate and it is the whole
+  // contract: a net that silently is not there is worse than no net, because it
+  // is the one the owner believed they had (invariant #4).
+  if (tool.mutatesWorkspace) {
+    const failure = await takeCheckpointForTurn(tool.name, ctx);
+    if (failure) {
+      const result: ToolExecutionResult = { outcome: 'error', error: failure };
+      await _writeToolCall(
+        ctx,
+        tool.name,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+  }
+
   // ── 3. Execute ─────────────────────────────────────────────────────────────
   try {
     const output = await tool.execute(validatedInput, ctx);
@@ -454,6 +480,63 @@ export function matchApprovalRule(
 }
 
 // ─── Audit trail writer ───────────────────────────────────────────────────────
+
+/**
+ * Turns already checkpointed, so eight edits in one turn cost one snapshot.
+ *
+ * Keyed by job + turn + workspace. Bounded by eviction rather than by a timer:
+ * a Map that only grows is a leak in a process that runs for weeks.
+ */
+const checkpointedTurns = new Set<string>();
+const MAX_REMEMBERED_TURNS = 500;
+
+/**
+ * Snapshot the workspace before a mutating tool runs.
+ *
+ * Returns null when the write may proceed (snapshot taken, already taken this
+ * turn, or no store configured), or an error message when it must not.
+ */
+async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promise<string | null> {
+  const store = ctx.checkpointsRoot;
+  const workspace = ctx.workspaces?.[0]?.path;
+
+  // No store configured (tests, chat turns) — no net, and no pretence of one.
+  // Said once rather than silently: an owner who thinks checkpoints are on
+  // deserves to learn otherwise from a log line, not from a lost file.
+  if (!store || !workspace) {
+    if (store && !workspace) {
+      console.warn(`[checkpoints] ${toolName}: no workspace resolved — running without a net`);
+    }
+    return null;
+  }
+
+  // `ctx.turn` is optional in the type. Without it, "once per turn" has no
+  // meaning, so fall back to one snapshot per call — slower, never unsafe —
+  // and say which mode is in effect rather than let the difference be invisible.
+  const turnKey =
+    ctx.turn === undefined
+      ? `${ctx.jobId}:call:${Date.now()}:${workspace}`
+      : `${ctx.jobId}:turn:${ctx.turn}:${workspace}`;
+
+  if (checkpointedTurns.has(turnKey)) return null;
+
+  try {
+    const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`);
+    if (checkpointedTurns.size >= MAX_REMEMBERED_TURNS) {
+      const oldest = checkpointedTurns.values().next().value;
+      if (oldest !== undefined) checkpointedTurns.delete(oldest);
+    }
+    checkpointedTurns.add(turnKey);
+    if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} before ${toolName}`);
+    return null;
+  } catch (err) {
+    return (
+      `checkpoint_failed: could not snapshot the workspace before running "${toolName}", ` +
+      `so the write was refused rather than run without a way back. ` +
+      `Cause: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`
+    );
+  }
+}
 
 async function _writeToolCall(
   ctx: ToolContext,

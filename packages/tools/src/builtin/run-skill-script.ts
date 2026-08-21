@@ -197,6 +197,7 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
+    mutatesWorkspace: true,
     defaultApproval: 'require_approval',
     execute: async (
       input: RunSkillScriptInput,

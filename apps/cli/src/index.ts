@@ -102,6 +102,46 @@ program
     }
   });
 
+// ── nodal-agents checkpoints ──────────────────────────────────────────────────
+//
+// The other half of the snapshots taken before an agent writes. They are
+// invisible to the model on purpose; a net nobody can reach is not a net.
+// Restoring stays a human gesture: judging that a run went wrong is a judgement,
+// and an agent able to roll itself back could roll back the evidence too.
+
+const checkpoints = program
+  .command('checkpoints')
+  .description('Snapshots taken before an agent modified a workspace');
+
+checkpoints
+  .command('list', { isDefault: true })
+  .description('List checkpoints for a workspace (defaults to the current directory)')
+  .argument('[workspace]', 'Workspace path')
+  .action(async (workspace?: string) => {
+    const { runCheckpointsList } = await import('./commands/checkpoints.ts');
+    try {
+      await runCheckpointsList(workspace);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+checkpoints
+  .command('restore')
+  .description('Restore a workspace to a checkpoint (the replaced state is saved first)')
+  .argument('<sha>', 'Checkpoint sha, or its first characters')
+  .argument('[workspace]', 'Workspace path')
+  .action(async (sha: string, workspace?: string) => {
+    const { runCheckpointsRestore } = await import('./commands/checkpoints.ts');
+    try {
+      await runCheckpointsRestore(sha, workspace);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
 // ── nodal-agentsreset ─────────────────────────────────────────────────────────────
 
 program
