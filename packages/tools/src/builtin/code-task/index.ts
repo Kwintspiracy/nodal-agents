@@ -27,6 +27,7 @@ import {
   type CodeTaskProvider,
   type NormalizedCliResult,
 } from './providers';
+import { assertSandboxEnforced } from './sandbox';
 import {
   assertCliBudget,
   assertCliProviderEnabled,
@@ -115,7 +116,9 @@ const codeTaskSchema = z.object({
     .describe(
       '"read" (default): analysis only — the CLI cannot modify files or run shell commands. ' +
         '"write": the CLI may edit files inside the workspace (one write run per workspace at ' +
-        'a time). Use "read" unless the task requires changes.',
+        'a time). Use "read" unless the task requires changes. Both guarantees rest on the ' +
+        "provider's own confinement, so a provider that cannot deliver them on this machine " +
+        'is refused with a precise error rather than run on weaker terms.',
     ),
   model: z
     .string()
@@ -206,6 +209,12 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     // Owner allow-list: a provider the owner switched off is refused loud
     // BEFORE resolving the binary (invariant #9 at the provider level).
     assertCliProviderEnabled(cliConfig.defaults, input.provider);
+
+    // Confinement we cannot honour is refused before anything is spawned.
+    // On Windows `codex exec --sandbox` does not confine the CLI at all — see
+    // sandbox.ts for the five reproductions and why this refuses rather than
+    // warns (the approval card cannot carry a caveat).
+    assertSandboxEnforced(input.provider, input.mode);
 
     // Resolve the binary — "absent" and "not logged in" are different
     // failures with different fixes (étape-A finding 6).

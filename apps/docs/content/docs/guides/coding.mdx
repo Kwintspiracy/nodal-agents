@@ -53,6 +53,14 @@ itself rather than by us:
 An agent that only needs to answer "where is X handled" never needs `write`. The
 mode travels with the approval request, so you see which one you are approving.
 
+**The two mechanisms are not equally strong, and that decides availability.**
+Claude Code _removes_ the write tools from the model, so there is nothing to
+escape. Codex _sandboxes_ them at the OS level — which works on Linux and macOS
+but, measured on 2026-08-21, not on Windows: under `--sandbox read-only` the CLI
+still spawned a shell and wrote files. Rather than present an approval that
+promises confinement it cannot deliver, **Nodal refuses `provider: "codex"` on
+Windows** with a precise error. Use `claude` there.
+
 ## Approval
 
 The agent proposes the task; the job suspends; you see the full task text, the

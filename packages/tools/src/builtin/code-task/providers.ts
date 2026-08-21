@@ -7,11 +7,16 @@
 // Provider asymmetries are DOCUMENTED, not papered over (invariant #4):
 //   - claude reports a notional cost (total_cost_usd) even under subscription;
 //     codex reports no cost at all — costUsd is null there.
-//   - read/write map to different mechanisms: claude hides tools via
-//     --disallowedTools (the model never sees them; permission_denials stays
-//     empty), codex delegates to its OS sandbox (--sandbox read-only /
-//     workspace-write, which on Windows is a distinct restricted-token
-//     implementation with weaker guarantees than the Linux one).
+//   - read/write map to different mechanisms, and this is the load-bearing
+//     difference: claude hides tools via --disallowedTools (the model never
+//     sees them; permission_denials stays empty), whereas codex delegates to
+//     an OS sandbox (--sandbox read-only / workspace-write).
+//     This comment used to say the Windows sandbox had "weaker guarantees than
+//     the Linux one". Measured on 2026-08-21 (codex-cli 0.148.0): it has NONE
+//     — read-only spawned a shell and wrote files, workspace-write wrote
+//     outside the working directory. "Weaker" and "absent" are not the same
+//     claim, and the gap between them is exactly what a user relies on. The
+//     combination is now refused up front; see sandbox.ts.
 
 import type { CliModelUsage } from '@nodal-agents/shared';
 
