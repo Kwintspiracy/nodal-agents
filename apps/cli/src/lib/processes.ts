@@ -104,8 +104,31 @@ export interface ProcessRecord {
 export async function processSnapshotWin(
   timeoutMs: number = SNAPSHOT_BUDGET_MS,
 ): Promise<Map<number, ProcessRecord>> {
+  if (process.platform !== 'win32') return new Map();
+
+  // Concurrent callers share one reading instead of racing for it.
+  //
+  // Not a cache — the promise is released the moment it settles, so a later
+  // call always takes a fresh reading. That distinction is the whole safety
+  // argument: a stored snapshot could name a pid Windows has since recycled,
+  // whereas callers joined to the SAME in-flight call all see one instant.
+  //
+  // It exists because the enumeration is expensive and does not parallelise:
+  // several at once on a two-core machine throttle each other until they all
+  // time out, which is exactly how Windows CI failed on 2026-08-21 — a dozen
+  // calls, every one expiring, each returning an empty table.
+  if (!inFlightSnapshot) {
+    inFlightSnapshot = readProcessTableWin(timeoutMs).finally(() => {
+      inFlightSnapshot = null;
+    });
+  }
+  return inFlightSnapshot;
+}
+
+let inFlightSnapshot: Promise<Map<number, ProcessRecord>> | null = null;
+
+async function readProcessTableWin(timeoutMs: number): Promise<Map<number, ProcessRecord>> {
   const out = new Map<number, ProcessRecord>();
-  if (process.platform !== 'win32') return out;
 
   const fail = (reason: string): Map<number, ProcessRecord> => {
     lastSnapshotFailure = reason;

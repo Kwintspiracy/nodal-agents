@@ -34,7 +34,8 @@ import {
   recordServiceTree,
   sweepRecordedChildren,
   killProcessTree,
-  descendantPidsWin,
+  processSnapshotWin,
+  walkDescendants,
   isPidAlive,
   waitForPidDead,
   type SpawnResult,
@@ -217,8 +218,20 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     [known?.runner, known?.web].filter((p): p is number => typeof p === 'number' && p > 0),
   );
   for (const child of known?.children ?? []) ourPids.add(child.pid);
-  for (const rooted of await Promise.all([...ourPids].map((p) => descendantPidsWin(p)))) {
-    for (const child of rooted) ourPids.add(child);
+
+  // ONE snapshot, walked once per root — not one snapshot per root.
+  //
+  // This used to be `Promise.all(roots.map(descendantPidsWin))`, which spawns a
+  // PowerShell per root. Harmless with two roots; adding the recorded children
+  // above quietly took it to a dozen concurrent WMI enumerations, and on a
+  // two-core machine they throttle each other into the ground. On Windows CI
+  // every one of them timed out — first at 6s, then at 20s — and each timeout
+  // returned an empty table, so the guard disabled itself while looking like a
+  // machine with nothing to clean. Reading the table once is both faster and
+  // more correct: every root is then judged against the same instant.
+  const snapshot = await processSnapshotWin();
+  for (const root of [...ourPids]) {
+    for (const rec of walkDescendants(snapshot, root)) ourPids.add(rec.pid);
   }
 
   const orphans: Array<{ name: string; port: number; pid: number }> = [];
