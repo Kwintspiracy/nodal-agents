@@ -7,6 +7,7 @@
 // every step; never write a half-installed row.
 
 import { cp, rm, mkdir, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join, basename, sep, resolve } from 'node:path';
 import { eq, and, agentSkills, agentSkillAssignments, type AnyDrizzleDb } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
@@ -319,6 +320,75 @@ export async function uninstallCommunitySkill(opts: UninstallSkillOptions): Prom
   await rm(join(opts.skillStoreDir, opts.slug), { recursive: true, force: true });
 }
 
+// ─── previewSkillUpdate (SKILL-003) ─────────────────────────────────────────
+
+export interface PreviewSkillUpdateResult {
+  /** The skill text agents see TODAY — the left side of the diff. */
+  currentContent: string;
+  /** The skill text that WILL be installed — the right side of the diff. */
+  upstreamContent: string;
+  contentChanged: boolean;
+  scriptsChanged: boolean;
+  /** Bundled script paths detected upstream, for the "scripts will be re-authorized" notice. */
+  scriptNames: string[];
+  /**
+   * SHA-256 of `upstreamContent`. Hand this back to `applySkillUpdate` as
+   * `expectedContentHash`: the apply re-downloads, and if upstream has moved
+   * since the preview it REFUSES rather than installing text nobody reviewed.
+   */
+  upstreamContentHash: string;
+  /** True when the owner edited the skill locally — an apply won't clobber `content`. */
+  contentOverridden: boolean;
+}
+
+/**
+ * Compute exactly what an update would install, without writing anything.
+ *
+ * SKILL-003 (audit vague D). The update confirmation used to show a CATEGORY
+ * ("Last check found: content changes"), never the text — while that text goes
+ * straight into the system prompt of every agent the skill is assigned to. The
+ * owner was approving content they had never seen, from a third-party repo:
+ * persistent prompt injection with a consent dialog on top.
+ *
+ * Two halves are needed and this is the first. The second is that the apply
+ * must install what was SHOWN: `applySkillUpdate` re-downloads at click time,
+ * so the preview alone is a hint, not a promise (the old `describeChanges`
+ * comment said as much). `upstreamContentHash` closes that gap.
+ */
+export async function previewSkillUpdate(
+  opts: ApplySkillUpdateOptions,
+): Promise<PreviewSkillUpdateResult> {
+  const existing = await loadUpdatableSkill(opts);
+  const source = parseSkillSource(existing.source!);
+  const { extractRoot, cleanup } = await downloadAndExtract(source);
+  try {
+    const resolved = await resolveUpstreamContent(extractRoot, source, opts.slug);
+    const localDir = join(opts.skillStoreDir, opts.slug);
+    const scriptsChanged = await computeScriptsChanged(
+      localDir,
+      resolved.skillDirAbs,
+      resolved.scripts,
+      existing.installedScripts ?? [],
+    );
+    const currentContent = existing.defaultContent ?? '';
+    return {
+      currentContent,
+      upstreamContent: resolved.content,
+      contentChanged: resolved.content !== currentContent,
+      scriptsChanged,
+      scriptNames: resolved.scripts.map((s) => s.path),
+      upstreamContentHash: sha256(resolved.content),
+      contentOverridden: existing.contentOverridden === true,
+    };
+  } finally {
+    await cleanup();
+  }
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
 // ─── applySkillUpdate ───────────────────────────────────────────────────────
 
 export interface ApplySkillUpdateOptions {
@@ -327,6 +397,13 @@ export interface ApplySkillUpdateOptions {
   skillStoreDir: string;
   /** Entity that must own the skill being updated. */
   entityId: string;
+  /**
+   * SKILL-003: the `upstreamContentHash` from the preview the owner actually
+   * read. When set and upstream no longer matches, the apply FAILS instead of
+   * installing unreviewed text (invariant #4 — no silent fallback). Omitted
+   * only by callers with no human in the loop.
+   */
+  expectedContentHash?: string;
 }
 
 export interface ApplySkillUpdateResult {
@@ -354,11 +431,21 @@ export interface ApplySkillUpdateResult {
  *   assignment for this skill: an upstream that changes its scripts loses the
  *   owner's prior execution authorization and must be re-authorized per agent.
  */
-export async function applySkillUpdate(
-  opts: ApplySkillUpdateOptions,
-): Promise<ApplySkillUpdateResult> {
-  // F-6-shaped scoping (mirrors uninstallCommunitySkill): slug is unique per
-  // (entity_id, slug), not globally.
+/**
+ * Load + validate the skill row an update targets. Shared by preview and apply
+ * so the two can never disagree about what is updatable.
+ *
+ * F-6-shaped scoping (mirrors uninstallCommunitySkill): slug is unique per
+ * (entity_id, slug), not globally.
+ */
+async function loadUpdatableSkill(opts: ApplySkillUpdateOptions): Promise<{
+  id: string;
+  isCommunity: boolean | null;
+  source: string | null;
+  defaultContent: string | null;
+  contentOverridden: boolean | null;
+  installedScripts: Array<{ path: string; language: string; sha256?: string }> | null;
+}> {
   const [existing] = await opts.db
     .select({
       id: agentSkills.id,
@@ -379,23 +466,66 @@ export async function applySkillUpdate(
       `Skill "${opts.slug}" is not a community-installed skill and cannot be updated this way.`,
     );
   }
+  return existing;
+}
 
-  const source = parseSkillSource(existing.source);
+/**
+ * Locate the manifest in an extracted repo and build the wrapped skill content.
+ * Shared by preview and apply so the text the owner READS is produced by the
+ * exact same code path as the text that gets INSTALLED.
+ */
+async function resolveUpstreamContent(
+  extractRoot: string,
+  source: ReturnType<typeof parseSkillSource>,
+  slug: string,
+): Promise<{
+  skillDirAbs: string;
+  scripts: DetectedScript[];
+  content: string;
+  /** Nested-skill filter, reused by the apply's file copy. */
+  isExcluded: (src: string) => boolean;
+}> {
+  const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
+  const skillDirAbs = join(extractRoot, dirname(manifestRel));
+  const manifestAbs = join(extractRoot, manifestRel);
+  const text = await readFile(manifestAbs, 'utf8');
+  const { body } = parseSkillMarkdown(text);
+
+  const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
+  const scripts = await detectScripts(skillDirAbs, isExcluded);
+  const content = buildContent(slug, body, scripts);
+  const contentBytes = Buffer.byteLength(content, 'utf8');
+  if (contentBytes > MAX_SKILL_CONTENT_BYTES) {
+    throw new SkillInstallError(
+      `Skill content too large (${contentBytes} bytes, max ${MAX_SKILL_CONTENT_BYTES / 1024}KB) — trim SKILL.md.`,
+    );
+  }
+  return { skillDirAbs, scripts, content, isExcluded };
+}
+
+export async function applySkillUpdate(
+  opts: ApplySkillUpdateOptions,
+): Promise<ApplySkillUpdateResult> {
+  const existing = await loadUpdatableSkill(opts);
+
+  const source = parseSkillSource(existing.source!);
   const { extractRoot, cleanup } = await downloadAndExtract(source);
   try {
-    const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
-    const skillDirAbs = join(extractRoot, dirname(manifestRel));
-    const manifestAbs = join(extractRoot, manifestRel);
-    const text = await readFile(manifestAbs, 'utf8');
-    const { body } = parseSkillMarkdown(text);
+    const resolved = await resolveUpstreamContent(extractRoot, source, opts.slug);
+    const { skillDirAbs, scripts, content, isExcluded } = resolved;
 
-    const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
-    const scripts = await detectScripts(skillDirAbs, isExcluded);
-    const content = buildContent(opts.slug, body, scripts);
-    const contentBytes = Buffer.byteLength(content, 'utf8');
-    if (contentBytes > MAX_SKILL_CONTENT_BYTES) {
+    // SKILL-003: install what was REVIEWED, or nothing.
+    //
+    // This download is a SECOND fetch — the preview the owner read came from
+    // an earlier one. Upstream is a third-party repo and can move between the
+    // two. Without this check the owner's consent would apply to text that no
+    // longer exists, which is precisely why the old confirmation dialog could
+    // never be more than a hint. Fail loud (invariant #4): re-preview and let
+    // them read the new text.
+    if (opts.expectedContentHash && sha256(content) !== opts.expectedContentHash) {
       throw new SkillInstallError(
-        `Skill content too large (${contentBytes} bytes, max ${MAX_SKILL_CONTENT_BYTES / 1024}KB) — trim SKILL.md.`,
+        `Upstream changed since you reviewed this update — nothing was installed. ` +
+          `Re-open the update to read the new version before approving it.`,
       );
     }
 

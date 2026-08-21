@@ -13,6 +13,7 @@ import {
   installCommunitySkill,
   uninstallCommunitySkill,
   applySkillUpdate,
+  previewSkillUpdate,
   acknowledgeSkillUpdate,
   skillStoreDir,
   SkillInstallError,
@@ -32,6 +33,20 @@ const UninstallRequestSchema = z.object({
 });
 
 const UpdateRequestSchema = z.object({
+  slug: z.string().min(1).max(128),
+  entityId: z.string().guid(),
+  /**
+   * SKILL-003: hash of the content the owner actually READ in the preview.
+   * When present, the apply refuses if upstream moved since. Optional so a
+   * caller with no human in the loop can still update.
+   */
+  expectedContentHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+});
+
+const PreviewRequestSchema = z.object({
   slug: z.string().min(1).max(128),
   entityId: z.string().guid(),
 });
@@ -150,11 +165,52 @@ export async function updateSkillRoute(
       slug: parsed.data.slug,
       skillStoreDir: skillStoreDir(parsed.data.entityId),
       entityId: parsed.data.entityId,
+      ...(parsed.data.expectedContentHash === undefined
+        ? {}
+        : { expectedContentHash: parsed.data.expectedContentHash }),
     });
     return c.json({ ok: true, ...result }, 200);
   } catch (err) {
     if (isUserFacingInstallError(err)) {
       return c.json({ ok: false, error: 'update_failed', message: err.message }, 400);
+    }
+    throw err;
+  }
+}
+
+// ─── POST /api/skills/preview-update ───────────────────────────────────────
+//
+// SKILL-003: return the ACTUAL text an update would install, so the owner can
+// read the diff before approving. The old confirmation showed a category
+// ("content changes") for text that goes straight into every assigned agent's
+// system prompt — consent without disclosure. Read-only: downloads and
+// compares, writes nothing.
+
+export async function previewSkillUpdateRoute(
+  c: Context,
+  deps: RunnerDeps,
+  runnerEnv: RunnerEnv,
+): Promise<Response> {
+  const authFail = checkWorkerSecret(c, runnerEnv);
+  if (authFail) return authFail;
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = PreviewRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const result = await previewSkillUpdate({
+      db: deps.db,
+      slug: parsed.data.slug,
+      skillStoreDir: skillStoreDir(parsed.data.entityId),
+      entityId: parsed.data.entityId,
+    });
+    return c.json({ ok: true, ...result }, 200);
+  } catch (err) {
+    if (isUserFacingInstallError(err)) {
+      return c.json({ ok: false, error: 'preview_failed', message: err.message }, 400);
     }
     throw err;
   }

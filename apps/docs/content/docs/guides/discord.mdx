@@ -47,7 +47,7 @@ can have multiple agents each with their own bot.
 
 **In DMs**, every message from an authorized conversation triggers a job.
 See [Who can talk to your bot](#who-can-talk-to-your-bot) below: the first DM
-claims ownership.
+requests ownership, which you then approve in the dashboard.
 
 **In a server channel**, the bot only responds when clearly addressed:
 
@@ -70,9 +70,12 @@ agent can see them; larger ones are skipped.
 A Discord bot's invite link is easy to pass around, so each bot has an
 allowlist:
 
-- **You claim it by DMing it first.** The first private message to a freshly
-  connected bot registers that conversation as the bot's **owner**: you.
-  From then on your messages go straight through.
+- **You claim it by DMing it, then confirming in the dashboard.** The first
+  private message to a freshly connected bot records an **owner claim** — it
+  grants nothing yet and runs no job. Approve that conversation under **Agents
+  → your agent → Channels** and it becomes the bot's owner. From then on your
+  messages go straight through. Whoever DMs first can only ever obtain a request
+  you are free to refuse.
 - **A new person is held for your approval.** If someone the bot doesn't know
   messages or mentions it, no job runs. Instead you (the owner) get a button
   card in your own DM ("👤 Name wants to talk to this bot. Allow?") with

@@ -2,41 +2,32 @@
 //
 // Gates access to xlsx_*, docx_*, and pptx_* builtins via requiredBuiltins.
 // Only agents holding this skill receive these tools in their whitelist.
+//
+// TOKEN-002 (audit 2026-08-07): this skill grants ALL THREE formats, which is
+// ~7.2k tokens of tool schema on every turn. Most agents need one format, so
+// the per-format siblings (spreadsheet-editing, document-editing,
+// presentation-editing) now exist and are the better default — an agent that
+// only touches workbooks saves ~3k tokens a turn, one that only writes
+// documents ~5.8k.
+//
+// This aggregate stays because dropping it would break every agent already
+// assigned to it, and because an agent that genuinely does all three formats
+// should carry one skill rather than three. Its tool list is now COMPOSED from
+// the three siblings rather than restated, so the four can never drift apart.
 
 import type { SystemSkill } from '../types';
+import { XLSX_BUILTINS } from './spreadsheet-editing';
+import { DOCX_BUILTINS } from './document-editing';
+import { PPTX_BUILTINS } from './presentation-editing';
 
 export const officeEditingSkill: SystemSkill = {
   slug: 'office-editing',
-  name: 'Office editing',
+  name: 'Office editing (all formats)',
   description:
     'Create and edit Excel, Word, and PowerPoint files stored in the agent workspace. ' +
-    'Excel: full lossless in-place edit + formatting. Word/PPT: create, append, and replace text in existing files.',
-  requiredBuiltins: [
-    'xlsx_read',
-    'xlsx_set_cell',
-    'xlsx_set_range',
-    'xlsx_append_rows',
-    'xlsx_add_sheet',
-    'xlsx_create',
-    'xlsx_delete_rows',
-    'xlsx_format_range',
-    'xlsx_insert_rows',
-    'xlsx_insert_columns',
-    'xlsx_delete_columns',
-    'xlsx_merge_cells',
-    'xlsx_unmerge_cells',
-    'xlsx_set_column_widths',
-    'xlsx_freeze_panes',
-    'xlsx_find_cells',
-    'docx_read',
-    'docx_create',
-    'docx_append_paragraphs',
-    'docx_replace_text',
-    'pptx_read',
-    'pptx_create',
-    'pptx_append_slides',
-    'pptx_replace_text',
-  ],
+    'Grants all three formats at once — if the agent only needs one, assign Spreadsheet, ' +
+    'Document or Presentation editing instead and save the other formats’ context cost.',
+  requiredBuiltins: [...XLSX_BUILTINS, ...DOCX_BUILTINS, ...PPTX_BUILTINS],
   content: `## Office editing discipline
 
 This skill unlocks the \`xlsx_*\`, \`docx_*\`, and \`pptx_*\` tools for working with Office files stored in the agent's workspace.

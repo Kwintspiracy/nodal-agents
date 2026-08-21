@@ -56,13 +56,18 @@ export default function ConnectorsInstalledTable({ instances, credsByType }: Pro
           const raw = CONNECTOR_CATALOG.find((c) => c.slug === inst.slug);
           // Normalise CatalogEntry (credentialType?: …) → ConnectorCatalogItem (credentialType: … | null)
           const catalogEntry: ConnectorCatalogItem = raw
-            ? { ...raw, credentialType: raw.credentialType ?? null }
+            ? {
+                ...raw,
+                credentialType: raw.credentialType ?? null,
+                scopeDisclosure: raw.scopeDisclosure ?? null,
+              }
             : {
                 slug: inst.slug,
                 label: inst.name,
                 authType: inst.authType as ConnectorCatalogItem['authType'],
                 docsHint: '',
                 credentialType: inst.credentialType ?? null,
+                scopeDisclosure: null,
               };
           const compatibleCredentials = catalogEntry.credentialType
             ? (credsByType[catalogEntry.credentialType] ?? [])

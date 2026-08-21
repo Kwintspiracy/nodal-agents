@@ -32,8 +32,9 @@ that also advances the offset cursor. A crash mid-update does not drop the
 message or create a duplicate job.
 
 In **private chats** every message from an authorized chat triggers a job (see
-[Who can talk to your bot](#who-can-talk-to-your-bot) — the first DM claims
-ownership; unknown chats are held for the owner's approval).
+[Who can talk to your bot](#who-can-talk-to-your-bot) — the first DM requests
+ownership, which you approve in the dashboard; unknown chats are held for the
+owner's approval).
 
 In **group chats** the bot only responds when clearly addressed:
 
@@ -71,9 +72,18 @@ action.
 A Telegram bot's username is public, so anyone who finds it could message it. To
 keep strangers from putting your agent to work, each bot has an allowlist:
 
-- **You claim it by DMing it first.** The first private message to a freshly
-  connected bot registers _that_ chat as the bot's **owner** — you. From then on
-  your messages go straight through.
+- **You claim it by DMing it, then confirming in the dashboard.** The first
+  private message to a freshly connected bot records an **owner claim** — it
+  does not grant anything yet, and no job runs. Open **Agents → your agent →
+  Channels**, approve that conversation, and it becomes the bot's owner. From
+  then on your messages go straight through.
+
+  The extra click is the point. A bot's username is public and searchable, and
+  the claim used to be granted to whoever messaged first — so between the moment
+  you pasted the token and the moment you sent your DM, a stranger who had found
+  the bot could take your place, task your agent, and receive its approval
+  cards. Now the first claimant only ever gets a request you can refuse.
+
 - **A new person is held for your approval.** If someone the bot doesn't know
   messages it, no job runs. Instead you (the owner) get a card in your own chat —
   _"👤 Name wants to talk to this bot. Allow?"_ — with **✅ Autoriser** /

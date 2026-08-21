@@ -19,6 +19,7 @@ import {
   installSkillRoute,
   uninstallSkillRoute,
   updateSkillRoute,
+  previewSkillUpdateRoute,
   acknowledgeSkillUpdateRoute,
 } from './routes/skills.ts';
 import {
@@ -219,6 +220,7 @@ export function createApp(
   app.post('/api/skills/install', (c) => installSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/update', (c) => updateSkillRoute(c, deps, runnerEnv));
+  app.post('/api/skills/preview-update', (c) => previewSkillUpdateRoute(c, deps, runnerEnv));
   app.post('/api/skills/acknowledge-update', (c) =>
     acknowledgeSkillUpdateRoute(c, deps, runnerEnv),
   );

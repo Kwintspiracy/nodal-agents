@@ -222,6 +222,22 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     client: WebClient,
     pending: NonNullable<SlackHandleResult['pendingAuth']>,
   ): Promise<void> {
+    // CHANNEL-001: no owner yet — this request IS the owner claim, held pending
+    // until a human approves it in the dashboard. Nobody to card; tell the
+    // claimant where the decision happens.
+    if (pending.ownerConversationId === null) {
+      await client.chat
+        .postMessage({
+          channel: pending.requesterConversationId,
+          text:
+            'Demande enregistrée. Ce bot n’a pas encore de propriétaire : ouvrez son tableau ' +
+            'de bord, onglet Channels de l’agent, et autorisez cette conversation pour en ' +
+            'prendre le contrôle.',
+        })
+        .catch(() => {});
+      return;
+    }
+
     const target = pending.targetAgentName
       ? `souhaite parler à l'agent « ${pending.targetAgentName} » via ce bot`
       : 'souhaite parler à ce bot';

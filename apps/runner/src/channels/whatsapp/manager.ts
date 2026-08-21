@@ -307,6 +307,21 @@ export function startWhatsAppManager(
     if (!entry) {
       throw new Error(`whatsapp socket for agent ${agentId} is no longer active`);
     }
+    // CHANNEL-001: no owner yet — this request IS the owner claim, held pending
+    // until a human approves it in the dashboard. Nobody to notify; tell the
+    // claimant where the decision happens.
+    if (pending.ownerConversationId === null) {
+      await entry.handle
+        .send(pending.requesterConversationId, {
+          text:
+            'Demande enregistrée. Ce numéro WhatsApp n’a pas encore de propriétaire : ouvrez ' +
+            'le tableau de bord, onglet Channels de l’agent, et autorisez cette conversation ' +
+            'pour en prendre le contrôle.',
+        })
+        .catch(() => {});
+      return;
+    }
+
     const target = pending.targetAgentName
       ? `souhaite parler à l'agent « ${pending.targetAgentName} » via ce numéro WhatsApp`
       : 'souhaite parler à ce numéro WhatsApp';

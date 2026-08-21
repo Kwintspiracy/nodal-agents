@@ -61,8 +61,14 @@ export interface HandleResult {
   pendingAuth?: {
     /** telegram_allowed_chats row id — the callback approves/denies this row. */
     allowedChatId: string;
-    /** Owner's chat id — where the confirmation card is sent. */
-    ownerChatId: string;
+    /**
+     * Owner's chat id — where the confirmation card is sent.
+     *
+     * NULL when the pending row IS the owner claim (CHANNEL-001): no owner
+     * exists yet, so nobody can be asked in-channel and the decision belongs to
+     * the dashboard. The poller must then notify the REQUESTER only.
+     */
+    ownerChatId: string | null;
     /** The new chat asking for access — where the "pending" note is sent. */
     requesterChatId: string;
     /** Display name for the owner's card. */
@@ -536,6 +542,20 @@ async function checkChatAuthorization(args: {
     if (chatType !== 'private') {
       return { authorized: false, result: { skipped: 'no_owner_group' } };
     }
+    // CHANNEL-001 (audit vague D): PENDING, never active.
+    //
+    // This was trust-on-first-use, and Telegram is where it actually bit: a
+    // bot's @username is public and globally searchable, and the setup order
+    // this product documents is "paste the token, then DM the bot" — so the
+    // nominal flow itself opened a window in which any stranger who found the
+    // bot could become its owner, task the agent, and receive its approval
+    // cards. Slack/Discord are shielded by workspace membership and WhatsApp is
+    // the user's own account; Telegram had nothing.
+    //
+    // The claim now HOLDS the owner slot (the WHERE role='owner' partial unique
+    // index covers pending rows) but carries no authority until a human
+    // approves it from the dashboard. A stranger DMing first can only produce a
+    // request the real owner sees and denies.
     await tx
       .insert(telegramAllowedChats)
       .values({
@@ -543,7 +563,7 @@ async function checkChatAuthorization(args: {
         agentId,
         chatId,
         role: 'owner',
-        status: 'active',
+        status: 'pending',
         requesterName: senderName,
       })
       .onConflictDoNothing();
@@ -565,7 +585,7 @@ async function checkChatAuthorization(args: {
         conversationId: chatId,
         kind: chatTypeToConversationKind(chatType),
         role: 'owner',
-        status: 'active',
+        status: 'pending',
         requesterName: senderName,
       })
       .onConflictDoNothing();
@@ -578,16 +598,34 @@ async function checkChatAuthorization(args: {
     // insert won: in the common single-writer case it did, and this read
     // just confirms that with no behavior change.
     const [ourRow] = await tx
-      .select({ role: telegramAllowedChats.role, status: telegramAllowedChats.status })
+      .select({
+        id: telegramAllowedChats.id,
+        role: telegramAllowedChats.role,
+        status: telegramAllowedChats.status,
+      })
       .from(telegramAllowedChats)
       .where(
         and(eq(telegramAllowedChats.agentId, agentId), eq(telegramAllowedChats.chatId, chatId)),
       )
       .limit(1);
 
-    if (ourRow?.role === 'owner' && ourRow.status === 'active') {
-      // Fall through: the owner's own first message proceeds to a job.
-      return { authorized: true };
+    if (ourRow?.role === 'owner') {
+      // Our claim holds the owner slot, PENDING (CHANNEL-001) — no job runs.
+      // There is no owner to card: this request IS the owner claim, so the
+      // decision belongs to the dashboard. Point the claimant at it.
+      return {
+        authorized: false,
+        result: {
+          skipped: 'awaiting_authorization',
+          pendingAuth: {
+            allowedChatId: ourRow.id,
+            ownerChatId: null,
+            requesterChatId: chatId,
+            requesterName: senderName,
+            ...(targetAgentName === undefined ? {} : { targetAgentName }),
+          },
+        },
+      };
     }
 
     // Lost the race — some other chat claimed ownership first. Fall back to

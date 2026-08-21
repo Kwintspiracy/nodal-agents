@@ -529,6 +529,23 @@ async function sendAuthConfirmation(
   botToken: string,
   pending: NonNullable<HandleResult['pendingAuth']>,
 ): Promise<void> {
+  // CHANNEL-001: no owner yet — this DM IS the owner claim, recorded pending
+  // instead of granted on sight, because a bot's @username is public and the
+  // documented setup order (paste token, then DM) left a window for a stranger
+  // to take the owner's place. There is no card recipient; point the claimant
+  // at the dashboard, which is where the claim is now approved.
+  if (pending.ownerChatId === null) {
+    await sendTelegramMessage({
+      botToken,
+      chatId: pending.requesterChatId,
+      text:
+        'Demande enregistrée. Ce bot n’a pas encore de propriétaire : ouvrez son tableau de ' +
+        'bord, onglet Channels de l’agent, et autorisez cette conversation pour en prendre le ' +
+        'contrôle.',
+    }).catch(() => {});
+    return;
+  }
+
   // A /ask-relayed request targets a SIBLING agent — name it on the card so
   // the owner knows exactly which agent's access they are granting (H3).
   const target = pending.targetAgentName

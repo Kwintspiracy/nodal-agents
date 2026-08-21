@@ -76,6 +76,43 @@ async function freshBot(): Promise<string> {
   return row!.id;
 }
 
+/**
+ * Bring an agent to "has an ACTIVE owner" — the state a single bootstrap DM
+ * used to reach by itself.
+ *
+ * Since CHANNEL-001 the first DM only RECORDS an owner claim (owner/pending)
+ * and creates no job: a bot handle is public, so the claim has to be confirmed
+ * by a human in the dashboard before it carries any authority. Tests that need
+ * an established owner therefore do both halves explicitly — claim, then
+ * approve — which is exactly what a real setup now does.
+ */
+/** Insert an already-approved owner row, for tests not about authorization. */
+async function seedActiveOwner(agentId: string, conversationId: string): Promise<void> {
+  await db.insert(channelAllowedConversations).values({
+    entityId: seed.entityId,
+    agentId,
+    channel: 'whatsapp',
+    conversationId,
+    kind: 'private',
+    role: 'owner',
+    status: 'active',
+  });
+}
+
+async function claimOwner(agentId: string, message: WhatsAppInboundMessage): Promise<void> {
+  await call(agentId, message);
+  await db
+    .update(channelAllowedConversations)
+    .set({ status: 'active' })
+    .where(
+      and(
+        eq(channelAllowedConversations.agentId, agentId),
+        eq(channelAllowedConversations.conversationId, message.conversationId),
+        eq(channelAllowedConversations.role, 'owner'),
+      ),
+    );
+}
+
 const call = (agentId: string, message: WhatsAppInboundMessage) =>
   handleWhatsAppMessage({
     message,
@@ -93,6 +130,10 @@ describe('handleWhatsAppMessage — no_content guard', () => {
 
   it('still processes an empty-text message flagged mediaPlaceholder, with a placeholder task', async () => {
     const agentId = await freshBot();
+    // This test is about the media placeholder, not authorization: give the
+    // conversation an approved owner row so it is allowed to create a job at
+    // all (since CHANNEL-001 a first DM no longer authorizes itself).
+    await seedActiveOwner(agentId, 'dm-media-1');
     const result = await call(agentId, {
       ...dm('', 'dm-media-1'),
       mediaPlaceholder: true,
@@ -104,15 +145,24 @@ describe('handleWhatsAppMessage — no_content guard', () => {
 });
 
 describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', () => {
-  it('first DM with no owner claims ownership AND creates a job', async () => {
+  // CHANNEL-001. This used to read "first DM claims ownership AND creates a
+  // job" — trust on first use. A bot handle is public, so whoever DMed first
+  // became the owner, including a stranger who got there before the person who
+  // had just pasted the token.
+  it('first DM with no owner records a PENDING owner claim and creates NO job', async () => {
     const agentId = await freshBot();
     const result = await call(agentId, dm('hi', 'dm-owner-1'));
-    expect(result.jobId).toBeDefined();
 
-    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
-    expect(job?.channel).toBe('whatsapp');
-    expect(job?.chatId).toBe('dm-owner-1');
-    expect(job?.task).toBe('hi');
+    // No job: an unconfirmed claim has no authority.
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    // No owner to card — the claimant is told where the decision is made.
+    expect(result.pendingAuth).toMatchObject({
+      ownerConversationId: null,
+      requesterConversationId: 'dm-owner-1',
+    });
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.chatId, 'dm-owner-1'));
+    expect(jobs).toHaveLength(0);
 
     const rows = await db
       .select()
@@ -124,13 +174,42 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
       conversationId: 'dm-owner-1',
       kind: 'private',
       role: 'owner',
-      status: 'active',
+      status: 'pending',
     });
+  });
+
+  it('a SECOND claimant cannot take the owner slot while a claim is pending', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('me first', 'dm-race-a'));
+    const second = await call(agentId, dm('no, me', 'dm-race-b'));
+
+    // The slot is held by the pending claim; the latecomer gets nothing at all.
+    expect(second.jobId).toBeUndefined();
+    expect(second.skipped).toBe('awaiting_authorization');
+
+    const owners = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, agentId),
+          eq(channelAllowedConversations.role, 'owner'),
+        ),
+      );
+    expect(owners).toHaveLength(1);
+    expect(owners[0]?.conversationId).toBe('dm-race-a');
+  });
+
+  it('once the owner claim is approved, that conversation creates jobs', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('hi', 'dm-approved-1'));
+    const result = await call(agentId, dm('do something', 'dm-approved-1'));
+    expect(result.jobId).toBeDefined();
   });
 
   it('an unknown DM when an owner exists creates NO job and returns a pendingAuth notice intent to the owner', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 'dm-owner-2'));
+    await claimOwner(agentId, dm('owner here', 'dm-owner-2'));
     const result = await call(agentId, dm('let me in', 'dm-stranger-2'));
 
     expect(result.jobId).toBeUndefined();
@@ -154,7 +233,7 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
 
   it('a repeat DM from an already-pending conversation does NOT re-ask the owner (no spam)', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 'dm-owner-3'));
+    await claimOwner(agentId, dm('owner here', 'dm-owner-3'));
     await call(agentId, dm('let me in', 'dm-stranger-3')); // first ask
     const again = await call(agentId, dm('please?', 'dm-stranger-3')); // repeat
 
@@ -165,7 +244,7 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
 
   it('an active member conversation creates a job', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('owner here', 'dm-owner-4'));
+    await claimOwner(agentId, dm('owner here', 'dm-owner-4'));
     await db.insert(channelAllowedConversations).values({
       entityId: seed.entityId,
       agentId,
@@ -183,14 +262,14 @@ describe('handleWhatsAppMessage — H-1 owner-claim / pending authorization', ()
 describe('handleWhatsAppMessage — group mention gating (mentionsSelf)', () => {
   it('ignores a group message that does not mention the bot', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('bootstrap owner', 'dm-owner-guild-1'));
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-guild-1'));
     const result = await call(agentId, groupMessage('just chatting'));
     expect(result).toEqual({ skipped: 'group_filter' });
   });
 
   it('processes a group message that mentions the bot, prefixing the sender name', async () => {
     const agentId = await freshBot();
-    await call(agentId, dm('bootstrap owner', 'dm-owner-guild-2'));
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-guild-2'));
     // This test is about mention gating, not H-1 — pre-authorize the group
     // itself (mirrors discord/handler.test.ts's pattern).
     await db.insert(channelAllowedConversations).values({
@@ -228,7 +307,7 @@ describe('handleWhatsAppMessage — group mention gating (mentionsSelf)', () => 
 describe('handleWhatsAppMessage — /ask routing gated by the TARGET agent allowlist', () => {
   it('routes /ask <slug> <text> to the named agent when the conversation is already active for it', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'dm-ask-1'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-1'));
 
     const [otherAgent] = await db
       .insert(agents)
@@ -262,7 +341,7 @@ describe('handleWhatsAppMessage — /ask routing gated by the TARGET agent allow
 
   it('/ask bypasses the group mention gate even without mentionsSelf', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'dm-ask-group-1'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-group-1'));
     await db.insert(channelAllowedConversations).values({
       entityId: seed.entityId,
       agentId: receiverId,
@@ -286,7 +365,7 @@ describe('handleWhatsAppMessage — /ask routing gated by the TARGET agent allow
 
   it('/ask to a sibling the conversation has never talked to: NO job, pending member created, owner notified', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'dm-ask-2'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-2'));
 
     const targetAgentId = await freshBot();
     await db.insert(channelAllowedConversations).values({
@@ -330,14 +409,14 @@ describe('handleWhatsAppMessage — /ask routing gated by the TARGET agent allow
 
   it('skips /ask <unknown-slug> rather than blindly creating a job', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'dm-ask-3'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-3'));
     const result = await call(receiverId, dm('/ask not-a-real-agent please help', 'dm-ask-3'));
     expect(result).toEqual({ skipped: 'ask_unknown_agent' });
   });
 
   it('skips /ask with no text after the slug', async () => {
     const receiverId = await freshBot();
-    await call(receiverId, dm('bootstrap receiver owner', 'dm-ask-4'));
+    await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-4'));
     const result = await call(receiverId, dm('/ask some-slug', 'dm-ask-4'));
     expect(result).toEqual({ skipped: 'ask_no_text' });
   });

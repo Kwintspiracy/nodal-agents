@@ -85,8 +85,15 @@ export type ChannelConversationAuthCheck =
         pendingAuth?: {
           /** channel_allowed_conversations row id -- the callback approves/denies this row. */
           conversationRowId: string;
-          /** Owner's conversation id -- where the confirmation card is sent. */
-          ownerConversationId: string;
+          /**
+           * Owner's conversation id -- where the confirmation card is sent.
+           *
+           * NULL when the pending row IS the owner claim (CHANNEL-001): there
+           * is no owner yet, so nobody can be asked in-channel and the decision
+           * belongs to the dashboard. Adapters must then notify the REQUESTER
+           * only, and must not fabricate a card with no recipient.
+           */
+          ownerConversationId: string | null;
           /** The new conversation asking for access -- where the "pending" note is sent. */
           requesterConversationId: string;
           requesterName: string;
@@ -173,6 +180,23 @@ export async function checkConversationAuthorization(args: {
     if (kind !== 'private') {
       return { authorized: false, result: { skipped: 'no_owner_group' } };
     }
+
+    // CHANNEL-001 (audit vague D): the claim is recorded PENDING, never active.
+    //
+    // This used to be trust-on-first-use: the first private conversation to
+    // reach the bot became its owner outright. A bot's handle is PUBLIC and
+    // searchable (a Telegram @username most of all), and the documented setup
+    // order is "paste the token, then DM the bot" — so between those two steps
+    // anyone who found the bot could take the owner's place, give the agent
+    // tasks, and receive its approval cards. The flow itself opened the window.
+    //
+    // Now the claim lands as owner/PENDING and creates no job: the owner slot
+    // is held (the (agent, channel) WHERE role='owner' partial unique index
+    // covers pending rows too, so a second claimant cannot race in) but carries
+    // no authority until a human approves the row from the dashboard —
+    // /agents/<id>/channels, the same approve/deny surface members already use.
+    // Worst case for a stranger who DMs first is a denied request the owner
+    // sees and refuses; there is no path to silent takeover.
     await tx
       .insert(channelAllowedConversations)
       .values({
@@ -182,10 +206,11 @@ export async function checkConversationAuthorization(args: {
         conversationId,
         kind,
         role: 'owner',
-        status: 'active',
+        status: 'pending',
         requesterName: senderName,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: channelAllowedConversations.id });
 
     // Race-safe re-check (mirrors telegram/handler.ts's F-4): the insert above
     // has no conflict target, so Postgres swallows ANY unique-constraint
@@ -194,6 +219,7 @@ export async function checkConversationAuthorization(args: {
     // index. Re-read what actually exists instead of assuming our insert won.
     const [ourRow] = await tx
       .select({
+        id: channelAllowedConversations.id,
         role: channelAllowedConversations.role,
         status: channelAllowedConversations.status,
       })
@@ -207,8 +233,23 @@ export async function checkConversationAuthorization(args: {
       )
       .limit(1);
 
-    if (ourRow?.role === 'owner' && ourRow.status === 'active') {
-      return { authorized: true };
+    if (ourRow?.role === 'owner') {
+      // Our claim holds the owner slot. It is pending, so no job runs — tell
+      // the claimant where to confirm it. There is no owner to notify: this
+      // request IS the owner claim.
+      return {
+        authorized: false,
+        result: {
+          skipped: 'awaiting_authorization',
+          pendingAuth: {
+            conversationRowId: ourRow.id,
+            ownerConversationId: null,
+            requesterConversationId: conversationId,
+            requesterName: senderName,
+            ...(targetAgentName === undefined ? {} : { targetAgentName }),
+          },
+        },
+      };
     }
 
     // Lost the race -- some other conversation claimed ownership first.

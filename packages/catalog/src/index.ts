@@ -26,6 +26,9 @@ import { citationDisciplineSkill } from './skills/citation-discipline';
 import { safeToolUseSkill } from './skills/safe-tool-use';
 import { workspaceHygieneSkill } from './skills/workspace-hygiene';
 import { officeEditingSkill } from './skills/office-editing';
+import { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
+import { documentEditingSkill } from './skills/document-editing';
+import { presentationEditingSkill } from './skills/presentation-editing';
 import { commandExecutionSkill } from './skills/command-execution';
 import { codeTaskSkill } from './skills/code-task';
 import { codeReviewSkill } from './skills/code-review';
@@ -38,6 +41,9 @@ import { toolAttachConnectorSkill } from './skills/tool-attach-connector';
 import { toolSchedulesSkill } from './skills/tool-schedules';
 
 export { officeEditingSkill } from './skills/office-editing';
+export { spreadsheetEditingSkill } from './skills/spreadsheet-editing';
+export { documentEditingSkill } from './skills/document-editing';
+export { presentationEditingSkill } from './skills/presentation-editing';
 export { commandExecutionSkill } from './skills/command-execution';
 export { codeTaskSkill } from './skills/code-task';
 export { codeReviewSkill } from './skills/code-review';
@@ -57,6 +63,9 @@ export const systemSkills: SystemSkill[] = [
   safeToolUseSkill,
   workspaceHygieneSkill,
   officeEditingSkill,
+  spreadsheetEditingSkill,
+  documentEditingSkill,
+  presentationEditingSkill,
   commandExecutionSkill,
   codeTaskSkill,
   codeReviewSkill,
