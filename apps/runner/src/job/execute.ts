@@ -132,6 +132,7 @@ import { loadThreadHistory } from './thread-history.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
+import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -1073,6 +1074,10 @@ async function runJob(
   const workspaceInventory = sharedWorkspacePath
     ? await buildSharedWorkspaceInventory(sharedWorkspacePath)
     : '';
+  // Git posture — an agent working in a repository did not know it was in one
+  // (see workspace-git.ts). Probed once, here, next to the inventory: same
+  // split, the runner computes and the orchestration renders.
+  const workspaceGit = sharedWorkspacePath ? await probeWorkspaceGit(sharedWorkspacePath) : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.task ? { task: job.task } : {}),
@@ -1081,6 +1086,7 @@ async function runJob(
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     ...(workspaceInventory ? { workspaceInventory } : {}),
+    ...(workspaceGit ? { workspaceGit } : {}),
     deployment,
   };
 

@@ -93,6 +93,22 @@ export interface JobContext {
    * the stable-half prompt cache). Empty/undefined ⇒ block omitted.
    */
   workspaceInventory?: string;
+  /**
+   * Git state of the workspace, probed by the runner at job start
+   * (apps/runner/src/lib/workspace-git.ts). Undefined when the workspace is not
+   * a repository, or when git could not answer — in both cases the block is
+   * omitted rather than rendered empty.
+   *
+   * Rendered in the VOLATILE half for the same reason as the inventory, and it
+   * matters more here: the stable half is reused ACROSS an agent's jobs, so a
+   * branch name placed there would be served stale to every job that follows.
+   */
+  workspaceGit?: {
+    root: string;
+    branch: string | null;
+    dirtyCount: number;
+    head: string | null;
+  };
 }
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
@@ -647,7 +663,38 @@ export async function buildSystemPrompt(
       wrapUntrusted('shared workspace listing', jobContext.workspaceInventory)
     : '';
 
-  const volatile = runtimeBlock + memoryBlock + jobContextBlock + inventoryBlock;
+  // Git posture of the workspace (JobContext.workspaceGit — probed by the
+  // runner). Volatile for the same reason as the inventory, and more acutely:
+  // the stable half is reused across an agent's jobs, so a branch name there
+  // would be served stale to every later job.
+  //
+  // The snapshot is presented as a snapshot, not as truth. Branch and dirty
+  // state drift while the job runs — a model told "you are on main" an hour ago
+  // will commit to main. Hermes reached the same conclusion and states it the
+  // same way: re-check with `git` before acting.
+  const gitBlock = jobContext?.workspaceGit
+    ? '\n\n## Git\n\n' +
+      'This workspace is a git repository. Snapshot taken at job start — branch and ' +
+      'working-tree state change as work proceeds, so re-check with `git status` / ' +
+      '`git branch --show-current` before acting on any of it:\n\n' +
+      // The branch name comes from the repository, i.e. from whoever created
+      // it — same untrusted-data argument as the inventory listing above. A
+      // branch called `ignore-previous-instructions` would otherwise land
+      // unmarked in the most trusted position of the request.
+      wrapUntrusted(
+        'git snapshot',
+        [
+          `root: ${jobContext.workspaceGit.root}`,
+          `branch: ${jobContext.workspaceGit.branch ?? '(detached HEAD)'}`,
+          `head: ${jobContext.workspaceGit.head ?? '(no commit yet)'}`,
+          jobContext.workspaceGit.dirtyCount === 0
+            ? 'working tree: clean'
+            : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
+        ].join('\n'),
+      )
+    : '';
+
+  const volatile = runtimeBlock + memoryBlock + jobContextBlock + inventoryBlock + gitBlock;
 
   return volatile.trim().length > 0 ? stable + SYSTEM_PROMPT_CACHE_BOUNDARY + volatile : stable;
 }
