@@ -10,7 +10,7 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
-## v0.8.5 — Aug 20, 2026
+## v0.8.5 — Aug 21, 2026
 
 Fixes a package that broke itself weeks after it was published. **If you installed
 0.8.0 or 0.8.1, upgrade — a fresh install of either is dead on arrival today.**
@@ -83,8 +83,28 @@ Fixes a package that broke itself weeks after it was published. **If you install
   which is the only way to see one that crashed during startup.
 - **Ctrl+C is honoured from the moment Postgres starts**, not five minutes later —
   interrupting a slow first boot no longer leaves a database running behind.
-- **Windows is in CI**, along with Playwright e2e and the route-parameter smoke
-  tests, all blocking. Every finding from the 0.8.1 audit is now closed.
+- **Interrupting the dev server no longer strands a Next.js process on :3000.**
+  Ctrl+C under a `.cmd` launcher makes Windows destroy the whole process group at
+  once, the CLI's own cleanup included, mid-run — so cleanup cannot live there. The
+  process tree is now recorded while the services are healthy, and the next start
+  sweeps whatever survived, matching each process by creation time so a recycled PID
+  is never mistaken for one of ours. It also reaches the deepest Turbopack worker,
+  which holds no port and was therefore invisible to any port scan.
+- **`up` refuses to kill a process it did not start.** A port it wants may be held
+  by your own dev server; it now says so and stops, instead of freeing the port by
+  destroying someone else's work.
+- **`down` stopped crying wolf about Postgres.** `pg_ctl stop` returns when the
+  signal is delivered, not when the postmaster is gone, so a stuck-database warning
+  was firing on a database that was merely still on its way out.
+- **Upgrades are tested against the real published package.** A new smoke test
+  installs `nodal-agents@0.8.1` from npm, configures it, then installs this build
+  over the top and checks it boots, serves a real page, keeps `pg-data`, and leaves
+  the master key byte-identical — a changed key would make every stored credential
+  permanently unreadable, silently. Fresh installs were already covered; the upgrade
+  path, which is the one most people take, was not.
+- **Windows is now in CI**, alongside the Linux suite, the Playwright smoke and
+  approvals specs, and the packaging smoke. Every finding from the 0.8.1 audit is
+  closed.
 
 ## v0.8.1 — Jul 31, 2026
 
