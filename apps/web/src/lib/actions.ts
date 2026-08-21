@@ -97,7 +97,11 @@ import {
   MemoryDuplicateError,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
-import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import {
+  buildSystemPrompt,
+  UNBLOCKABLE_TOOLS,
+  INTERNAL_TOOL_DESCRIPTORS,
+} from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
 import type {
@@ -128,6 +132,7 @@ import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
+import { ROLLUP_MAX_DEPTH, rollupRoot, pipelineMembers } from './coding-rollup.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -3647,6 +3652,8 @@ export type ConnectorCatalogItem = {
   authType: ConnectorAuthType;
   docsHint: string;
   credentialType: CredentialType | null;
+  /** CONNECTOR-001: how far this connector's token reaches, shown before consent. */
+  scopeDisclosure: string | null;
 };
 
 export type ConnectorsListResponse = {
@@ -3731,6 +3738,7 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorsLis
       authType: c.authType,
       docsHint: c.docsHint,
       credentialType: c.credentialType ?? null,
+      scopeDisclosure: c.scopeDisclosure ?? null,
     }));
 
     return ok({ instances, catalog });
@@ -5337,6 +5345,45 @@ const SetApprovalRuleSchema = z.object({
  *
  * Ownership checked: agent must belong to the active entity.
  */
+/**
+ * The always-on built-in tools, for the Autonomy screen's per-tool controls.
+ *
+ * A server action rather than a plain import, and that distinction is
+ * load-bearing: AgentComposer is a `'use client'` component, so importing
+ * `@nodal-agents/orchestration` there drags `@nodal-agents/db` and drizzle into
+ * the browser bundle. Turbopack then fails to compile the page at all — the
+ * route 500s on a missing build manifest, with no type error and no failing
+ * unit test to warn you (learned the hard way, 2026-08-20). Same shape of trap
+ * as the `'use server'` sync-export rule noted elsewhere in this file.
+ */
+export async function listInternalToolsAction(): Promise<
+  ActionResult<
+    Array<{
+      slug: string;
+      name: string;
+      risk: 'read' | 'write' | 'destructive';
+      description?: string;
+      unblockableReason?: string;
+    }>
+  >
+> {
+  try {
+    await getSession();
+    return ok(
+      INTERNAL_TOOL_DESCRIPTORS.map((d) => ({
+        slug: d.slug,
+        name: d.name,
+        risk: d.risk,
+        ...(d.description === undefined ? {} : { description: d.description }),
+        ...(d.unblockableReason === undefined ? {} : { unblockableReason: d.unblockableReason }),
+      })),
+    );
+  } catch (err) {
+    console.error('[listInternalToolsAction]', err);
+    return fail('unexpected_error', 'Could not load the built-in tool list');
+  }
+}
+
 export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
@@ -5345,6 +5392,15 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const { agentId, toolName, action, scope } = parsed.data;
+
+    // Some always-on tools are not capabilities but machinery — blocking them
+    // does not narrow what the agent can do, it breaks how it reports at all.
+    // Refused HERE, not just in the UI: the dashboard guard is one API call
+    // away from being bypassed. Loud, with the reason (invariant #4).
+    if (action === 'block' && UNBLOCKABLE_TOOLS[toolName]) {
+      return fail('validation_failed', UNBLOCKABLE_TOOLS[toolName]);
+    }
+
     const db = getDb();
 
     // Verify agent ownership. Checked even for an entity-scoped rule: the
@@ -6620,8 +6676,70 @@ export type CommunitySkillUpdateResult = {
  * scripts_authorized grant for this skill — the caller surfaces that count so
  * the UI can warn the user to re-approve.
  */
+export type CommunitySkillUpdatePreview = {
+  currentContent: string;
+  upstreamContent: string;
+  contentChanged: boolean;
+  scriptsChanged: boolean;
+  scriptNames: string[];
+  upstreamContentHash: string;
+  contentOverridden: boolean;
+};
+
+/**
+ * SKILL-003: fetch the ACTUAL text an update would install, so the owner can
+ * read it before approving. Read-only. Pass the returned `upstreamContentHash`
+ * to `updateCommunitySkillAction` — the apply refuses if upstream moved since,
+ * rather than installing text nobody reviewed.
+ */
+export async function previewCommunitySkillUpdateAction(
+  slug: string,
+): Promise<ActionResult<CommunitySkillUpdatePreview>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[previewCommunitySkillUpdateAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/preview-update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[previewCommunitySkillUpdateAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | ({ ok: true } & CommunitySkillUpdatePreview)
+      | { ok: false; error: string; message: string };
+    if (!body.ok) return fail(body.error, body.message);
+    return ok({
+      currentContent: body.currentContent,
+      upstreamContent: body.upstreamContent,
+      contentChanged: body.contentChanged,
+      scriptsChanged: body.scriptsChanged,
+      scriptNames: body.scriptNames,
+      upstreamContentHash: body.upstreamContentHash,
+      contentOverridden: body.contentOverridden,
+    });
+  } catch (err) {
+    console.error('[previewCommunitySkillUpdateAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
 export async function updateCommunitySkillAction(
   slug: string,
+  expectedContentHash?: string,
 ): Promise<ActionResult<CommunitySkillUpdateResult>> {
   try {
     const session = await getSession();
@@ -6640,7 +6758,11 @@ export async function updateCommunitySkillAction(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ slug, entityId: session.entityId }),
+        body: JSON.stringify({
+          slug,
+          entityId: session.entityId,
+          ...(expectedContentHash === undefined ? {} : { expectedContentHash }),
+        }),
       });
     } catch (fetchErr) {
       console.error('[updateCommunitySkillAction] fetch failed:', fetchErr);
@@ -7575,23 +7697,54 @@ async function loadActivity(
         ? sql`${agentJobs.createdAt} > now() - interval '12 weeks'`
         : sql`${agentJobs.createdAt} > now() - interval '7 days'`;
 
-    // Single grouped query — pivot in JS. Bounded by created_at to keep the
-    // index `idx_agent_jobs_entity_created` efficient. Left-join agents (then
-    // its LLM key) so each bucket also decomposes by provider+model; LEFT (not
-    // inner) so jobs whose agent/key was deleted still count toward the totals.
+    // Jobs by status — the bars. One grouped query, bounded by created_at to
+    // keep `idx_agent_jobs_entity_created` efficient.
     const rows = await db
       .select({
         bucket: sql<string>`to_char(${truncExpr}, 'YYYY-MM-DD')`,
         status: agentJobs.status,
-        model: agents.model,
-        provider: entityLlmKeys.provider,
         count: sql<string>`count(*)`,
       })
       .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .leftJoin(entityLlmKeys, eq(entityLlmKeys.id, agents.llmKeyId))
       .where(and(eq(agentJobs.entityId, session.entityId), windowCond))
-      .groupBy(truncExpr, agentJobs.status, agents.model, entityLlmKeys.provider);
+      .groupBy(truncExpr, agentJobs.status);
+
+    // Models — the lines. From llm_calls, which records the model that ACTUALLY
+    // answered, per call, at the time of the call.
+    //
+    // This used to read `agents.model` through a join, i.e. the model configured
+    // on the agent TODAY, applied to jobs from any date. Switching an agent to a
+    // new model rewrote twelve weeks of history: reported live on 2026-08-21 —
+    // "the week of 22 June shows GLM 5.3 called 125 times, and GLM 5.3 came out
+    // yesterday". The jobs were real; the model attributed to them was not.
+    //
+    // The honest source only exists from migration 0075 (19/08/2026) onward.
+    // Before that the effective model was never persisted anywhere, so those
+    // weeks carry no model line at all — a gap that says "not measured" instead
+    // of a plausible value that says something false (invariant #4).
+    //
+    // Note the unit shift this forces: a job makes SEVERAL llm_calls, so the
+    // lines count CALLS while the bars count JOBS. They no longer sum to the
+    // same total, and the chart states that rather than implying otherwise.
+    const modelTruncExpr =
+      unit === 'week'
+        ? sql`date_trunc('week', ${llmCalls.createdAt})`
+        : sql`date_trunc('day', ${llmCalls.createdAt})`;
+    const modelWindowCond =
+      unit === 'week'
+        ? sql`${llmCalls.createdAt} > now() - interval '12 weeks'`
+        : sql`${llmCalls.createdAt} > now() - interval '7 days'`;
+
+    const modelRows = await db
+      .select({
+        bucket: sql<string>`to_char(${modelTruncExpr}, 'YYYY-MM-DD')`,
+        model: llmCalls.modelEffective,
+        provider: llmCalls.provider,
+        count: sql<string>`count(*)`,
+      })
+      .from(llmCalls)
+      .where(and(eq(llmCalls.entityId, session.entityId), modelWindowCond))
+      .groupBy(modelTruncExpr, llmCalls.modelEffective, llmCalls.provider);
 
     const buckets = new Map<string, WeeklyActivityRow>();
     for (const iso of bucketIsos) {
@@ -7620,9 +7773,15 @@ async function loadActivity(
       else if (status === 'cancelled') bucket.cancelled += n;
       else if (status === 'pending') bucket.pending += n;
       else bucket.awaiting += n; // processing + awaiting_approval + awaiting_delegation
+    }
 
-      // Per-model decomposition, keyed by the `provider/model` label. Jobs
-      // whose agent/key was deleted collapse to 'unknown' rather than dropped.
+    // Model lines, from the inference trace — never from the agent's current
+    // configuration. A bucket with no llm_calls rows keeps `models: {}` and
+    // simply draws no line there.
+    for (const r of modelRows) {
+      const bucket = buckets.get(r.bucket);
+      if (!bucket) continue;
+      const n = Number(r.count);
       const model = formatModelLabel(r.provider, r.model && r.model.trim() ? r.model : '');
       bucket.models[model] = (bucket.models[model] ?? 0) + n;
       modelTotals.set(model, (modelTotals.get(model) ?? 0) + n);
@@ -10605,17 +10764,23 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
 function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
 ): boolean {
-  // NOTE (Quentin 20/08): a REFUSED edit changed nothing, so filtering it here
-  // is tempting — and correct in isolation. Measured on real data first: it
-  // takes the entity from 7 qualifying pipelines to 2, and empties the Code
-  // tab. The reason is NOT this predicate but the ONE-LEVEL rollup below it:
-  // on a THREE-level team (root orchestrator → lead → worker), the worker's
-  // CLI attempts land in the lead's bucket while the lead's own real writes
-  // roll up into the root's, so neither half looks like coding on its own.
-  // Fixing the qualification without fixing the rollup
-  // depth would hide real sessions to remove fake ones. Left as-is on purpose
-  // until the pipeline depth is decided — the Changes panel and the file
-  // COUNT already ignore refused calls, so the numbers shown are honest.
+  // REFUSED calls deliberately still QUALIFY a pipeline, even though they
+  // change nothing and are excluded from the file count and the Changes panel.
+  //
+  // Filtering them here was tried and reverted on 2026-08-20. It looks right —
+  // "an attempt is not a coding session" — and it is exactly wrong for the user
+  // this tab serves: a session where every write was refused is a read-only
+  // agent silently doing nothing, which is the single hardest failure to
+  // diagnose (Dev C, 9 attempts, 9 refusals, a full day lost). Hiding the row
+  // removes the only place that failure is visible. So the row stays, and it
+  // says 0 files changed — surfaced, and honest about having changed nothing.
+  // Pinned by `code-processes-actions.test.ts` ("still surfaces … but claims
+  // NOTHING was changed").
+  //
+  // The tab's real under-counting was never this predicate: it was the
+  // one-level rollup that split a three-level session in half. Measured live on
+  // the same data, one-level rollup showed 0 coding processes where the
+  // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
   if (calls.some((c) => EDIT_TOOL_NAMES.has(c.toolName))) return true;
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
@@ -10642,9 +10807,9 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     const entityId = session.entityId;
 
     // ── One scan of the tool_calls that CAN carry a coding signal, rolled up
-    // to each pipeline's root (job racine + enfants directs). Bounded by a
-    // recency window (5000 rows) — a full unbounded entity-wide scan doesn't
-    // belong on a page that only ever shows the top ~50 anyway.
+    // to each pipeline's DELEGATION ROOT at any depth (see coding-rollup.ts).
+    // Bounded by a recency window (5000 rows) — a full unbounded entity-wide
+    // scan doesn't belong on a page that only ever shows the top ~50 anyway.
     const relevantCalls = await db
       .select({
         jobId: toolCalls.jobId,
@@ -10671,16 +10836,27 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     const referencedJobIds = Array.from(
       new Set(relevantCalls.map((c) => c.jobId).filter((id): id is string => id !== null)),
     );
+    // Ancestors are resolved TRANSITIVELY, level by level, until no unknown
+    // parent is left. One `IN (…)` query per level of delegation, and a real
+    // pipeline is at most 3 deep (invariant #8, maxDelegationDepth).
     const parentOf = new Map<string, string | null>();
-    if (referencedJobIds.length > 0) {
+    let toResolve = referencedJobIds;
+    for (let depth = 0; depth < ROLLUP_MAX_DEPTH && toResolve.length > 0; depth++) {
       const rows = await db
         .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
         .from(agentJobs)
-        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, referencedJobIds)));
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, toResolve)));
       for (const r of rows) parentOf.set(r.id, r.parentJobId);
+      // Parents we now know about but haven't looked up yet.
+      toResolve = Array.from(
+        new Set(
+          rows
+            .map((r) => r.parentJobId)
+            .filter((id): id is string => id !== null && !parentOf.has(id)),
+        ),
+      );
     }
-    // One rollup level — "job racine + enfants directs", never further.
-    const rootOf = (jobId: string): string => parentOf.get(jobId) ?? jobId;
+    const rootOf = (jobId: string): string => rollupRoot(jobId, parentOf);
 
     const callsByRoot = new Map<
       string,
@@ -10719,31 +10895,41 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
 
       const jobIds = jobs.map((j) => j.id);
 
-      // Direct children — needed for the awaiting_delegation/completed stage rules.
-      const children =
-        jobIds.length > 0
-          ? await db
-              .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
-              .from(agentJobs)
-              .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, jobIds)))
-          : [];
+      // Descendants at ANY depth, fetched level by level. Direct children alone
+      // are not enough: on a three-level team the work that proves a pipeline
+      // is coding sits at the bottom, and stopping at depth 1 leaves it out of
+      // the very pipeline it belongs to.
       const childIdsByParent = new Map<string, string[]>();
-      for (const c of children) {
-        if (!c.parentJobId) continue;
-        const arr = childIdsByParent.get(c.parentJobId) ?? [];
-        arr.push(c.id);
-        childIdsByParent.set(c.parentJobId, arr);
+      {
+        let frontier = jobIds;
+        const fetched = new Set<string>(jobIds);
+        for (let depth = 0; depth < ROLLUP_MAX_DEPTH && frontier.length > 0; depth++) {
+          const rows = await db
+            .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+            .from(agentJobs)
+            .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)));
+          const next: string[] = [];
+          for (const r of rows) {
+            if (!r.parentJobId) continue;
+            const arr = childIdsByParent.get(r.parentJobId) ?? [];
+            arr.push(r.id);
+            childIdsByParent.set(r.parentJobId, arr);
+            if (!fetched.has(r.id)) {
+              fetched.add(r.id);
+              next.push(r.id);
+            }
+          }
+          frontier = next;
+        }
       }
-      const allRelevantIds = [...jobIds, ...children.map((c) => c.id)];
 
-      // Maps ANY pipeline member (the root itself, or one of its direct
-      // children) back to the root id — used to fold cli_runs cost rows onto
-      // the right pipeline below.
-      const rootForPipelineMember = new Map<string, string>();
-      for (const id of jobIds) rootForPipelineMember.set(id, id);
-      for (const c of children) {
-        if (c.parentJobId) rootForPipelineMember.set(c.id, c.parentJobId);
-      }
+      // Maps ANY pipeline member (the root, or a descendant at any depth) back
+      // to its root — used to fold cli_runs cost rows and file changes onto the
+      // right pipeline below.
+      const { memberIds: allRelevantIds, rootForMember: rootForPipelineMember } = pipelineMembers(
+        jobIds,
+        childIdsByParent,
+      );
 
       // Cost = the PIPELINE's cost (root + its direct children), not the root
       // job alone — a delegated child's own cli_runs rows (its own code_task
@@ -10975,17 +11161,47 @@ export async function getCodingProcessDetailAction(
         .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, entityId)));
       if (!job) return fail('not_found', 'Process not found');
 
-      // Direct children WITH agent name — cheap to fetch alongside the id and
-      // gives the timeline a real "delegated to <agent>" label instead of a
-      // bare "delegated" placeholder.
-      const children = await db
-        .select({ id: agentJobs.id, agentName: agents.name })
-        .from(agentJobs)
-        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-        .where(and(eq(agentJobs.entityId, entityId), eq(agentJobs.parentJobId, jobId)));
-      const childIds = children.map((c) => c.id);
-      const childAgentNameById = new Map(children.map((c) => [c.id, c.agentName]));
-      const allRelevantIds = [jobId, ...childIds];
+      // Descendants at ANY depth, WITH agent name and their own duration.
+      //
+      // Direct children alone would contradict the list: `listCodingProcesses`
+      // rolls a pipeline up to its delegation root at any depth, so a
+      // three-level session shows 3 files there and would show 1 here. Same
+      // level-by-level walk, same ROLLUP_MAX_DEPTH bound.
+      const descendants: Array<{
+        id: string;
+        agentName: string | null;
+        totalDurationMs: number | null;
+        parentJobId: string | null;
+      }> = [];
+      {
+        let frontier = [jobId];
+        const seen = new Set<string>([jobId]);
+        for (let depth = 0; depth < ROLLUP_MAX_DEPTH && frontier.length > 0; depth++) {
+          const rows = await db
+            .select({
+              id: agentJobs.id,
+              agentName: agents.name,
+              totalDurationMs: agentJobs.totalDurationMs,
+              parentJobId: agentJobs.parentJobId,
+            })
+            .from(agentJobs)
+            .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+            .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, frontier)));
+          const next: string[] = [];
+          for (const r of rows) {
+            if (seen.has(r.id)) continue;
+            seen.add(r.id);
+            descendants.push(r);
+            next.push(r.id);
+          }
+          frontier = next;
+        }
+      }
+      // Direct children only — the stage rules are about what THIS job
+      // delegated, not about the whole subtree.
+      const childIds = descendants.filter((d) => d.parentJobId === jobId).map((d) => d.id);
+      const childAgentNameById = new Map(descendants.map((d) => [d.id, d.agentName]));
+      const allRelevantIds = [jobId, ...descendants.map((d) => d.id)];
 
       // Timeline = the ROOT's tool_calls merged chronologically with its
       // DIRECT children's — a delegated worker's edits/commands are part of
@@ -11048,6 +11264,7 @@ export async function getCodingProcessDetailAction(
           modelUsage: cliRuns.modelUsage,
           costUsd: cliRuns.costUsd,
           createdAt: cliRuns.createdAt,
+          durationMs: cliRuns.durationMs,
         })
         .from(cliRuns)
         .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)));
@@ -11237,6 +11454,24 @@ export async function getCodingProcessDetailAction(
 
       const filesChanged = changeGroups.size;
 
+      // Duration of the PIPELINE, not of the root job alone — which is what
+      // made the header read "0.0s" on real sessions (punch list V1.1).
+      //
+      // Preference order, and it matters: a job's own `total_duration_ms` is
+      // the authoritative measure and is summed across the whole pipeline. But
+      // a job whose loop is driven by a coding CLI never goes through the turn
+      // loop that writes it, so it lands at 0 while its `cli_runs` rows carry
+      // the real elapsed time. Falling back to those instead of showing zero is
+      // the difference between "we didn't measure it" and "it took no time".
+      // Never SUMMED with the job durations — a CLI run happens INSIDE its job,
+      // so adding both would double-count it.
+      const jobDurationMs =
+        (job.totalDurationMs ?? 0) +
+        descendants.reduce((sum, d) => sum + (d.totalDurationMs ?? 0), 0);
+      const cliDurationMs = cliRunRows.reduce((sum, r) => sum + (r.durationMs ?? 0), 0);
+      const pipelineDurationMs =
+        jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
+
       return ok({
         header: {
           id: job.id,
@@ -11250,7 +11485,7 @@ export async function getCodingProcessDetailAction(
           costUsd,
           filesChanged,
           activityAt: job.createdAt ? job.createdAt.toISOString() : null,
-          durationMs: job.totalDurationMs ?? null,
+          durationMs: pipelineDurationMs,
           inputTokens,
           outputTokens,
           cachedTokens,
