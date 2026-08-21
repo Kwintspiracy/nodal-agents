@@ -1,97 +1,100 @@
-// code-task/sandbox.ts — where the coding CLIs' confinement actually holds,
-// and where it only claims to.
+// code-task/sandbox.ts — what actually decides whether a coding CLI is confined.
 //
-// ## The finding (measured 2026-08-21, codex-cli 0.148.0, Windows 11)
+// ## The finding, and the correction that followed
 //
-// `code_task` tells the model, in its own input schema, that read mode means
-// "the CLI cannot modify files or run shell commands", and that write mode
-// edits "inside the workspace". For `provider: "codex"` on Windows, BOTH
-// claims are false. Reproduced five times, including with the exact argv this
-// package builds:
+// First conclusion (2026-08-21): "`codex exec --sandbox` is not enforced on
+// Windows". Reproduced five times, confirmed independently by an external
+// review, and acted on — codex was refused outright on Windows.
 //
-//     codex exec --json --sandbox read-only --skip-git-repo-check -c 'mcp_servers={}' -
-//     → the CLI spawned powershell.exe, wrote the file, exit_code 0
+// **That diagnosis was wrong.** The A/B that settled it — same directory, same
+// command, one flag apart:
 //
-//     codex exec --json --sandbox workspace-write --skip-git-repo-check -
-//     → wrote a file OUTSIDE the working directory
+//     codex exec --json --sandbox read-only --skip-git-repo-check -
+//     → PowerShell ran, the file was written
 //
-// Also checked, so the cause is not one of these: it happens inside a real git
-// repository as well as outside one; `-c 'sandbox_mode="read-only"'` (the only
-// way to express a sandbox to `codex exec resume`, which takes no --sandbox
-// flag) is accepted without error and equally ignored.
+//     codex exec --json --sandbox read-only --skip-git-repo-check --ignore-user-config -
+//     → "l'accès au système de fichiers est en lecture seule", nothing written
 //
-// The Windows restricted-token sandbox does exist inside codex — `codex sandbox`
-// is a real subcommand and blocks writes — but it is internal (it demands
-// `--sandbox-state-json`) and `codex exec` demonstrably does not apply it.
+// The sandbox works on Windows. What disabled it was the OWNER'S OWN
+// `~/.codex/config.toml` — here `[windows] sandbox = "elevated"` — which every
+// Nodal-spawned run was loading. Ruled out along the way: `trust_level =
+// "trusted"` projects, since a directory outside every trusted project behaved
+// identically.
 //
-// ## Why this refuses instead of warning
+// So the real defect was never the platform. It was that **Nodal's confinement
+// depended on a user configuration file Nodal did not control**: any setting in
+// it could silently weaken the guarantee `code_task` prints on its approval
+// card, on any OS, leaving no trace.
 //
-// Three reasons, in order of weight:
+// That hole is closed at its source. `buildProviderArgs` now always passes
+// `--ignore-user-config` (added for a separate leak — the same file was feeding
+// the owner's personal MCP servers into Nodal runs — and it closes both). Auth
+// still resolves from CODEX_HOME, so the subscription keeps working.
 //
-//   1. **Consent.** Read mode is the DEFAULT, and the approval card presents it
-//      as an analysis with no effect. A user who approved "analyse the repo"
-//      must not receive writes. That is not a degraded guarantee, it is a
-//      different action than the one they agreed to.
-//   2. **No way to tell them in time.** `computeApproval` returns only
-//      'require_approval' | undefined — a tool cannot add a caveat to the card
-//      the human reads. Since the warning cannot reach the decision, the
-//      decision must not be offered.
-//   3. **The workspace contract.** `resolveAndCheckPath` and the workspace lock
-//      exist to bound a run to one workspace. An unconfined write mode voids
-//      that contract for every agent on the machine, not just this call.
+// ## Why there is no platform refusal here any more
 //
-// Claude is unaffected and stays available: its read mode removes the write
-// tools from the model with `--disallowedTools` rather than sandboxing them, so
-// there is nothing to escape.
+// Refusing codex on Windows would now block a feature that works, for a reason
+// that has been disproven. Leaving it in place "just in case" would be the exact
+// failure `scripts/probe-codex-sandbox.mjs` was written to catch — a refusal
+// outliving its reason — one commit after writing that probe.
 //
-// This is deliberately a platform check and not a probe. Probing would mean
-// letting the CLI attempt a write to see whether it lands — on the user's
-// machine, before every run.
+// What replaces it is a measurement anyone can re-run:
+//
+//     node scripts/probe-codex-sandbox.mjs
+//
+// It attempts a real write with the shipped argv and reports whether the bytes
+// landed. Run it after a codex upgrade, or on a platform nobody has measured.
 
 import type { CodeTaskProvider, CodeTaskMode } from './providers';
 
 /**
- * Does this platform actually enforce the sandbox `codex exec --sandbox` asks
- * for?
+ * Is this provider confined here, with the arguments Nodal actually passes?
  *
- * Linux (seccomp/Landlock) and macOS (Seatbelt) are codex's supported sandbox
- * platforms and are treated as enforcing. Windows is not — measured, see the
- * header. Anything unknown is treated as NOT enforcing: an unverified platform
- * gets the safe answer, never the convenient one.
+ * Kept as the single place that answers the question, so a future measurement
+ * has somewhere to land instead of scattered `if`s.
+ *
+ * Both providers qualify on every platform today, each for its own reason:
+ *
+ *   - **claude** removes the write tools from the model (`--disallowedTools`).
+ *     Nothing to escape, so no OS support is involved.
+ *   - **codex** relies on an OS sandbox, which does hold — measured on
+ *     Windows — *provided the owner's config.toml is not loaded*.
+ *     `buildProviderArgs` guarantees that with `--ignore-user-config`.
+ *
+ * If a platform is ever shown NOT to confine with the shipped argv, this is
+ * where that becomes a refusal — with the reproduction in the comment, and this
+ * time verified against the argv we ship rather than a hand-typed one.
  */
-export function codexSandboxEnforced(platform: NodeJS.Platform): boolean {
-  return platform === 'linux' || platform === 'darwin';
+export function providerConfinementHolds(
+  _provider: CodeTaskProvider,
+  _platform: NodeJS.Platform,
+): boolean {
+  return true;
 }
 
 /**
- * Refuse a run whose confinement we cannot honour, before anything is spawned.
+ * Refuse a run whose confinement cannot be honoured, before anything is spawned.
  *
- * Throws with the reproduction and the alternative — a refusal that does not
- * say what to do instead just gets worked around.
+ * Called from `code_task`'s `preflight` — before an approval card exists. A
+ * refusal that arrives after a human has approved is not a refusal; it is a
+ * broken promise followed by an error message.
+ *
+ * Nothing refuses today. The seam stays because it is the valuable part: when a
+ * measurement does turn up an unconfined combination, it plugs in here and lands
+ * ahead of the approval, instead of being bolted onto `execute()` where the card
+ * has already been shown — which is exactly the mistake the first version of
+ * this fix made.
  */
 export function assertSandboxEnforced(
   provider: CodeTaskProvider,
-  mode: CodeTaskMode,
+  _mode: CodeTaskMode,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  if (provider !== 'codex') return;
-  if (codexSandboxEnforced(platform)) return;
-
-  const claim =
-    mode === 'read'
-      ? 'read mode promises the CLI cannot modify files or run shell commands'
-      : 'write mode promises edits stay inside the workspace';
+  if (providerConfinementHolds(provider, platform)) return;
 
   throw new Error(
-    `codex_sandbox_unenforced: on ${platform}, \`codex exec --sandbox\` does not confine the ` +
-      `CLI — measured 2026-08-21 with codex-cli 0.148.0: it spawned a shell and wrote files ` +
-      `under --sandbox read-only, and wrote OUTSIDE the working directory under ` +
-      `--sandbox workspace-write.\n\n` +
-      `  This call is refused because ${claim}, and that promise cannot be kept here. ` +
-      `The approval you would have seen states the promise, and a tool cannot add a caveat ` +
-      `to it — so the choice is not offered rather than offered on false terms.\n\n` +
-      `  Use \`provider: "claude"\` instead: its read mode removes the write tools from the ` +
-      `model (--disallowedTools) rather than sandboxing them, so there is nothing to escape. ` +
-      `codex remains available on Linux and macOS.`,
+    `provider_not_confined: "${provider}" cannot be confined on ${platform} with the arguments ` +
+      `Nodal passes, so the confinement stated on the approval card cannot be kept. ` +
+      `Run \`node scripts/probe-codex-sandbox.mjs\` for the measurement.`,
   );
 }

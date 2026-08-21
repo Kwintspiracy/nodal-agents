@@ -1,146 +1,97 @@
-// sandbox.test.ts — the confinement guard.
+// sandbox.test.ts — the confinement seam, and the wiring that makes it early.
 //
-// Closes a real hole in the shipped 0.8.5: `code_task` told the model, in its
-// own schema, that read mode means "the CLI cannot modify files or run shell
-// commands". On Windows with `provider: "codex"` that was false — measured
-// 2026-08-21, five reproductions, including with the exact argv this package
-// builds. See sandbox.ts for the commands and outputs.
+// ## History, because it explains the shape of these cases
 //
-// These cases pin the DECISION, not the measurement: which combinations are
-// refused, which are untouched, and that the refusal says enough to act on.
+// The first version of this file pinned "codex is refused on Windows", built on
+// a measurement that turned out to be wrong: `codex exec --sandbox` DOES confine
+// on Windows — what disabled it was the owner's own `~/.codex/config.toml`,
+// which Nodal was loading. Passing `--ignore-user-config` closes it. See
+// sandbox.ts for the A/B.
+//
+// So the refusal is gone, and asserting it would now pin a disproven claim in
+// place. What remains worth testing is the SEAM and its ORDER:
+//
+//   - no provider is refused today, on any platform (an over-broad guard would
+//     silently remove codex from the dominant OS);
+//   - the guard is wired into `preflight`, not `execute`, so a future refusal
+//     lands BEFORE the approval card rather than after a human approves.
+//
+// The second point is the one two review passes caught, twice, in this same PR:
+// testing a helper in isolation says nothing about whether the shipped tool
+// still calls it.
 
 import { describe, it, expect } from 'vitest';
-import { codexSandboxEnforced, assertSandboxEnforced } from './sandbox';
+import { providerConfinementHolds, assertSandboxEnforced } from './sandbox';
+import type { CodeTaskProvider } from './providers';
 
-describe('codexSandboxEnforced', () => {
-  it('trusts the two platforms codex actually sandboxes on', () => {
-    expect(codexSandboxEnforced('linux')).toBe(true);
-    expect(codexSandboxEnforced('darwin')).toBe(true);
-  });
+const PLATFORMS: NodeJS.Platform[] = ['win32', 'linux', 'darwin', 'freebsd'];
+const PROVIDERS: CodeTaskProvider[] = ['claude', 'codex'];
 
-  it('does not trust Windows', () => {
-    expect(codexSandboxEnforced('win32')).toBe(false);
-  });
-
-  it('does not trust a platform nobody has measured', () => {
-    // The safe answer for the unknown case, not the convenient one: a platform
-    // we have never tested must not inherit a guarantee by default.
-    for (const p of ['freebsd', 'aix', 'sunos'] as NodeJS.Platform[]) {
-      expect(codexSandboxEnforced(p), `${p} was trusted without evidence`).toBe(false);
+describe('providerConfinementHolds', () => {
+  it('holds for both providers on every platform we ship to', () => {
+    // The regression this guards against is an over-broad refusal. Blocking
+    // codex on Windows — as this file asserted for one commit — removes a
+    // working feature from most users on a premise that was measured wrong.
+    for (const platform of PLATFORMS) {
+      for (const provider of PROVIDERS) {
+        expect(
+          providerConfinementHolds(provider, platform),
+          `${provider} was declared unconfined on ${platform} without a measurement`,
+        ).toBe(true);
+      }
     }
   });
 });
 
 describe('assertSandboxEnforced', () => {
-  it('refuses codex read mode where the sandbox does not hold', () => {
-    // The severe case: read is the DEFAULT, and the approval card presents it
-    // as an analysis with no effect.
-    expect(() => assertSandboxEnforced('codex', 'read', 'win32')).toThrow(
-      /codex_sandbox_unenforced/,
-    );
-  });
-
-  it('refuses codex write mode too — the workspace bound is just as false', () => {
-    // Measured: --sandbox workspace-write wrote OUTSIDE the working directory.
-    // Letting write through would keep a promise the workspace lock and
-    // resolveAndCheckPath exist to make.
-    expect(() => assertSandboxEnforced('codex', 'write', 'win32')).toThrow(
-      /codex_sandbox_unenforced/,
-    );
-  });
-
-  it('says which promise cannot be kept, per mode', () => {
-    // A refusal that does not name the broken promise gets worked around.
-    expect(() => assertSandboxEnforced('codex', 'read', 'win32')).toThrow(
-      /cannot modify files or run shell commands/,
-    );
-    expect(() => assertSandboxEnforced('codex', 'write', 'win32')).toThrow(
-      /stay inside the workspace/,
-    );
-  });
-
-  it('names the alternative, not just the problem', () => {
-    let message = '';
-    try {
-      assertSandboxEnforced('codex', 'read', 'win32');
-    } catch (err) {
-      message = (err as Error).message;
-    }
-    expect(message).toMatch(/provider: "claude"/);
-    expect(message).toMatch(/disallowedTools/);
-    expect(message, 'the refusal should say codex still works elsewhere').toMatch(
-      /Linux and macOS/,
-    );
-  });
-
-  it('leaves claude alone on every platform', () => {
-    // THE case that catches an over-broad guard. Claude removes the write tools
-    // from the model instead of sandboxing them, so there is nothing to escape
-    // — blocking it would be a regression dressed as a security fix.
-    for (const platform of ['win32', 'linux', 'darwin'] as NodeJS.Platform[]) {
-      for (const mode of ['read', 'write'] as const) {
+  it('refuses nothing today, on any platform', () => {
+    for (const platform of PLATFORMS) {
+      for (const provider of PROVIDERS) {
         expect(
-          () => assertSandboxEnforced('claude', mode, platform),
-          `claude/${mode} was blocked on ${platform}`,
+          () => assertSandboxEnforced(provider, 'read', platform),
+          `${provider}/read was refused on ${platform}`,
         ).not.toThrow();
-      }
-    }
-  });
-
-  it('leaves codex alone where its sandbox does hold', () => {
-    for (const platform of ['linux', 'darwin'] as NodeJS.Platform[]) {
-      for (const mode of ['read', 'write'] as const) {
         expect(
-          () => assertSandboxEnforced('codex', mode, platform),
-          `codex/${mode} was blocked on ${platform}, where it is enforced`,
+          () => assertSandboxEnforced(provider, 'write', platform),
+          `${provider}/write was refused on ${platform}`,
         ).not.toThrow();
       }
     }
   });
 });
 
-// ─── Le câblage, pas seulement la garde ──────────────────────────────────────
-
-describe('the real codeTaskTool, through the real executeTool', () => {
-  it('refuses codex on an unenforced platform without ever asking a human', async () => {
-    // Review nº2 killed the previous version of this suite with one mutation:
-    // delete `preflight` from codeTaskTool and all 50 tests stayed green. The
-    // cases above call the guard directly; preflight-order.test.ts builds its
-    // OWN tool that declares a preflight. Neither notices that the shipped tool
-    // stopped declaring one.
+describe('the shipped code_task keeps its refusal seam ahead of the approval', () => {
+  it('declares preflight, not a check buried in execute', async () => {
+    // Review nº2 killed the previous suite with one mutation: delete
+    // `preflight` from codeTaskTool and all 50 tests stayed green, because
+    // every case tested a helper or a purpose-built fake tool.
     //
-    // That is the second time in this PR the same gap appeared: testing the
-    // pieces, never the wiring. This case drives the tool that actually ships.
-    if (process.platform !== 'win32') return; // only meaningful where the guard fires
-
-    const { executeTool } = await import('../../execute');
+    // This asserts the property that survives the refusal being empty today:
+    // the shipped tool routes its confinement check through `preflight`, which
+    // `executeTool` runs BEFORE writing an approval request. Put the check back
+    // in `execute()` and a human would again approve a card for a run that
+    // cannot honour it.
     const { codeTaskTool } = await import('./index');
-    const { spinUpTestDb, seedMinimal } = await import('@nodal-agents/db/test-utils');
+    expect(
+      typeof codeTaskTool.preflight,
+      'code_task no longer declares preflight — a future refusal would arrive after approval',
+    ).toBe('function');
+  });
 
-    const { db } = await spinUpTestDb();
-    const seed = await seedMinimal(db);
-
-    const asked: unknown[] = [];
-    const result = await executeTool(
-      codeTaskTool,
-      {
-        purpose: 'analyse read-only',
-        provider: 'codex',
-        task: 'inspect the repository',
-        mode: 'read',
-      },
-      { db, entityId: seed.entityId, agentId: seed.agentId, jobId: seed.jobId } as never,
-      {
-        approvalRules: [],
-        onApprovalRequired: async (req: unknown) => {
-          asked.push(req);
-        },
-      } as never,
-    );
-
-    expect(result.outcome, 'the shipped tool did not refuse').toBe('error');
-    if (result.outcome !== 'error') return;
-    expect(result.error).toMatch(/codex_sandbox_unenforced/);
-    expect(asked, 'a human was asked to approve an unconfinable run').toHaveLength(0);
-  }, 30_000);
+  it('preflight stays quiet for the combinations that are confined', async () => {
+    const { codeTaskTool } = await import('./index');
+    for (const provider of PROVIDERS) {
+      expect(() =>
+        codeTaskTool.preflight?.(
+          {
+            purpose: 'p',
+            provider,
+            task: 't',
+            mode: 'read',
+          } as never,
+          {} as never,
+        ),
+      ).not.toThrow();
+    }
+  });
 });

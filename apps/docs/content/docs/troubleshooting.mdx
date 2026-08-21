@@ -196,29 +196,33 @@ Windows has since recycled is never mistaken for one of ours.
 **Fix.** Nothing to do. To avoid it entirely, stop with `nodal-agents down`
 rather than `Ctrl+C`.
 
-### "codex_sandbox_unenforced" — a coding task is refused on Windows
+### A Codex task wrote files in read mode
 
-**Symptom.** `code_task` with `provider: "codex"` fails immediately on Windows,
-before anything runs, naming `codex_sandbox_unenforced`.
+**Symptom.** `code_task` ran with `provider: "codex"` and `mode: "read"` — which
+the approval card describes as analysis only — and files were modified anyway.
 
-**Cause.** `codex exec --sandbox` does not confine the CLI on Windows. Measured
-on 2026-08-21 with codex-cli 0.148.0, five reproductions including the exact
-command Nodal builds: under `--sandbox read-only` the CLI spawned PowerShell and
-wrote files; under `--sandbox workspace-write` it wrote **outside** the working
-directory. It behaves the same inside a git repository, and the config-level
-equivalent (`-c 'sandbox_mode="read-only"'`) is accepted without error and
-ignored.
+**Cause.** Your own `~/.codex/config.toml` disabled the sandbox, and Nodal was
+loading it. One key was enough: `[windows] sandbox = "elevated"` turned
+`--sandbox read-only` into no confinement at all. Measured 2026-08-21 — same
+directory, same command, one flag apart: without `--ignore-user-config` the CLI
+spawned PowerShell and wrote the file; with it, "the filesystem is read-only"
+and nothing was written.
 
-**Why it is refused rather than warned about.** Read mode is the default, and
-the approval you see describes an analysis with no effect. A tool cannot add a
-caveat to that card — so rather than offer the choice on false terms, the call
-is not offered. The same applies to write mode: you consented to changes _inside
-a workspace_, and that bound does not hold either.
+**Fixed since.** Nodal now always passes `--ignore-user-config`, so no setting in
+that file can weaken the confinement stated on the approval card. Your
+subscription still authenticates — auth lives outside the file. The side effect
+is that model and reasoning-effort defaults set there no longer apply; set them
+per agent in Nodal instead.
 
-**Fix.** Use `provider: "claude"` for coding tasks on Windows. Its read mode
-removes the write tools from the model (`--disallowedTools`) instead of
-sandboxing them, so there is nothing to escape. Codex remains available on Linux
-and macOS, where its sandbox is enforced.
+**To verify on your machine**, or after a Codex upgrade:
+
+```bash
+node scripts/probe-codex-sandbox.mjs
+```
+
+It attempts a real write with the arguments Nodal passes. Exit 0 means confined,
+1 means not, 2 means it could not tell — and it never reports "confined" without
+positive proof that a command was attempted and refused.
 
 ### "Could not read the process table"
 
