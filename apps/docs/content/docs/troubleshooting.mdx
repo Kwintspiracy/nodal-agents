@@ -146,16 +146,71 @@ processes yourself, set it in both environments.
 on a different port than expected (default ports: web **3000**, runner **3001**,
 Postgres **25432**).
 
-**Cause.** A previous run was closed without `Ctrl+C` (or without
-`nodal-agents down`), leaving orphan processes holding the ports — or the OS has
-reserved a port (Windows Hyper-V/WinNAT excluded ranges). On startup the CLI
-sweeps orphans on the configured ports and, if a port is still unbindable,
+**Cause.** A previous run was closed abruptly, leaving processes of ours holding
+the ports — or the OS has reserved a port (Windows Hyper-V/WinNAT excluded
+ranges), or something else of yours is simply listening there.
+
+On startup the CLI cleans up **only what it can show is its own**: a PID it
+recorded itself, or one descending from it. If a port is still unbindable it
 **rotates** to a free neighbour and persists the new port in
 `~/.nodalai/config.json`.
 
 **Fix.** Usually nothing — let it rotate; the ready message prints the actual
 URL. If the dashboard origin changed, update any registered OAuth redirect URIs
 to match. To reset, run `nodal-agents down` and start again.
+
+### "Port conflict with a process that is not ours"
+
+**Symptom.** Startup stops with:
+
+```
+Port conflict with a process that is not ours:
+  - :3000 is held by pid 56980, which Nodal-Agents did not start
+```
+
+**Cause.** Something that is not Nodal-Agents is listening on a port it wants —
+very often your own dev server on `:3000`.
+
+**This refusal is deliberate.** Earlier versions killed whatever held the port
+and started anyway, which meant silently destroying someone else's work to free
+a port we merely wanted. Refusing is recoverable; killing is not.
+
+**Fix.** Either stop that process yourself, or give Nodal-Agents different ports
+in `~/.nodalai/config.json`.
+
+### "Cleaned up N process(es) left by the previous session"
+
+**Symptom.** A start prints this line before doing anything else.
+
+**Cause.** The previous session ended without a clean shutdown — most often
+`Ctrl+C`. On Windows, `Ctrl+C` on a `.cmd` launcher makes the console destroy
+the whole process group at once, the CLI's own cleanup routine included, in the
+middle of its work. Some background processes then outlive it.
+
+**This message is the fix working, not a fault.** The process tree is recorded
+while the services are healthy, so the next start can sweep whatever survived —
+including workers that hold no port and are therefore invisible to any port
+scan. Each process is matched by creation time as well as PID, so a number
+Windows has since recycled is never mistaken for one of ours.
+
+**Fix.** Nothing to do. To avoid it entirely, stop with `nodal-agents down`
+rather than `Ctrl+C`.
+
+### "Could not read the process table"
+
+**Symptom.** A yellow warning during shutdown, naming a timeout or an error from
+`Get-CimInstance` / `Get-WmiObject`.
+
+**Cause.** Windows would not enumerate its processes in time. Heavily loaded,
+containerised, or locked-down machines do this — GitHub's own Windows CI runners
+cannot do it at all.
+
+**Consequence, stated plainly.** The tree-kill falls back to `taskkill /T`, and a
+background worker may survive it. The next start cleans up what it recorded, so
+this costs you a message rather than a stuck port.
+
+**Fix.** Nothing required. If it happens on every stop and you would rather not
+see it, stopping with `nodal-agents down` on a quieter machine avoids it.
 
 ### Orphaned Postgres holds the shared-memory block
 

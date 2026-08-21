@@ -29,19 +29,41 @@ npm install -g nodal-agents
 
 ### `nodal-agents up`
 
-Starts everything in order: cleans orphaned processes from a previous crashed run, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser.
+Starts everything in order: cleans up what a previous run left behind, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser.
 
 If a configured port is occupied or reserved by the OS, `up` rotates to the next free port and saves the new value to `~/.nodalai/config.json`. If no config exists yet, it runs the `init` wizard first.
 
 | Flag | Effect |
 | ---- | ------ |
 | `--dev` | Run web in `next dev` mode (HMR, no prebuild). Slower first load, far faster iteration. Off by default. |
+| `--detach` (`-d`) | Start the services and return the terminal. Stop them later with `nodal-agents down`. |
+
+#### What "cleans up" means, and what it refuses to do
+
+`up` only ever kills a process it can show is **its own**: a PID it recorded itself, or one descending from it. Anything else holding a port it wants is a stranger, and `up` stops rather than kill it:
+
+```
+Port conflict with a process that is not ours:
+  - :3000 is held by pid 56980, which Nodal-Agents did not start
+```
+
+Earlier versions killed whatever held the port. That silently destroyed other people's work — usually their own dev server on `:3000` — to free a port we merely wanted. Refusing is recoverable; killing is not.
+
+The cleanup also works after an abrupt end. On Windows, `Ctrl+C` on a `.cmd` launcher makes the console destroy the whole process group at once, including the CLI's own shutdown routine, mid-run — so cleanup cannot live in that routine. The process tree is recorded while the services are healthy, and the next `up` sweeps whatever survived:
+
+```
+Cleaned up 4 process(es) left by the previous session
+```
+
+That message is the mechanism working. Each process is matched by creation time as well as PID, so a number Windows has since recycled is never mistaken for one of ours, and the sweep reaches background workers that hold no port at all — which no port scan can see.
 
 Running `nodal-agents` with no subcommand is equivalent to `nodal-agents up` and also accepts `--dev`.
 
 ### `nodal-agents down`
 
-Stops the runner and web (PIDs read from `~/.nodalai/pids/`) and stops Postgres **gracefully** via `pg_ctl stop -m fast`. The graceful Postgres stop is important on Windows: a hard kill leaves a shared-memory block that makes the next `up` fail until reboot.
+Stops the runner and web (PIDs read from `~/.nodalai/pids/`), sweeps any background workers they spawned, and stops Postgres **gracefully** via `pg_ctl stop -m fast`. The graceful Postgres stop is important on Windows: a hard kill leaves a shared-memory block that makes the next `up` fail until reboot.
+
+`down` verifies before it claims. `pg_ctl stop` returns when the signal is delivered, not when the postmaster is actually gone, so `down` waits for the process to disappear before reporting success. If it genuinely survives — which does happen, and poisons the next boot — you get the PID and the exact command to end it, rather than a cheerful message over a database that is still running.
 
 ### `nodal-agents init`
 

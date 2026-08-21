@@ -1,0 +1,109 @@
+---
+title: Coding with an agent
+description: Hand a real development task to Claude Code or Codex running under your own subscription — read-only by default, approved by you, and traceable afterwards.
+---
+
+The `code-task` skill unlocks the `code_task` built-in tool. It hands a complete
+development task — analyse, review, debug, implement — to a coding CLI that is
+already installed and logged in on this machine: **Claude Code** or **Codex**.
+
+The important part is where the work happens. The CLI is itself a full coding
+agent: it explores the working directory, reasons about it, and comes back with
+an answer. It runs **under your own subscription**, not through an API key, so a
+long investigation costs you nothing beyond what you already pay for.
+
+**Read-only by default, and every run needs your approval** unless you turn Yolo
+on for that agent.
+
+## Before you start
+
+The CLI has to exist on the machine and be signed in. Nodal-Agents does not
+install it and cannot log in for you.
+
+```bash
+claude --version     # Claude Code
+codex --version      # Codex
+```
+
+If either is missing, install it and sign in first. The **Capabilities** page has
+a **Test** button for each provider that runs a real call and reports exactly
+what failed — a missing binary and an expired login look different there.
+
+## Enable it for an agent
+
+1. Open **Skills** in the dashboard and find **Coding CLI** in the built-in
+   library.
+2. Assign it to the agent.
+3. On the agent's edit page, choose which providers it may use and what each one
+   defaults to.
+
+Both providers are allowed by default. Restricting an agent to one is a real
+choice, not cosmetic: it decides whose subscription gets spent.
+
+## Read mode and write mode
+
+`code_task` runs in one of two modes, and the difference is enforced by the CLI
+itself rather than by us:
+
+| Mode             | What the CLI can do                            | Enforced by                                                          |
+| ---------------- | ---------------------------------------------- | -------------------------------------------------------------------- |
+| `read` (default) | Explore and answer. No file changes, no shell. | Claude Code hides its write tools; Codex runs its sandbox read-only. |
+| `write`          | Change files inside the workspace.             | The same mechanisms, opened up.                                      |
+
+An agent that only needs to answer "where is X handled" never needs `write`. The
+mode travels with the approval request, so you see which one you are approving.
+
+## Approval
+
+The agent proposes the task; the job suspends; you see the full task text, the
+mode, the working directory and the agent's stated purpose before anything runs.
+
+Approve and the run starts. Reject and the agent gets an error it can act on.
+
+Yolo mode skips this gate per agent, on the **Autonomy** tab — the same control
+and the same caveats as [shell commands](/docs/guides/shell-commands).
+
+## The daily budget
+
+Each agent has a daily cap, **10 USD by default**, on the notional cost of its
+coding runs. Set it to `0` to remove the cap.
+
+Two things are worth knowing about that number, because it is easy to misread:
+
+- It is **notional**. Claude Code reports a cost even when the work is covered by
+  your subscription, and that reported figure is what the cap counts. It is a
+  brake on runaway usage, not a bill.
+- **Codex reports no cost at all**, so its runs count as zero against the cap.
+  What bounds them is the per-call timeout, not the budget.
+
+When the cap is reached, `code_task` refuses to start and says so. It does not
+silently downgrade or wait.
+
+## Watching the work: the Code tab
+
+Every run lands in the **Code** tab, which is built around what you actually want
+to check after the fact:
+
+- **Which files were touched**, with the diff of the one you select.
+- **The activity trail**, turn by turn — what the CLI did, in order.
+- **Token accounting per model**, including cache reads and cache writes. On a
+  Claude run the cache writes are usually the dominant line, which is worth
+  seeing rather than guessing at.
+
+## Code is not done until it is reviewed
+
+Write-mode work comes back marked _review-required_, and the skill instructs the
+agent never to conclude "done" straight after a successful write.
+
+This is deliberate, and it comes from watching harnesses that let a coder certify
+its own work: the agent that wrote the change is the worst judge of whether the
+change is right. Either the agent requests a review, or you read the diff in the
+Code tab. Both are fine. Skipping both is not.
+
+## Related
+
+- [Coding CLI skill reference](/docs/reference/system-skills/code-task) — the exact
+  guidance injected into the agent's prompt
+- [Shell commands](/docs/guides/shell-commands) — the same approval model, for
+  arbitrary commands
+- [Workspaces](/docs/concepts/workspaces) — where an agent's files live
