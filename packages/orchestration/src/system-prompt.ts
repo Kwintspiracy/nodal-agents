@@ -586,6 +586,16 @@ export async function buildSystemPrompt(
           // reproduce the delegation defect — seeing a capability you cannot
           // reach. The real fix is a surface-aware variant at the CATALOG layer
           // (invariant #3: fix at the agent layer, never patch the runtime).
+          //
+          // DELIBERATE ASYMMETRY with the team roster, which IS kept even
+          // though delegation is equally unreachable. Quentin's call, and the
+          // reasoning is that the two carry different things: a skill describes
+          // HOW to act, so it is dead weight to an agent that cannot act on it;
+          // a teammate is a FACT about the workspace, which changes what the
+          // agent has to TELL the user. Without the roster it answers "I can't
+          // do that" where a teammate could — with it, it can name who can and
+          // let the human route. Thin, but not nothing. Flagged here so a later
+          // review reads it as a decision rather than an oversight.
           ''
         : `\n\n## Skills (load before acting)\n\n` +
           `Scan the skills below. For ANY skill even partially relevant to your task, you MUST call ` +
