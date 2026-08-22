@@ -15,6 +15,17 @@
 import { z } from 'zod';
 
 export const runTaskInputSchema = z.object({
+  caller: z
+    .string()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe(
+      'Optional label naming WHO is asking (e.g. "agent-dev-a", "quentin-terminal"). ' +
+        'Purely declarative — recorded as provenance on the job, shown on the Runs ' +
+        'page, and NEVER used for authorization: the job runs under the rules of the ' +
+        'agent this server was launched for, whatever this says.',
+    ),
   instruction: z
     .string()
     .min(1)

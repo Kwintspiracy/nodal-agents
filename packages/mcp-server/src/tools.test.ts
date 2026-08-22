@@ -164,3 +164,44 @@ describe('le plafond refuse les valeurs qui ne plafonnent rien', () => {
     ).rejects.toThrow(/mcp_invalid_job_cap/);
   });
 });
+
+describe("l'identité par défaut vient de la base, pas d'une config", () => {
+  it("résout l'agent racine du workspace quand aucun agentId n'est donné", async () => {
+    // Invariant #6 : « quel agent orchestre » varie par installation. Un nom
+    // d'agent dans une config d'exemple aurait été un réglage par utilisateur
+    // codé en dur — Quentin l'a relevé au moment où j'allais l'écrire.
+    const { entities: entitiesTable } = await import('@nodal-agents/db');
+    await db
+      .update(entitiesTable)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entitiesTable.id, seed.entityId));
+    // L'autre entité du fichier n'a PAS de racine : une seule candidate.
+    const server = await buildNodalMcpServer({ db });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0.0.1' });
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'tache par defaut', caller: 'test-runner' },
+    });
+    const body = JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as {
+      jobId: string;
+    };
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, body.jobId)).limit(1);
+    expect(job!.agentId, "le job n'est pas signé par l'agent racine").toBe(seed.agentId);
+    // Et la provenance déclarée est enregistrée — étiquette, jamais identité.
+    expect((job!.triggerContext as { caller?: string }).caller).toBe('test-runner');
+    await client.close();
+  });
+
+  it('refuse de choisir quand PLUSIEURS workspaces ont une racine', async () => {
+    // Un serveur qui tirerait le premier au hasard signerait des jobs au nom
+    // d'un agent que personne n'a désigné.
+    const { entities: entitiesTable } = await import('@nodal-agents/db');
+    await db
+      .update(entitiesTable)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entitiesTable.id, autreEntiteId));
+    await expect(buildNodalMcpServer({ db })).rejects.toThrow(/mcp_ambiguous_root_agent/);
+  });
+});

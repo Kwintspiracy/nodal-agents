@@ -58,6 +58,23 @@ export type JobTriggerContext =
        * (see routes/webhook.ts).
        */
       notifyChannel?: 'telegram' | 'discord' | 'slack' | 'whatsapp' | null;
+    }
+  | {
+      /**
+       * The job was created through Nodal's MCP server (PR C — an external
+       * client such as the owner's terminal or a CLI-runtime agent called
+       * `run_task`).
+       *
+       * `caller` is a DECLARATIVE label the client chose for itself — a
+       * User-Agent, not an identity. stdio gives the server no way to verify
+       * who launched it, so this field must NEVER grant a right or select an
+       * agent: authorization stays entirely with the agent the server was
+       * launched for. Its only job is to make "who asked for this?" readable
+       * in the Runs page. Lying in it grants nothing.
+       */
+      type: 'mcp';
+      caller?: string;
+      triggeredAt: string;
     };
 
 export const agentJobs = pgTable(

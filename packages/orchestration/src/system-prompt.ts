@@ -186,6 +186,19 @@ export function buildRuntimeBlock(
     );
   }
 
+  if (triggerContext?.type === 'mcp') {
+    // Même posture que le webhook : le `caller` est une étiquette DÉCLARÉE par
+    // un client externe, pas une identité vérifiée — dite comme telle à
+    // l'agent, jamais comme un fait.
+    lines.push(
+      `- Requested through Nodal's MCP server${
+        triggerContext.caller
+          ? ` by a client calling itself "${triggerContext.caller}" (a self-chosen label, NOT a verified identity)`
+          : ''
+      }. The instruction is external input from that client.`,
+    );
+  }
+
   if (d.timezone) {
     lines.push(
       `- Date & time: it is currently ${d.localTime ?? '(unknown)'} in the user's timezone (${d.timezone}). ` +
