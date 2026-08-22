@@ -11,7 +11,8 @@
   "scripts": {
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "serve": "tsx src/launch.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -21,6 +22,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
-    "@nodal-agents/test-kit": "workspace:*"
+    "@nodal-agents/test-kit": "workspace:*",
+    "tsx": "^4.19.2"
   }
 }
