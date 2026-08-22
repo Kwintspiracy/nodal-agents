@@ -982,11 +982,15 @@ function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }
         This agent runs on the Claude Code harness, not the Nodal loop.
       </p>
       <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
-        It <strong>does</strong> receive its identity, its personality, its memory facts, the
-        absolute paths of its workspaces, the state of the repository, and the list of its
-        teammates. It does <strong>not</strong> receive Nodal&apos;s tools, skills, connectors, MCP
-        servers or per-tool approvals — its toolbox is the CLI&apos;s own, so changing those here
-        would have no effect.
+        It <strong>does</strong> receive its identity, its personality, the absolute paths of its
+        workspaces, the state of the repository, and — when it has them — its memory facts and the
+        list of its teammates.
+      </p>
+      <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
+        What it does <strong>not</strong> get is the ability to USE Nodal&apos;s tools, skills,
+        connectors or MCP servers: its toolbox is the CLI&apos;s own. Their names may still appear
+        in its prompt as information — so it can tell you a capability exists — but assigning one
+        here will not let it call anything.
       </p>
       <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
         It also cannot hand work to its teammates: delegating is a tool call, and this session has
@@ -2110,7 +2114,7 @@ function CodeTaskSection({
     <SectionCard>
       <SectionHead
         label="Call a coding CLI (tool)"
-        hint="This agent stays a Nodal agent and CALLS a coding CLI for one task, like any other tool. Different from running the agent ON a CLI — that is in Settings. Runs use your subscription; treat it the same as Command execution."
+        hint="This agent stays a Nodal agent and CALLS a coding CLI for one task, like any other tool. Different from running the agent ON a CLI, which is in Settings. Runs use your subscription; treat it the same as Command execution."
       />
 
       <div className="flex items-start gap-4">
@@ -3741,7 +3745,7 @@ function ClaudeCodeRuntimeCard({
     <SectionCard>
       <SectionHead
         label="Run this agent ON Claude Code"
-        hint="The agent's whole turn is served by Claude Code — there is no Nodal reasoning loop. Different from CALLING a coding CLI as a tool, which is on the Tools tab. What Nodal keeps is listed below."
+        hint="The agent's whole turn is served by Claude Code — there is no Nodal reasoning loop. Different from CALLING a coding CLI as a tool, which is on the Autonomy tab (and its provider defaults on Tools). What Nodal keeps is listed below."
       />
 
       <p className="text-body-13 leading-[1.5]! text-ink-3">{CLAUDE_CODE_DISCLAIMER}</p>

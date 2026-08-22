@@ -36,6 +36,7 @@ import {
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
+import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
@@ -66,6 +67,35 @@ export interface CliRuntimeJobRow {
   channel: string | null;
   conversationId: string | null;
   task: string | null;
+}
+
+/**
+ * Le JobContext d une session CLI — UN seul endroit, traverse par les deux
+ * chemins (job et chat).
+ *
+ * Il etait construit en double, et les deux copies ont derive : la #7 a livre la
+ * conscience du depot, la #8 a cable buildSystemPrompt ici, et NI l un NI l
+ * autre chemin ne passait `workspaceGit`. Le bloc git n est rendu que si ce
+ * champ existe, donc l agent qui en a le plus besoin — celui qui EST une CLI de
+ * code — ne l a jamais recu. Trouve parce qu une banniere d interface affirmait
+ * le contraire, pas par un test.
+ *
+ * Une fonction pure, donc testable, et surtout : un seul endroit ou ajouter le
+ * prochain champ.
+ */
+export function buildCliRuntimeJobContext(args: {
+  origin: string;
+  task?: string | null;
+  chatId?: string | null;
+  workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
+}): Parameters<typeof buildSystemPrompt>[2] {
+  return {
+    origin: args.origin,
+    surface: 'cli-runtime',
+    ...(args.task ? { task: args.task } : {}),
+    ...(args.chatId ? { telegramChatId: args.chatId } : {}),
+    ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
+  };
 }
 
 export async function runCliRuntimeJob(args: {
@@ -186,12 +216,28 @@ export async function runCliRuntimeJob(args: {
   //
   // `surface: 'cli-runtime'` drops the ONE block that would be wrong here, the
   // built-in capability list: this agent's tools are the CLI's, not Nodal's.
-  const systemPrompt = await buildSystemPrompt(agentRow, db, {
-    origin: job.channel ?? 'unknown',
-    surface: 'cli-runtime',
-    ...(job.task ? { task: job.task } : {}),
-    ...(job.chatId ? { telegramChatId: job.chatId } : {}),
-  });
+  // La sonde git, que le chemin runtime ne transmettait PAS.
+  //
+  // La PR #7 a livre la conscience du depot, et la #8 a cable buildSystemPrompt
+  // ici — sans jamais lui passer workspaceGit. Le bloc git n est rendu que si ce
+  // champ existe, donc l agent qui en a le PLUS besoin, celui qui EST une CLI de
+  // code, ne l a jamais eu. Trouve parce qu une banniere d interface affirmait
+  // le contraire.
+  //
+  // Sonde le cwd reel de la session, pas le workspace partage : c est la que la
+  // CLI travaille.
+  const workspaceGit = await probeWorkspaceGit(cwd);
+
+  const systemPrompt = await buildSystemPrompt(
+    agentRow,
+    db,
+    buildCliRuntimeJobContext({
+      origin: job.channel ?? 'unknown',
+      task: job.task,
+      chatId: job.chatId,
+      workspaceGit,
+    }),
+  );
 
   // Keep the job alive under the 5-minute reaper for the whole CLI run.
   const heartbeat = setInterval(() => {
