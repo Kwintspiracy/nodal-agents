@@ -57,6 +57,17 @@ const EXCLUDES = [
   '*.log',
 ];
 
+/**
+ * What a checkpoint does NOT cover — one sentence, so the limit travels with
+ * the feature instead of living only in a code comment nobody reads before
+ * losing a file. Rendered wherever checkpoints are presented to a human.
+ */
+export const CHECKPOINT_COVERAGE_NOTE =
+  'Checkpoints cover files tracked by an ordinary `git add`: anything the ' +
+  "project's own .gitignore excludes (.env, local data, caches) is NOT " +
+  'snapshotted and cannot be restored. That is deliberate — copying ignored ' +
+  'secrets into a second, unmanaged store would be worse than the gap.';
+
 export interface Checkpoint {
   /** Commit sha in the shadow store. */
   sha: string;
@@ -150,6 +161,20 @@ export async function snapshot(
   const key = workspaceKey(workspace);
   const ref = `refs/nodal/${key}`;
 
+  // `add -A` WITHOUT `-f` — a deliberate hole, documented rather than hidden.
+  //
+  // git honours the workspace's own `.gitignore` here, so a file the project
+  // ignores (`.env`, `data/private.json`, local caches) is NOT in the snapshot
+  // and CANNOT be restored. `-Af` would close that hole, and open a worse one:
+  // every secret the project deliberately keeps out of version control would
+  // be copied, in cleartext, into a shadow store under the user's home — kept
+  // for as long as the checkpoints are, and never covered by the project's own
+  // secret hygiene.
+  //
+  // Between "a wrong write to an ignored file cannot be undone" and "every
+  // secret gets a second, unmanaged copy", the first is the smaller harm. But
+  // it is only acceptable while it is SAID: see CHECKPOINT_COVERAGE_NOTE and
+  // the test that pins this behaviour, so nobody discovers it from a lost file.
   await git(store, workspace, ['add', '-A']);
   const tree = await git(store, workspace, ['write-tree']);
 

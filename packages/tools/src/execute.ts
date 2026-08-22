@@ -498,44 +498,64 @@ const MAX_REMEMBERED_TURNS = 500;
  */
 async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promise<string | null> {
   const store = ctx.checkpointsRoot;
-  const workspace = ctx.workspaces?.[0]?.path;
+  const workspaces = ctx.workspaces ?? [];
 
   // No store configured (tests, chat turns) — no net, and no pretence of one.
   // Said once rather than silently: an owner who thinks checkpoints are on
   // deserves to learn otherwise from a log line, not from a lost file.
-  if (!store || !workspace) {
-    if (store && !workspace) {
+  if (!store || workspaces.length === 0) {
+    if (store && workspaces.length === 0) {
       console.warn(`[checkpoints] ${toolName}: no workspace resolved — running without a net`);
     }
     return null;
   }
 
-  // `ctx.turn` is optional in the type. Without it, "once per turn" has no
-  // meaning, so fall back to one snapshot per call — slower, never unsafe —
-  // and say which mode is in effect rather than let the difference be invisible.
-  const turnKey =
-    ctx.turn === undefined
-      ? `${ctx.jobId}:call:${Date.now()}:${workspace}`
-      : `${ctx.jobId}:turn:${ctx.turn}:${workspace}`;
+  // EVERY workspace, not just the first.
+  //
+  // This took `ctx.workspaces[0].path` at first, which is not where the write
+  // necessarily lands: `file_write` resolves its target by label or absolute
+  // path (file-ops/workspace.ts), so an agent holding [docs, code] writing to
+  // `code/x.ts` got a snapshot of `docs` — and the write proceeded, and
+  // restoring gave back nothing. The per-turn key carried that same wrong
+  // workspace, so every later write of the turn counted as already covered.
+  //
+  // executeTool cannot know the target without re-implementing each tool's
+  // path resolution, and a net that depends on guessing right is not a net.
+  // Snapshotting all of them costs one commit per workspace per turn against a
+  // store that is already content-addressed — cheap, and correct whichever one
+  // the tool picks.
+  for (const ws of workspaces) {
+    const workspace = ws.path;
 
-  if (checkpointedTurns.has(turnKey)) return null;
+    // `ctx.turn` is optional in the type. Without it, "once per turn" has no
+    // meaning, so fall back to one snapshot per call — slower, never unsafe —
+    // and say which mode is in effect rather than let the difference be invisible.
+    const turnKey =
+      ctx.turn === undefined
+        ? `${ctx.jobId}:call:${Date.now()}:${workspace}`
+        : `${ctx.jobId}:turn:${ctx.turn}:${workspace}`;
 
-  try {
-    const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`);
-    if (checkpointedTurns.size >= MAX_REMEMBERED_TURNS) {
-      const oldest = checkpointedTurns.values().next().value;
-      if (oldest !== undefined) checkpointedTurns.delete(oldest);
+    if (checkpointedTurns.has(turnKey)) continue;
+
+    try {
+      const cp = await snapshot(store, workspace, `before ${toolName} (job ${ctx.jobId})`);
+      if (checkpointedTurns.size >= MAX_REMEMBERED_TURNS) {
+        const oldest = checkpointedTurns.values().next().value;
+        if (oldest !== undefined) checkpointedTurns.delete(oldest);
+      }
+      checkpointedTurns.add(turnKey);
+      if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} ${workspace} before ${toolName}`);
+    } catch (err) {
+      // One workspace that cannot be snapshotted is enough to refuse: we have
+      // no way to tell it is not the one about to be written.
+      return (
+        `checkpoint_failed: could not snapshot "${workspace}" before running "${toolName}", ` +
+        `so the write was refused rather than run without a way back. ` +
+        `Cause: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`
+      );
     }
-    checkpointedTurns.add(turnKey);
-    if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} before ${toolName}`);
-    return null;
-  } catch (err) {
-    return (
-      `checkpoint_failed: could not snapshot the workspace before running "${toolName}", ` +
-      `so the write was refused rather than run without a way back. ` +
-      `Cause: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`
-    );
   }
+  return null;
 }
 
 async function _writeToolCall(

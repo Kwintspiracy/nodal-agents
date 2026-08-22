@@ -35,8 +35,18 @@ export interface WorkspaceGitState {
   root: string;
   /** Current branch, or null in detached HEAD. */
   branch: string | null;
-  /** Number of entries `git status --porcelain` reports. 0 = clean. */
-  dirtyCount: number;
+  /**
+   * Number of entries `git status --porcelain` reports. 0 = clean.
+   *
+   * NULL when the status probe itself failed or timed out — which is NOT the
+   * same as clean, and must never be rendered as such. It was a plain `number`
+   * at first, defaulting to 0 on failure: a timed-out `git status` and a
+   * genuinely clean tree produced the identical value, so the prompt announced
+   * "working tree: clean" over an unknown state and the agent acted on it.
+   * That is invariant #4 (fail loud, no silent smart fallback) broken in the
+   * one place it matters most — the sentence the agent trusts before writing.
+   */
+  dirtyCount: number | null;
   /** Short SHA of HEAD, or null in a repo with no commits yet. */
   head: string | null;
 }
@@ -76,7 +86,11 @@ export async function probeWorkspaceGit(cwd: string): Promise<WorkspaceGitState 
     // `HEAD` is what --abbrev-ref prints in a detached checkout; that is not a
     // branch name and must not be presented as one.
     branch: branchRaw && branchRaw !== 'HEAD' ? branchRaw : null,
-    dirtyCount: statusRaw ? statusRaw.split('\n').filter((l) => l.trim() !== '').length : 0,
+    // `null` (probe failed) and `''` (clean tree) are different answers and
+    // must not collapse into the same number — hence the explicit null check
+    // rather than a truthiness test on a string that is empty when clean.
+    dirtyCount:
+      statusRaw === null ? null : statusRaw.split('\n').filter((l) => l.trim() !== '').length,
     head: headRaw,
   };
 }

@@ -106,7 +106,8 @@ export interface JobContext {
   workspaceGit?: {
     root: string;
     branch: string | null;
-    dirtyCount: number;
+    /** null = the status probe gave no answer. NOT the same as clean. */
+    dirtyCount: number | null;
     head: string | null;
   };
 }
@@ -687,9 +688,14 @@ export async function buildSystemPrompt(
           `root: ${jobContext.workspaceGit.root}`,
           `branch: ${jobContext.workspaceGit.branch ?? '(detached HEAD)'}`,
           `head: ${jobContext.workspaceGit.head ?? '(no commit yet)'}`,
-          jobContext.workspaceGit.dirtyCount === 0
-            ? 'working tree: clean'
-            : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
+          // null = the status probe failed. Saying "clean" there would be a
+          // silent smart fallback on the one line the agent trusts before it
+          // writes; saying "unknown" costs nothing and is true.
+          jobContext.workspaceGit.dirtyCount === null
+            ? 'working tree: UNKNOWN (git status did not answer — do not assume it is clean)'
+            : jobContext.workspaceGit.dirtyCount === 0
+              ? 'working tree: clean'
+              : `working tree: ${jobContext.workspaceGit.dirtyCount} modified entr${jobContext.workspaceGit.dirtyCount === 1 ? 'y' : 'ies'}`,
         ].join('\n'),
       )
     : '';

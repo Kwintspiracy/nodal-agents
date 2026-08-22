@@ -16,7 +16,13 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { snapshot, listCheckpoints, restoreCheckpoint, ensureStore } from './checkpoints';
+import {
+  snapshot,
+  listCheckpoints,
+  restoreCheckpoint,
+  ensureStore,
+  CHECKPOINT_COVERAGE_NOTE,
+} from './checkpoints';
 
 let root: string;
 let store: string;
@@ -182,5 +188,42 @@ describe('la clé de workspace', () => {
     await writeFile(join(ws, 'a.txt'), 'contenu');
     await snapshot(store, ws, 'sans slash final');
     expect((await listCheckpoints(store, ws + '/')).length).toBe(1);
+  });
+});
+
+describe('couverture — ce que le filet ne rattrape PAS', () => {
+  it("n'inclut pas un fichier couvert par le .gitignore du projet", async () => {
+    // Constat 2 de la review de la #7. `git add -A` sans `-f` respecte le
+    // .gitignore du workspace, donc un .env n'entre jamais dans le snapshot et
+    // ne peut pas être restauré — alors que la fonctionnalité promet un filet
+    // sous CHAQUE écriture.
+    //
+    // Ce test ne corrige pas le trou : il le FIXE. Le choix est délibéré —
+    // `-Af` copierait tous les secrets du projet dans un magasin non géré sous
+    // le home. Ce qui n'était pas acceptable, c'est que le trou soit invisible.
+    // Si quelqu'un passe un jour à `-Af`, ce test rougit et l'oblige à décider
+    // sciemment plutôt qu'à hériter du comportement.
+    await writeFile(join(ws, '.gitignore'), '.env\n');
+    await writeFile(join(ws, '.env'), 'SECRET=avant');
+    await writeFile(join(ws, 'code.txt'), 'v1');
+
+    await snapshot(store, ws, 'avant');
+    await writeFile(join(ws, '.env'), 'SECRET=ECRASE');
+    await writeFile(join(ws, 'code.txt'), 'v2');
+
+    const [cp] = await listCheckpoints(store, ws);
+    await restoreCheckpoint(store, ws, cp!.sha);
+
+    expect(await readFile(join(ws, 'code.txt'), 'utf-8'), 'le fichier suivi revient').toBe('v1');
+    expect(
+      await readFile(join(ws, '.env'), 'utf-8'),
+      'le fichier ignoré N EST PAS restauré — limite connue et documentée',
+    ).toBe('SECRET=ECRASE');
+  });
+
+  it('annonce sa limite dans une note exportée', async () => {
+    // La limite ci-dessus n'est tolérable que si elle voyage avec le paquet.
+    expect(CHECKPOINT_COVERAGE_NOTE).toMatch(/gitignore/);
+    expect(CHECKPOINT_COVERAGE_NOTE).toMatch(/cannot be restored/);
   });
 });

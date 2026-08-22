@@ -23,6 +23,7 @@ import {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  assertRuntimeSessionKey,
 } from '@nodal-agents/tools';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
@@ -38,7 +39,9 @@ export async function runCliRuntimeChatTurn(args: {
   conversationId: string;
   message: string;
 }): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
-  const { db, entityId, agentRow, conversationId, message } = args;
+  const { db, entityId, agentRow, message } = args;
+  // Same shared-table guard as the job path — see assertRuntimeSessionKey.
+  const conversationId = assertRuntimeSessionKey(args.conversationId);
 
   if (agentRow.runtime !== 'claude-code') {
     return { ok: false, error: `runtime_not_supported:${agentRow.runtime}` };

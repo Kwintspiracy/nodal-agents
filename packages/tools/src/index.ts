@@ -80,6 +80,8 @@ export {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  assertRuntimeSessionKey,
+  CODE_TASK_KEY_PREFIX,
 } from './builtin/index';
 export type {
   AlwaysOnTool,
