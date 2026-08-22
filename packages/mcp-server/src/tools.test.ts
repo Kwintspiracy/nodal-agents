@@ -126,3 +126,30 @@ describe('le contrat run_task', () => {
     await client.close();
   });
 });
+
+describe('le plafond sous la concurrence', () => {
+  it('tient quand dix appels partent EN MÊME TEMPS', async () => {
+    // Constat de la passe 2 : contrôle -> insert (await) -> incrément laissait
+    // dix appels concurrents observer la même valeur avant qu'aucun ne
+    // l'incrémente — dix jobs payants sous un plafond de deux. Le test
+    // séquentiel ne pouvait pas le voir ; celui-ci lance la salve d'un coup.
+    const server = await buildNodalMcpServer({
+      db,
+      agentId: seed.agentId,
+      maxJobsPerProcess: 2,
+    });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0.0.1' });
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+
+    const salve = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        client.callTool({ name: 'run_task', arguments: { instruction: `salve ${i}` } }),
+      ),
+    );
+
+    const reussis = salve.filter((r) => !(r.isError ?? false)).length;
+    expect(reussis, `${reussis} jobs créés sous un plafond de 2`).toBe(2);
+    await client.close();
+  });
+});

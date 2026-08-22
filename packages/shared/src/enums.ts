@@ -14,6 +14,7 @@ export const JOB_CHANNELS = [
   'discord',
   'dashboard',
   'webhook',
+  'mcp',
 ] as const;
 export const JobChannelSchema = z.enum(JOB_CHANNELS);
 export type JobChannel = z.infer<typeof JobChannelSchema>;
