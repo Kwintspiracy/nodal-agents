@@ -7,103 +7,144 @@
 // donc entier — la config personnelle de l'utilisateur n'entre pas — et Nodal
 // peut quand même exposer les siens.
 //
+// UN SEUL OUTIL : `run_task`. Le contrat de la surface chat, appliqué ici pour
+// la même raison — un appel MCP n'est pas un job, donc il ne reçoit pas les
+// outils d'un job. Il crée un job, et le job exécute avec toutes ses gardes
+// (approbations, audit, compteurs, hiérarchie). Voir tools.ts pour l'autopsie
+// de la version qui exposait les outils internes directement.
+//
 // STDIO UNIQUEMENT. Aucune écoute réseau ici, et ce n'est pas une omission :
-// un point d'entrée qui crée des jobs et fait tourner des outils exige une
-// authentification que ce lot ne livre pas. En stdio, le serveur est un
-// sous-processus du client — sa confiance est exactement celle de ce shell.
+// un point d'entrée qui crée des jobs exige une authentification que ce lot ne
+// livre pas. En stdio, le serveur est un sous-processus du client — sa
+// confiance est exactement celle de ce shell.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { agents, agentJobs, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import type { ToolContext } from '@nodal-agents/tools';
-import { listExposableTools, isDeferredToC2 } from './tools';
+import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
 
 export interface McpServerOptions {
   db: AnyDrizzleDb;
   /**
-   * AU NOM DE QUI le client appelle.
-   *
-   * Il n'y a ni job ni conversation derrière un appel MCP, donc aucune identité
-   * implicite : elle doit être choisie explicitement. C'est aussi le périmètre
-   * d'autorisation — les outils exposés sont ceux de CET agent, jamais un
-   * catalogue global.
+   * AU NOM DE QUI le client appelle. C'est le SEUL paramètre d'identité :
+   * l'entité est lue depuis la ligne agent, jamais fournie par l'appelant.
+   * La review a montré pourquoi — `agentId` de l'entité A plus `entityId` de
+   * l'entité B fabriquait une écriture inter-workspace signée par A.
    */
   agentId: string;
-  entityId: string | null;
-  /** Nom annoncé au client. */
   name?: string;
   version?: string;
+  /**
+   * Plafond de jobs créés par ce processus serveur. Les compteurs anti-boucle
+   * de Nodal vivent DANS un job (tours, outils, profondeur) — ils ne bornent
+   * pas le nombre de jobs racines qu'une surface externe injecte. Un client en
+   * boucle créerait sinon des racines payantes sans limite (constat review).
+   * Le processus est jetable : relancer le serveur remet le compteur à zéro,
+   * ce qui est un geste HUMAIN — c'est exactement la friction voulue.
+   */
+  maxJobsPerProcess?: number;
 }
+
+const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
 
 /**
  * Construit le serveur sans le connecter — pour que les tests puissent
  * l'inspecter sans ouvrir de transport.
+ *
+ * Échoue FORT si l'agent n'existe pas ou est inactif : la review a montré
+ * qu'un `agentId` inventé recevait quand même les outils de création. Un
+ * serveur au nom de personne n'a rien à servir.
  */
 export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpServer> {
+  const [agentRow] = await opts.db
+    .select({ id: agents.id, entityId: agents.entityId, active: agents.active })
+    .from(agents)
+    .where(eq(agents.id, opts.agentId))
+    .limit(1);
+
+  if (!agentRow || !agentRow.active) {
+    throw new Error(
+      `mcp_agent_not_found: no active agent with id "${opts.agentId}". ` +
+        `This server speaks FOR one agent; without it there is nothing to expose.`,
+    );
+  }
+
   const server = new McpServer({
     name: opts.name ?? 'nodal',
     version: opts.version ?? '0.1.0',
   });
 
-  const tools = await listExposableTools(opts.agentId, opts.db);
+  const maxJobs = opts.maxJobsPerProcess ?? DEFAULT_MAX_JOBS_PER_PROCESS;
+  let jobsCreated = 0;
 
-  for (const tool of tools) {
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        // Le schéma Zod de l'outil Nodal EST le schéma MCP — pas une copie
-        // rédigée à la main qui divergerait au premier champ ajouté.
-        inputSchema: (tool.inputSchema as { shape?: Record<string, never> }).shape ?? {},
-      },
-      async (args: unknown) => {
-        if (isDeferredToC2(tool.name)) {
-          // Refus EXPLICITE plutôt qu'absence silencieuse : l'outil existe dans
-          // la base de cet agent, le client a le droit de savoir pourquoi il ne
-          // peut pas s'en servir aujourd'hui.
+  server.registerTool(
+    'run_task',
+    {
+      description: RUN_TASK_DESCRIPTION,
+      inputSchema: runTaskInputSchema.shape,
+    },
+    async (args: unknown) => {
+      try {
+        if (jobsCreated >= maxJobs) {
           return {
             isError: true,
             content: [
               {
                 type: 'text' as const,
                 text:
-                  `${tool.name} n'est pas encore disponible par MCP. Cet outil rend la main ` +
-                  `APRÈS que l'agent délégué a fini, ce qu'un appel MCP synchrone ne peut pas ` +
-                  `attendre sans bloquer le client. Utilise create_task, qui confie le travail ` +
-                  `au tableau de tâches et rend la main immédiatement.`,
+                  `mcp_job_cap_reached: this server process already created ${maxJobs} jobs. ` +
+                  `The cap exists because MCP calls live outside Nodal's per-job loop ` +
+                  `guards. Restart the server to reset it — deliberately a human gesture.`,
               },
             ],
           };
         }
 
-        const ctx = {
-          db: opts.db,
-          entityId: opts.entityId,
-          agentId: opts.agentId,
-          // Pas de job derrière un appel MCP. Les outils qui en exigent un
-          // échoueront fort, ce qui est le comportement voulu : mieux vaut une
-          // erreur nette qu'un job orphelin rattaché à un identifiant inventé.
-          jobId: null,
-        } as unknown as ToolContext;
+        const { instruction } = runTaskInputSchema.parse(args);
 
-        try {
-          const parsed = tool.inputSchema.parse(args);
-          const result = await tool.execute(parsed, ctx);
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-        } catch (err) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text' as const,
-                text: err instanceof Error ? err.message : String(err),
-              },
-            ],
-          };
-        }
-      },
-    );
-  }
+        // Le même insert que run_task côté chat : un job pending, ramassé par
+        // le worker, exécuté par la boucle NORMALE — approbations, audit,
+        // compteurs, hiérarchie. Rien n'est exécuté ici.
+        const [job] = await opts.db
+          .insert(agentJobs)
+          .values({
+            entityId: agentRow.entityId,
+            agentId: agentRow.id,
+            status: 'pending',
+            channel: 'mcp',
+            task: instruction,
+            messages: [{ role: 'user', content: instruction }],
+          })
+          .returning({ id: agentJobs.id });
+
+        jobsCreated += 1;
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                jobId: job?.id,
+                status: 'pending',
+                note: 'The job runs asynchronously under the agent’s own rules; results land on the Runs page.',
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+        };
+      }
+    },
+  );
 
   return server;
 }

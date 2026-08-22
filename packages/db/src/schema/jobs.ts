@@ -209,7 +209,7 @@ export const agentJobs = pgTable(
     ),
     check(
       'agent_jobs_channel_check',
-      sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook')`,
+      sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook','mcp')`,
     ),
   ],
 );
