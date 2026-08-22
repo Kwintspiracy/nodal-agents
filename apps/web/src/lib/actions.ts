@@ -10553,6 +10553,17 @@ export type CodingProcessRow = {
   stage: string;
   task: string;
   costUsd: number;
+  /**
+   * Which coding CLIs actually ran in this pipeline ('claude', 'codex', or
+   * both). Empty when no cli_runs row exists yet — a session that has not
+   * finished a turn.
+   *
+   * Recorded since the start (cli_runs.provider, constrained in the schema) and
+   * never surfaced until now: a run whose executor is unknown cannot be read
+   * for security (the two CLIs do not confine identically) nor attributed for
+   * cost.
+   */
+  providers: string[];
   filesChanged: number;
   activityAt: string | null;
 };
@@ -10939,17 +10950,27 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           ? await db
               .select({
                 jobId: cliRuns.jobId,
+                // Grouped by provider TOO: the same pipeline can hand work to
+                // both CLIs, and "who ran this" is not answerable from a sum.
+                // The security reading depends on it (PR #6: the two do not
+                // confine the same way) and so does cost attribution — both
+                // spend the owner's subscription, at different rates.
+                provider: cliRuns.provider,
                 cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)`,
               })
               .from(cliRuns)
               .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)))
-              .groupBy(cliRuns.jobId)
+              .groupBy(cliRuns.jobId, cliRuns.provider)
           : [];
       const costByRoot = new Map<string, number>();
+      const providersByRoot = new Map<string, Set<string>>();
       for (const r of costRows) {
         if (!r.jobId) continue;
         const root = rootForPipelineMember.get(r.jobId) ?? r.jobId;
         costByRoot.set(root, (costByRoot.get(root) ?? 0) + Number(r.cost));
+        const set = providersByRoot.get(root) ?? new Set<string>();
+        set.add(r.provider);
+        providersByRoot.set(root, set);
       }
 
       // Files touched = the PIPELINE's files (root + direct children), from
@@ -11009,6 +11030,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         ),
         task: truncateForList(j.task, 120),
         costUsd: costByRoot.get(j.id) ?? 0,
+        providers: Array.from(providersByRoot.get(j.id) ?? []).sort(),
         filesChanged: filesByRoot.get(j.id)?.size ?? 0,
         activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
       }));
@@ -11257,6 +11279,7 @@ export async function getCodingProcessDetailAction(
       const cliRunRows = await db
         .select({
           jobId: cliRuns.jobId,
+          provider: cliRuns.provider,
           inputTokens: cliRuns.inputTokens,
           outputTokens: cliRuns.outputTokens,
           cachedTokens: cliRuns.cachedTokens,
@@ -11483,6 +11506,9 @@ export async function getCodingProcessDetailAction(
           stage,
           task: job.task,
           costUsd,
+          // Les CLI qui ont REELLEMENT tourne dans ce pipeline, tries pour que
+          // l ordre ne depende pas de celui des lignes.
+          providers: Array.from(new Set(cliRunRows.map((r) => r.provider))).sort(),
           filesChanged,
           activityAt: job.createdAt ? job.createdAt.toISOString() : null,
           durationMs: pipelineDurationMs,
@@ -11506,6 +11532,7 @@ export async function getCodingProcessDetailAction(
       .select({
         agentId: cliRuns.agentId,
         agentName: agents.name,
+        provider: cliRuns.provider,
         costUsd: cliRuns.costUsd,
         inputTokens: cliRuns.inputTokens,
         outputTokens: cliRuns.outputTokens,
@@ -11547,6 +11574,9 @@ export async function getCodingProcessDetailAction(
         stage: 'chat',
         task: 'Runtime chat session',
         costUsd: totalCost,
+        // Une session de runtime n a PAS de code_task, donc le provider n existe
+        // que dans cli_runs — c est le cas ou la jointure est la seule source.
+        providers: Array.from(new Set(runs.map((r) => r.provider))).sort(),
         filesChanged: 0,
         activityAt: lastRun.createdAt ? lastRun.createdAt.toISOString() : null,
         durationMs: null,
