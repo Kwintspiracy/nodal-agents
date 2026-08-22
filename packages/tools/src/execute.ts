@@ -17,6 +17,7 @@ import type {
 } from './types';
 import { InvalidInputError } from './errors';
 import { snapshot } from '@nodal-agents/checkpoints';
+import { stat } from 'node:fs/promises';
 
 // ─── executeTool ──────────────────────────────────────────────────────────────
 
@@ -526,6 +527,29 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
   // the tool picks.
   for (const ws of workspaces) {
     const workspace = ws.path;
+
+    // A workspace that is not reachable is skipped, not fatal.
+    //
+    // Snapshotting all of them fixed the wrong-target bug but created another:
+    // an agent holding [shared, archive] could no longer write to `shared`
+    // because `archive` sat on an unmounted drive. The write was refused even
+    // though its real target was healthy and already covered.
+    //
+    // The rule that resolves both: a directory we cannot even stat cannot be
+    // the target either — a write into it would fail on its own. So skipping it
+    // gives up no guarantee, while a snapshot that fails on a REACHABLE
+    // workspace still refuses, because there we genuinely cannot tell whether
+    // it is the one about to change.
+    try {
+      const st = await stat(workspace);
+      if (!st.isDirectory()) throw new Error('not a directory');
+    } catch {
+      console.warn(
+        `[checkpoints] ${toolName}: workspace "${workspace}" unreachable — skipped ` +
+          `(a write there would fail anyway; other workspaces are still covered)`,
+      );
+      continue;
+    }
 
     // `ctx.turn` is optional in the type. Without it, "once per turn" has no
     // meaning, so fall back to one snapshot per call — slower, never unsafe —

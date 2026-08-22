@@ -10,7 +10,12 @@
 
 import chalk from 'chalk';
 import { resolve } from 'node:path';
-import { listCheckpoints, restoreCheckpoint, checkpointsRoot } from '@nodal-agents/checkpoints';
+import {
+  listCheckpoints,
+  restoreCheckpoint,
+  checkpointsRoot,
+  CHECKPOINT_COVERAGE_NOTE,
+} from '@nodal-agents/checkpoints';
 import type { Checkpoint } from '@nodal-agents/checkpoints';
 
 function ago(iso: string): string {
@@ -44,7 +49,11 @@ export async function runCheckpointsList(workspace?: string): Promise<void> {
       `  ${chalk.cyan(cp.sha.slice(0, 8))}  ${chalk.gray(ago(cp.at).padEnd(12))}  ${cp.label}`,
     );
   }
-  console.log(chalk.gray(`\n  Restore one:  nodal-agents checkpoints restore <sha>\n`));
+  console.log(chalk.gray(`\n  Restore one:  nodal-agents checkpoints restore <sha>`));
+  // La limite fait partie de la promesse. Elle vivait dans une constante
+  // exportée que RIEN ne rendait — un compromis n'est acceptable que tant
+  // qu'il est dit à la personne qui compte dessus.
+  console.log(chalk.gray(`  ${CHECKPOINT_COVERAGE_NOTE}\n`));
 }
 
 export async function runCheckpointsRestore(sha: string, workspace?: string): Promise<void> {
@@ -70,6 +79,7 @@ export async function runCheckpointsRestore(sha: string, workspace?: string): Pr
   console.log(chalk.yellow(`Restoring ${match.sha.slice(0, 8)} — ${match.label}`));
   const res = await restoreCheckpoint(checkpointsRoot(), ws, match.sha);
   console.log(chalk.green(`  Restored ${ws}`));
+  console.log(chalk.gray(`  ${CHECKPOINT_COVERAGE_NOTE}`));
 
   if (res.safety) {
     // The state being discarded may have been the one worth keeping, so it is

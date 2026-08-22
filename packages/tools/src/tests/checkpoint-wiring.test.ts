@@ -233,3 +233,29 @@ describe('multi-workspace — le constat 1 de la review', () => {
     ).toBeGreaterThan(0);
   });
 });
+
+describe('workspace injoignable — le constat 2 de la passe 2', () => {
+  it("n'empêche PAS d'écrire dans un workspace sain", async () => {
+    // Le correctif « photographier tous les workspaces » avait cree ce defaut :
+    // un agent tenant [shared, archive] ne pouvait plus ecrire dans `shared`
+    // parce que `archive` etait sur un disque demonte. L ecriture etait refusee
+    // alors que sa cible reelle etait saine et deja couverte.
+    const fantome = join(root, 'jamais-cree');
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'a.txt', content: 'ok' },
+      ctx({
+        workspaces: [
+          { label: 'shared', path: ws } as never,
+          { label: 'archive', path: fantome } as never,
+        ],
+      }),
+      opts,
+    );
+    expect(res.outcome, 'un workspace injoignable a bloque une ecriture saine').toBe('success');
+    expect(
+      (await listCheckpoints(store, ws)).length,
+      'la cible saine reste couverte',
+    ).toBeGreaterThan(0);
+  });
+});
