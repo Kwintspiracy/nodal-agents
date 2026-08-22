@@ -34,6 +34,13 @@ async function fetchJson(url) {
   return res.json();
 }
 
+// A source that fails to load is not a source that says "no vision". Both
+// fetches used to warn and carry on, so with no network the script printed an
+// EMPTY "paste into VISION_MODEL_IDS" block and exited 0 — an operator pasting
+// that output would have wiped the list and blinded every model at once. Track
+// the failures and refuse to emit a list built on nothing.
+const failures = [];
+
 // OpenRouter: id → input_modalities
 const orVision = new Map();
 try {
@@ -42,6 +49,7 @@ try {
   console.log(`OpenRouter: ${orVision.size} models`);
 } catch (e) {
   console.warn('OpenRouter fetch failed:', e.message);
+  failures.push(`OpenRouter: ${e.message}`);
 }
 
 // models.dev: provider → models → model → modalities.input. Index by the bare
@@ -59,6 +67,19 @@ try {
   console.log(`models.dev: ${mdVision.size} entries`);
 } catch (e) {
   console.warn('models.dev fetch failed:', e.message);
+  failures.push(`models.dev: ${e.message}`);
+}
+
+// Fail loud rather than emit a list nobody can trust (invariant #4). One source
+// down is already enough: the two cover different id forms, so a single outage
+// silently demotes whole families to text-only.
+if (failures.length > 0) {
+  console.error(
+    `\nRefusing to print a vision list — ${failures.length} of 2 sources failed:\n` +
+      failures.map((f) => `  - ${f}`).join('\n') +
+      `\nThe existing VISION_MODEL_IDS is more accurate than anything derivable here.`,
+  );
+  process.exit(1);
 }
 
 const vision = [];

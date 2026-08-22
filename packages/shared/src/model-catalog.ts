@@ -764,32 +764,50 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 9 },
     },
     {
+      // Price corrected 2026-08-22 from GET /api/v1/models (0.00000075 /
+      // 0.00000375 per token). It sat at 1.5/7.5 — Google's pre-promotion rate
+      // — while OpenRouter had already passed the cut through. Same 2x
+      // overstatement as the 3.7 entry below had; found by the same check.
+      // 'max' dropped for the same reason as 3.7: not in supported_efforts.
+      // ('minimal' IS published for this id and is NOT added here — a new
+      // level is a behaviour change, not a data correction.)
       modelId: 'google/gemini-3.6-flash',
       label: 'Gemini 3.6 Flash',
       capabilities: {
         tools: true,
         forcedToolChoice: true,
         reasoning: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 7.5 },
+      pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
     },
     {
-      // The OpenRouter twin of the native entry above. Kept on the same
-      // introductory pricing, and on this catalog's OpenRouter convention:
-      // forcedToolChoice stays true here, unlike the native side — the two
-      // routes do not behave identically and the difference is deliberate.
+      // The OpenRouter twin of the native entry above. forcedToolChoice stays
+      // true here, unlike the native side — the two routes do not behave
+      // identically and the difference is deliberate.
+      //
+      // The PRICE is NOT the native one. This block's rule (see the pricing
+      // note at the top of the file) is the rate OpenRouter actually bills,
+      // and OpenRouter resells this model well under Google's own introductory
+      // rate: prompt 0.000000375 / completion 0.000001875 per token, read from
+      // GET /api/v1/models on 2026-08-22. Copying the native 0.75/3.75 here
+      // overstates every call by 2x and trips the cost guard early.
+      //
+      // Efforts are the three OpenRouter publishes in supported_efforts for
+      // this id. 'max' is deliberately absent: it maps to xhigh, which
+      // OpenRouter folds back onto high, so it would show the user two
+      // controls that do the same thing.
       modelId: 'google/gemini-3.7-flash',
       label: 'Gemini 3.7 Flash',
       capabilities: {
         tools: true,
         forcedToolChoice: true,
         reasoning: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
+      pricing: { inputPerMillionUsd: 0.375, outputPerMillionUsd: 1.875 },
     },
     {
       modelId: 'google/gemma-4-31b-it',
@@ -1000,23 +1018,39 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
  * `node scripts/refresh-model-vision.mjs`. Keyed by model id (not provider)
  * because a model is vision-capable wherever it's served.
  */
+// Regenerated in full on 2026-08-22 by `node scripts/refresh-model-vision.mjs`
+// (OpenRouter: 421 models, models.dev: 10 460 entries). The generated set and
+// this list now match exactly — 0 missing, 0 extra.
+//
+// What the regeneration surfaced: 11 catalogued ids were absent, and they were
+// not obscure ones. `claude-opus-5`, `claude-sonnet-5` and `claude-fable-5`
+// were all missing, in both their native and `anthropic/` forms — so an agent
+// on the flagship model could not be shown an image. A model absent from this
+// set does not error: `hydrateForLlm` swaps the image for `visionRoutingNote`
+// (apps/runner/src/job/execute.ts), which tells the LLM it cannot see and to
+// delegate or say so. The user is therefore told something — but by a model
+// improvising over a capability note, never by a structured error, and the
+// message blames the model rather than this stale list.
+//
+// The lesson is about the refresh, not the entries: nothing runs this script,
+// so the list rots silently every time a model is catalogued. Re-run it
+// whenever an entry is added, and diff — do not hand-add one id and assume the
+// rest still holds. That assumption is exactly what left the flagship blind.
 export const VISION_MODEL_IDS = new Set<string>([
   // OpenRouter (verified via /api/v1/models)
+  'anthropic/claude-fable-5',
   'anthropic/claude-haiku-4.5',
   'anthropic/claude-opus-4.7',
   'anthropic/claude-opus-4.7-fast',
   'anthropic/claude-opus-4.8',
   'anthropic/claude-opus-4.8-fast',
+  'anthropic/claude-opus-5',
+  'anthropic/claude-opus-5-fast',
   'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-sonnet-5',
   'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3.1-pro-preview',
   'google/gemini-3.5-flash',
-  // 3.6 and 3.7 added by hand, both confirmed multimodal at
-  // ai.google.dev/gemini-api/docs. 3.6 was ALREADY missing here while sitting
-  // in the catalog above — a model that accepts images but is not listed here
-  // simply refuses them, silently, with no way for the user to tell why. The
-  // refresh script is the source of truth for this list, so the real fix is to
-  // re-run it; these two lines stop the hole from widening in the meantime.
   'google/gemini-3.6-flash',
   'google/gemini-3.7-flash',
   'google/gemma-4-31b-it',
@@ -1024,13 +1058,20 @@ export const VISION_MODEL_IDS = new Set<string>([
   'moonshotai/kimi-k2.6',
   'moonshotai/kimi-k2.7-code',
   'moonshotai/kimi-k3',
+  'openai/gpt-5.6-luna',
+  'openai/gpt-5.6-luna-pro',
+  'openai/gpt-5.6-terra-pro',
+  'qwen/qwen3.8-max',
   // Verified via OpenRouter /api/v1/models input_modalities (2026-07-20).
   // qwen/qwen3.7-max is deliberately absent — text-only per the same source.
   'x-ai/grok-4.5',
   'qwen/qwen3.7-plus',
   // Native-provider forms
+  'claude-fable-5',
   'claude-opus-4-8',
+  'claude-opus-5',
   'claude-sonnet-4-6',
+  'claude-sonnet-5',
   'claude-haiku-4-5-20251001',
   'gpt-5',
   'gpt-5-mini',
