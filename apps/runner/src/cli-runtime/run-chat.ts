@@ -27,6 +27,7 @@ import {
 } from '@nodal-agents/tools';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
@@ -116,11 +117,21 @@ export async function runCliRuntimeChatTurn(args: {
     }
   }
 
+  // Same defect as run-job.ts, same fix: the raw personality field alone loses
+  // the team block, memory, skills and workspace context that the orchestration
+  // layer assembles. `surface: 'cli-runtime'` drops only the built-in tool list,
+  // which describes tools this agent does not have.
+  const systemPrompt = await buildSystemPrompt(agentRow as never, db, {
+    origin: 'dashboard',
+    surface: 'cli-runtime',
+    task: message,
+  });
+
   let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
   try {
     turn = await runClaudeTurn({
       message,
-      personality: agentRow.personality,
+      personality: systemPrompt,
       cwd,
       mode,
       extraDisallowed: perms.extraDisallowed,

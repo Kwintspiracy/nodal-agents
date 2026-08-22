@@ -57,7 +57,7 @@ export interface JobContext {
    * `origin: 'dashboard'`, which also tags real jobs spawned by run_task (those
    * DO have the full toolset and must not get the chat directive).
    */
-  surface?: 'chat';
+  surface?: 'chat' | 'cli-runtime';
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
   /**
@@ -566,7 +566,17 @@ export async function buildSystemPrompt(
   //    EXCEPT on the in-app chat surface: there the agent has only `run_task`,
   //    so advertising built-in tools makes it call phantom tools (e.g.
   //    query_memory) that aren't provided — yielding an empty turn. Omit it.
-  const builtinBlock = jobContext?.surface === 'chat' ? '' : buildBuiltinCapabilitiesBlock();
+  // Two surfaces get no built-in capabilities block, for the same reason: the
+  // tools it documents are not the tools they have.
+  //   - 'chat'        — one tool, `run_task`.
+  //   - 'cli-runtime' — the agent IS a coding CLI; its palette is the CLI's own
+  //     (Read, Write, Bash…), not Nodal's builtins. Advertising `file_write` to
+  //     a Claude Code session invites it to call something that does not exist.
+  // Everything else — team, memory, skills, workspace, git — applies to both.
+  const builtinBlock =
+    jobContext?.surface === 'chat' || jobContext?.surface === 'cli-runtime'
+      ? ''
+      : buildBuiltinCapabilitiesBlock();
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).
