@@ -1,6 +1,50 @@
 <!-- artifact: https://claude.ai/code/artifact/7844e194-d0c1-440d-8c84-7534fb429f6a -->
 
-# PR — voir ce qui se passe pendant une session de code
+# PR — arrêter de perdre ce qui a tourné
+
+> **Révision après mesure.** Cette spec s'appelait « voir ce qui se passe
+> pendant une session de code » et se voulait une PR d'affichage. La mesure a
+> changé son sujet : il y a une **perte de données silencieuse** en amont, et
+> elle passe devant.
+
+## 0 — Une session longue rend un résultat amputé, sans le dire
+
+**Mesuré** sur six sessions Codex réelles du 22/08, stdout brut :
+
+| Session | Octets | Part du plafond |
+|---|---:|---:|
+| review #7, passe 1 | **384 110** | **96 %** |
+| review #8, passe 1 | 198 806 | 50 % |
+| review #8, passe 3 | 137 189 | 34 % |
+| plan de test #8 | 63 213 | 16 % |
+
+`MAX_STDOUT_CHARS` vaut `400_000` (`process.ts:25`). Une session réelle en a
+consommé 96 % — **en mode texte**, alors que `code_task` lance les CLI en mode
+JSON, nettement plus verbeux à contenu égal. Le plafond n'est donc pas
+théorique : on le frôle en usage normal et on le dépasse probablement déjà.
+
+**Ce qu'on perd quand il tombe.** `append` (`process.ts:167-175`) garde le
+DÉBUT et jette la suite. Or la fin du flux porte le résultat final, l'usage et
+le coût du tour. On conserve le préambule et on perd la réponse.
+
+**Et personne n'est prévenu.** Le drapeau `truncated` est calculé
+(`process.ts:169,174`), transporté jusqu'au résultat (`process.ts:243`) — et
+**jamais lu** : zéro occurrence dans `index.ts` ou `providers.ts`. Aucune
+erreur, aucun avertissement. C'est l'invariant #4 (échouer fort, jamais de repli
+silencieux) rompu à un endroit qui touche l'audit ET la facturation.
+
+**Deux correctifs, le premier indépendant du reste :**
+
+| Correctif | Pourquoi |
+|---|---|
+| Échouer fort quand `truncated` est vrai | un résultat amputé ne doit pas passer pour complet |
+| Lire le flux ligne par ligne | supprime la CAUSE : plus d'accumulation, donc plus de plafond |
+
+Le second règle le premier au passage — d'où l'ordre de la PR.
+
+---
+
+# Le reste : voir ce qui se passe pendant une session
 
 Une session de code tourne dix à vingt minutes. Pendant tout ce temps, l'onglet
 Code est **vide**. Quand la ligne finit par apparaître, elle ne dit pas qui l'a
@@ -32,12 +76,9 @@ ce travail.
 
 Il n'y a rien à inventer, il y a à brancher.
 
-**À vérifier avant de coder.** `process.ts` plafonne la capture
-(`MAX_STDOUT_CHARS`). Si une session dépasse ce plafond, une partie du flux est
-**déjà perdue aujourd'hui** — l'analyse au fil de l'eau ne ferait donc pas
-qu'améliorer l'affichage, elle récupérerait de l'audit qu'on jette. À mesurer :
-combien de caractères produit une session réelle, et à quelle fréquence le
-plafond est atteint.
+**Mesuré depuis** — voir le point 0 ci-dessus : le plafond est frôlé en usage
+normal, et l'analyse au fil de l'eau ne fait pas qu'améliorer l'affichage, elle
+supprime la cause de la perte.
 
 ## 2 — On ne sait pas qui a exécuté
 
