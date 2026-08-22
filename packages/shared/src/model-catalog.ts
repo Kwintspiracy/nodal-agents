@@ -422,6 +422,28 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // 3 Flash+); thinking cannot be fully disabled on this line → mandatory.
   google: [
     {
+      // Shipped 2026-08-13. Model id, tool support, thinking levels and the
+      // 1M window confirmed at ai.google.dev/gemini-api/docs/latest-model —
+      // same discipline as the entries below, which were verified live rather
+      // than assumed from a version number.
+      //
+      // Pricing is the INTRODUCTORY rate, which Google states expires
+      // 2026-12-31 and then doubles ($1.50 / $7.50). Recorded as it stands
+      // today; a stale price is a wrong cost estimate, not a broken model, and
+      // the pricing-coverage test will not catch it — so it is written down
+      // here to be re-checked rather than silently trusted.
+      modelId: 'gemini-3.7-flash',
+      label: 'Gemini 3.7 Flash',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
+    },
+    {
       modelId: 'gemini-3.5-flash',
       label: 'Gemini 3.5 Flash',
       capabilities: {
@@ -754,6 +776,22 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 7.5 },
     },
     {
+      // The OpenRouter twin of the native entry above. Kept on the same
+      // introductory pricing, and on this catalog's OpenRouter convention:
+      // forcedToolChoice stays true here, unlike the native side — the two
+      // routes do not behave identically and the difference is deliberate.
+      modelId: 'google/gemini-3.7-flash',
+      label: 'Gemini 3.7 Flash',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
+    },
+    {
       modelId: 'google/gemma-4-31b-it',
       label: 'Gemma 4 31B-IT',
       capabilities: { tools: true, forcedToolChoice: true },
@@ -973,6 +1011,14 @@ export const VISION_MODEL_IDS = new Set<string>([
   'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3.1-pro-preview',
   'google/gemini-3.5-flash',
+  // 3.6 and 3.7 added by hand, both confirmed multimodal at
+  // ai.google.dev/gemini-api/docs. 3.6 was ALREADY missing here while sitting
+  // in the catalog above — a model that accepts images but is not listed here
+  // simply refuses them, silently, with no way for the user to tell why. The
+  // refresh script is the source of truth for this list, so the real fix is to
+  // re-run it; these two lines stop the hole from widening in the meantime.
+  'google/gemini-3.6-flash',
+  'google/gemini-3.7-flash',
   'google/gemma-4-31b-it',
   'minimax/minimax-m3',
   'moonshotai/kimi-k2.6',
@@ -989,6 +1035,7 @@ export const VISION_MODEL_IDS = new Set<string>([
   'gpt-5',
   'gpt-5-mini',
   'gemini-3.5-flash',
+  'gemini-3.7-flash',
   'gemini-3.1-pro-preview',
   'mistral-large-latest',
   'MiniMax-M3',
