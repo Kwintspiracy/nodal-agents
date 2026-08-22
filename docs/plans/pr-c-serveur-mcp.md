@@ -11,11 +11,16 @@ Un paquet `@nodal-agents/mcp-server` : Nodal exposé en serveur MCP **stdio**,
 au nom d'**un** agent, avec **un** outil — `run_task`.
 
 ```
-claude mcp add nodal -- <lanceur du serveur, agent choisi>
-→ run_task("lance trois reviews sur cette branche")
+claude mcp add nodal   -e DATABASE_URL=<l'URL que le runner utilise>   -- pnpm --filter @nodal-agents/mcp-server serve
+
+→ run_task("lance trois reviews sur cette branche", caller: "quentin-terminal")
 → un job `pending`, canal `mcp`, ramassé par le worker, exécuté par la boucle
   normale — approbations, audit, compteurs, hiérarchie.
 ```
+
+L'identité par défaut est **l'agent racine du workspace** (`entities.root_agent_id`,
+une donnée par installation — jamais un nom d'agent dans une config).
+`NODAL_MCP_AGENT_ID` la remplace au besoin.
 
 ## L'histoire qui compte : la v1 était à bloquer
 
