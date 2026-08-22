@@ -9,7 +9,12 @@
 // Usage (config MCP d'un client, ex. `claude mcp add`) :
 //
 //   command: pnpm
-//   args:    --filter @nodal-agents/mcp-server serve
+//   args:    --filter @nodal-agents/mcp-server --silent serve
+//
+//   `--silent` n'est PAS cosmétique : sans lui, pnpm écrit sa bannière de
+//   lifecycle sur STDOUT — le transport MCP — avant le premier message
+//   JSON-RPC, et le client peut déclarer le serveur invalide (constat passe 7,
+//   mesuré : la bannière part bien sur stdout, --silent la supprime).
 //   env:     DATABASE_URL=postgres://...   (obligatoire)
 //            NODAL_MCP_AGENT_ID=<uuid>     (optionnel — défaut : l'agent
 //                                           racine du workspace, lu en base)
