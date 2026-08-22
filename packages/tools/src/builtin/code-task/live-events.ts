@@ -219,7 +219,13 @@ export function makeEssentialCapture(provider: 'claude' | 'codex'): {
     onLine: (line: string): void => {
       if (!isEssentialLine(provider, line)) return;
       if (line.includes('"thread.started"')) {
-        pinned.push(line);
+        // Le PREMIER seulement. Épingler sans limite rouvrait exactement la
+        // fuite que la fenêtre glissante ferme : un CLI défectueux — ou une
+        // sortie hostile — répétant l'événement d'ouverture accumulait toutes
+        // ses lignes, chacune pouvant approcher les 200 000 caractères du
+        // plafond amont. Un tour n'a qu'un fil, donc qu'une ouverture ; les
+        // suivantes ne sont pas une donnée à garder, c'est du bruit.
+        if (pinned.length === 0) pinned.push(line);
         return;
       }
       kept.push(line);
