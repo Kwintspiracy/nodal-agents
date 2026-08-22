@@ -78,3 +78,35 @@ describe('runCli — flux ligne par ligne', () => {
     expect(run.truncated).toBe(false);
   });
 });
+
+describe('une ligne géante n’emporte pas ses voisines', () => {
+  it('livre les lignes complètes qui SUIVENT une ligne surdimensionnée', async () => {
+    // Constat de la passe 3, et un défaut de mon propre correctif : le plafond
+    // s'appliquait au tampon ENTIER et cherchait le DERNIER saut de ligne, donc
+    // tout ce qui précédait était jeté — y compris des lignes complètes du même
+    // chunk, dont pouvait faire partie l'événement de résultat. Mon commentaire
+    // affirmait que « seule la ligne courante » se perdait ; c'était faux.
+    const script =
+      'process.stdout.write(\'{"a":1}\\n\');' +
+      "process.stdout.write('{\"big\":\"' + 'x'.repeat(300000) + '\"}\\n');" +
+      'process.stdout.write(\'{"type":"result"}\\n\');';
+
+    const recu: string[] = [];
+    const run = await runCli(nodeCli, ['-e', script], {
+      cwd: process.cwd(),
+      timeoutMs: 30_000,
+      env: process.env as Record<string, string | undefined>,
+      onStdoutLine: (line) => recu.push(line),
+    });
+
+    expect(run.exitCode, `stderr: ${run.stderr.slice(0, 300)}`).toBe(0);
+    expect(recu, "la ligne d'AVANT a été perdue").toContain('{"a":1}');
+    expect(recu, "la ligne d'APRÈS a été perdue — c'est le résultat").toContain(
+      '{"type":"result"}',
+    );
+    expect(
+      recu.some((l) => l.length > 200_000),
+      'la ligne géante a quand même été livrée',
+    ).toBe(false);
+  }, 30_000);
+});

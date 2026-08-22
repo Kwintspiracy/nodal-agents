@@ -215,29 +215,47 @@ export function runCli(
     // entiere a JSON.parse. Le plafond de 8 Ko par ligne d audit n intervient
     // qu APRES. Ce garde-fou est en amont.
     let lineDropped = false;
+    // Vrai pendant qu'on abandonne une ligne surdimensionnée, jusqu'au prochain
+    // saut de ligne — pour repartir sur une frontière sûre.
+    let skippingOversized = false;
     const emitLines = (chunk: string): void => {
       if (!opts.onStdoutLine) return;
       lineBuf += chunk;
-      if (lineBuf.length > MAX_LINE_CHARS) {
-        // On jette jusqu au prochain saut de ligne : la ligne courante est
-        // perdue pour l observation (jamais pour l analyse finale, qui a sa
-        // propre capture), et on repart propre a la suivante.
-        const nl = lineBuf.lastIndexOf('\n');
-        lineBuf = nl === -1 ? '' : lineBuf.slice(nl + 1);
-        if (!lineDropped) {
-          lineDropped = true;
-          console.warn(
-            `[code-task] une ligne de flux depasse ${MAX_LINE_CHARS} caracteres — ` +
-              `ignoree pour l audit live (le resultat final n est pas affecte)`,
-          );
+
+      // Finir d'abord d'abandonner la ligne géante, jusqu'au PREMIER saut de
+      // ligne. Pas le dernier : ce qui suit doit être conservé.
+      if (skippingOversized) {
+        const skipTo = lineBuf.indexOf('\n');
+        if (skipTo === -1) {
+          lineBuf = '';
+          return;
         }
-        return;
+        lineBuf = lineBuf.slice(skipTo + 1);
+        skippingOversized = false;
       }
+
       let nl = lineBuf.indexOf('\n');
       while (nl !== -1) {
         const line = lineBuf.slice(0, nl).trim();
         lineBuf = lineBuf.slice(nl + 1);
-        if (line !== '') {
+        // Une ligne COMPLETE mais surdimensionnee est sautee ici — sinon elle
+        // passe entiere a JSON.parse chez le consommateur, ce que le plafond
+        // etait justement cense empecher.
+        // Cas d'une ligne géante livrée EN UN SEUL morceau : elle est déjà
+        // complète quand la boucle la voit, donc la garde sur le reste (plus
+        // bas) ne s'est jamais déclenchée. Défensif et NON couvert par un test —
+        // le système découpe les tuyaux en blocs de ~64 Ko, si bien qu'un test
+        // ne peut pas produire ce cas de façon fiable. Dit plutôt que passé pour
+        // éprouvé.
+        if (line.length > MAX_LINE_CHARS) {
+          if (!lineDropped) {
+            lineDropped = true;
+            console.warn(
+              `[code-task] une ligne de flux dépasse ${MAX_LINE_CHARS} caractères — ` +
+                `sautée pour l'audit live ; ses voisines sont conservées`,
+            );
+          }
+        } else if (line !== '') {
           try {
             opts.onStdoutLine(line);
           } catch (err) {
@@ -245,6 +263,27 @@ export function runCli(
           }
         }
         nl = lineBuf.indexOf('\n');
+      }
+
+      // Le plafond ne s'applique qu'au RESTE — une ligne encore incomplète.
+      //
+      // Il coupait avant sur le tampon entier, en cherchant le DERNIER saut de
+      // ligne : tout ce qui précédait était jeté, y compris des lignes
+      // COMPLÈTES du même chunk — dont pouvait faire partie l'événement de
+      // résultat. Mon commentaire affirmait que « seule la ligne courante » se
+      // perdait ; c'était faux, et la review l'a démontré. Les lignes complètes
+      // sont désormais émises AVANT tout abandon.
+      if (lineBuf.length > MAX_LINE_CHARS) {
+        lineBuf = '';
+        skippingOversized = true;
+        if (!lineDropped) {
+          lineDropped = true;
+          console.warn(
+            `[code-task] une ligne de flux dépasse ${MAX_LINE_CHARS} caractères — ` +
+              `abandonnée pour l'audit live ; les lignes complètes qui l'entourent ` +
+              `sont conservées`,
+          );
+        }
       }
     };
 

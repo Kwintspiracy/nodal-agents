@@ -38,6 +38,18 @@ let previousPath: string | undefined;
  * plafond de capture (400 000 caractères) — c'est tout l'intérêt.
  */
 const FAKE_CLI_SCRIPT = `
+// La fausse CLI OBEIT a ses arguments — sinon le test « de bout en bout » ne
+// prouve pas le couplage argv <-> format, et une regression remettant
+// \`--output-format json\` le laisserait vert (constat de la passe 3).
+const args = process.argv.slice(2);
+const fmt = args[args.indexOf('--output-format') + 1];
+if (fmt !== 'stream-json' || !args.includes('--verbose')) {
+  // Ce que produit REELLEMENT le mode agrege : un seul objet, en fin de course.
+  process.stdout.write(JSON.stringify({
+    type: 'result', result: 'AGREGE', session_id: 'sess_fake', is_error: false,
+  }));
+  process.exit(0);
+}
 const noise = JSON.stringify({
   type: 'assistant',
   message: { content: [{ type: 'text', text: 'z'.repeat(400) }] },
@@ -76,12 +88,12 @@ beforeAll(async () => {
   if (isWindows) {
     await writeFile(
       join(binDir, 'claude.cmd'),
-      `@echo off\r\n"${process.execPath}" "${scriptPath}"\r\n`,
+      `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
       'utf-8',
     );
   } else {
     const shim = join(binDir, 'claude');
-    await writeFile(shim, `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}"\n`, 'utf-8');
+    await writeFile(shim, `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`, 'utf-8');
     await chmod(shim, 0o755);
   }
 
