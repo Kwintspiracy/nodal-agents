@@ -93,6 +93,7 @@ export default function CodeProcessesTable({
         <Th>Agent</Th>
         <Th>Task</Th>
         <Th className="hidden md:table-cell">Origin</Th>
+        <Th className="hidden lg:table-cell">Ran on</Th>
         <Th>Stage</Th>
         <Th align="right" className="hidden sm:table-cell">
           Files
@@ -124,6 +125,24 @@ export default function CodeProcessesTable({
             </Td>
             <Td className="hidden md:table-cell">
               <MonoMicroTag tone="ink">{row.origin}</MonoMicroTag>
+            </Td>
+            {/* Quel CLI a REELLEMENT execute. Enregistre depuis toujours dans
+                cli_runs.provider, jamais montre : un run dont on ignore l
+                executant ne peut etre ni lu pour la securite (les deux CLI ne
+                confinent pas pareil) ni attribue pour le cout. Vide tant qu
+                aucun tour n est termine, plutot qu une valeur devinee. */}
+            <Td className="hidden lg:table-cell">
+              {row.providers.length > 0 ? (
+                <span className="flex flex-wrap gap-1">
+                  {row.providers.map((p) => (
+                    <MonoMicroTag key={p} tone="ink">
+                      {p}
+                    </MonoMicroTag>
+                  ))}
+                </span>
+              ) : (
+                <span className="text-mono-12 text-ink-4">—</span>
+              )}
             </Td>
             <Td>
               <StatusPill variant={stageVariant(row.stage)} label={stageLabel(row.stage)} />

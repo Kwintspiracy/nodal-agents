@@ -150,6 +150,14 @@ export default function CodeProcessDetail({
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-medium-15 text-ink">{header.agentName ?? 'Unknown agent'}</span>
           <MonoMicroTag tone="ink">{header.origin}</MonoMicroTag>
+          {/* Quel CLI a execute — la seule facon de lire un run pour la
+              securite (les deux ne confinent pas pareil, cf. PR #6) et de lui
+              attribuer son cout. */}
+          {header.providers.map((p) => (
+            <MonoMicroTag key={p} tone="ink">
+              {p}
+            </MonoMicroTag>
+          ))}
           <StatusPill variant={stageVariant(header.stage)} label={stageLabel(header.stage)} />
           {header.stage === 'coding' && (
             <span className="animate-pulse text-body-12 text-ink-4">Live…</span>
