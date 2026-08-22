@@ -67,8 +67,26 @@ When you delegate: (1) pass the PARAMETERS in the brief (paths, prompts, values)
 /** Layer 1 — intrinsic discipline for every agent (+ model-aware reinforcement). */
 export function buildBaselineBlock(
   model: string,
-  opts: { role?: 'agent' | 'orchestrator' | 'system' } = {},
+  opts: {
+    role?: 'agent' | 'orchestrator' | 'system';
+    /**
+     * False on the `cli-runtime` surface: that session has none of Nodal's
+     * builtins.
+     *
+     * This block was briefly dropped WHOLESALE there, on the claim that it was
+     * "entirely built around Nodal's builtins". That claim was wrong, and the
+     * review caught it: only the memory discipline and the role block name
+     * tools. The catalog part — verify before declaring a task done, confirm
+     * before a destructive action, fail loud, mirror the user's language, reuse
+     * what already exists instead of rebuilding it — depends on no tool at all
+     * and applies to a coding CLI exactly as much as to a Nodal agent. Dropping
+     * it let a CLI agent announce unverified work and rebuild existing
+     * artifacts.
+     */
+    nodalTools?: boolean;
+  } = {},
 ): string {
+  const nodalTools = opts.nodalTools !== false;
   const parts = contentOfKind('baseline');
   const reinforcement =
     parts.length > 0 && NEEDS_FIRMER_VERIFY.test(model)
@@ -76,13 +94,21 @@ export function buildBaselineBlock(
         'Actually run or check your work before you say a task is done, and never write tool output ' +
         'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
         'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
-        'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded with ' +
-        'skill_view ships run_skill_script and ready-made workflows/templates) instead of writing ' +
+        'commands. Use the tools, scripts, and exact file paths you were given' +
+        (nodalTools
+          ? ' (a skill loaded with skill_view ships run_skill_script and ready-made ' +
+            'workflows/templates)'
+          : '') +
+        ' instead of writing ' +
         'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
         'steps that finish the task, then deliver the result with its output path.'
       : '';
   const catalogBlock =
     parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}` : '';
+
+  // Both of these name Nodal tools the CLI session does not have —
+  // save_memory / mark_memory_outdated, and return_result.
+  if (!nodalTools) return catalogBlock;
 
   const roleBlock =
     opts.role === 'orchestrator' ? DELEGATION_DISCIPLINE_BLOCK : WORKER_DISCOVERY_BLOCK;

@@ -470,6 +470,11 @@ export async function buildSystemPrompt(
         skillSlug: agentSkills.slug,
         skillName: agentSkills.name,
         skillDescription: agentSkills.description,
+        // Only read on the 'cli-runtime' surface, which has no lazy load: that
+        // session cannot call `skill_view`, so a skill it can merely SEE listed
+        // is a capability it can never reach. Inlining costs prompt size; the
+        // alternative costs the skill entirely.
+        skillContent: agentSkills.content,
       })
       .from(agentSkillAssignments)
       .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -570,11 +575,15 @@ export async function buildSystemPrompt(
     assignedSkillRows.length === 0
       ? ''
       : jobContext?.surface === 'cli-runtime'
-        ? `\n\n## Skills available in this workspace\n\n` +
-          `These skills are attached to you. Their instructions live on disk under the skill ` +
-          `store; you can open them yourself with your own file tools. Nodal's \`skill_view\` / ` +
-          `\`run_skill_script\` are NOT available in this session — do not try to call them.` +
-          `\n\n${skillIndex}`
+        ? `\n\n## Skills\n\n` +
+          `Instructions attached to you for specific kinds of work. They are inlined in full ` +
+          `below because this session has no way to fetch them on demand. Follow the relevant ` +
+          `one before acting.\n\n` +
+          assignedSkillRows
+            .map(
+              (r) => `### ${r.skillName}\n\n${(r.skillContent ?? r.skillDescription ?? '').trim()}`,
+            )
+            .join('\n\n')
         : `\n\n## Skills (load before acting)\n\n` +
           `Scan the skills below. For ANY skill even partially relevant to your task, you MUST call ` +
           `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +
@@ -651,10 +660,10 @@ export async function buildSystemPrompt(
   // coding-CLI session none of those exist, so every one of those "MUST"s is an
   // order the agent cannot obey. Omitted there rather than shipped as noise the
   // model has to decide to ignore.
-  const baselineBlock =
-    jobContext?.surface === 'cli-runtime'
-      ? ''
-      : buildBaselineBlock(agent.model, { role: agent.role });
+  const baselineBlock = buildBaselineBlock(agent.model, {
+    role: agent.role,
+    nodalTools: jobContext?.surface !== 'cli-runtime',
+  });
   const channelBlock = buildChannelBlock({
     channel: jobContext?.origin,
     telegram: Boolean(jobContext?.telegramChatId),

@@ -16,7 +16,15 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { buildSystemPrompt } from '../system-prompt';
-import { agents, agentAssignments, eq } from '@nodal-agents/db';
+import {
+  agents,
+  agentAssignments,
+  agentSkills,
+  agentSkillAssignments,
+  agentMemory,
+  agentWorkspaces,
+  eq,
+} from '@nodal-agents/db';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -44,6 +52,44 @@ beforeAll(async () => {
     entityId: seed.entityId,
     orchestratorId: seed.agentId,
     subAgentId: (sub as { id: string }).id,
+  });
+
+  // Un skill REELLEMENT assigne a l agent teste. Sans lui, la branche skills
+  // du prompt n est jamais exercee — c est exactement pourquoi la review a
+  // trouve `skill_view` encore present dans un prompt cli-runtime alors que
+  // le test jurait le contraire.
+  const [sk] = await db
+    .insert(agentSkills)
+    .values({
+      entityId: seed.entityId,
+      slug: 'skill-test',
+      name: 'Skill Test',
+      description: 'Fait une chose precise.',
+      content: 'MARQUEUR_CONTENU_SKILL — les instructions completes du skill.',
+    })
+    .returning();
+  await db.insert(agentSkillAssignments).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    skillId: (sk as { id: string }).id,
+  });
+
+  // Une memoire reelle : sans elle le bloc memoire ne se rend pas du tout et
+  // sa branche n est jamais exercee — meme piege que la fixture sans skill.
+  await db.insert(agentMemory).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    fact: 'MARQUEUR_FAIT_MEMOIRE',
+    importance: 5,
+  });
+
+  // Un workspace reel, meme raison : sans lui buildWorkspacesBlock rend '' et
+  // l assertion sur l API fichiers ne teste rien.
+  await db.insert(agentWorkspaces).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    label: 'shared',
+    path: 'D:/tmp/ws-test',
   });
 
   const [row] = await db.select().from(agents).where(eq(agents.id, seed.agentId)).limit(1);
@@ -121,56 +167,73 @@ describe("surface 'cli-runtime'", () => {
   });
 });
 
-describe('aucune consigne portant sur un outil absent', () => {
-  // La review a mesuré 23 mentions d'outils Nodal dans le prompt cli-runtime —
-  // et AUCUNE n'était un fait : « you MUST call mark_memory_outdated », « use
-  // assign_* when… », « after every file_write, call file_read ». Un agent
-  // Claude Code n'a aucun de ces outils : son argv porte --strict-mcp-config et
-  // un --disallowedTools purement soustractif, sans --allowedTools ni
-  // --mcp-config. Chaque ligne était donc un ordre inexécutable.
-  const ABSENTS = [
-    'assign_',
-    'create_task',
-    'list_tasks',
-    'return_result',
-    'skill_view',
-    'run_skill_script',
-    'save_memory',
-    'query_memory',
-    'mark_memory_outdated',
-    'file_read',
-    'file_write',
-    'file_edit',
-    'file_list',
-    'file_search',
+describe('les blocs composés par Nodal ne donnent aucun ordre inexécutable', () => {
+  // La review avait mesuré 23 mentions d'outils absents dans le prompt
+  // cli-runtime, et AUCUNE n'était un fait : « you MUST call
+  // mark_memory_outdated », « use assign_* when… », « after every file_write,
+  // call file_read ». Une session Claude Code n'a aucun de ces outils.
+  //
+  // L'assertion porte sur les PHRASES exactes que Nodal compose, pas sur la
+  // simple présence d'un nom d'outil quelque part. La première version
+  // vérifiait l'absence totale, et c'était intenable pour une raison qui
+  // compte : les skills catalogue de type `baseline` contiennent eux aussi des
+  // impératifs Nodal (« call `file_write` IMMEDIATELY »). Ceux-là relèvent de
+  // la couche agent, pas du runtime — invariant #3, on corrige au catalogue,
+  // jamais en rustinant le prompt. Le trou est consigné dans la PR.
+  const ORDRES_NODAL = [
+    'assign tool `assign_', // roster : nomme un outil de délégation inexistant
+    'you MUST call `skill_view', // skills : précondition impossible
+    'DO NOT call `query_memory`', // mémoire : consigne sur un outil absent
+    'When using file_read / file_write', // workspace : API Nodal
   ];
 
-  it("ne nomme AUCUN outil que la session n'a pas", async () => {
+  it('aucun de ces ordres sur la surface cli-runtime', async () => {
     const prompt = await buildSystemPrompt(agent as never, db, {
       origin: 'api',
       surface: 'cli-runtime',
     } as never);
-    const trouves = ABSENTS.filter((t) => prompt.includes(t));
-    expect(
-      trouves,
-      `outils Nodal nommés dans un prompt cli-runtime : ${trouves.join(', ')}`,
-    ).toEqual([]);
+    const trouves = ORDRES_NODAL.filter((o) => prompt.includes(o));
+    expect(trouves, `ordres inexécutables encore composés : ${trouves.join(' | ')}`).toEqual([]);
   });
 
-  it("garde l'équipe malgré tout — le bug d'origine reste corrigé", async () => {
-    // Le risque du reformage : jeter le bénéfice avec les consignes. L'agent
-    // doit toujours SAVOIR qui compose son équipe, il ne doit simplement plus
-    // recevoir l'ordre de l'appeler.
+  it('inline le CONTENU du skill, faute de pouvoir le charger à la demande', async () => {
+    // Constat de la passe 2 : le prompt annonçait des skills sans donner ni leur
+    // contenu ni un chemin ouvrable. L'agent connaissait le nom d'une capacité
+    // qu'il ne pouvait pas atteindre — le même défaut que la délégation.
     const prompt = await buildSystemPrompt(agent as never, db, {
       origin: 'api',
       surface: 'cli-runtime',
     } as never);
-    expect(prompt, 'le sous-agent a disparu avec les consignes').toContain('sous-agent-test');
+    expect(prompt, 'le contenu du skill manque').toContain('MARQUEUR_CONTENU_SKILL');
   });
 
-  it('la surface Nodal ordinaire garde ses consignes', async () => {
-    // Le reformage ne doit toucher QUE cli-runtime.
+  it('garde la discipline générale du baseline', async () => {
+    // Le baseline avait été supprimé EN ENTIER pour cette surface, sur une
+    // affirmation fausse de ma part : il serait « entièrement » bâti autour des
+    // builtins. En réalité il agrège aussi les skills catalogue `baseline` —
+    // vérifier avant de déclarer terminé, hygiène du workspace, miroir de
+    // langue — qui ne dépendent d'aucun outil.
+    const prompt = await buildSystemPrompt(agent as never, db, {
+      origin: 'api',
+      surface: 'cli-runtime',
+    } as never);
+    expect(prompt, 'la discipline générale a été jetée avec les consignes').toContain(
+      '## How you work (always)',
+    );
+  });
+
+  it("garde l'équipe — le bug d'origine reste corrigé", async () => {
+    const prompt = await buildSystemPrompt(agent as never, db, {
+      origin: 'api',
+      surface: 'cli-runtime',
+    } as never);
+    expect(prompt).toContain('sous-agent-test');
+  });
+
+  it('la surface Nodal ordinaire garde ses ordres', async () => {
     const prompt = await buildSystemPrompt(agent as never, db, { origin: 'api' } as never);
-    expect(prompt).toContain('assign_');
+    for (const o of ORDRES_NODAL) {
+      expect(prompt, `la surface ordinaire a perdu : ${o}`).toContain(o);
+    }
   });
 });
