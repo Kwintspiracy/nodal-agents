@@ -13,7 +13,14 @@
 
 import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
+
+/**
+ * Plafond par ligne d audit. Une sortie d outil peut faire des megaoctets (un
+ * `Read` sur un gros fichier) ; l audit doit dire CE QUI s est passe, pas
+ * archiver le contenu du depot.
+ */
+const MAX_OUTPUT_CHARS = 8_000;
 
 export interface LiveToolEvent {
   /** The CLI's own id, used to pair a start with its result. */
@@ -140,7 +147,14 @@ export function makeLiveToolRecorder(args: {
         // CLI-internal Read is never mistaken for a Nodal builtin.
         toolName: `cli:${started.name}`,
         toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-        toolOutput: parsed.event.output ?? '',
+        // La SORTIE aussi, et elle porte le vrai risque : redactSecretsForAudit
+        // masque par NOM DE CHAMP, ce qui ne dit rien d un texte libre. Or ces
+        // lignes-la n existaient pas avant — un code_task n ecrivait qu une
+        // ligne finale. Enregistrer chaque appel interne fait entrer dans l
+        // audit le contenu de chaque fichier lu, jeton compris. redactSecretsInText
+        // masque les formes de credentials dans du texte, et rend la chaine
+        // inchangee quand rien ne matche.
+        toolOutput: redactSecretsInText((parsed.event.output ?? '').slice(0, MAX_OUTPUT_CHARS)),
         durationMs: Date.now() - started.startedAt,
         toolCallId: parsed.event.id,
       })

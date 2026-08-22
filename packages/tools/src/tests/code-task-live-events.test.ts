@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { parseLiveToolEvent } from '../builtin/code-task/live-events';
+import { buildProviderArgs } from '../builtin/code-task/providers';
 
 describe('parseLiveToolEvent — claude', () => {
   it('reconnaît un tool_use dans le contenu du message', () => {
@@ -87,5 +88,28 @@ describe('robustesse', () => {
     // reste celle de fin de flux. Lever ici tuerait la session qu'on observe.
     expect(parseLiveToolEvent('claude', 'pas du json')).toBeNull();
     expect(parseLiveToolEvent('codex', '{"incomplet":')).toBeNull();
+  });
+});
+
+describe("l'argv demande bien le flux que le parseur attend", () => {
+  // LE test qui manquait, et qui a coûté un constat bloquant : les tests
+  // ci-dessus nourrissent `parseLiveToolEvent` avec une ligne `stream-json`
+  // synthétique, sans jamais vérifier ce que le CLI produit RÉELLEMENT.
+  //
+  // code_task lançait claude avec `--output-format json` — UN objet agrégé à la
+  // fin. Le parseur ne matchait donc jamais rien, et l'absence de ligne
+  // ressemble exactement à une session sans outil. Cinquième fois dans ce lot
+  // qu'un test valide la pièce sans valider le câblage.
+  it('claude : stream-json ET --verbose, jamais le json agrégé', () => {
+    const args = buildProviderArgs('claude', 'read');
+    const i = args.indexOf('--output-format');
+    expect(i, '--output-format absent').toBeGreaterThan(-1);
+    expect(args[i + 1], 'le json agrégé ne peut PAS être observé en direct').toBe('stream-json');
+    // stream-json n'émet le flux complet en mode print qu'avec --verbose.
+    expect(args, '--verbose manque : le flux reste muet').toContain('--verbose');
+  });
+
+  it('codex : --json, le mode JSONL', () => {
+    expect(buildProviderArgs('codex', 'read')).toContain('--json');
   });
 });

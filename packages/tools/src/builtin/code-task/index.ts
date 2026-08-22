@@ -373,7 +373,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
           // often for a quarter of an hour, and may have written files; the
           // least it deserves is an error that points at the right place.
           throw new Error(
-            (run.truncated
+            (run.truncatedStdout
               ? `code_task output exceeded the capture cap, so the stream could not be ` +
                 `parsed — the CLI is not at fault. The session DID run and may have ` +
                 `changed files; only the transcript was cut. Underlying: ${err.message}`
@@ -425,6 +425,22 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
           // symptom otherwise is "every call starts cold" with no explanation.
           console.warn('[code_task] could not persist the CLI session for resume:', err);
         }
+      }
+
+      // Le QUATRIEME cas, trouve par la review : une troncature dont le prefixe
+      // reste analysable. codex peut avoir emis `turn.completed` AVANT que le
+      // plafond tombe — l analyse reussit alors, et le tour repart comme s il
+      // etait complet alors qu il manque la fin de la transcription.
+      //
+      // L analyse a REUSSI, donc echouer serait disproportionne : le resultat
+      // est reel. Mais le taire ferait exactement ce que ma spec reprochait a
+      // tort au code d origine — laisser passer un tour ampute pour un tour
+      // complet.
+      if (run.truncatedStdout) {
+        console.warn(
+          `[code_task] stdout a atteint le plafond mais s est quand meme analyse ` +
+            `(job=${ctx.jobId}) — le resultat est reel, la transcription est incomplete`,
+        );
       }
 
       return {
