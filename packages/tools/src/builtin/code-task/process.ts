@@ -104,7 +104,16 @@ export interface RunCliResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** Vrai si l UN des deux flux a ete coupe — conserve pour compatibilite. */
   truncated: boolean;
+  /**
+   * Par flux, parce que les confondre fait accuser le mauvais coupable : un
+   * stderr bavard levait `truncated`, et une sortie stdout reellement invalide
+   * se voyait alors attribuee a NOTRE plafond, en affirmant que le CLI n y
+   * etait pour rien.
+   */
+  truncatedStdout: boolean;
+  truncatedStderr: boolean;
   durationMs: number;
 }
 
@@ -170,7 +179,8 @@ export function runCli(
 
     let stdout = '';
     let stderr = '';
-    let truncated = false;
+    let truncatedStdout = false;
+    let truncatedStderr = false;
     let timedOut = false;
     let settled = false;
 
@@ -180,14 +190,14 @@ export function runCli(
     const outDecoder = new StringDecoder('utf8');
     const errDecoder = new StringDecoder('utf8');
 
-    const append = (existing: string, text: string, cap: number): string => {
+    const append = (existing: string, text: string, cap: number, mark: () => void): string => {
       if (existing.length >= cap) {
-        truncated = true;
+        mark();
         return existing;
       }
       const room = cap - existing.length;
       if (text.length <= room) return existing + text;
-      truncated = true;
+      mark();
       return existing + text.slice(0, room);
     };
     // Line splitting for onStdoutLine. Kept OUTSIDE the capped buffer on
@@ -216,10 +226,14 @@ export function runCli(
     child.stdout?.on('data', (c: Buffer) => {
       const text = outDecoder.write(c);
       emitLines(text);
-      stdout = append(stdout, text, MAX_STDOUT_CHARS);
+      stdout = append(stdout, text, MAX_STDOUT_CHARS, () => {
+        truncatedStdout = true;
+      });
     });
     child.stderr?.on('data', (c: Buffer) => {
-      stderr = append(stderr, errDecoder.write(c), MAX_STDERR_CHARS);
+      stderr = append(stderr, errDecoder.write(c), MAX_STDERR_CHARS, () => {
+        truncatedStderr = true;
+      });
     });
 
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -295,7 +309,9 @@ export function runCli(
         stdout,
         stderr,
         timedOut,
-        truncated,
+        truncated: truncatedStdout || truncatedStderr,
+        truncatedStdout,
+        truncatedStderr,
         durationMs: Date.now() - startedAt,
       });
     };
@@ -309,7 +325,14 @@ export function runCli(
     }, opts.timeoutMs);
 
     child.on('error', (err: Error) => {
-      stderr = append(stderr, `${stderr ? '\n' : ''}spawn_error: ${err.message}`, MAX_STDERR_CHARS);
+      stderr = append(
+        stderr,
+        `${stderr ? '\n' : ''}spawn_error: ${err.message}`,
+        MAX_STDERR_CHARS,
+        () => {
+          truncatedStderr = true;
+        },
+      );
       finish(null);
     });
     child.on('close', (code: number | null) => finish(code));

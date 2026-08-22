@@ -136,7 +136,18 @@ export function buildProviderArgs(
 ): string[] {
   if (provider === 'claude') {
     // `-p` with no inline prompt: claude reads the prompt from stdin.
-    const args = ['-p', '--output-format', 'json', '--strict-mcp-config'];
+    // stream-json, NOT the aggregated `json`.
+    //
+    // `--output-format json` prints ONE object at the very end, so nothing can
+    // be observed while the session runs — and a live audit that parses
+    // stream-json envelopes against it silently matches nothing at all, which
+    // is worse than not having it: an empty Code tab looks exactly like a
+    // session that used no tools.
+    //
+    // `--verbose` is what makes stream-json actually emit the full event stream
+    // in print mode; the runtime path (claude-turn.ts) has shipped this pair
+    // for a while, so the shape is known-good rather than assumed.
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config'];
     // A flag, and it works in print mode — the runtime path (claude-turn.ts)
     // has shipped it for a while, which is what made this half cheap.
     if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
@@ -256,20 +267,45 @@ export function extractClaudeModelUsage(raw: unknown): CliModelUsage[] | null {
   return out.length > 0 ? out : null;
 }
 
-/** `claude -p --output-format json` prints exactly ONE JSON object on stdout. */
+/**
+ * `claude -p --output-format stream-json --verbose` prints JSONL: one event per
+ * line, the LAST of which is the `type: "result"` object carrying the answer,
+ * the usage and the cost.
+ *
+ * Accepts a single bare object too — that is what the previous
+ * `--output-format json` produced, and a fixture or a pinned older CLI can
+ * still emit it. Reading both costs one branch and removes a version cliff.
+ *
+ * Non-JSON lines are SKIPPED here, unlike the codex parser which fails on them:
+ * a stream carries banners and partial deltas that were never meant to parse,
+ * and the failure that matters is "no result event at all", which is checked
+ * explicitly below.
+ */
 export function parseClaudeOutput(stdout: string): NormalizedCliResult {
   const trimmed = stdout.trim();
   if (trimmed === '') {
     throw new CliOutputError('claude', 'empty stdout', '');
   }
-  let obj: Record<string, unknown>;
-  try {
-    obj = JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
-    throw new CliOutputError('claude', 'stdout is not valid JSON', trimmed);
+  let obj: Record<string, unknown> | null = null;
+  for (const line of trimmed.split('\n')) {
+    const l = line.trim();
+    if (l === '' || !l.startsWith('{')) continue;
+    let evt: Record<string, unknown>;
+    try {
+      evt = JSON.parse(l) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (typeof evt === 'object' && evt !== null && evt['type'] === 'result') obj = evt;
   }
-  if (typeof obj !== 'object' || obj === null || obj['type'] !== 'result') {
-    throw new CliOutputError('claude', 'JSON is not a result object', trimmed);
+  if (obj === null) {
+    // Distinguish "the stream never concluded" from "this is not JSON at all":
+    // the first is what a truncated capture or a killed CLI looks like.
+    throw new CliOutputError(
+      'claude',
+      trimmed.startsWith('{') ? 'stream ended without a result event' : 'stdout is not valid JSON',
+      trimmed.slice(-400),
+    );
   }
   const usage = extractClaudeUsage(obj['usage'] as Record<string, unknown> | undefined);
   const isError = obj['is_error'] === true;

@@ -52,12 +52,17 @@ const CODEX_SUCCESS_JSONL = [
 // ─── buildProviderArgs ───────────────────────────────────────────────────────
 
 describe('buildProviderArgs', () => {
-  it('claude read: -p (prompt via STDIN), JSON output, strict MCP, write tools hidden', () => {
+  it('claude read: -p (prompt via STDIN), flux stream-json, strict MCP, write tools hidden', () => {
+    // `json` (un objet agrege en fin de course) est devenu `stream-json
+    // --verbose` : le premier ne peut PAS etre observe pendant l execution, et
+    // un audit live qui parse des enveloppes stream-json contre lui ne matche
+    // rien du tout — ce qui ressemble exactement a une session sans outil.
     const args = buildProviderArgs('claude', 'read');
     expect(args).toEqual([
       '-p',
       '--output-format',
-      'json',
+      'stream-json',
+      '--verbose',
       '--strict-mcp-config',
       '--disallowedTools',
       CLAUDE_READONLY_DISALLOWED,
