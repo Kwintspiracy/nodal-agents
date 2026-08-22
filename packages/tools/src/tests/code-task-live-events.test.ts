@@ -202,3 +202,23 @@ describe('codex : le sessionId survit au plafond', () => {
     );
   });
 });
+
+describe("l'épinglage ne devient pas une fuite", () => {
+  it("ne garde que le PREMIER thread.started, même s'il en pleut", () => {
+    // Constat de la passe 4 : épingler sans limite rouvrait la fuite que la
+    // fenêtre glissante ferme. Un CLI défectueux — ou une sortie hostile —
+    // répétant l'ouverture accumulait toutes ses lignes, chacune pouvant
+    // approcher les 200 000 caractères du plafond amont.
+    const cap = makeEssentialCapture('codex');
+    for (let i = 0; i < 10_000; i++) {
+      cap.onLine(JSON.stringify({ type: 'thread.started', thread_id: `th_${i}` }));
+    }
+    cap.onLine(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1 } }));
+
+    const t = cap.transcript();
+    const occurrences = t.split('thread.started').length - 1;
+    expect(occurrences, `${occurrences} ouvertures retenues au lieu d'une`).toBe(1);
+    // Et c'est bien la PREMIÈRE — celle qui porte le vrai fil.
+    expect(parseCodexOutput(t).sessionId).toBe('th_0');
+  });
+});
