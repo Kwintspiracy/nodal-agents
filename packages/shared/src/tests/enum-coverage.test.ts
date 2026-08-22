@@ -81,7 +81,7 @@ testEnum('McpTransport', MCP_TRANSPORTS, McpTransportSchema);
 // Specific DB constraint cross-checks — these encode the exact values from the CHECK clauses
 
 describe('DB constraint: agent_jobs channel_check', () => {
-  it('matches exactly the 10 DB channels', () => {
+  it('matches exactly the 11 DB channels', () => {
     const dbChannels = [
       'telegram',
       'api',
@@ -93,6 +93,11 @@ describe('DB constraint: agent_jobs channel_check', () => {
       'discord',
       'dashboard',
       'webhook',
+      // 0080 (PR C) : la provenance MCP. La review a montre que cette liste
+      // recopiee a la main etait restee verte tout en ne representant plus la
+      // contrainte SQL — d ou l ecart AgentJobSchema.parse() qui refusait une
+      // ligne DB legitime.
+      'mcp',
     ];
     expect([...JOB_CHANNELS].sort()).toEqual(dbChannels.sort());
   });

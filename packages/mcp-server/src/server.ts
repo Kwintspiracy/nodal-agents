@@ -85,6 +85,14 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
       inputSchema: runTaskInputSchema.shape,
     },
     async (args: unknown) => {
+      // Le siege est RESERVE avant l attente, pas verifie puis incremente
+      // apres : la premiere version faisait contrele -> insert (await) ->
+      // increment, et dix appels concurrents observaient tous la meme valeur
+      // avant qu aucun ne l incremente — dix jobs payants sous un plafond de
+      // deux (constat passe 2). L increment synchrone AVANT le premier await
+      // ferme la fenetre : Node n intercale rien entre ces deux lignes.
+      // Un insert qui echoue rend son siege dans le catch.
+      let seated = false;
       try {
         if (jobsCreated >= maxJobs) {
           return {
@@ -100,6 +108,8 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
             ],
           };
         }
+        jobsCreated += 1;
+        seated = true;
 
         const { instruction } = runTaskInputSchema.parse(args);
 
@@ -118,8 +128,6 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
           })
           .returning({ id: agentJobs.id });
 
-        jobsCreated += 1;
-
         return {
           content: [
             {
@@ -133,6 +141,9 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
           ],
         };
       } catch (err) {
+        // Un appel qui n a pas abouti rend son siege — sinon des erreurs de
+        // validation epuiseraient le plafond sans creer un seul job.
+        if (seated) jobsCreated -= 1;
         return {
           isError: true,
           content: [
