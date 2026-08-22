@@ -176,3 +176,29 @@ describe('le résultat survit à un flux plus gros que le tampon', () => {
     expect(parsed.resultText).toBe('la réponse');
   });
 });
+
+describe('codex : le sessionId survit au plafond', () => {
+  it('garde thread.started même noyé sous des milliers de lignes', () => {
+    // Constat de la passe 3 : « jeter le début » est correct pour claude, dont
+    // la ligne utile est terminale. C'est FAUX pour codex — `thread.started`
+    // arrive en PREMIER et porte le sessionId. Sans épinglage, un tour bavard
+    // rendait `sessionId: null`, l'analyse réussissait quand même, et la reprise
+    // de session devenait impossible en silence.
+    const cap = makeEssentialCapture('codex');
+    cap.onLine(JSON.stringify({ type: 'thread.started', thread_id: 'th_survivant' }));
+    for (let i = 0; i < 5000; i++) {
+      cap.onLine(
+        JSON.stringify({
+          type: 'item.completed',
+          item: { id: `i${i}`, type: 'agent_message', text: `m${i}` },
+        }),
+      );
+    }
+    cap.onLine(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1 } }));
+
+    const parsed = parseCodexOutput(cap.transcript());
+    expect(parsed.sessionId, 'le sessionId a été évincé — plus de reprise possible').toBe(
+      'th_survivant',
+    );
+  });
+});

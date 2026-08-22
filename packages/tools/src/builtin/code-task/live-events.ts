@@ -206,14 +206,27 @@ export function makeEssentialCapture(provider: 'claude' | 'codex'): {
   onLine: (line: string) => void;
   transcript: () => string;
 } {
+  // ÉPINGLÉES : les lignes d'OUVERTURE, que l'éviction ne doit jamais toucher.
+  //
+  // « jeter le début » est correct pour claude, dont la seule ligne utile est
+  // terminale. C'est FAUX pour codex : `thread.started` arrive en premier et
+  // porte le sessionId. Un tour émettant plus de lignes que le plafond perdrait
+  // donc son identifiant de session — l'analyse réussirait en rendant
+  // `sessionId: null`, et la reprise deviendrait impossible en silence.
+  const pinned: string[] = [];
   const kept: string[] = [];
   return {
     onLine: (line: string): void => {
       if (!isEssentialLine(provider, line)) return;
+      if (line.includes('"thread.started"')) {
+        pinned.push(line);
+        return;
+      }
       kept.push(line);
-      // Le resultat est a la FIN : on jette le debut, jamais la fin.
+      // Le résultat est à la FIN : on jette le début de la fenêtre glissante,
+      // jamais la fin, et jamais les lignes épinglées.
       if (kept.length > MAX_ESSENTIAL_LINES) kept.shift();
     },
-    transcript: (): string => kept.join('\n'),
+    transcript: (): string => [...pinned, ...kept].join('\n'),
   };
 }
