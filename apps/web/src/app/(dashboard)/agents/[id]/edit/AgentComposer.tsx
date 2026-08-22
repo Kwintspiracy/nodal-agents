@@ -963,8 +963,17 @@ function TabsBar({
 /**
  * Shown INSTEAD of an inert tab's controls when the user still lands on one —
  * a `?tab=skills` deep link, or the runtime being switched while the tab was
- * open. Says plainly that nothing here reaches the agent and where the real
- * settings are, rather than accepting edits that silently do nothing.
+ * open. Says plainly what does and does not reach the agent, rather than
+ * accepting edits that silently do nothing.
+ *
+ * ⚠️ CE TEXTE DÉCRIT UN COMPORTEMENT, DONC IL PEUT DEVENIR FAUX.
+ *
+ * Il l'est devenu : il affirmait que « le harnais ne reçoit QUE la
+ * personnalité » longtemps après que ce ne fut plus vrai. La vérité de
+ * référence est `packages/orchestration/src/tests/cli-runtime-surface.test.ts`,
+ * qui épingle exactement quels blocs la surface `cli-runtime` reçoit. Toute
+ * évolution là-bas doit repasser ici — aucun test ne le fera à votre place,
+ * c'est de la prose.
  */
 function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }) {
   return (
@@ -973,10 +982,20 @@ function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }
         This agent runs on the Claude Code harness, not the Nodal loop.
       </p>
       <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
-        The harness receives only this agent&apos;s personality — skills, tool groups, connectors,
-        MCP servers, per-tool approvals and memories are never sent to it, so changing them here
-        would have no effect. Put anything it must follow in its personality (Settings), and
-        configure the run itself — write mode, model, effort, daily budget — in the Model section.
+        It <strong>does</strong> receive its identity, its personality, its memory facts, the
+        absolute paths of its workspaces, the state of the repository, and the list of its
+        teammates. It does <strong>not</strong> receive Nodal&apos;s tools, skills, connectors, MCP
+        servers or per-tool approvals — its toolbox is the CLI&apos;s own, so changing those here
+        would have no effect.
+      </p>
+      <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
+        It also cannot hand work to its teammates: delegating is a tool call, and this session has
+        no way to reach Nodal&apos;s. It knows who they are so it can tell you when one of them is
+        the right answer.
+      </p>
+      <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
+        Put anything it must follow in its personality (Settings), and configure the run itself —
+        write mode, model, effort, daily budget — in the Model section.
       </p>
       <div className="mt-4">
         <PrimaryButton variant="neutral" type="button" onClick={onOpenOverview}>
@@ -2090,8 +2109,8 @@ function CodeTaskSection({
   return (
     <SectionCard>
       <SectionHead
-        label="Coding CLI"
-        hint="Runs delegate work to the coding CLI installed on this machine, under your subscription. Treat it the same as Command execution."
+        label="Call a coding CLI (tool)"
+        hint="This agent stays a Nodal agent and CALLS a coding CLI for one task, like any other tool. Different from running the agent ON a CLI — that is in Settings. Runs use your subscription; treat it the same as Command execution."
       />
 
       <div className="flex items-start gap-4">
@@ -3103,16 +3122,16 @@ function SettingsTab(props: {
               : 'LLM key + model identifier passed to the runner.'
           }
         />
-        <Field label="Runtime">
+        <Field label="What runs this agent's turns">
           <Select
             value={runtime}
             onChange={(e) => handleRuntimeSelect(e.target.value)}
             disabled={savingRuntime || !canChangeRuntime}
             className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
           >
-            <option value="nodal">Nodal (this agent&apos;s own LLM)</option>
-            <optgroup label="Coding CLIs (subscription)">
-              <option value="claude-code">Claude Code (subscription)</option>
+            <option value="nodal">Nodal — its own LLM, its tools and skills</option>
+            <optgroup label="A coding CLI IS the agent (no Nodal loop)">
+              <option value="claude-code">Claude Code — your subscription</option>
             </optgroup>
           </Select>
           {!canChangeRuntime && (
@@ -3713,7 +3732,7 @@ function ClaudeCodeRuntimeCard({
       toast.error(result.message);
       return;
     }
-    toast.success('Coding CLI defaults saved');
+    toast.success('Runtime defaults saved');
   }
 
   const hasWorkspace = workspaces.length > 0;
@@ -3721,8 +3740,8 @@ function ClaudeCodeRuntimeCard({
   return (
     <SectionCard>
       <SectionHead
-        label="Claude Code runtime"
-        hint="What Nodal still controls for an agent driven by the Claude Code harness."
+        label="Run this agent ON Claude Code"
+        hint="The agent's whole turn is served by Claude Code — there is no Nodal reasoning loop. Different from CALLING a coding CLI as a tool, which is on the Tools tab. What Nodal keeps is listed below."
       />
 
       <p className="text-body-13 leading-[1.5]! text-ink-3">{CLAUDE_CODE_DISCLAIMER}</p>
