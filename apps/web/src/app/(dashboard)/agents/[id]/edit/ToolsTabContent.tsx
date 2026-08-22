@@ -231,7 +231,7 @@ function CodeTaskConfigPanel({
       toast.error(result.message);
       return;
     }
-    toast.success('Coding CLI defaults saved');
+    toast.success('code_task tool defaults saved');
   }
 
   async function handleToggleEnabled(provider: 'claude' | 'codex', enabled: boolean) {
