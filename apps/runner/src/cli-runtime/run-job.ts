@@ -24,6 +24,7 @@ import {
   resolveTransportChannel,
   listActiveChannelsForAgent,
 } from '@nodal-agents/delivery';
+import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import {
   assertCliBudget,
   recordCliRun,
@@ -163,6 +164,25 @@ export async function runCliRuntimeJob(args: {
     }
   }
 
+  // The FULL Nodal prompt, not the raw personality field.
+  //
+  // This path used to pass `agentRow.personality` straight through, and it cost
+  // the agent everything the orchestration layer assembles: the team block, so
+  // an orchestrator with nine sub-agents attached in the database did not know
+  // they existed; persistent memory; the skills; the workspace inventory; the
+  // git posture. Reported live — "the sub-agents are ignored unless I paste
+  // them into the system prompt myself" — and that was exactly right: pasting
+  // them in was the only way they arrived.
+  //
+  // `surface: 'cli-runtime'` drops the ONE block that would be wrong here, the
+  // built-in capability list: this agent's tools are the CLI's, not Nodal's.
+  const systemPrompt = await buildSystemPrompt(agentRow as never, db, {
+    origin: job.channel ?? 'unknown',
+    surface: 'cli-runtime',
+    ...(job.task ? { task: job.task } : {}),
+    ...(job.chatId ? { telegramChatId: job.chatId } : {}),
+  });
+
   // Keep the job alive under the 5-minute reaper for the whole CLI run.
   const heartbeat = setInterval(() => {
     void touchJob(db, jobId).catch(() => {});
@@ -172,7 +192,7 @@ export async function runCliRuntimeJob(args: {
   try {
     turn = await runClaudeTurn({
       message: job.task ?? '',
-      personality: agentRow.personality,
+      personality: systemPrompt,
       cwd,
       mode,
       extraDisallowed: perms.extraDisallowed,
