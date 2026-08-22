@@ -129,6 +129,22 @@ export function runCli(
      * étape-A finding 1).
      */
     stdin?: string;
+    /**
+     * Called with each COMPLETE line of stdout, as it arrives.
+     *
+     * Both CLIs emit one JSON object per line (`claude -p --output-format
+     * stream-json`, `codex exec --json`), so a line is a whole event. Handing
+     * them over live is what lets the caller record what happened WHILE the
+     * session runs instead of after it ends — and, more importantly, what lets
+     * it keep the events it needs without depending on the accumulated buffer
+     * surviving MAX_STDOUT_CHARS.
+     *
+     * The buffer is still filled for callers that parse at the end; this is
+     * additive. Throwing from here would kill the drain loop, so exceptions are
+     * swallowed and logged — an observability hook must never take down the run
+     * it observes.
+     */
+    onStdoutLine?: (line: string) => void;
   },
 ): Promise<RunCliResult> {
   const { argv, envExtra } = buildSpawnArgv(cli, args);
@@ -174,9 +190,33 @@ export function runCli(
       truncated = true;
       return existing + text.slice(0, room);
     };
+    // Line splitting for onStdoutLine. Kept OUTSIDE the capped buffer on
+    // purpose: the cap exists to bound memory, and a caller that consumes
+    // events live must not lose them just because the transcript got long.
+    let lineBuf = '';
+    const emitLines = (chunk: string): void => {
+      if (!opts.onStdoutLine) return;
+      lineBuf += chunk;
+      let nl = lineBuf.indexOf('\n');
+      while (nl !== -1) {
+        const line = lineBuf.slice(0, nl).trim();
+        lineBuf = lineBuf.slice(nl + 1);
+        if (line !== '') {
+          try {
+            opts.onStdoutLine(line);
+          } catch (err) {
+            console.warn('[code-task] onStdoutLine threw — ignored:', err);
+          }
+        }
+        nl = lineBuf.indexOf('\n');
+      }
+    };
+
     // Keep draining past the cap so the child never blocks on a full pipe.
     child.stdout?.on('data', (c: Buffer) => {
-      stdout = append(stdout, outDecoder.write(c), MAX_STDOUT_CHARS);
+      const text = outDecoder.write(c);
+      emitLines(text);
+      stdout = append(stdout, text, MAX_STDOUT_CHARS);
     });
     child.stderr?.on('data', (c: Buffer) => {
       stderr = append(stderr, errDecoder.write(c), MAX_STDERR_CHARS);
@@ -235,6 +275,21 @@ export function runCli(
       settled = true;
       clearTimeout(timer);
       if (graceTimer) clearTimeout(graceTimer);
+      // A stream that ends without a trailing newline leaves its last event in
+      // the buffer. That last line is exactly the one that matters — the result
+      // for claude, `turn.completed` for codex — so dropping it would lose the
+      // one event the whole run is about.
+      if (opts.onStdoutLine) {
+        const tail = (lineBuf + outDecoder.end()).trim();
+        lineBuf = '';
+        if (tail !== '') {
+          try {
+            opts.onStdoutLine(tail);
+          } catch (err) {
+            console.warn('[code-task] onStdoutLine threw on tail — ignored:', err);
+          }
+        }
+      }
       resolve({
         exitCode,
         stdout,

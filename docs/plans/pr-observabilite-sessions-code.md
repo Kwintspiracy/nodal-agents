@@ -2,8 +2,9 @@
 
 # PR A — Observabilité des sessions de code
 
-Aujourd'hui, une session de code longue **rend un résultat amputé sans le dire**,
-et pendant qu'elle tourne, l'onglet Code est **vide**.
+Aujourd'hui, une session de code longue **échoue** avec un message qui accuse le
+CLI, alors que la cause est notre propre plafond de capture. Et pendant qu'elle
+tourne, l'onglet Code est **vide**.
 
 Cette PR corrige les deux.
 
@@ -11,25 +12,35 @@ Cette PR corrige les deux.
 
 | # | Ce qui change | Fichier | Pourquoi |
 |---|---|---|---|
-| **1** | Échouer fort quand la sortie a été tronquée | `code-task/process.ts` | un résultat amputé passe aujourd'hui pour complet |
-| **2** | Lire le flux ligne par ligne au lieu de tout accumuler | `code-task/process.ts` | supprime la **cause** de la troncature |
+| **1** | Lire le flux ligne par ligne au lieu de tout accumuler | `code-task/process.ts` | supprime le plafond, donc **supprime la panne** |
+| **2** | Dire « sortie tronquée » au lieu de « JSON invalide » | `code-task/process.ts` | le message actuel accuse le CLI au lieu du plafond |
 | **3** | Écrire une ligne d'audit par outil, **pendant** l'exécution | `code-task/index.ts` | la session devient visible en direct |
 | **4** | Afficher quel CLI a exécuté (`claude` ou `codex`) | onglet Code | on ne sait pas qui a fait quoi |
 | **5** | Afficher modèle, effort et coût du tour | `actions.ts` + onglet Code | une jointure `cli_runs` les apporte |
 
-Les points **1 et 2** sont un correctif de bug. Les **3 à 5** sont de
-l'observabilité.
+Le point **1** est le correctif de fond. Les **2 à 5** rendent visible ce qui ne
+l'était pas.
 
-## Les trois défauts, en une ligne chacun
+## Ce qui se passe quand le plafond tombe
 
-| Défaut | Preuve |
+Le tour **échoue** — vérifié dans les trois cas, aucun ne passe en silence :
+
+| Cas | Erreur rendue |
 |---|---|
-| La sortie est tronquée en usage normal | une session réelle a atteint **96 %** du plafond de 400 000 caractères, en mode texte — `code_task` utilise le mode JSON, plus verbeux |
-| On perd la **fin**, pas le milieu | `process.ts:167-175` garde le début. La fin porte le résultat, l'usage et le coût |
-| Personne n'est prévenu | le drapeau `truncated` est calculé (`process.ts:169`), transporté (`:243`), et **jamais lu** — zéro occurrence dans `index.ts` ou `providers.ts` |
+| `claude` : un seul objet JSON, coupé | `stdout is not valid JSON` |
+| `codex` : coupe en milieu de ligne | `non-JSON line in JSONL stream` |
+| `codex` : coupe sur une fin de ligne | `stream ended without turn.completed` |
 
-C'est l'invariant #4 rompu à un endroit qui touche l'**audit** et la
-**facturation**.
+Le problème n'est donc pas le silence, c'est **le coût et le mensonge** :
+
+- la session a tourné 10 à 20 minutes, a peut-être écrit des fichiers, et rend
+  une erreur d'analyse ;
+- le message accuse le **CLI**, alors que la cause est **notre plafond** ;
+- le drapeau `truncated` est calculé (`process.ts:169`), transporté (`:243`) et
+  **jamais lu** — il permettrait précisément de nommer la vraie cause.
+
+Le plafond est frôlé en usage normal (voir les mesures), donc ces échecs
+arrivent.
 
 ## Pourquoi la session est invisible pendant qu'elle tourne
 
