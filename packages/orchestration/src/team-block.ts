@@ -34,7 +34,31 @@ import { summarizePurpose } from './router/assign-tools';
  * @param parentAgentId  The orchestrator agent's ID
  * @param db             Drizzle DB handle
  */
-export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): Promise<string> {
+export interface TeamBlockOptions {
+  /**
+   * Whether the agent can actually CALL a delegation tool.
+   *
+   * False on the `cli-runtime` surface, and it is not a nuance: a Claude Code
+   * session is handed `--strict-mcp-config` and a purely SUBTRACTIVE
+   * `--disallowedTools` (claude-turn.ts) — there is no `--allowedTools`, no
+   * `--mcp-config`, no path by which `assign_x` becomes a dispatcher call. Its
+   * tool_use events land in the audit table and stop there.
+   *
+   * So the roster still belongs in the prompt — an agent that does not know its
+   * team is the bug this whole surface exists to fix — but the instructions do
+   * not. Telling a model to call a tool it cannot reach produces either an
+   * invented tool call or a refusal to proceed; both are worse than knowing the
+   * team and saying so.
+   */
+  delegation?: boolean;
+}
+
+export async function buildTeamBlock(
+  parentAgentId: AgentId,
+  db: AnyDrizzleDb,
+  options: TeamBlockOptions = {},
+): Promise<string> {
+  const canDelegate = options.delegation !== false;
   // Load children from DB
   const childRows = await db
     .select({
@@ -228,40 +252,53 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
   lines.push('## Your team\n');
-  lines.push(
-    'You orchestrate the agents below. You have TWO ways to delegate — choose the one ' +
-      'that fits the request:\n',
-  );
-  lines.push(
-    '- **`assign_<agent>` — one delegation, in-line.** Hand the request (or a single ' +
-      'step of it) to ONE agent and get its result back before continuing. Use this for a ' +
-      'single delegation, or when the next step depends on this one’s result (reactive / ' +
-      'sequential work). Only one assignment per turn; after the agent returns, either ' +
-      'finish with `return_result` or assign the next step. Do NOT delegate again unless ' +
-      'the request needs another step.',
-  );
-  lines.push(
-    '- **`create_task` — parallel fan-out.** Create several INDEPENDENT tasks at once, ' +
-      'each `assigned_to` an agent by its handle. They run concurrently in the background ' +
-      'and their results are compiled and delivered automatically once all finish. Use ' +
-      'this when the pieces of work do not depend on each other and can run in parallel. ' +
-      'Use `depends_on` to order tasks that must run in sequence within the board. After ' +
-      'creating the tasks, end your turn with a brief `return_result` acknowledgment — the ' +
-      'task board runs them, so do NOT call `list_tasks` to wait (only use it to fetch a ' +
-      'task ID for a `depends_on` reference).\n',
-  );
-  lines.push(
-    '⚠️ THE FINAL SUMMARY TO THE USER IS AUTOMATIC — NEVER MAKE IT A TASK. Once the work tasks ' +
-      'finish, the system composes a short summary of the whole run and sends it to the user on ' +
-      'their original channel by itself. So even when the user says "puis fais une synthèse et ' +
-      'envoie-la moi" / "then summarize and send it to me", that final summarize-and-send step is ' +
-      'ALREADY handled — do NOT turn it into a task and do NOT add a `depends_on` "synthèse"/' +
-      '"summary"/"→ Telegram" task. Creating one produces a DUPLICATE and an extra useless run. ' +
-      'Create ONLY the real work tasks, then `return_result`. If the user wants a long deliverable ' +
-      '(a file, an Obsidian note, an email, an HTML page), make a work task that PRODUCES that ' +
-      'artifact — but the chat reply itself is never a task.\n',
-  );
-  lines.push('Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n');
+  if (!canDelegate) {
+    // Roster as a FACT, not a manual. See TeamBlockOptions.delegation.
+    lines.push(
+      'These agents exist in this workspace and are attached to you. On THIS surface you ' +
+        'have NO delegation tool: there is no way for you to hand work to them, and any ' +
+        'attempt to call one would reach nothing. Treat the list as knowledge — who exists, ' +
+        'what each is for — and if a request genuinely needs one of them, say so plainly ' +
+        'rather than pretend to delegate.\n',
+    );
+  } else {
+    lines.push(
+      'You orchestrate the agents below. You have TWO ways to delegate — choose the one ' +
+        'that fits the request:\n',
+    );
+    lines.push(
+      '- **`assign_<agent>` — one delegation, in-line.** Hand the request (or a single ' +
+        'step of it) to ONE agent and get its result back before continuing. Use this for a ' +
+        'single delegation, or when the next step depends on this one’s result (reactive / ' +
+        'sequential work). Only one assignment per turn; after the agent returns, either ' +
+        'finish with `return_result` or assign the next step. Do NOT delegate again unless ' +
+        'the request needs another step.',
+    );
+    lines.push(
+      '- **`create_task` — parallel fan-out.** Create several INDEPENDENT tasks at once, ' +
+        'each `assigned_to` an agent by its handle. They run concurrently in the background ' +
+        'and their results are compiled and delivered automatically once all finish. Use ' +
+        'this when the pieces of work do not depend on each other and can run in parallel. ' +
+        'Use `depends_on` to order tasks that must run in sequence within the board. After ' +
+        'creating the tasks, end your turn with a brief `return_result` acknowledgment — the ' +
+        'task board runs them, so do NOT call `list_tasks` to wait (only use it to fetch a ' +
+        'task ID for a `depends_on` reference).\n',
+    );
+    lines.push(
+      '⚠️ THE FINAL SUMMARY TO THE USER IS AUTOMATIC — NEVER MAKE IT A TASK. Once the work tasks ' +
+        'finish, the system composes a short summary of the whole run and sends it to the user on ' +
+        'their original channel by itself. So even when the user says "puis fais une synthèse et ' +
+        'envoie-la moi" / "then summarize and send it to me", that final summarize-and-send step is ' +
+        'ALREADY handled — do NOT turn it into a task and do NOT add a `depends_on` "synthèse"/' +
+        '"summary"/"→ Telegram" task. Creating one produces a DUPLICATE and an extra useless run. ' +
+        'Create ONLY the real work tasks, then `return_result`. If the user wants a long deliverable ' +
+        '(a file, an Obsidian note, an email, an HTML page), make a work task that PRODUCES that ' +
+        'artifact — but the chat reply itself is never a task.\n',
+    );
+    lines.push(
+      'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
+    );
+  }
   lines.push('Your agents:');
   for (const row of childRows) {
     const {
@@ -298,8 +335,13 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
     lines.push(
-      `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
-        `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`,
+      canDelegate
+        ? `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
+            `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`
+        : // No tool name: naming `assign_x` to an agent that cannot call it is
+          // precisely what turned this roster into an invitation to hallucinate.
+          `- **${agentName}**${roleTag} (\`${agentSlug}\`)` +
+            `${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`,
     );
   }
 
