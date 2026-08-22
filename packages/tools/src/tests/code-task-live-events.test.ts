@@ -7,8 +7,12 @@
 // du flux (run-job.ts). Cette asymétrie est ce que ce fichier verrouille.
 
 import { describe, it, expect } from 'vitest';
-import { parseLiveToolEvent } from '../builtin/code-task/live-events';
-import { buildProviderArgs } from '../builtin/code-task/providers';
+import { parseLiveToolEvent, makeEssentialCapture } from '../builtin/code-task/live-events';
+import {
+  buildProviderArgs,
+  parseClaudeOutput,
+  parseCodexOutput,
+} from '../builtin/code-task/providers';
 
 describe('parseLiveToolEvent — claude', () => {
   it('reconnaît un tool_use dans le contenu du message', () => {
@@ -111,5 +115,64 @@ describe("l'argv demande bien le flux que le parseur attend", () => {
 
   it('codex : --json, le mode JSONL', () => {
     expect(buildProviderArgs('codex', 'read')).toContain('--json');
+  });
+});
+
+describe('le résultat survit à un flux plus gros que le tampon', () => {
+  // Constat bloquant de la passe 2, et une régression que J'AI introduite :
+  // `--output-format json` produisait un objet compact ; `stream-json --verbose`
+  // produit tout le flux d'événements, sorties d'outils comprises. Le tampon de
+  // runCli est plafonné et coupe la FIN — précisément où vit `type:"result"`.
+  // Une session longue aurait donc échoué sur « stream ended without a result
+  // event » après avoir parfaitement tourné.
+  it('capture le résultat même quand des milliers de lignes de bruit le précèdent', () => {
+    const cap = makeEssentialCapture('claude');
+    for (let i = 0; i < 5000; i++) {
+      cap.onLine(
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'x'.repeat(200) }] },
+        }),
+      );
+    }
+    cap.onLine(JSON.stringify({ type: 'result', result: 'FINI', session_id: 's1' }));
+
+    const parsed = parseClaudeOutput(cap.transcript());
+    expect(parsed.resultText, 'le résultat a été noyé dans le bruit').toBe('FINI');
+    expect(parsed.sessionId).toBe('s1');
+  });
+
+  it('garde la FIN, pas le début, quand le plafond de lignes essentielles tombe', () => {
+    // Le résultat est le dernier événement : jeter le début est correct, jeter
+    // la fin serait exactement le bug qu'on répare.
+    const cap = makeEssentialCapture('claude');
+    for (let i = 0; i < 5000; i++) {
+      cap.onLine(JSON.stringify({ type: 'result', result: `tour-${i}` }));
+    }
+    expect(parseClaudeOutput(cap.transcript()).resultText).toBe('tour-4999');
+  });
+
+  it('codex : garde thread.started et turn.completed, jette les sorties d’outils', () => {
+    const cap = makeEssentialCapture('codex');
+    cap.onLine(JSON.stringify({ type: 'thread.started', thread_id: 'th_1' }));
+    cap.onLine(
+      JSON.stringify({
+        type: 'item.completed',
+        item: { id: 'i1', type: 'command_execution', output: 'y'.repeat(50_000) },
+      }),
+    );
+    cap.onLine(
+      JSON.stringify({
+        type: 'item.completed',
+        item: { id: 'i2', type: 'agent_message', text: 'la réponse' },
+      }),
+    );
+    cap.onLine(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10 } }));
+
+    const t = cap.transcript();
+    expect(t, "la grosse sortie d'outil a été retenue").not.toContain('yyyy');
+    const parsed = parseCodexOutput(t);
+    expect(parsed.sessionId).toBe('th_1');
+    expect(parsed.resultText).toBe('la réponse');
   });
 });
