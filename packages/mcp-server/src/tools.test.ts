@@ -251,13 +251,16 @@ describe('la commande publique garde stdout muet', () => {
     const { spawn } = await import('node:child_process');
     const { dirname, join } = await import('node:path');
     const { fileURLToPath } = await import('node:url');
-    const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..');
+    // La commande LITTERALEMENT documentee, depuis la racine du depot — pas
+    // une variante « equivalente » lancee depuis le paquet : c est la commande
+    // publique qu on epingle, pas l idee generale (constat passe 8).
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
     const result = await new Promise<{ stdout: string; code: number | null }>((resolve) => {
       const env = { ...process.env };
       delete env['DATABASE_URL'];
-      const child = spawn('pnpm', ['--silent', 'serve'], {
-        cwd: pkgDir,
+      const child = spawn('pnpm', ['--filter', '@nodal-agents/mcp-server', '--silent', 'serve'], {
+        cwd: repoRoot,
         env,
         shell: process.platform === 'win32',
         windowsHide: true,
@@ -271,6 +274,9 @@ describe('la commande publique garde stdout muet', () => {
     });
 
     expect(result.code, 'le lanceur doit échouer fort sans DATABASE_URL').toBe(1);
-    expect(result.stdout.trim(), 'stdout est le transport MCP — il doit rester vide').toBe('');
+    // OCTET POUR OCTET, pas .trim() : le protocole stdio traite chaque ligne
+    // comme du JSON — une ligne VIDE est déjà une erreur de désérialisation
+    // chez le client. Un test qui tolère du blanc tolère la panne.
+    expect(result.stdout, 'stdout est le transport MCP — zéro octet toléré').toBe('');
   }, 60_000);
 });
