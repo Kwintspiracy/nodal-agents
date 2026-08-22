@@ -1,90 +1,95 @@
 <!-- artifact: https://claude.ai/code/artifact/6a369704-f6cb-44c5-85ce-58175af1887d -->
 
-# Lot « poste de développement » — état au 22/08/2026, 16h
+# Lot « poste de développement » — CLOS le 22/08/2026
 
-Trois PR ouvertes, aucune mergée. Deux sont sorties de la boucle de
-vérification, la troisième attend un arbitrage de périmètre.
+Les trois PR sont mergées. `main` est vert : typecheck 32/32, tests 31/31 sans
+cache, lint 32/32, `deps:check` propre. Zéro PR ouverte.
 
-## Où on en est
+## Ce qui est livré
 
-| PR | Sujet | Reviews | CI | Reste |
-|---|---|---|---|---|
-| **#7** | Continuité, conscience du dépôt, retour arrière | 3 passes, **close** | 🟢 4/4 | rien |
-| **#8** | Le runtime CLI recevait sa personnalité brute | 3 passes + 1 plan de test | 🟡 en cours | **un arbitrage** |
-| **#9** | Catalogue : prix, vision, efforts | 2 passes, **close** | 🟢 4/4 | rien |
+| PR | Apport |
+|---|---|
+| **#7** | Continuité de session pour `code_task`, conscience du dépôt, points de restauration |
+| **#8** | Un agent en runtime CLI reçoit son contexte — en **faits**, plus en ordres impossibles |
+| **#9** | Prix OpenRouter corrigés, 11 modèles rendus à la vision, script qui refuse de mentir |
 
-## Ce que les reviews ont trouvé — 15 constats, aucun faux
+## Ce que les reviews ont trouvé
 
-| PR | Constats | Dont causés par mes propres correctifs |
+**15 constats, aucun faux.** Neuf venaient de mes propres correctifs — c'est ce
+que les deuxièmes et troisièmes passes servent à attraper.
+
+| PR | Passes | Constats | Dont causés par mes correctifs |
+|---|---|---|---|
+| #7 | 3 | 6 | 2 |
+| #8 | 3 + 1 plan de test | 11 | 4 |
+| #9 | 2 | 7 | 3 |
+
+Un seul constat s'est révélé **faux** dans la journée, et il était de moi : « le
+modèle phare était aveugle ». Mesuré : 8 modèles sur 11, et aucun de ceux que
+j'avais nommés.
+
+### Le motif qui revient — quatre fois
+
+Un test à moi passait sans rien prouver, parce que sa fixture n'instanciait pas
+le cas : un seul workspace, un fichier non ignoré, aucun skill assigné, aucune
+mémoire. **Tester la pièce ne teste pas le câblage.**
+
+### La leçon de la #8
+
+Trois passes ont buté sur une seule cause : le texte du catalogue est écrit pour
+l'outillage Nodal. **Les règles sont portables ; la prose qui les porte ne l'est
+pas.** D'où : cette surface ne reçoit aucun contenu catalogue, et le correctif
+réel appartient à la couche catalogue.
+
+## Ce que le lot n'a PAS livré, et l'assume
+
+| Manque | Où ça va |
+|---|---|
+| La délégation depuis un agent CLI | **PR C** — le chemin est clair, `--strict-mcp-config` et `--mcp-config` cohabitent |
+| Les skills catalogue conscients de la surface | couche catalogue, invariant #3 |
+| 5 tests dépendant du **chemin** du dépôt | trou d'outillage, non corrigé |
+
+## La suite — trois PR, ordre validé
+
+| PR | Sujet | Pourquoi cet ordre |
 |---|---|---|
-| #7 | 6 | 2 |
-| #8 | 7 + 2 + 2 | 4 |
-| #9 | 4 + 3 | 3 |
+| **A** | [Observabilité des sessions de code](https://claude.ai/code/artifact/7844e194-d0c1-440d-8c84-7534fb429f6a) | contient un défaut **actif** : une session longue rend un résultat amputé sans le dire |
+| **B** | Nommage « CLI » — outil contre runtime | ~30 lignes de copie, règle une confusion quotidienne |
+| **C** | Serveur MCP | seule à ajouter une **surface d'attaque** — sa propre review, son propre plan de test |
 
-Un seul constat s'est révélé **faux** au fil de la journée, et il était de moi :
-« le modèle phare était aveugle ». Mesuré : 8 modèles sur 11, et aucun de ceux
-que j'avais nommés.
+**C se découpe** : d'abord la preuve minimale — un serveur exposant **un seul**
+outil, `create_task`, branché sur le `claude` du terminal. Si une tâche Nodal
+part du terminal et apparaît dans Runs, tout le reste tient. Sinon on l'apprend
+en une heure au lieu d'un lot entier.
 
-### Le motif qui revient
-
-Quatre fois, un test à moi est passé sans rien prouver, parce que sa fixture
-n'instanciait pas le cas : un seul workspace, un fichier non ignoré, aucun skill
-assigné, aucune mémoire. **Tester la pièce ne teste pas le câblage.**
-
-## PR #8 — ce qui attend ta décision
-
-Trois passes ont buté sur une seule cause : **le texte du catalogue est écrit
-pour l'outillage Nodal.**
-
-```
-verify-before-done  →  ordonne file_read après chaque écriture
-code-review         →  exige review_verdict puis return_result
-command-execution   →  prescrit run_command
-```
-
-Aucun n'existe dans une session Claude Code. Les *règles* sont portables ; la
-*prose* qui les porte ne l'est pas.
-
-**Ce que la #8 livre** : identité, personnalité, roster d'équipe comme fait,
-faits mémoire, chemins absolus, posture git. Le bug signalé est corrigé, mesuré
-à 22 176 → 4 789 caractères et 23 → 0 ordre inexécutable.
-
-**Ce qu'elle ne livre pas** :
-
-| Manque | Pourquoi | Où le corriger |
-|---|---|---|
-| La délégation | `--strict-mcp-config` + `--disallowedTools` soustractif : rien ne peut ajouter un outil à la session | PR d'architecture — rouvre la porte que la #6 a fermée |
-| Le contenu catalogue | Écrit pour les outils Nodal | Couche **catalogue**, invariant #3 |
+C sert **deux** usages, et le second est venu de Quentin : un agent CLI qui
+délègue, **et** son terminal qui pilote Nodal — trois reviews lancées en
+parallèle sans quitter le terminal.
 
 ## Outillage — trois défauts trouvés en route
 
 | Défaut | État |
 |---|---|
-| `codex exec` en tâche de fond bloque sans `< /dev/null` | corrigé, inscrit dans `/revue-codex` |
-| `.claude/` ignoré : les skills n'étaient pas versionnés | corrigé, 2 commits mentaient |
-| 5 tests dépendent du **chemin** du dépôt | non corrigé, hors périmètre |
+| `codex exec` en tâche de fond bloque sans `< /dev/null` | corrigé, inscrit dans `/revue-codex` (37 min perdues) |
+| `.claude/` ignoré : les skills n'étaient pas versionnés | corrigé — 2 commits affirmaient le contraire |
+| 5 tests dépendent du chemin du dépôt | **ouvert** |
 
 Et une limite mesurée : `--sandbox workspace-write` refuse l'écriture **et** la
 création de processus sur cette machine. Un plan de test ne peut pas être
-délégué à Codex sous Windows.
+délégué à Codex sous Windows — les mesures se font ici.
 
 ## Next steps
 
-### Ce qui attend une décision de Quentin
+### Ce que je fais ensuite, sans rien attendre
 
-1. **La #8 est-elle mergeable ainsi ?** Elle corrige le bug signalé et assume
-   deux manques nommés. L'alternative est d'élargir le lot.
-2. **La délégation depuis un agent CLI** : capacité à construire, ou absence
-   assumée ?
-3. **Les skills catalogue** conscients de la surface : projet à part entière.
+1. **PR A**, en commençant par la mesure promise : ce qu'on perd réellement quand
+   le plafond tombe, sur une session `code_task` réelle.
 
-### Ce que je peux faire seul ensuite
+### Gestes de Quentin, en attente
 
-4. Le trou d'outillage : les 5 tests dépendants du chemin.
-5. Relancer une passe sur la #7 après sa CI verte, pour confirmer.
-
-### Tes gestes, toujours en attente
-
-6. Révoquer les tokens Discord + Slack (fuités le 08/08).
-7. `node scripts/probe-codex-sandbox.mjs` sur Linux ou macOS.
-8. Décider du sort de la 0.8.6.
+2. **Révoquer les tokens Discord + Slack** — fuités le 08/08, jamais confirmés
+   révoqués.
+3. **`node scripts/probe-codex-sandbox.mjs` sur Linux ou macOS** — le confinement
+   de Codex n'a jamais été mesuré ailleurs que sous Windows.
+4. **Décider du sort de la 0.8.6** — la fuite MCP est publiée sur npm depuis la
+   0.8.1.
