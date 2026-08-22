@@ -769,15 +769,27 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // — while OpenRouter had already passed the cut through. Same 2x
       // overstatement as the 3.7 entry below had; found by the same check.
       // 'max' dropped for the same reason as 3.7: not in supported_efforts.
-      // ('minimal' IS published for this id and is NOT added here — a new
-      // level is a behaviour change, not a data correction.)
+      //
+      // mandatory:true — OpenRouter publishes it for this id, and its absence
+      // was NOT cosmetic: buildReasoningLevels appends 'off' whenever mandatory
+      // is missing (AgentComposer.tsx), and openrouter.ts turns that choice
+      // into `reasoning:{enabled:false}` — a setting this model does not
+      // accept. The picker was offering a switch that cannot be thrown.
+      //
+      // 'minimal' IS published for this id and is deliberately NOT added: the
+      // ReasoningEffort union, the Zod action schemas, the UI labels and the
+      // consistency test all enumerate off|low|medium|high|max. Adding a level
+      // is a cross-cutting change, not a catalog data fix — tracked, not
+      // smuggled in here. What is fixed now is the FALSE option ('off'); the
+      // missing true one leaves the picker narrower than the model, which
+      // costs a capability, not a broken call.
       modelId: 'google/gemini-3.6-flash',
       label: 'Gemini 3.6 Flash',
       capabilities: {
         tools: true,
         forcedToolChoice: true,
         reasoning: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'] },
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
       pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
@@ -797,14 +809,16 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Efforts are the three OpenRouter publishes in supported_efforts for
       // this id. 'max' is deliberately absent: it maps to xhigh, which
       // OpenRouter folds back onto high, so it would show the user two
-      // controls that do the same thing.
+      // controls that do the same thing. mandatory:true matches both the
+      // native twin above and OpenRouter's own metadata — I had dropped it
+      // when copying, which made the picker offer an 'off' this model refuses.
       modelId: 'google/gemini-3.7-flash',
       label: 'Gemini 3.7 Flash',
       capabilities: {
         tools: true,
         forcedToolChoice: true,
         reasoning: true,
-        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'] },
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
       pricing: { inputPerMillionUsd: 0.375, outputPerMillionUsd: 1.875 },
@@ -1022,15 +1036,27 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
 // (OpenRouter: 421 models, models.dev: 10 460 entries). The generated set and
 // this list now match exactly — 0 missing, 0 extra.
 //
-// What the regeneration surfaced: 11 catalogued ids were absent, and they were
-// not obscure ones. `claude-opus-5`, `claude-sonnet-5` and `claude-fable-5`
-// were all missing, in both their native and `anthropic/` forms — so an agent
-// on the flagship model could not be shown an image. A model absent from this
-// set does not error: `hydrateForLlm` swaps the image for `visionRoutingNote`
-// (apps/runner/src/job/execute.ts), which tells the LLM it cannot see and to
-// delegate or say so. The user is therefore told something — but by a model
-// improvising over a capability note, never by a structured error, and the
-// message blames the model rather than this stale list.
+// What the regeneration surfaced: 11 catalogued ids were absent — but only 8
+// of them were actually blind, and NOT the ones the raw list suggests. The
+// runner's test (execute.ts) is an OR:
+//
+//   canSeeImages = llmClient.capabilities.vision === true || modelCanSeeImages(id)
+//
+// and CAPABILITY_MATRIX marks the anthropic / openai / google providers
+// vision:true wholesale. So native `claude-opus-5` was never blind — the
+// provider flag carried it. The `openrouter` provider is vision:false
+// ("depends on underlying model; conservative default"), which leaves this set
+// as the ONLY thing standing between an OpenRouter-routed model and an image.
+// Measured on main before the fix: the 3 native forms saw fine, the 8
+// OpenRouter forms (anthropic/claude-opus-5 and its -fast/sonnet/fable twins,
+// openai/gpt-5.6-luna and its two siblings, qwen/qwen3.8-max) did not. After:
+// 0 of 11 blind.
+//
+// A model absent from this set does not error: `hydrateForLlm` swaps the image
+// for `visionRoutingNote` (apps/runner/src/job/execute.ts), which tells the LLM
+// it cannot see and to delegate or say so. The user is therefore told
+// something — but by a model improvising over a capability note, never by a
+// structured error, and the message blames the model rather than this list.
 //
 // The lesson is about the refresh, not the entries: nothing runs this script,
 // so the list rots silently every time a model is catalogued. Re-run it

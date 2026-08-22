@@ -37,8 +37,9 @@ async function fetchJson(url) {
 // A source that fails to load is not a source that says "no vision". Both
 // fetches used to warn and carry on, so with no network the script printed an
 // EMPTY "paste into VISION_MODEL_IDS" block and exited 0 — an operator pasting
-// that output would have wiped the list and blinded every model at once. Track
-// the failures and refuse to emit a list built on nothing.
+// that output would have wiped the list and blinded every model at once.
+// Tracked here, but see the coverage gate below: what disqualifies a run is an
+// UNRESOLVED id, not a failed fetch.
 const failures = [];
 
 // OpenRouter: id → input_modalities
@@ -70,18 +71,6 @@ try {
   failures.push(`models.dev: ${e.message}`);
 }
 
-// Fail loud rather than emit a list nobody can trust (invariant #4). One source
-// down is already enough: the two cover different id forms, so a single outage
-// silently demotes whole families to text-only.
-if (failures.length > 0) {
-  console.error(
-    `\nRefusing to print a vision list — ${failures.length} of 2 sources failed:\n` +
-      failures.map((f) => `  - ${f}`).join('\n') +
-      `\nThe existing VISION_MODEL_IDS is more accurate than anything derivable here.`,
-  );
-  process.exit(1);
-}
-
 const vision = [];
 const unknown = [];
 for (const id of catalogIds) {
@@ -93,9 +82,42 @@ for (const id of catalogIds) {
   if (hasImage(mods)) vision.push(id);
 }
 
+// The gate is COVERAGE, not the number of fetches that failed.
+//
+// The failure this guards against is one specific thing: an id nobody could
+// resolve being pasted back as absent, which reads as "text-only" and blinds
+// the model. A source being down only matters insofar as it leaves ids
+// unresolved — and the two sources are far from equal. Measured 2026-08-22 over
+// the 54 catalogued ids: models.dev alone resolves 54/54, OpenRouter alone
+// 33/54 (it carries no id the other lacks, since the native forms — the whole
+// `claude-*`, `gpt-*`, `gemini-*` families — are indexed only by models.dev).
+// So refusing whenever ANY source failed, as this did at first, would reject a
+// perfectly complete list every time OpenRouter hiccuped.
+//
+// Conversely a full pair of successful fetches is no guarantee either: a newly
+// catalogued id absent from both sources leaves a hole with zero fetch errors.
+// Counting failures answers the wrong question in both directions.
+if (unknown.length > 0) {
+  console.error(
+    `\nRefusing to print a paste-ready list — ${unknown.length} catalogued id(s) ` +
+      `could not be resolved by any reachable source:\n` +
+      unknown.map((id) => `  - ${id}`).join('\n') +
+      (failures.length
+        ? `\n\nSource(s) that failed to load:\n` + failures.map((f) => `  - ${f}`).join('\n')
+        : `\n\nBoth sources loaded — these ids are simply absent from both.`) +
+      `\n\nAn unresolved id is NOT a text-only model. Pasting a list built from ` +
+      `this run would silently drop whatever entry those ids currently have. ` +
+      `Resolve them by hand, or re-run once the failed source is back.`,
+  );
+  process.exit(1);
+}
+
+if (failures.length > 0) {
+  console.warn(
+    `\nNote: ${failures.length} source(s) failed to load, but every catalogued id ` +
+      `was still resolved by the survivor(s). The list below is complete.`,
+  );
+}
+
 console.log('\n── Vision-capable (paste into VISION_MODEL_IDS) ──');
 console.log(vision.map((id) => `  '${id}',`).join('\n'));
-if (unknown.length) {
-  console.log('\n── Not found in either source (verify by hand) ──');
-  console.log(unknown.map((id) => `  ${id}`).join('\n'));
-}
