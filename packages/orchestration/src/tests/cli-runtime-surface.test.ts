@@ -120,3 +120,57 @@ describe("surface 'cli-runtime'", () => {
     expect(prompt).not.toContain('## Built-in capabilities');
   });
 });
+
+describe('aucune consigne portant sur un outil absent', () => {
+  // La review a mesuré 23 mentions d'outils Nodal dans le prompt cli-runtime —
+  // et AUCUNE n'était un fait : « you MUST call mark_memory_outdated », « use
+  // assign_* when… », « after every file_write, call file_read ». Un agent
+  // Claude Code n'a aucun de ces outils : son argv porte --strict-mcp-config et
+  // un --disallowedTools purement soustractif, sans --allowedTools ni
+  // --mcp-config. Chaque ligne était donc un ordre inexécutable.
+  const ABSENTS = [
+    'assign_',
+    'create_task',
+    'list_tasks',
+    'return_result',
+    'skill_view',
+    'run_skill_script',
+    'save_memory',
+    'query_memory',
+    'mark_memory_outdated',
+    'file_read',
+    'file_write',
+    'file_edit',
+    'file_list',
+    'file_search',
+  ];
+
+  it("ne nomme AUCUN outil que la session n'a pas", async () => {
+    const prompt = await buildSystemPrompt(agent as never, db, {
+      origin: 'api',
+      surface: 'cli-runtime',
+    } as never);
+    const trouves = ABSENTS.filter((t) => prompt.includes(t));
+    expect(
+      trouves,
+      `outils Nodal nommés dans un prompt cli-runtime : ${trouves.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it("garde l'équipe malgré tout — le bug d'origine reste corrigé", async () => {
+    // Le risque du reformage : jeter le bénéfice avec les consignes. L'agent
+    // doit toujours SAVOIR qui compose son équipe, il ne doit simplement plus
+    // recevoir l'ordre de l'appeler.
+    const prompt = await buildSystemPrompt(agent as never, db, {
+      origin: 'api',
+      surface: 'cli-runtime',
+    } as never);
+    expect(prompt, 'le sous-agent a disparu avec les consignes').toContain('sous-agent-test');
+  });
+
+  it('la surface Nodal ordinaire garde ses consignes', async () => {
+    // Le reformage ne doit toucher QUE cli-runtime.
+    const prompt = await buildSystemPrompt(agent as never, db, { origin: 'api' } as never);
+    expect(prompt).toContain('assign_');
+  });
+});
