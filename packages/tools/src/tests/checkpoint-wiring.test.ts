@@ -174,3 +174,62 @@ describe('le câblage dans executeTool', () => {
     expect(res.error).toMatch(/checkpoint_failed/);
   });
 });
+
+describe('multi-workspace — le constat 1 de la review', () => {
+  it('photographie le workspace VISÉ, pas seulement le premier', async () => {
+    // Le câblage prenait ctx.workspaces[0].path, alors que file_write résout sa
+    // cible par label. Un agent tenant [shared, autre] qui écrit dans `autre/`
+    // obtenait un instantané de `shared` — l'écriture passait, et restaurer ne
+    // rendait rien. Le test d'origine ne configurait qu'UN workspace : il ne
+    // pouvait pas voir le défaut.
+    const autre = join(root, 'autre');
+    await mkdir(autre, { recursive: true });
+    await writeFile(join(autre, 'cible.txt'), 'avant');
+
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'autre/cible.txt', content: 'apres' },
+      ctx({
+        workspaces: [
+          { label: 'shared', path: ws } as never,
+          { label: 'autre', path: autre } as never,
+        ],
+      }),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+
+    const cps = await listCheckpoints(store, autre);
+    expect(cps.length, "le workspace réellement écrit n'a pas été photographié").toBeGreaterThan(0);
+  });
+
+  it('couvre le second workspace même après avoir couvert le premier dans le même tour', async () => {
+    // La clé de tour contenait le workspace choisi ; une fois `shared` couvert,
+    // toute écriture suivante du tour était réputée protégée, y compris dans un
+    // AUTRE workspace.
+    const autre = join(root, 'autre2');
+    await mkdir(autre, { recursive: true });
+    const deux = [
+      { label: 'shared', path: ws } as never,
+      { label: 'autre2', path: autre } as never,
+    ];
+
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'a.txt', content: '1' },
+      ctx({ workspaces: deux }),
+      opts,
+    );
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'autre2/b.txt', content: '2' },
+      ctx({ workspaces: deux }),
+      opts,
+    );
+
+    expect(
+      (await listCheckpoints(store, autre)).length,
+      'le second workspace est resté sans filet',
+    ).toBeGreaterThan(0);
+  });
+});

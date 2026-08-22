@@ -30,6 +30,7 @@ import {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  assertRuntimeSessionKey,
 } from '@nodal-agents/tools';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
@@ -89,7 +90,14 @@ export async function runCliRuntimeJob(args: {
   }
 
   // Session continuity: one CLI session per (agent, conversation).
-  const conversationKey = job.conversationId ?? job.chatId;
+  // assertRuntimeSessionKey: cli_sessions is shared with code_task, whose keys
+  // carry a `code_task:` prefix, and the unique index is only
+  // (agent_id, conversation_key). Checked rather than assumed — see the
+  // helper for why the runtime side is NOT prefixed instead.
+  const rawConversationKey = job.conversationId ?? job.chatId;
+  const conversationKey = rawConversationKey
+    ? assertRuntimeSessionKey(rawConversationKey)
+    : rawConversationKey;
   let resumeSessionId: string | undefined;
   if (conversationKey) {
     const [existing] = await db

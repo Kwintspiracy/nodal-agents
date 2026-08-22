@@ -19,6 +19,7 @@ export {
   listCheckpoints,
   restoreCheckpoint,
   ensureStore,
+  CHECKPOINT_COVERAGE_NOTE,
   type Checkpoint,
 } from './checkpoints';
 export { checkpointsRoot } from './root';

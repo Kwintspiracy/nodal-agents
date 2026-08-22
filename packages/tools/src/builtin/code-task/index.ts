@@ -53,6 +53,8 @@ export {
   recordCliRun,
   acquireWorkspaceLock,
   releaseWorkspaceLock,
+  assertRuntimeSessionKey,
+  CODE_TASK_KEY_PREFIX,
 } from './db';
 export { CLAUDE_READONLY_DISALLOWED } from './providers';
 export {

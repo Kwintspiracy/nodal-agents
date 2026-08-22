@@ -87,6 +87,8 @@ export {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  assertRuntimeSessionKey,
+  CODE_TASK_KEY_PREFIX,
 } from './code-task';
 export type { NormalizedCliResult } from './code-task';
 // Workspace confinement, reused by adapters that touch workspace files

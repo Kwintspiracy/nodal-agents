@@ -222,7 +222,40 @@ export async function releaseWorkspaceLock(
  * than starting fresh — it would answer confidently about the wrong tree.
  */
 export function codeTaskSessionKey(jobId: string, cwd: string): string {
-  return `code_task:${jobId}:${cwd}`;
+  return `${CODE_TASK_KEY_PREFIX}${jobId}:${cwd}`;
+}
+
+/**
+ * Prefixes `cli_sessions.conversation_key` reserves for keys built by a
+ * namespacing helper. Anything else in that column is a raw conversation id.
+ */
+export const CODE_TASK_KEY_PREFIX = 'code_task:';
+
+/**
+ * The runtime path (run-job / run-chat) writes into the SAME table, keyed by
+ * `conversationId ?? chatId`, and the unique index is only
+ * (agent_id, conversation_key). The two key spaces therefore MUST NOT overlap:
+ * one row holding two different CLI sessions means whichever wrote last wins,
+ * and an agent silently resumes the wrong session.
+ *
+ * Today they cannot collide — a conversation id is a uuid, a chat id is a
+ * channel-assigned number, and neither can equal `code_task:<jobId>:<cwd>`.
+ * But that is correct by luck, not by construction: nothing stopped a future
+ * channel from producing an id in any shape at all. This turns the assumption
+ * into a check, at the one place every runtime key passes through.
+ *
+ * Deliberately NOT solved by prefixing the runtime side too: that would orphan
+ * every session row already written and cold-start live conversations, to
+ * close a hole that has never been reachable.
+ */
+export function assertRuntimeSessionKey(conversationKey: string): string {
+  if (conversationKey.startsWith(CODE_TASK_KEY_PREFIX)) {
+    throw new Error(
+      `refusing a runtime session key that collides with the code_task namespace: ` +
+        `"${conversationKey}". Two different CLI sessions would share one row.`,
+    );
+  }
+  return conversationKey;
 }
 
 /** The CLI session to resume for this (agent, job, cwd, provider), if any. */
