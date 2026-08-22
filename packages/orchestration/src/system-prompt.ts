@@ -575,15 +575,18 @@ export async function buildSystemPrompt(
     assignedSkillRows.length === 0
       ? ''
       : jobContext?.surface === 'cli-runtime'
-        ? `\n\n## Skills\n\n` +
-          `Instructions attached to you for specific kinds of work. They are inlined in full ` +
-          `below because this session has no way to fetch them on demand. Follow the relevant ` +
-          `one before acting.\n\n` +
-          assignedSkillRows
-            .map(
-              (r) => `### ${r.skillName}\n\n${(r.skillContent ?? r.skillDescription ?? '').trim()}`,
-            )
-            .join('\n\n')
+        ? // No catalog content on this surface — same single cause as the
+          // baseline (see buildBaselineBlock): the skills' TEXT is written for
+          // Nodal's toolset. `code-review` requires `review_verdict` then
+          // `return_result`; `command-execution` prescribes `run_command`. None
+          // of them exists in a Claude Code session, so inlining that content
+          // handed the agent instructions whose every step misses.
+          //
+          // Nothing is announced either: listing an unreachable skill would
+          // reproduce the delegation defect — seeing a capability you cannot
+          // reach. The real fix is a surface-aware variant at the CATALOG layer
+          // (invariant #3: fix at the agent layer, never patch the runtime).
+          ''
         : `\n\n## Skills (load before acting)\n\n` +
           `Scan the skills below. For ANY skill even partially relevant to your task, you MUST call ` +
           `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +

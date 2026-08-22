@@ -196,30 +196,25 @@ describe('les blocs composés par Nodal ne donnent aucun ordre inexécutable', (
     expect(trouves, `ordres inexécutables encore composés : ${trouves.join(' | ')}`).toEqual([]);
   });
 
-  it('inline le CONTENU du skill, faute de pouvoir le charger à la demande', async () => {
-    // Constat de la passe 2 : le prompt annonçait des skills sans donner ni leur
-    // contenu ni un chemin ouvrable. L'agent connaissait le nom d'une capacité
-    // qu'il ne pouvait pas atteindre — le même défaut que la délégation.
+  it("n'injecte AUCUN contenu catalogue — ni skill, ni baseline", async () => {
+    // Conclusion des trois passes : le texte du catalogue est ecrit pour
+    // l'outillage Nodal. L'inliner donnait a l'agent des instructions dont
+    // chaque etape manque sa cible ; le lister sans le donner reproduisait le
+    // defaut de la delegation. Cette surface n'en recoit donc aucun, et le
+    // correctif reel appartient au catalogue.
     const prompt = await buildSystemPrompt(agent as never, db, {
       origin: 'api',
       surface: 'cli-runtime',
     } as never);
-    expect(prompt, 'le contenu du skill manque').toContain('MARQUEUR_CONTENU_SKILL');
+    expect(prompt, 'contenu de skill injecte').not.toContain('MARQUEUR_CONTENU_SKILL');
+    expect(prompt, 'bloc baseline du catalogue injecte').not.toContain('## How you work (always)');
   });
 
-  it('garde la discipline générale du baseline', async () => {
-    // Le baseline avait été supprimé EN ENTIER pour cette surface, sur une
-    // affirmation fausse de ma part : il serait « entièrement » bâti autour des
-    // builtins. En réalité il agrège aussi les skills catalogue `baseline` —
-    // vérifier avant de déclarer terminé, hygiène du workspace, miroir de
-    // langue — qui ne dépendent d'aucun outil.
-    const prompt = await buildSystemPrompt(agent as never, db, {
-      origin: 'api',
-      surface: 'cli-runtime',
-    } as never);
-    expect(prompt, 'la discipline générale a été jetée avec les consignes').toContain(
-      '## How you work (always)',
-    );
+  it('la surface ordinaire garde bien ce contenu', async () => {
+    // Le controle du correctif trop large : rien de tout ca ne doit disparaitre
+    // pour un agent Nodal.
+    const prompt = await buildSystemPrompt(agent as never, db, { origin: 'api' } as never);
+    expect(prompt).toContain('## How you work (always)');
   });
 
   it("garde l'équipe — le bug d'origine reste corrigé", async () => {

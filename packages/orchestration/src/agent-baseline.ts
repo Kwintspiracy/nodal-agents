@@ -73,20 +73,35 @@ export function buildBaselineBlock(
      * False on the `cli-runtime` surface: that session has none of Nodal's
      * builtins.
      *
-     * This block was briefly dropped WHOLESALE there, on the claim that it was
-     * "entirely built around Nodal's builtins". That claim was wrong, and the
-     * review caught it: only the memory discipline and the role block name
-     * tools. The catalog part — verify before declaring a task done, confirm
-     * before a destructive action, fail loud, mirror the user's language, reuse
-     * what already exists instead of rebuilding it — depends on no tool at all
-     * and applies to a coding CLI exactly as much as to a Nodal agent. Dropping
-     * it let a CLI agent announce unverified work and rebuild existing
-     * artifacts.
+     * Three review passes were spent on WHICH parts to keep, and the answer is
+     * none of them:
+     *
+     *  - pass 1 dropped the block wholesale, on the claim it was "entirely"
+     *    built around builtins — that claim was wrong;
+     *  - pass 2 restored the catalog part, because its RULES (verify before
+     *    declaring done, confirm before destructive actions, fail loud, mirror
+     *    the user's language, reuse instead of rebuild) genuinely depend on no
+     *    tool;
+     *  - pass 3 showed the restore reintroduced the problem, because those
+     *    rules' TEXT does name tools: verify-before-done orders `file_read`
+     *    after every write, workspace-hygiene names `file_write`, others reach
+     *    for `skill_view` / `create_task`.
+     *
+     * The rules are portable; the prose carrying them is not. Rewriting it is a
+     * CATALOG-layer job (invariant #3 — fix at the agent layer, never patch the
+     * runtime), so this surface gets no catalog content at all rather than text
+     * whose every instruction misses.
+     *
+     * What makes that acceptable: a Claude Code session is not undisciplined
+     * without it — it arrives with its own harness and its own conventions.
+     * Nodal's discipline was written for Nodal's tools; mixing the two gives an
+     * agent orders it cannot follow, which is worse than not giving them.
      */
     nodalTools?: boolean;
   } = {},
 ): string {
   const nodalTools = opts.nodalTools !== false;
+  if (!nodalTools) return '';
   const parts = contentOfKind('baseline');
   const reinforcement =
     parts.length > 0 && NEEDS_FIRMER_VERIFY.test(model)
@@ -94,21 +109,14 @@ export function buildBaselineBlock(
         'Actually run or check your work before you say a task is done, and never write tool output ' +
         'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
         'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
-        'commands. Use the tools, scripts, and exact file paths you were given' +
-        (nodalTools
-          ? ' (a skill loaded with skill_view ships run_skill_script and ready-made ' +
-            'workflows/templates)'
-          : '') +
-        ' instead of writing ' +
+        'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded ' +
+        'with skill_view ships run_skill_script and ready-made workflows/templates) ' +
+        'instead of writing ' +
         'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
         'steps that finish the task, then deliver the result with its output path.'
       : '';
   const catalogBlock =
     parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}` : '';
-
-  // Both of these name Nodal tools the CLI session does not have —
-  // save_memory / mark_memory_outdated, and return_result.
-  if (!nodalTools) return catalogBlock;
 
   const roleBlock =
     opts.role === 'orchestrator' ? DELEGATION_DISCIPLINE_BLOCK : WORKER_DISCOVERY_BLOCK;
