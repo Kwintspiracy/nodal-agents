@@ -28,7 +28,9 @@ import {
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
+import { buildCliRuntimeJobContext } from './run-job.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
 const RUNTIME_CHAT_TIMEOUT_MS = 600_000;
@@ -121,11 +123,16 @@ export async function runCliRuntimeChatTurn(args: {
   // the team block, memory, skills and workspace context that the orchestration
   // layer assembles. `surface: 'cli-runtime'` drops only the built-in tool list,
   // which describes tools this agent does not have.
-  const systemPrompt = await buildSystemPrompt(agentRow, db, {
-    origin: 'dashboard',
-    surface: 'cli-runtime',
-    task: message,
-  });
+  // Même oubli que le chemin job, même correctif : `workspaceGit` n'était jamais
+  // transmis, donc le bloc git — livré par la PR #7 — n'atteignait pas l'agent
+  // qui en a le plus besoin. Sondé sur le cwd réel de la session.
+  const workspaceGit = await probeWorkspaceGit(cwd);
+
+  const systemPrompt = await buildSystemPrompt(
+    agentRow,
+    db,
+    buildCliRuntimeJobContext({ origin: 'dashboard', task: message, workspaceGit }),
+  );
 
   let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
   try {
