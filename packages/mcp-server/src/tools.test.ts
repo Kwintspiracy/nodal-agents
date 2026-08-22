@@ -1,98 +1,128 @@
-// tools.test.ts — le serveur expose-t-il les outils de CET agent, et rien d'autre ?
+// tools.test.ts — un test par constat de la review qui a fait bloquer la v1.
 //
-// C'est la propriété qui décide de tout : un serveur MCP est un point d'entrée
-// qui crée des jobs. S'il exposait un catalogue global, il annulerait le modèle
-// d'autorisation de Nodal (invariant #9 : aucune liste par défaut, tout est
-// calculé depuis la base par agent).
-//
-// Le test qui ne prouverait rien : vérifier que la liste n'est pas vide.
+// La première version exposait `create_task` / `assign_*` directement, et la
+// review l'a démontée en six constats à racine unique : ces outils tirent leur
+// autorité du JOB qui les appelle. La v2 applique le contrat de la surface
+// chat — UN outil, `run_task`, qui crée un vrai job. Chaque test ci-dessous
+// épingle un des constats pour qu'il ne revienne pas.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentAssignments } from '@nodal-agents/db';
-import { listExposableTools, isDeferredToC2 } from './tools';
+import { agents, agentJobs, entities, eq } from '@nodal-agents/db';
+import { buildNodalMcpServer } from './server';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
-let solitaireId: string;
+let autreEntiteId: string;
 
 beforeAll(async () => {
   const res = await spinUpTestDb();
   db = res.db;
   seed = await seedMinimal(db);
 
-  // Un agent AVEC un sous-agent rattaché.
-  const [sub] = await db
-    .insert(agents)
-    .values({
-      entityId: seed.entityId,
-      name: 'Chercheur',
-      slug: 'chercheur',
-      personality: 'Je cherche.',
-      model: 'test-model',
-      role: 'agent',
-      active: true,
-    })
+  // Une SECONDE entité — le contrôle de l'usurpation inter-workspace.
+  const [autre] = await db
+    .insert(entities)
+    .values({ userId: seed.userId, name: 'Autre Workspace', slug: 'autre-workspace' })
     .returning();
-  await db.insert(agentAssignments).values({
-    entityId: seed.entityId,
-    orchestratorId: seed.agentId,
-    subAgentId: (sub as { id: string }).id,
-  });
-
-  // Et un agent SANS aucun rattachement — le contrôle.
-  const [solo] = await db
-    .insert(agents)
-    .values({
-      entityId: seed.entityId,
-      name: 'Solitaire',
-      slug: 'solitaire',
-      personality: 'Je travaille seul.',
-      model: 'test-model',
-      role: 'agent',
-      active: true,
-    })
-    .returning();
-  solitaireId = (solo as { id: string }).id;
+  autreEntiteId = (autre as { id: string }).id;
 });
 
-describe('la liste exposée vient de la base, par agent', () => {
-  it("expose l'assign du sous-agent RÉELLEMENT rattaché", async () => {
-    const noms = (await listExposableTools(seed.agentId, db)).map((t) => t.name);
-    expect(noms, "le sous-agent rattaché n'est pas exposé").toContain('assign_chercheur');
+/** Un client MCP réel branché en mémoire — vrai protocole, zéro processus. */
+async function connect(agentId: string) {
+  const server = await buildNodalMcpServer({ db, agentId });
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test', version: '0.0.1' });
+  await Promise.all([server.connect(serverT), client.connect(clientT)]);
+  return client;
+}
+
+describe('le contrat run_task', () => {
+  it("expose UN outil, et c'est run_task", async () => {
+    // Constat « create_task contourne la hiérarchie » : les outils internes ne
+    // sont plus servis du tout. La seule porte est celle du chat.
+    const client = await connect(seed.agentId);
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).toEqual(['run_task']);
+    await client.close();
   });
 
-  it("n'expose AUCUN assign pour un agent sans équipe", async () => {
-    // LA propriété qui compte. Un serveur qui exposerait un `assign_*` générique
-    // à tout le monde laisserait un agent confier du travail à des agents qui ne
-    // sont pas les siens.
-    const noms = (await listExposableTools(solitaireId, db)).map((t) => t.name);
-    const assigns = noms.filter((n) => n.startsWith('assign_'));
-    expect(assigns, `un agent sans équipe expose ${assigns.join(', ')}`).toEqual([]);
+  it("crée un VRAI job, dans l'entité DE L'AGENT", async () => {
+    // Constat « usurpation inter-entité » : entityId n'est plus un paramètre.
+    // Il est lu depuis la ligne agent — le seul endroit qui fait foi.
+    // Mutation exécutée : réinjecter une entité fournie par l'appelant fait
+    // rougir CE test avec « le job a atterri dans la mauvaise entité ».
+    const client = await connect(seed.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'analyse le depot et liste les bugs' },
+    });
+    const body = JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as {
+      jobId: string;
+    };
+    expect(body.jobId, 'aucun job créé').toBeTruthy();
+
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, body.jobId)).limit(1);
+    expect(job, 'le job annoncé n existe pas en base').toBeTruthy();
+    expect(job!.entityId, 'le job a atterri dans la mauvaise entité').toBe(seed.entityId);
+    expect(job!.entityId).not.toBe(autreEntiteId);
+    expect(job!.agentId).toBe(seed.agentId);
+    expect(job!.status, 'le job doit attendre le worker, pas s exécuter ici').toBe('pending');
+    expect(job!.channel, 'la provenance doit être dite, pas déguisée en api').toBe('mcp');
+    await client.close();
   });
 
-  it("n'expose pas l'équipe d'un AUTRE agent", async () => {
-    const noms = (await listExposableTools(solitaireId, db)).map((t) => t.name);
-    expect(noms, "l'équipe d'un autre agent a fuité").not.toContain('assign_chercheur');
+  it('refuse de démarrer pour un agent inexistant', async () => {
+    // Constat « un agentId inconnu reçoit quand même les outils » : un serveur
+    // au nom de personne n'a rien à servir.
+    await expect(connect('00000000-0000-0000-0000-000000000000')).rejects.toThrow(
+      /mcp_agent_not_found/,
+    );
   });
 
-  it('expose toujours les outils de tâches, eux', async () => {
-    // Ceux-là ne dépendent pas d'un rattachement : créer une tâche est ce qui
-    // reste possible sans équipe.
-    const noms = (await listExposableTools(solitaireId, db)).map((t) => t.name);
-    expect(noms).toContain('create_task');
-    expect(noms).toContain('list_tasks');
+  it('refuse de démarrer pour un agent inactif', async () => {
+    const [dormant] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Dormant',
+        slug: 'dormant',
+        personality: 'zzz',
+        model: 'test-model',
+        role: 'agent',
+        active: false,
+      })
+      .returning();
+    await expect(connect((dormant as { id: string }).id)).rejects.toThrow(/mcp_agent_not_found/);
   });
-});
 
-describe('ce qui est listé mais pas encore exécutable', () => {
-  it('marque assign_* comme reporté, et rien d’autre', () => {
-    // Refuser à l'exécution tout en LISTANT est un choix : l'outil existe dans
-    // la base de cet agent, le client a le droit de savoir pourquoi il ne peut
-    // pas s'en servir. Le taire donnerait le même symptôme qu'un droit manquant.
-    expect(isDeferredToC2('assign_chercheur')).toBe(true);
-    expect(isDeferredToC2('create_task')).toBe(false);
-    expect(isDeferredToC2('list_tasks')).toBe(false);
+  it('plafonne le nombre de jobs par processus', async () => {
+    // Constat « contournement global des compteurs anti-boucle » : les gardes
+    // de Nodal vivent DANS un job ; rien ne bornait le nombre de racines
+    // injectées. Le plafond par processus est cette borne — le réarmer est un
+    // redémarrage, donc un geste humain.
+    const server = await buildNodalMcpServer({
+      db,
+      agentId: seed.agentId,
+      maxJobsPerProcess: 2,
+    });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0.0.1' });
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+
+    const call = () =>
+      client.callTool({ name: 'run_task', arguments: { instruction: 'petite tache' } });
+    const a = await call();
+    const b = await call();
+    const c = await call();
+
+    expect(a.isError ?? false).toBe(false);
+    expect(b.isError ?? false).toBe(false);
+    expect(c.isError, 'le troisième appel aurait dû être refusé').toBe(true);
+    expect((c.content as Array<{ text: string }>)[0]!.text).toMatch(/mcp_job_cap_reached/);
+    await client.close();
   });
 });

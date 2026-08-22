@@ -554,6 +554,13 @@
       "when": 1786000000000,
       "tag": "0079_cli_runs_model_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1786000001000,
+      "tag": "0080_agent_jobs_mcp_channel",
+      "breakpoints": true
     }
   ]
 }
