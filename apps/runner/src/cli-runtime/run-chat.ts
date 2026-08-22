@@ -126,6 +126,14 @@ export async function runCliRuntimeChatTurn(args: {
   // Même oubli que le chemin job, même correctif : `workspaceGit` n'était jamais
   // transmis, donc le bloc git — livré par la PR #7 — n'atteignait pas l'agent
   // qui en a le plus besoin. Sondé sur le cwd réel de la session.
+  //
+  // COÛT, mesuré depuis le code plutôt que supposé : la sonde fait un
+  // `rev-parse --show-toplevel` (5 s au plus) puis trois commandes en parallèle
+  // (5 s au plus) — donc 10 s dans le pire cas, et des millisecondes sur un
+  // dépôt sain. Ce pire cas suppose un git qui pend, ce qui est en soi le
+  // signal. Assumé ici parce qu'un tour de chat CLI dure des minutes ; si ça
+  // devenait sensible, c'est le TIMEOUT de la sonde qu'il faudrait réduire, pas
+  // la sonde qu'il faudrait retirer.
   const workspaceGit = await probeWorkspaceGit(cwd);
 
   const systemPrompt = await buildSystemPrompt(
