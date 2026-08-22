@@ -28,10 +28,21 @@ test-results/
 # Playwright auth session state (contains session tokens — never commit)
 **/tests/e2e/.auth/
 # Local Claude Code per-machine settings + runtime artefacts (scheduled
-# tasks, scratch worktrees, lockfiles). Nothing under .claude/ or
-# .clone/ should be committed; the harness writes there freely between
-# sessions.
-.claude/
+# tasks, scratch worktrees, lockfiles). The harness writes there freely
+# between sessions, so the directory is ignored wholesale — EXCEPT
+# .claude/skills/, which is authored content, not runtime state.
+#
+# The exception was added on 2026-08-22 after two commits claimed to add a
+# skill and silently added nothing: `git add -A` drops ignored paths without a
+# word, so the message said one thing and the tree held another. `figma-sync`
+# had been living untracked for the same reason — one clone away from being
+# lost.
+#
+# The negation needs `.claude/*` rather than `.claude/`: git does not descend
+# into an excluded DIRECTORY, so a rule with a trailing slash makes any
+# un-ignore below it unreachable.
+.claude/*
+!.claude/skills/
 .clone/
 # Debug / scratch scripts (never commit — may contain secrets)
 apps/web/check-jobs*.ts
