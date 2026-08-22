@@ -239,3 +239,38 @@ describe("caller est une étiquette, pas un canal d'injection", () => {
     await client.close();
   });
 });
+
+describe('la commande publique garde stdout muet', () => {
+  it('pnpm --silent serve n’écrit RIEN sur stdout avant le transport', async () => {
+    // Constat passe 7 : la commande documentée SANS --silent écrit la bannière
+    // de lifecycle pnpm sur stdout — le transport MCP — avant le premier
+    // message JSON-RPC. Un client peut alors déclarer le serveur invalide.
+    // Ce test traverse le VRAI lanceur avec la VRAIE commande publique :
+    // sans DATABASE_URL il sort en 1 (échec fort attendu), et la propriété
+    // mesurée est que stdout reste vide pendant tout ce trajet.
+    const { spawn } = await import('node:child_process');
+    const { dirname, join } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+    const result = await new Promise<{ stdout: string; code: number | null }>((resolve) => {
+      const env = { ...process.env };
+      delete env['DATABASE_URL'];
+      const child = spawn('pnpm', ['--silent', 'serve'], {
+        cwd: pkgDir,
+        env,
+        shell: process.platform === 'win32',
+        windowsHide: true,
+      });
+      let stdout = '';
+      child.stdout?.on('data', (c: Buffer) => {
+        stdout += c.toString();
+      });
+      child.on('close', (code) => resolve({ stdout, code }));
+      child.on('error', () => resolve({ stdout, code: null }));
+    });
+
+    expect(result.code, 'le lanceur doit échouer fort sans DATABASE_URL').toBe(1);
+    expect(result.stdout.trim(), 'stdout est le transport MCP — il doit rester vide').toBe('');
+  }, 60_000);
+});
