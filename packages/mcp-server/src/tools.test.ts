@@ -153,3 +153,14 @@ describe('le plafond sous la concurrence', () => {
     await client.close();
   });
 });
+
+describe('le plafond refuse les valeurs qui ne plafonnent rien', () => {
+  it.each([NaN, Infinity, 2.5, 0, -1])('refuse %s au démarrage', async (cap) => {
+    // Constat de la passe 3 : `jobsCreated >= NaN` est toujours faux — un
+    // Number(process.env.X) mal écrit lançait un serveur SANS plafond, sans un
+    // mot. Une protection qui disparaît en silence est pire qu'absente.
+    await expect(
+      buildNodalMcpServer({ db, agentId: seed.agentId, maxJobsPerProcess: cap }),
+    ).rejects.toThrow(/mcp_invalid_job_cap/);
+  });
+});

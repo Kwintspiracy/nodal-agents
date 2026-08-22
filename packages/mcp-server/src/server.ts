@@ -75,7 +75,19 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
     version: opts.version ?? '0.1.0',
   });
 
+  // Valide FORT plutot que de tolerer : `jobsCreated >= NaN` est toujours
+  // faux, donc un NaN — le resultat typique d un Number(process.env.X) mal
+  // ecrit — desactivait le plafond EN SILENCE. Infinity pareil, et 2.5
+  // autorisait trois jobs au lieu des deux annonces. Une protection anti-boucle
+  // qui disparait sans un mot est pire qu absente : on croit couverte une
+  // surface qui ne l est pas (invariant #4).
   const maxJobs = opts.maxJobsPerProcess ?? DEFAULT_MAX_JOBS_PER_PROCESS;
+  if (!Number.isInteger(maxJobs) || maxJobs < 1) {
+    throw new Error(
+      `mcp_invalid_job_cap: maxJobsPerProcess must be a positive integer, got ` +
+        `${String(maxJobs)}. Refusing to start with a cap that cannot enforce anything.`,
+    );
+  }
   let jobsCreated = 0;
 
   server.registerTool(
