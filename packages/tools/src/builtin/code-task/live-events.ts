@@ -163,3 +163,57 @@ export function makeLiveToolRecorder(args: {
       });
   };
 }
+
+/**
+ * Nombre de lignes ESSENTIELLES conservees pour l analyse finale. Large : ces
+ * lignes sont petites (pas de sortie d outil) et un tour bavard en produit
+ * quelques centaines, pas des milliers.
+ */
+const MAX_ESSENTIAL_LINES = 4_000;
+
+/**
+ * Une ligne dont l analyseur final a besoin ?
+ *
+ * Test de CHAINE, volontairement : il tourne sur chaque ligne du flux, et
+ * parser en JSON pour decider de garder serait payer le prix sur la sortie
+ * d outil justement volumineuse qu on veut ecarter.
+ */
+function isEssentialLine(provider: 'claude' | 'codex', line: string): boolean {
+  if (provider === 'claude') return line.includes('"type":"result"');
+  return (
+    line.includes('"thread.started"') ||
+    line.includes('"turn.completed"') ||
+    line.includes('"turn.failed"') ||
+    line.includes('"type":"error"') ||
+    line.includes('"agent_message"')
+  );
+}
+
+/**
+ * Garde, au fil du flux, les seules lignes dont l analyse finale a besoin.
+ *
+ * Pourquoi ca existe : le passage a `stream-json --verbose` a rendu stdout
+ * ENORME (tout le flux d evenements, sorties d outils comprises), alors que le
+ * tampon de runCli est plafonne et coupe la FIN — precisement ou vit
+ * l evenement `result`. Une session longue aurait donc echoue sur
+ * « stream ended without a result event » apres avoir parfaitement tourne.
+ *
+ * On lit deja chaque ligne en direct : le resultat n a plus a dependre d un
+ * tampon qui peut etre ampute. Ce capteur garde les lignes essentielles — qui
+ * sont petites — et laisse le volume passer sans etre retenu.
+ */
+export function makeEssentialCapture(provider: 'claude' | 'codex'): {
+  onLine: (line: string) => void;
+  transcript: () => string;
+} {
+  const kept: string[] = [];
+  return {
+    onLine: (line: string): void => {
+      if (!isEssentialLine(provider, line)) return;
+      kept.push(line);
+      // Le resultat est a la FIN : on jette le debut, jamais la fin.
+      if (kept.length > MAX_ESSENTIAL_LINES) kept.shift();
+    },
+    transcript: (): string => kept.join('\n'),
+  };
+}

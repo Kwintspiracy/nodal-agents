@@ -24,6 +24,8 @@ const WINDOWS_BATCH_EXECUTABLE_ENV = 'NODAL_CODE_TASK_EXECUTABLE';
 /** Per-stream capture caps. stdout carries the CLI's JSON — generous cap. */
 const MAX_STDOUT_CHARS = 400_000;
 const MAX_STDERR_CHARS = 50_000;
+/** Plafond par LIGNE du flux — voir emitLines. */
+const MAX_LINE_CHARS = 200_000;
 
 export interface ResolvedCli {
   /** Absolute path to the executable. */
@@ -204,9 +206,33 @@ export function runCli(
     // purpose: the cap exists to bound memory, and a caller that consumes
     // events live must not lose them just because the transcript got long.
     let lineBuf = '';
+    // Une ligne de flux qui depasse ca est ABANDONNEE, pas bufferisee.
+    //
+    // lineBuf vit hors du tampon plafonne, ce qui etait voulu — un consommateur
+    // live ne doit pas perdre ses evenements parce que la transcription
+    // s allonge. Mais sans plafond propre, UN outil qui renvoie un gros fichier
+    // produit UNE ligne JSONL geante : elle grossit sans borne, puis passe
+    // entiere a JSON.parse. Le plafond de 8 Ko par ligne d audit n intervient
+    // qu APRES. Ce garde-fou est en amont.
+    let lineDropped = false;
     const emitLines = (chunk: string): void => {
       if (!opts.onStdoutLine) return;
       lineBuf += chunk;
+      if (lineBuf.length > MAX_LINE_CHARS) {
+        // On jette jusqu au prochain saut de ligne : la ligne courante est
+        // perdue pour l observation (jamais pour l analyse finale, qui a sa
+        // propre capture), et on repart propre a la suivante.
+        const nl = lineBuf.lastIndexOf('\n');
+        lineBuf = nl === -1 ? '' : lineBuf.slice(nl + 1);
+        if (!lineDropped) {
+          lineDropped = true;
+          console.warn(
+            `[code-task] une ligne de flux depasse ${MAX_LINE_CHARS} caracteres — ` +
+              `ignoree pour l audit live (le resultat final n est pas affecte)`,
+          );
+        }
+        return;
+      }
       let nl = lineBuf.indexOf('\n');
       while (nl !== -1) {
         const line = lineBuf.slice(0, nl).trim();

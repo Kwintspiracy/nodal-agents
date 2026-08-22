@@ -19,7 +19,7 @@ import type { ToolDefinition } from '../../types';
 import { assertWorkspacesConfigured, resolveAndCheckPath } from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
-import { makeLiveToolRecorder } from './live-events';
+import { makeLiveToolRecorder, makeEssentialCapture } from './live-events';
 import {
   buildProviderArgs,
   parseProviderOutput,
@@ -317,17 +317,25 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       // Live audit: each CLI-internal tool call becomes a tool_calls row AS IT
       // HAPPENS, so the Code tab shows the session working instead of staying
       // empty for the ten to twenty minutes it runs.
+      const liveRecorder = makeLiveToolRecorder({
+        db: ctx.db,
+        entityId: ctx.entityId ?? null,
+        jobId: ctx.jobId,
+        provider: input.provider,
+      });
+      // Et, au passage, on retient les lignes dont l analyse FINALE a besoin —
+      // sans quoi elle depend d un tampon plafonne qui coupe la fin, la ou vit
+      // justement l evenement de resultat.
+      const essential = makeEssentialCapture(input.provider);
       const run = await runCli(cli, args, {
         cwd,
         timeoutMs,
         env,
         stdin: input.task,
-        onStdoutLine: makeLiveToolRecorder({
-          db: ctx.db,
-          entityId: ctx.entityId ?? null,
-          jobId: ctx.jobId,
-          provider: input.provider,
-        }),
+        onStdoutLine: (line) => {
+          liveRecorder(line);
+          essential.onLine(line);
+        },
       });
 
       if (run.timedOut) {
@@ -352,7 +360,11 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       // unparseable JSON stream is an error, never a guess (invariant #4).
       let parsed;
       try {
-        parsed = parseProviderOutput(input.provider, run.stdout);
+        // La transcription essentielle d abord : elle est capturee au fil de
+        // l eau, donc jamais amputee. Repli sur le tampon quand rien n a ete
+        // capture (fixture, CLI qui n emet pas le flux attendu).
+        const captured = essential.transcript();
+        parsed = parseProviderOutput(input.provider, captured !== '' ? captured : run.stdout);
       } catch (err) {
         await safeRecord(
           ctx,
