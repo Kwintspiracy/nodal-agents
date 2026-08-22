@@ -24,7 +24,7 @@ import {
   resolveTransportChannel,
   listActiveChannelsForAgent,
 } from '@nodal-agents/delivery';
-import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
 import {
   assertCliBudget,
   recordCliRun,
@@ -41,10 +41,20 @@ import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './c
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
 
-export interface CliRuntimeAgentRow {
-  id: string;
-  entityId: string | null;
-  personality: string;
+// A runtime agent is a full `Agent` PLUS its CLI settings — not a hand-picked
+// subset. It started as a subset (id/entityId/personality and the cli fields),
+// which was enough while this path only forwarded `personality` verbatim. The
+// moment it began building the real system prompt, the subset became a trap:
+// `buildSystemPrompt` reads name, role and model, none of which were carried,
+// and the cast at the call site made the compiler accept it. The identity line
+// ("You are <name>…") silently vanished from the prompt and buildBaselineBlock
+// received undefined twice. Nothing errored — the prompt was just quietly
+// poorer, which is the hardest kind of regression to notice.
+//
+// Extending `Agent` means the conversion already done in executeJob/runChatTurn
+// is reused rather than duplicated, and the next field added to `Agent` is a
+// compile error here instead of a silent omission.
+export interface CliRuntimeAgentRow extends Agent {
   runtime: string;
   cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
   cliDefaults: { claude?: { model?: string; effort?: string } } | null;
@@ -176,7 +186,7 @@ export async function runCliRuntimeJob(args: {
   //
   // `surface: 'cli-runtime'` drops the ONE block that would be wrong here, the
   // built-in capability list: this agent's tools are the CLI's, not Nodal's.
-  const systemPrompt = await buildSystemPrompt(agentRow as never, db, {
+  const systemPrompt = await buildSystemPrompt(agentRow, db, {
     origin: job.channel ?? 'unknown',
     surface: 'cli-runtime',
     ...(job.task ? { task: job.task } : {}),

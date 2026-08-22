@@ -916,10 +916,11 @@ async function runJob(
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
       },
+      // Spread the `agent` already normalised above (line ~856) rather than
+      // re-deriving fields here — a second conversion is a second thing to
+      // drift.
       agentRow: {
-        id: agentRow.id,
-        entityId: agentRow.entityId ?? null,
-        personality: agentRow.personality,
+        ...agent,
         runtime: agentRow.runtime ?? 'nodal',
         cliPermissions: agentRow.cliPermissions ?? null,
         cliDefaults: agentRow.cliDefaults ?? null,
