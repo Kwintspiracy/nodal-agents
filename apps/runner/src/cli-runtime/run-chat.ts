@@ -121,7 +121,7 @@ export async function runCliRuntimeChatTurn(args: {
   // the team block, memory, skills and workspace context that the orchestration
   // layer assembles. `surface: 'cli-runtime'` drops only the built-in tool list,
   // which describes tools this agent does not have.
-  const systemPrompt = await buildSystemPrompt(agentRow as never, db, {
+  const systemPrompt = await buildSystemPrompt(agentRow, db, {
     origin: 'dashboard',
     surface: 'cli-runtime',
     task: message,

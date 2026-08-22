@@ -261,14 +261,27 @@ export async function runChatTurn(opts: {
   // Code session, resumed per conversation; the CLI's text is relayed
   // verbatim. Everything below (Nodal LLM client, system prompt, run_task)
   // does not apply to a runtime agent.
+  // Normalised ONCE, above the runtime divert — both branches build the same
+  // system prompt from it, so a field missing here is missing for both.
+  const agent: Agent = {
+    id: agentRow.id as AgentId,
+    name: agentRow.name,
+    slug: agentRow.slug,
+    role: (agentRow.role ?? 'agent') as Agent['role'],
+    personality: agentRow.personality,
+    entityId: (agentRow.entityId ?? null) as EntityId | null,
+    model: agentRow.model ?? DEFAULT_MODEL,
+    active: agentRow.active ?? true,
+    orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
+    memoryTokenBudget: agentRow.memoryTokenBudget,
+  };
+
   if (isRuntimeAgent) {
     return await runCliRuntimeChatTurn({
       db,
       entityId,
       agentRow: {
-        id: agentRow.id,
-        entityId: agentRow.entityId ?? null,
-        personality: agentRow.personality,
+        ...agent,
         runtime: agentRow.runtime ?? 'nodal',
         cliPermissions: agentRow.cliPermissions ?? null,
         cliDefaults: agentRow.cliDefaults ?? null,
@@ -310,18 +323,6 @@ export async function runChatTurn(opts: {
 
   // 3. System prompt — memory is AUTO-INJECTED here (recall is free). The
   //    origin:'dashboard' job-context steers the agent to reply in plain text.
-  const agent: Agent = {
-    id: agentRow.id as AgentId,
-    name: agentRow.name,
-    slug: agentRow.slug,
-    role: (agentRow.role ?? 'agent') as Agent['role'],
-    personality: agentRow.personality,
-    entityId: (agentRow.entityId ?? null) as EntityId | null,
-    model: agentRow.model ?? DEFAULT_MODEL,
-    active: agentRow.active ?? true,
-    orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
-    memoryTokenBudget: agentRow.memoryTokenBudget,
-  };
   const deployment = await getDeploymentContext(db, entityId);
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: 'dashboard',

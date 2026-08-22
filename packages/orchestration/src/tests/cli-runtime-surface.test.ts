@@ -62,6 +62,26 @@ describe("surface 'cli-runtime'", () => {
     expect(prompt, "le sous-agent rattaché n'apparaît pas").toContain('sous-agent-test');
   });
 
+  it("porte la ligne d'identité — ce que le cast avait fait disparaître", async () => {
+    // Ce test existe à cause d'un bug de MA propre PR, invisible ici jusqu'à ce
+    // qu'on le cherche : l'appelant côté runner ne construisait qu'un sous-
+    // ensemble de l'agent (id / entityId / personality), sans `name`, et
+    // passait le tout via un cast. La ligne d'identité disparaissait donc du
+    // prompt en production, alors que ce fichier — qui charge la ligne ENTIÈRE
+    // depuis la base — la voyait toujours. Le trou était chez l'appelant, pas
+    // dans buildSystemPrompt : tester la pièce ne teste pas le câblage.
+    //
+    // L'appelant est désormais tenu par le type (CliRuntimeAgentRow extends
+    // Agent). Cette assertion garde l'autre moitié : que le prompt de cette
+    // surface porte bien l'ancrage d'identité, sans quoi un agent finit par
+    // parler à la place de ses propres sous-agents.
+    const prompt = await buildSystemPrompt(agent as never, db, {
+      origin: 'api',
+      surface: 'cli-runtime',
+    } as never);
+    expect(prompt, "la ligne d'identité manque").toContain(`You are ${String(agent['name'])}`);
+  });
+
   it("n'annonce PAS les outils intégrés de Nodal", async () => {
     // Cet agent EST une CLI de code : sa palette est celle du CLI (Read, Write,
     // Bash…), pas celle de Nodal. Lui annoncer `file_write` l'invite à appeler
