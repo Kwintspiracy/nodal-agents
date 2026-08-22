@@ -1,6 +1,11 @@
 <!-- artifact: https://claude.ai/code/artifact/7844e194-d0c1-440d-8c84-7534fb429f6a -->
 
-# PR — arrêter de perdre ce qui a tourné
+# PR A — Observabilité : arrêter de perdre ce qui a tourné
+
+*Première des trois PR qui suivent le lot « poste de développement ».
+B = nommage « CLI » (outil contre runtime). C = serveur MCP.
+Ces lettres ne servent qu'à l'ordre : chacune prendra son numéro GitHub à
+l'ouverture, et ce titre le portera alors.*
 
 > **Révision après mesure.** Cette spec s'appelait « voir ce qui se passe
 > pendant une session de code » et se voulait une PR d'affichage. La mesure a

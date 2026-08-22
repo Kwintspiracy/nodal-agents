@@ -53,16 +53,16 @@ réel appartient à la couche catalogue.
 
 | PR | Sujet | Pourquoi cet ordre |
 |---|---|---|
-| **A** | [Observabilité des sessions de code](https://claude.ai/code/artifact/7844e194-d0c1-440d-8c84-7534fb429f6a) | contient un défaut **actif** : une session longue rend un résultat amputé sans le dire |
-| **B** | Nommage « CLI » — outil contre runtime | ~30 lignes de copie, règle une confusion quotidienne |
-| **C** | Serveur MCP | seule à ajouter une **surface d'attaque** — sa propre review, son propre plan de test |
+| **PR A** | [Observabilité — arrêter de perdre ce qui a tourné](https://claude.ai/code/artifact/7844e194-d0c1-440d-8c84-7534fb429f6a) | contient un défaut **actif** : une session longue rend un résultat amputé sans le dire |
+| **PR B** | Nommage « CLI » — outil contre runtime | ~30 lignes de copie, règle une confusion quotidienne |
+| **PR C** | Serveur MCP — délégation, et le terminal qui pilote Nodal | seule à ajouter une **surface d'attaque** — sa propre review, son propre plan de test |
 
-**C se découpe** : d'abord la preuve minimale — un serveur exposant **un seul**
+**PR C se découpe** : d'abord la preuve minimale — un serveur exposant **un seul**
 outil, `create_task`, branché sur le `claude` du terminal. Si une tâche Nodal
 part du terminal et apparaît dans Runs, tout le reste tient. Sinon on l'apprend
 en une heure au lieu d'un lot entier.
 
-C sert **deux** usages, et le second est venu de Quentin : un agent CLI qui
+PR C sert **deux** usages, et le second est venu de Quentin : un agent CLI qui
 délègue, **et** son terminal qui pilote Nodal — trois reviews lancées en
 parallèle sans quitter le terminal.
 
@@ -82,7 +82,7 @@ délégué à Codex sous Windows — les mesures se font ici.
 
 ### Ce que je fais ensuite, sans rien attendre
 
-1. **PR A**, en commençant par la mesure promise : ce qu'on perd réellement quand
+1. **PR A** (spec liée ci-dessus), en commençant par la mesure promise : ce qu'on perd réellement quand
    le plafond tombe, sur une session `code_task` réelle.
 
 ### Gestes de Quentin, en attente
