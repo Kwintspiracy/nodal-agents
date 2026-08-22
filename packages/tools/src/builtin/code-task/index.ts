@@ -19,6 +19,7 @@ import type { ToolDefinition } from '../../types';
 import { assertWorkspacesConfigured, resolveAndCheckPath } from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
+import { makeLiveToolRecorder } from './live-events';
 import {
   buildProviderArgs,
   parseProviderOutput,
@@ -313,7 +314,21 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     try {
       // The task travels via stdin — the only injection-safe channel for
       // free text on the Windows .cmd shim path (process.ts).
-      const run = await runCli(cli, args, { cwd, timeoutMs, env, stdin: input.task });
+      // Live audit: each CLI-internal tool call becomes a tool_calls row AS IT
+      // HAPPENS, so the Code tab shows the session working instead of staying
+      // empty for the ten to twenty minutes it runs.
+      const run = await runCli(cli, args, {
+        cwd,
+        timeoutMs,
+        env,
+        stdin: input.task,
+        onStdoutLine: makeLiveToolRecorder({
+          db: ctx.db,
+          entityId: ctx.entityId ?? null,
+          jobId: ctx.jobId,
+          provider: input.provider,
+        }),
+      });
 
       if (run.timedOut) {
         await safeRecord(
@@ -351,8 +366,19 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
           effort,
         );
         if (err instanceof CliOutputError) {
+          // Name OUR cause when it is ours. A truncated buffer yields exactly
+          // these parse failures — "stdout is not valid JSON", "non-JSON line",
+          // "stream ended without turn.completed" — and every one of them
+          // blames the CLI for output we cut ourselves. The session really ran,
+          // often for a quarter of an hour, and may have written files; the
+          // least it deserves is an error that points at the right place.
           throw new Error(
-            `${err.message} (exit ${String(run.exitCode)}; stderr: ${run.stderr.slice(0, 400)})`,
+            (run.truncated
+              ? `code_task output exceeded the capture cap, so the stream could not be ` +
+                `parsed — the CLI is not at fault. The session DID run and may have ` +
+                `changed files; only the transcript was cut. Underlying: ${err.message}`
+              : err.message) +
+              ` (exit ${String(run.exitCode)}; stderr: ${run.stderr.slice(0, 400)})`,
           );
         }
         throw err;
