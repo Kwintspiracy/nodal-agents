@@ -20,7 +20,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { agents, agentJobs, eq } from '@nodal-agents/db';
+import { agents, agentJobs, entities, eq, isNotNull } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
 
@@ -31,8 +31,15 @@ export interface McpServerOptions {
    * l'entité est lue depuis la ligne agent, jamais fournie par l'appelant.
    * La review a montré pourquoi — `agentId` de l'entité A plus `entityId` de
    * l'entité B fabriquait une écriture inter-workspace signée par A.
+   *
+   * OPTIONNEL, et c'est un invariant (#6, pas de réglage par utilisateur codé
+   * en dur) : « quel agent orchestre » varie d'une installation à l'autre, donc
+   * aucun nom d'agent ne doit vivre dans une config d'exemple. Absent, le
+   * serveur résout l'AGENT RACINE du workspace — `entities.root_agent_id`, une
+   * donnée par installation. Ambigu (plusieurs workspaces) ⇒ échec fort qui
+   * liste les choix, jamais un tirage silencieux.
    */
-  agentId: string;
+  agentId?: string;
   name?: string;
   version?: string;
   /**
@@ -49,6 +56,34 @@ export interface McpServerOptions {
 const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
 
 /**
+ * L'identité par défaut : l'agent racine du workspace, lu en base.
+ *
+ * Une installation n'a en général qu'un workspace ; s'il y en a plusieurs, on
+ * refuse de choisir — un serveur qui tirerait le premier au hasard signerait
+ * des jobs au nom d'un agent que personne n'a désigné.
+ */
+async function resolveRootAgentId(db: AnyDrizzleDb): Promise<string> {
+  const rows = await db
+    .select({ entityName: entities.name, rootAgentId: entities.rootAgentId })
+    .from(entities)
+    .where(isNotNull(entities.rootAgentId));
+
+  if (rows.length === 1 && rows[0]!.rootAgentId) return rows[0]!.rootAgentId;
+
+  if (rows.length === 0) {
+    throw new Error(
+      'mcp_no_root_agent: no workspace has a root agent configured. Pass agentId ' +
+        'explicitly, or set a root agent in the dashboard.',
+    );
+  }
+  throw new Error(
+    `mcp_ambiguous_root_agent: ${rows.length} workspaces have a root agent ` +
+      `(${rows.map((r) => r.entityName).join(', ')}). Pass agentId explicitly to ` +
+      `choose which one this server speaks for.`,
+  );
+}
+
+/**
  * Construit le serveur sans le connecter — pour que les tests puissent
  * l'inspecter sans ouvrir de transport.
  *
@@ -57,15 +92,17 @@ const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
  * serveur au nom de personne n'a rien à servir.
  */
 export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpServer> {
+  const agentId = opts.agentId ?? (await resolveRootAgentId(opts.db));
+
   const [agentRow] = await opts.db
     .select({ id: agents.id, entityId: agents.entityId, active: agents.active })
     .from(agents)
-    .where(eq(agents.id, opts.agentId))
+    .where(eq(agents.id, agentId))
     .limit(1);
 
   if (!agentRow || !agentRow.active) {
     throw new Error(
-      `mcp_agent_not_found: no active agent with id "${opts.agentId}". ` +
+      `mcp_agent_not_found: no active agent with id "${agentId}". ` +
         `This server speaks FOR one agent; without it there is nothing to expose.`,
     );
   }
@@ -123,7 +160,7 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
         jobsCreated += 1;
         seated = true;
 
-        const { instruction } = runTaskInputSchema.parse(args);
+        const { instruction, caller } = runTaskInputSchema.parse(args);
 
         // Le même insert que run_task côté chat : un job pending, ramassé par
         // le worker, exécuté par la boucle NORMALE — approbations, audit,
@@ -136,6 +173,15 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
             status: 'pending',
             channel: 'mcp',
             task: instruction,
+            // Provenance, pas identite : `caller` est declaratif (voir le type
+            // JobTriggerContext) et n accorde rien — il rend « qui a demande
+            // ca ? » lisible dans les Runs. triggeredAt vient du serveur, pas
+            // du client.
+            triggerContext: {
+              type: 'mcp',
+              ...(caller ? { caller } : {}),
+              triggeredAt: new Date().toISOString(),
+            },
             messages: [{ role: 'user', content: instruction }],
           })
           .returning({ id: agentJobs.id });
