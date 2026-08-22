@@ -19,6 +19,14 @@ export const runTaskInputSchema = z.object({
     .string()
     .min(1)
     .max(120)
+    // Une etiquette est un IDENTIFIANT, pas du texte libre. Sans cette regex,
+    // le champ acceptait retours a la ligne et Markdown, et il est interpole
+    // dans le bloc Runtime — donc dans le MESSAGE SYSTEME du job. Un client
+    // pouvait y ecrire une fausse section « instructions operateur » qui
+    // obtenait la priorite d un message systeme (constat passe 5). Refuser a
+    // l entree vaut mieux qu assainir au rendu : l erreur est nette, et aucun
+    // rendu futur ne peut reintroduire le trou en oubliant l assainissement.
+    .regex(/^[\w .:@/-]+$/, 'caller must be a plain label (letters, digits, spaces, .:@/-_ only)')
     .optional()
     .describe(
       'Optional label naming WHO is asking (e.g. "agent-dev-a", "quentin-terminal"). ' +
