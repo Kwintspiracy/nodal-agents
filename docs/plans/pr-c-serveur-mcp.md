@@ -2,8 +2,22 @@
 
 # PR C — Nodal comme serveur MCP · C1 LIVRÉE (#12)
 
-**État : sortie de la boucle de review après 4 passes, CI en cours, merge à
-suivre.**
+**État : C1 livrée. Reste à merger : #15 (tests de l'interrupteur), geste de
+Quentin.**
+
+## Suivi
+
+| # | Lot | PR | État |
+|---|-----|----|----|
+| 1 | C1 — serveur MCP stdio, `run_task` | #12 | ✅ mergée |
+| 2 | Interrupteur `mcpServerEnabled` + gardes | #13 | ✅ mergée |
+| 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | 🔄 CI verte, à merger |
+
+**23/08 :** l'inventaire a montré que la #13 avait livré `get/setMcpServerSwitchAction`
+sans test — le standard « plus une action serveur sans test » cassé en silence.
+La #15 ferme le trou : 5 gardes calquées sur le jumeau LanCommandYolo (défaut
+fermé, bascule sur row réelle, isolation du voisin, refus non-propriétaire,
+entrée mal formée). 18/18 local, CI verte.
 
 ## Ce qui est livré (C1)
 
@@ -11,16 +25,11 @@ Un paquet `@nodal-agents/mcp-server` : Nodal exposé en serveur MCP **stdio**,
 au nom d'**un** agent, avec **un** outil — `run_task`.
 
 ```
-claude mcp add nodal   -e DATABASE_URL=<l'URL que le runner utilise>   -- pnpm --filter @nodal-agents/mcp-server --silent serve
-
-→ run_task("lance trois reviews sur cette branche", caller: "quentin-terminal")
+claude mcp add nodal -- <lanceur du serveur, agent choisi>
+→ run_task("lance trois reviews sur cette branche")
 → un job `pending`, canal `mcp`, ramassé par le worker, exécuté par la boucle
   normale — approbations, audit, compteurs, hiérarchie.
 ```
-
-L'identité par défaut est **l'agent racine du workspace** (`entities.root_agent_id`,
-une donnée par installation — jamais un nom d'agent dans une config).
-`NODAL_MCP_AGENT_ID` la remplace au besoin.
 
 ## L'histoire qui compte : la v1 était à bloquer
 
