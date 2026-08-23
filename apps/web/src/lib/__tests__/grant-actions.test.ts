@@ -384,3 +384,64 @@ describe('setLanCommandYoloAction', () => {
     expect(await lanFlag()).toBe(false);
   });
 });
+
+// ─── Interrupteur du serveur MCP ─────────────────────────────────────────────
+//
+// Le jumeau du bloc LanCommandYolo ci-dessus — même surface, mêmes risques :
+// ce drapeau ouvre un point d'entrée EXTERNE qui crée des jobs. L'inventaire
+// du 23/08 a montré ces deux actions sans test : la PR #13 avait cassé le
+// standard « plus une action serveur sans test » sans que rien ne le signale.
+
+describe('get/setMcpServerSwitchAction', () => {
+  async function mcpFlag() {
+    const [row] = await testDb.select().from(entities).where(eq(entities.id, seed.entityId));
+    return row!.mcpServerEnabled;
+  }
+
+  it('FERMÉ par défaut, et la lecture le dit', async () => {
+    const { getMcpServerSwitchAction } = await actions();
+    const r = await getMcpServerSwitchAction();
+    expect(r.ok, r.ok ? '' : r.message).toBe(true);
+    if (r.ok) {
+      expect(r.data.enabled, 'un point d’entrée externe ouvert par défaut').toBe(false);
+      expect(r.data.isOwner).toBe(true);
+    }
+  });
+
+  it('bascule le drapeau de l’espace COURANT, dans les deux sens', async () => {
+    const { setMcpServerSwitchAction } = await actions();
+
+    const on = await setMcpServerSwitchAction({ enabled: true });
+    expect(on.ok, on.ok ? '' : on.message).toBe(true);
+    expect(await mcpFlag()).toBe(true);
+
+    const off = await setMcpServerSwitchAction({ enabled: false });
+    expect(off.ok, off.ok ? '' : off.message).toBe(true);
+    expect(await mcpFlag()).toBe(false);
+  });
+
+  it('n’ouvre le serveur QUE sur son espace, jamais sur le voisin', async () => {
+    const { setMcpServerSwitchAction } = await actions();
+    await setMcpServerSwitchAction({ enabled: true });
+    const [voisin] = await testDb.select().from(entities).where(eq(entities.id, foreignEntityId));
+    expect(voisin!.mcpServerEnabled, 'l’espace voisin a été ouvert lui aussi').toBe(false);
+    await setMcpServerSwitchAction({ enabled: false });
+  });
+
+  it('refuse un non-propriétaire — et le drapeau reste fermé', async () => {
+    const { setMcpServerSwitchAction } = await actions();
+    await asNonOwner(async () => {
+      const r = await setMcpServerSwitchAction({ enabled: true });
+      expect(r.ok).toBe(false);
+      expect(r.ok ? '' : r.code).toBe('forbidden');
+    });
+    expect(await mcpFlag(), 'un non-propriétaire a ouvert le serveur MCP').toBe(false);
+  });
+
+  it('refuse une entrée mal formée sans rien basculer', async () => {
+    const { setMcpServerSwitchAction } = await actions();
+    const r = await setMcpServerSwitchAction({ enabled: 'yes' });
+    expect(r.ok).toBe(false);
+    expect(await mcpFlag()).toBe(false);
+  });
+});
