@@ -468,3 +468,44 @@ describe('le ciblage d’agent — la cible se choisit, l’entité jamais', () 
     await client.close();
   });
 });
+
+describe('une racine configurée mais cassée ne se replie pas en silence', () => {
+  it('erreur explicite quand la racine désignée est inactive', async () => {
+    // Constat passe 2 : le repli sur le lanceur n'est prévu que pour « aucune
+    // racine configurée ». L'étendre à « racine cassée » masquait une
+    // configuration incohérente — le job partait chez le lanceur alors que le
+    // contrat promettait la racine.
+    const { agents: agentsTable, entities: entitiesTable } = await import('@nodal-agents/db');
+    const [racineMorte] = await db
+      .insert(agentsTable)
+      .values({
+        entityId: seed.entityId,
+        name: 'Racine Morte',
+        slug: 'racine-morte',
+        personality: 'zzz',
+        model: 'test-model',
+        role: 'orchestrator',
+        active: false,
+      })
+      .returning();
+    await db
+      .update(entitiesTable)
+      .set({ rootAgentId: (racineMorte as { id: string }).id })
+      .where(eq(entitiesTable.id, seed.entityId));
+    try {
+      const client = await connect(seed.agentId);
+      const res = await client.callTool({
+        name: 'run_task',
+        arguments: { instruction: 'x' },
+      });
+      expect(res.isError, 'le repli silencieux a eu lieu').toBe(true);
+      expect((res.content as Array<{ text: string }>)[0]!.text).toMatch(/mcp_root_agent_invalid/);
+      await client.close();
+    } finally {
+      await db
+        .update(entitiesTable)
+        .set({ rootAgentId: seed.agentId })
+        .where(eq(entitiesTable.id, seed.entityId));
+    }
+  });
+});
