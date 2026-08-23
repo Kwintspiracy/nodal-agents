@@ -336,3 +336,27 @@ describe("l'interrupteur maitre", () => {
     }
   });
 });
+
+describe('les trous de la review des gardes', () => {
+  it('refuse un agent SANS entité — le saut d’interrupteur', async () => {
+    // Constat review : un agent actif avec entityId null était accepté, et
+    // comme l'interrupteur est PAR ENTITÉ, il n'était jamais vérifié — le
+    // serveur créait des jobs alors qu'aucun workspace n'avait rien activé.
+    // L'absence d'entité est un refus fort, pas une raison de sauter la garde.
+    const { agents: agentsTable } = await import('@nodal-agents/db');
+    const [orphelin] = await db
+      .insert(agentsTable)
+      .values({
+        name: 'Orphelin',
+        slug: 'orphelin',
+        personality: 'sans entite',
+        model: 'test-model',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+    await expect(connect((orphelin as { id: string }).id)).rejects.toThrow(
+      /mcp_agent_without_entity/,
+    );
+  });
+});
