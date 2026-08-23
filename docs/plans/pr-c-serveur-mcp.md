@@ -2,8 +2,7 @@
 
 # PR C — Nodal comme serveur MCP · C1 LIVRÉE (#12)
 
-**État : C1 livrée. Reste à merger : #15 (tests de l'interrupteur), geste de
-Quentin.**
+**État : TOUT est vert. Reste à merger : #15 et #17, gestes de Quentin.**
 
 ## Suivi
 
@@ -12,7 +11,33 @@ Quentin.**
 | 1 | C1 — serveur MCP stdio, `run_task` | #12 | ✅ mergée |
 | 2 | Interrupteur `mcpServerEnabled` + gardes | #13 | ✅ mergée |
 | 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | 🔄 CI verte, à merger |
-| 4 | Connexion en 1 ligne (`nodal-agents mcp serve`) + réveil worker | #17 | 🔄 CI en cours, validée live |
+| 4 | Connexion en 1 ligne (`nodal-agents mcp serve`) + réveil worker | #17 | ✅ CI 5/5 verte, reviewée, à merger |
+
+## La review de la #17 (23/08) — 6 constats, tous fermés
+
+| Constat | Correctif |
+|---|---|
+| `localhost` → notification muette sur Windows (::1) + workerSecret offert à un squatteur IPv6 | `127.0.0.1`, comme RUNNER_URL le documente (3 finders indépendants) |
+| workerSecret optionnel = 403 permanent avalé | requis dans le contrat |
+| Un refus HTTP passait pour un succès | non-2xx signalé sur stderr |
+| Pas d'arrêt : le SDK n'écoute PAS la fin de stdin (vérifié dans sa source) → orphelins tenant des connexions PG | résolution sur EOF stdin + onclose ; les 2 lanceurs ferment le pool et sortent. Prouvé live : exit 0 en 5 s |
+| Le repli d'agent jamais re-vérifié actif (2 chemins sur 3 gardés) | re-vérifié à chaque appel + test |
+| Insert sans id = succès sans handle | rollback + erreur forte |
+
+Reporté (noté, pas fait) : dédupliquer le contrat `triggerWorker` (6 copies) ;
+joindre les 2 SELECT du chemin chaud de run_task.
+
+## La saga snyk (23/08) — 6 passages, la leçon
+
+Snyk ne gate que les **manifestes touchés** par la PR, avec sa propre base.
+`pnpm audit` ne rattachait PAS l'arbre du SDK MCP au projet mcp-server — 5
+passages à l'aveugle avant que Quentin ouvre le rapport : les 22 avis étaient
+l'arbre hono/express du SDK. Épinglés (hono ≥4.12.34, @hono/node-server, qs,
+body-parser, ip-address) + au passage : les overrides pnpm de package.json
+étaient MORTS depuis pnpm 10 (déménagés vers pnpm-workspace.yaml), vestiges
+tools/orchestration retirés des deps de mcp-server, fast-uri/brace-expansion/
+js-yaml/nanoid/postcss/vite/turbo épinglés. **Leçon : au premier échec snyk,
+demander le rapport à Quentin — une ligne du rapport vaut cinq déductions.**
 
 **23/08 :** l'inventaire a montré que la #13 avait livré `get/setMcpServerSwitchAction`
 sans test — le standard « plus une action serveur sans test » cassé en silence.
