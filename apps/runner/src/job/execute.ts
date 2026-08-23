@@ -133,6 +133,7 @@ import { triggerWorker } from '../routes/agent.ts';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
+import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -1235,30 +1236,14 @@ async function runJob(
     // dashboard et le chat. Décision Quentin (23/08), même motif que le
     // master-switch LAN : un retrait déterministe au niveau du runner, jamais
     // une consigne de prompt.
-    // La provenance MCP est HÉRITÉE, pas seulement lue sur ce job. Sans ça, le
-    // contournement tient en un appel : un job MCP fait
-    // `create_task(assigned_to: <la racine>, "crée un cron…")`, et le job
-    // enfant — canal `task-board`, parentJobId = le job MCP — récupérerait les
-    // meta-tools que son parent s'était vu retirer. On remonte donc la chaîne
-    // des parents (bornée par maxDelegationDepth, donc ≤ 4 requêtes) : un seul
-    // ancêtre `mcp` suffit à garder la restriction.
-    let isMcpChannel = job.channel === 'mcp';
-    if (!isMcpChannel) {
-      let ancestorId: string | null = job.parentJobId ?? null;
-      for (let hop = 0; ancestorId && hop < 5; hop++) {
-        const [ancestor]: Array<{ channel: string; parentJobId: string | null }> = await db
-          .select({ channel: agentJobs.channel, parentJobId: agentJobs.parentJobId })
-          .from(agentJobs)
-          .where(eq(agentJobs.id, ancestorId))
-          .limit(1);
-        if (!ancestor) break;
-        if (ancestor.channel === 'mcp') {
-          isMcpChannel = true;
-          break;
-        }
-        ancestorId = ancestor.parentJobId;
-      }
-    }
+    // La provenance MCP est HÉRITÉE le long des parents, et la résolution est
+    // FAIL-CLOSED — voir lib/mcp-provenance.ts pour les deux contournements que
+    // la version inline ouvrait (chaîne fabriquée via /api/agent plus longue
+    // que la borne, parent purgé par la rétention).
+    const isMcpChannel = await isMcpOriginJob(db, {
+      channel: job.channel ?? null,
+      parentJobId: job.parentJobId ?? null,
+    });
     const metaToolNames: string[] =
       isRootAgent && !isMcpChannel
         ? enabledMetaTools(parseRootGrants(rootEntityRow?.rootGrants)).filter(

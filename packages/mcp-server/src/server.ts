@@ -120,14 +120,24 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
     .where(eq(agents.id, agentId))
     .limit(1);
 
-  if (agentRow?.entityId) await assertMcpEnabled(opts.db, agentRow.entityId);
-
   if (!agentRow || !agentRow.active) {
     throw new Error(
       `mcp_agent_not_found: no active agent with id "${agentId}". ` +
         `This server speaks FOR one agent; without it there is nothing to expose.`,
     );
   }
+  // Un agent SANS entité était accepté, et comme l'interrupteur est par
+  // entité, il n'était alors jamais vérifié : le serveur créait des jobs alors
+  // qu'aucun workspace n'avait rien activé (constat review). L'absence
+  // d'entité est un refus fort, pas une raison de sauter la garde.
+  if (!agentRow.entityId) {
+    throw new Error(
+      `mcp_agent_without_entity: agent "${agentId}" belongs to no workspace, so the ` +
+        `per-workspace MCP switch cannot apply. Refusing rather than running unguarded.`,
+    );
+  }
+  const entityId = agentRow.entityId;
+  await assertMcpEnabled(opts.db, entityId);
 
   const server = new McpServer({
     name: opts.name ?? 'nodal',
@@ -182,36 +192,52 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
         jobsCreated += 1;
         seated = true;
 
-        // Reverifie A CHAQUE APPEL, pas seulement au demarrage : couper
-        // l'interrupteur dans le dashboard doit couper les clients DEJA
-        // connectes, pas seulement empecher les prochains.
-        if (agentRow.entityId) await assertMcpEnabled(opts.db, agentRow.entityId);
-
         const { instruction, caller } = runTaskInputSchema.parse(args);
 
+        // Vérification de l'interrupteur ET insert dans UNE transaction, avec
+        // un verrou sur la ligne entité. Lire-puis-insérer laissait une course
+        // (constat review) : l'appel lisait `enabled = true`, le propriétaire
+        // coupait, l'insert passait quand même. Avec le FOR UPDATE, soit la
+        // coupure a commité d'abord et on lit `false` — refus — soit notre
+        // transaction tient le verrou et la coupure attend un job créé AVANT
+        // elle, ce qui est la sémantique honnête de « couper coupe ».
+        //
         // Le même insert que run_task côté chat : un job pending, ramassé par
         // le worker, exécuté par la boucle NORMALE — approbations, audit,
         // compteurs, hiérarchie. Rien n'est exécuté ici.
-        const [job] = await opts.db
-          .insert(agentJobs)
-          .values({
-            entityId: agentRow.entityId,
-            agentId: agentRow.id,
-            status: 'pending',
-            channel: 'mcp',
-            task: instruction,
-            // Provenance, pas identite : `caller` est declaratif (voir le type
-            // JobTriggerContext) et n accorde rien — il rend « qui a demande
-            // ca ? » lisible dans les Runs. triggeredAt vient du serveur, pas
-            // du client.
-            triggerContext: {
-              type: 'mcp',
-              ...(caller ? { caller } : {}),
-              triggeredAt: new Date().toISOString(),
-            },
-            messages: [{ role: 'user', content: instruction }],
-          })
-          .returning({ id: agentJobs.id });
+        const [job] = await opts.db.transaction(async (tx) => {
+          const [gate] = await tx
+            .select({ enabled: entities.mcpServerEnabled })
+            .from(entities)
+            .where(eq(entities.id, entityId))
+            .for('update');
+          if (!gate?.enabled) {
+            throw new Error(
+              'mcp_disabled: the MCP server is switched off for this workspace. ' +
+                'Enable it in the dashboard (Settings) before connecting clients.',
+            );
+          }
+          return tx
+            .insert(agentJobs)
+            .values({
+              entityId,
+              agentId: agentRow.id,
+              status: 'pending',
+              channel: 'mcp',
+              task: instruction,
+              // Provenance, pas identite : `caller` est declaratif (voir le type
+              // JobTriggerContext) et n accorde rien — il rend « qui a demande
+              // ca ? » lisible dans les Runs. triggeredAt vient du serveur, pas
+              // du client.
+              triggerContext: {
+                type: 'mcp',
+                ...(caller ? { caller } : {}),
+                triggeredAt: new Date().toISOString(),
+              },
+              messages: [{ role: 'user', content: instruction }],
+            })
+            .returning({ id: agentJobs.id });
+        });
 
         return {
           content: [
