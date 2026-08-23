@@ -360,3 +360,83 @@ describe('les trous de la review des gardes', () => {
     );
   });
 });
+
+describe('le ciblage d’agent — la cible se choisit, l’entité jamais', () => {
+  it('adresse le job à l’agent VISÉ quand un slug est donné', async () => {
+    // Retour de Quentin : passer obligatoirement par la racine est contraignant.
+    // Choisir une cible DANS le workspace = choisir dans quel chat on tape.
+    const { agents: agentsTable } = await import('@nodal-agents/db');
+    const [cible] = await db
+      .insert(agentsTable)
+      .values({
+        entityId: seed.entityId,
+        name: 'Reviewer B',
+        slug: 'reviewer-b',
+        personality: 'je relis',
+        model: 'test-model',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+    const client = await connect(seed.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'relis la branche X', agent: 'reviewer-b', caller: 'dev-a' },
+    });
+    const body = JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as {
+      jobId: string;
+    };
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, body.jobId)).limit(1);
+    expect(job!.agentId, "le job n'est pas signé par la cible").toBe((cible as { id: string }).id);
+    expect(job!.entityId, "l'entité reste celle du serveur").toBe(seed.entityId);
+    await client.close();
+  });
+
+  it('refuse un slug inconnu dans ce workspace', async () => {
+    const client = await connect(seed.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'x', agent: 'fantome' },
+    });
+    expect(res.isError).toBe(true);
+    expect((res.content as Array<{ text: string }>)[0]!.text).toMatch(/mcp_target_agent_not_found/);
+    await client.close();
+  });
+
+  it("ne résout JAMAIS un slug d'un autre workspace", async () => {
+    // La ligne que la v1 avait franchie : la résolution est bornée à l'entité
+    // du serveur, donc un agent d'un autre workspace est simplement
+    // introuvable — même slug exact, même base.
+    const { agents: agentsTable } = await import('@nodal-agents/db');
+    await db.insert(agentsTable).values({
+      entityId: autreEntiteId,
+      name: 'Etranger',
+      slug: 'etranger',
+      personality: 'ailleurs',
+      model: 'test-model',
+      role: 'agent',
+      active: true,
+    });
+    const client = await connect(seed.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'x', agent: 'etranger' },
+    });
+    expect(res.isError, "un agent d'un AUTRE workspace a été résolu").toBe(true);
+    await client.close();
+  });
+
+  it('sans slug, la racine du lancement reste le défaut', async () => {
+    const client = await connect(seed.agentId);
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'defaut' },
+    });
+    const body = JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as {
+      jobId: string;
+    };
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, body.jobId)).limit(1);
+    expect(job!.agentId).toBe(seed.agentId);
+    await client.close();
+  });
+});

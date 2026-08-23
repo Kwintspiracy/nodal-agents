@@ -20,7 +20,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { agents, agentJobs, entities, eq, isNotNull } from '@nodal-agents/db';
+import { agents, agentJobs, entities, and, eq, isNotNull } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { runTaskInputSchema, RUN_TASK_DESCRIPTION } from './tools';
 
@@ -192,7 +192,36 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
         jobsCreated += 1;
         seated = true;
 
-        const { instruction, caller } = runTaskInputSchema.parse(args);
+        const { instruction, caller, agent: targetSlug } = runTaskInputSchema.parse(args);
+
+        // La CIBLE se choisit, l'ENTITÉ jamais — c'est la ligne exacte que la
+        // v1 avait franchie. Choisir un agent DANS le workspace équivaut à
+        // choisir dans quel chat on tape sa demande : le job tourne sous les
+        // outils, approbations et budgets de CET agent, et les gardes du canal
+        // (jamais les meta-tools, interrupteur, plafond) ne dépendent pas de
+        // la cible. La résolution est bornée à l'entité du serveur — un slug
+        // d'un autre workspace est simplement introuvable ici.
+        let targetAgent: { id: string } = { id: agentRow.id };
+        if (targetSlug) {
+          const [resolved] = await opts.db
+            .select({ id: agents.id })
+            .from(agents)
+            .where(
+              and(
+                eq(agents.entityId, entityId),
+                eq(agents.slug, targetSlug),
+                eq(agents.active, true),
+              ),
+            )
+            .limit(1);
+          if (!resolved) {
+            throw new Error(
+              `mcp_target_agent_not_found: no active agent with slug "${targetSlug}" in this ` +
+                `workspace. Omit the field to address the root agent.`,
+            );
+          }
+          targetAgent = resolved;
+        }
 
         // Vérification de l'interrupteur ET insert dans UNE transaction, avec
         // un verrou sur la ligne entité. Lire-puis-insérer laissait une course
@@ -221,7 +250,7 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
             .insert(agentJobs)
             .values({
               entityId,
-              agentId: agentRow.id,
+              agentId: targetAgent.id,
               status: 'pending',
               channel: 'mcp',
               task: instruction,
