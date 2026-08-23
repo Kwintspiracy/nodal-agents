@@ -10751,6 +10751,62 @@ function deriveJobStage(
 const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:NotebookEdit']);
 const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
 
+/**
+ * Le garde-fou Office de la définition v4 (décision Quentin 23/08) : ce ne
+ * sont plus les OUTILS qui disent « dev », c'est la NATURE des fichiers
+ * édités. Liste d'EXCLUSION volontairement courte — bureautique, média,
+ * archives. Tout le reste qualifie, extension inconnue comprise : un vrai
+ * codeur écrit du .vue, .rs, .tf, .svelte… qu'aucune liste d'inclusion ne
+ * couvrira jamais, et le rater est pire que d'afficher un .txt de trop
+ * (« un codeur sans CLI est un codeur quand même »).
+ */
+const NON_DEV_EXTENSIONS = new Set([
+  // bureautique
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'odt',
+  'ods',
+  'odp',
+  'pdf',
+  'rtf',
+  // image / audio / vidéo (le .svg reste dev : c'est un asset de repo)
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'ico',
+  'mp3',
+  'wav',
+  'ogg',
+  'mp4',
+  'mov',
+  'avi',
+  'mkv',
+  'webm',
+  // archives
+  'zip',
+  'tar',
+  'gz',
+  '7z',
+  'rar',
+]);
+
+/** True quand le chemin édité ressemble à du travail de dev (voir NON_DEV_EXTENSIONS). */
+function isDevFilePath(path: string | null): boolean {
+  if (!path) return false;
+  const base = path.split(/[\\/]/).pop() ?? path;
+  const dot = base.lastIndexOf('.');
+  // Sans extension (Makefile, Dockerfile, LICENSE…) = dev.
+  if (dot <= 0) return true;
+  return !NON_DEV_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+}
+
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
 function extractFilePath(input: Record<string, unknown> | null): string | null {
   if (!input) return null;
@@ -10909,6 +10965,20 @@ function pipelineQualifiesAsCoding(
     return input?.mode === 'write';
   });
   if (hasWriteCodeTask) return true;
+  // v4 (23/08, constat live de Quentin) : un codeur PUR LLM — file_edit/
+  // file_write via OpenRouter, sans CLI, sans code_task, sans reviewer —
+  // codait réellement et l'onglet restait vide. La v3 exigeait un « marqueur
+  // dev » (cli:*/code_task/review_verdict) comme garde-fou Office ; le
+  // marqueur est remplacé par la NATURE des fichiers édités : du code/config
+  // qualifie seul, du bureautique/média non (isDevFilePath). Le chemin
+  // marqueur reste en repli pour un pipeline dont toutes les éditions sont
+  // non-dev mais qui porte quand même un signal de dev explicite.
+  const nodalDevWrite = calls.some(
+    (c) =>
+      (c.toolName === 'file_edit' || c.toolName === 'file_write') &&
+      isDevFilePath(extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null)),
+  );
+  if (nodalDevWrite) return true;
   const hasNodalFileWrite = calls.some(
     (c) => c.toolName === 'file_edit' || c.toolName === 'file_write',
   );

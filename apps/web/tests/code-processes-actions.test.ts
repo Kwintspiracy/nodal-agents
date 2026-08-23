@@ -412,7 +412,11 @@ describe('listCodingProcessesAction', () => {
     expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
   });
 
-  it('a bare file_write with no dev marker anywhere is EXCLUDED (the Office-agent guard, condition C)', async () => {
+  it('an OFFICE-only file_write (.pptx) with no dev signal is EXCLUDED (guard v4: file nature)', async () => {
+    // v4 (23/08) : le garde-fou Office ne passe plus par la présence d'un
+    // marqueur CLI mais par la NATURE des fichiers édités. Un .pptx seul
+    // reste invisible — c'est le même comportement que v3, pour la bonne
+    // raison cette fois.
     const agentId = await makeAgent('Audit Code Office Agent');
     const jobId = await makeJob(agentId, 'completed');
     await _testDb!.insert(toolCalls).values({
@@ -428,6 +432,52 @@ describe('listCodingProcessesAction', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
+  });
+
+  it('a pure-LLM coder — file_edit on a .ts file, NO CLI, NO code_task, NO reviewer — is INCLUDED (v4)', async () => {
+    // Le constat live de Quentin (23/08) : orchestrateur → codeur OpenRouter
+    // qui édite du code via les outils Nodal. Il code réellement ; la v3 le
+    // rendait invisible (aucun « marqueur dev »). La v4 le qualifie par la
+    // nature du fichier édité.
+    const agentId = await makeAgent('Audit Code PureLLM Coder');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_edit',
+      toolInput: {
+        path: 'src/lib/parser.ts',
+        old_string: 'const x = 1;',
+        new_string: 'const x = 2;',
+      },
+      toolOutput: 'ok',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const row = result.data.find((r) => r.id === jobId);
+    expect(row, 'un codeur sans CLI est un codeur quand même').toBeDefined();
+    expect(row!.filesChanged).toBeGreaterThan(0);
+  });
+
+  it('a file without extension (Dockerfile) written by file_write is INCLUDED (v4: no-extension = dev)', async () => {
+    const agentId = await makeAgent('Audit Code Dockerfile Agent');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: 'deploy/Dockerfile', content: 'FROM node:22-slim' },
+      toolOutput: 'ok',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeDefined();
   });
 
   it('a read-only CLI job (cli_runs + cli:Read only) is EXCLUDED — not a coding session', async () => {
