@@ -2,6 +2,13 @@ packages:
   - 'apps/*'
   - 'packages/*'
   - 'packages/adapters/*'
+# pnpm 10 lit les overrides ICI — le bloc "pnpm" de package.json est ignoré
+# (c'est le WARN affiché à chaque commande ; l'override vite y était mort).
+overrides:
+  vite: ^8.0.12
+  # snyk PR #17 : @modelcontextprotocol/sdk > ajv > fast-uri 3.1.2 porte
+  # 3 vulns high (host confusion) corrigées en 3.1.5.
+  fast-uri: ^3.1.5
 allowBuilds:
   '@embedded-postgres/windows-x64': true
   '@embedded-postgres/linux-x64': true
