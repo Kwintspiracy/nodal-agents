@@ -35,10 +35,13 @@ describe('resolveMcpServeOptions', () => {
     expect(opts.databaseUrl).not.toContain('p@ss');
   });
 
-  it('branche la notification worker sur le port du runner, secret compris', () => {
+  it('branche la notification worker sur 127.0.0.1 (jamais localhost), secret compris', () => {
     const opts = resolveMcpServeOptions(BASE, {});
+    // `localhost` peut résoudre en ::1 sur Windows, où le runner n'écoute pas :
+    // notification silencieusement morte + workerSecret offert à un squatteur
+    // IPv6 (review 23/08, même piège que RUNNER_URL dans env.ts).
     expect(opts.notifyRunner).toEqual({
-      url: 'http://localhost:3101',
+      url: 'http://127.0.0.1:3101',
       workerSecret: WORKER_SECRET,
     });
   });

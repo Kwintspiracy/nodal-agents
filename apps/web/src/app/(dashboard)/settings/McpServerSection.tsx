@@ -71,7 +71,12 @@ export default function McpServerSection({ initial }: Props) {
             by this switch.
           </p>
           {enabled && (
-            <SetUrl subtitle="Connect a client (Claude Code shown):" url={MCP_CONNECT_COMMAND} />
+            <>
+              <SetUrl subtitle="Connect a client (Claude Code shown):" url={MCP_CONNECT_COMMAND} />
+              <p className="mt-1.5 text-body-12 text-ink-4">
+                Run it on the machine that hosts Nodal.
+              </p>
+            </>
           )}
           {!initial.isOwner && (
             <p className="mt-2 text-body-12 text-ink-4">

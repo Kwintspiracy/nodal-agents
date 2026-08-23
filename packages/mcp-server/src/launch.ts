@@ -9,7 +9,10 @@
 // LA VOIE UTILISATEUR est ailleurs : `claude mcp add nodal -- nodal-agents mcp serve`
 // (apps/cli/src/commands/mcp.ts) — le CLI résout DATABASE_URL depuis le config
 // de l'install et notifie le runner à chaque job. Ce fichier reste le lanceur
-// BRUT du monorepo (dev, CI) : env-driven, aucune lecture de config.
+// BRUT du monorepo (dev, CI) : env-driven, aucune lecture de config, et il ne
+// passe PAS notifyRunner — les jobs créés par ce chemin attendent le repêchage
+// cron (~2 min). Assumé : ce lanceur ne connaît pas le workerSecret, et lui
+// faire lire le config recréerait le couplage que la voie CLI possède déjà.
 //
 // Usage (config MCP d'un client, ex. `claude mcp add`) :
 //
@@ -49,9 +52,14 @@ const { db, close } = createClient(databaseUrl);
 const agentId = process.env['NODAL_MCP_AGENT_ID'];
 
 try {
+  // Se résout à la déconnexion du client (stdin fermé), pas au démarrage.
   await startNodalMcpServer({ db, ...(agentId ? { agentId } : {}) });
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   await close().catch(() => {});
   process.exit(1);
 }
+// Déconnexion propre : fermer le pool et sortir, sinon les connexions
+// Postgres gardent le processus en vie pour toujours.
+await close().catch(() => {});
+process.exit(0);

@@ -23,7 +23,7 @@ import { buildDatabaseUrl } from '../lib/env.ts';
 
 export interface McpServeOptions {
   databaseUrl: string;
-  notifyRunner: { url: string; workerSecret?: string };
+  notifyRunner: { url: string; workerSecret: string };
   agentId?: string;
 }
 
@@ -48,25 +48,41 @@ export function resolveMcpServeOptions(
     // Même résolution que `up` : le mot de passe du config, ou le legacy pour
     // les clusters d'avant SECRET-003 (buildDatabaseUrl porte ce défaut).
     databaseUrl: buildDatabaseUrl(config.ports.postgres, config.postgresPassword),
+    // 127.0.0.1, jamais `localhost` : sur Windows, localhost préfère l'IPv6
+    // ::1 où le runner n'écoute pas (bind 127.0.0.1) — la notification
+    // échouerait en silence, et un squatteur de [::1]:port recevrait le
+    // workerSecret. C'est le piège que env.ts documente déjà (RUNNER_URL).
+    // Le secret n'est pas optionnel : la route /api/worker exige le Bearer,
+    // une notification sans secret est un 403 permanent déguisé en succès.
     notifyRunner: {
-      url: `http://localhost:${config.ports.runner}`,
-      ...(config.workerSecret ? { workerSecret: config.workerSecret } : {}),
+      url: `http://127.0.0.1:${config.ports.runner}`,
+      workerSecret: config.workerSecret,
     },
     ...(agentId ? { agentId } : {}),
   };
 }
 
-/** Démarre le serveur MCP stdio avec la config de l'install. Ne retourne pas. */
+/**
+ * Démarre le serveur MCP stdio avec la config de l'install, sert jusqu'à la
+ * déconnexion du client, puis ferme le pool et sort. Sans cette sortie, le
+ * client MCP qui fait l'arrêt standard (fermer stdin, attendre l'exit)
+ * laissait un orphelin tenant des connexions Postgres (constat review 23/08).
+ */
 export async function runMcpServe(): Promise<void> {
   const opts = resolveMcpServeOptions(readConfig());
 
-  // Imports différés : @nodal-agents/db ouvre un pool à la création du client,
-  // et le serveur MCP n'est utile qu'ici — le reste du CLI n'a pas à les payer.
-  const { createClient } = await import('@nodal-agents/db');
-  const { startNodalMcpServer } = await import('@nodal-agents/mcp-server');
+  // Imports différés (le reste du CLI n'a pas à parser ces graphes de
+  // modules), en parallèle : ils sont indépendants. Note : createClient
+  // n'ouvre le pool qu'à l'APPEL, pas à l'import — le différé n'économise
+  // que le coût de parsing.
+  const [{ createClient }, { startNodalMcpServer }] = await Promise.all([
+    import('@nodal-agents/db'),
+    import('@nodal-agents/mcp-server'),
+  ]);
 
   const { db, close } = createClient(opts.databaseUrl);
   try {
+    // Se résout à la DÉCONNEXION du client (stdin fermé), pas au démarrage.
     await startNodalMcpServer({
       db,
       notifyRunner: opts.notifyRunner,
@@ -78,4 +94,6 @@ export async function runMcpServe(): Promise<void> {
     await close().catch(() => {});
     process.exit(1);
   }
+  await close().catch(() => {});
+  process.exit(0);
 }
