@@ -17,10 +17,12 @@ export default function NetworkForm({ initial }: Props) {
   const [bind, setBind] = useState<'loopback' | 'lan'>(initial.configuredBind);
   const [isPending, startTransition] = useTransition();
   const [restartHint, setRestartHint] = useState(false);
+  const [authAlignedHint, setAuthAlignedHint] = useState(false);
 
   function handleReset() {
     setBind(initial.configuredBind);
     setRestartHint(false);
+    setAuthAlignedHint(false);
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -31,6 +33,7 @@ export default function NetworkForm({ initial }: Props) {
       else {
         toast.success('Network settings saved');
         setRestartHint(r.data.requiresRestart);
+        setAuthAlignedHint(r.data.authModeAligned);
       }
     });
   }
@@ -98,6 +101,13 @@ export default function NetworkForm({ initial }: Props) {
             <b className="block font-medium text-ink">Config file missing</b>
             ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
             <code className="text-mono-12">nodal-agents init</code> at least once.
+          </Banner>
+        )}
+
+        {authAlignedHint && (
+          <Banner variant="info" title="Sign-in enabled.">
+            LAN access requires email + password auth, so it was switched on. After the restart, the
+            login page will ask you to create your account. Your agents and settings are kept.
           </Banner>
         )}
 
