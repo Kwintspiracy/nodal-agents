@@ -6,6 +6,11 @@
 // pas lançable depuis une config MCP sans écrire un intégrateur soi-même. Une
 // bibliothèque sans lanceur n'est pas une fonctionnalité, c'est un composant.
 //
+// LA VOIE UTILISATEUR est ailleurs : `claude mcp add nodal -- nodal-agents mcp serve`
+// (apps/cli/src/commands/mcp.ts) — le CLI résout DATABASE_URL depuis le config
+// de l'install et notifie le runner à chaque job. Ce fichier reste le lanceur
+// BRUT du monorepo (dev, CI) : env-driven, aucune lecture de config.
+//
 // Usage (config MCP d'un client, ex. `claude mcp add`) :
 //
 //   command: pnpm

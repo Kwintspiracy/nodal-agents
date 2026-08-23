@@ -142,6 +142,31 @@ checkpoints
     }
   });
 
+// ── nodal-agents mcp ──────────────────────────────────────────────────────────
+//
+// STDOUT du sous-processus `serve` = transport JSON-RPC du client MCP. Aucune
+// bannière, aucun chalk : toute sortie humaine part sur stderr (voir mcp.ts).
+
+const mcp = program
+  .command('mcp')
+  .description('Expose this install as an MCP server for external clients');
+
+mcp
+  .command('serve')
+  .description(
+    'Start the stdio MCP server (use via: claude mcp add nodal -- nodal-agents mcp serve)',
+  )
+  .action(async () => {
+    const { runMcpServe } = await import('./commands/mcp.ts');
+    try {
+      await runMcpServe();
+    } catch (err) {
+      // stderr uniquement — jamais stdout (transport MCP).
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
 // ── nodal-agentsreset ─────────────────────────────────────────────────────────────
 
 program

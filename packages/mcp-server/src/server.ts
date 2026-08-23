@@ -51,6 +51,24 @@ export interface McpServerOptions {
    * ce qui est un geste HUMAIN — c'est exactement la friction voulue.
    */
   maxJobsPerProcess?: number;
+  /**
+   * Où réveiller le worker après la création d'un job. Sans ça, un job `mcp`
+   * attend le repêchage périodique du cron (âge > 30 s + tick de 120 s) —
+   * mesuré live le 23/08 : 2 min 31 entre `run_task` et le premier tour. Les
+   * autres créateurs de jobs (Telegram, web, webhooks) déclenchent le worker
+   * immédiatement ; ce champ donne au canal MCP le même contrat.
+   *
+   * Fire-and-forget, même sémantique que `triggerWorker` côté runner : un
+   * échec est avalé, le cron reste le filet. Optionnel parce que le paquet ne
+   * DEVINE jamais l'URL du runner (invariant #6) — le lanceur qui connaît le
+   * config la fournit.
+   */
+  notifyRunner?: {
+    /** Base URL du runner, ex. "http://localhost:3001". */
+    url: string;
+    /** Secret worker — envoyé en Authorization: Bearer quand présent. */
+    workerSecret?: string;
+  };
 }
 
 const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
@@ -308,6 +326,23 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
             })
             .returning({ id: agentJobs.id });
         });
+
+        // APRÈS le commit, jamais dedans : réveiller le worker pour un job
+        // qu'un rollback aurait effacé serait un déclenchement fantôme (même
+        // règle que triggerJobWorker côté WhatsApp).
+        if (job?.id && opts.notifyRunner) {
+          const { url, workerSecret } = opts.notifyRunner;
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (workerSecret) headers['Authorization'] = `Bearer ${workerSecret}`;
+          void fetch(`${url}/api/worker`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ jobId: job.id }),
+            // Bornée pour toujours se résoudre ; un trigger perdu est récupéré
+            // par le repêchage cron comme avant.
+            signal: AbortSignal.timeout(10_000),
+          }).catch(() => {});
+        }
 
         return {
           content: [

@@ -17,6 +17,7 @@
     "@nodal-agents/auth": "workspace:*",
     "@nodal-agents/checkpoints": "workspace:*",
     "@nodal-agents/db": "workspace:*",
+    "@nodal-agents/mcp-server": "workspace:*",
     "chalk": "^5.4.1",
     "commander": "^14.0.3",
     "embedded-postgres": "^18.3.0-beta.17",

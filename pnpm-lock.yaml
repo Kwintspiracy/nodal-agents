@@ -53,6 +53,9 @@ importers:
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@nodal-agents/mcp-server':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
