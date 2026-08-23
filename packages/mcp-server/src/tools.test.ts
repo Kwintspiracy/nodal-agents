@@ -37,8 +37,11 @@ beforeAll(async () => {
 });
 
 /** Un client MCP réel branché en mémoire — vrai protocole, zéro processus. */
-async function connect(agentId: string) {
-  const server = await buildNodalMcpServer({ db, agentId });
+async function connect(
+  agentId: string,
+  extra?: Partial<Parameters<typeof buildNodalMcpServer>[0]>,
+) {
+  const server = await buildNodalMcpServer({ db, agentId, ...extra });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0.0.1' });
   await Promise.all([server.connect(serverT), client.connect(clientT)]);
@@ -507,5 +510,125 @@ describe('une racine configurée mais cassée ne se replie pas en silence', () =
         .set({ rootAgentId: seed.agentId })
         .where(eq(entitiesTable.id, seed.entityId));
     }
+  });
+});
+
+describe('le réveil du worker — plus de 2 min 30 d’attente cron', () => {
+  // Mesuré live (23/08, job 367e889d) : sans notification, un job `mcp` attend
+  // le repêchage périodique (âge > 30 s + tick 120 s). Les autres canaux
+  // réveillent le worker à la création ; celui-ci doit faire pareil.
+
+  it('POSTe le jobId créé sur /api/worker, avec le secret en Bearer', async () => {
+    const { createServer } = await import('node:http');
+    const captured = new Promise<{ url: string; auth: string | undefined; body: string }>(
+      (resolve) => {
+        const srv = createServer((req, res) => {
+          let body = '';
+          req.on('data', (c: Buffer) => (body += c.toString()));
+          req.on('end', () => {
+            res.writeHead(200).end('{}');
+            srv.close();
+            resolve({ url: req.url ?? '', auth: req.headers.authorization, body });
+          });
+        });
+        srv.listen(0, '127.0.0.1');
+        srv.on('listening', () => {
+          const addr = srv.address() as { port: number };
+          port = addr.port;
+          ready();
+        });
+      },
+    );
+    let port = 0;
+    let ready!: () => void;
+    const listening = new Promise<void>((r) => (ready = r));
+    void captured; // le serveur démarre dans le constructeur de la promesse
+    await listening;
+
+    const client = await connect(seed.agentId, {
+      notifyRunner: { url: `http://127.0.0.1:${port}`, workerSecret: 'secret-test-123' },
+    });
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'tâche notifiée' },
+    });
+    const { jobId } = JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as {
+      jobId: string;
+    };
+
+    // L’assertion porte sur la REQUÊTE REÇUE, pas sur un compteur d’appels :
+    // même chemin, même job, même secret que le contrat triggerWorker du runner.
+    const reqSeen = await captured;
+    expect(reqSeen.url).toBe('/api/worker');
+    expect(reqSeen.auth).toBe('Bearer secret-test-123');
+    expect(JSON.parse(reqSeen.body)).toEqual({ jobId });
+    await client.close();
+  });
+
+  it('un runner injoignable ne casse pas l’appel : fire-and-forget, le cron reste le filet', async () => {
+    // Port TCP fermé : la notification échoue. Le job doit exister quand même
+    // et la réponse rester un succès — sinon la disponibilité du runner
+    // deviendrait une condition de création de job, ce que le cron couvrait déjà.
+    const client = await connect(seed.agentId, {
+      notifyRunner: { url: 'http://127.0.0.1:1', workerSecret: 'secret-test-123' },
+    });
+    const res = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'tâche sans runner' },
+    });
+    expect(res.isError ?? false).toBe(false);
+    const { jobId } = JSON.parse((res.content as Array<{ text: string }>)[0]!.text) as {
+      jobId: string;
+    };
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId)).limit(1);
+    expect(job!.status).toBe('pending');
+    await client.close();
+  });
+});
+
+describe('le repli sur l’agent du lancement est re-vérifié ACTIF à chaque appel', () => {
+  // Constat review 23/08 : désactiver l'agent bloquait les chemins racine et
+  // slug mais PAS le repli — un serveur longue durée continuait de signer des
+  // jobs au nom d'un agent désactivé.
+  it('refuse dès que l’agent du lancement est désactivé, sans redémarrage', async () => {
+    // Un workspace SANS racine configurée : le repli s'applique. rootAgentId
+    // est remis à null explicitement — un test précédent laisse une racine
+    // cassée sur cette entité, et cet état-là est déjà couvert ailleurs.
+    await db
+      .update(entities)
+      .set({ mcpServerEnabled: true, rootAgentId: null })
+      .where(eq(entities.id, autreEntiteId));
+    const [lanceur] = await db
+      .insert(agents)
+      .values({
+        entityId: autreEntiteId,
+        name: 'Lanceur sans racine',
+        slug: 'lanceur-sans-racine',
+        personality: 'test',
+        model: 'test-model',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+    const lanceurId = (lanceur as { id: string }).id;
+
+    const client = await connect(lanceurId);
+    const avant = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'avant désactivation' },
+    });
+    expect(avant.isError ?? false, (avant.content as Array<{ text: string }>)[0]?.text ?? '').toBe(
+      false,
+    );
+
+    await db.update(agents).set({ active: false }).where(eq(agents.id, lanceurId));
+
+    const apres = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'après désactivation' },
+    });
+    expect(apres.isError, 'un agent désactivé ne doit plus recevoir de jobs').toBe(true);
+    expect((apres.content as Array<{ text: string }>)[0]!.text).toMatch(/mcp_agent_not_found/);
+    await client.close();
   });
 });

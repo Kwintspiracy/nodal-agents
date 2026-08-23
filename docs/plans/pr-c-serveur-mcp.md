@@ -2,8 +2,7 @@
 
 # PR C — Nodal comme serveur MCP · C1 LIVRÉE (#12)
 
-**État : C1 livrée. Reste à merger : #15 (tests de l'interrupteur), geste de
-Quentin.**
+**État : LOT CLOS — #12, #13, #15, #17 toutes mergées (23/08).**
 
 ## Suivi
 
@@ -11,7 +10,34 @@ Quentin.**
 |---|-----|----|----|
 | 1 | C1 — serveur MCP stdio, `run_task` | #12 | ✅ mergée |
 | 2 | Interrupteur `mcpServerEnabled` + gardes | #13 | ✅ mergée |
-| 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | 🔄 CI verte, à merger |
+| 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | ✅ mergée |
+| 4 | Connexion en 1 ligne (`nodal-agents mcp serve`) + réveil worker | #17 | ✅ mergée |
+
+## La review de la #17 (23/08) — 6 constats, tous fermés
+
+| Constat | Correctif |
+|---|---|
+| `localhost` → notification muette sur Windows (::1) + workerSecret offert à un squatteur IPv6 | `127.0.0.1`, comme RUNNER_URL le documente (3 finders indépendants) |
+| workerSecret optionnel = 403 permanent avalé | requis dans le contrat |
+| Un refus HTTP passait pour un succès | non-2xx signalé sur stderr |
+| Pas d'arrêt : le SDK n'écoute PAS la fin de stdin (vérifié dans sa source) → orphelins tenant des connexions PG | résolution sur EOF stdin + onclose ; les 2 lanceurs ferment le pool et sortent. Prouvé live : exit 0 en 5 s |
+| Le repli d'agent jamais re-vérifié actif (2 chemins sur 3 gardés) | re-vérifié à chaque appel + test |
+| Insert sans id = succès sans handle | rollback + erreur forte |
+
+Reporté (noté, pas fait) : dédupliquer le contrat `triggerWorker` (6 copies) ;
+joindre les 2 SELECT du chemin chaud de run_task.
+
+## La saga snyk (23/08) — 6 passages, la leçon
+
+Snyk ne gate que les **manifestes touchés** par la PR, avec sa propre base.
+`pnpm audit` ne rattachait PAS l'arbre du SDK MCP au projet mcp-server — 5
+passages à l'aveugle avant que Quentin ouvre le rapport : les 22 avis étaient
+l'arbre hono/express du SDK. Épinglés (hono ≥4.12.34, @hono/node-server, qs,
+body-parser, ip-address) + au passage : les overrides pnpm de package.json
+étaient MORTS depuis pnpm 10 (déménagés vers pnpm-workspace.yaml), vestiges
+tools/orchestration retirés des deps de mcp-server, fast-uri/brace-expansion/
+js-yaml/nanoid/postcss/vite/turbo épinglés. **Leçon : au premier échec snyk,
+demander le rapport à Quentin — une ligne du rapport vaut cinq déductions.**
 
 **23/08 :** l'inventaire a montré que la #13 avait livré `get/setMcpServerSwitchAction`
 sans test — le standard « plus une action serveur sans test » cassé en silence.
@@ -27,11 +53,25 @@ Premier test réel de bout en bout, mené par Quentin depuis son terminal :
 **completed**, résultat `"Ok"`. Vérifié en base, pas au dashboard.
 
 **Constat au passage — latence de ramassage ~2 min 30** : le serveur MCP
-n'appelle PAS `triggerWorker` après l'insertion (aucun fetch dans le paquet).
-Le job attend donc le repêchage du cron : âge > 30 s + tick de 120 s. Les
-autres créateurs de jobs (Telegram, web) déclenchent le worker immédiatement.
-Amélioration candidate pour C2 : `run_task` notifie le runner à la création
-— même mécanisme fire-and-forget, mêmes garde-fous.
+n'appelait pas `triggerWorker` après l'insertion. **Fermé par la #17** (voir
+ci-dessous), avec le second constat de Quentin sur la commande de connexion.
+
+## La connexion en une ligne (#17)
+
+L'ancienne commande documentée était cassée pour tout utilisateur réel :
+`pnpm --filter` n'existe que dans le monorepo, DATABASE_URL est
+inconnaissable, et le mot de passe Postgres finissait en clair dans la config
+MCP du client. La #17 livre :
+
+| Morceau | Comportement |
+|---|---|
+| `nodal-agents mcp serve` | résout l'URL de la base depuis le config comme `up`, démarre le stdio ; échec fort sans config, stdout vierge |
+| Settings | la commande `claude mcp add nodal -- nodal-agents mcp serve` en bloc copiable |
+| `notifyRunner` | `run_task` réveille le worker après commit — même contrat que Telegram/web ; le cron reste le filet |
+
+Vérifié : requête `/api/worker` réelle capturée en test (chemin, Bearer,
+jobId) ; `mcp serve` prouvé live (boot depuis config seul, `initialize` +
+`tools/list` propres) ; bloc copiable vérifié à l'écran sur l'install réelle.
 
 ## Ce qui est livré (C1)
 

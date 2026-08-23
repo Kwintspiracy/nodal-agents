@@ -51,6 +51,29 @@ export interface McpServerOptions {
    * ce qui est un geste HUMAIN — c'est exactement la friction voulue.
    */
   maxJobsPerProcess?: number;
+  /**
+   * Où réveiller le worker après la création d'un job. Sans ça, un job `mcp`
+   * attend le repêchage périodique du cron (âge > 30 s + tick de 120 s) —
+   * mesuré live le 23/08 : 2 min 31 entre `run_task` et le premier tour. Les
+   * autres créateurs de jobs (Telegram, web, webhooks) déclenchent le worker
+   * immédiatement ; ce champ donne au canal MCP le même contrat.
+   *
+   * Fire-and-forget, même sémantique que `triggerWorker` côté runner : un
+   * échec est avalé, le cron reste le filet. Optionnel parce que le paquet ne
+   * DEVINE jamais l'URL du runner (invariant #6) — le lanceur qui connaît le
+   * config la fournit.
+   */
+  notifyRunner?: {
+    /** Base URL du runner, ex. "http://127.0.0.1:3001". */
+    url: string;
+    /**
+     * Secret worker, envoyé en Authorization: Bearer. REQUIS : la route
+     * /api/worker du runner refuse toute requête sans Bearer valide — un
+     * notifyRunner sans secret serait un 403 permanent que le fire-and-forget
+     * avalerait, c'est-à-dire la panne silencieuse que l'invariant #4 interdit.
+     */
+    workerSecret: string;
+  };
 }
 
 const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
@@ -241,6 +264,25 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
               );
             }
             targetAgent = root;
+          } else {
+            // Repli « pas de racine configurée » : l'agent du lancement — mais
+            // re-vérifié ACTIF à chaque appel, comme les chemins racine et
+            // slug. Sans ça, désactiver l'agent dans le dashboard bloquait
+            // deux des trois chemins de résolution et pas le troisième
+            // (constat review 23/08) : un serveur longue durée continuait de
+            // créer des jobs au nom d'un agent désactivé.
+            const [launcher] = await opts.db
+              .select({ id: agents.id })
+              .from(agents)
+              .where(and(eq(agents.id, agentRow.id), eq(agents.active, true)))
+              .limit(1);
+            if (!launcher) {
+              throw new Error(
+                'mcp_agent_not_found: the agent this server was launched for has been ' +
+                  'deactivated. Reactivate it, set a root agent, or restart the server ' +
+                  'for another agent.',
+              );
+            }
           }
         }
         if (targetSlug) {
@@ -287,7 +329,7 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
                 'Enable it in the dashboard (Settings) before connecting clients.',
             );
           }
-          return tx
+          const inserted = await tx
             .insert(agentJobs)
             .values({
               entityId,
@@ -307,7 +349,51 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
               messages: [{ role: 'user', content: instruction }],
             })
             .returning({ id: agentJobs.id });
+          // Un insert qui ne rapporte pas d'id serait un job committé sans
+          // handle : le client croirait à un succès sans pouvoir le suivre, et
+          // le réveil du worker serait sauté en silence. On annule (rollback)
+          // et on échoue fort plutôt que de répondre « pending » sans jobId.
+          if (!inserted[0]?.id) {
+            throw new Error(
+              'mcp_job_id_missing: the job insert reported no id — rolled back rather than ' +
+                'answering success without a handle.',
+            );
+          }
+          return inserted;
         });
+
+        // APRÈS le commit, jamais dedans : réveiller le worker pour un job
+        // qu'un rollback aurait effacé serait un déclenchement fantôme (même
+        // règle que triggerJobWorker côté WhatsApp).
+        if (job?.id && opts.notifyRunner) {
+          const { url, workerSecret } = opts.notifyRunner;
+          const jobId = job.id;
+          void fetch(`${url}/api/worker`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${workerSecret}`,
+            },
+            body: JSON.stringify({ jobId }),
+            // Bornée pour toujours se résoudre ; un trigger perdu est récupéré
+            // par le repêchage cron comme avant.
+            signal: AbortSignal.timeout(10_000),
+          })
+            .then((res) => {
+              // Un refus HTTP (401/403 : secret désynchronisé) N'EST PAS un
+              // échec réseau : fetch le résout, le .catch ne voit rien, et la
+              // dégradation vers l'attente cron serait permanente et muette.
+              // stderr, jamais stdout (transport MCP).
+              if (!res.ok) {
+                console.error(
+                  `mcp_notify_rejected: /api/worker answered ${res.status} for job ${jobId} — ` +
+                    `check that the workerSecret in ~/.nodalai/config.json matches the running runner. ` +
+                    `The job still runs via the periodic cron pickup (~2 min).`,
+                );
+              }
+            })
+            .catch(() => {});
+        }
 
         return {
           content: [
@@ -341,8 +427,31 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
   return server;
 }
 
-/** Construit puis branche sur stdio — le point d'entrée d'un vrai lancement. */
+/**
+ * Construit, branche sur stdio, et ne se résout QUE lorsque le client se
+ * déconnecte (stdin fermé / transport clos).
+ *
+ * Avant, la promesse se résolvait juste après connect() et rien n'observait la
+ * fin du transport : le client MCP qui fait l'arrêt standard (fermer stdin et
+ * attendre la sortie) laissait un processus orphelin dont le pool Postgres
+ * tenait des connexions pour toujours (constat review 23/08 — et sur Windows
+ * le tree-kill est déjà un point faible connu). Résoudre à la déconnexion
+ * permet au lanceur d'enchaîner fermeture du pool puis exit.
+ */
 export async function startNodalMcpServer(opts: McpServerOptions): Promise<void> {
   const server = await buildNodalMcpServer(opts);
+  const closed = new Promise<void>((resolve) => {
+    // Deux signaux de fin, l'un OU l'autre :
+    //  - `server.server.onclose` : fermeture protocolaire (le SDK l'invoque
+    //    quand transport.close() est appelé) ;
+    //  - EOF sur stdin : le transport du SDK n'écoute PAS 'end' (vérifié dans
+    //    sa source, stdio.js : listeners 'data'/'error' seulement), donc un
+    //    client qui ferme simplement notre stdin ne déclenche RIEN côté SDK —
+    //    c'est pourtant l'arrêt standard d'un serveur MCP stdio.
+    server.server.onclose = resolve;
+    process.stdin.once('end', resolve);
+    process.stdin.once('close', resolve);
+  });
   await server.connect(new StdioServerTransport());
+  await closed;
 }

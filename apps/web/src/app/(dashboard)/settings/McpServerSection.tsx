@@ -23,6 +23,16 @@ import { setMcpServerSwitchAction, type McpServerSwitchView } from '@/lib/action
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Switch from '@/components/ui/Switch';
+import { SetUrl } from '@/components/ui/SetUrl.tsx';
+
+/**
+ * La commande complète, prête à coller. `nodal-agents mcp serve` résout
+ * lui-même l'URL de la base depuis ~/.nodalai/config.json — l'utilisateur n'a
+ * ni DATABASE_URL à connaître, ni secret à copier dans la config de son client
+ * (l'ancienne commande documentée mettait le mot de passe Postgres en clair
+ * dans la config MCP, et son `pnpm --filter` n'existait que dans le repo de dev).
+ */
+const MCP_CONNECT_COMMAND = 'claude mcp add nodal -- nodal-agents mcp serve';
 
 interface Props {
   initial: McpServerSwitchView;
@@ -61,13 +71,12 @@ export default function McpServerSection({ initial }: Props) {
             by this switch.
           </p>
           {enabled && (
-            <p className="mt-2 text-body-13 leading-[1.5]! text-ink-3">
-              Connect a client:{' '}
-              <code className="text-mono-12">
-                claude mcp add nodal -e DATABASE_URL=… -- pnpm --filter @nodal-agents/mcp-server
-                --silent serve
-              </code>
-            </p>
+            <>
+              <SetUrl subtitle="Connect a client (Claude Code shown):" url={MCP_CONNECT_COMMAND} />
+              <p className="mt-1.5 text-body-12 text-ink-4">
+                Run it on the machine that hosts Nodal.
+              </p>
+            </>
           )}
           {!initial.isOwner && (
             <p className="mt-2 text-body-12 text-ink-4">

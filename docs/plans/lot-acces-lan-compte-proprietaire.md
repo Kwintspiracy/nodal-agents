@@ -2,14 +2,24 @@
 
 # Lot — Accès LAN : le propriétaire réclame son compte
 
-**État : livré et validé de bout en bout sur l'install réelle (23/08). Reste à
-merger : #16, geste de Quentin.**
+**État : LOT CLOS — #16 mergée le 23/08 (validée live, reviewée, CI 5/5).**
 
 ## Suivi
 
 | # | Lot | PR | État |
 |---|-----|----|----|
-| 1 | Pont local-trust → local-auth (3 morceaux) | #16 | 🔄 CI verte, validée live, à merger |
+| 1 | Pont local-trust → local-auth (3 morceaux) | #16 | ✅ mergée |
+
+## Review (23/08) — 2 constats, fermés
+
+| Constat | Correctif |
+|---|---|
+| Le scrypt (~100 ms CPU) brûlait AVANT la garde claim_closed — action publique, spam gratuit | pré-contrôle avant hachage ; l'autorité reste le re-contrôle sous verrou |
+| Réclamation ok + auto-connexion ratée = formulaire claim périmé (re-soumettre → claim_closed) | `router.refresh()` recharge l'état serveur |
+
+Blanchi à la source : better-auth normalise l'email en minuscules au lookup
+(`findUserByEmail`) — pas de piège de casse ; l'alignement config préserve les
+clés Google ; TOFU identique au sign-up du premier utilisateur, assumé.
 
 ## Le problème (vécu, pas théorique)
 

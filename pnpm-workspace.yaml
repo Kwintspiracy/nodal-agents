@@ -2,6 +2,32 @@ packages:
   - 'apps/*'
   - 'packages/*'
   - 'packages/adapters/*'
+# pnpm 10 lit les overrides ICI — le bloc "pnpm" de package.json est ignoré
+# (c'est le WARN affiché à chaque commande ; l'override vite y était mort).
+overrides:
+  # >=8.0.16 : deux vulns high (fs.deny bypass Windows, launch-editor) sous.
+  vite: ^8.0.16
+  # snyk PR #17 : @modelcontextprotocol/sdk > ajv > fast-uri 3.1.2 porte
+  # 3 vulns high (host confusion) corrigées en 3.1.5.
+  fast-uri: ^3.1.5
+  # snyk scanne TOUT manifeste touché par une PR : déménager les overrides a
+  # touché le package.json racine, exposant ses vulns high transitives
+  # préexistantes (eslint→minimatch→brace-expansion, eslintrc→js-yaml,
+  # vite→postcss→nanoid). Épinglées par ligne majeure — aucun consommateur
+  # ne change de major.
+  'brace-expansion@1': ^1.1.18
+  'brace-expansion@5': ^5.0.9
+  'js-yaml@4': ^4.3.1
+  'nanoid@3': ^3.3.18
+  'postcss@8': ^8.5.18
+  # Rapport snyk du projet mcp-server (lu par Quentin, 23/08) : l'arbre du
+  # SDK MCP (hono/express) porte 22 avis. Épinglés aux versions « Fixed in »
+  # du rapport — même ligne majeure partout.
+  'hono@4': ^4.12.34
+  '@hono/node-server@1': ^1.19.17
+  'qs@6': ^6.15.2
+  'body-parser@2': ^2.3.0
+  'ip-address@10': ^10.3.1
 allowBuilds:
   '@embedded-postgres/windows-x64': true
   '@embedded-postgres/linux-x64': true

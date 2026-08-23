@@ -17,10 +17,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nodal-agents/db": "workspace:*",
-    "@nodal-agents/orchestration": "workspace:*",
-    "@nodal-agents/tools": "workspace:*",
-    "zod": "^4.1.13",
-    "@nodal-agents/shared": "workspace:*"
+    "@nodal-agents/shared": "workspace:*",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",
