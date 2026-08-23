@@ -2,8 +2,51 @@
 
 # PR C — Nodal comme serveur MCP · C1 LIVRÉE (#12)
 
-**État : sortie de la boucle de review après 4 passes, CI en cours, merge à
-suivre.**
+**État : C1 livrée. Reste à merger : #15 (tests de l'interrupteur), geste de
+Quentin.**
+
+## Suivi
+
+| # | Lot | PR | État |
+|---|-----|----|----|
+| 1 | C1 — serveur MCP stdio, `run_task` | #12 | ✅ mergée |
+| 2 | Interrupteur `mcpServerEnabled` + gardes | #13 | ✅ mergée |
+| 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | 🔄 CI verte, à merger |
+| 4 | Connexion en 1 ligne (`nodal-agents mcp serve`) + réveil worker | #17 | 🔄 CI en cours, validée live |
+
+**23/08 :** l'inventaire a montré que la #13 avait livré `get/setMcpServerSwitchAction`
+sans test — le standard « plus une action serveur sans test » cassé en silence.
+La #15 ferme le trou : 5 gardes calquées sur le jumeau LanCommandYolo (défaut
+fermé, bascule sur row réelle, isolation du voisin, refus non-propriétaire,
+entrée mal formée). 18/18 local, CI verte.
+
+## Preuve live (23/08) — la chaîne complète fonctionne
+
+Premier test réel de bout en bout, mené par Quentin depuis son terminal :
+`claude mcp add nodal` → `run_task("réponds simplement ok")` → job
+`367e889d…` créé (canal `mcp`, agent Alfred) → ramassé par le tick cron →
+**completed**, résultat `"Ok"`. Vérifié en base, pas au dashboard.
+
+**Constat au passage — latence de ramassage ~2 min 30** : le serveur MCP
+n'appelait pas `triggerWorker` après l'insertion. **Fermé par la #17** (voir
+ci-dessous), avec le second constat de Quentin sur la commande de connexion.
+
+## La connexion en une ligne (#17)
+
+L'ancienne commande documentée était cassée pour tout utilisateur réel :
+`pnpm --filter` n'existe que dans le monorepo, DATABASE_URL est
+inconnaissable, et le mot de passe Postgres finissait en clair dans la config
+MCP du client. La #17 livre :
+
+| Morceau | Comportement |
+|---|---|
+| `nodal-agents mcp serve` | résout l'URL de la base depuis le config comme `up`, démarre le stdio ; échec fort sans config, stdout vierge |
+| Settings | la commande `claude mcp add nodal -- nodal-agents mcp serve` en bloc copiable |
+| `notifyRunner` | `run_task` réveille le worker après commit — même contrat que Telegram/web ; le cron reste le filet |
+
+Vérifié : requête `/api/worker` réelle capturée en test (chemin, Bearer,
+jobId) ; `mcp serve` prouvé live (boot depuis config seul, `initialize` +
+`tools/list` propres) ; bloc copiable vérifié à l'écran sur l'install réelle.
 
 ## Ce qui est livré (C1)
 
@@ -11,16 +54,11 @@ Un paquet `@nodal-agents/mcp-server` : Nodal exposé en serveur MCP **stdio**,
 au nom d'**un** agent, avec **un** outil — `run_task`.
 
 ```
-claude mcp add nodal   -e DATABASE_URL=<l'URL que le runner utilise>   -- pnpm --filter @nodal-agents/mcp-server --silent serve
-
-→ run_task("lance trois reviews sur cette branche", caller: "quentin-terminal")
+claude mcp add nodal -- <lanceur du serveur, agent choisi>
+→ run_task("lance trois reviews sur cette branche")
 → un job `pending`, canal `mcp`, ramassé par le worker, exécuté par la boucle
   normale — approbations, audit, compteurs, hiérarchie.
 ```
-
-L'identité par défaut est **l'agent racine du workspace** (`entities.root_agent_id`,
-une donnée par installation — jamais un nom d'agent dans une config).
-`NODAL_MCP_AGENT_ID` la remplace au besoin.
 
 ## L'histoire qui compte : la v1 était à bloquer
 
