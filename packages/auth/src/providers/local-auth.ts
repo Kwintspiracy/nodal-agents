@@ -164,6 +164,17 @@ export class LocalAuthProvider implements AuthProvider {
       throw new ClaimError('claim_invalid', 'Password must be at least 8 characters.');
     }
 
+    // Pré-contrôle AVANT le hachage : scrypt coûte ~100 ms de CPU par appel,
+    // par design. Sans ce contrôle, une fois le compte créé, chaque appel —
+    // l'action est publique, c'est la page de login — brûlait quand même un
+    // scrypt complet avant d'être refusé (review 23/08). Ce contrôle est un
+    // filtre d'économie, PAS l'autorité : la vérité reste le re-contrôle sous
+    // verrou dans la transaction ci-dessous.
+    const anyAccountEarly = await this.#db.select({ id: accounts.id }).from(accounts).limit(1);
+    if (anyAccountEarly.length > 0) {
+      throw new ClaimError('claim_closed', 'This workspace already has a sign-in account.');
+    }
+
     // Hash outside the transaction — scrypt is slow by design and must not
     // hold the advisory lock (or a DB connection) for that long.
     const hashed = await hashPassword(input.password);

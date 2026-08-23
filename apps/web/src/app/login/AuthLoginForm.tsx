@@ -130,6 +130,10 @@ export default function AuthLoginForm({ setup, openSignup }: Props) {
       } else {
         setInfo('Account created. Sign in to continue.');
         setError('');
+        // L'état serveur a changé (claim → ready) : recharger le composant
+        // serveur pour rendre le formulaire de connexion — re-soumettre le
+        // formulaire de réclamation ne donnerait que claim_closed.
+        router.refresh();
       }
     } catch {
       setError('Network error. Please try again.');
