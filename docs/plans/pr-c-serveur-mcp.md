@@ -19,6 +19,20 @@ La #15 ferme le trou : 5 gardes calquées sur le jumeau LanCommandYolo (défaut
 fermé, bascule sur row réelle, isolation du voisin, refus non-propriétaire,
 entrée mal formée). 18/18 local, CI verte.
 
+## Preuve live (23/08) — la chaîne complète fonctionne
+
+Premier test réel de bout en bout, mené par Quentin depuis son terminal :
+`claude mcp add nodal` → `run_task("réponds simplement ok")` → job
+`367e889d…` créé (canal `mcp`, agent Alfred) → ramassé par le tick cron →
+**completed**, résultat `"Ok"`. Vérifié en base, pas au dashboard.
+
+**Constat au passage — latence de ramassage ~2 min 30** : le serveur MCP
+n'appelle PAS `triggerWorker` après l'insertion (aucun fetch dans le paquet).
+Le job attend donc le repêchage du cron : âge > 30 s + tick de 120 s. Les
+autres créateurs de jobs (Telegram, web) déclenchent le worker immédiatement.
+Amélioration candidate pour C2 : `run_task` notifie le runner à la création
+— même mécanisme fire-and-forget, mêmes garde-fous.
+
 ## Ce qui est livré (C1)
 
 Un paquet `@nodal-agents/mcp-server` : Nodal exposé en serveur MCP **stdio**,
