@@ -1,0 +1,12 @@
+-- 0081 — l'interrupteur maitre du serveur MCP (PR C, decision Quentin 23/08).
+--
+-- Le serveur MCP (0080) est un point d'entree externe qui cree des jobs, et il
+-- etait invisible du dashboard : rien ne montrait qu'il existe, rien ne
+-- permettait de l'interdire. Desactiver exigeait de connaitre chaque client
+-- configure sur la machine.
+--
+-- Defaut FERME, comme le master-switch LAN : une porte s'ouvre par un geste
+-- explicite du proprietaire, elle n'est pas ouverte parce qu'un paquet est
+-- installe. Le serveur verifie au demarrage ET a chaque appel, donc couper
+-- l'interrupteur coupe aussi les clients deja connectes.
+ALTER TABLE entities ADD COLUMN mcp_server_enabled boolean NOT NULL DEFAULT false;

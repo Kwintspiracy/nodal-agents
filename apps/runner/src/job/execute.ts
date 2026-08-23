@@ -1224,11 +1224,47 @@ async function runJob(
       .limit(1);
     const isRootAgent =
       rootEntityRow?.rootAgentId != null && rootEntityRow.rootAgentId === agentRow.id;
-    const metaToolNames: string[] = isRootAgent
-      ? enabledMetaTools(parseRootGrants(rootEntityRow?.rootGrants)).filter(
-          (name) => registry.get(name) !== undefined,
-        )
-      : [];
+    // Le canal MCP ne porte JAMAIS les outils de configuration.
+    //
+    // « Demander du travail » et « reconfigurer la plateforme » ne sont pas le
+    // même pouvoir, et ils ne voyagent ensemble que parce que l'agent racine
+    // porte les deux. Un job créé par un client MCP — invisible, extérieur,
+    // au mieux étiqueté par un `caller` déclaratif — peut faire tout le
+    // travail de l'agent, mais créer/modifier des agents, skills, connecteurs
+    // ou automations reste réservé aux surfaces où un humain est visible : le
+    // dashboard et le chat. Décision Quentin (23/08), même motif que le
+    // master-switch LAN : un retrait déterministe au niveau du runner, jamais
+    // une consigne de prompt.
+    // La provenance MCP est HÉRITÉE, pas seulement lue sur ce job. Sans ça, le
+    // contournement tient en un appel : un job MCP fait
+    // `create_task(assigned_to: <la racine>, "crée un cron…")`, et le job
+    // enfant — canal `task-board`, parentJobId = le job MCP — récupérerait les
+    // meta-tools que son parent s'était vu retirer. On remonte donc la chaîne
+    // des parents (bornée par maxDelegationDepth, donc ≤ 4 requêtes) : un seul
+    // ancêtre `mcp` suffit à garder la restriction.
+    let isMcpChannel = job.channel === 'mcp';
+    if (!isMcpChannel) {
+      let ancestorId: string | null = job.parentJobId ?? null;
+      for (let hop = 0; ancestorId && hop < 5; hop++) {
+        const [ancestor]: Array<{ channel: string; parentJobId: string | null }> = await db
+          .select({ channel: agentJobs.channel, parentJobId: agentJobs.parentJobId })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, ancestorId))
+          .limit(1);
+        if (!ancestor) break;
+        if (ancestor.channel === 'mcp') {
+          isMcpChannel = true;
+          break;
+        }
+        ancestorId = ancestor.parentJobId;
+      }
+    }
+    const metaToolNames: string[] =
+      isRootAgent && !isMcpChannel
+        ? enabledMetaTools(parseRootGrants(rootEntityRow?.rootGrants)).filter(
+            (name) => registry.get(name) !== undefined,
+          )
+        : [];
     const metaToolDefs: AnyToolDef[] = metaToolNames
       .map((name) => registry.get(name))
       .filter((t): t is AnyToolDef => t !== undefined);

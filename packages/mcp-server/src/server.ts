@@ -56,6 +56,26 @@ export interface McpServerOptions {
 const DEFAULT_MAX_JOBS_PER_PROCESS = 20;
 
 /**
+ * L'interrupteur maitre. Defaut FERME (migration 0081) : un point d'entree
+ * externe qui cree des jobs s'ouvre par un geste explicite du proprietaire,
+ * il n'existe pas parce qu'un paquet est installe. Meme motif que le
+ * master-switch LAN de run_command.
+ */
+async function assertMcpEnabled(db: AnyDrizzleDb, entityId: string): Promise<void> {
+  const [row] = await db
+    .select({ enabled: entities.mcpServerEnabled })
+    .from(entities)
+    .where(eq(entities.id, entityId))
+    .limit(1);
+  if (!row?.enabled) {
+    throw new Error(
+      'mcp_disabled: the MCP server is switched off for this workspace. ' +
+        'Enable it in the dashboard (Settings) before connecting clients.',
+    );
+  }
+}
+
+/**
  * L'identité par défaut : l'agent racine du workspace, lu en base.
  *
  * Une installation n'a en général qu'un workspace ; s'il y en a plusieurs, on
@@ -99,6 +119,8 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
     .from(agents)
     .where(eq(agents.id, agentId))
     .limit(1);
+
+  if (agentRow?.entityId) await assertMcpEnabled(opts.db, agentRow.entityId);
 
   if (!agentRow || !agentRow.active) {
     throw new Error(
@@ -159,6 +181,11 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
         }
         jobsCreated += 1;
         seated = true;
+
+        // Reverifie A CHAQUE APPEL, pas seulement au demarrage : couper
+        // l'interrupteur dans le dashboard doit couper les clients DEJA
+        // connectes, pas seulement empecher les prochains.
+        if (agentRow.entityId) await assertMcpEnabled(opts.db, agentRow.entityId);
 
         const { instruction, caller } = runTaskInputSchema.parse(args);
 

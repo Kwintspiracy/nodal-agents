@@ -561,6 +561,13 @@
       "when": 1786000001000,
       "tag": "0080_agent_jobs_mcp_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1786000002000,
+      "tag": "0081_entities_mcp_server_enabled",
+      "breakpoints": true
     }
   ]
 }
