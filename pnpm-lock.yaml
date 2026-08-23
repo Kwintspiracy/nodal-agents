@@ -857,15 +857,9 @@ importers:
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
-      '@nodal-agents/orchestration':
-        specifier: workspace:*
-        version: link:../orchestration
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
-      '@nodal-agents/tools':
-        specifier: workspace:*
-        version: link:../tools
       zod:
         specifier: ^4.1.13
         version: 4.4.3
