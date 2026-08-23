@@ -103,6 +103,32 @@ nodal-agents logs             # print all three (no follow)
 
 The valid service names are `web`, `runner`, and `postgres`. With no argument it prints all three and exits; with a single service it follows that log until you press Ctrl+C. An unknown service name exits with an error.
 
+### `nodal-agents mcp serve`
+
+Starts Nodal's MCP server on stdio, so an external MCP client — your terminal,
+a coding agent — can hand work to your agents. You never run this by hand:
+your MCP client launches it. Register it once, in one line:
+
+```bash
+claude mcp add nodal -- nodal-agents mcp serve
+```
+
+Run that on the machine that hosts Nodal. The command resolves the database
+from `~/.nodalai/config.json` (the same resolution `up` uses) — there is no
+`DATABASE_URL` to provide and no secret ends up in your client's config. It
+fails loud if no config exists (`nodal-agents init` first), and it refuses to
+serve while the **MCP server** switch in Settings is off.
+
+The server exposes a single tool, `run_task`, which creates a tracked job for
+the workspace's root agent (or a chosen agent by slug). Jobs land on the Runs
+page with channel `mcp`, run under the agent's own approval rules and budgets,
+and can never use the configuration tools. When the client disconnects, the
+process exits cleanly.
+
+| Env variable | Effect |
+| ---- | ------ |
+| `NODAL_MCP_AGENT_ID` | Serve on behalf of a specific agent id instead of resolving the workspace root. |
+
 ### `nodal-agents reset`
 
 **Destructive.** Stops any running processes, then deletes the entire `~/.nodalai/` directory — config, the Postgres database, and logs. This is irreversible: your agents, jobs, memory, and provider keys are all gone.
