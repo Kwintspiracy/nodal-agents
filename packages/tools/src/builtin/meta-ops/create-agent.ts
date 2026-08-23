@@ -8,17 +8,14 @@
 //   'planner' → role: 'orchestrator',   orchestratorMode: 'planner'
 
 import { z } from 'zod';
+import { AgentSlugSchema } from '@nodal-agents/shared';
 import { eq, createAgentRepo } from '@nodal-agents/db';
 import { agents } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 import { resolveAgentProvider, validateModelForProvider } from './agent-model';
 
 const CreateAgentInput = z.object({
-  slug: z
-    .string()
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens only.')
-    .min(1)
-    .describe('URL-safe identifier for the agent (e.g. "support-bot").'),
+  slug: AgentSlugSchema.describe('URL-safe identifier for the agent (e.g. "support-bot").'),
   name: z.string().min(1).describe('Human-readable display name for the agent.'),
   personality: z
     .string()

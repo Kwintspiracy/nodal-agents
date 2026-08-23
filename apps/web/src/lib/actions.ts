@@ -126,7 +126,7 @@ import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
-import { MCP_CATALOG } from '@nodal-agents/shared';
+import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
@@ -442,11 +442,7 @@ export async function deleteWorkspaceAction(raw: unknown): Promise<ActionResult<
 
 const CreateAgentSchema = z
   .object({
-    slug: z
-      .string()
-      .min(1)
-      .max(80)
-      .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'),
+    slug: AgentSlugSchema,
     name: z.string().min(1).max(120),
     personality: z.string().min(1),
     model: z.string().min(1),

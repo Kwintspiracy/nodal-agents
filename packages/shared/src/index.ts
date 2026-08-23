@@ -34,4 +34,5 @@ export * from './approval-impact';
 export * from './approval-explain';
 export * from './untrusted';
 export * from './redact-transcript';
+export * from './agent-slug';
 export * from './catastrophic-command';

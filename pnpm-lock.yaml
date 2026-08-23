@@ -856,6 +856,9 @@ importers:
       '@nodal-agents/orchestration':
         specifier: workspace:*
         version: link:../orchestration
+      '@nodal-agents/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../tools
