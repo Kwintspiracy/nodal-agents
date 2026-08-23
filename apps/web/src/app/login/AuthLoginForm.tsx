@@ -205,14 +205,19 @@ export default function AuthLoginForm({ setup, openSignup }: Props) {
                   data-testid="password-input"
                   className="rounded-lg border-rule-2 bg-hover py-2.5 pr-10 focus:border-rule"
                 />
-                <IconButton
-                  ghost
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-2"
-                >
-                  {showPassword ? <EyeSlash size={15} /> : <Eye size={15} />}
-                </IconButton>
+                {/* Positioning lives on the wrapper: IconButton's base class
+                    sets `relative`, which wins over a caller-passed `absolute`
+                    in the compiled utility order. */}
+                <span className="absolute right-3 top-1/2 flex -translate-y-1/2">
+                  <IconButton
+                    ghost
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="text-ink-3 hover:text-ink-2"
+                  >
+                    {showPassword ? <EyeSlash size={15} /> : <Eye size={15} />}
+                  </IconButton>
+                </span>
               </div>
             </div>
 
