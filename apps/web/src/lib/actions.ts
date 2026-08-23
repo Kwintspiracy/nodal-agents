@@ -6265,6 +6265,70 @@ export async function setLanCommandYoloAction(raw: unknown): Promise<ActionResul
   }
 }
 
+// ─── MCP server switch ────────────────────────────────────────────────────────
+
+export type McpServerSwitchView = {
+  enabled: boolean;
+  isOwner: boolean;
+};
+
+/**
+ * L'interrupteur maître du serveur MCP (migration 0081, décision Quentin
+ * 23/08). Même modèle que le master-switch LAN : lecture pour tous, écriture
+ * pour le propriétaire, défaut FERMÉ. Le serveur vérifie la colonne au
+ * démarrage ET à chaque appel — couper ici coupe les clients déjà connectés.
+ */
+export async function getMcpServerSwitchAction(): Promise<ActionResult<McpServerSwitchView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ enabled: entities.mcpServerEnabled, userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    return ok({
+      enabled: entityRow.enabled,
+      isOwner: entityRow.userId === session.userId,
+    });
+  } catch (err) {
+    console.error('[getMcpServerSwitchAction]', err);
+    return fail('db_error', 'Failed to load MCP server setting');
+  }
+}
+
+const SetMcpServerSwitchSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export async function setMcpServerSwitchAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetMcpServerSwitchSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+    await db
+      .update(entities)
+      .set({ mcpServerEnabled: parsed.data.enabled })
+      .where(eq(entities.id, session.entityId));
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setMcpServerSwitchAction]', err);
+    return fail('db_error', 'Failed to save MCP server setting');
+  }
+}
+
 // ─── Skill Actions ────────────────────────────────────────────────────────────
 
 export type InstalledScript = { path: string; language: string };

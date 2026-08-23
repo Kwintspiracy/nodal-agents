@@ -69,6 +69,14 @@ export const entities = pgTable(
     // local-auth mode, commands always require approval unless the owner
     // explicitly opts in here.
     lanCommandYolo: boolean('lan_command_yolo').notNull().default(false),
+    /**
+     * Interrupteur maitre du serveur MCP (PR C, decision Quentin 23/08).
+     * Defaut FERME : un point d'entree externe qui cree des jobs doit etre
+     * ouvert par un geste explicite, pas exister parce qu'un paquet est
+     * installe. Verifie au demarrage du serveur ET a chaque appel — couper
+     * l'interrupteur coupe les clients deja connectes.
+     */
+    mcpServerEnabled: boolean('mcp_server_enabled').notNull().default(false),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),

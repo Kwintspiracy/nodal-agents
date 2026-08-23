@@ -7,6 +7,7 @@ import {
   getRootConfigAction,
   listAgentsAction,
   getLanCommandYoloAction,
+  getMcpServerSwitchAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
   type WorkspaceRow,
@@ -17,6 +18,7 @@ import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
 import LanCommandYoloSection from './LanCommandYoloSection.tsx';
+import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
 import PageShell from '@/components/ui/PageShell';
@@ -39,6 +41,7 @@ export default async function SettingsPage() {
     rootConfigResult,
     agentsResult,
     lanYoloResult,
+    mcpSwitchResult,
     installNotesResult,
     tzResult,
   ] = await Promise.all([
@@ -49,6 +52,7 @@ export default async function SettingsPage() {
     getRootConfigAction(),
     listAgentsAction(),
     getLanCommandYoloAction(),
+    getMcpServerSwitchAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
   ]);
@@ -112,6 +116,15 @@ export default async function SettingsPage() {
             lede="In multi-user / LAN mode, shell commands always require approval by default. The workspace owner can opt in to allow Yolo (auto-run) mode per agent."
           >
             <LanCommandYoloSection initial={lanYoloResult.data} />
+          </SetBlock>
+        )}
+
+        {mcpSwitchResult.ok && (
+          <SetBlock
+            label="MCP server"
+            lede="External clients (your terminal, a coding agent) can hand work to the root agent through Nodal's MCP server. Off by default; MCP jobs never get the configuration tools."
+          >
+            <McpServerSection initial={mcpSwitchResult.data} />
           </SetBlock>
         )}
 

@@ -29,6 +29,11 @@ beforeAll(async () => {
     .values({ userId: seed.userId, name: 'Autre Workspace', slug: 'autre-workspace' })
     .returning();
   autreEntiteId = (autre as { id: string }).id;
+
+  // L'interrupteur maitre est FERME par defaut (0081) — l'ouvrir explicitement
+  // ici est exactement le geste qu'un proprietaire ferait dans le dashboard.
+  // Les tests de l'interrupteur lui-meme le referment localement.
+  await db.update(entities).set({ mcpServerEnabled: true }).where(eq(entities.id, seed.entityId));
 });
 
 /** Un client MCP réel branché en mémoire — vrai protocole, zéro processus. */
@@ -279,4 +284,55 @@ describe('la commande publique garde stdout muet', () => {
     // chez le client. Un test qui tolère du blanc tolère la panne.
     expect(result.stdout, 'stdout est le transport MCP — zéro octet toléré').toBe('');
   }, 60_000);
+});
+
+describe("l'interrupteur maitre", () => {
+  it('FERMÉ par défaut : un workspace neuf refuse le serveur', async () => {
+    // autreEntiteId n'a jamais été ouvert — c'est l'état de toute installation
+    // fraîche. Un point d'entrée externe qui crée des jobs s'ouvre par un geste
+    // explicite, il n'existe pas parce qu'un paquet est installé.
+    const [agentAutre] = await db
+      .insert(agents)
+      .values({
+        entityId: autreEntiteId,
+        name: 'Isole',
+        slug: 'isole',
+        personality: 'seul',
+        model: 'test-model',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+    await expect(connect((agentAutre as { id: string }).id)).rejects.toThrow(/mcp_disabled/);
+  });
+
+  it("couper l'interrupteur coupe un client DÉJÀ connecté", async () => {
+    // La coupure doit agir à CHAQUE appel, pas seulement au démarrage — sinon
+    // fermer la porte laisse dedans tous ceux qui étaient entrés avant.
+    const client = await connect(seed.agentId);
+    const avant = await client.callTool({
+      name: 'run_task',
+      arguments: { instruction: 'avant la coupure' },
+    });
+    expect(avant.isError ?? false).toBe(false);
+
+    await db
+      .update(entities)
+      .set({ mcpServerEnabled: false })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const apres = await client.callTool({
+        name: 'run_task',
+        arguments: { instruction: 'apres la coupure' },
+      });
+      expect(apres.isError, 'le client connecté a survécu à la coupure').toBe(true);
+      expect((apres.content as Array<{ text: string }>)[0]!.text).toMatch(/mcp_disabled/);
+    } finally {
+      await db
+        .update(entities)
+        .set({ mcpServerEnabled: true })
+        .where(eq(entities.id, seed.entityId));
+      await client.close();
+    }
+  });
 });
