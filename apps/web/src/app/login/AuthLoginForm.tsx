@@ -7,16 +7,29 @@ import PillTabs from '@/components/ui/PillTabs';
 import TextInput from '@/components/ui/TextInput';
 import IconButton from '@/components/ui/IconButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { claimOwnerAccountAction } from '@/lib/actions.ts';
+import type { AuthSetupState } from '@nodal-agents/auth';
 
 type Mode = 'signin' | 'signup';
 
+interface Props {
+  /** Which flow can succeed on this install — resolved server-side. */
+  setup: AuthSetupState;
+  /** True when NODALAI_ALLOW_OPEN_SIGNUP=1 keeps sign-up open past the first user. */
+  openSignup: boolean;
+}
+
 /**
- * Email+password sign-in/sign-up form. Used when AUTH_MODE=local-auth.
+ * Email+password form. Used when AUTH_MODE=local-auth. Renders one of:
+ *   - 'claim': owner-account creation for an install migrated from local-trust
+ *     (a user exists, no password) — sign-up is closed, sign-in impossible.
+ *   - 'fresh': sign-up first (no user exists yet).
+ *   - 'ready': sign-in; the sign-up tab only shows when it can succeed.
  * Posts to better-auth endpoints at /api/auth/sign-in/email and /api/auth/sign-up/email.
  */
-export default function AuthLoginForm() {
+export default function AuthLoginForm({ setup, openSignup }: Props) {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>('signin');
+  const [mode, setMode] = useState<Mode>(setup === 'fresh' ? 'signup' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -24,6 +37,9 @@ export default function AuthLoginForm() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const isClaim = setup === 'claim';
+  const showSignupTab = setup === 'fresh' || openSignup;
 
   function resetMode(next: Mode) {
     setMode(next);
@@ -34,39 +50,47 @@ export default function AuthLoginForm() {
     setShowPassword(false);
   }
 
+  async function signIn(emailArg: string, passwordArg: string): Promise<boolean> {
+    const res = await fetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: emailArg, password: passwordArg }),
+    });
+    return res.ok;
+  }
+
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/auth/sign-in/email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        setError(data?.error ?? 'Invalid email or password.');
-      } else {
+      if (await signIn(email, password)) {
         router.push('/');
+      } else {
+        setError('Invalid email or password.');
       }
     } catch {
-      setError('Network error — please try again.');
+      setError('Network error. Please try again.');
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleSignUp(e: React.FormEvent) {
-    e.preventDefault();
+  function validatePasswordPair(): boolean {
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
-      return;
+      return false;
     }
     if (password.length < 8) {
       setError('Password must be at least 8 characters.');
-      return;
+      return false;
     }
+    return true;
+  }
+
+  async function handleSignUp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!validatePasswordPair()) return;
     setLoading(true);
     setError('');
     try {
@@ -79,15 +103,47 @@ export default function AuthLoginForm() {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
         setError(data?.error ?? 'Could not create account.');
       } else {
-        setInfo('Account created — you can sign in now.');
+        setInfo('Account created. You can sign in now.');
         resetMode('signin');
       }
     } catch {
-      setError('Network error — please try again.');
+      setError('Network error. Please try again.');
     } finally {
       setLoading(false);
     }
   }
+
+  async function handleClaim(e: React.FormEvent) {
+    e.preventDefault();
+    if (!validatePasswordPair()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const r = await claimOwnerAccountAction({ email, password });
+      if (!r.ok) {
+        setError(r.message);
+        return;
+      }
+      // Credential created — sign in with it right away.
+      if (await signIn(email, password)) {
+        router.push('/');
+      } else {
+        setInfo('Account created. Sign in to continue.');
+        setError('');
+        // L'état serveur a changé (claim → ready) : recharger le composant
+        // serveur pour rendre le formulaire de connexion — re-soumettre le
+        // formulaire de réclamation ne donnerait que claim_closed.
+        router.refresh();
+      }
+    } catch {
+      setError('Network error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const submitHandler = isClaim ? handleClaim : mode === 'signin' ? handleSignIn : handleSignUp;
+  const needsConfirm = isClaim || mode === 'signup';
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-canvas px-4">
@@ -99,24 +155,34 @@ export default function AuthLoginForm() {
               nodal-agents
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-ink tracking-tight">Welcome</h1>
-          <p className="text-sm text-ink-3 mt-1">Sign in or create an account to continue</p>
+          <h1 className="text-2xl font-bold text-ink tracking-tight">
+            {isClaim ? 'Create your account' : 'Welcome'}
+          </h1>
+          <p className="text-sm text-ink-3 mt-1">
+            {isClaim
+              ? 'Sign-in is now required. Set the owner email and password. Your agents, settings and history stay as they are.'
+              : showSignupTab
+                ? 'Sign in or create an account to continue'
+                : 'Sign in to continue'}
+          </p>
         </div>
 
-        <PillTabs
-          tabs={[
-            { value: 'signin', label: 'Sign in' },
-            { value: 'signup', label: 'Create account' },
-          ]}
-          value={mode}
-          onChange={(v) => resetMode(v as Mode)}
-          variant="inset"
-          fullWidth
-          className="mb-6 border border-rule-2"
-        />
+        {!isClaim && showSignupTab && (
+          <PillTabs
+            tabs={[
+              { value: 'signin', label: 'Sign in' },
+              { value: 'signup', label: 'Create account' },
+            ]}
+            value={mode}
+            onChange={(v) => resetMode(v as Mode)}
+            variant="inset"
+            fullWidth
+            className="mb-6 border border-rule-2"
+          />
+        )}
 
         <div className="rounded-2xl border border-rule-2 bg-paper/60 p-6 space-y-4">
-          <form onSubmit={mode === 'signin' ? handleSignIn : handleSignUp} className="space-y-3">
+          <form onSubmit={submitHandler} className="space-y-3">
             <div>
               <label className="block text-xs text-ink-3 mb-1.5">Email address</label>
               <TextInput
@@ -143,18 +209,23 @@ export default function AuthLoginForm() {
                   data-testid="password-input"
                   className="rounded-lg border-rule-2 bg-hover py-2.5 pr-10 focus:border-rule"
                 />
-                <IconButton
-                  ghost
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-2"
-                >
-                  {showPassword ? <EyeSlash size={15} /> : <Eye size={15} />}
-                </IconButton>
+                {/* Positioning lives on the wrapper: IconButton's base class
+                    sets `relative`, which wins over a caller-passed `absolute`
+                    in the compiled utility order. */}
+                <span className="absolute right-3 top-1/2 flex -translate-y-1/2">
+                  <IconButton
+                    ghost
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="text-ink-3 hover:text-ink-2"
+                  >
+                    {showPassword ? <EyeSlash size={15} /> : <Eye size={15} />}
+                  </IconButton>
+                </span>
               </div>
             </div>
 
-            {mode === 'signup' && (
+            {needsConfirm && (
               <div>
                 <label className="block text-xs text-ink-3 mb-1.5">Confirm password</label>
                 <TextInput
@@ -163,6 +234,7 @@ export default function AuthLoginForm() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
                   required
+                  data-testid="confirm-password-input"
                   className="rounded-lg border-rule-2 bg-hover py-2.5 focus:border-rule"
                 />
               </div>
@@ -183,7 +255,13 @@ export default function AuthLoginForm() {
               data-testid="login-button"
               className="mt-1 w-full"
             >
-              {loading ? '…' : mode === 'signin' ? 'Sign in' : 'Create account'}
+              {loading
+                ? '…'
+                : isClaim
+                  ? 'Create account and sign in'
+                  : mode === 'signin'
+                    ? 'Sign in'
+                    : 'Create account'}
             </PrimaryButton>
           </form>
         </div>

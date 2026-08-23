@@ -2,14 +2,13 @@
 
 # Lot — Accès LAN : le propriétaire réclame son compte
 
-**État : livré, validé live, reviewé, CI 5/5 verte. Reste à merger : #16,
-geste de Quentin.**
+**État : LOT CLOS — #16 mergée le 23/08 (validée live, reviewée, CI 5/5).**
 
 ## Suivi
 
 | # | Lot | PR | État |
 |---|-----|----|----|
-| 1 | Pont local-trust → local-auth (3 morceaux) | #16 | ✅ CI verte, validée live, reviewée, à merger |
+| 1 | Pont local-trust → local-auth (3 morceaux) | #16 | ✅ mergée |
 
 ## Review (23/08) — 2 constats, fermés
 

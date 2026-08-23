@@ -121,7 +121,7 @@ import {
   findModelCatalogEntry,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
-import { requireAuth } from '@nodal-agents/auth';
+import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
@@ -9013,7 +9013,7 @@ const UpdateNetworkSchema = z.object({
 
 export async function updateNetworkSettingsAction(
   raw: unknown,
-): Promise<ActionResult<{ requiresRestart: boolean }>> {
+): Promise<ActionResult<{ requiresRestart: boolean; authModeAligned: boolean }>> {
   try {
     await getSession();
     const guard = await assertMonoUserHostInstall();
@@ -9023,8 +9023,24 @@ export async function updateNetworkSettingsAction(
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
 
+    // An explicit auth.mode="local-trust" combined with bind="lan" is a config
+    // the CLI refuses to boot (every runner route would be open to the network
+    // unauthenticated). The LAN option is documented as "Sign-in required", so
+    // switching to LAN aligns the persisted mode instead of writing a config
+    // that bricks the next `nodal-agents up`.
+    const patch: Record<string, unknown> = { bind: parsed.data.bind };
+    let authModeAligned = false;
+    if (parsed.data.bind === 'lan') {
+      const existing = readNodalaiConfig();
+      const prevAuth = (existing?.['auth'] ?? null) as Record<string, unknown> | null;
+      if (prevAuth?.['mode'] === 'local-trust') {
+        patch['auth'] = { ...prevAuth, mode: 'local-auth' };
+        authModeAligned = true;
+      }
+    }
+
     try {
-      mergeNodalaiConfig({ bind: parsed.data.bind });
+      mergeNodalaiConfig(patch);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       if (msg === 'cli_config_missing') {
@@ -9038,10 +9054,44 @@ export async function updateNetworkSettingsAction(
 
     revalidatePath('/settings');
     const runtimeBind: 'loopback' | 'lan' = env.BIND === '0.0.0.0' ? 'lan' : 'loopback';
-    return ok({ requiresRestart: parsed.data.bind !== runtimeBind });
+    return ok({ requiresRestart: parsed.data.bind !== runtimeBind, authModeAligned });
   } catch (err) {
     console.error('[updateNetworkSettingsAction]', err);
     return fail('db_error', 'Failed to update network settings');
+  }
+}
+
+// ─── Owner account claim (login page) ─────────────────────────────────────────
+// PUBLIC BY DESIGN — no getSession(): the caller is on the login page of an
+// install migrated from local-trust, and by definition cannot sign in yet.
+// The surface is harmless outside the 'claim' state: the provider re-checks
+// under an advisory lock that zero accounts exist, so this is one-shot. Trust
+// model is the same as first-user sign-up on a fresh install (TOFU): whoever
+// reaches the login page first owns the install.
+
+const ClaimOwnerSchema = z.object({
+  email: z.string().trim().max(200).email(),
+  password: z.string().min(8).max(200),
+});
+
+export async function claimOwnerAccountAction(raw: unknown): Promise<ActionResult<null>> {
+  try {
+    const parsed = ClaimOwnerSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const provider = getAuthProvider();
+    if (!(provider instanceof LocalAuthProvider)) {
+      return fail('unavailable', 'Only available with email + password sign-in.');
+    }
+    await provider.claimOwnerAccount(parsed.data);
+    return ok(null);
+  } catch (err) {
+    if (err instanceof ClaimError) {
+      return fail(err.code, err.message);
+    }
+    console.error('[claimOwnerAccountAction]', err);
+    return fail('db_error', 'Could not create the owner account');
   }
 }
 

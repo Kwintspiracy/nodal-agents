@@ -2,7 +2,7 @@
 
 # PR C — Nodal comme serveur MCP · C1 LIVRÉE (#12)
 
-**État : TOUT est vert. Reste à merger : #15 et #17, gestes de Quentin.**
+**État : LOT CLOS — #12, #13, #15, #17 toutes mergées (23/08).**
 
 ## Suivi
 
@@ -10,8 +10,8 @@
 |---|-----|----|----|
 | 1 | C1 — serveur MCP stdio, `run_task` | #12 | ✅ mergée |
 | 2 | Interrupteur `mcpServerEnabled` + gardes | #13 | ✅ mergée |
-| 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | 🔄 CI verte, à merger |
-| 4 | Connexion en 1 ligne (`nodal-agents mcp serve`) + réveil worker | #17 | ✅ CI 5/5 verte, reviewée, à merger |
+| 3 | Tests de l'interrupteur (trou d'inventaire) | #15 | ✅ mergée |
+| 4 | Connexion en 1 ligne (`nodal-agents mcp serve`) + réveil worker | #17 | ✅ mergée |
 
 ## La review de la #17 (23/08) — 6 constats, tous fermés
 

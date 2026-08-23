@@ -20,8 +20,9 @@ export {
   LocalAuthProvider,
   createLocalAuthProvider,
   isGoogleConfigured,
+  ClaimError,
 } from './providers/local-auth.ts';
-export type { LocalAuthProviderOptions } from './providers/local-auth.ts';
+export type { LocalAuthProviderOptions, AuthSetupState } from './providers/local-auth.ts';
 
 export { BearerTokenProvider } from './providers/bearer-token.ts';
 export type { BearerTokenProviderOptions } from './providers/bearer-token.ts';

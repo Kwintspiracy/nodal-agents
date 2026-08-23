@@ -6,9 +6,11 @@
 
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { hashPassword } from 'better-auth/crypto';
 import type { BetterAuthOptions } from 'better-auth';
 import {
   eq,
+  sql,
   users,
   sessions,
   accounts,
@@ -43,6 +45,31 @@ export interface LocalAuthProviderOptions {
 // the concrete Options type out of the factory.
 
 type BetterAuthInstance = ReturnType<typeof betterAuth<BetterAuthOptions>>;
+
+// ─── Setup state & owner claim ────────────────────────────────────────────────
+// An install can arrive in local-auth mode by three routes, and the login page
+// must behave differently for each:
+//   'fresh' — no user at all (new install booted straight into local-auth):
+//             the regular first-user sign-up applies.
+//   'claim' — users exist but NO account (credential or social) exists: the
+//             install was migrated from local-trust, so its owner has a user
+//             row and a workspace but no way to sign in. Sign-up is closed
+//             (the owner exists), so the ONLY working path is claiming the
+//             owner account: attach an email + password to the existing user.
+//   'ready' — at least one account exists: normal sign-in.
+
+export type AuthSetupState = 'fresh' | 'claim' | 'ready';
+
+/** Thrown by claimOwnerAccount — `code` is stable for UI mapping. */
+export class ClaimError extends Error {
+  readonly code: 'claim_closed' | 'claim_ambiguous' | 'claim_invalid';
+
+  constructor(code: ClaimError['code'], message: string) {
+    super(message);
+    this.name = 'ClaimError';
+    this.code = code;
+  }
+}
 
 // ─── Provider class ───────────────────────────────────────────────────────────
 
@@ -109,6 +136,91 @@ export class LocalAuthProvider implements AuthProvider {
   async handleAuthRequest(req: Request): Promise<Response | null> {
     // Let better-auth handle auth routes. Returns null (via catch) on errors.
     return this.#auth.handler(req).catch(() => null);
+  }
+
+  /** See AuthSetupState — decides which form the login page renders. */
+  async getSetupState(): Promise<AuthSetupState> {
+    const anyAccount = await this.#db.select({ id: accounts.id }).from(accounts).limit(1);
+    if (anyAccount.length > 0) return 'ready';
+    const anyUser = await this.#db.select({ id: users.id }).from(users).limit(1);
+    return anyUser.length > 0 ? 'claim' : 'fresh';
+  }
+
+  /**
+   * One-shot: attaches an email + credential (password) to the single existing
+   * user of a migrated install, so its owner can sign in. Refuses once ANY
+   * account exists (claim_closed) and when more than one user exists
+   * (claim_ambiguous — no way to know which one is the owner; fail loud).
+   *
+   * The password is hashed with better-auth's own hashPassword so the regular
+   * /api/auth/sign-in/email endpoint verifies it.
+   */
+  async claimOwnerAccount(input: { email: string; password: string }): Promise<{ userId: string }> {
+    const email = input.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new ClaimError('claim_invalid', 'Enter a valid email address.');
+    }
+    if (input.password.length < 8) {
+      throw new ClaimError('claim_invalid', 'Password must be at least 8 characters.');
+    }
+
+    // Pré-contrôle AVANT le hachage : scrypt coûte ~100 ms de CPU par appel,
+    // par design. Sans ce contrôle, une fois le compte créé, chaque appel —
+    // l'action est publique, c'est la page de login — brûlait quand même un
+    // scrypt complet avant d'être refusé (review 23/08). Ce contrôle est un
+    // filtre d'économie, PAS l'autorité : la vérité reste le re-contrôle sous
+    // verrou dans la transaction ci-dessous.
+    const anyAccountEarly = await this.#db.select({ id: accounts.id }).from(accounts).limit(1);
+    if (anyAccountEarly.length > 0) {
+      throw new ClaimError('claim_closed', 'This workspace already has a sign-in account.');
+    }
+
+    // Hash outside the transaction — scrypt is slow by design and must not
+    // hold the advisory lock (or a DB connection) for that long.
+    const hashed = await hashPassword(input.password);
+
+    return this.#db.transaction(async (tx) => {
+      // Serializes concurrent claims: only one transaction at a time can be
+      // past this point, so the accounts re-check below is race-free.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('nodalai_claim_owner'))`);
+
+      const anyAccount = await tx.select({ id: accounts.id }).from(accounts).limit(1);
+      if (anyAccount.length > 0) {
+        throw new ClaimError('claim_closed', 'This workspace already has a sign-in account.');
+      }
+
+      const userRows = await tx.select({ id: users.id, name: users.name }).from(users).limit(2);
+      if (userRows.length === 0) {
+        throw new ClaimError('claim_closed', 'No owner to claim. Create an account instead.');
+      }
+      if (userRows.length > 1) {
+        throw new ClaimError(
+          'claim_ambiguous',
+          'Multiple users exist but none can sign in. Fix the install manually.',
+        );
+      }
+
+      const owner = userRows[0]!;
+      await tx
+        .update(users)
+        .set({
+          email,
+          name: owner.name || (email.split('@')[0] ?? email),
+          emailVerified: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, owner.id));
+
+      await tx.insert(accounts).values({
+        id: crypto.randomUUID(),
+        userId: owner.id,
+        providerId: 'credential',
+        accountId: owner.id,
+        password: hashed,
+      });
+
+      return { userId: owner.id };
+    });
   }
 }
 
