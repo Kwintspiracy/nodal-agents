@@ -201,7 +201,35 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
         // (jamais les meta-tools, interrupteur, plafond) ne dépendent pas de
         // la cible. La résolution est bornée à l'entité du serveur — un slug
         // d'un autre workspace est simplement introuvable ici.
+        // Le défaut est LA RACINE DE L'ENTITÉ, pas l'agent du lancement. La
+        // review a montré l'écart : le contrat public dit « omets le champ
+        // pour adresser la racine », mais un serveur lancé pour un worker
+        // adressait silencieusement ce worker. Résolu à CHAQUE appel — la
+        // racine peut changer pendant que le serveur tourne — et vérifié
+        // actif ; sans racine configurée, repli documenté sur l'agent du
+        // lancement.
         let targetAgent: { id: string } = { id: agentRow.id };
+        if (!targetSlug) {
+          const [ent] = await opts.db
+            .select({ rootAgentId: entities.rootAgentId })
+            .from(entities)
+            .where(eq(entities.id, entityId))
+            .limit(1);
+          if (ent?.rootAgentId) {
+            const [root] = await opts.db
+              .select({ id: agents.id })
+              .from(agents)
+              .where(
+                and(
+                  eq(agents.id, ent.rootAgentId),
+                  eq(agents.entityId, entityId),
+                  eq(agents.active, true),
+                ),
+              )
+              .limit(1);
+            if (root) targetAgent = root;
+          }
+        }
         if (targetSlug) {
           const [resolved] = await opts.db
             .select({ id: agents.id })

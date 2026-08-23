@@ -19,7 +19,8 @@
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/orchestration": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
-    "zod": "^4.1.13"
+    "zod": "^4.1.13",
+    "@nodal-agents/shared": "workspace:*"
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",

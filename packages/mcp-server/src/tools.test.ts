@@ -426,8 +426,34 @@ describe('le ciblage d’agent — la cible se choisit, l’entité jamais', () 
     await client.close();
   });
 
-  it('sans slug, la racine du lancement reste le défaut', async () => {
-    const client = await connect(seed.agentId);
+  it("sans slug, le défaut est LA RACINE DE L'ENTITÉ — même si le serveur a été lancé pour un worker", async () => {
+    // Constat review : le contrat public dit « omets le champ pour adresser la
+    // racine », mais le défaut était l'agent du LANCEMENT. Un serveur lancé
+    // pour un worker adressait silencieusement ce worker. Mon premier test
+    // masquait l'écart : il lançait le serveur pour la racine, donc les deux
+    // définitions coïncidaient.
+    const { agents: agentsTable } = await import('@nodal-agents/db');
+    const [worker] = await db
+      .insert(agentsTable)
+      .values({
+        entityId: seed.entityId,
+        name: 'Worker Lanceur',
+        slug: 'worker-lanceur',
+        personality: 'je lance',
+        model: 'test-model',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+    // La racine de l'entité est posée EXPLICITEMENT ici — un test qui dépend
+    // d'un état laissé par un autre test ment dès qu'on le lance seul.
+    const { entities: entitiesTable } = await import('@nodal-agents/db');
+    await db
+      .update(entitiesTable)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entitiesTable.id, seed.entityId));
+    // Le serveur est lancé pour le WORKER.
+    const client = await connect((worker as { id: string }).id);
     const res = await client.callTool({
       name: 'run_task',
       arguments: { instruction: 'defaut' },
@@ -436,7 +462,9 @@ describe('le ciblage d’agent — la cible se choisit, l’entité jamais', () 
       jobId: string;
     };
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, body.jobId)).limit(1);
-    expect(job!.agentId).toBe(seed.agentId);
+    expect(job!.agentId, "le défaut a adressé l'agent du lancement, pas la racine").toBe(
+      seed.agentId,
+    );
     await client.close();
   });
 });
