@@ -15,6 +15,19 @@
 import { z } from 'zod';
 
 export const runTaskInputSchema = z.object({
+  agent: z
+    .string()
+    .min(1)
+    .max(120)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'agent must be a slug (lowercase letters, digits, hyphens)')
+    .optional()
+    .describe(
+      'Optional TARGET agent, by slug, resolved INSIDE this workspace only. ' +
+        'Omit to address the workspace root agent. Choosing a target is the ' +
+        'same power as choosing which chat to type in — the job runs under ' +
+        "THAT agent's tools, approval rules and budgets, and MCP jobs never " +
+        'get the configuration tools regardless of target.',
+    ),
   caller: z
     .string()
     .min(1)
