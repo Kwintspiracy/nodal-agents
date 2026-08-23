@@ -10,6 +10,59 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.6 — Aug 23, 2026
+
+Your terminal can now hand work to your agents, and the dashboard follows you
+to your phone — without either path being able to brick your install.
+
+**Nodal as an MCP server, connectable in one line**
+
+- **`claude mcp add nodal -- nodal-agents mcp serve`.** That is the whole
+  setup. The new `mcp serve` CLI command resolves the database from your own
+  install's config — no `DATABASE_URL` to know, no secret pasted into a client
+  config, and it works on any npm install, not just a dev checkout. Settings
+  shows the exact command with a Copy button.
+- **One tool, `run_task`.** An external MCP client (your terminal, a coding
+  agent) hands a request to your root agent — or a chosen agent by slug. The
+  job runs through the normal loop: approvals, audit, budgets, and it can
+  never touch the configuration tools. Off by default; a switch in Settings
+  turns it on, and turning it off also cuts clients that are already connected.
+- **Jobs start immediately.** `run_task` wakes the worker on creation like
+  every other channel — measured before the fix, an MCP job waited ~2½ minutes
+  for the periodic sweep.
+- **The server exits when your client disconnects.** Closing stdin used to
+  leave an orphan process holding Postgres connections; now both launchers
+  close the pool and exit cleanly.
+
+**LAN access that cannot dead-end**
+
+- **The LAN toggle keeps your config bootable.** Switching to LAN used to be
+  able to write a config the CLI refuses to start (network bind + no-password
+  mode) — bricking the stack until a manual edit. The toggle now enables
+  sign-in in the same write and says so.
+- **An existing install gets a claim screen, not a dead login.** An install
+  born without a password that switches to sign-in used to hit a wall: no
+  password to sign in with, sign-up closed because the owner already exists.
+  The login page now detects that state and offers **Create your account** —
+  attached to the existing owner, so agents, settings and history stay exactly
+  as they are. Validated end-to-end on a real migrated install, phone included.
+- **Copy buttons work over plain-HTTP LAN.** The clipboard API is blocked on
+  http; copy blocks now fall back so the button works exactly where LAN users
+  need it.
+
+**Hardening**
+
+- The MCP job path was reviewed adversarially: the worker wake-up uses
+  `127.0.0.1` (never `localhost`, which can silently resolve to IPv6 on
+  Windows), rejected notifications are reported instead of swallowed, a
+  deactivated agent is refused on every call, and a job insert that cannot
+  report its id fails loud instead of answering success.
+- ~30 vulnerable transitive dependencies pinned to patched versions across the
+  workspace (hono, fast-uri, brace-expansion, js-yaml, nanoid, postcss, qs,
+  body-parser, ip-address, vite, turbo) — and the pnpm overrides that were
+  silently ignored since pnpm 10 moved to `pnpm-workspace.yaml`, where they
+  actually apply.
+
 ## v0.8.5 — Aug 21, 2026
 
 Fixes a package that broke itself weeks after it was published. **If you installed

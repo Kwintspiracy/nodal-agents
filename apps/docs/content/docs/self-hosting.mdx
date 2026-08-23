@@ -73,26 +73,30 @@ Services bind to `127.0.0.1`. No authentication is required — the dashboard is
 
 ### LAN mode
 
-Services bind to `0.0.0.0`, making the dashboard accessible to other devices on your network. LAN mode **requires sign-up**: the first person to visit `http://<your-ip>:3000/login` creates an account and becomes the admin.
+Services bind to `0.0.0.0`, making the dashboard accessible to other devices on your network. LAN mode **requires sign-in** — the toggle enables email+password auth in the same write, so the config always stays bootable.
 
-To switch to LAN mode, run the init wizard and select **LAN** when prompted:
+The recommended path is the dashboard: **Settings → Network → LAN**, then restart:
 
 ```bash
-nodal-agents init
 nodal-agents down && nodal-agents up
 ```
 
-Or edit `~/.nodalai/config.json` directly and set `"bind": "lan"`, then restart.
+You can also run `nodal-agents init` and select **LAN**, or edit `~/.nodalai/config.json` directly (`"bind": "lan"`) and restart.
+
+Who owns the account depends on the install:
+
+- **Fresh install** — the first person to visit `http://<your-ip>:3000/login` signs up and becomes the admin. Sign-up closes after that.
+- **Existing install** (it ran without a password before) — the login page detects that the owner exists but has no password yet, and shows **Create your account** instead of a dead sign-in. Set your email and password there: the account attaches to the existing owner, so your agents, settings and history stay exactly as they are. This is one-shot — once claimed, only sign-in remains.
 
 ### Auth modes
 
 The runner supports three auth modes (`AUTH_MODE` in `apps/runner/src/env.ts`); all three are selectable from **Settings → Security**:
 
-| Mode           | Behaviour                                                                                                         |
-| -------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `local-trust`  | No authentication. The dashboard trusts any request. Default for a loopback bind.                                 |
-| `local-auth`   | Email + password sign-up. Default for a LAN bind; the first user to sign up becomes the admin.                    |
-| `bearer-token` | The runner API requires a static `Authorization: Bearer <token>` header. Used for headless / programmatic access. |
+| Mode           | Behaviour                                                                                                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `local-trust`  | No authentication. The dashboard trusts any request. Default for a loopback bind.                                                                                                   |
+| `local-auth`   | Email + password sign-in. Default for a LAN bind. On a fresh install the first sign-up becomes the admin; on an existing install the owner claims the account (see LAN mode above). |
+| `bearer-token` | The runner API requires a static `Authorization: Bearer <token>` header. Used for headless / programmatic access.                                                                   |
 
 When you do not set a mode explicitly, it is derived from `bind`: `loopback` → `local-trust`, `lan` → `local-auth`.
 

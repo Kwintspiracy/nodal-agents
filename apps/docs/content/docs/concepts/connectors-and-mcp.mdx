@@ -130,6 +130,34 @@ permissions — only connect servers you trust.
 
 ---
 
+## Nodal as an MCP server
+
+The direction also works in reverse: Nodal can expose **itself** as an MCP
+server, so an external client — your terminal, a coding agent like Claude Code
+— hands work to your agents instead of the other way around.
+
+Enable the **MCP server** switch in Settings (off by default), then register
+the server in your client, on the machine that hosts Nodal:
+
+```bash
+claude mcp add nodal -- nodal-agents mcp serve
+```
+
+The client gets exactly one tool, `run_task`: it creates a **tracked job** for
+your workspace's root agent (or a chosen agent by slug) and returns the job id
+immediately. The work itself runs asynchronously through the normal loop —
+the agent's own tools, approval rules, budgets, and delegation — and lands on
+the Runs page with channel `mcp` plus the caller's self-chosen label.
+
+What the door never grants, whatever the switch says: the configuration tools.
+An MCP job can ask for work; it cannot create agents, skills, connectors or
+automations — that is enforced in the runner. Each server process also caps
+how many jobs it can create; restarting the client resets the cap, which is
+deliberately a human gesture. Turning the switch off cuts clients that are
+already connected — the server re-checks it on every call.
+
+---
+
 ## How tools reach the agent
 
 At job-start the runner fetches the agent's assigned connectors and MCP servers
