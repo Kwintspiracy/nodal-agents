@@ -227,7 +227,20 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
                 ),
               )
               .limit(1);
-            if (root) targetAgent = root;
+            // Racine CONFIGURÉE mais introuvable/inactive/hors entité : erreur
+            // explicite, jamais un repli. Le repli sur le lanceur n'est prévu
+            // que pour « aucune racine configurée » — l'étendre à « racine
+            // cassée » masquerait une configuration incohérente et casserait
+            // le contrat « champ omis = racine » en silence (constat passe 2,
+            // invariant #4).
+            if (!root) {
+              throw new Error(
+                'mcp_root_agent_invalid: this workspace designates a root agent that is ' +
+                  'inactive or missing. Fix the root agent in Settings, or pass `agent` ' +
+                  'explicitly.',
+              );
+            }
+            targetAgent = root;
           }
         }
         if (targetSlug) {
