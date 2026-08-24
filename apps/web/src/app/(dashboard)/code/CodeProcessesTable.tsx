@@ -253,7 +253,12 @@ export default function CodeProcessesTable({
         >
           {sessions.map((s) => {
             const key = `${s.kind}-${s.id}`;
-            const type = s.sessionType === 'review' ? 'Review' : 'Coding';
+            const type =
+              s.sessionType === 'pr_review'
+                ? 'PR review'
+                : s.sessionType === 'review'
+                  ? 'Review'
+                  : 'Coding';
             const task = s.task.length > 70 ? `${s.task.slice(0, 70)}…` : s.task;
             return (
               <option key={key} value={key}>

@@ -649,4 +649,54 @@ describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
     expect(row?.projectPath).toBe('D:/Projets/MonApp');
     expect(row?.projectName).toBe('MonApp');
   });
+
+  it('sessionType : verdicts sans édition = review, et « PR #n » dans la tâche = pr_review', async () => {
+    const agentId = await makeAgent('Session Type Reviewer');
+
+    // Une review de PR — le cas MCP typique : la session Claude Code de
+    // Quentin demande à Nodal « review la PR #12 ».
+    const [prJob] = await _testDb!
+      .insert(agentJobs)
+      .values({
+        entityId: _testEntityId,
+        agentId,
+        status: 'completed',
+        channel: 'mcp',
+        task: 'Review PR #12 on nodal-agents and give a verdict',
+      })
+      .returning();
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId: prJob!.id,
+      toolName: 'review_verdict',
+      toolInput: { verdict: 'approve' },
+      toolOutput: '{"verdict":"approve","summary":"LGTM"}',
+    });
+
+    // Une review classique — mêmes signaux, tâche sans référence de PR.
+    const [plainJob] = await _testDb!
+      .insert(agentJobs)
+      .values({
+        entityId: _testEntityId,
+        agentId,
+        status: 'completed',
+        channel: 'api',
+        task: 'Review the changes Dev C just made to the auth module',
+      })
+      .returning();
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId: plainJob!.id,
+      toolName: 'review_verdict',
+      toolInput: { verdict: 'request_changes' },
+      toolOutput: '{"verdict":"request_changes","summary":"missing tests"}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === prJob!.id)?.sessionType).toBe('pr_review');
+    expect(result.data.find((r) => r.id === plainJob!.id)?.sessionType).toBe('review');
+  });
 });

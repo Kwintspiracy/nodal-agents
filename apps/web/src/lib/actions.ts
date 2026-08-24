@@ -10798,10 +10798,19 @@ export type CodingProcessRow = {
   /**
    * Nature de la session (spec Quentin 25/08, dropdown du poste de travail) :
    * 'review' = des verdicts sans aucune édition (une session de relecture) ;
+   * 'pr_review' = une review dont la TÂCHE référence une pull request — le
+   * cas typique : la session Claude Code de Quentin demande via le serveur
+   * MCP « review la PR #12 ». Détection par le texte de la tâche,
+   * canal-neutre (un « review cette PR » posé dans le chat compte aussi) ;
    * 'coding' = tout le reste.
    */
-  sessionType: 'coding' | 'review';
+  sessionType: 'coding' | 'review' | 'pr_review';
 };
+
+/** La tâche parle-t-elle d'une pull request ? (« PR #12 », « pull request », URL /pull/). */
+function taskReferencesPullRequest(task: string): boolean {
+  return /pull request|github\.com\/[^\s]+\/pull\/\d+|(^|[^A-Za-z])PR\s*#?\d+/i.test(task);
+}
 
 const REVIEW_APPROVE_MARKER = '"verdict":"approve"';
 
@@ -11381,7 +11390,8 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
               0,
             );
             const filesCount = filesByRoot.get(j.id)?.size ?? 0;
-            return verdictCount > 0 && filesCount === 0 ? ('review' as const) : ('coding' as const);
+            if (verdictCount === 0 || filesCount > 0) return 'coding' as const;
+            return taskReferencesPullRequest(j.task) ? ('pr_review' as const) : ('review' as const);
           })(),
         };
       });
@@ -11885,7 +11895,11 @@ export async function getCodingProcessDetailAction(
           projectPath: detailProjectPath,
           projectName: detailProjectPath ? projectNameFromPath(detailProjectPath) : null,
           sessionType:
-            verdicts.length > 0 && filesChanged === 0 ? ('review' as const) : ('coding' as const),
+            verdicts.length > 0 && filesChanged === 0
+              ? taskReferencesPullRequest(job.task)
+                ? ('pr_review' as const)
+                : ('review' as const)
+              : ('coding' as const),
           // Les CLI qui ont REELLEMENT tourne dans ce pipeline, tries pour que
           // l ordre ne depende pas de celui des lignes.
           providers: Array.from(new Set(cliRunRows.map((r) => r.provider))).sort(),
