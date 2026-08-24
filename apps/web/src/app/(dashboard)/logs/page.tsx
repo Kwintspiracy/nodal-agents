@@ -1,9 +1,15 @@
 import Link from 'next/link';
-import { listAgentsAction, listToolCallsAction, listToolNamesAction } from '@/lib/actions.ts';
+import {
+  listAgentsAction,
+  listServiceLogsAction,
+  listToolCallsAction,
+  listToolNamesAction,
+} from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
 import LogFilters from './LogFilters.tsx';
 import LogsTable from './LogsTable.tsx';
+import ServiceLogsPanel from './ServiceLogsPanel.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,12 +21,62 @@ interface PageProps {
     tool?: string;
     job?: string;
     page?: string;
+    view?: string;
   }>;
+}
+
+/** Les deux onglets de la page : l'audit d'activité (tool calls) et les logs
+ *  de SERVICE (runner/web) — deux choses que la page confondait par son nom. */
+function ViewTabs({ active }: { active: 'activity' | 'service' }) {
+  const base = 'rounded-full border px-3.5 py-1.5 text-medium-13 transition-colors';
+  return (
+    <div className="flex gap-2">
+      <Link
+        href="/logs"
+        className={
+          active === 'activity'
+            ? `${base} border-rule bg-hover text-ink`
+            : `${base} border-rule-2 text-ink-3 hover:text-ink`
+        }
+      >
+        Activity
+      </Link>
+      <Link
+        href="/logs?view=service"
+        className={
+          active === 'service'
+            ? `${base} border-rule bg-hover text-ink`
+            : `${base} border-rule-2 text-ink-3 hover:text-ink`
+        }
+      >
+        Service logs
+      </Link>
+    </div>
+  );
 }
 
 export default async function LogsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const page = Math.max(1, Number.parseInt(sp.page ?? '1', 10) || 1);
+
+  if (sp.view === 'service') {
+    const logsResult = await listServiceLogsAction();
+    return (
+      <PageShell
+        title="Logs"
+        subtitle="Runner and web process logs — errors, traces, and rotation archives."
+        toolbar={<ViewTabs active="service" />}
+      >
+        {logsResult.ok ? (
+          <ServiceLogsPanel initial={logsResult.data} />
+        ) : (
+          <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
+            {logsResult.message}
+          </div>
+        )}
+      </PageShell>
+    );
+  }
 
   const [agentsResult, toolNamesResult, result] = await Promise.all([
     listAgentsAction(),
@@ -51,7 +107,12 @@ export default async function LogsPage({ searchParams }: PageProps) {
     <PageShell
       title="Logs"
       subtitle="Recent tool calls across the fleet."
-      toolbar={<LogFilters agents={agents} toolNames={toolNames} />}
+      toolbar={
+        <div className="flex flex-wrap items-center gap-3">
+          <ViewTabs active="activity" />
+          <LogFilters agents={agents} toolNames={toolNames} />
+        </div>
+      }
     >
       <div className="space-y-6">
         {result.data.items.length === 0 ? (

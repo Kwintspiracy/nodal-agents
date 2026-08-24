@@ -124,6 +124,13 @@ import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from 
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
+import {
+  SERVICE_LOG_NAMES,
+  readServiceLogTail,
+  clearServiceLog,
+  type ServiceLogName,
+  type ServiceLogTail,
+} from './service-logs.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
@@ -11771,5 +11778,98 @@ export async function getCodingProcessDetailAction(
   } catch (err) {
     console.error('[getCodingProcessDetailAction]', err);
     return fail('db_error', 'Failed to load process detail');
+  }
+}
+
+// ─── Service logs (page Logs, onglet « Service logs ») ────────────────────────
+//
+// Les fichiers ~/.nodalai/logs/<svc>.log — stdout des processus runner/web —
+// n'étaient lisibles qu'au CLI (constat Quentin 24/08 : la page « Logs » du
+// dashboard n'affiche que l'audit des tool calls). Lecture pour tout
+// utilisateur authentifié (même niveau de confiance que le reste du
+// dashboard) ; EFFACEMENT owner-only hors local-trust — c'est destructif et
+// les logs appartiennent à la machine de l'hôte.
+
+export type ServiceLogInfoRow = {
+  service: ServiceLogName;
+  currentBytes: number;
+  archiveBytes: number | null;
+  isOwner: boolean;
+};
+
+async function isWorkspaceOwner(session: { userId: string; entityId: string }): Promise<boolean> {
+  if (env.AUTH_MODE === 'local-trust') return true;
+  const db = getDb();
+  const [row] = await db
+    .select({ userId: entities.userId })
+    .from(entities)
+    .where(eq(entities.id, session.entityId));
+  return row?.userId === session.userId;
+}
+
+export async function listServiceLogsAction(): Promise<ActionResult<ServiceLogInfoRow[]>> {
+  try {
+    const session = await getSession();
+    const owner = await isWorkspaceOwner(session);
+    const rows: ServiceLogInfoRow[] = SERVICE_LOG_NAMES.map((service) => {
+      const current = readServiceLogTail(service, 'current', undefined, 0);
+      const archive = readServiceLogTail(service, 'archive', undefined, 0);
+      return {
+        service,
+        currentBytes: current.exists ? current.sizeBytes : 0,
+        archiveBytes: archive.exists ? archive.sizeBytes : null,
+        isOwner: owner,
+      };
+    });
+    return ok(rows);
+  } catch (err) {
+    console.error('[listServiceLogsAction]', err);
+    return fail('db_error', 'Failed to list service logs');
+  }
+}
+
+const ReadServiceLogSchema = z.object({
+  service: z.enum(SERVICE_LOG_NAMES),
+  generation: z.enum(['current', 'archive']),
+});
+
+export async function readServiceLogTailAction(
+  raw: unknown,
+): Promise<ActionResult<ServiceLogTail>> {
+  try {
+    await getSession();
+    const parsed = ReadServiceLogSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    return ok(readServiceLogTail(parsed.data.service, parsed.data.generation));
+  } catch (err) {
+    console.error('[readServiceLogTailAction]', err);
+    return fail('db_error', 'Failed to read service log');
+  }
+}
+
+const ClearServiceLogSchema = z.object({ service: z.enum(SERVICE_LOG_NAMES) });
+
+export async function clearServiceLogAction(
+  raw: unknown,
+): Promise<ActionResult<{ freedBytes: number }>> {
+  try {
+    const session = await getSession();
+    const parsed = ClearServiceLogSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    if (!(await isWorkspaceOwner(session))) {
+      return fail('forbidden', 'Only the workspace owner can clear service logs.');
+    }
+    // L'erreur fs (verrou Windows sur le fichier tenu par le service) remonte
+    // telle quelle : mieux vaut « Windows a refusé » qu'un nettoyage prétendu.
+    const { freedBytes } = clearServiceLog(parsed.data.service);
+    return ok({ freedBytes });
+  } catch (err) {
+    console.error('[clearServiceLogAction]', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail('fs_error', `Could not clear the log: ${msg}`);
   }
 }
