@@ -78,6 +78,8 @@ import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
+import PageSearchInput from '@/components/ui/PageSearchInput';
 import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
@@ -1342,9 +1344,24 @@ function SkillsTab({
 
   const byName = (a: SkillRow, b: SkillRow) => a.name.localeCompare(b.name);
   const attached = allSkills.filter((s) => assignedIds.has(s.id)).sort(byName);
+
+  // Décision Quentin 24/08 : l'onglet ne montre que ce que CET agent sait
+  // faire. La bibliothèque du workspace (jusqu'ici déroulée en pleine page
+  // sous « Available on this workspace », un inventaire qui noyait l'info
+  // utile) vit désormais dans la modale « Attach skills », cherchable.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState('');
+
+  const available = allSkills.filter((s) => !assignedIds.has(s.id));
+  const query = pickerQuery.trim().toLowerCase();
+  const matches = query
+    ? available.filter((s) =>
+        `${s.name} ${s.slug} ${s.description ?? ''}`.toLowerCase().includes(query),
+      )
+    : available;
   // Provenance segments (shared model, empty ones hidden). Within the attached
   // card provenances mix, so rows there carry the MonoMicroTag instead.
-  const segments = segmentSkillsByProvenance(allSkills.filter((s) => !assignedIds.has(s.id)));
+  const segments = segmentSkillsByProvenance(matches);
 
   if (allSkills.length === 0) {
     return (
@@ -1366,13 +1383,26 @@ function SkillsTab({
   return (
     <div className="space-y-6">
       <SectionCard>
-        <SectionHead
-          label={`Attached · ${attached.length}`}
-          hint="Loaded into this agent's system prompt. Detach to remove."
-        />
+        <div className="flex items-start justify-between gap-3">
+          <SectionHead
+            label={`Attached · ${attached.length}`}
+            hint="Loaded into this agent's system prompt. Detach to remove."
+          />
+          <PrimaryButton
+            variant="neutral"
+            size="sm"
+            onClick={() => {
+              setPickerQuery('');
+              setPickerOpen(true);
+            }}
+          >
+            + Attach skills
+          </PrimaryButton>
+        </div>
         {attached.length === 0 ? (
           <p className="text-body-13 text-ink-3">
-            No skills attached to this agent yet. Attach one from the list below.
+            No skills attached to this agent yet. Use “Attach skills” to pick from the{' '}
+            {available.length} installed in this workspace.
           </p>
         ) : (
           <div className="space-y-2">
@@ -1389,36 +1419,6 @@ function SkillsTab({
         )}
       </SectionCard>
 
-      {segments.length > 0 && (
-        <SectionCard>
-          <SectionHead
-            label={`Available on this workspace · ${segments.reduce((n, seg) => n + seg.skills.length, 0)}`}
-            hint="Already installed at the workspace level; click + to attach to this agent."
-          />
-          <div className="space-y-5">
-            {segments.map((seg) => (
-              <div key={seg.key}>
-                <div className="mb-2.5 flex items-center gap-2">
-                  <span className={`h-1.5 w-1.5 rounded-full ${seg.dot}`} aria-hidden />
-                  <span className="text-medium-13 text-ink">{seg.label}</span>
-                  <span className="text-mono-11 text-ink-4">{seg.skills.length}</span>
-                </div>
-                <div className="space-y-2">
-                  {seg.skills.map((s) => (
-                    <SkillToggleRow
-                      key={s.id}
-                      skill={s}
-                      assigned={false}
-                      onToggle={() => toggle(s, true)}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
       <p className="text-body-13 text-ink-3">
         Need something new?{' '}
         <Link href="/skills" className="underline hover:text-ink-2">
@@ -1426,6 +1426,62 @@ function SkillsTab({
         </Link>{' '}
         to create or install a skill, then attach it here.
       </p>
+
+      {/* Picker de la bibliothèque du workspace. Chaque + attache
+          immédiatement (liste auto-sauvée, pattern AssignSkillModal) : la
+          modale reste ouverte pour enchaîner, Close pour finir. */}
+      <Modal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Attach skills"
+        className="!max-w-2xl"
+        footer={
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={() => setPickerOpen(false)}>
+              Close
+            </PrimaryButton>
+          </ModalFooter>
+        }
+      >
+        <div className="space-y-4">
+          <PageSearchInput
+            value={pickerQuery}
+            onChange={setPickerQuery}
+            placeholder="Search installed skills…"
+            minWidth={0}
+            className="w-full"
+          />
+          <div className="max-h-[50vh] space-y-5 overflow-y-auto pr-1">
+            {available.length === 0 ? (
+              <p className="text-body-13 text-ink-3">
+                Everything installed in this workspace is already attached to this agent.
+              </p>
+            ) : segments.length === 0 ? (
+              <p className="text-body-13 text-ink-3">No installed skill matches “{pickerQuery}”.</p>
+            ) : (
+              segments.map((seg) => (
+                <div key={seg.key}>
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <span className={`h-1.5 w-1.5 rounded-full ${seg.dot}`} aria-hidden />
+                    <span className="text-medium-13 text-ink">{seg.label}</span>
+                    <span className="text-mono-11 text-ink-4">{seg.skills.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {seg.skills.map((s) => (
+                      <SkillToggleRow
+                        key={s.id}
+                        skill={s}
+                        assigned={false}
+                        onToggle={() => toggle(s, true)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
