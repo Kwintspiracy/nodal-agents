@@ -416,10 +416,8 @@ function FileDiffRow({ group }: { group: CodingFileChangeGroup }) {
         </span>
       </DisclosureButton>
       {open && (
-        <div className="space-y-3 border-t border-rule-2 bg-canvas/50 px-4 py-4">
-          {group.edits.map((edit, i) => (
-            <EditHunk key={i} edit={edit} />
-          ))}
+        <div className="border-t border-rule-2">
+          <FileSplitDiff edits={group.edits} />
         </div>
       )}
     </div>
@@ -506,7 +504,7 @@ function SplitDiffCell({ cell, side }: { cell: SplitCell; side: 'left' | 'right'
     return (
       <>
         <span className="select-none border-r border-rule-2 bg-hover px-2" />
-        <span className="bg-hover" />
+        <span className="min-w-0 bg-hover" />
       </>
     );
   }
@@ -523,8 +521,13 @@ function SplitDiffCell({ cell, side }: { cell: SplitCell; side: 'left' | 'right'
       >
         {cell.n}
       </span>
+      {/* min-w-0 + overflow-hidden : une ligne plus longue que sa DEMI-colonne
+          est coupée au bord (comme GitHub/CodeRabbit), au lieu de déborder en
+          peinture sur la moitié d'en face — le bug du 1er rendu. Le texte
+          complet reste lisible au survol (title). */}
       <span
-        className={`whitespace-pre px-2 font-mono text-mono-12 leading-[1.6] text-ink-2 ${tone}`}
+        title={cell.text}
+        className={`min-w-0 overflow-hidden whitespace-pre px-2 font-mono text-mono-12 leading-[1.6] text-ink-2 ${tone}`}
       >
         {cell.text || ' '}
       </span>
@@ -533,6 +536,85 @@ function SplitDiffCell({ cell, side }: { cell: SplitCell; side: 'left' | 'right'
 }
 
 const SPLIT_ROW_LIMIT = 80;
+
+/**
+ * Le diff d'UN fichier : tous ses hunks dans UNE seule grille (le rendu par
+ * hunk séparé donnait des mini-blocs déconnectés qui repartaient chacun à la
+ * ligne 1 — illisible), séparés par une barre « ⋯ », numérotation continue
+ * par colonne, un seul « Show all ».
+ */
+function FileSplitDiff({ edits }: { edits: CodingChangeView[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const rows = useMemo(() => {
+    const out: Array<SplitRow | { kind: 'hunk-sep' }> = [];
+    let lnOffset = 0;
+    let rnOffset = 0;
+    edits.forEach((edit, idx) => {
+      if (idx > 0) out.push({ kind: 'hunk-sep' });
+      const hunkRows = buildSplitRows(edit.oldText ?? '', edit.newText ?? '');
+      let maxL = 0;
+      let maxR = 0;
+      for (const r of hunkRows) {
+        if (r.kind !== 'line') {
+          out.push(r);
+          continue;
+        }
+        const left = r.left ? { ...r.left, n: r.left.n + lnOffset } : null;
+        const right = r.right ? { ...r.right, n: r.right.n + rnOffset } : null;
+        if (r.left) maxL = Math.max(maxL, r.left.n);
+        if (r.right) maxR = Math.max(maxR, r.right.n);
+        out.push({ kind: 'line', left, right });
+      }
+      lnOffset += maxL;
+      rnOffset += maxR;
+    });
+    return out;
+  }, [edits]);
+
+  const visible = expanded ? rows : rows.slice(0, SPLIT_ROW_LIMIT);
+  const hasMore = rows.length > SPLIT_ROW_LIMIT;
+
+  return (
+    <div>
+      <div className="overflow-x-auto bg-canvas">
+        <div className="grid min-w-[560px] grid-cols-[3rem_minmax(0,1fr)_3rem_minmax(0,1fr)]">
+          {visible.map((row, i) =>
+            row.kind === 'hunk-sep' ? (
+              <div
+                key={i}
+                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-0.5 text-center font-mono text-mono-11 text-ink-4"
+              >
+                ⋯
+              </div>
+            ) : row.kind === 'elided' ? (
+              <div
+                key={i}
+                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-1 font-mono text-mono-11 text-ink-4"
+              >
+                {row.count} unmodified line{row.count === 1 ? '' : 's'}
+              </div>
+            ) : (
+              <div key={i} className="col-span-4 grid grid-cols-subgrid">
+                <SplitDiffCell cell={row.left} side="left" />
+                <SplitDiffCell cell={row.right} side="right" />
+              </div>
+            ),
+          )}
+        </div>
+      </div>
+      {hasMore && !expanded && (
+        <div className="px-4 py-2">
+          <TextButton
+            onClick={() => setExpanded(true)}
+            className="text-body-12 text-ink-4 underline hover:text-ink-3"
+          >
+            Show all ({rows.length} lines)
+          </TextButton>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Bloc brut repliable — utilisé par Activity pour l'input/output JSON. */
 function CollapsibleLines({ text }: { text: string; tone?: 'default' }) {
@@ -551,48 +633,6 @@ function CollapsibleLines({ text }: { text: string; tone?: 'default' }) {
           className="mt-1 text-body-12 text-ink-4 underline hover:text-ink-3"
         >
           Show all ({lines.length} lines)
-        </TextButton>
-      )}
-    </div>
-  );
-}
-
-function EditHunk({ edit }: { edit: CodingChangeView }) {
-  const [expanded, setExpanded] = useState(false);
-  const rows = useMemo(
-    () => buildSplitRows(edit.oldText ?? '', edit.newText ?? ''),
-    [edit.oldText, edit.newText],
-  );
-  const visible = expanded ? rows : rows.slice(0, SPLIT_ROW_LIMIT);
-  const hasMore = rows.length > SPLIT_ROW_LIMIT;
-
-  return (
-    <div>
-      <div className="overflow-x-auto rounded-md border border-rule-2 bg-canvas">
-        <div className="grid min-w-[640px] grid-cols-[3rem_minmax(0,1fr)_3rem_minmax(0,1fr)]">
-          {visible.map((row, i) =>
-            row.kind === 'elided' ? (
-              <div
-                key={i}
-                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-1 font-mono text-mono-11 text-ink-4"
-              >
-                {row.count} unmodified line{row.count === 1 ? '' : 's'}
-              </div>
-            ) : (
-              <div key={i} className="col-span-4 grid grid-cols-subgrid">
-                <SplitDiffCell cell={row.left} side="left" />
-                <SplitDiffCell cell={row.right} side="right" />
-              </div>
-            ),
-          )}
-        </div>
-      </div>
-      {hasMore && !expanded && (
-        <TextButton
-          onClick={() => setExpanded(true)}
-          className="mt-1 text-body-12 text-ink-4 underline hover:text-ink-3"
-        >
-          Show all ({rows.length} lines)
         </TextButton>
       )}
     </div>
