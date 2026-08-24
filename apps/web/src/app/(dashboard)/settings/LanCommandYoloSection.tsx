@@ -53,8 +53,8 @@ export default function LanCommandYoloSection({ initial }: Props) {
       } else {
         toast.success(
           next
-            ? 'Yolo mode enabled for this workspace — agents with the command-execution skill can auto-run commands.'
-            : 'Yolo mode disabled — commands require approval again.',
+            ? 'Per-agent Yolo unlocked. Nothing auto-runs yet — enable it agent by agent (Autonomy tab).'
+            : 'Per-agent Yolo locked. Every run asks for approval again.',
         );
       }
     });
@@ -65,17 +65,22 @@ export default function LanCommandYoloSection({ initial }: Props) {
   return (
     <div className="flex items-start gap-4 rounded-xl border border-rule-2 bg-paper px-[18px] py-4">
       <div className="min-w-0 flex-1">
+        {/* Copy v2 (24/08) : l'ancien titre « Allow command auto-run (Yolo) »
+            se lisait comme « activer le Yolo du workspace » — une soirée de
+            malentendu pour un interrupteur qui n'active RIEN par lui-même :
+            il ne fait que déverrouiller les toggles PAR AGENT. */}
         <div className="flex items-center gap-2">
           <span className="text-medium-14 text-ink">
-            Allow command auto-run (Yolo) in LAN / multi-user mode
+            Unlock per-agent Yolo on this network install
           </span>
           <MonoMicroTag tone="err">owner only</MonoMicroTag>
         </div>
         <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
-          When on, workspace agents with the{' '}
-          <span className="font-medium text-ink-2">command-execution</span> skill can be set to
-          auto-run shell commands with no per-command approval. The toggle on each agent&apos;s
-          Autonomy tab becomes available. Commands are still logged.
+          Turns nothing on by itself. It unlocks the per-agent Yolo toggles — shell commands (
+          <span className="font-medium text-ink-2">command-execution</span>) and coding CLI tasks (
+          <span className="font-medium text-ink-2">code_task</span>) — on each agent&apos;s Autonomy
+          tab. Every agent keeps asking for approval until you enable its own toggle. Runs are still
+          logged.
         </p>
 
         {!initial.isOwner && (
@@ -88,11 +93,11 @@ export default function LanCommandYoloSection({ initial }: Props) {
           <Banner variant="warn">
             <span>
               <b className="block font-medium text-ink">
-                Yolo is enabled — commands run with no approval gate
+                Per-agent Yolo is unlocked for this workspace
               </b>
-              Any agent in this workspace that has the command-execution skill and Yolo toggled on
-              will execute shell commands immediately. Only agents you fully trust should have this
-              combination.
+              Agents whose own Yolo toggle is on (Autonomy tab) run shell commands and coding CLI
+              tasks immediately, with no approval gate. Agents without it keep asking. Only give the
+              per-agent toggle to agents you fully trust.
             </span>
           </Banner>
         )}
@@ -111,9 +116,9 @@ export default function LanCommandYoloSection({ initial }: Props) {
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Enable Yolo mode for this workspace?"
-        message="This lets any agent in this workspace auto-run shell commands with no approval gate, as long as it has the command-execution skill and Yolo toggled on in its Autonomy tab. Only enable for agents you fully trust. Commands are still logged."
-        confirmLabel="Enable Yolo"
+        title="Unlock per-agent Yolo?"
+        message="This turns nothing on by itself. It makes the per-agent Yolo toggles available (shell commands and coding CLI tasks, Autonomy tab). An agent only auto-runs once you enable its own toggle — reserve that for agents you fully trust. Runs are still logged."
+        confirmLabel="Unlock"
         destructive
         onConfirm={() => {
           setConfirmOpen(false);
