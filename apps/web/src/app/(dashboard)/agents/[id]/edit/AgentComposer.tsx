@@ -59,6 +59,7 @@ import {
   type ChannelAllowedConversationView,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import FolderPickerModal from './FolderPickerModal.tsx';
 import {
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -2880,6 +2881,7 @@ function SettingsTab(props: {
   const [wsLabel, setWsLabel] = useState('');
   const [wsPath, setWsPath] = useState('');
   const [wsAdding, setWsAdding] = useState(false);
+  const [wsPickerOpen, setWsPickerOpen] = useState(false);
   const [wsRemoveId, setWsRemoveId] = useState<string | null>(null);
   const [wsIsPending, startWsTransition] = useTransition();
 
@@ -3527,6 +3529,14 @@ function SettingsTab(props: {
               />
               <PrimaryButton
                 variant="neutral"
+                onClick={() => setWsPickerOpen(true)}
+                disabled={wsIsPending || wsAdding}
+                className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-body-14"
+              >
+                Browse…
+              </PrimaryButton>
+              <PrimaryButton
+                variant="neutral"
                 onClick={handleAddWorkspace}
                 disabled={wsIsPending || wsAdding || !wsLabel.trim() || !wsPath.trim()}
                 className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-body-14"
@@ -3566,6 +3576,21 @@ function SettingsTab(props: {
           destructive
           onConfirm={confirmDeleteFile}
           onCancel={() => setWsDeleteTarget(null)}
+        />
+
+        {/* Explorateur de dossiers côté serveur (bouton Browse…). Remplit le
+            champ path ; le label est pré-rempli avec le nom du dossier s'il
+            est vide (modifiable avant Add). */}
+        <FolderPickerModal
+          open={wsPickerOpen}
+          onClose={() => setWsPickerOpen(false)}
+          onSelect={(path) => {
+            setWsPath(path);
+            if (!wsLabel.trim()) {
+              const base = path.split(/[/\\]/).filter(Boolean).pop() ?? '';
+              setWsLabel(base.slice(0, 80));
+            }
+          }}
         />
       </SectionCard>
 
