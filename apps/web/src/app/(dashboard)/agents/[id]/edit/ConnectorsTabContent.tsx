@@ -16,6 +16,9 @@ import Disc from '@/components/ui/Disc';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Checkbox from '@/components/ui/Checkbox';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import PageSearchInput from '@/components/ui/PageSearchInput';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 
 /**
@@ -65,6 +68,11 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     return m;
   });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Décision Quentin 24/08 (même geste que l'onglet Skills) : l'onglet ne
+  // montre que ce qui est CONNECTÉ à cet agent ; la bibliothèque du workspace
+  // vit dans la modale « Attach connectors », cherchable.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState('');
   // Server awaiting the trust question, and how wide the grant should reach.
   const [trustAsk, setTrustAsk] = useState<string | null>(null);
   const [trustAllAgents, setTrustAllAgents] = useState(false);
@@ -343,33 +351,91 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     );
   }
 
+  // Filtre du picker : label + slug (+ credential pour les API).
+  const query = pickerQuery.trim().toLowerCase();
+  const pickable = query
+    ? available.filter((item) => {
+        const haystack =
+          item.kind === 'api'
+            ? `${item.row.label} ${item.row.slug} ${item.row.credentialName ?? ''}`
+            : `${item.row.label} ${item.row.slug}`;
+        return haystack.toLowerCase().includes(query);
+      })
+    : available;
+
   return (
     <div className="space-y-6">
       <Section
         label={`Connected · ${connected.length}`}
         hint="Revoke any to detach everywhere. Per-op (API) / per-tool (MCP) whitelist via the gear icon."
+        action={
+          <PrimaryButton
+            variant="neutral"
+            size="sm"
+            onClick={() => {
+              setPickerQuery('');
+              setPickerOpen(true);
+            }}
+          >
+            + Attach connectors
+          </PrimaryButton>
+        }
       >
         {connected.length === 0 && (
           <p className="text-body-13 text-ink-3">
-            No connectors or MCP servers attached to this agent yet. Pick from the list below.
+            No connectors or MCP servers attached to this agent yet. Use “Attach connectors” to pick
+            from the {available.length} installed in this workspace.
           </p>
         )}
         {connected.map((item) => renderRow(item, true))}
       </Section>
 
-      {available.length > 0 && (
-        <Section
-          label={`Available on this workspace · ${available.length}`}
-          hint="Already installed at the workspace level; click + to attach to this agent."
-        >
-          {available.map((item) => renderRow(item, false))}
-        </Section>
-      )}
-
       <div className="flex flex-col gap-2">
         <EdAddButton href="/connectors">Browse connectors marketplace</EdAddButton>
         <EdAddButton href="/mcp">Browse MCP servers</EdAddButton>
       </div>
+
+      {/* Picker de la bibliothèque du workspace (API + MCP confondus, comme
+          l'onglet). Chaque + attache immédiatement — pour un serveur MCP, la
+          question de confiance s'ouvre PAR-DESSUS (ConfirmDialog rendu après
+          la Modal dans le JSX : à z-index égal, le portail monté en dernier
+          gagne). La modale reste ouverte pour enchaîner. */}
+      <Modal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Attach connectors"
+        className="!max-w-2xl"
+        footer={
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={() => setPickerOpen(false)}>
+              Close
+            </PrimaryButton>
+          </ModalFooter>
+        }
+      >
+        <div className="space-y-4">
+          <PageSearchInput
+            value={pickerQuery}
+            onChange={setPickerQuery}
+            placeholder="Search installed connectors and MCP servers…"
+            minWidth={0}
+            className="w-full"
+          />
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+            {available.length === 0 ? (
+              <p className="text-body-13 text-ink-3">
+                Everything installed in this workspace is already connected to this agent.
+              </p>
+            ) : pickable.length === 0 ? (
+              <p className="text-body-13 text-ink-3">
+                No installed connector matches “{pickerQuery}”.
+              </p>
+            ) : (
+              pickable.map((item) => renderRow(item, false))
+            )}
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={trustAsk !== null}
@@ -593,17 +659,23 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
 function Section({
   label,
   hint,
+  action,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Bouton rendu à droite de l'en-tête (ex. « + Attach connectors »). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="space-y-2">
-      <div>
-        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">{label}</div>
-        {hint && <p className="mt-1 text-body-12 leading-[1.5]! text-ink-3">{hint}</p>}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">{label}</div>
+          {hint && <p className="mt-1 text-body-12 leading-[1.5]! text-ink-3">{hint}</p>}
+        </div>
+        {action}
       </div>
       <div className="space-y-2">{children}</div>
     </section>
