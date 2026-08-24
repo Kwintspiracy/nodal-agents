@@ -5,6 +5,7 @@ import { createWriteStream, openSync, writeFileSync, readFileSync, existsSync } 
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
+import { rotateLogIfNeeded } from './log-rotation.ts';
 
 export type SpawnResult = ResultPromise;
 
@@ -473,6 +474,7 @@ export function spawnRunner(
   opts: SpawnServiceOptions = {},
 ): ResultPromise {
   const logFile = join(LOG_DIR, 'runner.log');
+  rotateLogIfNeeded(logFile);
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
   let bin: string;
@@ -542,6 +544,7 @@ export interface SpawnWebOptions extends SpawnServiceOptions {
  */
 export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}): ResultPromise {
   const logFile = join(LOG_DIR, 'web.log');
+  rotateLogIfNeeded(logFile);
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
   let bin: string;
