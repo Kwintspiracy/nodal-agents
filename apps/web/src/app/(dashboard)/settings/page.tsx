@@ -14,6 +14,7 @@ import {
 } from '@/lib/actions.ts';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import SecurityForm from './SecurityForm.tsx';
+import PasswordForm from './PasswordForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
@@ -98,6 +99,17 @@ export default async function SettingsPage() {
         {networkResult.ok && (
           <SetBlock label="Network" lede="Control which devices can reach the dashboard.">
             <NetworkForm initial={networkResult.data} />
+          </SetBlock>
+        )}
+
+        {/* Un mot de passe n'existe qu'en local-auth — la section n'apparaît
+            pas en local-trust (rien à changer) ni en bearer-token. */}
+        {s.authMode === 'local-auth' && (
+          <SetBlock
+            label="Password"
+            lede="Change your sign-in password. Other signed-in devices are signed out."
+          >
+            <PasswordForm />
           </SetBlock>
         )}
 
