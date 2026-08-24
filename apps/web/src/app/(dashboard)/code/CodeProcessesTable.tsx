@@ -81,8 +81,9 @@ export default function CodeProcessesTable({
   if (rows.length === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        No coding activity yet. Attach the Coding CLI capability to an agent, or switch one to the
-        Claude Code runtime, to see processes here.
+        No coding activity yet. Every pipeline that edits code files shows up here — whether the
+        agent uses the plain Nodal file tools, a Coding CLI, or the Claude Code runtime. Ask an
+        agent to write some code and watch it land.
       </div>
     );
   }
