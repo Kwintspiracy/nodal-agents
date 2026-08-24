@@ -24,6 +24,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   getCodingProcessDetailAction,
+  listApprovalsAction,
+  type ApprovalRow,
   type CodingProcessDetail as CodingProcessDetailData,
   type CodingToolCallView,
   type CodingActivityItem,
@@ -31,6 +33,7 @@ import {
   type CodingChangeView,
   type CodingVerdictView,
 } from '@/lib/actions.ts';
+import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import DisclosureButton from '@/components/ui/DisclosureButton';
@@ -49,12 +52,21 @@ const STAGE_LABEL: Record<string, string> = {
   done_approved: 'Done · Approved',
   failed: 'Failed',
   chat: 'Chat',
+  awaiting_approval: 'Blocked · needs approval',
 };
+
+/**
+ * Étapes où le process est encore VIVANT — la sonde continue de tourner.
+ * `coding` seul était faux deux fois : un process délégué/en review bougeait
+ * sans rafraîchir, et un process BLOQUÉ sur approbation figeait l'écran au
+ * moment précis où l'utilisateur doit agir (punch list V1.1).
+ */
+const LIVE_STAGES = new Set(['coding', 'delegated', 'review', 'awaiting_approval']);
 
 function stageVariant(stage: string): StatusVariant {
   if (stage === 'coding' || stage === 'delegated' || stage === 'review') return 'run';
   if (stage === 'done' || stage === 'done_approved') return 'done';
-  if (stage === 'failed') return 'warn';
+  if (stage === 'failed' || stage === 'awaiting_approval') return 'warn';
   return 'idle';
 }
 
@@ -106,15 +118,37 @@ export default function CodeProcessDetail({
     stageRef.current = detail.header.stage;
   }, [detail.header.stage]);
 
+  // Approbations en attente appartenant à CE pipeline. Chargées avec la même
+  // cadence que le détail ; résolues → le prochain tick les efface.
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRow[]>([]);
+  const pipelineIdsRef = useRef(detail.pipelineJobIds);
   useEffect(() => {
-    if (stageRef.current !== 'coding') return;
-    const id = setInterval(() => {
-      if (stageRef.current !== 'coding') return;
+    pipelineIdsRef.current = detail.pipelineJobIds;
+  }, [detail.pipelineJobIds]);
+
+  useEffect(() => {
+    if (!LIVE_STAGES.has(stageRef.current)) return;
+    let cancelled = false;
+    const tick = () => {
+      if (!LIVE_STAGES.has(stageRef.current)) return;
       void getCodingProcessDetailAction(query).then((result) => {
-        if (result.ok) setDetail(result.data);
+        if (result.ok && !cancelled) setDetail(result.data);
       });
-    }, POLL_INTERVAL);
-    return () => clearInterval(id);
+      void listApprovalsAction({ status: 'pending' }).then((result) => {
+        if (!result.ok || cancelled) return;
+        const ids = new Set(pipelineIdsRef.current);
+        setPendingApprovals(result.data.filter((a) => ids.has(a.jobId)));
+      });
+    };
+    const id = setInterval(tick, POLL_INTERVAL);
+    // Premier chargement des approbations sans attendre 4s — un process déjà
+    // bloqué au moment où la page s'ouvre doit montrer sa carte tout de suite.
+    const first = setTimeout(tick, 0);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      clearTimeout(first);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.header.stage]);
 
@@ -184,6 +218,60 @@ export default function CodeProcessDetail({
           ))}
         </div>
       </div>
+
+      {/* Approbations en attente du pipeline — la carte inline (punch list
+          V1.1, pattern dsh : bande ambre, justification, action, refuse/allow).
+          Au-dessus de tout : c'est la seule chose qui BLOQUE le process. */}
+      {pendingApprovals.map((a) => (
+        <div
+          key={a.id}
+          className="space-y-3 rounded-xl border border-warn/40 border-l-4 border-l-warn bg-paper p-5"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-medium-14 text-ink">⏸ {a.explanation.what}</span>
+            <MonoMicroTag tone="ink">{a.agentName ?? 'agent'}</MonoMicroTag>
+            <span className="text-mono-11 text-ink-4">{a.toolName}</span>
+          </div>
+          <div className="space-y-1.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
+            <p className="text-body-13 italic text-ink-2">
+              {a.explanation.purpose
+                ? `« ${a.explanation.purpose} »`
+                : "L'agent n'a pas expliqué pourquoi."}
+            </p>
+            <p className="text-body-12 text-warn">
+              ⚠️ {a.explanation.effectLabel}
+              {a.explanation.target && (
+                <span className="text-ink-2"> → {a.explanation.target}</span>
+              )}
+            </p>
+            {a.explanation.args.length > 0 && (
+              <dl className="space-y-0.5 pt-0.5">
+                {a.explanation.args.map((arg) => (
+                  <div key={arg.key} className="flex gap-2 text-mono-12">
+                    <dt className="shrink-0 text-ink-3">{arg.key}</dt>
+                    <dd className="min-w-0 break-all text-ink-2">
+                      {arg.value}
+                      {arg.truncated && (
+                        <span className="text-ink-3">
+                          {' '}
+                          ({arg.fullLength} caractères, 300 affichés)
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+          <ApprovalActions
+            approvalId={a.id}
+            toolName={a.toolName}
+            agentId={a.agentId}
+            mcpRulePattern={a.mcpRulePattern}
+            mcpServerName={a.explanation.provenance.name ?? null}
+          />
+        </div>
+      ))}
 
       {/* Review verdicts — a synthesis, kept near the header, above the layout below. */}
       {verdicts.length > 0 && (

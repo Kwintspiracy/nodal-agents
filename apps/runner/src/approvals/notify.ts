@@ -185,7 +185,7 @@ const DELIVERY_CHAIN_MAX_HOPS = 8;
  * order from `jobId` itself up to the root, or null if the boundary was
  * crossed or the starting job doesn't even resolve to an agent.
  */
-async function walkJobChainToRoot(
+export async function walkJobChainToRoot(
   db: RunnerDeps['db'],
   jobId: string,
 ): Promise<Array<{ agentId: string; channel: string | null }> | null> {

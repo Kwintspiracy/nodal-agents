@@ -140,6 +140,7 @@ import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
+import { notifyCodeTransition } from '../notify/code-transitions.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
@@ -3575,6 +3576,25 @@ async function runJob(
           unresolvedToolFailures.delete(call.name);
         } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
           unresolvedToolFailures.add(call.name);
+        }
+
+        // Punch list V1.1 — transition du pipeline code notifiée au canal
+        // d'origine (✔/✖ code_task, 🔎 review_verdict). Fire-and-forget :
+        // le module gate sur les canaux de messagerie et avale ses erreurs —
+        // jamais bloquant, jamais fatal pour le job.
+        if (call.name === 'code_task') {
+          void notifyCodeTransition(db, jobId as string, {
+            kind: 'code_task_done',
+            success: toolResult.outcome === 'success',
+            agentName: agent.name,
+          });
+        } else if (call.name === 'review_verdict' && toolResult.outcome === 'success') {
+          const verdictInput = call.input as { verdict?: unknown };
+          void notifyCodeTransition(db, jobId as string, {
+            kind: 'review_verdict',
+            verdict: typeof verdictInput.verdict === 'string' ? verdictInput.verdict : 'recorded',
+            agentName: agent.name,
+          });
         }
 
         // Guard 1f (S2) — error streak, across the whole job. `toolResult`
