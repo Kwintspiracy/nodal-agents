@@ -20,8 +20,9 @@
 // the 'coding' stage — same interval-effect shape as CodeProcessesTable's
 // list poller.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { diffLines } from '@/lib/line-diff';
 import {
   getCodingProcessDetailAction,
   listApprovalsAction,
@@ -425,50 +426,123 @@ function FileDiffRow({ group }: { group: CodingFileChangeGroup }) {
   );
 }
 
-// ─── Central panel: selected file's diff ───────────────────────────────────
+// ─── Split diff (spec Quentin 25/08, maquette CodeRabbit/GitHub) ─────────────
+// Le classique côte à côte ligne contre ligne : ancien à gauche (suppressions
+// en rouge), nouveau à droite (ajouts en vert), lignes alignées, cellule vide
+// grisée en face d'une ligne sans vis-à-vis, runs inchangés repliés en
+// « N unmodified lines ». Construit sur diffLines (LCS maison, line-diff.ts).
 
-function prefixLines(text: string, prefix: string): string {
-  return text
-    .split('\n')
-    .map((l) => `${prefix} ${l}`)
-    .join('\n');
+type SplitCell = { n: number; text: string; changed: boolean } | null;
+type SplitRow =
+  | { kind: 'line'; left: SplitCell; right: SplitCell }
+  | { kind: 'elided'; count: number };
+
+/** Apparie le script d'ops LCS en lignes gauche/droite alignées (style GitHub). */
+function buildSplitRows(oldText: string, newText: string): SplitRow[] {
+  const ops = diffLines(oldText, newText);
+  const rows: SplitRow[] = [];
+  let ln = 0; // numéro de ligne gauche (relatif au hunk)
+  let rn = 0; // numéro de ligne droite
+
+  let i = 0;
+  while (i < ops.length) {
+    const op = ops[i]!;
+    if (op.op === 'same') {
+      // Run de lignes inchangées — contexte de 3 de chaque côté, le reste replié.
+      let j = i;
+      while (j < ops.length && ops[j]!.op === 'same') j++;
+      const run = ops.slice(i, j);
+      const CONTEXT = 3;
+      const isFirst = i === 0;
+      const isLast = j === ops.length;
+      // En bord de fichier, un seul côté de contexte est utile.
+      const head = isFirst ? 0 : CONTEXT;
+      const tail = isLast ? 0 : CONTEXT;
+      run.forEach((line, k) => {
+        const inHead = k < head;
+        const inTail = k >= run.length - tail;
+        if (run.length > head + tail + 1 && !inHead && !inTail) {
+          ln++;
+          rn++;
+          const prev = rows[rows.length - 1];
+          if (prev && prev.kind === 'elided') prev.count++;
+          else rows.push({ kind: 'elided', count: 1 });
+        } else {
+          ln++;
+          rn++;
+          rows.push({
+            kind: 'line',
+            left: { n: ln, text: line.text, changed: false },
+            right: { n: rn, text: line.text, changed: false },
+          });
+        }
+      });
+      i = j;
+      continue;
+    }
+    // Run de changements : les suppressions puis les ajouts contigus sont
+    // appariés rangée par rangée — l'excédent d'un côté fait face à du vide.
+    const removes: string[] = [];
+    const adds: string[] = [];
+    while (i < ops.length && ops[i]!.op !== 'same') {
+      if (ops[i]!.op === 'remove') removes.push(ops[i]!.text);
+      else adds.push(ops[i]!.text);
+      i++;
+    }
+    const len = Math.max(removes.length, adds.length);
+    for (let k = 0; k < len; k++) {
+      const left = k < removes.length ? { n: ++ln, text: removes[k]!, changed: true } : null;
+      const right = k < adds.length ? { n: ++rn, text: adds[k]!, changed: true } : null;
+      rows.push({ kind: 'line', left, right });
+    }
+  }
+  return rows;
 }
 
-function EditHunk({ edit }: { edit: CodingChangeView }) {
+function SplitDiffCell({ cell, side }: { cell: SplitCell; side: 'left' | 'right' }) {
+  // Cellule sans vis-à-vis : le hachuré sombre de la maquette, rendu en fond
+  // neutre appuyé — rien à lire de ce côté.
+  if (!cell) {
+    return (
+      <>
+        <span className="select-none border-r border-rule-2 bg-hover px-2" />
+        <span className="bg-hover" />
+      </>
+    );
+  }
+  const tone = cell.changed ? (side === 'left' ? 'bg-err/10' : 'bg-ok/10') : '';
+  const numTone = cell.changed
+    ? side === 'left'
+      ? 'bg-err/15 text-err'
+      : 'bg-ok/15 text-ok'
+    : 'text-ink-4';
   return (
-    <div className="space-y-1.5">
-      {edit.oldText !== null && (
-        <CollapsibleLines text={prefixLines(edit.oldText, '−')} tone="remove" />
-      )}
-      {edit.newText !== null && (
-        <CollapsibleLines text={prefixLines(edit.newText, '+')} tone="add" />
-      )}
-    </div>
+    <>
+      <span
+        className={`select-none border-r border-rule-2 px-2 text-right font-mono text-mono-11 leading-[1.6] ${numTone}`}
+      >
+        {cell.n}
+      </span>
+      <span
+        className={`whitespace-pre px-2 font-mono text-mono-12 leading-[1.6] text-ink-2 ${tone}`}
+      >
+        {cell.text || ' '}
+      </span>
+    </>
   );
 }
 
-function CollapsibleLines({
-  text,
-  tone = 'default',
-}: {
-  text: string;
-  tone?: 'default' | 'add' | 'remove';
-}) {
+const SPLIT_ROW_LIMIT = 80;
+
+/** Bloc brut repliable — utilisé par Activity pour l'input/output JSON. */
+function CollapsibleLines({ text }: { text: string; tone?: 'default' }) {
   const lines = text.split('\n');
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? lines : lines.slice(0, LINE_LIMIT);
   const hasMore = lines.length > LINE_LIMIT;
-  const toneClass =
-    tone === 'add'
-      ? 'bg-ok-bg text-ok'
-      : tone === 'remove'
-        ? 'bg-warn-bg text-err'
-        : 'bg-hover text-ink-2';
   return (
     <div>
-      <pre
-        className={`overflow-x-auto rounded-md px-3 py-2 text-mono-12 leading-[1.5]! whitespace-pre ${toneClass}`}
-      >
+      <pre className="overflow-x-auto rounded-md bg-hover px-3 py-2 text-mono-12 leading-[1.5]! whitespace-pre text-ink-2">
         {visible.join('\n')}
       </pre>
       {hasMore && !expanded && (
@@ -477,6 +551,48 @@ function CollapsibleLines({
           className="mt-1 text-body-12 text-ink-4 underline hover:text-ink-3"
         >
           Show all ({lines.length} lines)
+        </TextButton>
+      )}
+    </div>
+  );
+}
+
+function EditHunk({ edit }: { edit: CodingChangeView }) {
+  const [expanded, setExpanded] = useState(false);
+  const rows = useMemo(
+    () => buildSplitRows(edit.oldText ?? '', edit.newText ?? ''),
+    [edit.oldText, edit.newText],
+  );
+  const visible = expanded ? rows : rows.slice(0, SPLIT_ROW_LIMIT);
+  const hasMore = rows.length > SPLIT_ROW_LIMIT;
+
+  return (
+    <div>
+      <div className="overflow-x-auto rounded-md border border-rule-2 bg-canvas">
+        <div className="grid min-w-[640px] grid-cols-[3rem_minmax(0,1fr)_3rem_minmax(0,1fr)]">
+          {visible.map((row, i) =>
+            row.kind === 'elided' ? (
+              <div
+                key={i}
+                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-1 font-mono text-mono-11 text-ink-4"
+              >
+                {row.count} unmodified line{row.count === 1 ? '' : 's'}
+              </div>
+            ) : (
+              <div key={i} className="col-span-4 grid grid-cols-subgrid">
+                <SplitDiffCell cell={row.left} side="left" />
+                <SplitDiffCell cell={row.right} side="right" />
+              </div>
+            ),
+          )}
+        </div>
+      </div>
+      {hasMore && !expanded && (
+        <TextButton
+          onClick={() => setExpanded(true)}
+          className="mt-1 text-body-12 text-ink-4 underline hover:text-ink-3"
+        >
+          Show all ({rows.length} lines)
         </TextButton>
       )}
     </div>
