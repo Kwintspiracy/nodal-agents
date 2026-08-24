@@ -113,7 +113,7 @@ export default async function SettingsPage() {
         {lanYoloResult.ok && s.authMode !== 'local-trust' && (
           <SetBlock
             label="Command execution (LAN)"
-            lede="In multi-user / LAN mode, shell commands always require approval by default. The workspace owner can opt in to allow Yolo (auto-run) mode per agent."
+            lede="On a network install, shell commands and coding CLI tasks always require approval by default. This switch does not change that — it only lets the owner unlock Yolo (auto-run) agent by agent."
           >
             <LanCommandYoloSection initial={lanYoloResult.data} />
           </SetBlock>
