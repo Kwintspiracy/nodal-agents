@@ -161,13 +161,6 @@ export default function CodeProcessDetail({
 
   const { header, activity, verdicts, changes } = detail;
 
-  // Selected file for the central panel. Derived at render time (never an
-  // effect): falls back to the first file whenever the current selection
-  // isn't in the list — covers both the initial mount and a poll that
-  // changed the file set, with no synchronous setState-in-effect needed.
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-  const selectedGroup = changes.find((g) => g.filePath === selectedFilePath) ?? changes[0] ?? null;
-
   // Agent filter for the Activity trail — only worth showing once delegation
   // actually happened (root + at least one distinct delegated agent).
   const [agentFilter, setAgentFilter] = useState('all');
@@ -294,136 +287,140 @@ export default function CodeProcessDetail({
         </div>
       ))}
 
-      {/* Review verdicts — a synthesis, kept near the header, above the layout below. */}
-      {verdicts.length > 0 && (
-        <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
-          <h2 className="text-mono-11 tracking-wider text-ink-4 uppercase">Review verdicts</h2>
-          {verdicts.map((v, i) => (
-            <VerdictCard key={i} verdict={v} />
-          ))}
-        </div>
-      )}
+      {/* v7 (spec Quentin 25/08) : UNE colonne, dans l'ordre — verdict de
+          review condensé (extensible), fichiers repliables façon PR review
+          (chevron + chemin + −N +N, diff à l'ouverture), puis l'activité
+          chronologique de TOUS les agents. Plus de sidebar de fichiers ni de
+          panneau central : les colonnes étroites, « ça ne va pas du tout ». */}
+      <VerdictsSection verdicts={verdicts} stage={header.stage} />
 
-      {/* Files sidebar + central panel (selected file's diff, then Activity). */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr] lg:items-start">
-        <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper lg:sticky lg:top-6">
-          <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-            Files{changes.length > 0 ? ` · ${changes.length}` : ''}
-          </h2>
-          {changes.length === 0 ? (
-            <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
-          ) : (
-            <div className="max-h-[70vh] overflow-y-auto">
-              {changes.map((group) => (
-                <FileListRow
-                  key={group.filePath}
-                  group={group}
-                  active={group.filePath === selectedGroup?.filePath}
-                  onSelect={() => setSelectedFilePath(group.filePath)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+          Files{changes.length > 0 ? ` · ${changes.length}` : ''}
+        </h2>
+        {changes.length === 0 ? (
+          <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
+        ) : (
+          changes.map((group) => <FileDiffRow key={group.filePath} group={group} />)
+        )}
+      </div>
 
-        <div className="min-w-0 space-y-6">
-          {selectedGroup && (
-            <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-              <h2 className="border-b border-rule-2 px-4 py-3">
-                <PathTail
-                  text={selectedGroup.filePath}
-                  className="font-mono text-body-13 text-ink"
-                />
-              </h2>
-              <div className="max-h-[70vh] space-y-3 overflow-y-auto px-4 py-4">
-                {selectedGroup.edits.map((edit, i) => (
-                  <EditHunk key={i} edit={edit} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Activity — compact secondary trail: metrics only, no content. */}
-          <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-            <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-              Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
-            </h2>
-            {agentFilters.length > 1 && (
-              <div className="border-b border-rule-2 px-4 py-2.5">
-                <PillTabs
-                  tabs={[
-                    { value: 'all', label: 'All', count: totalCalls },
-                    ...agentFilters.map((a) => ({ value: a.key, label: a.label, count: a.count })),
-                  ]}
-                  value={agentFilter}
-                  onChange={setAgentFilter}
-                  variant="inset"
-                />
-              </div>
-            )}
-            {activity.length === 0 ? (
-              <p className="px-4 py-6 text-body-13 text-ink-4">
-                {header.kind === 'chat'
-                  ? "Chat sessions don't record a tool-call trail yet, only their run history."
-                  : 'No activity recorded yet.'}
-              </p>
-            ) : (
-              <div className="max-h-[70vh] overflow-y-auto">
-                {visibleActivity.map((item, i) =>
-                  item.kind === 'turn' ? (
-                    <TurnMarkerRow key={`turn-${i}`} item={item} />
-                  ) : (
-                    <ActivityRow key={item.id} tc={item} />
-                  ),
-                )}
-              </div>
+      {/* Activity — la chronologie de la session, tous agents confondus. */}
+      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+          Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
+        </h2>
+        {agentFilters.length > 1 && (
+          <div className="border-b border-rule-2 px-4 py-2.5">
+            <PillTabs
+              tabs={[
+                { value: 'all', label: 'All', count: totalCalls },
+                ...agentFilters.map((a) => ({ value: a.key, label: a.label, count: a.count })),
+              ]}
+              value={agentFilter}
+              onChange={setAgentFilter}
+              variant="inset"
+            />
+          </div>
+        )}
+        {activity.length === 0 ? (
+          <p className="px-4 py-6 text-body-13 text-ink-4">
+            {header.kind === 'chat'
+              ? "Chat sessions don't record a tool-call trail yet, only their run history."
+              : 'No activity recorded yet.'}
+          </p>
+        ) : (
+          <div className="max-h-[70vh] overflow-y-auto">
+            {visibleActivity.map((item, i) =>
+              item.kind === 'turn' ? (
+                <TurnMarkerRow key={`turn-${i}`} item={item} />
+              ) : (
+                <ActivityRow key={item.id} tc={item} />
+              ),
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Files sidebar ──────────────────────────────────────────────────────────
+// ─── Review verdict — condensé d'abord, complet sur demande ──────────────────
 
-/** Splits on the last path separator (either / or \) — CLI tool_input paths are POSIX, Nodal file_edit/file_write can be either. */
-function splitFilePath(path: string): { dir: string; base: string } {
-  const idx = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  if (idx === -1) return { dir: '', base: path };
-  return { dir: path.slice(0, idx), base: path.slice(idx + 1) };
+/** Le statut condensé d'une review — lisible en une demi-seconde. */
+function verdictStatus(verdicts: CodingVerdictView[], stage: string) {
+  if (verdicts.length === 0) {
+    if (stage === 'review') return { variant: 'run' as StatusVariant, label: 'Review in progress' };
+    return null;
+  }
+  const last = verdicts[verdicts.length - 1]!;
+  return last.verdict === 'approve'
+    ? { variant: 'done' as StatusVariant, label: 'Approved' }
+    : { variant: 'warn' as StatusVariant, label: 'Changes requested' };
 }
 
-function FileListRow({
-  group,
-  active,
-  onSelect,
-}: {
-  group: CodingFileChangeGroup;
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const { dir, base } = splitFilePath(group.filePath);
+function VerdictsSection({ verdicts, stage }: { verdicts: CodingVerdictView[]; stage: string }) {
+  const [open, setOpen] = useState(false);
+  const status = verdictStatus(verdicts, stage);
+  if (!status) return null;
+  const last = verdicts[verdicts.length - 1] ?? null;
+
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') onSelect();
-      }}
-      className={`flex cursor-pointer items-center gap-2 border-l-2 px-4 py-2.5 transition-colors ${
-        active ? 'border-ink bg-hover' : 'border-transparent hover:bg-hover'
-      }`}
-    >
-      <div className="min-w-0 flex-1">
-        <PathTail text={base} title={group.filePath} className="font-mono text-body-13 text-ink" />
-        {dir && <PathTail text={dir} title={group.filePath} className="text-mono-11 text-ink-4" />}
-      </div>
-      <div className="shrink-0 text-mono-11">
-        <span className="text-ok">+{group.addedLines}</span>{' '}
-        <span className="text-err">−{group.removedLines}</span>
-      </div>
+    <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+      <DisclosureButton
+        open={open}
+        onClick={() => verdicts.length > 0 && setOpen((v) => !v)}
+        className="w-full px-4 py-3"
+      >
+        <span className="text-mono-11 uppercase tracking-wider text-ink-4">Review</span>
+        <StatusPill variant={status.variant} label={status.label} />
+        {last?.summary && !open && (
+          <span className="min-w-0 truncate text-body-13 text-ink-3">{last.summary}</span>
+        )}
+        {verdicts.length > 1 && (
+          <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
+            {verdicts.length} verdicts
+          </span>
+        )}
+      </DisclosureButton>
+      {open && (
+        <div className="space-y-3 border-t border-rule-2 px-4 py-4">
+          {verdicts.map((v, i) => (
+            <VerdictCard key={i} verdict={v} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Fichiers repliables façon PR review (spec Quentin, image CodeRabbit) ────
+
+function FileDiffRow({ group }: { group: CodingFileChangeGroup }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-rule-2 last:border-b-0">
+      <DisclosureButton
+        open={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-4 py-2.5"
+      >
+        <PathTail
+          text={group.filePath}
+          className="min-w-0 flex-1 font-mono text-body-13 text-ink"
+        />
+        <span className="shrink-0 text-mono-11">
+          {group.removedLines > 0 && <span className="text-err">−{group.removedLines}</span>}{' '}
+          {group.addedLines > 0 && <span className="text-ok">+{group.addedLines}</span>}
+        </span>
+      </DisclosureButton>
+      {open && (
+        <div className="space-y-3 border-t border-rule-2 bg-canvas/50 px-4 py-4">
+          {group.edits.map((edit, i) => (
+            <EditHunk key={i} edit={edit} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

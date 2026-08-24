@@ -10795,6 +10795,12 @@ export type CodingProcessRow = {
   projectPath: string | null;
   /** Nom d'affichage du projet (basename de projectPath). */
   projectName: string | null;
+  /**
+   * Nature de la session (spec Quentin 25/08, dropdown du poste de travail) :
+   * 'review' = des verdicts sans aucune édition (une session de relecture) ;
+   * 'coding' = tout le reste.
+   */
+  sessionType: 'coding' | 'review';
 };
 
 const REVIEW_APPROVE_MARKER = '"verdict":"approve"';
@@ -11368,6 +11374,15 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
           projectPath,
           projectName: projectPath ? projectNameFromPath(projectPath) : null,
+          sessionType: (() => {
+            const pipelineIds = [j.id, ...(childIdsByParent.get(j.id) ?? [])];
+            const verdictCount = pipelineIds.reduce(
+              (n, id) => n + (verdictOutputsByJob.get(id)?.length ?? 0),
+              0,
+            );
+            const filesCount = filesByRoot.get(j.id)?.size ?? 0;
+            return verdictCount > 0 && filesCount === 0 ? ('review' as const) : ('coding' as const);
+          })(),
         };
       });
     }
@@ -11869,6 +11884,8 @@ export async function getCodingProcessDetailAction(
           costUsd,
           projectPath: detailProjectPath,
           projectName: detailProjectPath ? projectNameFromPath(detailProjectPath) : null,
+          sessionType:
+            verdicts.length > 0 && filesChanged === 0 ? ('review' as const) : ('coding' as const),
           // Les CLI qui ont REELLEMENT tourne dans ce pipeline, tries pour que
           // l ordre ne depende pas de celui des lignes.
           providers: Array.from(new Set(cliRunRows.map((r) => r.provider))).sort(),
@@ -11940,6 +11957,7 @@ export async function getCodingProcessDetailAction(
         costUsd: totalCost,
         projectPath: null,
         projectName: null,
+        sessionType: 'coding',
         // Une session de runtime n a PAS de code_task, donc le provider n existe
         // que dans cli_runs — c est le cas ou la jointure est la seule source.
         providers: Array.from(new Set(runs.map((r) => r.provider))).sort(),

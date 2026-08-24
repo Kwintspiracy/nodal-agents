@@ -33,6 +33,7 @@ import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
+import Select from '@/components/ui/Select';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 
@@ -241,72 +242,42 @@ export default function CodeProcessesTable({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-          {/* Rail des sessions — la chronologie du projet, plus récente en tête. */}
-          <div className="self-start overflow-hidden rounded-xl border border-rule-2 bg-paper">
-            <div className="border-b border-rule-2 px-4 py-2.5 text-mono-11 uppercase tracking-[0.12em] text-ink-4">
-              Sessions
-            </div>
-            <ul>
-              {sessions.map((s) => {
-                const key = `${s.kind}-${s.id}`;
-                const isCurrent = key === effectiveKey;
-                return (
-                  <li key={key} className="border-b border-rule-2 last:border-b-0">
-                    <RowActionButton
-                      onClick={() => setSessionKey(key)}
-                      className={`!h-auto !w-full !justify-start !rounded-none !border-transparent !px-4 !py-3 !text-left ${
-                        isCurrent ? '!bg-hover' : '!bg-transparent'
-                      }`}
-                    >
-                      <span className="block min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <AgentAvatar name={s.agentName ?? '?'} size="sm" shape="round" />
-                          <span className="truncate text-medium-13 text-ink">
-                            {s.agentName ?? 'Unknown agent'}
-                          </span>
-                          <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
-                            {relativeTime(s.activityAt)}
-                          </span>
-                        </span>
-                        <span
-                          className="mt-1 block truncate text-body-12 text-ink-3"
-                          title={s.task}
-                        >
-                          {s.task}
-                        </span>
-                        <span className="mt-1.5 flex items-center gap-2">
-                          <StatusPill variant={stageVariant(s.stage)} label={stageLabel(s.stage)} />
-                          {s.filesChanged > 0 && (
-                            <span className="text-mono-11 text-ink-4">{s.filesChanged} files</span>
-                          )}
-                          {s.costUsd > 0 && (
-                            <span className="text-mono-11 text-ink-4">${s.costUsd.toFixed(2)}</span>
-                          )}
-                        </span>
-                      </span>
-                    </RowActionButton>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+        {/* Sélecteur de session — un DROPDOWN, pas une longue liste en dur
+            (spec Quentin 25/08). Plus récente sélectionnée par défaut ; chaque
+            option annonce sa nature (Coding / Review), l'agent, la tâche,
+            l'étape et l'âge. */}
+        <Select
+          value={effectiveKey ?? ''}
+          onChange={(e) => setSessionKey(e.target.value)}
+          aria-label="Session"
+        >
+          {sessions.map((s) => {
+            const key = `${s.kind}-${s.id}`;
+            const type = s.sessionType === 'review' ? 'Review' : 'Coding';
+            const task = s.task.length > 70 ? `${s.task.slice(0, 70)}…` : s.task;
+            return (
+              <option key={key} value={key}>
+                {type} · {s.agentName ?? 'Unknown agent'} · {task} · {stageLabel(s.stage)} ·{' '}
+                {relativeTime(s.activityAt)}
+              </option>
+            );
+          })}
+        </Select>
 
-          {/* Détail de la session sélectionnée — diffs, activity, verdicts,
-              approbations : le même poste de travail que /code/[id], embarqué. */}
-          <div className="min-w-0">
-            {current ? (
-              <EmbeddedProcessDetail
-                key={effectiveKey}
-                query={current.kind === 'job' ? { jobId: current.id } : { sessionId: current.id }}
-              />
-            ) : (
-              <p className="rounded-xl border border-rule-2 bg-paper px-6 py-10 text-center text-body-14 text-ink-4">
-                No session in this project yet.
-              </p>
-            )}
-          </div>
-        </div>
+        {/* La session sélectionnée, en PLEINE largeur, une seule colonne :
+            verdict de review condensé, diffs par fichier repliables, activité
+            chronologique de tous les agents — le même poste de travail que
+            /code/[id], embarqué. */}
+        {current ? (
+          <EmbeddedProcessDetail
+            key={effectiveKey}
+            query={current.kind === 'job' ? { jobId: current.id } : { sessionId: current.id }}
+          />
+        ) : (
+          <p className="rounded-xl border border-rule-2 bg-paper px-6 py-10 text-center text-body-14 text-ink-4">
+            No session in this project yet.
+          </p>
+        )}
       </div>
     );
   }
