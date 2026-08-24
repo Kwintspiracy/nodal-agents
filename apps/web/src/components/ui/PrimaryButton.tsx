@@ -57,7 +57,13 @@ const PrimaryButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Props>(
   function PrimaryButton(props, ref) {
     const { children, variant = 'ink', size = 'md', className = '' } = props;
     const dim = size === 'md' ? 'h-[34px] px-3.5 text-medium-14' : 'h-[30px] px-3 text-medium-13';
-    const cls = `inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md leading-none! transition-[filter,background-color] ${dim} ${VARIANT[variant]} ${className}`;
+    // disabled: sans ces classes, un bouton désactivé était PIXEL-IDENTIQUE à
+    // un bouton actif (curseur pointeur compris) — cliquer ne faisait rien,
+    // sans aucun indice. Vécu sur le « Add » d'AddWorkerModal (24/08) : la
+    // modale semblait cassée alors que le bouton attendait une sélection.
+    // Même convention qu'IconButton (opacity-40) ; pointer-events-none coupe
+    // aussi les états hover, qui s'appliquent visuellement même désactivé.
+    const cls = `inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md leading-none! transition-[filter,background-color] disabled:pointer-events-none disabled:opacity-40 ${dim} ${VARIANT[variant]} ${className}`;
 
     if ('href' in props && props.href) {
       // anchor-flavour
