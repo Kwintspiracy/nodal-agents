@@ -95,6 +95,17 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
       return `Runs script "${str(input['script'])}" from skill "${str(input['skill'])}".`;
     case 'skill_file_write':
       return `Writes a file into skill "${str(input['skill'])}"'s bundle.`;
+    case 'code_task':
+      // Risque fonction de l'IMPACT réel (lot approbations, décision Quentin
+      // 24/08) : un code_task tombait dans le default « irreversible or
+      // destructive » alors que ses écritures sont checkpointées AVANT
+      // exécution (mutatesWorkspace → takeCheckpointForTurn, vérouillé par
+      // checkpoint-wiring.test.ts) — donc réversibles. Les COMMANDES que le
+      // codeur lance, elles, ne le sont pas : la ligne dit les deux vérités.
+      return (
+        'Runs a coding agent that edits files in the workspace. ' +
+        'File changes are checkpointed first and can be reverted; commands it runs are not.'
+      );
     default:
       return `${toolName}: irreversible or destructive action.`;
   }

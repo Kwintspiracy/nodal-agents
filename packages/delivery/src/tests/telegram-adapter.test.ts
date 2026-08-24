@@ -177,6 +177,32 @@ describe('telegramAdapter.sendApprovalCard', () => {
     });
     expect(result).toEqual({ messageId: '5' });
   });
+
+  it('« Toujours autoriser » : troisième bouton sur sa PROPRE ligne, suffixe :w', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: { message_id: 6 } }),
+    );
+
+    await telegramAdapter.sendApprovalCard!(CREDS, FAKE_CHAT_ID, {
+      text: 'Approve this?',
+      approveLabel: '✅ Approve',
+      rejectLabel: '❌ Reject',
+      alwaysLabel: '🔁 Always allow',
+      callbackId: 'apr:req-456',
+    });
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['reply_markup']).toEqual({
+      inline_keyboard: [
+        [
+          { text: '✅ Approve', callback_data: 'apr:req-456:a' },
+          { text: '❌ Reject', callback_data: 'apr:req-456:r' },
+        ],
+        [{ text: '🔁 Always allow', callback_data: 'apr:req-456:w' }],
+      ],
+    });
+  });
 });
 
 describe('telegramAdapter.editMessageText', () => {

@@ -39,6 +39,45 @@ import type { RunnerDeps } from '../deps.ts';
 
 /** callback_data carried by the buttons. Parsed by approval-callback.ts. Stays well under Telegram's 64-byte cap. */
 export const APPROVAL_CALLBACK_PREFIX = 'apr';
+
+/**
+ * Libellés des boutons de carte — exportés pour que le flux « Toujours
+ * autoriser » (telegram/approval-callback.ts) reconstruise la carte d'origine
+ * à l'identique quand l'utilisateur annule la confirmation.
+ */
+export const APPROVAL_BUTTON_LABELS = {
+  approve: '✅ Approve',
+  reject: '❌ Reject',
+  always: '🔁 Always allow',
+} as const;
+
+/**
+ * Le corps de la carte d'approbation (trois étages : la voix de l'agent, la
+ * ligne d'impact déterministe, le détail technique). Partagé entre l'envoi
+ * initial et la restauration de la carte après un « annuler » du flux
+ * Toujours autoriser — les deux doivent dire exactement la même chose.
+ */
+export async function buildApprovalCardBody(
+  db: RunnerDeps['db'],
+  args: { entityId: string; toolName: string; toolInput: unknown; who: string },
+): Promise<string> {
+  const explanation = await explainApprovalRequest(
+    db,
+    args.entityId,
+    args.toolName,
+    args.toolInput,
+  );
+  return (
+    `⏳ Approbation requise — ${args.who}\n\n` +
+    // The agent's own words stay first and verbatim (invariant #2), but they
+    // are clearly ITS voice, quoted — not the platform's verdict. An ABSENT
+    // purpose is stated, never left blank (asserted by notify.test.ts).
+    (explanation.purpose
+      ? `« ${explanation.purpose} »\n\n`
+      : "L'agent n'a pas expliqué pourquoi.\n\n") +
+    renderExplanationText(explanation)
+  );
+}
 export function approvalCallbackData(approvalRequestId: string, decision: 'a' | 'r'): string {
   return `${APPROVAL_CALLBACK_PREFIX}:${approvalRequestId}:${decision}`;
 }
@@ -367,28 +406,12 @@ export async function notifyApprovalCreated(
     // MCP server, at which endpoint, with which description THAT server
     // supplies) and words it accordingly, instead of guessing. Arguments are
     // redacted inside it — an approval card gets forwarded and screenshotted.
-    const explanation = await explainApprovalRequest(
-      deps.db,
-      req.entityId,
-      req.toolName,
-      req.toolInput,
-    );
-
-    const body =
-      `⏳ Approbation requise — ${who}\n\n` +
-      // The agent's own words stay first and verbatim (invariant #2), but they
-      // are now clearly ITS voice, quoted — not the platform's verdict.
-      //
-      // An ABSENT purpose is stated, never left blank: "the agent did not say
-      // why" is information the reviewer needs, and a silent gap reads as if
-      // nothing were missing. Asserted by notify.test.ts.
-      //
-      // Read off the explanation rather than re-derived from toolInput here:
-      // this surface and the dashboard each had their own copy of the rule.
-      (explanation.purpose
-        ? `« ${explanation.purpose} »\n\n`
-        : "L'agent n'a pas expliqué pourquoi.\n\n") +
-      renderExplanationText(explanation);
+    const body = await buildApprovalCardBody(deps.db, {
+      entityId: req.entityId,
+      toolName: req.toolName,
+      toolInput: req.toolInput,
+      who,
+    });
 
     // Channel-neutral (W2): sent through the ChannelAdapter rather than the
     // Telegram helper directly. `callbackId` carries the `apr:<id>` prefix so
@@ -407,8 +430,13 @@ export async function notifyApprovalCreated(
       const text = `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`;
       const card: ApprovalCard = {
         text,
-        approveLabel: '✅ Approve',
-        rejectLabel: '❌ Reject',
+        approveLabel: APPROVAL_BUTTON_LABELS.approve,
+        rejectLabel: APPROVAL_BUTTON_LABELS.reject,
+        // Troisième action (lot approbations, parité avec le bouton web
+        // « Toujours pour cet outil ») : seul l'adapter Telegram la rend
+        // aujourd'hui — le flux de confirmation par édition de message vit
+        // dans telegram/approval-callback.ts. Les autres adapters l'ignorent.
+        alwaysLabel: APPROVAL_BUTTON_LABELS.always,
         callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
       };
       await adapter.sendApprovalCard(credentials, conversationId, card);

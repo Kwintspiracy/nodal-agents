@@ -134,6 +134,11 @@ async function sendApprovalCard(
       { text: card.rejectLabel, callback_data: `${card.callbackId}:r` },
     ],
   ];
+  // « Toujours autoriser » sur sa PROPRE ligne, pleine largeur : trois tiers
+  // sur une ligne tronquent les libellés sur mobile.
+  if (card.alwaysLabel) {
+    inlineKeyboard.push([{ text: card.alwaysLabel, callback_data: `${card.callbackId}:w` }]);
+  }
   const { messageId } = await sendTelegramMessage({
     chatId,
     botToken,

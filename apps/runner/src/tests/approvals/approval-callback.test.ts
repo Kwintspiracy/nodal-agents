@@ -10,7 +10,14 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  and,
+  approvalRequests,
+  approvalRules,
+  agentJobs,
+  agents,
+  telegramAllowedChats,
+} from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -128,6 +135,13 @@ describe('parseApprovalCallbackData', () => {
     const id = '00000000-0000-0000-0000-0000000000cd';
     expect(parseApprovalCallbackData(approvalCallbackData(id, 'a'))?.decision).toBe('approve');
     expect(parseApprovalCallbackData(approvalCallbackData(id, 'r'))?.decision).toBe('reject');
+  });
+
+  it('parse les trois suffixes du flux « Toujours autoriser »', () => {
+    const id = '00000000-0000-0000-0000-0000000000ef';
+    expect(parseApprovalCallbackData(`apr:${id}:w`)?.decision).toBe('always_ask');
+    expect(parseApprovalCallbackData(`apr:${id}:wc`)?.decision).toBe('always_confirm');
+    expect(parseApprovalCallbackData(`apr:${id}:wb`)?.decision).toBe('always_back');
   });
 });
 
@@ -375,5 +389,149 @@ describe('handleApprovalCallback — approval card routes to the bot OWNER, neve
       .where(eq(approvalRequests.id, id))
       .limit(1);
     expect(ap!.status).toBe('pending'); // untouched
+  });
+});
+
+// ─── Le flux « Toujours autoriser » (lot approbations, 24/08) ────────────────
+// Trois contrats : (1) le 1er tap N'APPROUVE RIEN — il édite la carte en
+// question de confirmation ; (2) la confirmation écrit une VRAIE ligne
+// approval_rules (asserted en base) AVANT d'approuver ; (3) « Back » restaure
+// la carte d'origine, boutons compris, sans rien résoudre.
+
+/** Les corps des appels editMessageText émis depuis le dernier mockClear. */
+function editMessageBodies(): Array<{
+  text: string;
+  reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+}> {
+  const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls as Array<
+    [string, { body?: string } | undefined]
+  >;
+  return calls
+    .filter(([url]) => String(url).includes('editMessageText'))
+    .map(([, init]) => JSON.parse(init?.body ?? '{}'));
+}
+
+describe('handleApprovalCallback — Toujours autoriser', () => {
+  it('1er tap (w) : question de confirmation affichée, approbation INTACTE', async () => {
+    const id = await insertPendingApproval();
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:w`, CHAT_ID),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(true);
+    if (!r.handled) throw new Error('unreachable');
+    expect(r.decision).toBe('always_confirm_shown');
+
+    // Rien n'est résolu, aucune règle n'existe encore.
+    const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(ap!.status, 'le 1er tap a résolu au lieu de demander confirmation').toBe('pending');
+
+    // La carte a été éditée en question, avec les DEUX boutons wc/wb.
+    const edits = editMessageBodies();
+    expect(edits).toHaveLength(1);
+    expect(edits[0]!.text).toContain('Always allow run_command');
+    const buttons = edits[0]!.reply_markup!.inline_keyboard.flat();
+    expect(buttons.map((b) => b.callback_data)).toEqual([`apr:${id}:wc`, `apr:${id}:wb`]);
+  });
+
+  it('confirmation (wc) : la règle auto_approve EXISTE en base, puis l’approbation est résolue', async () => {
+    const id = await insertPendingApproval('run_skill_script');
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:wc`, CHAT_ID),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(true);
+    if (!r.handled) throw new Error('unreachable');
+    expect(r.decision).toBe('approve');
+
+    // LA ligne qui compte : la règle permanente, en base, agent-scopée.
+    const [rule] = await db
+      .select()
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, seed.entityId),
+          eq(approvalRules.agentId, seed.agentId),
+          eq(approvalRules.toolName, 'run_skill_script'),
+        ),
+      );
+    expect(rule, 'aucune règle auto_approve écrite').toBeDefined();
+    expect(rule!.action).toBe('auto_approve');
+
+    const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(ap!.status).toBe('approved');
+    expect(ap!.resolvedBy).toBe('telegram');
+    expect(ap!.notes).toContain('Always allowed');
+  });
+
+  it('annulation (wb) : la carte d’origine est restaurée avec ses TROIS boutons, rien résolu', async () => {
+    const id = await insertPendingApproval();
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:wb`, CHAT_ID),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(true);
+    if (!r.handled) throw new Error('unreachable');
+    expect(r.decision).toBe('card_restored');
+
+    const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(ap!.status).toBe('pending');
+
+    const edits = editMessageBodies();
+    expect(edits).toHaveLength(1);
+    expect(edits[0]!.text).toContain('Approbation requise');
+    const buttons = edits[0]!.reply_markup!.inline_keyboard.flat();
+    expect(buttons.map((b) => b.callback_data)).toEqual([
+      `apr:${id}:a`,
+      `apr:${id}:r`,
+      `apr:${id}:w`,
+    ]);
+  });
+
+  it('wc depuis un MAUVAIS chat : refusé, AUCUNE règle écrite', async () => {
+    const id = await insertPendingApproval('skill_file_write');
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:wc`, GUEST_CHAT_ID),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(false);
+    if (r.handled) throw new Error('unreachable');
+    expect(r.reason).toBe('chat_mismatch');
+
+    const rules = await db
+      .select()
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, seed.entityId),
+          eq(approvalRules.toolName, 'skill_file_write'),
+        ),
+      );
+    expect(rules, 'un chat non autorisé a posé une règle permanente').toHaveLength(0);
+    const [ap] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+    expect(ap!.status).toBe('pending');
   });
 });
