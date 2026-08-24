@@ -41,6 +41,7 @@ import {
   type SpawnResult,
 } from '../lib/processes.ts';
 import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
+import { startHealthWatchdog, probeRunnerHealth, type Watchdog } from '../lib/watchdog.ts';
 
 async function killSilent(child: SpawnResult): Promise<void> {
   // Kill the whole process tree — see killProcessTree for the Windows
@@ -760,6 +761,39 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   console.log(chalk.gray('  Ctrl+C to stop all services'));
   console.log('');
 
+  // ── 9c. Health watchdog — the launcher keeps LOOKING after the boot ───────
+  // Constat du 23/08 : Postgres est mort sous une stack déclarée « healthy ».
+  // Le Promise.race du bas n'attend que la mort des processus runner/web — un
+  // Postgres mort ne tue ni l'un ni l'autre, donc rien ne le voyait. Le runner
+  // sonde sa base à chaque GET /api/health (503 si morte) : on ré-interroge CE
+  // health toutes les 30s et on nomme la panne dans le terminal, une fois par
+  // transition. Pas de redémarrage automatique (invariant #4 — fail loud).
+  // Foreground uniquement : en --detach le lanceur est déjà sorti, la vérité
+  // vit alors dans /api/health (runner ET web pingent la base désormais).
+  const watchdog: Watchdog = startHealthWatchdog({
+    probe: () => probeRunnerHealth(runnerUrl),
+    onTransition: (state, detail) => {
+      const at = new Date().toLocaleTimeString();
+      if (state === 'healthy') {
+        console.log(chalk.green(`\n  [${at}] Recovered — ${detail}.`));
+        return;
+      }
+      console.error(chalk.red.bold(`\n  [${at}] DEGRADED — ${detail}.`));
+      if (state === 'degraded') {
+        console.error(
+          chalk.red(
+            '  The dashboard may still render, but nothing can read or write the database:\n' +
+              '  jobs are not created, chats and schedules are failing.',
+          ),
+        );
+        printLogTail('runner', 10);
+      }
+      console.error(
+        chalk.yellow('  → Restart the stack: `nodal-agents down`, then `nodal-agents up`.'),
+      );
+    },
+  });
+
   // ── 10. Stay up until a child exits ───────────────────────────────────────
   // SIGINT/SIGTERM are already handled — the handlers were registered back at
   // step 2b, as soon as Postgres came up, so the whole startup window is
@@ -768,5 +802,6 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // Keep process alive until a child exits, then shut down
   await Promise.race([runnerProcess, webProcess]);
 
+  watchdog.stop();
   await shutdown();
 }
