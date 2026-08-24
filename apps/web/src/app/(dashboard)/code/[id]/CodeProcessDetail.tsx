@@ -107,9 +107,16 @@ function PathTail({
 export default function CodeProcessDetail({
   query,
   initialDetail,
+  embedded = false,
 }: {
   query: { jobId: string } | { sessionId: string };
   initialDetail: CodingProcessDetailData;
+  /**
+   * true = rendu DANS le poste de travail projet (/code, rail de sessions à
+   * gauche) : pas de lien « ← Code », pas de titre projet (le contexte projet
+   * vit au-dessus) — le titre redevient l'agent, acteur de la session.
+   */
+  embedded?: boolean;
 }) {
   const [detail, setDetail] = useState(initialDetail);
   // Synced in an effect, never during render (react-hooks/refs).
@@ -175,16 +182,19 @@ export default function CodeProcessDetail({
 
   return (
     <div className="space-y-6">
-      <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
-        ← Code
-      </Link>
+      {!embedded && (
+        <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
+          ← Code
+        </Link>
+      )}
 
       {/* Header — le PROJET d'abord (décision Quentin 25/08 : « si j'ouvre un
           projet, la chose importante c'est le projet ») ; l'agent devient un
-          acteur, en tag. Sans projet dérivable, l'agent reste le titre. */}
+          acteur, en tag. Sans projet dérivable — ou en mode embarqué, où le
+          projet titre déjà le poste de travail — l'agent reste le titre. */}
       <div className="space-y-4 rounded-xl border border-rule-2 bg-paper p-5">
         <div className="flex flex-wrap items-center gap-3">
-          {header.projectName ? (
+          {!embedded && header.projectName ? (
             <>
               <span className="text-medium-15 text-ink" title={header.projectPath ?? undefined}>
                 {header.projectName}

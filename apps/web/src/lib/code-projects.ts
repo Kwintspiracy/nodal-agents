@@ -138,3 +138,20 @@ export function deriveProjectRoot(
 export function projectNameFromPath(projectPath: string): string {
   return projectPath.split('/').filter(Boolean).pop() ?? projectPath;
 }
+
+/** Normalisation d'un chemin de workspace vers la forme projet (slashes, sans trailing). */
+export function normalizeWorkspacePath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * Repli « Other sessions » (constat Quentin 25/08 : « c'est quoi ce
+ * fourre-tout ? ») : une session sans AUCUN fichier ancrable (zéro édition,
+ * ou chemins relatifs morts) retombe sur l'unique workspace de son agent
+ * racine — sans ambiguïté possible. Un agent à 0 ou 2+ workspaces reste dans
+ * le tiroir : on ne devine pas.
+ */
+export function fallbackProjectFromAgentWorkspaces(agentPaths: string[]): string | null {
+  if (agentPaths.length !== 1) return null;
+  return normalizeWorkspacePath(agentPaths[0]!);
+}

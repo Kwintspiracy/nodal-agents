@@ -24,7 +24,11 @@ import {
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath, access as fsAccess } from 'node:fs/promises';
-import { deriveProjectRoot, projectNameFromPath } from './code-projects.ts';
+import {
+  deriveProjectRoot,
+  projectNameFromPath,
+  fallbackProjectFromAgentWorkspaces,
+} from './code-projects.ts';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -10875,6 +10879,15 @@ const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write'])
  * couvrira jamais, et le rater est pire que d'afficher un .txt de trop
  * (« un codeur sans CLI est un codeur quand même »).
  */
+/**
+ * v5 (constat Quentin 25/08, vault Obsidian) : le NOTES-ONLY ne qualifie pas.
+ * Le markdown/texte est NEUTRE — il ne disqualifie pas un vrai repo (un
+ * codeur édite son README au milieu de son .ts), mais une session qui
+ * n'écrit QUE du .md/.txt est de la prise de notes, pas du code, quel que
+ * soit l'outil qui l'a écrite (CLI compris).
+ */
+const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
+
 const NON_DEV_EXTENSIONS = new Set([
   // bureautique
   'doc',
@@ -10912,14 +10925,15 @@ const NON_DEV_EXTENSIONS = new Set([
   'rar',
 ]);
 
-/** True quand le chemin édité ressemble à du travail de dev (voir NON_DEV_EXTENSIONS). */
+/** True quand le chemin édité ressemble à du travail de dev (voir NON_DEV_EXTENSIONS / NEUTRAL_EXTENSIONS). */
 function isDevFilePath(path: string | null): boolean {
   if (!path) return false;
   const base = path.split(/[\\/]/).pop() ?? path;
   const dot = base.lastIndexOf('.');
   // Sans extension (Makefile, Dockerfile, LICENSE…) = dev.
   if (dot <= 0) return true;
-  return !NON_DEV_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+  const ext = base.slice(dot + 1).toLowerCase();
+  return !NON_DEV_EXTENSIONS.has(ext) && !NEUTRAL_EXTENSIONS.has(ext);
 }
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
@@ -11073,37 +11087,29 @@ function pipelineQualifiesAsCoding(
   // one-level rollup that split a three-level session in half. Measured live on
   // the same data, one-level rollup showed 0 coding processes where the
   // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
-  if (calls.some((c) => EDIT_TOOL_NAMES.has(c.toolName))) return true;
+  // v5 (constat Quentin 25/08, vault Obsidian) : la NATURE des fichiers
+  // décide pour TOUT LE MONDE, outils CLI compris. La v4 laissait n'importe
+  // quel cli:Edit/cli:Write qualifier inconditionnellement — un agent
+  // runtime qui prenait des notes dans un vault 100 % markdown devenait un
+  // « projet de code ». Désormais une seule règle : au moins UNE édition
+  // (exécutée OU refusée — le cas Dev C reste couvert, ses tentatives
+  // visaient des fichiers dev) sur un fichier de code/config. Le repli
+  // « marqueur cli sauve des éditions non-dev » (relique v3) disparaît avec.
+  const hasDevEdit = calls.some(
+    (c) =>
+      FILE_TOOL_NAMES.has(c.toolName) &&
+      isDevFilePath(extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null)),
+  );
+  if (hasDevEdit) return true;
+  // Les intentions de dev EXPLICITES qualifient sans édition : déléguer du
+  // code en écriture, ou rendre un verdict de review.
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
     const input = c.toolInput as { mode?: string } | null;
     return input?.mode === 'write';
   });
   if (hasWriteCodeTask) return true;
-  // v4 (23/08, constat live de Quentin) : un codeur PUR LLM — file_edit/
-  // file_write via OpenRouter, sans CLI, sans code_task, sans reviewer —
-  // codait réellement et l'onglet restait vide. La v3 exigeait un « marqueur
-  // dev » (cli:*/code_task/review_verdict) comme garde-fou Office ; le
-  // marqueur est remplacé par la NATURE des fichiers édités : du code/config
-  // qualifie seul, du bureautique/média non (isDevFilePath). Le chemin
-  // marqueur reste en repli pour un pipeline dont toutes les éditions sont
-  // non-dev mais qui porte quand même un signal de dev explicite.
-  const nodalDevWrite = calls.some(
-    (c) =>
-      (c.toolName === 'file_edit' || c.toolName === 'file_write') &&
-      isDevFilePath(extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null)),
-  );
-  if (nodalDevWrite) return true;
-  const hasNodalFileWrite = calls.some(
-    (c) => c.toolName === 'file_edit' || c.toolName === 'file_write',
-  );
-  if (!hasNodalFileWrite) return false;
-  return calls.some(
-    (c) =>
-      c.toolName.startsWith('cli:') ||
-      c.toolName === 'code_task' ||
-      c.toolName === 'review_verdict',
-  );
+  return calls.some((c) => c.toolName === 'review_verdict');
 }
 
 export async function listCodingProcessesAction(): Promise<ActionResult<CodingProcessRow[]>> {
@@ -11300,6 +11306,20 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       // partagent leurs remontées de dossiers.
       const gitMemo = new Map<string, string | null>();
 
+      // Workspaces PAR AGENT — le repli des sessions sans fichier ancrable
+      // (voir fallbackProjectFromAgentWorkspaces).
+      const agentWsRows = await db
+        .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+        .where(eq(agents.entityId, entityId));
+      const workspacesByAgent = new Map<string, string[]>();
+      for (const r of agentWsRows) {
+        const arr = workspacesByAgent.get(r.agentId) ?? [];
+        arr.push(r.path);
+        workspacesByAgent.set(r.agentId, arr);
+      }
+
       // review_verdict outputs — for each job AND its direct children.
       const verdictRows =
         allRelevantIds.length > 0
@@ -11323,11 +11343,11 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       }
 
       jobRows = jobs.map((j) => {
-        const projectPath = deriveProjectRoot(
-          rawPathsByRoot.get(j.id) ?? [],
-          workspaceRoots,
-          gitMemo,
-        );
+        const projectPath =
+          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], workspaceRoots, gitMemo) ??
+          (j.agentId
+            ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [])
+            : null);
         return {
           id: j.id,
           kind: 'job' as const,
@@ -11822,11 +11842,19 @@ export async function getCodingProcessDetailAction(
       const pipelineDurationMs =
         jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
 
-      const detailProjectPath = deriveProjectRoot(
+      let detailProjectPath = deriveProjectRoot(
         rawChangePaths,
         workspaceRoots,
         new Map<string, string | null>(),
       );
+      // Même repli que la liste : l'unique workspace de l'agent racine.
+      if (!detailProjectPath && job.agentId) {
+        const agentWs = await db
+          .select({ path: agentWorkspaces.path })
+          .from(agentWorkspaces)
+          .where(eq(agentWorkspaces.agentId, job.agentId));
+        detailProjectPath = fallbackProjectFromAgentWorkspaces(agentWs.map((w) => w.path));
+      }
 
       return ok({
         header: {

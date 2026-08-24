@@ -534,3 +534,119 @@ describe('listCodingProcessesAction', () => {
     expect(row?.stage).toBe('failed');
   });
 });
+
+// ─── Définition v5 (constat Quentin 25/08, vault Obsidian) ────────────────────
+// La NATURE des fichiers décide pour TOUT LE MONDE, outils CLI compris : une
+// session 100 % markdown est de la prise de notes, pas du code — quel que
+// soit l'outil qui l'a écrite. Le mixte (.md + .ts) reste du code.
+
+describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
+  it('une session CLI 100 % .md (le vault Obsidian) est ABSENTE de la liste', async () => {
+    const agentId = await makeAgent('Vault Notes Agent');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: '/vault/Notes/idees.md', content: '# Idées' },
+        toolOutput: 'ok',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Edit',
+        toolInput: { file_path: '/vault/Journal/2026-08-25.md', old_string: 'a', new_string: 'b' },
+        toolOutput: 'ok',
+      },
+    ]);
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === jobId),
+      'une session 100 % markdown a été qualifiée « coding »',
+    ).toBeUndefined();
+  });
+
+  it('un pipeline MIXTE (.md + .ts) reste un projet de code', async () => {
+    const agentId = await makeAgent('Mixed Docs Coder');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: '/repo/README.md', content: '# Doc' },
+        toolOutput: 'ok',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: '/repo/src/feature.ts', content: 'export {}' },
+        toolOutput: 'ok',
+      },
+    ]);
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeTruthy();
+  });
+
+  it('un file_write Nodal .md seul (notes sans CLI) ne qualifie pas non plus', async () => {
+    const agentId = await makeAgent('Nodal Notes Writer');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: 'notes/reunion.md', content: '# CR' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
+  });
+
+  it('session dev sans chemin ancrable : repli sur l’UNIQUE workspace de l’agent', async () => {
+    const agentId = await makeAgent('Solo Workspace Coder');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(agentWorkspaces).values({
+      entityId: _testEntityId,
+      agentId,
+      label: 'app',
+      path: 'D:\\Projets\\MonApp',
+    });
+
+    // Chemin relatif dont le fichier n'existe pas sur CE disque : la
+    // résolution par existence échoue, l'entité a plusieurs workspaces →
+    // aucun ancrage par fichier. Le repli = le seul workspace de l'AGENT.
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_edit',
+      toolInput: { path: 'src/main.ts', old_string: 'a', new_string: 'b' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const row = result.data.find((r) => r.id === jobId);
+    expect(row).toBeTruthy();
+    expect(row?.projectPath).toBe('D:/Projets/MonApp');
+    expect(row?.projectName).toBe('MonApp');
+  });
+});

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 // CodeProcessesTable — la page /code, organisée PAR PROJET (décision Quentin
 // 25/08) : « ce qui est intéressant, c'est de suivre le développement d'un
@@ -21,20 +21,20 @@
 // 'coding' — le regroupement est recalculé à chaque rafraîchissement.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   listCodingProcessesAction,
+  getCodingProcessDetailAction,
   setCodeProjectArchivedAction,
   type CodingProcessRow,
+  type CodingProcessDetail as CodingProcessDetailData,
 } from '@/lib/actions.ts';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
-import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
 import { relativeTime } from '@/lib/format-time';
+import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 
 const POLL_INTERVAL = 5000;
 
@@ -61,10 +61,6 @@ function stageVariant(stage: string): StatusVariant {
 
 function stageLabel(stage: string): string {
   return STAGE_LABEL[stage] ?? stage;
-}
-
-function processHref(row: CodingProcessRow): string {
-  return `/code/${row.kind}-${row.id}`;
 }
 
 type Project = {
@@ -120,7 +116,14 @@ export default function CodeProcessesTable({
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
   const [archived, setArchived] = useState<Set<string>>(() => new Set(initialArchivedPaths));
   const [selected, setSelected] = useState<string | null>(null);
+  // Session ouverte dans le poste de travail projet ; null = la plus récente.
+  const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+
+  function openProjectView(key: string) {
+    setSelected(key);
+    setSessionKey(null);
+  }
 
   // A ref mirrors `rows` so the polling effect can read the latest list
   // without depending on it (an interval that resets every fetch would never
@@ -194,24 +197,116 @@ export default function CodeProcessesTable({
     );
   }
 
-  // ── Niveau 2 : la chronologie d'UN projet ─────────────────────────────────
+  // ── Niveau 2 : le POSTE DE TRAVAIL d'un projet (décision Quentin 25/08 :
+  // « si je clique sur un projet, je veux les diffs, la review, les résultats
+  // de review, et explorer les sessions dans cette interface » — pas une page
+  // intermédiaire qui liste des sessions). Rail de sessions à gauche, détail
+  // complet (diffs / activity / verdicts / approbations) à droite.
   const openProject = selected ? projects.find((p) => p.key === selected) : null;
   if (openProject) {
+    const sessions = openProject.sessions;
+    const effectiveKey =
+      sessionKey && sessions.some((s) => `${s.kind}-${s.id}` === sessionKey)
+        ? sessionKey
+        : sessions[0]
+          ? `${sessions[0].kind}-${sessions[0].id}`
+          : null;
+    const current = sessions.find((s) => `${s.kind}-${s.id}` === effectiveKey) ?? null;
+    const filesTotal = sessions.reduce((n, s) => n + s.filesChanged, 0);
+
     return (
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
+        {/* En-tête projet : identité + agrégats — le résumé avant le détail. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-rule-2 bg-paper px-5 py-4">
           <TextButton onClick={() => setSelected(null)}>← Projects</TextButton>
           <span className="text-medium-15 text-ink">{openProject.name}</span>
           {openProject.path && (
-            <code className="text-mono-12 text-ink-4" title={openProject.path}>
+            <code className="hidden text-mono-12 text-ink-4 md:inline" title={openProject.path}>
               {openProject.path}
             </code>
           )}
-          <span className="text-body-13 text-ink-4">
-            {openProject.sessions.length} session{openProject.sessions.length === 1 ? '' : 's'}
+          <span className="ml-auto flex items-center gap-4 text-mono-12 text-ink-3">
+            <span>
+              {sessions.length} session{sessions.length === 1 ? '' : 's'}
+            </span>
+            <span>{filesTotal} files</span>
+            <span>
+              {openProject.totalCostUsd > 0 ? `$${openProject.totalCostUsd.toFixed(2)}` : '—'}
+            </span>
+            <span className="flex items-center -space-x-1.5">
+              {openProject.agentNames.slice(0, 4).map((n) => (
+                <AgentAvatar key={n} name={n} size="sm" shape="round" />
+              ))}
+            </span>
           </span>
         </div>
-        <SessionsTable rows={openProject.sessions} />
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+          {/* Rail des sessions — la chronologie du projet, plus récente en tête. */}
+          <div className="self-start overflow-hidden rounded-xl border border-rule-2 bg-paper">
+            <div className="border-b border-rule-2 px-4 py-2.5 text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+              Sessions
+            </div>
+            <ul>
+              {sessions.map((s) => {
+                const key = `${s.kind}-${s.id}`;
+                const isCurrent = key === effectiveKey;
+                return (
+                  <li key={key} className="border-b border-rule-2 last:border-b-0">
+                    <RowActionButton
+                      onClick={() => setSessionKey(key)}
+                      className={`!h-auto !w-full !justify-start !rounded-none !border-transparent !px-4 !py-3 !text-left ${
+                        isCurrent ? '!bg-hover' : '!bg-transparent'
+                      }`}
+                    >
+                      <span className="block min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <AgentAvatar name={s.agentName ?? '?'} size="sm" shape="round" />
+                          <span className="truncate text-medium-13 text-ink">
+                            {s.agentName ?? 'Unknown agent'}
+                          </span>
+                          <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
+                            {relativeTime(s.activityAt)}
+                          </span>
+                        </span>
+                        <span
+                          className="mt-1 block truncate text-body-12 text-ink-3"
+                          title={s.task}
+                        >
+                          {s.task}
+                        </span>
+                        <span className="mt-1.5 flex items-center gap-2">
+                          <StatusPill variant={stageVariant(s.stage)} label={stageLabel(s.stage)} />
+                          {s.filesChanged > 0 && (
+                            <span className="text-mono-11 text-ink-4">{s.filesChanged} files</span>
+                          )}
+                          {s.costUsd > 0 && (
+                            <span className="text-mono-11 text-ink-4">${s.costUsd.toFixed(2)}</span>
+                          )}
+                        </span>
+                      </span>
+                    </RowActionButton>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* Détail de la session sélectionnée — diffs, activity, verdicts,
+              approbations : le même poste de travail que /code/[id], embarqué. */}
+          <div className="min-w-0">
+            {current ? (
+              <EmbeddedProcessDetail
+                key={effectiveKey}
+                query={current.kind === 'job' ? { jobId: current.id } : { sessionId: current.id }}
+              />
+            ) : (
+              <p className="rounded-xl border border-rule-2 bg-paper px-6 py-10 text-center text-body-14 text-ink-4">
+                No session in this project yet.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -224,7 +319,7 @@ export default function CodeProcessesTable({
           <ProjectCard
             key={p.key}
             project={p}
-            onOpen={() => setSelected(p.key)}
+            onOpen={() => openProjectView(p.key)}
             onArchive={p.path ? () => toggleArchive(p, true) : undefined}
           />
         ))}
@@ -249,7 +344,7 @@ export default function CodeProcessesTable({
                 key={p.key}
                 project={p}
                 dimmed
-                onOpen={() => setSelected(p.key)}
+                onOpen={() => openProjectView(p.key)}
                 onUnarchive={() => toggleArchive(p, false)}
               />
             ))}
@@ -331,78 +426,43 @@ function ProjectCard({
   );
 }
 
-/** La table de sessions (l'ancienne liste plate), désormais TOUJOURS scopée à un projet. */
-function SessionsTable({ rows }: { rows: CodingProcessRow[] }) {
-  return (
-    <Table>
-      <THead>
-        <Th>Agent</Th>
-        <Th>Task</Th>
-        <Th className="hidden md:table-cell">Origin</Th>
-        <Th className="hidden lg:table-cell">Ran on</Th>
-        <Th>Stage</Th>
-        <Th align="right" className="hidden sm:table-cell">
-          Files
-        </Th>
-        <Th align="right" className="hidden sm:table-cell">
-          Cost
-        </Th>
-        <Th align="right">Age</Th>
-      </THead>
-      <tbody>
-        {rows.map((row) => (
-          <Tr key={`${row.kind}-${row.id}`}>
-            <Td>
-              <Link href={processHref(row)} className="flex items-center gap-2.5">
-                <AgentAvatar name={row.agentName ?? '?'} size="md" shape="round" />
-                <span className="truncate text-medium-14 leading-[1.2]! text-ink">
-                  {row.agentName ?? 'Unknown agent'}
-                </span>
-              </Link>
-            </Td>
-            <Td className="max-w-[320px]">
-              <Link
-                href={processHref(row)}
-                className="line-clamp-1 text-body-14 text-ink-2 transition-colors hover:text-ink"
-                title={row.task}
-              >
-                {row.task}
-              </Link>
-            </Td>
-            <Td className="hidden md:table-cell">
-              <MonoMicroTag tone="ink">{row.origin}</MonoMicroTag>
-            </Td>
-            {/* Quel CLI a REELLEMENT execute. Enregistre depuis toujours dans
-                cli_runs.provider : un run dont on ignore l executant ne peut
-                etre ni lu pour la securite ni attribue pour le cout. */}
-            <Td className="hidden lg:table-cell">
-              {row.providers.length > 0 ? (
-                <span className="flex flex-wrap gap-1">
-                  {row.providers.map((p) => (
-                    <MonoMicroTag key={p} tone="ink">
-                      {p}
-                    </MonoMicroTag>
-                  ))}
-                </span>
-              ) : (
-                <span className="text-mono-12 text-ink-4">—</span>
-              )}
-            </Td>
-            <Td>
-              <StatusPill variant={stageVariant(row.stage)} label={stageLabel(row.stage)} />
-            </Td>
-            <Td align="right" className="hidden text-mono-12 text-ink-3 sm:table-cell">
-              {row.filesChanged > 0 ? row.filesChanged : '—'}
-            </Td>
-            <Td align="right" className="hidden text-mono-12 text-ink-3 sm:table-cell">
-              {row.costUsd > 0 ? `$${row.costUsd.toFixed(2)}` : '—'}
-            </Td>
-            <Td align="right" className="text-mono-12 text-ink-4">
-              {relativeTime(row.activityAt)}
-            </Td>
-          </Tr>
-        ))}
-      </tbody>
-    </Table>
-  );
+/**
+ * Charge puis rend le détail d'une session DANS le poste de travail projet.
+ * Le composant CodeProcessDetail exige un initialDetail (la page /code/[id]
+ * le fournit côté serveur) — embarqué, ce wrapper le charge côté client, avec
+ * un état de chargement honnête, puis remonte à chaque changement de session
+ * (key posée par l'appelant).
+ */
+function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { sessionId: string } }) {
+  const [detail, setDetail] = useState<CodingProcessDetailData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCodingProcessDetailAction(query).then((result) => {
+      if (cancelled) return;
+      if (result.ok) setDetail(result.data);
+      else setError(result.message);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (error) {
+    return (
+      <p className="rounded-xl border border-err/25 bg-paper px-6 py-10 text-center text-body-14 text-err">
+        {error}
+      </p>
+    );
+  }
+  if (!detail) {
+    return (
+      <p className="rounded-xl border border-rule-2 bg-paper px-6 py-10 text-center text-body-14 text-ink-4">
+        Loading session…
+      </p>
+    );
+  }
+  return <CodeProcessDetail query={query} initialDetail={detail} embedded />;
 }
