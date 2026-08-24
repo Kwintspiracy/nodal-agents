@@ -23,7 +23,10 @@ import {
   channelAllowedConversations,
   getChannelBinding,
 } from '@nodal-agents/db';
-import { parseApprovalCallbackData } from '../../telegram/approval-callback.ts';
+import {
+  parseApprovalCallbackData,
+  type ApprovalCallbackDecision,
+} from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -116,7 +119,7 @@ export type SlackApprovalInteractionResult =
   | { handled: false; reason: string };
 
 export async function handleSlackApprovalInteraction(args: {
-  parsed: { approvalRequestId: string; decision: 'approve' | 'reject' };
+  parsed: { approvalRequestId: string; decision: ApprovalCallbackDecision };
   channelId: string;
   channelType: 'im' | 'channel';
   /** The agent whose gateway received this interaction — must own the resolved delivery target (defense in depth). */
@@ -126,6 +129,13 @@ export async function handleSlackApprovalInteraction(args: {
   env: RunnerEnv;
 }): Promise<SlackApprovalInteractionResult> {
   const { parsed, channelId, channelType, receivingAgentId, ack, deps, env } = args;
+
+  // Le flux « Toujours autoriser » (suffixes w/wc/wb) est Telegram-only pour
+  // l'instant — la carte Slack ne porte pas ce bouton : refus honnête.
+  if (parsed.decision !== 'approve' && parsed.decision !== 'reject') {
+    await ack.ephemeralReply('Standing rules can only be granted from the dashboard.');
+    return { handled: false, reason: 'unsupported_decision' };
+  }
 
   // SECURITY (mirrors discord's 2026-07-04 decision): approvals are DM-only
   // — a channel has multiple members who could tap the same button.

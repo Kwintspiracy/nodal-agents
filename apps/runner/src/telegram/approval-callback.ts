@@ -13,16 +13,23 @@
 // the decision was (or wasn't) persisted.
 
 import { eq } from '@nodal-agents/db';
-import { approvalRequests } from '@nodal-agents/db';
+import { approvalRequests, agents } from '@nodal-agents/db';
 import {
   answerTelegramCallback,
   editTelegramMessageText,
+  type TelegramInlineKeyboard,
   type TelegramUpdate,
 } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveApprovalDecision } from '../approvals/resolve.ts';
-import { APPROVAL_CALLBACK_PREFIX, resolveApprovalDeliveryTarget } from '../approvals/notify.ts';
+import {
+  APPROVAL_CALLBACK_PREFIX,
+  APPROVAL_BUTTON_LABELS,
+  buildApprovalCardBody,
+  resolveApprovalDeliveryTarget,
+} from '../approvals/notify.ts';
+import { upsertAutoApproveRule } from '../approvals/rules.ts';
 
 export interface HandleApprovalCallbackArgs {
   update: TelegramUpdate;
@@ -35,18 +42,42 @@ export interface HandleApprovalCallbackArgs {
 
 export type ApprovalCallbackResult =
   | { handled: true; decision: 'approve' | 'reject'; jobId: string }
+  // Le flux « Toujours autoriser » a deux étapes intermédiaires qui n'ont
+  // rien résolu : la question de confirmation affichée, et la carte
+  // restaurée après un « Back ». Elles sont TRAITÉES (le tap a eu un effet
+  // visible) sans porter de décision.
+  | { handled: true; decision: 'always_confirm_shown' | 'card_restored'; jobId: string }
   | { handled: false; reason: string };
 
-/** Parse `apr:<uuid>:<a|r>` → { id, decision }, or null if it isn't ours / malformed. */
+export type ApprovalCallbackDecision =
+  | 'approve'
+  | 'reject'
+  /** 1er tap sur 🔁 — afficher la question de confirmation. */
+  | 'always_ask'
+  /** Confirmation — écrire la règle auto_approve PUIS approuver. */
+  | 'always_confirm'
+  /** Annulation — restaurer la carte d'origine. */
+  | 'always_back';
+
+const DECISION_BY_SUFFIX: Record<string, ApprovalCallbackDecision> = {
+  a: 'approve',
+  r: 'reject',
+  w: 'always_ask',
+  wc: 'always_confirm',
+  wb: 'always_back',
+};
+
+/** Parse `apr:<uuid>:<a|r|w|wc|wb>` → { id, decision }, or null if it isn't ours / malformed. */
 export function parseApprovalCallbackData(
   data: string | undefined,
-): { approvalRequestId: string; decision: 'approve' | 'reject' } | null {
+): { approvalRequestId: string; decision: ApprovalCallbackDecision } | null {
   if (!data) return null;
   const parts = data.split(':');
   if (parts.length !== 3 || parts[0] !== APPROVAL_CALLBACK_PREFIX) return null;
   const [, id, d] = parts;
-  if (!id || (d !== 'a' && d !== 'r')) return null;
-  return { approvalRequestId: id, decision: d === 'a' ? 'approve' : 'reject' };
+  const decision = d ? DECISION_BY_SUFFIX[d] : undefined;
+  if (!id || !decision) return null;
+  return { approvalRequestId: id, decision };
 }
 
 export async function handleApprovalCallback(
@@ -89,8 +120,10 @@ export async function handleApprovalCallback(
       id: approvalRequests.id,
       jobId: approvalRequests.jobId,
       agentId: approvalRequests.agentId,
+      entityId: approvalRequests.entityId,
       status: approvalRequests.status,
       toolName: approvalRequests.toolName,
+      toolInput: approvalRequests.toolInput,
     })
     .from(approvalRequests)
     .where(eq(approvalRequests.id, parsed.approvalRequestId))
@@ -140,6 +173,137 @@ export async function handleApprovalCallback(
       });
     }
     return { handled: false, reason: 'already_resolved' };
+  }
+
+  // ── Flux « Toujours autoriser » (lot approbations, 24/08) ────────────────
+  // Un grant permanent mérite un second geste délibéré (même règle que le
+  // ConfirmDialog du web) : le 1er tap ÉDITE la carte en question de
+  // confirmation, rien n'est résolu ; « Back » restaure la carte d'origine à
+  // l'identique ; la confirmation écrit la règle AVANT d'approuver — l'ordre
+  // inverse laisserait croire à un grant permanent qui n'existe pas si
+  // l'écriture de la règle échouait.
+
+  if (parsed.decision === 'always_ask') {
+    if (messageId !== undefined) {
+      await editTelegramMessageText({
+        botToken,
+        chatId: jobChatId,
+        messageId,
+        text:
+          `⚠️ Always allow ${approval.toolName} for this agent?\n\n` +
+          `It will run without asking, whatever its arguments. ` +
+          `Revocable anytime from the agent's Autonomy tab.`,
+        inlineKeyboard: [
+          [
+            {
+              text: '✅ Yes, always',
+              callback_data: `${APPROVAL_CALLBACK_PREFIX}:${approval.id}:wc`,
+            },
+            { text: '↩ Back', callback_data: `${APPROVAL_CALLBACK_PREFIX}:${approval.id}:wb` },
+          ],
+        ],
+      });
+    }
+    await answerTelegramCallback(botToken, cb.id, 'One more tap to confirm.');
+    return { handled: true, decision: 'always_confirm_shown', jobId: approval.jobId };
+  }
+
+  if (parsed.decision === 'always_back') {
+    // entityId nullable au schéma (legacy) : sans lui, impossible de
+    // reconstruire l'explication (contexte MCP) — on retire juste la question.
+    if (!approval.entityId) {
+      if (messageId !== undefined) {
+        await editTelegramMessageText({
+          botToken,
+          chatId: jobChatId,
+          messageId,
+          text: `⏳ Still pending — ${approval.toolName}. Resolve it from the dashboard.`,
+        });
+      }
+      await answerTelegramCallback(botToken, cb.id);
+      return { handled: true, decision: 'card_restored', jobId: approval.jobId };
+    }
+    if (messageId !== undefined) {
+      const [agentRow] = approval.agentId
+        ? await deps.db
+            .select({ name: agents.name })
+            .from(agents)
+            .where(eq(agents.id, approval.agentId))
+            .limit(1)
+        : [];
+      const body = await buildApprovalCardBody(deps.db, {
+        entityId: approval.entityId,
+        toolName: approval.toolName,
+        toolInput: approval.toolInput,
+        who: agentRow?.name ?? 'An agent',
+      });
+      const cbId = `${APPROVAL_CALLBACK_PREFIX}:${approval.id}`;
+      const inlineKeyboard: TelegramInlineKeyboard = [
+        [
+          { text: APPROVAL_BUTTON_LABELS.approve, callback_data: `${cbId}:a` },
+          { text: APPROVAL_BUTTON_LABELS.reject, callback_data: `${cbId}:r` },
+        ],
+        [{ text: APPROVAL_BUTTON_LABELS.always, callback_data: `${cbId}:w` }],
+      ];
+      await editTelegramMessageText({
+        botToken,
+        chatId: jobChatId,
+        messageId,
+        text: `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`,
+        inlineKeyboard,
+      });
+    }
+    await answerTelegramCallback(botToken, cb.id);
+    return { handled: true, decision: 'card_restored', jobId: approval.jobId };
+  }
+
+  if (parsed.decision === 'always_confirm') {
+    // Une règle est TOUJOURS agent-scopée ici — une approbation sans agent
+    // (théorique) n'a pas de cible : refus honnête plutôt qu'une règle
+    // entity-wide que personne n'a demandée.
+    if (!approval.agentId || !approval.entityId) {
+      await answerTelegramCallback(botToken, cb.id, 'No agent to bind — use the dashboard.', true);
+      return { handled: false, reason: 'no_agent_for_rule' };
+    }
+    // Règle D'ABORD : si elle échoue, l'approbation reste pending — visible et
+    // retentable — au lieu d'un appel approuvé sous un grant fantôme.
+    try {
+      await upsertAutoApproveRule(deps.db, {
+        entityId: approval.entityId,
+        agentId: approval.agentId,
+        toolName: approval.toolName,
+      });
+    } catch (err) {
+      console.error('[approval-callback] auto_approve rule write failed:', err);
+      await answerTelegramCallback(
+        botToken,
+        cb.id,
+        'Could not save the standing rule — nothing changed. Try the dashboard.',
+        true,
+      );
+      return { handled: false, reason: 'rule_write_failed' };
+    }
+
+    const confirmed = await resolveApprovalDecision(deps, env, {
+      approvalRequestId: parsed.approvalRequestId,
+      decision: 'approve',
+      resolvedBy: 'telegram',
+      notes: 'Always allowed from the Telegram card.',
+    });
+    if (!confirmed.ok) {
+      await answerTelegramCallback(botToken, cb.id, 'Could not apply — try the dashboard.', true);
+      return { handled: false, reason: confirmed.code };
+    }
+    await answerTelegramCallback(botToken, cb.id, '✅ Always allowed');
+    if (messageId !== undefined) {
+      await editTelegramMessageText({
+        botToken,
+        chatId: jobChatId,
+        messageId,
+        text: `✅ Approved — ${approval.toolName} will now run without asking for this agent.`,
+      });
+    }
+    return { handled: true, decision: 'approve', jobId: confirmed.jobId };
   }
 
   const result = await resolveApprovalDecision(deps, env, {

@@ -83,3 +83,20 @@ describe('computeApprovalImpactLine — other tools (unchanged shape)', () => {
     expect(line).toContain('scripts/run_workflow.py');
   });
 });
+
+describe('computeApprovalImpactLine — code_task (lot approbations 24/08)', () => {
+  it('ne dit plus « irreversible or destructive » : les fichiers sont checkpointés, les commandes non', () => {
+    const line = computeApprovalImpactLine('code_task', { task: 'add a button' });
+    expect(line).toBe(
+      'Runs a coding agent that edits files in the workspace. ' +
+        'File changes are checkpointed first and can be reverted; commands it runs are not.',
+    );
+    expect(line).not.toContain('irreversible');
+  });
+
+  it('un outil inconnu garde la ligne catch-all', () => {
+    expect(computeApprovalImpactLine('mystery_tool', {})).toBe(
+      'mystery_tool: irreversible or destructive action.',
+    );
+  });
+});

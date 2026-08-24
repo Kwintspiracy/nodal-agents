@@ -52,6 +52,14 @@ export interface ApprovalCard {
   text: string;
   approveLabel: string;
   rejectLabel: string;
+  /**
+   * Optional third action: « toujours autoriser » (writes a standing
+   * auto-approve rule after an in-channel confirmation step). Suffixed `:w`
+   * on the callbackId. Adapters that don't render it (Discord/Slack today —
+   * the confirm-by-message-edit flow is Telegram-only for now) simply keep
+   * their two buttons; absent = the exact pre-existing card.
+   */
+  alwaysLabel?: string;
   callbackId: string;
 }
 
