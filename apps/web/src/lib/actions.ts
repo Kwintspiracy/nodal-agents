@@ -11432,6 +11432,13 @@ export type CodingProcessDetail = {
   activity: CodingActivityItem[];
   verdicts: CodingVerdictView[];
   changes: CodingFileChangeGroup[];
+  /**
+   * Tous les jobs du pipeline (racine + délégués). Sert au client à filtrer
+   * les approbations en attente (`listApprovalsAction`) qui appartiennent à
+   * CE process — la carte d'approbation inline de /code/[id] (punch list
+   * V1.1). Vide pour une session de chat (pas de jobs).
+   */
+  pipelineJobIds: string[];
 };
 
 const CodingProcessDetailSchema = z.union([
@@ -11805,6 +11812,7 @@ export async function getCodingProcessDetailAction(
         activity,
         verdicts,
         changes,
+        pipelineJobIds: allRelevantIds,
       });
     }
 
@@ -11873,6 +11881,7 @@ export async function getCodingProcessDetailAction(
       activity: [],
       verdicts: [],
       changes: [],
+      pipelineJobIds: [],
     });
   } catch (err) {
     console.error('[getCodingProcessDetailAction]', err);
