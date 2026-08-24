@@ -1292,17 +1292,21 @@ export async function browseServerFoldersAction(
     let requested = rawPath?.trim() ?? '';
     if (!requested) {
       if (process.platform === 'win32') {
-        // Racines Windows = les lettres de lecteur présentes.
-        const dirs: ServerFolderEntry[] = [];
-        for (let code = 65; code <= 90; code++) {
-          const drive = `${String.fromCharCode(code)}:\\`;
-          try {
-            await fsAccess(drive);
-            dirs.push({ name: drive, path: drive });
-          } catch {
-            // lettre non montée
-          }
-        }
+        // Racines Windows = les lettres de lecteur présentes. Sondées en
+        // PARALLÈLE : un lecteur réseau mappé mais injoignable peut bloquer
+        // plusieurs secondes, et en séquentiel il retiendrait les 25 autres.
+        const probes = await Promise.all(
+          Array.from({ length: 26 }, (_, i) => {
+            const drive = `${String.fromCharCode(65 + i)}:\\`;
+            return fsAccess(drive).then(
+              () => drive,
+              () => null,
+            );
+          }),
+        );
+        const dirs: ServerFolderEntry[] = probes
+          .filter((d): d is string => d !== null)
+          .map((d) => ({ name: d, path: d }));
         return ok({ path: null, parent: null, home, dirs, truncated: false });
       }
       // POSIX n'a pas de notion de lecteurs : la racine EST '/'.
