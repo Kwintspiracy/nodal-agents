@@ -20,8 +20,9 @@
 // the 'coding' stage — same interval-effect shape as CodeProcessesTable's
 // list poller.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { diffLines } from '@/lib/line-diff';
 import {
   getCodingProcessDetailAction,
   listApprovalsAction,
@@ -107,9 +108,16 @@ function PathTail({
 export default function CodeProcessDetail({
   query,
   initialDetail,
+  embedded = false,
 }: {
   query: { jobId: string } | { sessionId: string };
   initialDetail: CodingProcessDetailData;
+  /**
+   * true = rendu DANS le poste de travail projet (/code, rail de sessions à
+   * gauche) : pas de lien « ← Code », pas de titre projet (le contexte projet
+   * vit au-dessus) — le titre redevient l'agent, acteur de la session.
+   */
+  embedded?: boolean;
 }) {
   const [detail, setDetail] = useState(initialDetail);
   // Synced in an effect, never during render (react-hooks/refs).
@@ -154,13 +162,6 @@ export default function CodeProcessDetail({
 
   const { header, activity, verdicts, changes } = detail;
 
-  // Selected file for the central panel. Derived at render time (never an
-  // effect): falls back to the first file whenever the current selection
-  // isn't in the list — covers both the initial mount and a poll that
-  // changed the file set, with no synchronous setState-in-effect needed.
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-  const selectedGroup = changes.find((g) => g.filePath === selectedFilePath) ?? changes[0] ?? null;
-
   // Agent filter for the Activity trail — only worth showing once delegation
   // actually happened (root + at least one distinct delegated agent).
   const [agentFilter, setAgentFilter] = useState('all');
@@ -175,14 +176,28 @@ export default function CodeProcessDetail({
 
   return (
     <div className="space-y-6">
-      <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
-        ← Code
-      </Link>
+      {!embedded && (
+        <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
+          ← Code
+        </Link>
+      )}
 
-      {/* Header */}
+      {/* Header — le PROJET d'abord (décision Quentin 25/08 : « si j'ouvre un
+          projet, la chose importante c'est le projet ») ; l'agent devient un
+          acteur, en tag. Sans projet dérivable — ou en mode embarqué, où le
+          projet titre déjà le poste de travail — l'agent reste le titre. */}
       <div className="space-y-4 rounded-xl border border-rule-2 bg-paper p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-medium-15 text-ink">{header.agentName ?? 'Unknown agent'}</span>
+          {!embedded && header.projectName ? (
+            <>
+              <span className="text-medium-15 text-ink" title={header.projectPath ?? undefined}>
+                {header.projectName}
+              </span>
+              <MonoMicroTag tone="agent">{header.agentName ?? 'Unknown agent'}</MonoMicroTag>
+            </>
+          ) : (
+            <span className="text-medium-15 text-ink">{header.agentName ?? 'Unknown agent'}</span>
+          )}
           <MonoMicroTag tone="ink">{header.origin}</MonoMicroTag>
           {/* Quel CLI a execute — la seule facon de lire un run pour la
               securite (les deux ne confinent pas pareil, cf. PR #6) et de lui
@@ -273,184 +288,343 @@ export default function CodeProcessDetail({
         </div>
       ))}
 
-      {/* Review verdicts — a synthesis, kept near the header, above the layout below. */}
-      {verdicts.length > 0 && (
-        <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
-          <h2 className="text-mono-11 tracking-wider text-ink-4 uppercase">Review verdicts</h2>
+      {/* v7 (spec Quentin 25/08) : UNE colonne, dans l'ordre — verdict de
+          review condensé (extensible), fichiers repliables façon PR review
+          (chevron + chemin + −N +N, diff à l'ouverture), puis l'activité
+          chronologique de TOUS les agents. Plus de sidebar de fichiers ni de
+          panneau central : les colonnes étroites, « ça ne va pas du tout ». */}
+      <VerdictsSection verdicts={verdicts} stage={header.stage} />
+
+      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+          Files{changes.length > 0 ? ` · ${changes.length}` : ''}
+        </h2>
+        {changes.length === 0 ? (
+          <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
+        ) : (
+          changes.map((group) => <FileDiffRow key={group.filePath} group={group} />)
+        )}
+      </div>
+
+      {/* Activity — la chronologie de la session, tous agents confondus. */}
+      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+          Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
+        </h2>
+        {agentFilters.length > 1 && (
+          <div className="border-b border-rule-2 px-4 py-2.5">
+            <PillTabs
+              tabs={[
+                { value: 'all', label: 'All', count: totalCalls },
+                ...agentFilters.map((a) => ({ value: a.key, label: a.label, count: a.count })),
+              ]}
+              value={agentFilter}
+              onChange={setAgentFilter}
+              variant="inset"
+            />
+          </div>
+        )}
+        {activity.length === 0 ? (
+          <p className="px-4 py-6 text-body-13 text-ink-4">
+            {header.kind === 'chat'
+              ? "Chat sessions don't record a tool-call trail yet, only their run history."
+              : 'No activity recorded yet.'}
+          </p>
+        ) : (
+          <div className="max-h-[70vh] overflow-y-auto">
+            {visibleActivity.map((item, i) =>
+              item.kind === 'turn' ? (
+                <TurnMarkerRow key={`turn-${i}`} item={item} />
+              ) : (
+                <ActivityRow key={item.id} tc={item} />
+              ),
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Review verdict — condensé d'abord, complet sur demande ──────────────────
+
+/** Le statut condensé d'une review — lisible en une demi-seconde. */
+function verdictStatus(verdicts: CodingVerdictView[], stage: string) {
+  if (verdicts.length === 0) {
+    if (stage === 'review') return { variant: 'run' as StatusVariant, label: 'Review in progress' };
+    return null;
+  }
+  const last = verdicts[verdicts.length - 1]!;
+  return last.verdict === 'approve'
+    ? { variant: 'done' as StatusVariant, label: 'Approved' }
+    : { variant: 'warn' as StatusVariant, label: 'Changes requested' };
+}
+
+function VerdictsSection({ verdicts, stage }: { verdicts: CodingVerdictView[]; stage: string }) {
+  const [open, setOpen] = useState(false);
+  const status = verdictStatus(verdicts, stage);
+  if (!status) return null;
+  const last = verdicts[verdicts.length - 1] ?? null;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+      <DisclosureButton
+        open={open}
+        onClick={() => verdicts.length > 0 && setOpen((v) => !v)}
+        className="w-full px-4 py-3"
+      >
+        <span className="text-mono-11 uppercase tracking-wider text-ink-4">Review</span>
+        <StatusPill variant={status.variant} label={status.label} />
+        {last?.summary && !open && (
+          <span className="min-w-0 truncate text-body-13 text-ink-3">{last.summary}</span>
+        )}
+        {verdicts.length > 1 && (
+          <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
+            {verdicts.length} verdicts
+          </span>
+        )}
+      </DisclosureButton>
+      {open && (
+        <div className="space-y-3 border-t border-rule-2 px-4 py-4">
           {verdicts.map((v, i) => (
             <VerdictCard key={i} verdict={v} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Files sidebar + central panel (selected file's diff, then Activity). */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr] lg:items-start">
-        <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper lg:sticky lg:top-6">
-          <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-            Files{changes.length > 0 ? ` · ${changes.length}` : ''}
-          </h2>
-          {changes.length === 0 ? (
-            <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
-          ) : (
-            <div className="max-h-[70vh] overflow-y-auto">
-              {changes.map((group) => (
-                <FileListRow
-                  key={group.filePath}
-                  group={group}
-                  active={group.filePath === selectedGroup?.filePath}
-                  onSelect={() => setSelectedFilePath(group.filePath)}
-                />
-              ))}
-            </div>
-          )}
+// ─── Fichiers repliables façon PR review (spec Quentin, image CodeRabbit) ────
+
+function FileDiffRow({ group }: { group: CodingFileChangeGroup }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-rule-2 last:border-b-0">
+      <DisclosureButton
+        open={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-4 py-2.5"
+      >
+        <PathTail
+          text={group.filePath}
+          className="min-w-0 flex-1 font-mono text-body-13 text-ink"
+        />
+        <span className="shrink-0 text-mono-11">
+          {group.removedLines > 0 && <span className="text-err">−{group.removedLines}</span>}{' '}
+          {group.addedLines > 0 && <span className="text-ok">+{group.addedLines}</span>}
+        </span>
+      </DisclosureButton>
+      {open && (
+        <div className="border-t border-rule-2">
+          <FileSplitDiff edits={group.edits} />
         </div>
+      )}
+    </div>
+  );
+}
 
-        <div className="min-w-0 space-y-6">
-          {selectedGroup && (
-            <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-              <h2 className="border-b border-rule-2 px-4 py-3">
-                <PathTail
-                  text={selectedGroup.filePath}
-                  className="font-mono text-body-13 text-ink"
-                />
-              </h2>
-              <div className="max-h-[70vh] space-y-3 overflow-y-auto px-4 py-4">
-                {selectedGroup.edits.map((edit, i) => (
-                  <EditHunk key={i} edit={edit} />
-                ))}
-              </div>
-            </div>
-          )}
+// ─── Split diff (spec Quentin 25/08, maquette CodeRabbit/GitHub) ─────────────
+// Le classique côte à côte ligne contre ligne : ancien à gauche (suppressions
+// en rouge), nouveau à droite (ajouts en vert), lignes alignées, cellule vide
+// grisée en face d'une ligne sans vis-à-vis, runs inchangés repliés en
+// « N unmodified lines ». Construit sur diffLines (LCS maison, line-diff.ts).
 
-          {/* Activity — compact secondary trail: metrics only, no content. */}
-          <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-            <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-              Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
-            </h2>
-            {agentFilters.length > 1 && (
-              <div className="border-b border-rule-2 px-4 py-2.5">
-                <PillTabs
-                  tabs={[
-                    { value: 'all', label: 'All', count: totalCalls },
-                    ...agentFilters.map((a) => ({ value: a.key, label: a.label, count: a.count })),
-                  ]}
-                  value={agentFilter}
-                  onChange={setAgentFilter}
-                  variant="inset"
-                />
+type SplitCell = { n: number; text: string; changed: boolean } | null;
+type SplitRow =
+  | { kind: 'line'; left: SplitCell; right: SplitCell }
+  | { kind: 'elided'; count: number };
+
+/** Apparie le script d'ops LCS en lignes gauche/droite alignées (style GitHub). */
+function buildSplitRows(oldText: string, newText: string): SplitRow[] {
+  const ops = diffLines(oldText, newText);
+  const rows: SplitRow[] = [];
+  let ln = 0; // numéro de ligne gauche (relatif au hunk)
+  let rn = 0; // numéro de ligne droite
+
+  let i = 0;
+  while (i < ops.length) {
+    const op = ops[i]!;
+    if (op.op === 'same') {
+      // Run de lignes inchangées — contexte de 3 de chaque côté, le reste replié.
+      let j = i;
+      while (j < ops.length && ops[j]!.op === 'same') j++;
+      const run = ops.slice(i, j);
+      const CONTEXT = 3;
+      const isFirst = i === 0;
+      const isLast = j === ops.length;
+      // En bord de fichier, un seul côté de contexte est utile.
+      const head = isFirst ? 0 : CONTEXT;
+      const tail = isLast ? 0 : CONTEXT;
+      run.forEach((line, k) => {
+        const inHead = k < head;
+        const inTail = k >= run.length - tail;
+        if (run.length > head + tail + 1 && !inHead && !inTail) {
+          ln++;
+          rn++;
+          const prev = rows[rows.length - 1];
+          if (prev && prev.kind === 'elided') prev.count++;
+          else rows.push({ kind: 'elided', count: 1 });
+        } else {
+          ln++;
+          rn++;
+          rows.push({
+            kind: 'line',
+            left: { n: ln, text: line.text, changed: false },
+            right: { n: rn, text: line.text, changed: false },
+          });
+        }
+      });
+      i = j;
+      continue;
+    }
+    // Run de changements : les suppressions puis les ajouts contigus sont
+    // appariés rangée par rangée — l'excédent d'un côté fait face à du vide.
+    const removes: string[] = [];
+    const adds: string[] = [];
+    while (i < ops.length && ops[i]!.op !== 'same') {
+      if (ops[i]!.op === 'remove') removes.push(ops[i]!.text);
+      else adds.push(ops[i]!.text);
+      i++;
+    }
+    const len = Math.max(removes.length, adds.length);
+    for (let k = 0; k < len; k++) {
+      const left = k < removes.length ? { n: ++ln, text: removes[k]!, changed: true } : null;
+      const right = k < adds.length ? { n: ++rn, text: adds[k]!, changed: true } : null;
+      rows.push({ kind: 'line', left, right });
+    }
+  }
+  return rows;
+}
+
+function SplitDiffCell({ cell, side }: { cell: SplitCell; side: 'left' | 'right' }) {
+  // Cellule sans vis-à-vis : le hachuré sombre de la maquette, rendu en fond
+  // neutre appuyé — rien à lire de ce côté.
+  if (!cell) {
+    return (
+      <>
+        <span className="select-none border-r border-rule-2 bg-hover px-2" />
+        <span className="min-w-0 bg-hover" />
+      </>
+    );
+  }
+  const tone = cell.changed ? (side === 'left' ? 'bg-err/10' : 'bg-ok/10') : '';
+  const numTone = cell.changed
+    ? side === 'left'
+      ? 'bg-err/15 text-err'
+      : 'bg-ok/15 text-ok'
+    : 'text-ink-4';
+  return (
+    <>
+      <span
+        className={`select-none border-r border-rule-2 px-2 text-right font-mono text-mono-11 leading-[1.6] ${numTone}`}
+      >
+        {cell.n}
+      </span>
+      {/* min-w-0 + overflow-hidden : une ligne plus longue que sa DEMI-colonne
+          est coupée au bord (comme GitHub/CodeRabbit), au lieu de déborder en
+          peinture sur la moitié d'en face — le bug du 1er rendu. Le texte
+          complet reste lisible au survol (title). */}
+      <span
+        title={cell.text}
+        className={`min-w-0 overflow-hidden whitespace-pre px-2 font-mono text-mono-12 leading-[1.6] text-ink-2 ${tone}`}
+      >
+        {cell.text || ' '}
+      </span>
+    </>
+  );
+}
+
+const SPLIT_ROW_LIMIT = 80;
+
+/**
+ * Le diff d'UN fichier : tous ses hunks dans UNE seule grille (le rendu par
+ * hunk séparé donnait des mini-blocs déconnectés qui repartaient chacun à la
+ * ligne 1 — illisible), séparés par une barre « ⋯ », numérotation continue
+ * par colonne, un seul « Show all ».
+ */
+function FileSplitDiff({ edits }: { edits: CodingChangeView[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const rows = useMemo(() => {
+    const out: Array<SplitRow | { kind: 'hunk-sep' }> = [];
+    let lnOffset = 0;
+    let rnOffset = 0;
+    edits.forEach((edit, idx) => {
+      if (idx > 0) out.push({ kind: 'hunk-sep' });
+      const hunkRows = buildSplitRows(edit.oldText ?? '', edit.newText ?? '');
+      let maxL = 0;
+      let maxR = 0;
+      for (const r of hunkRows) {
+        if (r.kind !== 'line') {
+          out.push(r);
+          continue;
+        }
+        const left = r.left ? { ...r.left, n: r.left.n + lnOffset } : null;
+        const right = r.right ? { ...r.right, n: r.right.n + rnOffset } : null;
+        if (r.left) maxL = Math.max(maxL, r.left.n);
+        if (r.right) maxR = Math.max(maxR, r.right.n);
+        out.push({ kind: 'line', left, right });
+      }
+      lnOffset += maxL;
+      rnOffset += maxR;
+    });
+    return out;
+  }, [edits]);
+
+  const visible = expanded ? rows : rows.slice(0, SPLIT_ROW_LIMIT);
+  const hasMore = rows.length > SPLIT_ROW_LIMIT;
+
+  return (
+    <div>
+      <div className="overflow-x-auto bg-canvas">
+        <div className="grid min-w-[560px] grid-cols-[3rem_minmax(0,1fr)_3rem_minmax(0,1fr)]">
+          {visible.map((row, i) =>
+            row.kind === 'hunk-sep' ? (
+              <div
+                key={i}
+                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-0.5 text-center font-mono text-mono-11 text-ink-4"
+              >
+                ⋯
               </div>
-            )}
-            {activity.length === 0 ? (
-              <p className="px-4 py-6 text-body-13 text-ink-4">
-                {header.kind === 'chat'
-                  ? "Chat sessions don't record a tool-call trail yet, only their run history."
-                  : 'No activity recorded yet.'}
-              </p>
+            ) : row.kind === 'elided' ? (
+              <div
+                key={i}
+                className="col-span-4 border-y border-rule-2 bg-hover px-3 py-1 font-mono text-mono-11 text-ink-4"
+              >
+                {row.count} unmodified line{row.count === 1 ? '' : 's'}
+              </div>
             ) : (
-              <div className="max-h-[70vh] overflow-y-auto">
-                {visibleActivity.map((item, i) =>
-                  item.kind === 'turn' ? (
-                    <TurnMarkerRow key={`turn-${i}`} item={item} />
-                  ) : (
-                    <ActivityRow key={item.id} tc={item} />
-                  ),
-                )}
+              <div key={i} className="col-span-4 grid grid-cols-subgrid">
+                <SplitDiffCell cell={row.left} side="left" />
+                <SplitDiffCell cell={row.right} side="right" />
               </div>
-            )}
-          </div>
+            ),
+          )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ─── Files sidebar ──────────────────────────────────────────────────────────
-
-/** Splits on the last path separator (either / or \) — CLI tool_input paths are POSIX, Nodal file_edit/file_write can be either. */
-function splitFilePath(path: string): { dir: string; base: string } {
-  const idx = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  if (idx === -1) return { dir: '', base: path };
-  return { dir: path.slice(0, idx), base: path.slice(idx + 1) };
-}
-
-function FileListRow({
-  group,
-  active,
-  onSelect,
-}: {
-  group: CodingFileChangeGroup;
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const { dir, base } = splitFilePath(group.filePath);
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') onSelect();
-      }}
-      className={`flex cursor-pointer items-center gap-2 border-l-2 px-4 py-2.5 transition-colors ${
-        active ? 'border-ink bg-hover' : 'border-transparent hover:bg-hover'
-      }`}
-    >
-      <div className="min-w-0 flex-1">
-        <PathTail text={base} title={group.filePath} className="font-mono text-body-13 text-ink" />
-        {dir && <PathTail text={dir} title={group.filePath} className="text-mono-11 text-ink-4" />}
-      </div>
-      <div className="shrink-0 text-mono-11">
-        <span className="text-ok">+{group.addedLines}</span>{' '}
-        <span className="text-err">−{group.removedLines}</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Central panel: selected file's diff ───────────────────────────────────
-
-function prefixLines(text: string, prefix: string): string {
-  return text
-    .split('\n')
-    .map((l) => `${prefix} ${l}`)
-    .join('\n');
-}
-
-function EditHunk({ edit }: { edit: CodingChangeView }) {
-  return (
-    <div className="space-y-1.5">
-      {edit.oldText !== null && (
-        <CollapsibleLines text={prefixLines(edit.oldText, '−')} tone="remove" />
-      )}
-      {edit.newText !== null && (
-        <CollapsibleLines text={prefixLines(edit.newText, '+')} tone="add" />
+      {hasMore && !expanded && (
+        <div className="px-4 py-2">
+          <TextButton
+            onClick={() => setExpanded(true)}
+            className="text-body-12 text-ink-4 underline hover:text-ink-3"
+          >
+            Show all ({rows.length} lines)
+          </TextButton>
+        </div>
       )}
     </div>
   );
 }
 
-function CollapsibleLines({
-  text,
-  tone = 'default',
-}: {
-  text: string;
-  tone?: 'default' | 'add' | 'remove';
-}) {
+/** Bloc brut repliable — utilisé par Activity pour l'input/output JSON. */
+function CollapsibleLines({ text }: { text: string; tone?: 'default' }) {
   const lines = text.split('\n');
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? lines : lines.slice(0, LINE_LIMIT);
   const hasMore = lines.length > LINE_LIMIT;
-  const toneClass =
-    tone === 'add'
-      ? 'bg-ok-bg text-ok'
-      : tone === 'remove'
-        ? 'bg-warn-bg text-err'
-        : 'bg-hover text-ink-2';
   return (
     <div>
-      <pre
-        className={`overflow-x-auto rounded-md px-3 py-2 text-mono-12 leading-[1.5]! whitespace-pre ${toneClass}`}
-      >
+      <pre className="overflow-x-auto rounded-md bg-hover px-3 py-2 text-mono-12 leading-[1.5]! whitespace-pre text-ink-2">
         {visible.join('\n')}
       </pre>
       {hasMore && !expanded && (
