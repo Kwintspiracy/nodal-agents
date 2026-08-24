@@ -179,10 +179,21 @@ export default function CodeProcessDetail({
         ← Code
       </Link>
 
-      {/* Header */}
+      {/* Header — le PROJET d'abord (décision Quentin 25/08 : « si j'ouvre un
+          projet, la chose importante c'est le projet ») ; l'agent devient un
+          acteur, en tag. Sans projet dérivable, l'agent reste le titre. */}
       <div className="space-y-4 rounded-xl border border-rule-2 bg-paper p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-medium-15 text-ink">{header.agentName ?? 'Unknown agent'}</span>
+          {header.projectName ? (
+            <>
+              <span className="text-medium-15 text-ink" title={header.projectPath ?? undefined}>
+                {header.projectName}
+              </span>
+              <MonoMicroTag tone="agent">{header.agentName ?? 'Unknown agent'}</MonoMicroTag>
+            </>
+          ) : (
+            <span className="text-medium-15 text-ink">{header.agentName ?? 'Unknown agent'}</span>
+          )}
           <MonoMicroTag tone="ink">{header.origin}</MonoMicroTag>
           {/* Quel CLI a execute — la seule facon de lire un run pour la
               securite (les deux ne confinent pas pareil, cf. PR #6) et de lui

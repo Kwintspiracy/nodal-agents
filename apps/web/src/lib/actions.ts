@@ -24,6 +24,7 @@ import {
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath, access as fsAccess } from 'node:fs/promises';
+import { deriveProjectRoot, projectNameFromPath } from './code-projects.ts';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -58,6 +59,7 @@ import {
   webhookTriggers,
   entityLlmKeys,
   agentWorkspaces,
+  codeProjectArchives,
   entities,
   entityMembers,
   users,
@@ -10782,6 +10784,13 @@ export type CodingProcessRow = {
   providers: string[];
   filesChanged: number;
   activityAt: string | null;
+  /**
+   * Racine de projet dérivée (repo git des fichiers touchés, repli workspace).
+   * null → tiroir « Autres » de la vue par projet. Jamais stockée en base.
+   */
+  projectPath: string | null;
+  /** Nom d'affichage du projet (basename de projectPath). */
+  projectName: string | null;
 };
 
 const REVIEW_APPROVE_MARKER = '"verdict":"approve"';
@@ -11267,17 +11276,29 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       // Nodal form = the same file) so the count never doubles.
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const filesByRoot = new Map<string, Set<string>>();
+      // Les chemins BRUTS (avant canonicalisation) par pipeline — la
+      // dérivation de projet a besoin de la forme absolue quand elle existe.
+      const rawPathsByRoot = new Map<string, string[]>();
       for (const [root, calls] of callsByRoot) {
         if (!candidateJobIds.includes(root)) continue;
         const set = new Set<string>();
+        const raws: string[] = [];
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
           if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
-          if (fp) set.add(canonicalChangePath(fp, workspaceRoots));
+          if (fp) {
+            set.add(canonicalChangePath(fp, workspaceRoots));
+            raws.push(fp);
+          }
         }
         filesByRoot.set(root, set);
+        rawPathsByRoot.set(root, raws);
       }
+
+      // Un seul cache git pour tout l'écran — les pipelines d'un même repo
+      // partagent leurs remontées de dossiers.
+      const gitMemo = new Map<string, string | null>();
 
       // review_verdict outputs — for each job AND its direct children.
       const verdictRows =
@@ -11301,25 +11322,34 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         verdictOutputsByJob.set(v.jobId, arr);
       }
 
-      jobRows = jobs.map((j) => ({
-        id: j.id,
-        kind: 'job' as const,
-        agentId: j.agentId,
-        agentName: j.agentName,
-        origin: j.channel,
-        status: j.status,
-        stage: deriveJobStage(
-          j.status,
-          j.id,
-          childIdsByParent.get(j.id) ?? [],
-          verdictOutputsByJob,
-        ),
-        task: truncateForList(j.task, 120),
-        costUsd: costByRoot.get(j.id) ?? 0,
-        providers: Array.from(providersByRoot.get(j.id) ?? []).sort(),
-        filesChanged: filesByRoot.get(j.id)?.size ?? 0,
-        activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
-      }));
+      jobRows = jobs.map((j) => {
+        const projectPath = deriveProjectRoot(
+          rawPathsByRoot.get(j.id) ?? [],
+          workspaceRoots,
+          gitMemo,
+        );
+        return {
+          id: j.id,
+          kind: 'job' as const,
+          agentId: j.agentId,
+          agentName: j.agentName,
+          origin: j.channel,
+          status: j.status,
+          stage: deriveJobStage(
+            j.status,
+            j.id,
+            childIdsByParent.get(j.id) ?? [],
+            verdictOutputsByJob,
+          ),
+          task: truncateForList(j.task, 120),
+          costUsd: costByRoot.get(j.id) ?? 0,
+          providers: Array.from(providersByRoot.get(j.id) ?? []).sort(),
+          filesChanged: filesByRoot.get(j.id)?.size ?? 0,
+          activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
+          projectPath,
+          projectName: projectPath ? projectNameFromPath(projectPath) : null,
+        };
+      });
     }
 
     // Chat runtime sessions are EXCLUDED on purpose (Quentin, 19/08): the
@@ -11647,11 +11677,15 @@ export async function getCodingProcessDetailAction(
       // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const changeGroups = new Map<string, CodingFileChangeGroup>();
+      // Chemins BRUTS pour la dérivation de projet du header (même règle que
+      // la liste — les deux surfaces doivent nommer le même projet).
+      const rawChangePaths: string[] = [];
       for (const tc of toolCallRows) {
         // A refused call wrote nothing — it must not appear as a change.
         if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
+        rawChangePaths.push(change.filePath);
         const canonical = canonicalChangePath(change.filePath, workspaceRoots);
         const group = changeGroups.get(canonical) ?? {
           filePath: canonical,
@@ -11788,6 +11822,12 @@ export async function getCodingProcessDetailAction(
       const pipelineDurationMs =
         jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
 
+      const detailProjectPath = deriveProjectRoot(
+        rawChangePaths,
+        workspaceRoots,
+        new Map<string, string | null>(),
+      );
+
       return ok({
         header: {
           id: job.id,
@@ -11799,6 +11839,8 @@ export async function getCodingProcessDetailAction(
           stage,
           task: job.task,
           costUsd,
+          projectPath: detailProjectPath,
+          projectName: detailProjectPath ? projectNameFromPath(detailProjectPath) : null,
           // Les CLI qui ont REELLEMENT tourne dans ce pipeline, tries pour que
           // l ordre ne depende pas de celui des lignes.
           providers: Array.from(new Set(cliRunRows.map((r) => r.provider))).sort(),
@@ -11868,6 +11910,8 @@ export async function getCodingProcessDetailAction(
         stage: 'chat',
         task: 'Runtime chat session',
         costUsd: totalCost,
+        projectPath: null,
+        projectName: null,
         // Une session de runtime n a PAS de code_task, donc le provider n existe
         // que dans cli_runs — c est le cas ou la jointure est la seule source.
         providers: Array.from(new Set(runs.map((r) => r.provider))).sort(),
@@ -11886,6 +11930,62 @@ export async function getCodingProcessDetailAction(
   } catch (err) {
     console.error('[getCodingProcessDetailAction]', err);
     return fail('db_error', 'Failed to load process detail');
+  }
+}
+
+// ─── Archivage des projets Code (décision Quentin 25/08) ─────────────────────
+// Les projets sont dérivés, jamais stockés — seule l'ARCHIVE persiste : un
+// état d'UI (« sors ce projet de mon espace actif »), AUCUN effet sur le
+// dossier réel, réversible d'un clic.
+
+export async function listArchivedCodeProjectsAction(): Promise<ActionResult<string[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({ projectPath: codeProjectArchives.projectPath })
+      .from(codeProjectArchives)
+      .where(eq(codeProjectArchives.entityId, session.entityId));
+    return ok(rows.map((r) => r.projectPath));
+  } catch (err) {
+    console.error('[listArchivedCodeProjectsAction]', err);
+    return fail('db_error', 'Failed to load archived projects');
+  }
+}
+
+const SetCodeProjectArchivedSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  archived: z.boolean(),
+});
+
+export async function setCodeProjectArchivedAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCodeProjectArchivedSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    if (parsed.data.archived) {
+      await db
+        .insert(codeProjectArchives)
+        .values({ entityId: session.entityId, projectPath: parsed.data.projectPath })
+        .onConflictDoNothing();
+    } else {
+      await db
+        .delete(codeProjectArchives)
+        .where(
+          and(
+            eq(codeProjectArchives.entityId, session.entityId),
+            eq(codeProjectArchives.projectPath, parsed.data.projectPath),
+          ),
+        );
+    }
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCodeProjectArchivedAction]', err);
+    return fail('db_error', 'Failed to update project archive');
   }
 }
 

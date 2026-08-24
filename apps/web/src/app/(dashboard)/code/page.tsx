@@ -1,4 +1,4 @@
-import { listCodingProcessesAction } from '@/lib/actions.ts';
+import { listCodingProcessesAction, listArchivedCodeProjectsAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import CodeProcessesTable from './CodeProcessesTable.tsx';
 
@@ -6,15 +6,25 @@ import CodeProcessesTable from './CodeProcessesTable.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function CodePage() {
-  const result = await listCodingProcessesAction();
+  const [result, archivedResult] = await Promise.all([
+    listCodingProcessesAction(),
+    listArchivedCodeProjectsAction(),
+  ]);
   const rows = result.ok ? result.data : [];
+  // Vue PAR PROJET (décision Quentin 25/08) : le sous-titre compte les
+  // projets, pas les sessions — c'est l'unité que la page raconte désormais.
+  const projectCount = new Set(rows.map((r) => r.projectPath ?? '__other__')).size;
 
   return (
     <PageShell
       title="Code"
-      subtitle={`${rows.length} coding process${rows.length !== 1 ? 'es' : ''}`}
+      subtitle={`${projectCount} project${projectCount !== 1 ? 's' : ''} · ${rows.length} session${rows.length !== 1 ? 's' : ''}`}
     >
-      <CodeProcessesTable initialRows={rows} error={!result.ok ? result.message : undefined} />
+      <CodeProcessesTable
+        initialRows={rows}
+        initialArchivedPaths={archivedResult.ok ? archivedResult.data : []}
+        error={!result.ok ? result.message : undefined}
+      />
     </PageShell>
   );
 }

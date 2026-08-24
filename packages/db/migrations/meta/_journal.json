@@ -575,6 +575,13 @@
       "when": 1786000003000,
       "tag": "0082_entities_auto_run_paused",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1786000004000,
+      "tag": "0083_code_project_archives",
+      "breakpoints": true
     }
   ]
 }
