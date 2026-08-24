@@ -3520,13 +3520,16 @@ function SettingsTab(props: {
                 maxLength={80}
                 className="w-28 shrink-0 !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
               />
-              <TextInput
-                type="text"
-                value={wsPath}
-                onChange={(e) => setWsPath(e.target.value)}
-                placeholder="/home/you/notes  or  C:\Users\you\docs"
-                className="min-w-0 flex-1 !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
-              />
+              {/* Chemin choisi via Browse… — lecture seule : le sélecteur est
+                  LE mode canonique (décision Quentin 24/08, plus de saisie
+                  manuelle), donc pas de champ éditable en doublon. */}
+              <code
+                className={`min-w-0 flex-1 truncate rounded-lg border border-rule-2 bg-hover px-3 py-2 text-mono-13 ${
+                  wsPath ? 'text-ink-2' : 'text-ink-4'
+                }`}
+              >
+                {wsPath || 'No folder chosen yet'}
+              </code>
               <PrimaryButton
                 variant="neutral"
                 onClick={() => setWsPickerOpen(true)}
@@ -3546,9 +3549,8 @@ function SettingsTab(props: {
             </div>
           </Field>
           <p className="text-body-12 text-ink-4">
-            Absolute path. Label is the prefix the agent uses (e.g.{' '}
-            <code className="font-mono">notes/file.md</code>). Leave label blank if a single folder
-            — label is then optional.
+            Pick a folder with Browse…. Label is the prefix the agent uses (e.g.{' '}
+            <code className="font-mono">notes/file.md</code>).
           </p>
         </div>
 
