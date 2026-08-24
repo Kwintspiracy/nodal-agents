@@ -19,10 +19,11 @@ import {
   resolve as pathResolve,
   isAbsolute as pathIsAbsolute,
   sep as pathSep,
+  normalize as pathNormalize,
 } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { realpath as fsRealpath } from 'node:fs/promises';
+import { realpath as fsRealpath, access as fsAccess } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -1241,6 +1242,113 @@ export async function removeAgentWorkspaceAction(workspaceId: string): Promise<A
   } catch (err) {
     console.error('[removeAgentWorkspaceAction]', err);
     return fail('db_error', 'Failed to remove workspace');
+  }
+}
+
+// ─── Server folder browser ──────────────────────────────────────────────────────
+// Un navigateur web ne peut PAS livrer le chemin absolu d'un dossier local (le
+// sandbox le cache, même showDirectoryPicker). Le serveur Nodal tourne sur la
+// machine hôte : c'est donc LUI qui liste disques et dossiers, et la modale
+// « Add folder » navigue dedans (pattern Jellyfin/Portainer). Owner-only —
+// l'arborescence du disque appartient à l'hôte — et NOMS de dossiers
+// uniquement, jamais de fichiers ni de contenu.
+
+export type ServerFolderEntry = { name: string; path: string };
+
+export type ServerFolderListing = {
+  /** Chemin absolu normalisé listé, ou null quand on liste les racines (lecteurs Windows). */
+  path: string | null;
+  /** Chemin du dossier parent ; null à une racine (le UI retombe alors sur les lecteurs). */
+  parent: string | null;
+  /** Répertoire home de l'utilisateur serveur — raccourci UI. */
+  home: string;
+  dirs: ServerFolderEntry[];
+  /** true si la liste a été coupée à FOLDER_BROWSE_MAX_ENTRIES. */
+  truncated: boolean;
+};
+
+const FOLDER_BROWSE_MAX_ENTRIES = 500;
+
+export async function browseServerFoldersAction(
+  rawPath: string | null,
+): Promise<ActionResult<ServerFolderListing>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    // Owner-only, uniformément (même garde que les grants de scripts) : en
+    // local-trust l'unique utilisateur EST le propriétaire, le check passe.
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can browse server folders.');
+    }
+
+    const home = homedir();
+
+    let requested = rawPath?.trim() ?? '';
+    if (!requested) {
+      if (process.platform === 'win32') {
+        // Racines Windows = les lettres de lecteur présentes. Sondées en
+        // PARALLÈLE : un lecteur réseau mappé mais injoignable peut bloquer
+        // plusieurs secondes, et en séquentiel il retiendrait les 25 autres.
+        const probes = await Promise.all(
+          Array.from({ length: 26 }, (_, i) => {
+            const drive = `${String.fromCharCode(65 + i)}:\\`;
+            return fsAccess(drive).then(
+              () => drive,
+              () => null,
+            );
+          }),
+        );
+        const dirs: ServerFolderEntry[] = probes
+          .filter((d): d is string => d !== null)
+          .map((d) => ({ name: d, path: d }));
+        return ok({ path: null, parent: null, home, dirs, truncated: false });
+      }
+      // POSIX n'a pas de notion de lecteurs : la racine EST '/'.
+      requested = '/';
+    }
+
+    if (requested.length > 4096) return fail('validation_failed', 'Path too long');
+    if (!/^([A-Za-z]:[/\\]|\/|\\\\)/.test(requested)) {
+      return fail('validation_failed', 'Path must be absolute');
+    }
+    const target = pathNormalize(requested);
+
+    let entries;
+    try {
+      entries = await fsReaddir(target, { withFileTypes: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        return fail('not_found', `No such folder: ${target}`);
+      }
+      if (code === 'EPERM' || code === 'EACCES') {
+        return fail('forbidden', `The operating system denied access to ${target}`);
+      }
+      throw err;
+    }
+
+    let dirs: ServerFolderEntry[] = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => ({ name: e.name, path: pathJoin(target, e.name) }));
+    dirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    const truncated = dirs.length > FOLDER_BROWSE_MAX_ENTRIES;
+    if (truncated) dirs = dirs.slice(0, FOLDER_BROWSE_MAX_ENTRIES);
+
+    // À la racine d'un lecteur ('C:\') ou de '/' dirname est un point fixe :
+    // parent=null, et le UI retombe sur la liste des racines.
+    const parentPath = pathDirname(target);
+    const parent = parentPath === target ? null : parentPath;
+
+    return ok({ path: target, parent, home, dirs, truncated });
+  } catch (err) {
+    console.error('[browseServerFoldersAction]', err);
+    return fail('fs_error', 'Failed to browse server folders');
   }
 }
 
