@@ -322,20 +322,20 @@ describe('lectures sans argument — la session borne ce qui sort', () => {
   });
 
   it('les réglages d’espace lisent bien l’espace de la session', async () => {
-    // `getWorkspaceTimezoneAction` et `getLanCommandYoloAction` ne prennent
+    // `getWorkspaceTimezoneAction` et `getAutoRunPauseAction` ne prennent
     // aucun argument : la seule façon de se tromper d'espace est de ne pas
-    // filtrer du tout. On le vérifie sur le drapeau LAN, dont la valeur
-    // voisine est mise à `true` pour l'occasion.
-    const { getLanCommandYoloAction, getWorkspaceTimezoneAction } = await actions();
+    // filtrer du tout. On le vérifie sur le frein d'auto-exécution, dont la
+    // valeur voisine est mise à `true` pour l'occasion.
+    const { getAutoRunPauseAction, getWorkspaceTimezoneAction } = await actions();
     await testDb
       .update(entities)
-      .set({ lanCommandYolo: true })
+      .set({ autoRunPaused: true })
       .where(eq(entities.id, voisin.entityId));
 
-    const lan = await getLanCommandYoloAction();
-    expect(lan.ok, lan.ok ? '' : lan.message).toBe(true);
-    if (lan.ok) {
-      expect(lan.data.lanCommandYolo, 'le drapeau du voisin a été lu à la place du nôtre').toBe(
+    const pause = await getAutoRunPauseAction();
+    expect(pause.ok, pause.ok ? '' : pause.message).toBe(true);
+    if (pause.ok) {
+      expect(pause.data.autoRunPaused, 'le frein du voisin a été lu à la place du nôtre').toBe(
         false,
       );
     }

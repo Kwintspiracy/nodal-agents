@@ -218,8 +218,8 @@ interface Props {
   /** Every skill in the entity (Library + custom), used by the Skills tab to
    *  offer attach on top of the already-attached list. */
   allSkills: SkillRow[];
-  /** Whether the workspace owner has opted in to Yolo in non-local-trust mode. */
-  lanCommandYolo?: boolean;
+  /** Frein d'urgence du workspace (entities.auto_run_paused) — les règles Yolo par agent sont dormantes tant qu'il est enclenché. */
+  autoRunPaused?: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner?: boolean;
   /** Channels tab data (see ChannelsTabContent.tsx) — null cfg fields signal
@@ -245,7 +245,7 @@ export default function AgentComposer({
   jobs,
   attachedSkills,
   allSkills,
-  lanCommandYolo = false,
+  autoRunPaused = false,
   isOwner = false,
   channelsError,
   telegramCfg,
@@ -636,7 +636,7 @@ export default function AgentComposer({
               mcpServers={mcpServers}
               hasTelegramBot={!!agent.telegramBotToken}
               attachedSkills={attachedSkills}
-              lanCommandYolo={lanCommandYolo}
+              autoRunPaused={autoRunPaused}
               isOwner={isOwner}
               cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
             />
@@ -1550,7 +1550,7 @@ function AutonomyTab({
   mcpServers,
   hasTelegramBot,
   attachedSkills,
-  lanCommandYolo,
+  autoRunPaused,
   isOwner,
   cliDailyBudgetUsd,
 }: {
@@ -1559,7 +1559,7 @@ function AutonomyTab({
   mcpServers: AgentMcpServerRow[];
   hasTelegramBot: boolean;
   attachedSkills: SkillRow[];
-  lanCommandYolo: boolean;
+  autoRunPaused: boolean;
   isOwner: boolean;
   cliDailyBudgetUsd: number;
 }) {
@@ -1770,7 +1770,7 @@ function AutonomyTab({
         attachedSkills={attachedSkills}
         rules={rules}
         onRulesChange={setRules}
-        lanCommandYolo={lanCommandYolo}
+        autoRunPaused={autoRunPaused}
         isOwner={isOwner}
       />
 
@@ -1779,7 +1779,7 @@ function AutonomyTab({
         attachedSkills={attachedSkills}
         rules={rules}
         onRulesChange={setRules}
-        lanCommandYolo={lanCommandYolo}
+        autoRunPaused={autoRunPaused}
         isOwner={isOwner}
         cliDailyBudgetUsd={cliDailyBudgetUsd}
       />
@@ -1816,15 +1816,15 @@ function CommandExecutionSection({
   attachedSkills,
   rules,
   onRulesChange,
-  lanCommandYolo,
+  autoRunPaused,
   isOwner,
 }: {
   agentId: string;
   attachedSkills: SkillRow[];
   rules: ApprovalRuleUiRow[];
   onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
-  /** Whether the workspace owner has opted into Yolo in non-local-trust mode. */
-  lanCommandYolo: boolean;
+  /** Frein d'urgence du workspace (entities.auto_run_paused) — rend la règle dormante à l'exécution. */
+  autoRunPaused: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner: boolean;
 }) {
@@ -1834,12 +1834,6 @@ function CommandExecutionSection({
   // mirrors AUTH_MODE and is safe to read in client components).
   const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
 
-  // The toggle is enabled when:
-  //   - local-trust mode (single-user loopback — no auth; classic behaviour), OR
-  //   - The workspace owner has explicitly opted in via lanCommandYolo AND the
-  //     current user is that owner.
-  const yoloAllowed = isLocalTrust || (lanCommandYolo && isOwner);
-
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -1847,16 +1841,12 @@ function CommandExecutionSection({
     (r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve',
   );
 
-  // ENABLING is gated by yoloAllowed. DISABLING an existing rule must always be
-  // possible for anyone who can manage this workspace (local-trust, or the owner)
-  // — otherwise turning the workspace switch off would strand a now-dormant rule
-  // that can't be cleared. So the toggle is interactive when Yolo is allowed, or
-  // when a rule already exists and the user is permitted to clear it.
-  const canManage = isLocalTrust || isOwner;
-  const canToggle = yoloAllowed || (yoloEnabled && canManage);
-  // A rule exists but Yolo is not allowed here → it is dormant: the runtime
-  // master-switch (workspace lan_command_yolo) downgrades it to require-approval.
-  const isDormant = yoloEnabled && !yoloAllowed;
+  // 0082 : plus de pré-condition workspace — ce toggle est la SEULE clé
+  // (owner-only hors local-trust, confirmation à l'activation). Le frein
+  // auto_run_paused ne conditionne pas la création de la règle : il la rend
+  // DORMANTE à l'exécution (8b d'execute.ts), affichée grise ci-dessous.
+  const canToggle = isLocalTrust || isOwner;
+  const isDormant = yoloEnabled && autoRunPaused;
 
   function applyOptimistic(enabled: boolean) {
     onRulesChange(
@@ -1920,36 +1910,22 @@ function CommandExecutionSection({
             When on, this agent runs any shell command immediately with no approval gate. Commands
             are still logged. Only enable for agents you fully trust.
           </p>
-          {isDormant && canManage && (
+          {isDormant && (
             <p className="mt-2 text-body-12 text-warn">
-              This agent&apos;s Yolo is <b className="font-semibold">dormant</b> — workspace Yolo is
-              off, so its commands still require approval. Turn it off here to clear it, or
-              re-enable Yolo in{' '}
+              This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
+              brake is on, so its commands still require approval. Release the brake in{' '}
               <Link
                 href="/settings"
                 className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
               >
-                Settings → Command execution
-              </Link>
-              .
+                Settings → Auto-run brake
+              </Link>{' '}
+              to re-arm it.
             </p>
           )}
-          {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
+          {!canToggle && (
             <p className="mt-2 text-body-12 text-ink-4">
-              Yolo is off for this workspace. The owner can enable it in{' '}
-              <Link
-                href="/settings"
-                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
-              >
-                Settings → Command execution
-              </Link>
-              , or switch to loopback mode.
-            </p>
-          )}
-          {!yoloAllowed && lanCommandYolo && !isOwner && (
-            <p className="mt-2 text-body-12 text-ink-4">
-              The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
-              it per agent.
+              Only the workspace owner can toggle Yolo per agent.
             </p>
           )}
         </div>
@@ -1959,8 +1935,8 @@ function CommandExecutionSection({
           checked={yoloEnabled}
           onChange={() => handleToggle(!yoloEnabled)}
           disabled={saving || !canToggle}
-          // Dormant (rule exists but workspace Yolo is off): show it in the ON
-          // position but neutral grey, not active red — it's inert at runtime.
+          // Dormant (rule exists but the workspace brake is on): show it in the
+          // ON position but neutral grey, not active red — it's inert at runtime.
           trackClassName={
             isDormant
               ? 'mt-0.5 border-ink-4/40 bg-ink-4/20'
@@ -2009,7 +1985,7 @@ function CodeTaskSection({
   attachedSkills,
   rules,
   onRulesChange,
-  lanCommandYolo,
+  autoRunPaused,
   isOwner,
   cliDailyBudgetUsd,
 }: {
@@ -2017,8 +1993,8 @@ function CodeTaskSection({
   attachedSkills: SkillRow[];
   rules: ApprovalRuleUiRow[];
   onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
-  /** Whether the workspace owner has opted into Yolo in non-local-trust mode. */
-  lanCommandYolo: boolean;
+  /** Frein d'urgence du workspace (entities.auto_run_paused) — rend la règle dormante à l'exécution. */
+  autoRunPaused: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner: boolean;
   /** agents.cli_daily_budget_usd — 0 means no cap. */
@@ -2028,7 +2004,6 @@ function CodeTaskSection({
 
   // Read auth mode client-side — mirrors CommandExecutionSection.
   const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
-  const yoloAllowed = isLocalTrust || (lanCommandYolo && isOwner);
 
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -2036,9 +2011,10 @@ function CodeTaskSection({
   const yoloEnabled = rules.some(
     (r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve',
   );
-  const canManage = isLocalTrust || isOwner;
-  const canToggle = yoloAllowed || (yoloEnabled && canManage);
-  const isDormant = yoloEnabled && !yoloAllowed;
+  // 0082 : même contrat que CommandExecutionSection — le toggle est la seule
+  // clé (owner-only hors local-trust) ; le frein rend la règle dormante.
+  const canToggle = isLocalTrust || isOwner;
+  const isDormant = yoloEnabled && autoRunPaused;
 
   function applyOptimistic(enabled: boolean) {
     onRulesChange(
@@ -2130,36 +2106,22 @@ function CodeTaskSection({
             still logged and count against the daily budget below. Only enable for agents you fully
             trust.
           </p>
-          {isDormant && canManage && (
+          {isDormant && (
             <p className="mt-2 text-body-12 text-warn">
-              This agent&apos;s Yolo is <b className="font-semibold">dormant</b>. Workspace Yolo is
-              off, so its coding tasks still require approval. Turn it off here to clear it, or
-              re-enable Yolo in{' '}
+              This agent&apos;s Yolo is <b className="font-semibold">paused</b> — the workspace
+              brake is on, so its coding tasks still require approval. Release the brake in{' '}
               <Link
                 href="/settings"
                 className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
               >
-                Settings → Command execution
-              </Link>
-              .
+                Settings → Auto-run brake
+              </Link>{' '}
+              to re-arm it.
             </p>
           )}
-          {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
+          {!canToggle && (
             <p className="mt-2 text-body-12 text-ink-4">
-              Yolo is off for this workspace. The owner can enable it in{' '}
-              <Link
-                href="/settings"
-                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
-              >
-                Settings → Command execution
-              </Link>
-              , or switch to loopback mode.
-            </p>
-          )}
-          {!yoloAllowed && lanCommandYolo && !isOwner && (
-            <p className="mt-2 text-body-12 text-ink-4">
-              The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
-              it per agent.
+              Only the workspace owner can toggle Yolo per agent.
             </p>
           )}
         </div>

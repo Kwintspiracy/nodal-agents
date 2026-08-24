@@ -67,7 +67,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       reflection_enabled boolean NOT NULL DEFAULT false,
       memory_curation_enabled boolean NOT NULL DEFAULT true,
       skill_assignment_mode text NOT NULL DEFAULT 'approval',
-      lan_command_yolo boolean NOT NULL DEFAULT false,
+      auto_run_paused boolean NOT NULL DEFAULT false,
       mcp_server_enabled boolean NOT NULL DEFAULT false
     );
 

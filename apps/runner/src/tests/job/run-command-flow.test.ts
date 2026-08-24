@@ -539,14 +539,14 @@ describe('run_command — E2E runner integration', () => {
   // stale per-agent Yolo rules live.
   const lanEnv: RunnerEnv = { ...testEnv, AUTH_MODE: 'local-auth' };
 
-  it('LAN GATE (workspace Yolo OFF): auto_approve rule is overridden → job suspends for approval', async () => {
-    const MARKER3 = `rc-marker-${Date.now()}-langate-off`;
-    // Plain script invocation so the ONLY reason this suspends is the LAN gate
-    // (an inline `node -e` would also gate via A2, masking a LAN-gate regression).
+  it('BRAKE ENGAGED: auto_approve rule is overridden → job suspends for approval', async () => {
+    const MARKER3 = `rc-marker-${Date.now()}-brake-on`;
+    // Plain script invocation so the ONLY reason this suspends is the brake
+    // (an inline `node -e` would also gate via A2, masking a brake regression).
     const COMMAND3 = `node emit.js ${MARKER3}`;
 
-    // Workspace has NOT opted in (the master switch is off).
-    await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
+    // Le propriétaire a enclenché le frein d'urgence (0082).
+    await db.update(entities).set({ autoRunPaused: true }).where(eq(entities.id, seed.entityId));
 
     // An auto_approve rule EXISTS (e.g. created earlier while the switch was on).
     const [ruleRow] = await db
@@ -579,8 +579,8 @@ describe('run_command — E2E runner integration', () => {
         },
       ]);
 
-      // local-auth + workspace Yolo OFF → the runtime gate forces approval despite
-      // the auto_approve rule, so the job must SUSPEND (not auto-run to completion).
+      // Frein enclenché → la frontière runtime force l'approbation malgré la
+      // règle auto_approve : le job doit SUSPENDRE (pas filer à completion).
       const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
       expect(result.status).toBe('awaiting_approval');
 
@@ -597,15 +597,17 @@ describe('run_command — E2E runner integration', () => {
       expect(pending!.executedAt).toBeNull();
     } finally {
       await db.delete(approvalRules).where(eq(approvalRules.id, ruleRow.id));
+      // Relâche le frein pour les tests suivants.
+      await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, seed.entityId));
     }
   });
 
-  it('LAN GATE (workspace Yolo ON): auto_approve rule is honored → command runs inline', async () => {
-    const MARKER4 = `rc-marker-${Date.now()}-langate-on`;
+  it('BRAKE RELEASED (default): auto_approve rule is honored → command runs inline', async () => {
+    const MARKER4 = `rc-marker-${Date.now()}-brake-off`;
     const COMMAND4 = `node emit.js ${MARKER4}`;
 
-    // Workspace HAS opted in (the master switch is on).
-    await db.update(entities).set({ lanCommandYolo: true }).where(eq(entities.id, seed.entityId));
+    // État par défaut de toute install : frein relâché.
+    await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, seed.entityId));
 
     const [ruleRow] = await db
       .insert(approvalRules)
@@ -637,7 +639,7 @@ describe('run_command — E2E runner integration', () => {
         },
       ]);
 
-      // local-auth + workspace Yolo ON → the rule is honored → runs inline.
+      // Frein relâché → la règle est honorée → exécution inline.
       const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
       expect(result.status).toBe('completed');
 
@@ -668,11 +670,6 @@ describe('run_command — E2E runner integration', () => {
       expect(found).toBe(true);
     } finally {
       await db.delete(approvalRules).where(eq(approvalRules.id, ruleRow.id));
-      // Reset the switch so it doesn't bleed into other tests.
-      await db
-        .update(entities)
-        .set({ lanCommandYolo: false })
-        .where(eq(entities.id, seed.entityId));
     }
   });
 

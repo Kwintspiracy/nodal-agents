@@ -6,7 +6,7 @@ import {
   listWorkspacesAction,
   getRootConfigAction,
   listAgentsAction,
-  getLanCommandYoloAction,
+  getAutoRunPauseAction,
   getMcpServerSwitchAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
@@ -17,7 +17,7 @@ import SecurityForm from './SecurityForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
-import LanCommandYoloSection from './LanCommandYoloSection.tsx';
+import AutoRunPauseSection from './AutoRunPauseSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
@@ -40,7 +40,7 @@ export default async function SettingsPage() {
     wsResult,
     rootConfigResult,
     agentsResult,
-    lanYoloResult,
+    autoRunPauseResult,
     mcpSwitchResult,
     installNotesResult,
     tzResult,
@@ -51,7 +51,7 @@ export default async function SettingsPage() {
     listWorkspacesAction(),
     getRootConfigAction(),
     listAgentsAction(),
-    getLanCommandYoloAction(),
+    getAutoRunPauseAction(),
     getMcpServerSwitchAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
@@ -110,12 +110,12 @@ export default async function SettingsPage() {
           </SetBlock>
         )}
 
-        {lanYoloResult.ok && s.authMode !== 'local-trust' && (
+        {autoRunPauseResult.ok && (
           <SetBlock
-            label="Command execution (LAN)"
-            lede="On a network install, shell commands and coding CLI tasks always require approval by default. This switch does not change that — it only lets the owner unlock Yolo (auto-run) agent by agent."
+            label="Auto-run brake"
+            lede="Per-agent Yolo (Autonomy tab of each agent) decides what auto-runs. This is the workspace-wide emergency brake: pause everything at once, release to re-arm."
           >
-            <LanCommandYoloSection initial={lanYoloResult.data} />
+            <AutoRunPauseSection initial={autoRunPauseResult.data} />
           </SetBlock>
         )}
 

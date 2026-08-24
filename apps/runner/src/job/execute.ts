@@ -1645,60 +1645,46 @@ async function runJob(
     entityId: r.entityId,
   }));
 
-  // ── 8b. Workspace Yolo master-switch for code-execution tools ─────────────────
+  // ── 8b. Workspace auto-run BRAKE for code-execution tools ─────────────────────
   // run_command, run_skill_script and skill_file_write are ALL code-execution
   // surfaces — a shell command, a bundled skill script, and a skill file whose
-  // content is a script waiting to be run by one of the other two — so the master
-  // switch protects EXECUTION OF CODE, not just run_command. É-2 (audit sécu
-  // 2026-07-07): create_mcp/attach_mcp with a stdio transport ALSO spawn an
-  // arbitrary local subprocess (npx/uvx <cmd>), so they are code-execution too —
-  // their auto_approve rule used to survive this gate. The list is name-based
-  // (it can't see the transport here), so it conservatively covers the http case
-  // as well: creating/attaching an MCP server in a LAN install is worth a human
-  // glance even over HTTP (it carries an API key and can reach internal URLs).
-  // Auto-approving any of them in a non-local-trust (LAN / multi-user) install is
-  // gated behind an explicit, owner-controlled workspace opt-in
-  // (entities.lan_command_yolo). The
-  // web layer gates *creating* a per-agent auto_approve rule, but rule creation is
-  // NOT the security boundary — EXECUTION is. So we enforce the same gate here,
-  // authoritatively, per tool: when the workspace has not opted in, none of these
-  // three tools can ever auto-approve, no matter what rules exist.
-  //   (a) drop any auto_approve rule for that tool, and
-  //   (b) if no tool-specific rule then remains, inject a require_approval rule
-  //       so a blanket wildcard ('*') auto_approve can't sweep it in either.
-  // Nothing is deleted from the DB — re-enabling the workspace switch reactivates
-  // the rules. In local-trust mode (single-user loopback) the switch is N/A.
+  // content is a script waiting to be run by one of the other two. É-2 (audit
+  // sécu 2026-07-07): create_mcp/attach_mcp with a stdio transport ALSO spawn
+  // an arbitrary local subprocess (npx/uvx <cmd>), and code_task spawns the
+  // owner's coding CLI — same trust class as a shell.
+  //
+  // INVERSION du modèle à deux clés (0082, décision Quentin 24/08). L'ancien
+  // lan_command_yolo était une PRÉ-CONDITION : hors local-trust, aucune règle
+  // auto_approve de ces outils ne s'appliquait tant que l'owner n'avait pas
+  // « débloqué » le workspace. Redondant — poser la règle par agent est DÉJÀ
+  // owner-only des deux côtés (web ET la carte d'approbation) — et pénible :
+  // deux serrures, une seule clé. Sa vraie valeur était le coupe-circuit, qui
+  // devient son SEUL rôle : `entities.auto_run_paused` est un frein
+  // d'urgence, inactif par défaut, TOUS modes d'auth confondus (un bouton
+  // rouge qui ne marche qu'en LAN n'est pas un bouton rouge). Enclenché :
+  //   (a) drop any auto_approve rule for these tools, and
+  //   (b) if no tool-specific rule then remains, inject a require_approval
+  //       rule so a blanket wildcard ('*') auto_approve can't sweep them in.
+  // Nothing is deleted from the DB — releasing the brake re-arms the rules.
   // Injecting an explicit require_approval rule also matters downstream: the
   // autonomy relaxation in executeTool is guarded by `!matchedRule`, so once a
-  // tool has a matched rule here, fully_autonomous/destructive_gate can no longer
-  // auto-approve it either — the master switch outranks autonomy.
-  //
-  // AUTH_MODE source: the passed runnerEnv when present (worker/chat routes +
-  // tests), else process.env directly (cron paths call executeJob without it).
-  // We read process.env rather than the module `env` proxy ON PURPOSE: the proxy
-  // validates the ENTIRE runner env (DATABASE_URL et al.) on first access, which
-  // throws in test contexts that don't set it — the cron paths call executeJob
-  // without runnerEnv, so that fallback threw and broke cron job execution under
-  // test. A single enum needs no full-env validation; default to local-trust.
-  const authMode = runnerEnv?.AUTH_MODE ?? process.env['AUTH_MODE'] ?? 'local-trust';
-  if (authMode !== 'local-trust') {
+  // tool has a matched rule here, fully_autonomous/destructive_gate can no
+  // longer auto-approve it either — the brake outranks autonomy.
+  {
     const CODE_EXECUTION_TOOLS = [
       'run_command',
-      // code_task spawns the owner's coding CLI (claude/codex) — same trust
-      // class as a shell (étape B, subscription-runtimes plan): a LAN caller
-      // must not benefit from a Yolo rule the master-switch has not blessed.
       'code_task',
       'run_skill_script',
       'skill_file_write',
       'create_mcp',
       'attach_mcp',
     ];
-    const [yoloEntityRow] = await db
-      .select({ lanCommandYolo: entitiesTable.lanCommandYolo })
+    const [brakeRow] = await db
+      .select({ autoRunPaused: entitiesTable.autoRunPaused })
       .from(entitiesTable)
       .where(eq(entitiesTable.id, job.entityId ?? ''))
       .limit(1);
-    if (!yoloEntityRow?.lanCommandYolo) {
+    if (brakeRow?.autoRunPaused) {
       for (const codeTool of CODE_EXECUTION_TOOLS) {
         approvalRuleList = approvalRuleList.filter(
           (r) => !(r.toolName === codeTool && r.action === 'auto_approve'),
@@ -1706,7 +1692,7 @@ async function runJob(
         const hasToolRule = approvalRuleList.some((r) => r.toolName === codeTool);
         if (!hasToolRule) {
           approvalRuleList.push({
-            id: `lan-yolo-gate-${codeTool}`,
+            id: `auto-run-pause-${codeTool}`,
             toolName: codeTool,
             action: 'require_approval',
             agentId: agentRow.id,

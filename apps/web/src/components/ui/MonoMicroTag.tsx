@@ -9,7 +9,7 @@
  * "experimental", skill provenance). Distinct from TagMini (squared, semibold,
  * sits inside SetRow values) and StatusPill (larger state chip). Extracted
  * from five identical inline spans across AgentComposer and
- * LanCommandYoloSection.
+ * AutoRunPauseSection.
  */
 type Tone = 'err' | 'skill' | 'warn' | 'agent' | 'ink';
 

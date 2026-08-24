@@ -5494,23 +5494,19 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     // Gate (non-local-trust only): only the workspace owner may change a
     // per-agent Yolo rule — in EITHER direction. Disabling is the safe direction
     // (it only removes auto-approval) but a non-owner flipping it off would
-    // disrupt the owner's automations, so we owner-gate both. Enabling
-    // additionally requires the workspace opt-in (lan_command_yolo).
+    // disrupt the owner's automations, so we owner-gate both. Le pré-requis
+    // « master switch » a disparu (0082) : le toggle par agent est la SEULE
+    // clé d'activation ; le frein auto_run_paused met les règles en dormance
+    // à l'exécution (8b d'execute.ts) sans conditionner leur création.
     if (env.AUTH_MODE !== 'local-trust') {
       const db = getDb();
       const [entityRow] = await db
-        .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+        .select({ userId: entities.userId })
         .from(entities)
         .where(eq(entities.id, session.entityId));
       if (!entityRow) return fail('not_found', 'Workspace not found');
       if (entityRow.userId !== session.userId) {
         return fail('forbidden', 'Only the workspace owner can change command auto-run.');
-      }
-      if (enabled && !entityRow.lanCommandYolo) {
-        return fail(
-          'forbidden',
-          'Yolo mode is not enabled for this workspace. Enable it in Settings → Command execution first.',
-        );
       }
     }
 
@@ -5590,24 +5586,18 @@ export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<
 
     // Gate (non-local-trust only): only the workspace owner may change a
     // per-agent Yolo rule — in EITHER direction, same reasoning as
-    // setRunCommandYoloAction. Enabling additionally requires the workspace
-    // opt-in (lan_command_yolo) — code_task reuses that same master switch
-    // rather than introducing a second one.
+    // setRunCommandYoloAction. Le pré-requis « master switch » a disparu
+    // (0082) : le toggle par agent est la SEULE clé d'activation, et le frein
+    // auto_run_paused ne fait que mettre les règles en dormance à l'exécution.
     if (env.AUTH_MODE !== 'local-trust') {
       const db = getDb();
       const [entityRow] = await db
-        .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+        .select({ userId: entities.userId })
         .from(entities)
         .where(eq(entities.id, session.entityId));
       if (!entityRow) return fail('not_found', 'Workspace not found');
       if (entityRow.userId !== session.userId) {
         return fail('forbidden', 'Only the workspace owner can change coding CLI auto-run.');
-      }
-      if (enabled && !entityRow.lanCommandYolo) {
-        return fail(
-          'forbidden',
-          'Yolo mode is not enabled for this workspace. Enable it in Settings → Command execution first.',
-        );
       }
     }
 
@@ -6197,50 +6187,51 @@ export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResul
 
 // ─── LAN Command Yolo (workspace setting) ────────────────────────────────────
 //
-// When AUTH_MODE is not 'local-trust' (i.e. the install is local-auth or
-// bearer-token — multi-user or LAN), the workspace OWNER can opt in to
-// allowing Yolo mode for their workspace's agents. This is a deliberate
-// security relaxation: the owner is making a conscious decision that they
-// trust the agents in this workspace to auto-run shell commands.
+// Frein d'urgence de l'auto-exécution (0082, inversion du modèle à deux clés
+// — décision Quentin 24/08). paused=true met en dormance TOUTES les règles
+// auto_approve des outils d'exécution de code du workspace (le runner les
+// déshabille à l'exécution — 8b d'execute.ts, la frontière autoritaire).
+// paused=false (défaut) : les toggles Yolo par agent s'appliquent tels quels.
+// Tous modes d'auth : un bouton rouge qui ne marche qu'en LAN n'en est pas un.
 //
 // Only the entity owner (entities.userId === session.userId) may toggle this.
 
-export type LanCommandYoloView = {
-  lanCommandYolo: boolean;
+export type AutoRunPauseView = {
+  autoRunPaused: boolean;
   isOwner: boolean;
 };
 
-export async function getLanCommandYoloAction(): Promise<ActionResult<LanCommandYoloView>> {
+export async function getAutoRunPauseAction(): Promise<ActionResult<AutoRunPauseView>> {
   try {
     const session = await getSession();
     const db = getDb();
     const [entityRow] = await db
-      .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+      .select({ userId: entities.userId, autoRunPaused: entities.autoRunPaused })
       .from(entities)
       .where(eq(entities.id, session.entityId));
     if (!entityRow) return fail('not_found', 'Workspace not found');
     return ok({
-      lanCommandYolo: entityRow.lanCommandYolo,
+      autoRunPaused: entityRow.autoRunPaused,
       isOwner: entityRow.userId === session.userId,
     });
   } catch (err) {
-    console.error('[getLanCommandYoloAction]', err);
-    return fail('db_error', 'Failed to load LAN command yolo setting');
+    console.error('[getAutoRunPauseAction]', err);
+    return fail('db_error', 'Failed to load the auto-run pause setting');
   }
 }
 
-const SetLanCommandYoloSchema = z.object({
-  enabled: z.boolean(),
+const SetAutoRunPauseSchema = z.object({
+  paused: z.boolean(),
 });
 
-export async function setLanCommandYoloAction(raw: unknown): Promise<ActionResult<void>> {
+export async function setAutoRunPauseAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetLanCommandYoloSchema.safeParse(raw);
+    const parsed = SetAutoRunPauseSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { enabled } = parsed.data;
+    const { paused } = parsed.data;
 
     const db = getDb();
 
@@ -6256,15 +6247,15 @@ export async function setLanCommandYoloAction(raw: unknown): Promise<ActionResul
 
     await db
       .update(entities)
-      .set({ lanCommandYolo: enabled })
+      .set({ autoRunPaused: paused })
       .where(eq(entities.id, session.entityId));
 
     revalidatePath('/settings');
     revalidatePath('/agents');
     return ok(undefined);
   } catch (err) {
-    console.error('[setLanCommandYoloAction]', err);
-    return fail('db_error', 'Failed to save LAN command yolo setting');
+    console.error('[setAutoRunPauseAction]', err);
+    return fail('db_error', 'Failed to save the auto-run pause setting');
   }
 }
 
