@@ -573,7 +573,7 @@ export default function AgentComposer({
             jobs={jobs}
             attachedSkills={attachedNonToolSkills}
             connectorsAssigned={assignedConnectorRows}
-            mcpsAssignedCount={assignedMcps}
+            mcpsAssigned={mcpServers.filter((s) => s.assigned)}
             // The Overview CTAs must not point at a tab this agent can't use.
             onOpenSkills={isCliRuntime ? null : () => setTab('skills')}
             onOpenConnectors={isCliRuntime ? null : () => setTab('connectors')}
@@ -1051,20 +1051,24 @@ function OverviewTab({
   jobs,
   attachedSkills,
   connectorsAssigned,
-  mcpsAssignedCount,
+  mcpsAssigned,
   onOpenSkills,
   onOpenConnectors,
 }: {
   jobs: JobRow[];
   attachedSkills: SkillRow[];
   connectorsAssigned: AgentConnectorRow[];
-  mcpsAssignedCount: number;
+  mcpsAssigned: AgentMcpServerRow[];
   /** null ⇒ that tab is inert for this agent (CLI runtime) — render no CTA. */
   onOpenSkills: (() => void) | null;
   onOpenConnectors: (() => void) | null;
 }) {
   const hasSkills = attachedSkills.length > 0;
-  const hasConnectors = connectorsAssigned.length > 0;
+  // Un serveur MCP attaché EST un connecteur de l'agent (l'onglet Connectors
+  // liste les deux depuis l'unification) — l'overview disait « No connectors
+  // assigned yet » à un agent équipé d'un MCP (constat Quentin 24/08, Comfy
+  // artist), avec un renvoi vers un emplacement qui n'existe plus.
+  const hasConnectors = connectorsAssigned.length > 0 || mcpsAssigned.length > 0;
 
   return (
     <div className="space-y-6">
@@ -1078,7 +1082,7 @@ function OverviewTab({
 
         <SectionCard>
           <SectionHead
-            label={`Connectors used · ${connectorsAssigned.length}`}
+            label={`Connectors used · ${connectorsAssigned.length + mcpsAssigned.length}`}
             right={
               hasConnectors && onOpenConnectors ? (
                 <RowActionButton onClick={onOpenConnectors}>Manage</RowActionButton>
@@ -1090,6 +1094,9 @@ function OverviewTab({
               {connectorsAssigned.map((c) => (
                 <ConnectorOverviewRow key={c.connectorId} row={c} />
               ))}
+              {mcpsAssigned.map((s) => (
+                <McpOverviewRow key={s.mcpServerId} row={s} />
+              ))}
             </div>
           ) : (
             <p className="text-body-13 text-ink-3">
@@ -1097,12 +1104,6 @@ function OverviewTab({
               {onOpenConnectors && (
                 <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
               )}
-            </p>
-          )}
-          {mcpsAssignedCount > 0 && (
-            <p className="mt-3 border-t border-rule-2 pt-3 text-body-12 text-ink-4">
-              + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} attached (Settings
-              → Knowledge).
             </p>
           )}
         </SectionCard>
@@ -1277,6 +1278,31 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
         </>
       }
       description={row.credentialName ?? undefined}
+      actions={
+        <span className="inline-flex items-center gap-1.5 text-mono-11 uppercase tracking-[0.08em] text-ink-3">
+          <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
+          on
+        </span>
+      }
+    />
+  );
+}
+
+function McpOverviewRow({ row }: { row: AgentMcpServerRow }) {
+  return (
+    <EdRow
+      glyph={
+        <Disc variant="conn" size="lg" shape="square">
+          <span className="font-mono text-label-11">MCP</span>
+        </Disc>
+      }
+      name={
+        <>
+          {row.label}
+          <span className="ml-2 text-mono-11 uppercase tracking-[0.04em] text-ink-4">MCP</span>
+        </>
+      }
+      description={`${row.availableTools.length} tool${row.availableTools.length === 1 ? '' : 's'}`}
       actions={
         <span className="inline-flex items-center gap-1.5 text-mono-11 uppercase tracking-[0.08em] text-ink-3">
           <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
