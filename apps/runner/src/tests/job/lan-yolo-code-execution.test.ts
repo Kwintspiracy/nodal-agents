@@ -1,15 +1,17 @@
-// lan-yolo-code-execution.test.ts — Fix #6 (audit finding EX-1 / plan item #6):
-// the workspace Yolo master-switch (`entities.lan_command_yolo`) must gate ALL
-// code-execution builtins — run_command, run_skill_script, skill_file_write —
-// not just run_command. Before the fix, run_skill_script and skill_file_write
-// had no matched approval rule on LAN, so the autonomy relaxation in
-// executeTool (`destructive_gate`/`fully_autonomous`, guarded by `!matchedRule`)
-// auto-approved them regardless of the switch — code ran on LAN even though the
-// owner believed the switch turned it off.
+// lan-yolo-code-execution.test.ts — le FREIN d'auto-exécution
+// (`entities.auto_run_paused`, 0082) doit couvrir TOUS les builtins
+// d'exécution de code — run_command, run_skill_script, skill_file_write… —
+// pas seulement run_command (héritage du Fix #6, audit EX-1 : sans règle
+// injectée, la relaxation d'autonomie d'executeTool, gardée par
+// `!matchedRule`, auto-approuvait ces outils malgré le frein).
 //
-// This test proves run_skill_script now gets an injected require_approval rule
-// (execute.ts step 8b) under: non-local-trust + lanCommandYolo=false +
-// destructive_gate autonomy — so the job suspends instead of auto-executing.
+// INVERSION 0082 (décision Quentin 24/08) : l'ancien lan_command_yolo était
+// une pré-condition (défaut = tout bloqué hors local-trust tant que l'owner
+// n'avait pas « débloqué »). auto_run_paused est un frein : défaut = les
+// règles/relaxations s'appliquent ; enclenché = tout demande approbation.
+// Ces tests prouvent les deux directions : frein enclenché → suspension
+// (règle require_approval injectée en 8b, qui bat aussi fully_autonomous) ;
+// frein relâché → l'autonomie du workspace s'applique à nouveau.
 // Harness copied verbatim from run-command-flow.test.ts.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -280,10 +282,10 @@ async function createJob(): Promise<{ id: string }> {
   return job;
 }
 
-describe('LAN Yolo master-switch — code-execution tools beyond run_command', () => {
-  it('run_skill_script under destructive_gate + lanCommandYolo=false → suspends for approval (never auto-executes)', async () => {
-    // Workspace has NOT opted into LAN Yolo — the master switch is off.
-    await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
+describe('Auto-run brake — code-execution tools beyond run_command', () => {
+  it('run_skill_script under destructive_gate + brake ENGAGED → suspends for approval (never auto-executes)', async () => {
+    // Le propriétaire a enclenché le frein d'urgence du workspace.
+    await db.update(entities).set({ autoRunPaused: true }).where(eq(entities.id, seed.entityId));
 
     const job = await createJob();
 
@@ -308,31 +310,34 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
       },
     ]);
 
-    // With the fix, execute.ts step 8b injects a require_approval rule for
-    // run_skill_script (no matched rule existed before), which ALSO defeats the
-    // destructive_gate relaxation in executeTool (guarded by `!matchedRule`).
-    // Without the fix, this call would run straight through to 'completed'.
-    const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
-    expect(result.status).toBe('awaiting_approval');
+    try {
+      // Frein enclenché : 8b injecte une règle require_approval pour
+      // run_skill_script (aucune règle matched avant), ce qui bat AUSSI la
+      // relaxation destructive_gate d'executeTool (gardée par `!matchedRule`).
+      // Sans le frein, cet appel filerait jusqu'à 'completed'.
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
+      expect(result.status).toBe('awaiting_approval');
 
-    const approvalRows = await db
-      .select()
-      .from(approvalRequests)
-      .where(eq(approvalRequests.jobId, job.id));
-    const pending = approvalRows.find(
-      (r) => r.toolName === 'run_skill_script' && r.status === 'pending',
-    );
-    expect(pending).toBeDefined();
-    // Never reached executeTool's execute() branch, so it was never stamped run.
-    expect(pending!.executedAt).toBeNull();
+      const approvalRows = await db
+        .select()
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      const pending = approvalRows.find(
+        (r) => r.toolName === 'run_skill_script' && r.status === 'pending',
+      );
+      expect(pending).toBeDefined();
+      // Never reached executeTool's execute() branch, so it was never stamped run.
+      expect(pending!.executedAt).toBeNull();
+    } finally {
+      await db.update(entities).set({ autoRunPaused: false }).where(eq(entities.id, seed.entityId));
+    }
   });
 
-  it('run_skill_script under fully_autonomous + lanCommandYolo=true → the master switch no longer forces approval', async () => {
-    // Sanity check on the OTHER side of the switch: once the owner opts the
-    // workspace in, execute.ts step 8b skips the inject entirely, so the
-    // workspace's own autonomy relaxation applies again and the tool runs
-    // without a human. Proves the fix gates on the switch, not on the tool
-    // unconditionally.
+  it('run_skill_script under fully_autonomous + brake RELEASED → nothing forces approval', async () => {
+    // L'autre direction : frein relâché (l'état par DÉFAUT de toute install),
+    // 8b n'injecte rien, la relaxation d'autonomie du workspace s'applique et
+    // l'outil tourne sans humain. Prouve que la suspension du test précédent
+    // venait bien du frein, pas de l'outil.
     //
     // Uses fully_autonomous here (not destructive_gate): audit fix M-8 made
     // run_skill_script's content-opaque posture unconditional under
@@ -346,7 +351,7 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
     await db
       .update(entities)
       .set({
-        lanCommandYolo: true,
+        autoRunPaused: false,
         rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' },
       })
       .where(eq(entities.id, seed.entityId));
@@ -389,26 +394,25 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
       await db
         .update(entities)
         .set({
-          lanCommandYolo: false,
+          autoRunPaused: false,
           rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' },
         })
         .where(eq(entities.id, seed.entityId));
     }
   });
 
-  it('skill_file_write under fully_autonomous + lanCommandYolo=false → suspends for approval (never auto-executes)', async () => {
+  it('skill_file_write under fully_autonomous + brake ENGAGED → suspends for approval (never auto-executes)', async () => {
     // skill_file_write declares riskLevel:'destructive', so destructive_gate
     // ALREADY gates it on its own (isHeavy = tool.riskLevel === 'destructive'
     // for any tool that isn't run_command/run_skill_script) — that path doesn't
-    // exercise the master switch. fully_autonomous is the level that relaxes
-    // EVERY require_approval unconditionally (no riskLevel check at all), so
-    // it's the one that would auto-execute skill_file_write on LAN without
-    // this fix.
+    // exercise the brake. fully_autonomous is the level that relaxes EVERY
+    // require_approval unconditionally (no riskLevel check at all), so it's
+    // the one that would auto-execute skill_file_write without the brake.
     await db
       .update(entities)
       .set({
         rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' },
-        lanCommandYolo: false,
+        autoRunPaused: true,
       })
       .where(eq(entities.id, seed.entityId));
 
@@ -437,9 +441,9 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
         },
       ]);
 
-      // With the fix, execute.ts step 8b injects a require_approval rule for
-      // skill_file_write too, defeating the fully_autonomous relaxation.
-      // Without the fix, this call would run straight through to 'completed'.
+      // Frein enclenché : 8b injecte une règle require_approval pour
+      // skill_file_write aussi, ce qui bat la relaxation fully_autonomous.
+      // Sans le frein, cet appel filerait jusqu'à 'completed'.
       const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
       expect(result.status).toBe('awaiting_approval');
 
@@ -458,7 +462,7 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
         .update(entities)
         .set({
           rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' },
-          lanCommandYolo: false,
+          autoRunPaused: false,
         })
         .where(eq(entities.id, seed.entityId));
     }

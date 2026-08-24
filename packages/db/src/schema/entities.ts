@@ -64,11 +64,19 @@ export const entities = pgTable(
       .notNull()
       .default('approval')
       .$type<'auto' | 'approval'>(),
-    // Allows the workspace OWNER to opt into Yolo (auto-approve run_command)
-    // even in non-local-trust (LAN/local-auth) mode. Off by default: in
-    // local-auth mode, commands always require approval unless the owner
-    // explicitly opts in here.
-    lanCommandYolo: boolean('lan_command_yolo').notNull().default(false),
+    /**
+     * Frein d'urgence de l'auto-exécution (0082, inversion du modèle à deux
+     * clés — décision Quentin 24/08). true = TOUT l'auto-run de code du
+     * workspace est en pause : les règles auto_approve des outils d'exécution
+     * (run_command, code_task, scripts, MCP stdio) deviennent dormantes sans
+     * être supprimées — le runner les déshabille à l'exécution. false
+     * (défaut) = les toggles Yolo par agent (owner-only) s'appliquent tels
+     * quels. Remplace lan_command_yolo, qui était une PRÉ-CONDITION
+     * d'activation : redondante (les toggles par agent étaient déjà
+     * owner-only) et pénible — sa vraie valeur était le coupe-circuit, qui
+     * devient son seul rôle.
+     */
+    autoRunPaused: boolean('auto_run_paused').notNull().default(false),
     /**
      * Interrupteur maitre du serveur MCP (PR C, decision Quentin 23/08).
      * Defaut FERME : un point d'entree externe qui cree des jobs doit etre

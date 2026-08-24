@@ -568,6 +568,13 @@
       "when": 1786000002000,
       "tag": "0081_entities_mcp_server_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1786000003000,
+      "tag": "0082_entities_auto_run_paused",
+      "breakpoints": true
     }
   ]
 }

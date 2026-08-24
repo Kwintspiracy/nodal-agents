@@ -161,7 +161,7 @@ afterEach(async () => {
   await testDb
     .update(agentSkillAssignments)
     .set({ scriptsAuthorized: false, filesWritable: false });
-  await testDb.update(entities).set({ lanCommandYolo: false });
+  await testDb.update(entities).set({ autoRunPaused: false });
 });
 
 // ─── setSkillScriptsAuthorizedAction ─────────────────────────────────────────
@@ -331,57 +331,74 @@ describe('setSkillFilesWritableAction', () => {
   });
 });
 
-// ─── setLanCommandYoloAction ─────────────────────────────────────────────────
+// ─── setAutoRunPauseAction (0082 — le frein remplace le master-switch) ────────
+//
+// Sémantique INVERSÉE mais mêmes risques : le frein en pause protège, le
+// RELÂCHER ré-arme toutes les règles Yolo du workspace d'un coup — c'est le
+// relâchement qui est le geste sensible, owner-only.
 
-describe('setLanCommandYoloAction', () => {
-  async function lanFlag() {
+describe('setAutoRunPauseAction', () => {
+  async function pauseFlag() {
     const [row] = await testDb.select().from(entities).where(eq(entities.id, seed.entityId));
-    return row!.lanCommandYolo;
+    return row!.autoRunPaused;
   }
 
-  it('bascule le drapeau de l’espace COURANT, dans les deux sens', async () => {
-    const { setLanCommandYoloAction } = await actions();
+  it('bascule le frein de l’espace COURANT, dans les deux sens', async () => {
+    const { setAutoRunPauseAction } = await actions();
 
-    const on = await setLanCommandYoloAction({ enabled: true });
+    const on = await setAutoRunPauseAction({ paused: true });
     expect(on.ok, on.ok ? '' : on.message).toBe(true);
-    expect(await lanFlag()).toBe(true);
+    expect(await pauseFlag()).toBe(true);
 
-    const off = await setLanCommandYoloAction({ enabled: false });
+    const off = await setAutoRunPauseAction({ paused: false });
     expect(off.ok, off.ok ? '' : off.message).toBe(true);
-    expect(await lanFlag()).toBe(false);
+    expect(await pauseFlag()).toBe(false);
   });
 
-  it('n’ouvre l’exécution QUE sur son espace, jamais sur le voisin', async () => {
-    // Un `update` sans clause d'espace ouvrirait l'exécution de commandes chez
-    // tout le monde d'un seul clic.
-    const { setLanCommandYoloAction } = await actions();
+  it('ne freine QUE son espace, jamais le voisin', async () => {
+    // Un `update` sans clause d'espace mettrait en pause (ou ré-armerait)
+    // l'auto-exécution chez tout le monde d'un seul clic.
+    const { setAutoRunPauseAction } = await actions();
 
-    await setLanCommandYoloAction({ enabled: true });
+    await setAutoRunPauseAction({ paused: true });
 
     const [voisin] = await testDb.select().from(entities).where(eq(entities.id, foreignEntityId));
-    expect(voisin!.lanCommandYolo, 'l’espace voisin a été ouvert lui aussi').toBe(false);
+    expect(voisin!.autoRunPaused, 'l’espace voisin a été freiné lui aussi').toBe(false);
   });
 
-  it('refuse un non-propriétaire — et le drapeau reste à false', async () => {
-    const { setLanCommandYoloAction } = await actions();
+  it('refuse un non-propriétaire — dans les DEUX directions', async () => {
+    const { setAutoRunPauseAction } = await actions();
 
+    // Direction sensible : RELÂCHER un frein posé par l'owner.
+    await testDb
+      .update(entities)
+      .set({ autoRunPaused: true })
+      .where(eq(entities.id, seed.entityId));
     await asNonOwner(async () => {
-      const r = await setLanCommandYoloAction({ enabled: true });
+      const r = await setAutoRunPauseAction({ paused: false });
       expect(r.ok).toBe(false);
       expect(r.ok ? '' : r.code).toBe('forbidden');
     });
+    expect(await pauseFlag(), 'un non-propriétaire a relâché le frein').toBe(true);
 
-    expect(await lanFlag(), 'un non-propriétaire a ouvert l’exécution de commandes LAN').toBe(
-      false,
-    );
+    // Et freiner sans être owner est refusé aussi (perturberait les automations).
+    await testDb
+      .update(entities)
+      .set({ autoRunPaused: false })
+      .where(eq(entities.id, seed.entityId));
+    await asNonOwner(async () => {
+      const r = await setAutoRunPauseAction({ paused: true });
+      expect(r.ok).toBe(false);
+    });
+    expect(await pauseFlag()).toBe(false);
   });
 
   it('refuse une entrée mal formée sans rien basculer', async () => {
-    const { setLanCommandYoloAction } = await actions();
+    const { setAutoRunPauseAction } = await actions();
 
-    const r = await setLanCommandYoloAction({ enabled: 'yes' });
+    const r = await setAutoRunPauseAction({ paused: 'yes' });
     expect(r.ok).toBe(false);
-    expect(await lanFlag()).toBe(false);
+    expect(await pauseFlag()).toBe(false);
   });
 });
 

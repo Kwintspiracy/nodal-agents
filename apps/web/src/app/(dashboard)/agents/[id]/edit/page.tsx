@@ -8,7 +8,7 @@ import {
   listJobsAction,
   getAgentAttachedSkillsAction,
   listSkillsAction,
-  getLanCommandYoloAction,
+  getAutoRunPauseAction,
   getAgentChannelsAction,
   getAgentTelegramConfigAction,
   getTelegramAllowedChatsAction,
@@ -48,7 +48,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     jobsResult,
     skillsResult,
     allSkillsResult,
-    lanYoloResult,
+    pauseResult,
     channelsOverviewResult,
     telegramCfgResult,
     telegramAllowedChatsResult,
@@ -66,7 +66,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     // the Skills tab (parity with how Connectors already lists everything
     // installed on the workspace, not just what's assigned to this agent).
     listSkillsAction(),
-    getLanCommandYoloAction(),
+    getAutoRunPauseAction(),
     // Channels tab (in-page — see ChannelsTabContent.tsx). Same reads the old
     // standalone /agents/[id]/channels page did; that route now just
     // redirects here (?tab=channels) — one canonical surface.
@@ -88,8 +88,8 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const attachedSkills = skillsResult.ok ? skillsResult.data : [];
   const allSkills = allSkillsResult.ok ? allSkillsResult.data : [];
 
-  const lanCommandYolo = lanYoloResult.ok ? lanYoloResult.data.lanCommandYolo : false;
-  const isOwner = lanYoloResult.ok ? lanYoloResult.data.isOwner : false;
+  const autoRunPaused = pauseResult.ok ? pauseResult.data.autoRunPaused : false;
+  const isOwner = pauseResult.ok ? pauseResult.data.isOwner : false;
 
   // Channels tab data — the agent existing is already confirmed above, so
   // these only fail on a genuine db_error; surface the first one as a banner
@@ -124,7 +124,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       jobs={jobs}
       attachedSkills={attachedSkills}
       allSkills={allSkills}
-      lanCommandYolo={lanCommandYolo}
+      autoRunPaused={autoRunPaused}
       isOwner={isOwner}
       channelsError={channelsError}
       telegramCfg={telegramCfgResult.ok ? telegramCfgResult.data : null}
