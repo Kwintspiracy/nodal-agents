@@ -40,9 +40,36 @@ function resolveAbsoluteChangePath(rawPath: string, workspaceRoots: string[]): s
 }
 
 /**
- * Remonte de `dir` vers la racine du dépôt git (le premier dossier contenant
- * `.git`). Mémoïsé par requête — chaque dossier visité, trouvé ou non, est
- * mis en cache pour tous les chemins suivants du même écran.
+ * Marqueurs de racine de projet, au-delà de `.git` (constat Quentin 25/08 :
+ * les apps que le codeur crée dans le workspace partagé `Dev\` n'ont pas de
+ * dépôt git — `Dev\calorie-counter` DOIT être un projet, pas `Dev` entier).
+ * Liste courte et conventionnelle — un manifeste ou un point d'entrée.
+ */
+const PROJECT_MARKERS = [
+  '.git',
+  'package.json',
+  'pyproject.toml',
+  'requirements.txt',
+  'Cargo.toml',
+  'go.mod',
+  'composer.json',
+  'deno.json',
+  'index.html',
+];
+
+function hasProjectMarker(dir: string): boolean {
+  try {
+    return PROJECT_MARKERS.some((m) => fsExistsSync(`${dir}/${m}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remonte de `dir` vers la racine de PROJET : le PLUS HAUT dossier (dans les
+ * bornes) portant un marqueur — la convention repo/monorepo, qui garde entier
+ * un projet dont le workspace est la racine (`MonApp/package.json` gagne sur
+ * `MonApp/src`). Mémoïsé par requête.
  *
  * `stopAt` : frontière HAUTE de la remontée — le workspace qui contient le
  * fichier. Sans elle, un fichier d'un dossier non-versionné remontait
@@ -50,7 +77,7 @@ function resolveAbsoluteChangePath(rawPath: string, workspaceRoots: string[]): s
  * `.git` dans le home de l'utilisateur transformait tout en un seul projet).
  * Le projet ne peut jamais être plus large que le workspace.
  */
-function findGitRoot(
+function findProjectRoot(
   dir: string,
   memo: Map<string, string | null>,
   stopAt: string | null,
@@ -63,30 +90,38 @@ function findGitRoot(
     return a === b || a.startsWith(b + '/');
   };
   const key = (d: string) => `${stopAt ?? ''}|${d}`;
+  const cached = memo.get(key(dir));
+  if (cached !== undefined) return cached;
+
   const visited: string[] = [];
+  let topmost: string | null = null;
   let cur = dir;
   for (let hops = 0; hops < 24 && cur && inBounds(cur); hops++) {
-    const cached = memo.get(key(cur));
-    if (cached !== undefined) {
-      for (const v of visited) memo.set(key(v), cached);
-      return cached;
-    }
     visited.push(cur);
-    try {
-      if (fsExistsSync(`${cur}/.git`)) {
-        for (const v of visited) memo.set(key(v), cur);
-        return cur;
-      }
-    } catch {
-      break;
-    }
+    if (hasProjectMarker(cur)) topmost = cur;
     const parent = cur.replace(/\/[^/]*$/, '');
-    // Racine atteinte : '' (POSIX) ou 'c:' (Windows) — pas de repo au-dessus.
+    // Racine atteinte : '' (POSIX) ou 'c:' (Windows) — pas de projet au-dessus.
     if (parent === cur || parent === '' || /^[a-z]:$/i.test(parent)) break;
     cur = parent;
   }
-  for (const v of visited) memo.set(key(v), null);
-  return null;
+  for (const v of visited) memo.set(key(v), topmost);
+  return topmost;
+}
+
+/**
+ * Sans aucun marqueur : le SOUS-DOSSIER de premier niveau du workspace qui
+ * contient le fichier — jamais le workspace-conteneur entier (toutes les apps
+ * d'un `Dev\` partagé fusionneraient en un seul projet). Un fichier posé
+ * directement à la racine du workspace rend le workspace lui-même.
+ */
+function firstLevelChildUnder(dir: string, wsRoot: string): string {
+  const isWin = /^[a-z]:\//i.test(dir);
+  const a = isWin ? dir.toLowerCase() : dir;
+  const b = isWin ? wsRoot.toLowerCase() : wsRoot;
+  if (a === b || !a.startsWith(b + '/')) return wsRoot;
+  const rest = dir.slice(wsRoot.length + 1);
+  const child = rest.split('/')[0];
+  return child ? `${wsRoot}/${child}` : wsRoot;
 }
 
 /**
@@ -122,12 +157,17 @@ export function deriveProjectRoot(
         break;
       }
     }
-    const git = findGitRoot(dir, gitMemo, wsRoot);
-    if (git) {
-      gitVotes.set(git, (gitVotes.get(git) ?? 0) + 1);
+    const marked = findProjectRoot(dir, gitMemo, wsRoot);
+    if (marked) {
+      gitVotes.set(marked, (gitVotes.get(marked) ?? 0) + 1);
       continue;
     }
-    if (wsRoot) wsVotes.set(wsRoot, (wsVotes.get(wsRoot) ?? 0) + 1);
+    // Aucun marqueur : le sous-dossier de premier niveau sous le workspace —
+    // jamais le workspace-conteneur entier (constat Quentin 25/08).
+    if (wsRoot) {
+      const child = firstLevelChildUnder(dir, wsRoot);
+      wsVotes.set(child, (wsVotes.get(child) ?? 0) + 1);
+    }
   }
   const top = (m: Map<string, number>): string | null =>
     [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
