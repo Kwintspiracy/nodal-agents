@@ -255,6 +255,57 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
+  it('un FICHIER supprimé ne fait pas disparaître son projet ; un PROJET supprimé, si', async () => {
+    // Constat Codex (26/08) : le scan exigeait que le fichier édité existe
+    // encore. Un renommage, un refactor, un `.tmp` nettoyé, et le projet
+    // sortait du contexte alors qu'il est bien vivant — pendant que l'onglet
+    // Code continuait de l'afficher, puisque LUI vérifie le dossier de projet.
+    const vivant = join(racine, 'dev', 'vivant');
+    await mkdir(vivant, { recursive: true });
+    await writeFile(join(vivant, 'garde.ts'), 'export {}');
+
+    const [job2] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: devAgentId,
+        status: 'completed',
+        channel: 'api',
+        task: 'refactor',
+      })
+      .returning();
+    // Un fichier qui n'existe PLUS : supprimé après avoir été édité.
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: job2!.id,
+      toolName: 'file_write',
+      toolInput: { path: `${racine}/dev/vivant/ancien-nom.ts` },
+      toolOutput: '{"ok":true}',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        projects.some((p) => p.path === `${racine}/dev/vivant`),
+        'un fichier supprimé a emporté son projet avec lui',
+      ).toBe(true);
+
+      // Le dossier de projet, lui, fait foi : supprimé, le projet s'en va.
+      await rm(vivant, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+      const apres = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        apres.some((p) => p.path === `${racine}/dev/vivant`),
+        'un projet supprimé du disque est encore annoncé aux agents',
+      ).toBe(false);
+    } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, job2!.id));
+      await rm(vivant, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
   it('masquer prend effet IMMÉDIATEMENT, sans attendre l’expiration du cache', async () => {
     // Constat Codex (26/08) : le cache de 60 s portait AUSSI les préférences.
     // Masquer un projet le laissait donc annoncé aux agents pendant une minute,

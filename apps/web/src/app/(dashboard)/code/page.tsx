@@ -17,7 +17,13 @@ export default async function CodePage() {
     getCodeTabStatusAction(),
   ]);
   const rows = result.ok ? result.data : [];
+  // Une lecture de préférences en ÉCHEC ne se traduit pas par « rien de rangé »
+  // (revue Codex, 26/08) : ce repli remontrait tous les projets masqués et
+  // perdrait tous les noms choisis, sans que rien ne le dise. L'écran
+  // afficherait un état plausible et faux — exactement ce que l'invariant #4
+  // interdit. On remonte donc l'erreur comme pour la liste des sessions.
   const prefs = prefsResult.ok ? prefsResult.data : [];
+  const readError = !result.ok ? result.message : !prefsResult.ok ? prefsResult.message : undefined;
   const hidden = new Set(prefs.filter((p) => p.hidden).map((p) => projectKey(p.projectPath)));
 
   // Vue PAR PROJET (décision Quentin 25/08) : le sous-titre compte les projets,
@@ -39,7 +45,7 @@ export default async function CodePage() {
         // plein : un repli silencieux vers un état plausible est exactement ce
         // que l'invariant #4 interdit.
         workspaceCount={statusResult.ok ? statusResult.data.workspaceCount : null}
-        error={!result.ok ? result.message : undefined}
+        error={readError}
       />
     </PageShell>
   );

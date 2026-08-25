@@ -175,6 +175,15 @@ function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, strin
  *   3. un seul dossier  → relatif à sa racine
  *   4. sinon            → l'existence sur disque tranche, et si rien
  *                         n'existe, on renonce plutôt que de choisir au hasard
+ *
+ * Les trois premiers cas sont DÉTERMINISTES : ils ne consultent pas le disque
+ * (revue Codex, 26/08). Exiger que le fichier existe encore effaçait un projet
+ * bien vivant dès qu'un fichier édité avait été supprimé depuis — un renommage,
+ * un refactor, un `.tmp` nettoyé. L'onglet Code, lui, garde cette histoire :
+ * ce qu'il vérifie, c'est le DOSSIER DE PROJET, pas chaque fichier. Les deux
+ * vues doivent juger pareil.
+ *
+ * Le disque n'est consulté qu'au cas 4, où il n'y a rien d'autre pour trancher.
  */
 function resolveScannedPath(
   p: string,
@@ -182,23 +191,17 @@ function resolveScannedPath(
   roots: string[],
   exists: (path: string) => boolean,
 ): string | null {
-  if (isAbsolute(p)) return exists(p) ? p : null;
+  if (isAbsolute(p)) return p;
   const rel = p.replace(/^\.\//, '');
 
   const [first, ...rest] = rel.split('/');
   const byLabel = authorWorkspaces.find((w) => w.label === first);
-  if (byLabel && rest.length > 0) {
-    const candidate = `${byLabel.path}/${rest.join('/')}`;
-    return exists(candidate) ? candidate : null;
-  }
+  if (byLabel && rest.length > 0) return `${byLabel.path}/${rest.join('/')}`;
 
-  if (authorWorkspaces.length === 1) {
-    const candidate = `${authorWorkspaces[0]!.path}/${rel}`;
-    return exists(candidate) ? candidate : null;
-  }
+  if (authorWorkspaces.length === 1) return `${authorWorkspaces[0]!.path}/${rel}`;
 
-  // Auteur inconnu (job supprimé) ou aucun label reconnu : on retombe sur
-  // l'ancien comportement, l'existence tranche parmi toutes les racines.
+  // Auteur inconnu (job supprimé) ou aucun label reconnu : l'existence tranche
+  // parmi toutes les racines, et si rien n'existe on renonce.
   return roots.map((r) => `${r}/${rel}`).find(exists) ?? null;
 }
 
@@ -431,6 +434,11 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       if (!wsRoot) continue;
 
       const projectPath = projectRootFor(abs, wsRoot, rootMemo);
+      // C'est le DOSSIER DE PROJET dont on vérifie l'existence, pas le fichier
+      // (revue Codex, 26/08) : un projet supprimé disparaît, un fichier
+      // supprimé au fil du travail ne fait pas disparaître son projet. Même
+      // règle que l'onglet Code, au caractère près.
+      if (!existsCached(projectPath)) continue;
       const entry = byPath.get(projectPath) ?? {
         owners: new Set(ownersByRoot.get(wsRoot) ?? []),
         lastActivityAt: row.createdAt ? row.createdAt.toISOString() : null,

@@ -109,14 +109,23 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
     // n'importe quel espace, et ses porteurs des développeurs.
     //
     // Sauter bruyamment plutôt qu'absorber : l'utilisateur garde son skill, le
-    // nôtre n'est pas livré, et le journal dit exactement quoi renommer.
+    // nôtre n'est pas livré, et le journal dit exactement quel geste poser.
+    //
+    // Le geste doit être POSSIBLE (revue Codex, 26/08). Ce message disait
+    // « renommez le vôtre » — or un slug est immuable par construction :
+    // `UpdateSkillSchema` le retire du payload, délibérément, parce que c'est
+    // l'identifiant stable d'un skill. On demandait donc à l'utilisateur une
+    // manœuvre qu'aucun écran ne permet, et le skill du catalogue restait
+    // indisponible sans issue. Un message d'échec qui n'est pas actionnable ne
+    // vaut guère mieux qu'un repli silencieux.
     if (existing && existing.createdBy !== 'system') {
       console.warn(
-        `[seed-skills] "${skill.slug}" already exists as a user-owned skill — ` +
-          `the catalog skill of the same name was NOT installed. ` +
-          `Rename yours to receive it. ` +
-          `If that skill came from an older Nodal install rather than from you, ` +
-          `delete it instead and restart to get the catalog version.`,
+        `[seed-skills] "${skill.slug}" already exists as a skill you own — ` +
+          `the catalog skill of the same name was NOT installed, and your own is untouched. ` +
+          `A slug cannot be changed once created: to receive the catalog skill, copy your ` +
+          `content into a new skill under a different slug, delete this one, and restart. ` +
+          `If it came from an older Nodal install rather than from you, deleting it and ` +
+          `restarting is enough.`,
       );
       continue;
     }
