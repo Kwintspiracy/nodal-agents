@@ -28,10 +28,10 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 
 ## Workflow rules
 
-- Opus 4.8 orchestrates and reviews; Sonnet 5 codes/tests; Haiku banned.
-- Max 5 concurrent agents.
-- Each brique merged only when its applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
-- Plan file at `~/.Codex/plans/nodalai-migration-plan.md` is the source of truth — update `[ ]` checkboxes as work progresses.
+- When Fable orchestrate the session, it delegates coding to Opus 5 and Sonnet 5 depending on the task complexity.
+- Never use Haiku
+- Each brique and PR can only be merge when proper PR Reviews and/or applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
+- When a PR or coding session is over, always delegates review and testing to Codex
 
 ## Commands
 

@@ -41,10 +41,35 @@ to rediscover it):
 
 ## Workflow rules
 
-- Opus 4.8 orchestrates and reviews; Sonnet 5 codes/tests; Haiku banned.
-- Max 5 concurrent agents.
-- Each brique merged only when its applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
-- Plan file at `~/.claude/plans/nodalai-migration-plan.md` is the source of truth — update `[ ]` checkboxes as work progresses.
+- When Fable orchestrates the session, it delegates coding to Opus 5 and Sonnet 5 depending on task complexity.
+- Never use Haiku.
+- A brique or PR is merged only once PR review and the applicable test gates pass (unit + arch + regression always; integration/smoke when an external service is touched).
+
+### Reviewing a PR — `codex review`, never a Claude subagent
+
+**This rule exists because it was broken on 2026-08-25.** The review plan said
+"external Codex for the P0s"; four Claude subagents were launched instead, over
+several hours, silently burning the session's own quota. The findings were real,
+but the argument for reviewing them — an outside pair of eyes — was not: two
+instances of the same model share the same blind spots. The plan was written and
+then forgotten by its own author, which is why the rule now lives here.
+
+- **Reviewing a PR means running `codex review`.** Not the Agent tool. Not a
+  subagent named after Codex. The command must appear in the tool calls.
+- **Launching a Claude subagent to review a PR is FORBIDDEN.** No exception for
+  "just a second opinion", "a quick pass", or "the diff is small".
+- **The trigger is an OPEN PR, not the end of a session.** A review is due as
+  soon as the PR exists, including mid-session and including a PR that is still
+  being amended.
+- **Loop** review → fix → review until Codex asks for no further change. A
+  finding is closed by a test that fails first, and the fix is verified BY
+  MUTATION (disable it, the test must go red).
+- **If `codex` is missing or fails: say so and stop.** Never fall back to a
+  Claude reviewer — that is a silent smart fallback (invariant #4), and it hides
+  the fact that no independent review happened.
+
+Claude subagents remain fine for anything that is NOT reviewing a PR: searching
+the codebase, mapping an area, drafting, running suites.
 
 ## Commands
 

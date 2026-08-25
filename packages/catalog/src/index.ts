@@ -126,4 +126,17 @@ export const capabilitySkillSlugs: string[] = slugsOfKind('capability');
  */
 export const agentInternalSkillSlugs: string[] = slugsOfKind('agent-internal');
 
+/**
+ * TOOL GROUP skills — presented as toggles on the agent's Tools tab and hidden
+ * from every Skills surface, because their value IS the tools they unlock.
+ *
+ * Derived from the `toolGroup` flag each skill DECLARES, never deduced from
+ * "does it gate a builtin" — that older rule filed discipline-carrying skills
+ * (code-review, command-execution) under Tools, where the owner could not find
+ * or edit their text. See the `toolGroup` doc in types.ts.
+ */
+export const toolGroupSkillSlugs: string[] = systemSkills
+  .filter((s) => s.toolGroup === true)
+  .map((s) => s.slug);
+
 export type { SystemSkill, SkillKind };
