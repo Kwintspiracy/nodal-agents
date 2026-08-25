@@ -611,23 +611,59 @@ describe('executeTool — fully_autonomous workspace', () => {
     expect(res.outcome).toBe('awaiting_approval');
   });
 
-  it('fully_autonomous relaxes require_approval → run_command executes with no prompt', async () => {
+  // CORRECTIF (revue P0 du 25/08, finding bloquant). Ces deux tests
+  // affirmaient l'inverse — « fully_autonomous exécute run_command sans
+  // prompt » — et gravaient une escalade de privilège comme comportement
+  // attendu : un réglage de workspace suffisait à obtenir un shell, sans
+  // qu'aucune règle par agent n'ait été posée. Un blanc-seing « plus jamais
+  // de question » ne vaut pas consentement à exécuter du code arbitraire.
+  it('fully_autonomous ne relaxe PAS run_command → approbation quand même', async () => {
     const res = await executeTool(
       makeRunCommandTool(),
       { command: 'ls -la' },
       makeCtx(),
       autonomousOpts(),
     );
-    expect(res.outcome).toBe('success');
+    expect(
+      res.outcome,
+      'l’autonomie du workspace a auto-approuvé un shell sans règle explicite',
+    ).toBe('awaiting_approval');
   });
 
-  it('fully_autonomous relaxes a safe-by-default skill-script tool too', async () => {
+  it('fully_autonomous ne relaxe PAS un outil de script de skill non plus', async () => {
     const skillScript = makeSimpleTool({
       name: 'run_skill_script',
       riskLevel: 'destructive',
       defaultApproval: 'require_approval',
     });
     const res = await executeTool(skillScript, { value: 'go' }, makeCtx(), autonomousOpts());
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('…mais une RÈGLE EXPLICITE auto_approve exécute bien (le Yolo reste la clé)', async () => {
+    const rule: ApprovalRule = {
+      id: 'yolo',
+      toolName: 'run_command',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'ls -la' },
+      makeCtx(),
+      autonomousOpts([rule]),
+    );
+    expect(res.outcome, 'la règle explicite par agent ne suffit plus à exécuter').toBe('success');
+  });
+
+  it('fully_autonomous relaxe toujours un outil ORDINAIRE (le correctif borne, il ne gèle pas)', async () => {
+    const ordinary = makeSimpleTool({
+      name: 'some_write_tool',
+      riskLevel: 'write',
+      defaultApproval: 'require_approval',
+    });
+    const res = await executeTool(ordinary, { value: 'go' }, makeCtx(), autonomousOpts());
     expect(res.outcome).toBe('success');
   });
 

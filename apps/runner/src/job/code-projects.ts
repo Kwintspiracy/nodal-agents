@@ -67,9 +67,19 @@ function within(dir: string, root: string): boolean {
   return a === b || a.startsWith(b + '/');
 }
 
-/** Racine de projet d'un fichier : plus haut dossier marqué sous le workspace, sinon 1er niveau. */
-function projectRootFor(absFile: string, wsRoot: string): string {
+/**
+ * Racine de projet d'un fichier : plus haut dossier marqué sous le workspace,
+ * sinon 1er niveau. MÉMOÏSÉ par dossier (revue P1 du 25/08, finding bloquant) :
+ * sans cache, chaque ligne scannée refaisait jusqu'à 24 remontées × 9 marqueurs
+ * d'`existsSync` synchrones — jusqu'à ~324 000 accès disque par job, event
+ * loop du runner gelé plusieurs secondes.
+ */
+function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, string>): string {
   const dir = absFile.replace(/\/[^/]*$/, '');
+  const key = `${wsRoot}|${dir}`;
+  const cached = memo.get(key);
+  if (cached !== undefined) return cached;
+
   let topmost: string | null = null;
   let cur = dir;
   for (let hops = 0; hops < 24 && cur && within(cur, wsRoot); hops++) {
@@ -78,11 +88,24 @@ function projectRootFor(absFile: string, wsRoot: string): string {
     if (parent === cur || parent === '' || /^[a-z]:$/i.test(parent)) break;
     cur = parent;
   }
-  if (topmost) return topmost;
-  if (!within(dir, wsRoot) || dir === wsRoot) return wsRoot;
-  const child = dir.slice(wsRoot.length + 1).split('/')[0];
-  return child ? `${wsRoot}/${child}` : wsRoot;
+  let result: string;
+  if (topmost) result = topmost;
+  else if (!within(dir, wsRoot) || dir === wsRoot) result = wsRoot;
+  else {
+    const child = dir.slice(wsRoot.length + 1).split('/')[0];
+    result = child ? `${wsRoot}/${child}` : wsRoot;
+  }
+  memo.set(key, result);
+  return result;
 }
+
+/**
+ * Cache par entité (revue P1 du 25/08) : `getDeploymentContext` tourne à
+ * CHAQUE job ET à chaque tour de chat. Un projet ne naît pas deux fois par
+ * minute — 60 s de TTL suffisent, et le prix du scan est payé une fois.
+ */
+const PROJECTS_TTL_MS = 60_000;
+const projectsCache = new Map<string, { at: number; value: CodeProjectSummary[] }>();
 
 /**
  * Les projets de code de l'entité, avec leurs détenteurs. Best-effort : toute
@@ -93,6 +116,8 @@ export async function listCodeProjectsForContext(
   db: RunnerDeps['db'],
   entityId: string,
 ): Promise<CodeProjectSummary[]> {
+  const cached = projectsCache.get(entityId);
+  if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
   try {
     // Les workspaces de l'entité, par agent — la carte « qui possède quoi ».
     const wsRows = await db
@@ -124,6 +149,21 @@ export async function listCodeProjectsForContext(
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
 
+    const rootMemo = new Map<string, string>();
+    const existsMemo = new Map<string, boolean>();
+    const existsCached = (p: string): boolean => {
+      const hit = existsMemo.get(p);
+      if (hit !== undefined) return hit;
+      let ok = false;
+      try {
+        ok = existsSync(p);
+      } catch {
+        ok = false;
+      }
+      existsMemo.set(p, ok);
+      return ok;
+    };
+
     const byPath = new Map<string, { owners: Set<string>; lastActivityAt: string | null }>();
     for (const row of rows) {
       // Une écriture REFUSÉE n'a rien créé — même règle que l'onglet Code.
@@ -144,19 +184,13 @@ export async function listCodeProjectsForContext(
       const p = norm(raw.trim());
       // Résolution : absolu tel quel, sinon collé au workspace qui l'héberge.
       const candidates = isAbsolute(p) ? [p] : roots.map((r) => `${r}/${p.replace(/^\.\//, '')}`);
-      const abs = candidates.find((c) => {
-        try {
-          return existsSync(c);
-        } catch {
-          return false;
-        }
-      });
+      const abs = candidates.find(existsCached);
       if (!abs) continue;
 
       const wsRoot = roots.find((r) => within(abs, r));
       if (!wsRoot) continue;
 
-      const projectPath = projectRootFor(abs, wsRoot);
+      const projectPath = projectRootFor(abs, wsRoot, rootMemo);
       const entry = byPath.get(projectPath) ?? {
         owners: new Set(ownersByRoot.get(wsRoot) ?? []),
         lastActivityAt: row.createdAt ? row.createdAt.toISOString() : null,
@@ -165,7 +199,7 @@ export async function listCodeProjectsForContext(
       byPath.set(projectPath, entry);
     }
 
-    return Array.from(byPath.entries())
+    const result = Array.from(byPath.entries())
       .sort((a, b) => (b[1].lastActivityAt ?? '').localeCompare(a[1].lastActivityAt ?? ''))
       .slice(0, MAX_PROJECTS)
       .map(([path, v]) => ({
@@ -174,6 +208,8 @@ export async function listCodeProjectsForContext(
         owners: Array.from(v.owners).sort(),
         lastActivityAt: v.lastActivityAt,
       }));
+    projectsCache.set(entityId, { at: Date.now(), value: result });
+    return result;
   } catch (err) {
     console.warn(
       '[code-projects] listing failed (context will omit the section):',

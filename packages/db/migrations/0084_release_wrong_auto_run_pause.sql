@@ -1,0 +1,24 @@
+-- 0084 — annule le backfill fautif de 0082 (revue P0 du 25/08, finding bloquant).
+--
+-- Le backfill de 0082 posait `auto_run_paused = true` quand l'ancien
+-- `lan_command_yolo` valait false ET qu'une regle auto_approve d'outil de code
+-- existait, en lisant ce false comme « le proprietaire avait deliberement
+-- coupe ». La premisse est FAUSSE sur le mode par defaut : hors LAN
+-- (local-trust), l'ancienne garde ne s'appliquait pas du tout et la section
+-- Settings etait masquee — le drapeau y valait false par construction, sans
+-- jamais avoir rien voulu dire. Consequence : une install locale qui avait
+-- active un Yolo se retrouvait, apres mise a jour, avec ses crons et ses
+-- taches Telegram suspendus en attente d'approbation, sans qu'aucun geste
+-- n'ait ete fait.
+--
+-- Le frein est un GESTE DELIBERE, pas un etat devine : il repart relache
+-- partout (sa valeur par defaut), et quiconque le veut l'enclenche en un clic
+-- dans Settings. La fenetre concernee est courte (0082 date du 24/08) et
+-- l'etat est visible dans l'interface, donc la correction ne peut pas
+-- surprendre en silence.
+--
+-- Le durcissement qui compte vit ailleurs, dans le code : l'autonomie du
+-- workspace ne relaxe plus JAMAIS les outils d'execution de code
+-- (packages/tools/src/execute.ts, isCodeExecutionTool) — seule une regle
+-- explicite par agent le fait.
+UPDATE entities SET auto_run_paused = false WHERE auto_run_paused = true;

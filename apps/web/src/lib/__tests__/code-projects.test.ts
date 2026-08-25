@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, codeProjectArchives, entities, users } from '@nodal-agents/db';
+import { and, eq, codeProjectArchives, entities, users } from '@nodal-agents/db';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,6 +26,8 @@ let racine = '';
 const norm = (p: string) => p.replace(/\\/g, '/');
 
 let foreignEntityId = '';
+/** Un autre utilisateur — sert à rendre la session NON-propriétaire. */
+let foreignOwnerUserId = '';
 
 vi.mock('@/lib/server.ts', () => ({
   getDb: () => testDb,
@@ -82,6 +84,7 @@ beforeAll(async () => {
     })
     .returning();
   foreignEntityId = autreEntite!.id;
+  foreignOwnerUserId = autreUser!.id;
 });
 
 afterAll(async () => {
@@ -216,6 +219,47 @@ describe('archivage des projets (lignes réelles)', () => {
         list.data.filter((p) => p === `${racine}/repoA`),
         'l’archive du voisin a fuité dans la liste',
       ).toHaveLength(0);
+    }
+  });
+});
+
+describe('garde-fous ajoutés par la revue P1 (25/08)', () => {
+  it('une racine de disque n’est JAMAIS un projet', async () => {
+    // Un workspace configuré sur C:\ matcherait tout le disque et produirait
+    // un « projet » nommé Users. Mieux vaut aucun projet qu'un projet faux.
+    const memo = new Map<string, string | null>();
+    expect(deriveProjectRoot([`${racine}/plain/z.md`], ['/'], memo)).toBeNull();
+    expect(deriveProjectRoot([`${racine}/plain/z.md`], ['C:/'], memo)).toBeNull();
+  });
+
+  it('archiver un projet est réservé au PROPRIÉTAIRE de l’espace', async () => {
+    const { setCodeProjectArchivedAction } = await import('../actions.ts');
+    const projectPath = `${racine}/repoA`;
+
+    // La session devient non-propriétaire le temps de l'appel.
+    await testDb
+      .update(entities)
+      .set({ userId: foreignOwnerUserId })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const r = await setCodeProjectArchivedAction({ projectPath, archived: true });
+      expect(r.ok).toBe(false);
+      expect(r.ok ? '' : r.code).toBe('forbidden');
+      const rows = await testDb
+        .select()
+        .from(codeProjectArchives)
+        .where(
+          and(
+            eq(codeProjectArchives.projectPath, projectPath),
+            eq(codeProjectArchives.entityId, seed.entityId),
+          ),
+        );
+      expect(rows, 'un non-propriétaire a archivé un projet').toHaveLength(0);
+    } finally {
+      await testDb
+        .update(entities)
+        .set({ userId: seed.userId })
+        .where(eq(entities.id, seed.entityId));
     }
   });
 });

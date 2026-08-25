@@ -271,10 +271,22 @@ export async function buildNodalMcpServer(opts: McpServerOptions): Promise<McpSe
             // deux des trois chemins de résolution et pas le troisième
             // (constat review 23/08) : un serveur longue durée continuait de
             // créer des jobs au nom d'un agent désactivé.
+            // L'appartenance à l'entité est re-vérifiée ici AUSSI (revue P1 du
+            // 25/08) : les chemins racine et slug la contrôlent, ce repli
+            // l'omettait. `entityId` est figé au démarrage du serveur — si la
+            // ligne agent changeait d'entité pendant qu'il tourne, le job
+            // serait inséré avec l'entité d'origine et l'agent d'une autre :
+            // exactement l'écriture inter-workspace que ce module dit fermer.
             const [launcher] = await opts.db
               .select({ id: agents.id })
               .from(agents)
-              .where(and(eq(agents.id, agentRow.id), eq(agents.active, true)))
+              .where(
+                and(
+                  eq(agents.id, agentRow.id),
+                  eq(agents.active, true),
+                  eq(agents.entityId, entityId),
+                ),
+              )
               .limit(1);
             if (!launcher) {
               throw new Error(

@@ -106,17 +106,29 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
       return `Reads the file "${str(input['path'])}" — read-only, changes nothing.`;
     case 'file_list':
       return `Lists workspace files — read-only, changes nothing.`;
-    case 'code_task':
+    case 'code_task': {
       // Risque fonction de l'IMPACT réel (lot approbations, décision Quentin
       // 24/08) : un code_task tombait dans le default « irreversible or
       // destructive » alors que ses écritures sont checkpointées AVANT
-      // exécution (mutatesWorkspace → takeCheckpointForTurn, vérouillé par
-      // checkpoint-wiring.test.ts) — donc réversibles. Les COMMANDES que le
-      // codeur lance, elles, ne le sont pas : la ligne dit les deux vérités.
+      // exécution (mutatesWorkspace → takeCheckpointForTurn, verrouillé par
+      // checkpoint-wiring.test.ts).
+      //
+      // Mais « réversible » sans réserve était FAUX (revue P0 du 25/08) : le
+      // snapshot fait un `git add` ordinaire, donc tout ce que le .gitignore
+      // du projet exclut (.env, données locales, caches) n'est PAS capturé —
+      // le dépôt le documente lui-même (CHECKPOINT_COVERAGE_NOTE). Et le mode
+      // 'read' ne modifie rien du tout : l'annoncer comme une écriture
+      // apprend à ne plus lire la ligne d'impact.
+      const mode = typeof input['mode'] === 'string' ? input['mode'] : 'read';
+      if (mode !== 'write') {
+        return 'Runs a coding agent in READ mode: it inspects the workspace and reports back, without editing files or running commands.';
+      }
       return (
         'Runs a coding agent that edits files in the workspace. ' +
-        'File changes are checkpointed first and can be reverted; commands it runs are not.'
+        'Tracked files are snapshotted first and can be reverted from the CLI; ' +
+        'gitignored files (.env, local data) and the commands it runs are not.'
       );
+    }
     default:
       return `${toolName}: irreversible or destructive action.`;
   }

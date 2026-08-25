@@ -243,6 +243,36 @@ export function createLocalAuthProvider(options: LocalAuthProviderOptions): Loca
   const authOptions: BetterAuthOptions = {
     baseURL,
     secret,
+    // Plafond de tentatives — SANS lui, il n'y en avait AUCUN (revue P1 du
+    // 25/08, finding bloquant). better-auth active son rate-limit uniquement
+    // en production ET seulement s'il sait dériver une IP, qu'il ne lit QUE
+    // dans `x-forwarded-for` : sans reverse-proxy — le cas normal d'un Nodal
+    // sur le LAN — `getIp` rend null et le limiteur se désactive en silence.
+    // Un hôte du réseau pouvait donc pilonner /sign-in sur le seul compte de
+    // l'install, sans plafond ni verrou.
+    //
+    // On l'active explicitement, avec un `customRules` à CLÉ FIXE pour les
+    // routes sensibles : la clé ne dépend plus d'une IP qu'on ne sait pas
+    // établir (et qu'un client pourrait forger via l'en-tête). Le plafond est
+    // donc global à l'install — acceptable ici, où le nombre d'utilisateurs
+    // légitimes est de l'ordre de 1, et où l'alternative est zéro plafond.
+    rateLimit: {
+      enabled: true,
+      // `memory`, pas `database` : le stockage base exige une table `rateLimit`
+      // que notre schéma n'a pas (essayé — l'auth entière tombait, tests à
+      // l'appui). Nodal tourne en UN process web, donc un compteur en mémoire
+      // couvre exactement la surface à protéger ; il repart à zéro au
+      // redémarrage, ce qui est sans effet sur une attaque en cours.
+      storage: 'memory',
+      window: 60,
+      max: 100,
+      customRules: {
+        '/sign-in/email': { window: 60, max: 10 },
+        '/sign-up/email': { window: 60, max: 5 },
+        '/change-password': { window: 60, max: 10 },
+        '/change-email': { window: 60, max: 5 },
+      },
+    },
     // CSRF: better-auth rejects auth requests whose Origin header doesn't match
     // baseURL or trustedOrigins. In LAN mode the user accesses the dashboard
     // via http://<lan-ip>:3000 from another device, so we additionally trust any

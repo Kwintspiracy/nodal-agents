@@ -6,8 +6,73 @@
 // contrainte unique (entity, agent, tool) NULLS NOT DISTINCT — une ligne par
 // triplet, l'action écrase la précédente.
 
-import { approvalRules } from '@nodal-agents/db';
+import { and, eq, approvalRules, entities } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
+
+export type RuleTarget = { entityId: string; agentId: string; toolName: string };
+
+/**
+ * L'action de la règle EXACTE (entité, agent, outil), ou null si aucune ligne
+ * n'existe. Sert à capturer l'état d'avant pour pouvoir le restaurer si la
+ * suite échoue (revue P0 du 25/08).
+ */
+export async function getApprovalRule(db: RunnerDeps['db'], t: RuleTarget): Promise<string | null> {
+  const [row] = await db
+    .select({ action: approvalRules.action })
+    .from(approvalRules)
+    .where(
+      and(
+        eq(approvalRules.entityId, t.entityId),
+        eq(approvalRules.agentId, t.agentId),
+        eq(approvalRules.toolName, t.toolName),
+      ),
+    )
+    .limit(1);
+  return row?.action ?? null;
+}
+
+/**
+ * Remet la règle dans l'état capturé par getApprovalRule : son action
+ * précédente, ou la SUPPRESSION quand il n'y avait pas de ligne. Best-effort —
+ * un rollback qui échoue est loggué, jamais propagé (on est déjà sur un
+ * chemin d'échec).
+ */
+export async function restoreApprovalRule(
+  db: RunnerDeps['db'],
+  t: RuleTarget & { previousAction: string | null },
+): Promise<void> {
+  try {
+    const where = and(
+      eq(approvalRules.entityId, t.entityId),
+      eq(approvalRules.agentId, t.agentId),
+      eq(approvalRules.toolName, t.toolName),
+    );
+    if (t.previousAction === null) {
+      await db.delete(approvalRules).where(where);
+      return;
+    }
+    await db
+      .update(approvalRules)
+      .set({ action: t.previousAction, updatedAt: new Date() })
+      .where(where);
+  } catch (err) {
+    console.error('[approvals/rules] rollback failed:', err);
+  }
+}
+
+/** Le frein d'urgence du workspace est-il enclenché ? */
+export async function isAutoRunPaused(db: RunnerDeps['db'], entityId: string): Promise<boolean> {
+  try {
+    const [row] = await db
+      .select({ autoRunPaused: entities.autoRunPaused })
+      .from(entities)
+      .where(eq(entities.id, entityId))
+      .limit(1);
+    return row?.autoRunPaused === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Pose (ou remplace) la règle auto_approve d'UN outil pour UN agent. Portée

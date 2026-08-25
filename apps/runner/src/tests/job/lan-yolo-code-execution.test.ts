@@ -22,17 +22,18 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { and, eq } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
   approvalRequests,
+  approvalRules,
   agentSkills,
   agentSkillAssignments,
   agentWorkspaces,
   entities,
 } from '@nodal-agents/db';
-import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createToolRegistry, registerBuiltins, isCodeExecutionTool } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
@@ -333,21 +334,21 @@ describe('Auto-run brake — code-execution tools beyond run_command', () => {
     }
   });
 
-  it('run_skill_script under fully_autonomous + brake RELEASED → nothing forces approval', async () => {
-    // L'autre direction : frein relâché (l'état par DÉFAUT de toute install),
-    // 8b n'injecte rien, la relaxation d'autonomie du workspace s'applique et
-    // l'outil tourne sans humain. Prouve que la suspension du test précédent
-    // venait bien du frein, pas de l'outil.
+  it('run_skill_script under fully_autonomous + brake RELEASED → STILL suspends (autonomy never grants code execution)', async () => {
+    // CORRECTIF (revue P0 du 25/08, finding bloquant). Ce test affirmait
+    // l'inverse — « frein relâché + fully_autonomous → tourne sans humain » —
+    // et gravait ainsi une ESCALADE DE PRIVILÈGE comme comportement attendu :
+    // sur une install réseau, l'autonomie du workspace suffisait à exécuter
+    // du shell sans qu'aucun toggle Yolo par agent n'ait été tourné.
     //
-    // Uses fully_autonomous here (not destructive_gate): audit fix M-8 made
-    // run_skill_script's content-opaque posture unconditional under
-    // destructive_gate (isHeavy = riskLevel === 'destructive', always true for
-    // this tool — a skill script can shell out to anything without ever
-    // calling run_command, so destructive_gate can no longer judge it
-    // "ordinary" and relax it). fully_autonomous is the one level that still
-    // relaxes EVERY require_approval unconditionally (no riskLevel check), so
-    // it's the one this master-switch test needs to isolate the switch's own
-    // effect from that unrelated M-8 change.
+    // Avant l'inversion du modèle à deux clés (#24), le runner injectait un
+    // require_approval sur les outils de code à chaque job hors local-trust ;
+    // ce matchedRule synthétique bloquait la relaxation d'autonomie. En
+    // rendant l'injection conditionnelle au frein, la #24 a rouvert le
+    // chemin. Le durcissement vit désormais dans executeTool
+    // (isCodeExecutionTool) : l'autonomie décrit une TOLÉRANCE générale, elle
+    // ne vaut jamais consentement à exécuter du code arbitraire — ce
+    // consentement-là s'exprime UNIQUEMENT par une règle explicite par agent.
     await db
       .update(entities)
       .set({
@@ -381,15 +382,22 @@ describe('Auto-run brake — code-execution tools beyond run_command', () => {
       ]);
 
       const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
-      // No suspension: the tool actually ran (and errored — the skill isn't
-      // installed on disk — but that's a tool_result, not an approval gate).
-      expect(result.status).toBe('completed');
+      // Le job SUSPEND : aucune règle explicite ne couvre run_skill_script, et
+      // l'autonomie ne peut plus relaxer un outil d'exécution de code.
+      expect(
+        result.status,
+        'l’autonomie du workspace a auto-approuvé un outil d’exécution de code',
+      ).toBe('awaiting_approval');
 
       const pendingApprovals = await db
         .select()
         .from(approvalRequests)
         .where(eq(approvalRequests.jobId, job.id));
-      expect(pendingApprovals.find((r) => r.status === 'pending')).toBeUndefined();
+      const pending = pendingApprovals.find((r) => r.status === 'pending');
+      expect(pending, 'aucune demande d’approbation créée').toBeDefined();
+      expect(pending!.toolName).toBe('run_skill_script');
+      // Rien n'a tourné : la preuve qui compte, pas un compteur d'appels.
+      expect(pending!.executedAt).toBeNull();
     } finally {
       await db
         .update(entities)
@@ -465,6 +473,157 @@ describe('Auto-run brake — code-execution tools beyond run_command', () => {
           autoRunPaused: false,
         })
         .where(eq(entities.id, seed.entityId));
+    }
+  });
+});
+
+// ─── L'autonomie n'accorde JAMAIS l'exécution de code (revue P0, 25/08) ──────
+// Le finding bloquant portait sur run_command et code_task autant que sur
+// run_skill_script : sur une install réseau, `fully_autonomous` + zéro règle
+// suffisait à exécuter du shell. On épingle les deux outils vedettes, plus la
+// contrepartie qui doit RESTER vraie : une règle explicite par agent (le
+// toggle Yolo) autorise bien l'exécution — sinon le correctif aurait cassé la
+// fonctionnalité au lieu de la borner.
+
+describe('Autonomy never grants code execution (P0 review fix)', () => {
+  // run_command n'entre dans la whitelist d'un agent que via un skill qui le
+  // déclare en requiredBuiltins (execute.ts calcule la palette par job).
+  beforeAll(async () => {
+    const ts = Date.now();
+    const [skillRow] = await db
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        name: `Command execution p0 ${ts}`,
+        slug: `command-execution-p0-${ts}`,
+        content: 'run shell commands and delegate coding',
+        requiredBuiltins: ['run_command', 'code_task'],
+      })
+      .returning();
+    await db.insert(agentSkillAssignments).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      skillId: skillRow!.id,
+    });
+  });
+
+  it('run_command under fully_autonomous, no rule → suspends for approval', async () => {
+    await db
+      .update(entities)
+      .set({
+        autoRunPaused: false,
+        rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' },
+      })
+      .where(eq(entities.id, seed.entityId));
+
+    try {
+      const job = await createJob();
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-rc-auto',
+              toolName: 'run_command',
+              args: { purpose: 'list files', command: 'echo hello' },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr-auto', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
+      expect(result.status).toBe('awaiting_approval');
+
+      const [pending] = await db
+        .select()
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      expect(pending).toBeDefined();
+      expect(pending!.toolName).toBe('run_command');
+      expect(pending!.executedAt).toBeNull();
+    } finally {
+      await db
+        .update(entities)
+        .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' } })
+        .where(eq(entities.id, seed.entityId));
+    }
+  });
+
+  it('les SIX outils d’exécution de code sont hors de portée de la relaxation', () => {
+    // Le chemin d'intégration est prouvé ci-dessus par run_command et par
+    // run_skill_script ; ici on fige la LISTE elle-même, qui est ce qu'un
+    // futur ajout d'outil risque d'oublier. (code_task ne peut pas passer par
+    // executeJob dans ce harnais : son preflight de sandbox refuse avant même
+    // la porte d'approbation, donc il n'y prouverait rien.)
+    for (const name of [
+      'run_command',
+      'code_task',
+      'run_skill_script',
+      'skill_file_write',
+      'create_mcp',
+      'attach_mcp',
+    ]) {
+      expect(isCodeExecutionTool(name), `${name} peut être auto-approuvé par l’autonomie`).toBe(
+        true,
+      );
+    }
+    // Et un outil ordinaire reste relaxable — le correctif borne, il ne gèle pas.
+    expect(isCodeExecutionTool('web_search')).toBe(false);
+    expect(isCodeExecutionTool('file_write')).toBe(false);
+  });
+
+  it('une RÈGLE EXPLICITE par agent autorise toujours (le Yolo n’est pas cassé)', async () => {
+    await db
+      .update(entities)
+      .set({
+        autoRunPaused: false,
+        rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' },
+      })
+      .where(eq(entities.id, seed.entityId));
+    await db.insert(approvalRules).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      toolName: 'run_command',
+      action: 'auto_approve',
+    });
+
+    try {
+      const job = await createJob();
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-rc-rule',
+              toolName: 'run_command',
+              args: { purpose: 'say hello', command: 'echo hello' },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr-rule', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
+      expect(result.status, 'la règle explicite par agent ne suffit plus').toBe('completed');
+
+      const pendings = await db
+        .select()
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      expect(pendings.find((r) => r.status === 'pending')).toBeUndefined();
+    } finally {
+      await db
+        .delete(approvalRules)
+        .where(
+          and(eq(approvalRules.entityId, seed.entityId), eq(approvalRules.toolName, 'run_command')),
+        );
     }
   });
 });

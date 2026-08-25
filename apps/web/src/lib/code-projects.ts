@@ -148,7 +148,11 @@ export function deriveProjectRoot(
     let wsRoot: string | null = null;
     for (const root of workspaceRoots) {
       const r = root.replace(/\\/g, '/').replace(/\/+$/, '');
-      if (r === '') continue;
+      // Un workspace posé sur une RACINE DE DISQUE est ignoré (revue P1 du
+      // 25/08) : il engloberait la machine entière, et le repli « sous-dossier
+      // de premier niveau » en tirerait des projets nommés `Users` ou `home`.
+      // Aucun projet vaut mieux qu'un projet inventé.
+      if (r === '' || isDriveRoot(r)) continue;
       const matches = isWin
         ? abs.toLowerCase().startsWith(r.toLowerCase() + '/')
         : abs.startsWith(r + '/');
@@ -157,6 +161,12 @@ export function deriveProjectRoot(
         break;
       }
     }
+    // Un fichier qui n'est SOUS AUCUN workspace ne produit aucun projet
+    // (attrapé par le test « racine de disque », revue P1 du 25/08) : sans
+    // cette sortie, `findProjectRoot` était appelé avec une borne nulle,
+    // remontait sans limite et pouvait retenir un dépôt fortuit du home —
+    // précisément le trou que la borne workspace était censée fermer.
+    if (!wsRoot) continue;
     const marked = findProjectRoot(dir, gitMemo, wsRoot);
     if (marked) {
       gitVotes.set(marked, (gitVotes.get(marked) ?? 0) + 1);
@@ -171,12 +181,23 @@ export function deriveProjectRoot(
   }
   const top = (m: Map<string, number>): string | null =>
     [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  return top(gitVotes) ?? top(wsVotes);
+  const winner = top(gitVotes) ?? top(wsVotes);
+  return winner !== null && !isDriveRoot(winner) ? winner : null;
 }
 
 /** `D:/APPS/NodalAI` → `NodalAI` — le nom d'affichage d'un projet. */
 export function projectNameFromPath(projectPath: string): string {
   return projectPath.split('/').filter(Boolean).pop() ?? projectPath;
+}
+
+/**
+ * Une racine de disque (`C:`, `C:/`, `/`) n'est JAMAIS un projet (revue P1 du
+ * 25/08) : un workspace configuré sur `C:\` matcherait tout le disque et
+ * produirait un « projet » nommé `Users`. Mieux vaut aucun projet qu'un projet
+ * aberrant — la session retombe alors dans le tiroir « Other sessions ».
+ */
+function isDriveRoot(p: string): boolean {
+  return p === '' || p === '/' || /^[a-z]:\/?$/i.test(p);
 }
 
 /** Normalisation d'un chemin de workspace vers la forme projet (slashes, sans trailing). */
