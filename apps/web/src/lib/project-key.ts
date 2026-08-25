@@ -16,10 +16,21 @@
 // deux doivent répondre pareil, faute de quoi un projet masqué dans
 // l'interface resterait annoncé aux agents.
 
-/** Chemin Windows (`C:/…`) ? Seuls ceux-là se replient en casse. */
-const isWindowsPath = (p: string): boolean => /^[a-z]:\//i.test(p);
+/**
+ * Chemin Windows ? Seuls ceux-là se replient en casse.
+ *
+ * Deux formes, pas une (revue Codex, 26/08) : la lettre de lecteur (`C:/…`) et
+ * le partage réseau UNC, que la normalisation en slashes rend `//serveur/part`.
+ * `addAgentWorkspaceAction` accepte les deux depuis toujours — ne reconnaître
+ * que la première traitait un partage Windows comme un chemin sensible à la
+ * casse, donc dupliquait ses projets et ratait ses renommages.
+ */
+export const isWindowsPath = (p: string): boolean => /^[a-z]:\//i.test(p) || p.startsWith('//');
 
-/** `C:\Dev\App\` → `c:/dev/app` ; `/srv/App` → `/srv/App` (casse préservée). */
+/**
+ * `C:\Dev\App\` → `c:/dev/app` ; `\\srv\part\App` → `//srv/part/app` ;
+ * `/srv/App` → `/srv/App` (casse préservée).
+ */
 export function projectKey(p: string): string {
   const norm = p.replace(/\\/g, '/').replace(/\/+$/, '');
   return isWindowsPath(norm) ? norm.toLowerCase() : norm;

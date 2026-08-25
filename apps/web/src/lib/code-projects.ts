@@ -16,8 +16,9 @@
 // des fonctions async — ces helpers sync (et testables) doivent vivre ici.
 
 import { existsSync as fsExistsSync } from 'node:fs';
+import { isWindowsPath } from './project-key.ts';
 
-/** Chemin absolu ? (POSIX `/…` ou Windows `C:/…`, déjà slash-normalisé.) */
+/** Chemin absolu ? (POSIX `/…`, Windows `C:/…` ou UNC `//srv/part`.) */
 function isAbsoluteChangePath(p: string): boolean {
   return /^[a-z]:\//i.test(p) || p.startsWith('/');
 }
@@ -32,9 +33,7 @@ export const normPath = (s: string): string => s.replace(/\\/g, '/').replace(/\/
 export function samePath(a: string, b: string): boolean {
   const x = normPath(a);
   const y = normPath(b);
-  return /^[a-z]:\//i.test(x) || /^[a-z]:\//i.test(y)
-    ? x.toLowerCase() === y.toLowerCase()
-    : x === y;
+  return isWindowsPath(x) || isWindowsPath(y) ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
 /** `child` est-il DANS `parent` (ou `parent` lui-même) ? Frontière de segment. */
@@ -44,7 +43,7 @@ export function isUnderPath(child: string, parent: string): boolean {
   if (p === '') return false;
   // La frontière compte : sans le `/`, un dossier `dev` avalerait `dev-notes`
   // (revue Codex, 26/08).
-  const isWin = /^[a-z]:\//i.test(c) || /^[a-z]:\//i.test(p);
+  const isWin = isWindowsPath(c) || isWindowsPath(p);
   const cc = isWin ? c.toLowerCase() : c;
   const pp = isWin ? p.toLowerCase() : p;
   return cc === pp || cc.startsWith(pp + '/');
@@ -190,7 +189,7 @@ function projectUnderWorkspace(
 ): string {
   if (hasProjectMarker(wsRoot, memo)) return wsRoot;
 
-  const isWin = /^[a-z]:\//i.test(dir);
+  const isWin = isWindowsPath(dir) || isWindowsPath(wsRoot);
   const a = isWin ? dir.toLowerCase() : dir;
   const b = isWin ? wsRoot.toLowerCase() : wsRoot;
   if (a === b || !a.startsWith(b + '/')) return wsRoot;

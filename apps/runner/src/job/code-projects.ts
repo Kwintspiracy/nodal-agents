@@ -71,6 +71,16 @@ const SCAN_LIMIT = 1500;
 const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '');
 const isAbsolute = (p: string): boolean => /^[a-z]:\//i.test(p) || p.startsWith('/');
 
+/**
+ * Chemin Windows — jumeau de `apps/web/src/lib/project-key.ts`.
+ *
+ * DEUX formes (revue Codex, 26/08) : la lettre de lecteur, et le partage réseau
+ * UNC que la normalisation rend `//serveur/part`. Les workspaces acceptent les
+ * deux ; ne reconnaître que la première rendait un partage Windows sensible à
+ * la casse, et ses écritures pouvaient être écartées du contexte.
+ */
+const isWindowsPath = (p: string): boolean => /^[a-z]:\//i.test(p) || p.startsWith('//');
+
 function hasMarker(dir: string): boolean {
   try {
     return PROJECT_MARKERS.some((m) => existsSync(`${dir}/${m}`));
@@ -108,11 +118,11 @@ export function isDriveRoot(p: string): boolean {
  */
 export function projectKey(p: string): string {
   const s = norm(p);
-  return /^[a-z]:\//i.test(s) ? s.toLowerCase() : s;
+  return isWindowsPath(s) ? s.toLowerCase() : s;
 }
 
 function within(dir: string, root: string): boolean {
-  const isWin = /^[a-z]:\//i.test(dir);
+  const isWin = isWindowsPath(dir) || isWindowsPath(root);
   const a = isWin ? dir.toLowerCase() : dir;
   const b = isWin ? root.toLowerCase() : root;
   return a === b || a.startsWith(b + '/');

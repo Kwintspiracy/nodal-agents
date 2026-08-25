@@ -349,6 +349,12 @@ describe('listCodeProjectsForContext', () => {
     expect(projectKeyOf('/srv/App')).not.toBe(projectKeyOf('/srv/app'));
     // Windows, lui, se replie bien : c'est le même dossier écrit autrement.
     expect(projectKeyOf('C:\\Dev\\App\\')).toBe(projectKeyOf('c:/dev/app'));
+    // Un PARTAGE RÉSEAU aussi (revue Codex, 26/08) : `\\serveur\part` est un
+    // chemin Windows, insensible à la casse, même s'il n'a pas de lettre de
+    // lecteur. Les workspaces l'acceptent depuis toujours.
+    expect(projectKeyOf('\\\\serveur\\part\\App')).toBe(projectKeyOf('//SERVEUR/part/app'));
+    // Et il ne se confond pas avec un chemin POSIX.
+    expect(projectKeyOf('//serveur/part/App')).not.toBe(projectKeyOf('/serveur/part/app'));
   });
 
   it('RENOMMER un projet change le nom que les agents entendent', async () => {
