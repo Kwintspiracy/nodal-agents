@@ -613,12 +613,14 @@ describe('Autonomy never grants code execution (P0 review fix)', () => {
         rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' },
       })
       .where(eq(entities.id, seed.entityId));
-    await db.insert(approvalRules).values({
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      toolName: '*',
-      action: 'auto_approve',
-    });
+    // Les DEUX portées du wildcard : agent (priorité 5) et entité (priorité 6).
+    // La neutralisation ne regarde pas la portée — les deux passent par le même
+    // chemin — mais les deux lignes sont posées ensemble pour que le test tombe
+    // si l'une des deux branches était un jour traitée à part.
+    await db.insert(approvalRules).values([
+      { entityId: seed.entityId, agentId: seed.agentId, toolName: '*', action: 'auto_approve' },
+      { entityId: seed.entityId, agentId: null, toolName: '*', action: 'auto_approve' },
+    ]);
 
     const job = await createJob();
     const llmClient = makeMockLlmClient([

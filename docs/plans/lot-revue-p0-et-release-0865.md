@@ -56,6 +56,41 @@ mode LAN.
 2. L'archivage d'un projet s'appuyait sur `isWorkspaceOwner`, qui répond
    toujours vrai en `local-trust`.
 
+### Deux portes dérobées fermées par la relecture
+
+La boucle revue → correction → revue a tourné quatre fois. Elle a trouvé, après
+les P0 eux-mêmes, deux façons de rouvrir exactement le même trou :
+
+**Une règle wildcard `*` en auto\_approve.** Attrapée en priorité 5/6, elle
+devenait une « règle explicite », et la garde d'autonomie — protégée
+précisément par l'absence de règle explicite — cessait de s'appliquer. Un
+blanc-seing « tout auto » redonnait le shell sans qu'aucun réglage par agent
+n'ait été touché. Le sens permissif est désormais ignoré pour les outils de
+code ; un wildcard `require_approval` ou `block` continue de s'appliquer.
+
+**La liste des six outils, recopiée à deux endroits.** Identiques ce jour-là,
+mais rien ne verrouillait l'égalité : un futur outil ajouté à la garde et
+oublié dans la copie du frein d'urgence serait resté balayable par un wildcard
+malgré le bouton rouge. Une seule source désormais, figée par un test.
+
+### Ce que la relecture laisse volontairement en l'état
+
+- Le grant entité-wide « tous mes agents » sur un outil nommé couvre aussi les
+  agents **futurs**, y compris ceux qu'un orchestrateur crée lui-même. C'est ce
+  que le grant dit ; à savoir, pas à corriger.
+- La migration 0084 relâche aussi un frein enclenché à la main pendant la
+  fenêtre du 24 au 25/08. Assumé et écrit dans la migration.
+- Le compteur de limitation de débit est par process — correct tant que le web
+  est mono-process.
+- L'IP d'audit des sessions vaudra `127.0.0.1` pour tout le monde : c'est le
+  prix de la clé stable qui réactive la limitation. Perte d'information sur
+  « quel appareil s'est connecté ».
+- Les deux dérivations de projet divergent encore sur **l'existence sur
+  disque** (le web garde un chemin absolu sans le vérifier, le runner exige
+  qu'il existe). Le remède est l'extraction dans un paquet partagé, pas une
+  troisième recopie. ⚠️ À l'extraction : la différence « le web rend UN projet,
+  le runner rend une LISTE » est **intentionnelle** — ne pas l'unifier.
+
 ## 2. Skill « dev » — pourquoi il remplace la case à cocher
 
 Constat de Quentin : les relecteurs ont `code-review`, les développeurs n'ont
