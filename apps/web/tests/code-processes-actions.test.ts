@@ -857,11 +857,12 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     const row = apres.data.find((r) => r.id === jobId);
     // Le PROJET disparaît — c'est le constat de Quentin. La session, elle,
     // reste : elle a bien eu lieu, et l'effacer réécrirait l'histoire. Elle
-    // retombe sur l'unique dossier de son agent, faute de projet nommable.
+    // tombe dans « Other sessions », et surtout PAS sous le dossier conteneur,
+    // ce qui ferait réapparaître le travail supprimé sous un autre nom.
     expect(
       row?.projectPath,
       'un dossier supprimé apparaît encore comme projet dans l’onglet',
-    ).not.toBe(projet);
+    ).toBeNull();
     expect(
       apres.data.some((r) => r.projectPath === projet),
       'le projet supprimé subsiste sur une autre session',
@@ -907,12 +908,13 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     expect(row, 'la session qui échoue à créer une app a été filtrée de l’onglet').toBeTruthy();
     // Honnête sur le résultat : rien n'a été écrit.
     expect(row?.filesChanged, 'une écriture refusée a été comptée comme un fichier').toBe(0);
-    // Le projet visé n'existe pas — rien n'a abouti. La session retombe sur
-    // l'unique dossier de son agent, qui est l'endroit où elle a échoué.
-    expect(row?.projectPath).toBe(DEV_FOLDER);
+    // Aucun projet à nommer — rien n'a abouti. La session vit dans le tiroir
+    // « Other sessions », et surtout PAS sous le dossier conteneur : l'y
+    // ranger inventerait un projet à partir d'un échec.
+    expect(row?.projectPath, 'un projet a été inventé à partir d’écritures refusées').toBeNull();
     expect(
       result.data.some((r) => r.projectPath === `${DEV_FOLDER}/nouvelle-app`),
-      'un projet a été inventé à partir d’écritures toutes refusées',
+      'le dossier jamais créé apparaît comme projet',
     ).toBe(false);
   });
 

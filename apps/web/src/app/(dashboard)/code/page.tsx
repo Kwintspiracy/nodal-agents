@@ -30,7 +30,13 @@ export default async function CodePage() {
   // pas les sessions — c'est l'unité que la page raconte. Les projets masqués
   // n'entrent pas dans le compte : ils ne sont pas dans la liste non plus.
   const visible = rows.filter((r) => !(r.projectPath && hidden.has(projectKey(r.projectPath))));
-  const projectCount = new Set(visible.map((r) => r.projectPath ?? '__other__')).size;
+  // MÊME clé que la table (revue Codex, 26/08) : sur Windows, deux sessions du
+  // même dossier peuvent porter des casses différentes. La table les groupe en
+  // une carte ; compter les chemins bruts annoncerait deux projets pour une
+  // seule carte affichée.
+  const projectCount = new Set(
+    visible.map((r) => (r.projectPath ? projectKey(r.projectPath) : '__other__')),
+  ).size;
 
   return (
     <PageShell

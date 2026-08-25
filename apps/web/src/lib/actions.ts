@@ -11598,12 +11598,23 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
 
       jobRows = jobs.map((j) => {
         const ws = workspacesFor(j.id);
+        const jobChanges = changesByRoot.get(j.id) ?? [];
+        // Le repli ne vaut QUE pour une session sans aucun fichier à ancrer —
+        // une review, une délégation à la CLI (revue Codex, 26/08).
+        //
+        // Appliqué sans cette condition, il rattrapait les cas où la dérivation
+        // a délibérément renoncé : projet supprimé du disque, ou nouvelle app
+        // dont toutes les écritures ont été refusées. Le travail supprimé
+        // réapparaissait alors sous le dossier CONTENEUR — exactement le
+        // fantôme que ce lot existe pour faire disparaître, sous un autre nom.
+        //
+        // Une session qui visait un projet et n'en a pas retombe donc dans
+        // « Other sessions », ce qui est la vérité : elle a eu lieu, et il n'y
+        // a rien à nommer.
+        const aVisePro = jobChanges.some((c) => isInsideWorkspace(c, ws));
         const projectPath =
-          deriveProjectRoot(changesByRoot.get(j.id) ?? [], ws, devMemo) ??
-          // Repli sans fichier ancrable : l'unique dossier de l'agent, et
-          // seulement s'il existe encore sur le disque — `devMemo` porte aussi
-          // le contrôle d'existence.
-          (j.agentId
+          deriveProjectRoot(jobChanges, ws, devMemo) ??
+          (!aVisePro && j.agentId
             ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [], devMemo)
             : null);
         return {
@@ -12140,8 +12151,12 @@ export async function getCodingProcessDetailAction(
 
       const detailMemo = new Map<string, string | null>();
       let detailProjectPath = deriveProjectRoot(rawChanges, detailWorkspaces, detailMemo);
-      // Même repli que la liste : l'unique dossier de l'agent racine.
-      if (!detailProjectPath && job.agentId) {
+      // Même repli que la liste, MÊME condition : uniquement quand il n'y avait
+      // aucun fichier à ancrer. Sinon il rattraperait les cas où la dérivation
+      // a délibérément renoncé (projet supprimé, écritures toutes refusées) et
+      // ferait réapparaître le travail sous le dossier conteneur.
+      const detailAVisePro = rawChanges.some((c) => isInsideWorkspace(c, detailWorkspaces));
+      if (!detailProjectPath && !detailAVisePro && job.agentId) {
         const agentWs = await db
           .select({ path: agentWorkspaces.path })
           .from(agentWorkspaces)
@@ -12154,18 +12169,24 @@ export async function getCodingProcessDetailAction(
       // Le nom choisi par le propriétaire l'emporte sur le nom du dossier — le
       // détail doit titrer comme la liste, sinon on croit changer de projet en
       // ouvrant une session.
+      //
+      // La correspondance passe par `projectKey`, PAS par une égalité SQL
+      // (revue Codex, 26/08) : sur Windows, deux sessions du même dossier
+      // peuvent avoir été enregistrées avec des casses différentes. La liste
+      // les groupe déjà ainsi ; une égalité stricte aurait fait retomber le
+      // titre sur le nom du dossier dès qu'on ouvrait la « mauvaise » session.
       const detailProjectName = detailProjectPath
         ? (
             await db
-              .select({ displayName: codeProjects.displayName })
+              .select({
+                projectPath: codeProjects.projectPath,
+                displayName: codeProjects.displayName,
+              })
               .from(codeProjects)
-              .where(
-                and(
-                  eq(codeProjects.entityId, entityId),
-                  eq(codeProjects.projectPath, detailProjectPath),
-                ),
-              )
-          )[0]?.displayName?.trim() || projectNameFromPath(detailProjectPath)
+              .where(eq(codeProjects.entityId, entityId))
+          )
+            .find((r) => projectKey(r.projectPath) === projectKey(detailProjectPath!))
+            ?.displayName?.trim() || projectNameFromPath(detailProjectPath)
         : null;
 
       return ok({
