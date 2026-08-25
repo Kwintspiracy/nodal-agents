@@ -306,6 +306,90 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
+  it('un chemin relatif SANS label ne va pas piocher dans le dossier d’un autre agent', async () => {
+    // Constat Codex (26/08). Quand aucun label ne correspond, l'existence sur
+    // disque tranche — mais parmi les dossiers de l'AUTEUR, pas de tout
+    // l'espace. Chercher partout attribuait l'écriture au projet d'un agent
+    // qui n'y est pour rien dès qu'un chemin homonyme existait ailleurs.
+    //
+    // Ici : `commun/app.js` existe chez DEUX agents. Celui qui écrit est le
+    // second ; c'est SON dossier qui doit gagner.
+    //
+    // Le dossier du VOISIN porte volontairement un nom plus LONG : les racines
+    // sont triées de la plus longue à la plus courte, donc il est examiné en
+    // premier. Sans ce détail le test serait décoratif — constaté en le
+    // vérifiant par mutation, où il passait encore avec la recherche élargie.
+    const chezLAutre = norm(await mkdtemp(join(tmpdir(), 'nodal-homo-voisin-au-nom-tres-long-')));
+    const chezLAuteur = norm(await mkdtemp(join(tmpdir(), 'nodal-homo-b-')));
+    for (const base of [chezLAutre, chezLAuteur]) {
+      await mkdir(join(base, 'commun'), { recursive: true });
+      await writeFile(join(base, 'commun', 'app.js'), '// app');
+    }
+
+    const [autre] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Agent voisin',
+        slug: `voisin-homo-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    const [auteur] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Agent auteur',
+        slug: `auteur-homo-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    await db.insert(agentWorkspaces).values([
+      { entityId: seed.entityId, agentId: autre!.id, label: 'A', path: chezLAutre },
+      // DEUX dossiers pour l'auteur : sans ça la règle « dossier unique »
+      // trancherait avant d'arriver au cas testé.
+      { entityId: seed.entityId, agentId: auteur!.id, label: 'B', path: chezLAuteur },
+      { entityId: seed.entityId, agentId: auteur!.id, label: 'C', path: `${racine}/dev` },
+    ]);
+    const [jobAuteur] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: auteur!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'app',
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: jobAuteur!.id,
+      toolName: 'file_write',
+      toolInput: { path: 'commun/app.js' },
+      toolOutput: '{"ok":true}',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        projects.some((p) => p.path === `${chezLAutre}/commun`),
+        'l’écriture a été attribuée au dossier d’un agent qui n’y est pour rien',
+      ).toBe(false);
+      expect(
+        projects.some((p) => p.path === `${chezLAuteur}/commun`),
+        'l’écriture n’a pas été rattachée au dossier de son auteur',
+      ).toBe(true);
+    } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobAuteur!.id));
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, autre!.id));
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, auteur!.id));
+      await rm(chezLAutre, { recursive: true, force: true });
+      await rm(chezLAuteur, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
   it('masquer prend effet IMMÉDIATEMENT, sans attendre l’expiration du cache', async () => {
     // Constat Codex (26/08) : le cache de 60 s portait AUSSI les préférences.
     // Masquer un projet le laissait donc annoncé aux agents pendant une minute,

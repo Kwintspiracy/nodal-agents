@@ -210,9 +210,14 @@ function resolveScannedPath(
 
   if (authorWorkspaces.length === 1) return `${authorWorkspaces[0]!.path}/${rel}`;
 
-  // Auteur inconnu (job supprimé) ou aucun label reconnu : l'existence tranche
-  // parmi toutes les racines, et si rien n'existe on renonce.
-  return roots.map((r) => `${r}/${rel}`).find(exists) ?? null;
+  // Plusieurs dossiers et aucun label reconnu : l'existence tranche — mais
+  // CHEZ L'AUTEUR (revue Codex, 26/08). Chercher parmi toutes les racines de
+  // l'espace attribuait l'écriture au projet d'un agent qui n'y est pour rien,
+  // dès qu'un chemin homonyme existait ailleurs et arrivait plus tôt dans
+  // l'ordre. Le jumeau web ne cherche que chez l'auteur ; deviner ici, c'est
+  // à la fois un repli malin (invariant #4) et un désaccord entre les vues.
+  const candidates = authorWorkspaces.length > 0 ? authorWorkspaces.map((w) => w.path) : roots;
+  return candidates.map((r) => `${r}/${rel}`).find(exists) ?? null;
 }
 
 /** Un projet tel que le SCAN le voit : sans nom choisi, sans masquage appliqué. */
