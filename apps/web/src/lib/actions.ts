@@ -12381,18 +12381,32 @@ async function upsertCodeProject(
   projectPath: string,
   patch: { hidden?: boolean; displayName?: string | null },
 ): Promise<void> {
-  const existing = (
+  // TOUTES les lignes qui désignent ce projet, pas seulement la première
+  // (revue Codex, 26/08). La contrainte d'unicité porte sur le TEXTE exact,
+  // héritée de `code_project_archives` (0083) : une base mise à jour peut donc
+  // déjà contenir deux lignes ne différant que par la casse, et une écriture
+  // concurrente peut encore en créer. N'en corriger qu'une laisserait l'autre
+  // à `hidden=true`, et le projet resterait masqué pour toujours.
+  //
+  // Les mettre toutes à jour converge : la première écriture qui suit remet
+  // l'ensemble d'accord, quelle que soit la façon dont les doublons sont nés.
+  const matches = (
     await db
       .select({ id: codeProjects.id, projectPath: codeProjects.projectPath })
       .from(codeProjects)
       .where(eq(codeProjects.entityId, entityId))
-  ).find((r) => projectKey(r.projectPath) === projectKey(projectPath));
+  ).filter((r) => projectKey(r.projectPath) === projectKey(projectPath));
 
-  if (existing) {
+  if (matches.length > 0) {
     await db
       .update(codeProjects)
       .set({ ...patch, updatedAt: new Date() })
-      .where(eq(codeProjects.id, existing.id));
+      .where(
+        inArray(
+          codeProjects.id,
+          matches.map((r) => r.id),
+        ),
+      );
     return;
   }
 

@@ -414,6 +414,35 @@ describe('les deux gestes du propriétaire (lignes réelles)', () => {
     }
   });
 
+  it('des DOUBLONS de casse hérités d’une vieille base sont tous défaits d’un coup', async () => {
+    // Constat Codex (26/08). La contrainte d'unicité porte sur le TEXTE exact,
+    // héritée de `code_project_archives` (0083) : une base mise à jour peut
+    // déjà contenir deux lignes ne différant que par la casse. N'en corriger
+    // qu'une laissait l'autre à `hidden=true`, et le projet restait masqué pour
+    // toujours — le démasquage semblait fonctionner sans rien changer.
+    //
+    // Les deux lignes sont posées ICI parce qu'elles sont la CONDITION du
+    // scénario (une base héritée), pas le résultat qu'on mesure : ce qu'on
+    // mesure, c'est ce que l'action en fait.
+    const { setCodeProjectHiddenAction } = await import('../actions.ts');
+    await testDb.insert(codeProjects).values([
+      { entityId: seed.entityId, projectPath: 'D:/Legacy/App', hidden: true },
+      { entityId: seed.entityId, projectPath: 'd:/legacy/app', hidden: true },
+    ]);
+
+    const r = await setCodeProjectHiddenAction({ projectPath: 'D:/Legacy/App', hidden: false });
+    expect(r.ok, r.ok ? '' : r.message).toBe(true);
+
+    const rows = (
+      await testDb.select().from(codeProjects).where(eq(codeProjects.entityId, seed.entityId))
+    ).filter((p) => p.projectPath.toLowerCase() === 'd:/legacy/app');
+    expect(rows).toHaveLength(2);
+    expect(
+      rows.filter((p) => p.hidden),
+      'un doublon est resté masqué : le projet ne peut plus être rétabli',
+    ).toHaveLength(0);
+  });
+
   it('renommer avec une chaîne vide rend son nom au DOSSIER (null, pas une chaîne vide)', async () => {
     const { renameCodeProjectAction } = await import('../actions.ts');
     const projectPath = `${racine}/repoB`;
