@@ -900,12 +900,26 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
       },
     ]);
 
-    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const { listCodingProcessesAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
     const result = await listCodingProcessesAction();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const row = result.data.find((r) => r.id === jobId);
     expect(row, 'la session qui échoue à créer une app a été filtrée de l’onglet').toBeTruthy();
+
+    // Le DÉTAIL doit dire la même chose (revue Codex, 26/08). Il écartait les
+    // appels refusés avant de décider, croyait donc n'avoir rien à ancrer, et
+    // le repli lui faisait nommer un projet que la liste ne nommait pas.
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (detail.ok) {
+      expect(
+        detail.data.header.projectPath,
+        'le détail nomme un projet que la liste laisse dans « Other sessions »',
+      ).toBeNull();
+      expect(detail.data.header.filesChanged).toBe(0);
+    }
     // Honnête sur le résultat : rien n'a été écrit.
     expect(row?.filesChanged, 'une écriture refusée a été comptée comme un fichier').toBe(0);
     // Aucun projet à nommer — rien n'a abouti. La session vit dans le tiroir

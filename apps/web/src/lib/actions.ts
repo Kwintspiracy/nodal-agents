@@ -12004,11 +12004,27 @@ export async function getCodingProcessDetailAction(
       // Les écritures BRUTES pour la dérivation de projet du header (même règle
       // que la liste — les deux surfaces doivent nommer le même projet).
       const rawChanges: ChangeRef[] = [];
+      /**
+       * Les écritures TENTÉES, refusées comprises.
+       *
+       * Elles ne servent qu'à une question : cette session visait-elle un
+       * projet ? La liste, elle, garde les refus dans son calcul — les écarter
+       * ici faisait croire au détail qu'il n'y avait rien à ancrer, donc le
+       * repli s'appliquait et nommait un projet que la liste ne nommait pas
+       * (revue Codex, 26/08). Deux surfaces, deux réponses, sur la session la
+       * plus importante de l'écran : celle où tout a été refusé.
+       *
+       * Elles n'entrent JAMAIS dans les diffs ni dans le compte de fichiers :
+       * un appel refusé n'a rien écrit.
+       */
+      const attemptedTargets: ChangeRef[] = [];
       for (const tc of toolCallRows) {
-        // A refused call wrote nothing — it must not appear as a change.
-        if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
+        const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
+        attemptedTargets.push(attempted);
+        // A refused call wrote nothing — it must not appear as a change.
+        if (isRefusedToolCall(tc.toolOutput)) continue;
         const ref: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         // Non rattachable, hors détail — comme dans la liste.
         if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
@@ -12155,7 +12171,7 @@ export async function getCodingProcessDetailAction(
       // aucun fichier à ancrer. Sinon il rattraperait les cas où la dérivation
       // a délibérément renoncé (projet supprimé, écritures toutes refusées) et
       // ferait réapparaître le travail sous le dossier conteneur.
-      const detailAVisePro = rawChanges.some((c) => isInsideWorkspace(c, detailWorkspaces));
+      const detailAVisePro = attemptedTargets.some((c) => isInsideWorkspace(c, detailWorkspaces));
       if (!detailProjectPath && !detailAVisePro && job.agentId) {
         const agentWs = await db
           .select({ path: agentWorkspaces.path })
