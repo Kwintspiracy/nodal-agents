@@ -106,9 +106,38 @@ describe('deriveProjectRoot (vrai disque)', () => {
     expect(mixed, 'le vote majoritaire n’a pas choisi le repo dominant').toBe(`${racine}/repoA`);
   });
 
-  it('sans .git : repli sur le workspace qui préfixe le fichier', () => {
+  it('sans marqueur : le SOUS-DOSSIER de premier niveau, jamais le workspace-conteneur', () => {
+    // Constat Quentin 25/08 (calorie-counter) : rendre le workspace entier
+    // fusionnerait toutes les apps d'un Dev\ partagé en un seul projet.
     const root = deriveProjectRoot([`${racine}/plain/z.md`], [racine], memo());
-    expect(root).toBe(racine);
+    expect(root).toBe(`${racine}/plain`);
+  });
+
+  it('workspace-CONTENEUR : deux apps sans git = DEUX projets distincts', async () => {
+    await mkdir(join(racine, 'dev', 'calorie-counter'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'calorie-counter', 'index.html'), '<!doctype html>');
+    await writeFile(join(racine, 'dev', 'calorie-counter', 'app.js'), '// app');
+    await mkdir(join(racine, 'dev', 'todo-app'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'todo-app', 'main.js'), '// autre app');
+    const ws = `${racine}/dev`;
+
+    // calorie-counter porte un marqueur (index.html) → son dossier.
+    expect(deriveProjectRoot([`${racine}/dev/calorie-counter/app.js`], [ws], memo())).toBe(
+      `${racine}/dev/calorie-counter`,
+    );
+    // todo-app n'en porte aucun → le sous-dossier de premier niveau quand même.
+    expect(deriveProjectRoot([`${racine}/dev/todo-app/main.js`], [ws], memo())).toBe(
+      `${racine}/dev/todo-app`,
+    );
+  });
+
+  it('workspace = LE projet (manifeste à sa racine) : src/ ne fragmente pas', async () => {
+    await mkdir(join(racine, 'monapp', 'src'), { recursive: true });
+    await writeFile(join(racine, 'monapp', 'package.json'), '{}');
+    await writeFile(join(racine, 'monapp', 'src', 'x.ts'), 'export {}');
+    const ws = `${racine}/monapp`;
+
+    expect(deriveProjectRoot([`${racine}/monapp/src/x.ts`], [ws], memo())).toBe(ws);
   });
 
   it('un chemin RELATIF (forme Nodal) est résolu par existence sur disque', () => {
