@@ -11124,7 +11124,12 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
   return null;
 }
 
-export function pipelineQualifiesAsCoding(
+// PAS exportée : ce fichier est `'use server'`, où tout export doit être une
+// fonction async — un helper synchrone exporté fait échouer le BUILD (pas le
+// typecheck, qui l'accepte sans broncher). Les tests passent par
+// listCodingProcessesAction, ce qui est de toute façon la bonne granularité :
+// ils prouvent le comportement observable, pas le prédicat isolé.
+function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
   /**
    * Un agent de l'équipe de dev a-t-il participé à ce pipeline ? Porte du
