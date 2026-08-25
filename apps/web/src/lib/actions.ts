@@ -11421,8 +11421,22 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     const candidateJobIds = Array.from(callsByRoot.entries())
       .filter(([root, calls]) => {
         const ws = workspacesFor(root);
-        const touchedWorkspace =
-          deriveProjectRoot(changesByRoot.get(root) ?? [], ws, devMemo) !== null;
+        // QUALIFIER, ce n'est pas DÉRIVER (revue Codex, 26/08). La question
+        // posée ici est « cette écriture visait-elle un dossier attaché ? »,
+        // pas « le projet existe-t-il sur le disque ? ».
+        //
+        // Passer par `deriveProjectRoot` faisait disparaître le cas le plus
+        // important de l'onglet : un agent qui tente de créer une NOUVELLE app
+        // et dont toutes les écritures sont refusées. Le dossier n'existe pas —
+        // justement parce que rien n'a abouti — donc aucun projet n'était
+        // dérivé, donc la session entière était filtrée. L'onglet cachait
+        // exactement la panne qu'il existe pour montrer (Dev C, neuf
+        // tentatives, neuf refus, une journée perdue).
+        //
+        // La session apparaît donc, dans le tiroir « Other sessions » faute de
+        // projet nommable, et annonce honnêtement 0 fichier changé.
+        const changes = changesByRoot.get(root) ?? [];
+        const touchedWorkspace = changes.some((c) => isInsideWorkspace(c, ws));
         return pipelineQualifiesAsCoding(calls, touchedWorkspace);
       })
       .map(([root]) => root);

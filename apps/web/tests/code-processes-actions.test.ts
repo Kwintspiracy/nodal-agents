@@ -854,10 +854,66 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     const apres = await listCodingProcessesAction();
     expect(apres.ok).toBe(true);
     if (!apres.ok) return;
+    const row = apres.data.find((r) => r.id === jobId);
+    // Le PROJET disparaît — c'est le constat de Quentin. La session, elle,
+    // reste : elle a bien eu lieu, et l'effacer réécrirait l'histoire. Elle
+    // retombe sur l'unique dossier de son agent, faute de projet nommable.
     expect(
-      apres.data.find((r) => r.id === jobId),
-      'un projet supprimé du disque apparaît encore dans l’onglet',
-    ).toBeUndefined();
+      row?.projectPath,
+      'un dossier supprimé apparaît encore comme projet dans l’onglet',
+    ).not.toBe(projet);
+    expect(
+      apres.data.some((r) => r.projectPath === projet),
+      'le projet supprimé subsiste sur une autre session',
+    ).toBe(false);
+  });
+
+  it('une NOUVELLE app dont toutes les écritures ont été REFUSÉES reste visible', async () => {
+    // Constat P1 de la revue Codex (26/08), et le cas le plus important de
+    // l'onglet : un agent tente de créer une app, chaque écriture est refusée,
+    // et il ne dit rien. C'est la panne la plus dure à diagnostiquer — Dev C,
+    // neuf tentatives, neuf refus, une journée perdue.
+    //
+    // Le dossier n'existe pas, précisément parce que rien n'a abouti. Qualifier
+    // via la dérivation de projet filtrait donc la session entière : l'onglet
+    // cachait exactement ce qu'il existe pour montrer. La qualification demande
+    // maintenant « l'écriture visait-elle un dossier attaché ? », sans exiger
+    // que le projet existe.
+    const agentId = await makeAgent('Failed New App Coder');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: `${DEV_FOLDER}/nouvelle-app/index.ts`, content: 'export {}' },
+        toolOutput: '<tool_use_error>No such tool available: Write.</tool_use_error>',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: `${DEV_FOLDER}/nouvelle-app/app.tsx`, content: 'export {}' },
+        toolOutput: '<tool_use_error>No such tool available: Write.</tool_use_error>',
+      },
+    ]);
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const row = result.data.find((r) => r.id === jobId);
+    expect(row, 'la session qui échoue à créer une app a été filtrée de l’onglet').toBeTruthy();
+    // Honnête sur le résultat : rien n'a été écrit.
+    expect(row?.filesChanged, 'une écriture refusée a été comptée comme un fichier').toBe(0);
+    // Le projet visé n'existe pas — rien n'a abouti. La session retombe sur
+    // l'unique dossier de son agent, qui est l'endroit où elle a échoué.
+    expect(row?.projectPath).toBe(DEV_FOLDER);
+    expect(
+      result.data.some((r) => r.projectPath === `${DEV_FOLDER}/nouvelle-app`),
+      'un projet a été inventé à partir d’écritures toutes refusées',
+    ).toBe(false);
   });
 
   it('un pipeline ne compte QUE les fichiers rattachables', async () => {
