@@ -19,6 +19,41 @@ import { InvalidInputError } from './errors';
 import { snapshot } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 
+// ─── Outils d'exécution de code ───────────────────────────────────────────────
+
+/**
+ * Les outils qui font tourner du code arbitraire sur la machine de l'hôte —
+ * shell, harnais de code, scripts de skill, écriture dans un bundle de skill,
+ * et le spawn d'un serveur MCP stdio.
+ *
+ * Ils partagent une propriété : leur exécution ne peut PAS être déduite d'une
+ * préférence générale. Le niveau d'autonomie du workspace
+ * (`fully_autonomous` / `destructive_gate`) dit à quel point l'utilisateur
+ * veut être dérangé pour du travail ordinaire ; il ne dit rien sur le fait de
+ * confier un shell à un agent. Ce consentement-là s'exprime uniquement par
+ * une règle d'approbation explicite (le toggle Yolo par agent).
+ *
+ * Cette liste est LA source unique (revue sécurité du 25/08) : le frein
+ * d'urgence du runner l'importait en double sous forme de tableau inline.
+ * Deux copies identiques ce jour-là, rien ne verrouillait l'égalité — un
+ * futur outil ajouté ici mais pas là-bas aurait laissé une règle wildcard
+ * `*` le balayer malgré le bouton rouge. Un seul endroit, donc.
+ */
+export const CODE_EXECUTION_TOOL_NAMES: readonly string[] = [
+  'run_command',
+  'code_task',
+  'run_skill_script',
+  'skill_file_write',
+  'create_mcp',
+  'attach_mcp',
+];
+
+const CODE_EXECUTION_TOOL_SET = new Set(CODE_EXECUTION_TOOL_NAMES);
+
+export function isCodeExecutionTool(toolName: string): boolean {
+  return CODE_EXECUTION_TOOL_SET.has(toolName);
+}
+
 // ─── executeTool ──────────────────────────────────────────────────────────────
 
 /**
@@ -109,7 +144,28 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   }
 
   // ── 2. Approval gate ───────────────────────────────────────────────────────
-  const matchedRule = matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
+  const rawMatchedRule = matchApprovalRule(
+    opts.approvalRules,
+    tool.name,
+    ctx.agentId,
+    ctx.entityId,
+  );
+  // Un wildcard `*` auto_approve ne vaut PAS consentement à exécuter du code
+  // (revue sécurité du 25/08). C'est le même trou que la relaxation d'autonomie,
+  // par une autre porte : une règle « tout auto » attrapée en priorité 5/6
+  // devenait un matchedRule, donc la garde ci-dessous — protégée par
+  // `!matchedRule` — ne s'appliquait plus. Le blanc-seing est ignoré ici, et
+  // l'outil retombe sur sa posture par défaut : approbation demandée, à moins
+  // qu'une règle NOMMANT l'outil (le toggle Yolo de l'agent) ne l'autorise.
+  //
+  // Seul le sens permissif est neutralisé : un wildcard `require_approval` ou
+  // `block` continue de s'appliquer — durcir vaut toujours.
+  const matchedRule =
+    rawMatchedRule?.toolName === '*' &&
+    rawMatchedRule.action === 'auto_approve' &&
+    isCodeExecutionTool(tool.name)
+      ? undefined
+      : rawMatchedRule;
   // An explicit rule always wins. With no matching rule, fall back to the tool's
   // own default posture: undefined for ordinary tools (→ execute, the historical
   // default), 'require_approval' for safe-by-default tools like run_command. So a
@@ -123,10 +179,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // require_approval, and crucially the run_command LAN master-switch's injected
   // require_approval). The catastrophic hardline floor below still re-forces a human.
   //   - fully_autonomous → auto-approve everything;
+  //
+  // …avec une EXCEPTION sur `fully_autonomous` × outils d'exécution de code
+  // (revue P0 du 25/08, finding bloquant).
+  //
+  // Avant l'inversion du modèle à deux clés (#24), le runner injectait un
+  // require_approval sur ces outils à chaque job hors local-trust ; ce
+  // `matchedRule` synthétique bloquait toute relaxation. En rendant
+  // l'injection conditionnelle au frein (relâché par défaut), la #24 a
+  // rouvert le chemin : `fully_autonomous` + zéro règle = shell auto-exécuté
+  // sans qu'aucun toggle Yolo par agent n'ait été tourné. Un blanc-seing
+  // « plus jamais de question » ne peut pas valoir consentement à exécuter du
+  // code arbitraire : ce consentement-là s'exprime UNIQUEMENT par une règle
+  // explicite (le toggle Yolo de l'agent), honorée juste au-dessus.
+  //
+  // `destructive_gate` n'est PAS concerné, et c'est délibéré : il ne signe pas
+  // un blanc-seing, il JUGE chaque appel — une commande destructrice ou
+  // lourde reste gatée, run_skill_script/skill_file_write/code_task le sont
+  // par leur riskLevel. C'est la posture documentée « auto, mais garde les
+  // destructions », et la retirer casserait un comportement voulu et testé.
   //   - destructive_gate → auto-approve ordinary work, but KEEP the gate for a
   //     `destructive` tool or a destructive/heavy run_command (rm, install, kill…).
   if (!matchedRule && effectiveAction === 'require_approval') {
-    if (opts.autonomy === 'fully_autonomous') {
+    if (opts.autonomy === 'fully_autonomous' && !isCodeExecutionTool(tool.name)) {
       effectiveAction = 'auto_approve';
     } else if (opts.autonomy === 'destructive_gate') {
       // What still needs a human under "auto, gate destructive":

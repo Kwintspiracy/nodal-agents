@@ -23,7 +23,7 @@ import {
 } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { realpath as fsRealpath, access as fsAccess } from 'node:fs/promises';
+import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from 'node:fs/promises';
 import {
   deriveProjectRoot,
   projectNameFromPath,
@@ -1299,16 +1299,25 @@ export async function browseServerFoldersAction(
     if (!requested) {
       if (process.platform === 'win32') {
         // Racines Windows = les lettres de lecteur présentes. Sondées en
-        // PARALLÈLE : un lecteur réseau mappé mais injoignable peut bloquer
-        // plusieurs secondes, et en séquentiel il retiendrait les 25 autres.
-        const probes = await Promise.all(
-          Array.from({ length: 26 }, (_, i) => {
-            const drive = `${String.fromCharCode(65 + i)}:\\`;
-            return fsAccess(drive).then(
+        // PARALLÈLE, et surtout AVEC UN DÉLAI MAXIMUM (revue P1 du 25/08) :
+        // le parallélisme évite l'addition des attentes, pas l'attente
+        // elle-même — un lecteur réseau mappé sur un serveur éteint fait
+        // timeouter fsAccess pendant 30 à 60 s, et `Promise.all` attend le
+        // plus lent. Un lecteur qui ne répond pas en 1,5 s n'est simplement
+        // pas listé : mieux vaut une lettre manquante qu'une modale vide.
+        const probeDrive = (drive: string): Promise<string | null> =>
+          Promise.race([
+            fsAccess(drive).then(
               () => drive,
               () => null,
-            );
-          }),
+            ),
+            new Promise<null>((resolve) => {
+              const t = setTimeout(() => resolve(null), 1500);
+              t.unref?.();
+            }),
+          ]);
+        const probes = await Promise.all(
+          Array.from({ length: 26 }, (_, i) => probeDrive(`${String.fromCharCode(65 + i)}:\\`)),
         );
         const dirs: ServerFolderEntry[] = probes
           .filter((d): d is string => d !== null)
@@ -1320,14 +1329,57 @@ export async function browseServerFoldersAction(
     }
 
     if (requested.length > 4096) return fail('validation_failed', 'Path too long');
-    if (!/^([A-Za-z]:[/\\]|\/|\\\\)/.test(requested)) {
+    // Les chemins UNC (\\serveur\partage) sont refusés (revue P1 du 25/08) :
+    // les lister ferait tenter à la machine hôte une authentification SMB
+    // SORTANTE vers un hôte choisi dans la requête — fuite de hash NTLM sur
+    // Windows — et bloquerait l'action pendant le timeout réseau. Le
+    // sélecteur sert à désigner un dossier LOCAL.
+    //
+    // Le refus porte sur les DEUX écritures, et surtout sur le chemin
+    // NORMALISÉ (revue du 25/08) : `//serveur/partage` commence par un seul
+    // `/`, franchissait donc le test « absolu », et `path.win32.normalize` le
+    // rendait à `\\serveur\partage\` juste avant `opendir` — le refus était
+    // contourné par le simple choix du slash.
+    const isUnc = (p: string) => /^[\\/]{2}/.test(p);
+    if (isUnc(requested)) {
+      return fail(
+        'validation_failed',
+        'Network (UNC) paths are not supported — pick a local folder.',
+      );
+    }
+    if (!/^([A-Za-z]:[/\\]|\/)/.test(requested)) {
       return fail('validation_failed', 'Path must be absolute');
     }
     const target = pathNormalize(requested);
+    if (isUnc(target)) {
+      return fail(
+        'validation_failed',
+        'Network (UNC) paths are not supported — pick a local folder.',
+      );
+    }
 
-    let entries;
+    // `opendir` + arrêt à la borne : `readdir` matérialisait TOUTES les
+    // entrées avant la troncature, donc un dossier à 200 000 fichiers (cache,
+    // sorties ComfyUI) chargeait 200 000 Dirent en mémoire du serveur pour
+    // n'en afficher que 500. Le plafond protégeait le réseau, pas l'hôte.
+    const dirs: ServerFolderEntry[] = [];
+    let truncated = false;
     try {
-      entries = await fsReaddir(target, { withFileTypes: true });
+      const handle = await fsOpendir(target);
+      try {
+        for await (const entry of handle) {
+          if (!entry.isDirectory()) continue;
+          if (dirs.length >= FOLDER_BROWSE_MAX_ENTRIES) {
+            truncated = true;
+            break;
+          }
+          dirs.push({ name: entry.name, path: pathJoin(target, entry.name) });
+        }
+      } finally {
+        // `for await` ferme le handle en fin d'itération ; un `break` le laisse
+        // ouvert — d'où la fermeture explicite, tolérante au double close.
+        await handle.close().catch(() => {});
+      }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
@@ -1338,13 +1390,7 @@ export async function browseServerFoldersAction(
       }
       throw err;
     }
-
-    let dirs: ServerFolderEntry[] = entries
-      .filter((e) => e.isDirectory())
-      .map((e) => ({ name: e.name, path: pathJoin(target, e.name) }));
     dirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-    const truncated = dirs.length > FOLDER_BROWSE_MAX_ENTRIES;
-    if (truncated) dirs = dirs.slice(0, FOLDER_BROWSE_MAX_ENTRIES);
 
     // À la racine d'un lecteur ('C:\') ou de '/' dirname est un point fixe :
     // parent=null, et le UI retombe sur la liste des racines.
@@ -5197,14 +5243,35 @@ export type ApprovalRow = {
 };
 
 export async function listApprovalsAction(
-  opts: { status?: 'pending' | 'approved' | 'rejected' | 'expired' | 'all' } = {},
+  opts: {
+    status?: 'pending' | 'approved' | 'rejected' | 'expired' | 'all';
+    /**
+     * Restreint aux approbations de CES jobs, en SQL (revue P1 du 25/08).
+     * Sans ce filtre, l'onglet Code chargeait les 100 approbations les plus
+     * récentes de l'espace toutes les 4 s pour n'en afficher qu'une poignée :
+     * du tool_input de jobs sans rapport poussé dans la page, et surtout un
+     * vrai bug — au-delà de 100 approbations en attente, celle du process
+     * regardé tombait hors fenêtre et sa carte disparaissait alors que le
+     * process restait bloqué dessus.
+     */
+    jobIds?: string[];
+  } = {},
 ): Promise<ActionResult<ApprovalRow[]>> {
   try {
     const session = await getSession();
     const db = getDb();
     const status = opts.status ?? 'pending';
 
-    const baseConditions = eq(approvalRequests.entityId, session.entityId);
+    // Une liste de jobs VIDE veut dire « aucun job » — jamais « tous ».
+    if (opts.jobIds && opts.jobIds.length === 0) return ok([]);
+
+    const scoped = opts.jobIds
+      ? and(
+          eq(approvalRequests.entityId, session.entityId),
+          inArray(approvalRequests.jobId, opts.jobIds),
+        )
+      : eq(approvalRequests.entityId, session.entityId);
+    const baseConditions = scoped;
     const where =
       status === 'all' ? baseConditions : and(baseConditions, eq(approvalRequests.status, status));
 
@@ -9017,6 +9084,22 @@ export async function updateAuthSettingsAction(
       );
     }
 
+    // L'AUTRE moitié du garde-fou (revue P0 du 25/08, finding bloquant).
+    // updateNetworkSettingsAction aligne déjà le mode quand on passe en LAN ;
+    // ce formulaire-ci écrivait `auth.mode` sans jamais regarder `bind`, donc
+    // choisir « No auth » sur une install LAN produisait exactement la config
+    // que le CLI refuse de booter (resolveAuthMode jette) — la stack morte au
+    // restart de l'incident du 23/08, par l'autre porte. Refus explicite
+    // plutôt qu'un basculement silencieux du bind : couper l'accès réseau de
+    // quelqu'un sans le lui dire serait pire que l'erreur.
+    if (parsed.data.mode === 'local-trust' && existing['bind'] === 'lan') {
+      return fail(
+        'validation_failed',
+        'This install is reachable on the LAN, where sign-in is required. ' +
+          'Switch Network back to “This machine only” first, then disable auth.',
+      );
+    }
+
     const prevAuth = (existing['auth'] ?? {}) as Record<string, unknown>;
     const nextAuth: Record<string, unknown> = {
       ...prevAuth,
@@ -12032,6 +12115,19 @@ export async function setCodeProjectArchivedAction(raw: unknown): Promise<Action
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
+    // Owner-only (revue P1 du 25/08) : ranger l'espace de travail change ce
+    // que TOUT LE MONDE voit. Même garde EXACTE que le sélecteur de dossiers
+    // (comparaison directe avec entities.userId, sans exemption local-trust) —
+    // en mono-utilisateur le propriétaire EST la session, donc rien ne change
+    // pour l'usage normal.
+    const [ownerRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!ownerRow) return fail('not_found', 'Workspace not found');
+    if (ownerRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can archive a project.');
+    }
     if (parsed.data.archived) {
       await db
         .insert(codeProjectArchives)

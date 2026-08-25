@@ -33,7 +33,14 @@ export {
 export { createToolRegistry } from './registry';
 
 // Execution wrapper
-export { executeTool, matchApprovalRule, namespaceOf, namespaceRulePattern } from './execute';
+export {
+  executeTool,
+  matchApprovalRule,
+  namespaceOf,
+  namespaceRulePattern,
+  isCodeExecutionTool,
+  CODE_EXECUTION_TOOL_NAMES,
+} from './execute';
 // Command classifiers moved to @nodal-agents/shared (2026-07-08) so the
 // approval-impact line (shared, rendered by runner AND web) can reuse the
 // SAME verdicts as the gate — re-exported here so existing consumers

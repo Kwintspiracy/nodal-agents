@@ -54,9 +54,26 @@ export async function probeRunnerHealth(runnerUrl: string): Promise<HealthProbeR
     const res = await fetch(`${runnerUrl}/api/health`, { signal: controller.signal });
     clearTimeout(t);
     if (res.status === 200) return { state: 'healthy', detail: '' };
-    return { state: 'degraded', detail: 'database unreachable (runner reports db: error)' };
-  } catch {
-    return { state: 'unreachable', detail: 'runner is not answering /api/health' };
+    // Le détail est LU DANS LA RÉPONSE, jamais deviné (revue P1 du 25/08) :
+    // annoncer « base injoignable » sur n'importe quel non-200 se trompera le
+    // jour où le health rapportera autre chose, et un watchdog qui crie faux
+    // perd sa seule valeur — la confiance qu'on lui accorde.
+    const body = (await res.json().catch(() => null)) as { db?: string } | null;
+    const detail =
+      body?.db === 'error'
+        ? 'database unreachable (runner reports db: error)'
+        : `runner is unhealthy (HTTP ${res.status})`;
+    return { state: 'degraded', detail };
+  } catch (err) {
+    // Un abort de timeout n'est pas la même panne qu'un refus de connexion :
+    // le premier dit « occupé ou gelé », le second « personne n'écoute ».
+    const aborted = err instanceof Error && err.name === 'AbortError';
+    return {
+      state: 'unreachable',
+      detail: aborted
+        ? 'runner did not answer /api/health within 3s (busy or stalled)'
+        : 'runner is not answering /api/health',
+    };
   }
 }
 

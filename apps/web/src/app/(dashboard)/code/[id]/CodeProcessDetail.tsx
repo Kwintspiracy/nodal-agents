@@ -135,18 +135,28 @@ export default function CodeProcessDetail({
   }, [detail.pipelineJobIds]);
 
   useEffect(() => {
-    if (!LIVE_STAGES.has(stageRef.current)) return;
+    if (!LIVE_STAGES.has(stageRef.current)) {
+      // Le process n'est plus vivant : purger les cartes d'approbation, sinon
+      // elles restent affichées — boutons compris — sur un process terminé
+      // (revue P1 du 25/08).
+      setPendingApprovals([]);
+      return;
+    }
     let cancelled = false;
     const tick = () => {
       if (!LIVE_STAGES.has(stageRef.current)) return;
       void getCodingProcessDetailAction(query).then((result) => {
         if (result.ok && !cancelled) setDetail(result.data);
       });
-      void listApprovalsAction({ status: 'pending' }).then((result) => {
-        if (!result.ok || cancelled) return;
-        const ids = new Set(pipelineIdsRef.current);
-        setPendingApprovals(result.data.filter((a) => ids.has(a.jobId)));
-      });
+      // Filtré en SQL sur les jobs de CE pipeline : le navigateur ne reçoit
+      // plus les approbations des autres jobs, et une approbation ancienne ne
+      // peut plus tomber hors de la fenêtre des 100 plus récentes.
+      void listApprovalsAction({ status: 'pending', jobIds: pipelineIdsRef.current }).then(
+        (result) => {
+          if (!result.ok || cancelled) return;
+          setPendingApprovals(result.data);
+        },
+      );
     };
     const id = setInterval(tick, POLL_INTERVAL);
     // Premier chargement des approbations sans attendre 4s — un process déjà

@@ -29,7 +29,13 @@ import {
   buildApprovalCardBody,
   resolveApprovalDeliveryTarget,
 } from '../approvals/notify.ts';
-import { upsertAutoApproveRule } from '../approvals/rules.ts';
+import {
+  upsertAutoApproveRule,
+  getApprovalRule,
+  restoreApprovalRule,
+  isAutoRunPaused,
+} from '../approvals/rules.ts';
+import { isCodeExecutionTool } from '@nodal-agents/tools';
 
 export interface HandleApprovalCallbackArgs {
   update: TelegramUpdate;
@@ -59,13 +65,20 @@ export type ApprovalCallbackDecision =
   /** Annulation — restaurer la carte d'origine. */
   | 'always_back';
 
-const DECISION_BY_SUFFIX: Record<string, ApprovalCallbackDecision> = {
-  a: 'approve',
-  r: 'reject',
-  w: 'always_ask',
-  wc: 'always_confirm',
-  wb: 'always_back',
-};
+// `Object.create(null)` : un objet littéral hérite d'Object.prototype, donc
+// DECISION_BY_SUFFIX['constructor'] renvoyait une valeur truthy et le garde
+// `!decision` laissait passer des suffixes fantômes (revue P0 du 25/08).
+// Sans prototype, seules les cinq clés réelles répondent.
+const DECISION_BY_SUFFIX: Record<string, ApprovalCallbackDecision> = Object.assign(
+  Object.create(null) as Record<string, ApprovalCallbackDecision>,
+  {
+    a: 'approve',
+    r: 'reject',
+    w: 'always_ask',
+    wc: 'always_confirm',
+    wb: 'always_back',
+  } satisfies Record<string, ApprovalCallbackDecision>,
+);
 
 /** Parse `apr:<uuid>:<a|r|w|wc|wb>` → { id, decision }, or null if it isn't ours / malformed. */
 export function parseApprovalCallbackData(
@@ -183,6 +196,20 @@ export async function handleApprovalCallback(
   // inverse laisserait croire à un grant permanent qui n'existe pas si
   // l'écriture de la règle échouait.
 
+  // Le nom de l'agent CONCERNÉ — sur une chaîne déléguée c'est le worker, pas
+  // l'orchestrateur qui possède le bot. La question de confirmation et la
+  // carte finale le nomment : accorder un droit permanent à « cet agent »
+  // sans dire lequel est un piège (revue P0 du 25/08).
+  let agentNameForCard: string | null = null;
+  if (approval.agentId) {
+    const [row] = await deps.db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(eq(agents.id, approval.agentId))
+      .limit(1);
+    agentNameForCard = row?.name ?? null;
+  }
+
   if (parsed.decision === 'always_ask') {
     if (messageId !== undefined) {
       await editTelegramMessageText({
@@ -190,7 +217,7 @@ export async function handleApprovalCallback(
         chatId: jobChatId,
         messageId,
         text:
-          `⚠️ Always allow ${approval.toolName} for this agent?\n\n` +
+          `⚠️ Always allow ${approval.toolName} for ${agentNameForCard ?? 'this agent'}?\n\n` +
           `It will run without asking, whatever its arguments. ` +
           `Revocable anytime from the agent's Autonomy tab.`,
         inlineKeyboard: [
@@ -209,7 +236,7 @@ export async function handleApprovalCallback(
   }
 
   if (parsed.decision === 'always_back') {
-    // entityId nullable au schéma (legacy) : sans lui, impossible de
+    // entityId nullable au schema (legacy) : sans lui, impossible de
     // reconstruire l'explication (contexte MCP) — on retire juste la question.
     if (!approval.entityId) {
       if (messageId !== undefined) {
@@ -266,7 +293,16 @@ export async function handleApprovalCallback(
       return { handled: false, reason: 'no_agent_for_rule' };
     }
     // Règle D'ABORD : si elle échoue, l'approbation reste pending — visible et
-    // retentable — au lieu d'un appel approuvé sous un grant fantôme.
+    // retentable — au lieu d'un appel approuvé sous un grant fantôme. L'état
+    // PRÉCÉDENT est capturé pour pouvoir revenir en arrière si la résolution
+    // échoue ensuite (revue P0 du 25/08 : sans ce rollback, un tap sur une
+    // carte périmée laissait une règle permanente en base alors que le
+    // message disait « rien n'a bougé »).
+    const previousRule = await getApprovalRule(deps.db, {
+      entityId: approval.entityId,
+      agentId: approval.agentId,
+      toolName: approval.toolName,
+    });
     try {
       await upsertAutoApproveRule(deps.db, {
         entityId: approval.entityId,
@@ -284,23 +320,82 @@ export async function handleApprovalCallback(
       return { handled: false, reason: 'rule_write_failed' };
     }
 
-    const confirmed = await resolveApprovalDecision(deps, env, {
-      approvalRequestId: parsed.approvalRequestId,
-      decision: 'approve',
-      resolvedBy: 'telegram',
-      notes: 'Always allowed from the Telegram card.',
-    });
+    // La règle est déjà COMMITÉE : à partir d'ici, toute sortie qui n'aboutit
+    // pas doit la retirer — y compris une sortie par EXCEPTION.
+    //
+    // Sans ce try, un blip de base au milieu de la résolution laissait la
+    // règle posée et faisait remonter l'erreur jusqu'au poller, qui rejoue le
+    // même clic sans avancer son offset. La seconde tentative relisait alors
+    // l'état laissé par la première : `previousRule` valait `auto_approve`, et
+    // un échec propre au rejeu « restaurait » ce blanc-seing au lieu de le
+    // supprimer. Résultat : un droit permanent SILENCIEUX qu'aucun geste
+    // n'avait validé, sous un message disant « rien n'a bougé ».
+    //
+    // On répare donc AVANT que le poller ne rejoue, puis on relance l'erreur :
+    // la seconde tentative repart d'un état propre.
+    let confirmed: Awaited<ReturnType<typeof resolveApprovalDecision>>;
+    try {
+      confirmed = await resolveApprovalDecision(deps, env, {
+        approvalRequestId: parsed.approvalRequestId,
+        decision: 'approve',
+        resolvedBy: 'telegram',
+        notes: 'Always allowed from the Telegram card.',
+      });
+    } catch (err) {
+      await restoreApprovalRule(deps.db, {
+        entityId: approval.entityId,
+        agentId: approval.agentId,
+        toolName: approval.toolName,
+        previousAction: previousRule,
+      });
+      throw err;
+    }
     if (!confirmed.ok) {
+      // La résolution a échoué (job annulé, approbation expirée, déjà
+      // résolue…) : le grant permanent n'a plus de raison d'être — on remet
+      // l'état d'avant, sinon le message ci-dessous mentirait.
+      await restoreApprovalRule(deps.db, {
+        entityId: approval.entityId,
+        agentId: approval.agentId,
+        toolName: approval.toolName,
+        previousAction: previousRule,
+      });
       await answerTelegramCallback(botToken, cb.id, 'Could not apply — try the dashboard.', true);
       return { handled: false, reason: confirmed.code };
     }
+
+    // Le frein d'urgence rend TOUTE règle auto_approve d'outil de code
+    // dormante : promettre « ne demandera plus » alors que le prochain appel
+    // redemandera serait un no-op silencieux (invariant #4).
+    //
+    // Ici, et ICI SEULEMENT, une erreur de lecture est rattrapée : ce site ne
+    // décide rien, il rédige une note. Le frein qui compte est appliqué
+    // ailleurs (étape 8b du loop, et run-job côté runtime CLI), où l'erreur
+    // remonte et fait échouer le job. Faire tomber le traitement du clic pour
+    // une phrase d'information ferait rejouer l'update par le poller.
+    let brakeEngaged = false;
+    try {
+      brakeEngaged = await isAutoRunPaused(deps.db, approval.entityId);
+    } catch (err) {
+      console.warn(
+        '[approvals] brake state unreadable, card note omitted:',
+        err instanceof Error ? err.message : err,
+      );
+    }
+    const brakeNote =
+      brakeEngaged && isCodeExecutionTool(approval.toolName)
+        ? ' The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.'
+        : '';
+
     await answerTelegramCallback(botToken, cb.id, '✅ Always allowed');
     if (messageId !== undefined) {
       await editTelegramMessageText({
         botToken,
         chatId: jobChatId,
         messageId,
-        text: `✅ Approved — ${approval.toolName} will now run without asking for this agent.`,
+        text:
+          `✅ Approved — ${approval.toolName} will now run without asking for ` +
+          `${agentNameForCard ?? 'this agent'}.${brakeNote}`,
       });
     }
     return { handled: true, decision: 'approve', jobId: confirmed.jobId };

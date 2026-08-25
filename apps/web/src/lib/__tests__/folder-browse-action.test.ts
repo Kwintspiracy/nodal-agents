@@ -129,6 +129,27 @@ describe('browseServerFoldersAction', () => {
     if (!result.ok) expect(result.code).toBe('not_found');
   });
 
+  it('refuse un chemin réseau UNC — dans SES DEUX écritures', async () => {
+    const { browseServerFoldersAction } = await import('../actions.ts');
+
+    // Lister un UNC ferait tenter à l'hôte une authentification SMB SORTANTE
+    // vers un serveur choisi dans la requête (fuite de hash NTLM sur Windows),
+    // et bloquerait l'action le temps du timeout réseau.
+    //
+    // La forme à slashes avant est le cas qui manquait : `//serveur/partage`
+    // franchissait le test « absolu » parce qu'il commence par un seul `/`, et
+    // `path.win32.normalize` le rendait à `\\serveur\partage\` juste avant
+    // l'ouverture — le refus était contourné par le simple choix du slash.
+    for (const chemin of ['\\\\serveur\\partage', '//serveur/partage', '\\\\10.0.0.5\\c$']) {
+      const result = await browseServerFoldersAction(chemin);
+      expect(result.ok, `« ${chemin} » a été accepté`).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('validation_failed');
+        expect(result.message).toContain('UNC');
+      }
+    }
+  });
+
   it('null liste les racines : les lecteurs sur Windows, « / » sur POSIX', async () => {
     const { browseServerFoldersAction } = await import('../actions.ts');
 

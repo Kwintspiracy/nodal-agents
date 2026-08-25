@@ -85,13 +85,24 @@ describe('computeApprovalImpactLine — other tools (unchanged shape)', () => {
 });
 
 describe('computeApprovalImpactLine — code_task (lot approbations 24/08)', () => {
-  it('ne dit plus « irreversible or destructive » : les fichiers sont checkpointés, les commandes non', () => {
-    const line = computeApprovalImpactLine('code_task', { task: 'add a button' });
+  it('mode write : dit ce qui est réversible ET ce qui ne l’est pas (revue P0 du 25/08)', () => {
+    const line = computeApprovalImpactLine('code_task', { task: 'add a button', mode: 'write' });
     expect(line).toBe(
       'Runs a coding agent that edits files in the workspace. ' +
-        'File changes are checkpointed first and can be reverted; commands it runs are not.',
+        'Tracked files are snapshotted first and can be reverted from the CLI; ' +
+        'gitignored files (.env, local data) and the commands it runs are not.',
     );
     expect(line).not.toContain('irreversible');
+    // La réserve qui manquait : le snapshot fait un `git add` ordinaire, donc
+    // ce que le .gitignore exclut n'est PAS restaurable — le dépôt le
+    // documente (CHECKPOINT_COVERAGE_NOTE), la carte le disait pas.
+    expect(line).toContain('gitignored');
+  });
+
+  it('mode read (le défaut) : n’annonce ni écriture ni commande', () => {
+    const line = computeApprovalImpactLine('code_task', { task: 'audit the app' });
+    expect(line).toContain('READ mode');
+    expect(line).not.toContain('edits files');
   });
 
   it('un outil inconnu garde la ligne catch-all', () => {

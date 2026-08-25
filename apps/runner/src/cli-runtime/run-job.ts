@@ -36,6 +36,7 @@ import {
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
+import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
 
@@ -115,6 +116,16 @@ export async function runCliRuntimeJob(args: {
   // 'codex' is reserved data — implemented later behind the same seam.
   if (agentRow.runtime !== 'claude-code') {
     return fail(`runtime_not_supported:${agentRow.runtime}`);
+  }
+
+  // LE FREIN D'URGENCE COUVRE AUSSI CE CHEMIN (revue P0 du 25/08, finding
+  // majeur). Un agent à runtime CLI est dérouté vers ici bien AVANT l'étape
+  // 8b du loop nodal, là où le frein retire les auto_approve : le bouton
+  // rouge du workspace arrêtait donc les agents ordinaires pendant qu'une
+  // session CLI — un shell complet dans le workspace — continuait de tourner.
+  // Un frein qui ne freine qu'une partie des agents n'est pas un frein.
+  if (job.entityId && (await isAutoRunPaused(db, job.entityId))) {
+    return fail('auto_run_paused');
   }
 
   // The workspace IS the perimeter of a runtime agent — no workspace, no run.
