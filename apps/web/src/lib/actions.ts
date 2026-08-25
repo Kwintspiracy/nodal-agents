@@ -1334,7 +1334,14 @@ export async function browseServerFoldersAction(
     // SORTANTE vers un hôte choisi dans la requête — fuite de hash NTLM sur
     // Windows — et bloquerait l'action pendant le timeout réseau. Le
     // sélecteur sert à désigner un dossier LOCAL.
-    if (/^\\\\/.test(requested)) {
+    //
+    // Le refus porte sur les DEUX écritures, et surtout sur le chemin
+    // NORMALISÉ (revue du 25/08) : `//serveur/partage` commence par un seul
+    // `/`, franchissait donc le test « absolu », et `path.win32.normalize` le
+    // rendait à `\\serveur\partage\` juste avant `opendir` — le refus était
+    // contourné par le simple choix du slash.
+    const isUnc = (p: string) => /^[\\/]{2}/.test(p);
+    if (isUnc(requested)) {
       return fail(
         'validation_failed',
         'Network (UNC) paths are not supported — pick a local folder.',
@@ -1344,6 +1351,12 @@ export async function browseServerFoldersAction(
       return fail('validation_failed', 'Path must be absolute');
     }
     const target = pathNormalize(requested);
+    if (isUnc(target)) {
+      return fail(
+        'validation_failed',
+        'Network (UNC) paths are not supported — pick a local folder.',
+      );
+    }
 
     // `opendir` + arrêt à la borne : `readdir` matérialisait TOUTES les
     // entrées avant la troncature, donc un dossier à 200 000 fichiers (cache,

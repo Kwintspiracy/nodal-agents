@@ -196,8 +196,11 @@ export function projectNameFromPath(projectPath: string): string {
  * produirait un « projet » nommé `Users`. Mieux vaut aucun projet qu'un projet
  * aberrant — la session retombe alors dans le tiroir « Other sessions ».
  */
-function isDriveRoot(p: string): boolean {
-  return p === '' || p === '/' || /^[a-z]:\/?$/i.test(p);
+export function isDriveRoot(p: string): boolean {
+  // Les slashes de fin sont retirés d'abord, sinon `//` (et `C://`) passaient
+  // à travers — c'est le jumeau runner de ce prédicat qui l'a révélé.
+  const s = p.replace(/\/+$/, '');
+  return s === '' || s === '/' || /^[a-z]:$/i.test(s);
 }
 
 /** Normalisation d'un chemin de workspace vers la forme projet (slashes, sans trailing). */

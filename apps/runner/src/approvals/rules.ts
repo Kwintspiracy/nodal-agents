@@ -60,18 +60,21 @@ export async function restoreApprovalRule(
   }
 }
 
-/** Le frein d'urgence du workspace est-il enclenché ? */
+/**
+ * Le frein d'urgence du workspace est-il enclenché ?
+ *
+ * Ne rattrape RIEN (invariant #4, revue du 25/08) : la version précédente
+ * rendait `false` sur erreur de base, donc une base injoignable relâchait le
+ * frein en silence — un frein qui échoue doit échouer FERMÉ ou bruyamment,
+ * jamais s'effacer. L'appelant traite l'exception comme un échec de job.
+ */
 export async function isAutoRunPaused(db: RunnerDeps['db'], entityId: string): Promise<boolean> {
-  try {
-    const [row] = await db
-      .select({ autoRunPaused: entities.autoRunPaused })
-      .from(entities)
-      .where(eq(entities.id, entityId))
-      .limit(1);
-    return row?.autoRunPaused === true;
-  } catch {
-    return false;
-  }
+  const [row] = await db
+    .select({ autoRunPaused: entities.autoRunPaused })
+    .from(entities)
+    .where(eq(entities.id, entityId))
+    .limit(1);
+  return row?.autoRunPaused === true;
 }
 
 /**

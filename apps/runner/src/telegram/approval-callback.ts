@@ -343,7 +343,21 @@ export async function handleApprovalCallback(
     // Le frein d'urgence rend TOUTE règle auto_approve d'outil de code
     // dormante : promettre « ne demandera plus » alors que le prochain appel
     // redemandera serait un no-op silencieux (invariant #4).
-    const brakeEngaged = await isAutoRunPaused(deps.db, approval.entityId);
+    //
+    // Ici, et ICI SEULEMENT, une erreur de lecture est rattrapée : ce site ne
+    // décide rien, il rédige une note. Le frein qui compte est appliqué
+    // ailleurs (étape 8b du loop, et run-job côté runtime CLI), où l'erreur
+    // remonte et fait échouer le job. Faire tomber le traitement du clic pour
+    // une phrase d'information ferait rejouer l'update par le poller.
+    let brakeEngaged = false;
+    try {
+      brakeEngaged = await isAutoRunPaused(deps.db, approval.entityId);
+    } catch (err) {
+      console.warn(
+        '[approvals] brake state unreadable, card note omitted:',
+        err instanceof Error ? err.message : err,
+      );
+    }
     const brakeNote =
       brakeEngaged && isCodeExecutionTool(approval.toolName)
         ? ' The workspace auto-run brake is engaged, so it will keep asking until you release it in Settings.'

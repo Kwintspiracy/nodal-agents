@@ -60,6 +60,21 @@ function hasMarker(dir: string): boolean {
   }
 }
 
+/**
+ * Une racine de disque (`/`, `C:`, `C:/`) n'est jamais un workspace exploitable :
+ * elle engloberait la machine entière, et le repli « sous-dossier de premier
+ * niveau » en tirerait des projets nommés `Users` ou `home`.
+ *
+ * La garde vit des DEUX côtés (revue du 25/08) : l'onglet Code l'a
+ * (apps/web/src/lib/code-projects.ts), le contexte injecté ne l'avait pas — le
+ * prompt système annonçait donc à tous les agents un projet que l'interface
+ * refusait d'afficher, avec ses détenteurs. Deux dérivations, deux vérités.
+ */
+export function isDriveRoot(p: string): boolean {
+  const s = p.replace(/\/+$/, '');
+  return s === '' || s === '/' || /^[a-z]:$/i.test(s);
+}
+
 function within(dir: string, root: string): boolean {
   const isWin = /^[a-z]:\//i.test(dir);
   const a = isWin ? dir.toLowerCase() : dir;
@@ -128,9 +143,10 @@ export async function listCodeProjectsForContext(
     if (wsRows.length === 0) return [];
 
     // Racines uniques, plus longues d'abord (un workspace niché gagne).
-    const roots = Array.from(new Set(wsRows.map((r) => norm(r.path)))).sort(
-      (a, b) => b.length - a.length,
-    );
+    const roots = Array.from(new Set(wsRows.map((r) => norm(r.path))))
+      .filter((r) => !isDriveRoot(r))
+      .sort((a, b) => b.length - a.length);
+    if (roots.length === 0) return [];
     const ownersByRoot = new Map<string, Set<string>>();
     for (const r of wsRows) {
       const set = ownersByRoot.get(norm(r.path)) ?? new Set<string>();

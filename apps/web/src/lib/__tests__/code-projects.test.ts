@@ -16,7 +16,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deriveProjectRoot, projectNameFromPath } from '../code-projects.ts';
+import { deriveProjectRoot, projectNameFromPath, isDriveRoot } from '../code-projects.ts';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -224,9 +224,28 @@ describe('archivage des projets (lignes réelles)', () => {
 });
 
 describe('garde-fous ajoutés par la revue P1 (25/08)', () => {
-  it('une racine de disque n’est JAMAIS un projet', async () => {
+  it('une racine de disque n’est JAMAIS un projet — et les DEUX dérivations en conviennent', async () => {
     // Un workspace configuré sur C:\ matcherait tout le disque et produirait
     // un « projet » nommé Users. Mieux vaut aucun projet qu'un projet faux.
+    //
+    // Le test porte sur le prédicat plutôt que sur `deriveProjectRoot` seul :
+    // via la dérivation, le cas `C:/` ne prouve rien sur une CI Linux (aucun
+    // chemin POSIX ne commence par `C:/`, donc le résultat serait null même
+    // sans la garde). Le prédicat, lui, répond partout.
+    //
+    // La MÊME table de cas est rejouée sur le prédicat du runner
+    // (apps/runner/src/tests/job/code-projects-drive-root.test.ts). Les deux
+    // dérivations ont divergé une fois — l'onglet Code masquait un projet que
+    // le prompt système annonçait quand même, détenteurs compris. Tant qu'elles
+    // vivent dans deux fichiers, elles sont épinglées par deux tests jumeaux.
+    for (const p of ['', '/', '//', 'C:', 'C:/', 'c:/', 'D:/']) {
+      expect(isDriveRoot(p), `« ${p} » devrait être une racine de disque`).toBe(true);
+    }
+    for (const p of ['/home/kwint', 'C:/Users', 'C:/Users/kwint/Dev/app']) {
+      expect(isDriveRoot(p), `« ${p} » n’est PAS une racine de disque`).toBe(false);
+    }
+
+    // Et de bout en bout : un workspace posé sur une racine ne produit rien.
     const memo = new Map<string, string | null>();
     expect(deriveProjectRoot([`${racine}/plain/z.md`], ['/'], memo)).toBeNull();
     expect(deriveProjectRoot([`${racine}/plain/z.md`], ['C:/'], memo)).toBeNull();

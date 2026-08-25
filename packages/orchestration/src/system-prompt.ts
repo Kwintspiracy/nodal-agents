@@ -152,7 +152,12 @@ export interface DeploymentContext {
 export function sanitizePromptField(value: string, maxLength: number): string {
   const flattened = value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/`/g, '');
   const collapsed = flattened.replace(/\s+/g, ' ').trim();
-  return collapsed.length > maxLength ? `${collapsed.slice(0, maxLength)}…` : collapsed;
+  if (collapsed.length <= maxLength) return collapsed;
+  // Troncature par POINT DE CODE, pas par unité UTF-16 (revue du 25/08) : un
+  // emoji à cheval sur la borne laissait un demi-caractère isolé, séquence
+  // UTF-8 mal formée que certains fournisseurs rejettent — sur le payload
+  // entier, pas seulement sur le champ.
+  return `${[...collapsed].slice(0, maxLength).join('')}…`;
 }
 
 export interface CodeProjectSummary {
