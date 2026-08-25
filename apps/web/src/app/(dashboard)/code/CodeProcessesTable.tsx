@@ -108,10 +108,18 @@ function groupProjects(rows: CodingProcessRow[]): Project[] {
 export default function CodeProcessesTable({
   initialRows,
   initialArchivedPaths,
+  devTeamCount,
   error,
 }: {
   initialRows: CodingProcessRow[];
   initialArchivedPaths: string[];
+  /**
+   * Combien d'agents portent un skill d'équipe de dev. À zéro, la liste est
+   * vide PAR CONSTRUCTION et non faute d'activité : l'état vide doit alors
+   * nommer le geste manquant plutôt que d'accuser les agents de n'avoir rien
+   * fait.
+   */
+  devTeamCount: number;
   error?: string;
 }) {
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
@@ -188,12 +196,27 @@ export default function CodeProcessesTable({
     );
   }
 
+  if (rows.length === 0 && devTeamCount === 0) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
+        <p className="text-ink-2">No agent is marked as a developer yet.</p>
+        <p className="mx-auto mt-2 max-w-lg">
+          This tab shows what your developers build. Attach the{' '}
+          <span className="font-medium text-ink-2">Software development</span> skill to the agents
+          that write code — it gives them the discipline to work by, and it is what tells this tab
+          whose work belongs here. Reviewers are picked up through{' '}
+          <span className="font-medium text-ink-2">Code review</span>.
+        </p>
+      </div>
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        No coding activity yet. Every pipeline that edits code files shows up here � grouped by
-        project (the git repo or workspace it touched). Ask an agent to write some code and watch
-        the project appear.
+        No coding activity yet. Work by your developer agents shows up here, grouped by project (the
+        git repo or folder it touched). Ask one of them to write some code and watch the project
+        appear.
       </div>
     );
   }

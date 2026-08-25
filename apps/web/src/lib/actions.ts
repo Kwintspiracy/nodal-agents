@@ -10969,76 +10969,29 @@ const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:
 const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
 
 /**
- * Le garde-fou Office de la définition v4 (décision Quentin 23/08) : ce ne
- * sont plus les OUTILS qui disent « dev », c'est la NATURE des fichiers
- * édités. Liste d'EXCLUSION volontairement courte — bureautique, média,
- * archives. Tout le reste qualifie, extension inconnue comprise : un vrai
- * codeur écrit du .vue, .rs, .tf, .svelte… qu'aucune liste d'inclusion ne
- * couvrira jamais, et le rater est pire que d'afficher un .txt de trop
- * (« un codeur sans CLI est un codeur quand même »).
- */
-/**
- * v5 (constat Quentin 25/08, vault Obsidian) : le NOTES-ONLY ne qualifie pas.
- * Le markdown/texte est NEUTRE — il ne disqualifie pas un vrai repo (un
- * codeur édite son README au milieu de son .ts), mais une session qui
- * n'écrit QUE du .md/.txt est de la prise de notes, pas du code, quel que
- * soit l'outil qui l'a écrite (CLI compris).
+ * v6 — la qualification se fait par IDENTITÉ, plus par extension de fichier.
  *
- * `.json` a été essayé ici puis RETIRÉ le jour même (décision Quentin) : un
- * .json peut être du vrai code (mock-data d'une app) — « une exclusion par
- * langage ratera tôt ou tard du vrai code ». Le bruit ComfyArtist (workflows
- * .json) sera traité par IDENTITÉ (champ Dev/Auto/Exclu par agent, au plan),
- * pas par extension.
+ * Les versions v4 et v5 devinaient le « dev » à partir de la NATURE des
+ * fichiers édités : liste d'exclusion pour la bureautique et les médias,
+ * markdown neutre. Deux échecs successifs l'ont condamnée. Le coffre Obsidian
+ * s'invitait dans l'onglet Code parce que de vrais `.py` et `.bat` y avaient
+ * été écrits en juillet ; les workflows ComfyUI menaçaient d'y entrer à leur
+ * tour, et les exclure par leur `.json` aurait fait disparaître les
+ * mock-data d'une vraie app.
+ *
+ * D'où la règle posée par le propriétaire, non négociable : **jamais
+ * d'exclusion par langage — une exclusion par langage ratera tôt ou tard du
+ * vrai code.** Ce qui distingue une session de code n'est pas le suffixe du
+ * fichier, c'est QUI l'a écrit. Un agent est développeur parce qu'il porte
+ * le skill `dev` ; un relecteur parce qu'il porte `code-review`. Le coffre
+ * sort de l'onglet parce que son agent n'est pas un développeur, pas parce
+ * que le markdown serait moins noble que le TypeScript.
+ *
+ * Bénéfice second, et c'est ce qui a décidé : le skill est déjà la guidance
+ * du développeur. Il ne s'ajoute donc pas comme un réglage de plus à
+ * découvrir — il sert deux fins à la fois, guider et désigner.
  */
-const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
-
-const NON_DEV_EXTENSIONS = new Set([
-  // bureautique
-  'doc',
-  'docx',
-  'xls',
-  'xlsx',
-  'ppt',
-  'pptx',
-  'odt',
-  'ods',
-  'odp',
-  'pdf',
-  'rtf',
-  // image / audio / vidéo (le .svg reste dev : c'est un asset de repo)
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'bmp',
-  'ico',
-  'mp3',
-  'wav',
-  'ogg',
-  'mp4',
-  'mov',
-  'avi',
-  'mkv',
-  'webm',
-  // archives
-  'zip',
-  'tar',
-  'gz',
-  '7z',
-  'rar',
-]);
-
-/** True quand le chemin édité ressemble à du travail de dev (voir NON_DEV_EXTENSIONS / NEUTRAL_EXTENSIONS). */
-function isDevFilePath(path: string | null): boolean {
-  if (!path) return false;
-  const base = path.split(/[\\/]/).pop() ?? path;
-  const dot = base.lastIndexOf('.');
-  // Sans extension (Makefile, Dockerfile, LICENSE…) = dev.
-  if (dot <= 0) return true;
-  const ext = base.slice(dot + 1).toLowerCase();
-  return !NON_DEV_EXTENSIONS.has(ext) && !NEUTRAL_EXTENSIONS.has(ext);
-}
+const DEV_TEAM_SKILL_SLUGS = ['dev', 'code-review'] as const;
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
 function extractFilePath(input: Record<string, unknown> | null): string | null {
@@ -11171,8 +11124,14 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
   return null;
 }
 
-function pipelineQualifiesAsCoding(
+export function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
+  /**
+   * Un agent de l'équipe de dev a-t-il participé à ce pipeline ? Porte du
+   * skill `dev` (développeur) ou `code-review` (relecteur). C'est la
+   * condition d'IDENTITÉ de la v6 — sans elle, rien ne qualifie.
+   */
+  hasDevTeamAgent: boolean,
 ): boolean {
   // REFUSED calls deliberately still QUALIFY a pipeline, even though they
   // change nothing and are excluded from the file count and the Changes panel.
@@ -11191,22 +11150,21 @@ function pipelineQualifiesAsCoding(
   // one-level rollup that split a three-level session in half. Measured live on
   // the same data, one-level rollup showed 0 coding processes where the
   // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
-  // v5 (constat Quentin 25/08, vault Obsidian) : la NATURE des fichiers
-  // décide pour TOUT LE MONDE, outils CLI compris. La v4 laissait n'importe
-  // quel cli:Edit/cli:Write qualifier inconditionnellement — un agent
-  // runtime qui prenait des notes dans un vault 100 % markdown devenait un
-  // « projet de code ». Désormais une seule règle : au moins UNE édition
-  // (exécutée OU refusée — le cas Dev C reste couvert, ses tentatives
-  // visaient des fichiers dev) sur un fichier de code/config. Le repli
-  // « marqueur cli sauve des éditions non-dev » (relique v3) disparaît avec.
-  const hasDevEdit = calls.some(
-    (c) =>
-      FILE_TOOL_NAMES.has(c.toolName) &&
-      isDevFilePath(extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null)),
-  );
-  if (hasDevEdit) return true;
-  // Les intentions de dev EXPLICITES qualifient sans édition : déléguer du
-  // code en écriture, ou rendre un verdict de review.
+  // v6 : l'IDENTITÉ commande. Aucun agent de l'équipe de dev dans le
+  // pipeline, aucune session de code — quels que soient les fichiers touchés.
+  // C'est ce qui sort le coffre Obsidian et les workflows ComfyUI de l'onglet
+  // sans avoir à juger un suffixe de fichier (cf. DEV_TEAM_SKILL_SLUGS).
+  if (!hasDevTeamAgent) return false;
+
+  // L'identité ne suffit pas : un développeur qui répond à une question de
+  // son propriétaire n'a pas ouvert de session de code. Il faut une trace de
+  // travail — une édition, une délégation en écriture, ou un verdict.
+  //
+  // L'extension du fichier n'entre PLUS dans le calcul (règle du
+  // propriétaire : une exclusion par langage ratera tôt ou tard du vrai
+  // code). Un développeur qui édite un README édite le README de son projet.
+  const hasEdit = calls.some((c) => FILE_TOOL_NAMES.has(c.toolName));
+  if (hasEdit) return true;
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
     const input = c.toolInput as { mode?: string } | null;
@@ -11214,6 +11172,46 @@ function pipelineQualifiesAsCoding(
   });
   if (hasWriteCodeTask) return true;
   return calls.some((c) => c.toolName === 'review_verdict');
+}
+
+/**
+ * Les agents de l'entité qui portent `dev` ou `code-review` — l'équipe de dev.
+ *
+ * Rendre un Set vide est un RÉSULTAT, pas un incident : il signifie « aucun
+ * développeur désigné », et l'onglet le dit alors franchement au lieu
+ * d'afficher une liste devinée (invariant #4).
+ */
+async function devTeamAgentIds(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ agentId: agentSkillAssignments.agentId })
+    .from(agentSkillAssignments)
+    .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
+    .where(
+      and(
+        eq(agentSkillAssignments.entityId, entityId),
+        inArray(agentSkills.slug, [...DEV_TEAM_SKILL_SLUGS]),
+      ),
+    );
+  return new Set(rows.map((r) => r.agentId));
+}
+
+/**
+ * Combien d'agents portent un skill d'équipe de dev. Sert UNIQUEMENT à
+ * l'état vide de l'onglet Code : à zéro, le message explique le geste à
+ * faire (attacher le skill) au lieu de laisser croire qu'aucun agent n'a
+ * jamais codé.
+ */
+export async function countDevTeamAgentsAction(): Promise<ActionResult<number>> {
+  try {
+    const session = await getSession();
+    const ids = await devTeamAgentIds(getDb(), session.entityId);
+    return ok(ids.size);
+  } catch (err) {
+    return fail('unknown', err instanceof Error ? err.message : 'Failed to count dev agents');
+  }
 }
 
 export async function listCodingProcessesAction(): Promise<ActionResult<CodingProcessRow[]>> {
@@ -11256,13 +11254,26 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     // parent is left. One `IN (…)` query per level of delegation, and a real
     // pipeline is at most 3 deep (invariant #8, maxDelegationDepth).
     const parentOf = new Map<string, string | null>();
+    // L'agent de CHAQUE job du pipeline, y compris les ancêtres : la
+    // qualification par identité (v6) demande de savoir si un membre de
+    // l'équipe de dev a participé, à n'importe quelle profondeur. Sur une
+    // chaîne orchestrateur → lead → développeur, c'est le job du BAS qui
+    // porte le skill, et c'est le job du HAUT qui devient la ligne affichée.
+    const agentOfJob = new Map<string, string>();
     let toResolve = referencedJobIds;
     for (let depth = 0; depth < ROLLUP_MAX_DEPTH && toResolve.length > 0; depth++) {
       const rows = await db
-        .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+        .select({
+          id: agentJobs.id,
+          parentJobId: agentJobs.parentJobId,
+          agentId: agentJobs.agentId,
+        })
         .from(agentJobs)
         .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, toResolve)));
-      for (const r of rows) parentOf.set(r.id, r.parentJobId);
+      for (const r of rows) {
+        parentOf.set(r.id, r.parentJobId);
+        if (r.agentId) agentOfJob.set(r.id, r.agentId);
+      }
       // Parents we now know about but haven't looked up yet.
       toResolve = Array.from(
         new Set(
@@ -11278,16 +11289,30 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       string,
       Array<{ toolName: string; toolInput: unknown; toolOutput: string | null }>
     >();
+    // Les agents ayant participé à chaque pipeline, racine comprise.
+    const agentsByRoot = new Map<string, Set<string>>();
     for (const c of relevantCalls) {
       if (!c.jobId) continue;
       const root = rootOf(c.jobId);
       const arr = callsByRoot.get(root) ?? [];
       arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
       callsByRoot.set(root, arr);
+
+      const participants = agentsByRoot.get(root) ?? new Set<string>();
+      const own = agentOfJob.get(c.jobId);
+      if (own) participants.add(own);
+      const rootAgent = agentOfJob.get(root);
+      if (rootAgent) participants.add(rootAgent);
+      agentsByRoot.set(root, participants);
     }
 
+    const devTeam = await devTeamAgentIds(db, entityId);
     const candidateJobIds = Array.from(callsByRoot.entries())
-      .filter(([, calls]) => pipelineQualifiesAsCoding(calls))
+      .filter(([root, calls]) => {
+        const participants = agentsByRoot.get(root) ?? new Set<string>();
+        const hasDevTeamAgent = Array.from(participants).some((a) => devTeam.has(a));
+        return pipelineQualifiesAsCoding(calls, hasDevTeamAgent);
+      })
       .map(([root]) => root);
 
     let jobRows: CodingProcessRow[] = [];

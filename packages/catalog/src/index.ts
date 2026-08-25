@@ -31,6 +31,7 @@ import { documentEditingSkill } from './skills/document-editing';
 import { presentationEditingSkill } from './skills/presentation-editing';
 import { commandExecutionSkill } from './skills/command-execution';
 import { codeTaskSkill } from './skills/code-task';
+import { devSkill } from './skills/dev';
 import { codeReviewSkill } from './skills/code-review';
 import { requestReviewSkill } from './skills/request-review';
 import { toolCreateMcpSkill } from './skills/tool-create-mcp';
@@ -46,6 +47,7 @@ export { documentEditingSkill } from './skills/document-editing';
 export { presentationEditingSkill } from './skills/presentation-editing';
 export { commandExecutionSkill } from './skills/command-execution';
 export { codeTaskSkill } from './skills/code-task';
+export { devSkill } from './skills/dev';
 export { codeReviewSkill } from './skills/code-review';
 export { requestReviewSkill } from './skills/request-review';
 
@@ -68,6 +70,7 @@ export const systemSkills: SystemSkill[] = [
   presentationEditingSkill,
   commandExecutionSkill,
   codeTaskSkill,
+  devSkill,
   codeReviewSkill,
   requestReviewSkill,
   // Tool usage guides — loaded on demand via skill_view, not auto-injected.

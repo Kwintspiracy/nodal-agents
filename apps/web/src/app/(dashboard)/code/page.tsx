@@ -1,4 +1,8 @@
-import { listCodingProcessesAction, listArchivedCodeProjectsAction } from '@/lib/actions.ts';
+import {
+  listCodingProcessesAction,
+  listArchivedCodeProjectsAction,
+  countDevTeamAgentsAction,
+} from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import CodeProcessesTable from './CodeProcessesTable.tsx';
 
@@ -6,9 +10,10 @@ import CodeProcessesTable from './CodeProcessesTable.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function CodePage() {
-  const [result, archivedResult] = await Promise.all([
+  const [result, archivedResult, devTeamResult] = await Promise.all([
     listCodingProcessesAction(),
     listArchivedCodeProjectsAction(),
+    countDevTeamAgentsAction(),
   ]);
   const rows = result.ok ? result.data : [];
   // Vue PAR PROJET (décision Quentin 25/08) : le sous-titre compte les
@@ -23,6 +28,7 @@ export default async function CodePage() {
       <CodeProcessesTable
         initialRows={rows}
         initialArchivedPaths={archivedResult.ok ? archivedResult.data : []}
+        devTeamCount={devTeamResult.ok ? devTeamResult.data : 0}
         error={!result.ok ? result.message : undefined}
       />
     </PageShell>

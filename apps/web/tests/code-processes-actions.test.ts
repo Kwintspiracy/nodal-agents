@@ -11,7 +11,15 @@ import { randomBytes } from 'node:crypto';
 import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentJobs, agentWorkspaces, cliRuns, toolCalls } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  agentWorkspaces,
+  agentSkills,
+  agentSkillAssignments,
+  cliRuns,
+  toolCalls,
+} from '@nodal-agents/db';
 import type * as NodalMemory from '@nodal-agents/memory';
 
 // ─── Module-level state ───────────────────────────────────────────────────────
@@ -93,7 +101,31 @@ afterAll(() => {
   vi.restoreAllMocks();
 });
 
-async function makeAgent(name: string): Promise<string> {
+/**
+ * Le skill de l'entité pour un slug donné, créé à la demande. La v6 qualifie
+ * par IDENTITÉ : sans assignation de skill, plus aucun pipeline n'entre dans
+ * l'onglet Code, quels que soient les fichiers touchés.
+ */
+const skillIdBySlug = new Map<string, string>();
+async function skillId(slug: string, name: string): Promise<string> {
+  const cached = skillIdBySlug.get(slug);
+  if (cached) return cached;
+  const [row] = await _testDb!
+    .insert(agentSkills)
+    .values({ entityId: _testEntityId, name, slug, content: `test skill ${slug}` })
+    .returning();
+  if (!row) throw new Error(`Failed to seed skill ${slug}`);
+  skillIdBySlug.set(slug, row.id);
+  return row.id;
+}
+
+/**
+ * `skills` par défaut = ['dev'] : la quasi-totalité de cette suite décrit le
+ * travail d'un DÉVELOPPEUR. Passer `[]` fabrique un agent qui n'appartient pas
+ * à l'équipe de dev — le coffre de notes, l'agent bureautique, le générateur
+ * d'images — dont le travail ne doit JAMAIS apparaître dans l'onglet.
+ */
+async function makeAgent(name: string, skills: string[] = ['dev']): Promise<string> {
   const [row] = await _testDb!
     .insert(agents)
     .values({
@@ -105,6 +137,13 @@ async function makeAgent(name: string): Promise<string> {
     })
     .returning();
   if (!row) throw new Error(`Failed to seed agent ${name}`);
+  for (const slug of skills) {
+    await _testDb!.insert(agentSkillAssignments).values({
+      entityId: _testEntityId,
+      agentId: row.id,
+      skillId: await skillId(slug, slug === 'dev' ? 'Software development' : 'Code review'),
+    });
+  }
   return row.id;
 }
 
@@ -412,12 +451,12 @@ describe('listCodingProcessesAction', () => {
     expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
   });
 
-  it('an OFFICE-only file_write (.pptx) with no dev signal is EXCLUDED (guard v4: file nature)', async () => {
-    // v4 (23/08) : le garde-fou Office ne passe plus par la présence d'un
-    // marqueur CLI mais par la NATURE des fichiers édités. Un .pptx seul
-    // reste invisible — c'est le même comportement que v3, pour la bonne
-    // raison cette fois.
-    const agentId = await makeAgent('Audit Code Office Agent');
+  it('un agent bureautique (PAS de skill dev) reste EXCLU — v6 : c’est l’identité, pas le .pptx', async () => {
+    // v6 (25/08) : le garde-fou Office ne juge plus l'extension. Un agent qui
+    // écrit une présentation n'est pas un développeur — non parce que .pptx
+    // serait un format indigne, mais parce que personne ne l'a désigné
+    // développeur. Le même agent, s'il portait le skill dev, apparaîtrait.
+    const agentId = await makeAgent('Audit Code Office Agent', []);
     const jobId = await makeJob(agentId, 'completed');
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
@@ -535,14 +574,15 @@ describe('listCodingProcessesAction', () => {
   });
 });
 
-// ─── Définition v5 (constat Quentin 25/08, vault Obsidian) ────────────────────
-// La NATURE des fichiers décide pour TOUT LE MONDE, outils CLI compris : une
-// session 100 % markdown est de la prise de notes, pas du code — quel que
-// soit l'outil qui l'a écrite. Le mixte (.md + .ts) reste du code.
+// ─── Définition v6 (décision Quentin 25/08) ───────────────────────────────────
+// C'est l'IDENTITÉ qui qualifie, jamais l'extension : « une exclusion par
+// langage ratera tôt ou tard du vrai code ». Le coffre Obsidian sort parce que
+// son agent n'est pas un développeur ; le README d'un développeur reste dans
+// son projet ; les mock-data .json d'une vraie app aussi.
 
-describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
-  it('une session CLI 100 % .md (le vault Obsidian) est ABSENTE de la liste', async () => {
-    const agentId = await makeAgent('Vault Notes Agent');
+describe('listCodingProcessesAction — v6, la qualification par identité', () => {
+  it('le coffre de notes est ABSENT — son agent n’est pas un développeur', async () => {
+    const agentId = await makeAgent('Vault Notes Agent', []);
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values([
@@ -568,8 +608,52 @@ describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
     if (!result.ok) return;
     expect(
       result.data.find((r) => r.id === jobId),
-      'une session 100 % markdown a été qualifiée « coding »',
+      'le travail d’un agent non-développeur est apparu dans l’onglet Code',
     ).toBeUndefined();
+  });
+
+  it('le MÊME markdown, écrit par un DÉVELOPPEUR, qualifie — c’est le README de son projet', async () => {
+    // Le pendant du test précédent, et la raison d'être de la v6 : les mêmes
+    // fichiers, le même outil, un résultat opposé selon QUI écrit. Sous la v5,
+    // un développeur qui ne touchait que sa doc disparaissait de l'onglet.
+    const agentId = await makeAgent('Doc Writing Coder');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'cli:Write',
+      toolInput: { file_path: '/repos/monapp/README.md', content: '# MonApp' },
+      toolOutput: 'ok',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === jobId),
+      'le travail d’un développeur a été jugé sur l’extension de son fichier',
+    ).toBeTruthy();
+  });
+
+  it('un RELECTEUR (skill code-review) entre aussi dans l’onglet', async () => {
+    const agentId = await makeAgent('Reviewer Agent', ['code-review']);
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'review_verdict',
+      toolInput: { verdict: 'approve', summary: 'ok' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeTruthy();
   });
 
   it('le .json QUALIFIE (décision Quentin : mock-data = vrai code ; le bruit Comfy se traitera par agent)', async () => {
@@ -622,8 +706,8 @@ describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
     expect(result.data.find((r) => r.id === jobId)).toBeTruthy();
   });
 
-  it('un file_write Nodal .md seul (notes sans CLI) ne qualifie pas non plus', async () => {
-    const agentId = await makeAgent('Nodal Notes Writer');
+  it('un preneur de notes sans skill dev ne qualifie pas non plus, CLI ou pas', async () => {
+    const agentId = await makeAgent('Nodal Notes Writer', []);
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values({
