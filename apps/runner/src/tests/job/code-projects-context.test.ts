@@ -9,10 +9,11 @@
 // workspace-conteneur), les bons DÉTENTEURS (les agents dont le workspace le
 // contient), et rien d'inventé — sur un VRAI arbre disque.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
+  eq,
   agents,
   agentWorkspaces,
   agentJobs,
@@ -25,7 +26,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RunnerDeps } from '../../deps.ts';
-import { listCodeProjectsForContext } from '../../job/code-projects.ts';
+import {
+  listCodeProjectsForContext,
+  _resetProjectsCacheForTests,
+} from '../../job/code-projects.ts';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -136,6 +140,14 @@ beforeAll(async () => {
   ]);
 });
 
+// Le cache de 60 s par entité rendait muettes toutes les assertions qui
+// suivaient la première : chaque test relisait la liste mémoïsée au lieu de la
+// recalculer. Découvert en vérifiant par mutation un test de filtrage qui
+// passait encore, filtre débranché.
+beforeEach(() => {
+  _resetProjectsCacheForTests();
+});
+
 afterAll(async () => {
   if (racine) await rm(racine, { recursive: true, force: true });
 });
@@ -162,6 +174,63 @@ describe('listCodeProjectsForContext', () => {
       projects.some((p) => p.name === 'ghost-app'),
       'un projet est né d’une écriture refusée',
     ).toBe(false);
+  });
+
+  it('dans une entité QUI A des développeurs, le workspace d’un non-dev ne produit rien', async () => {
+    // Le test jumeau ci-dessous sort par le raccourci « aucun développeur dans
+    // l'entité » : il ne touche donc jamais le filtre des workspaces lui-même
+    // (constat de la revue — en retirant ce filtre, il passait quand même).
+    // Ici l'entité a deux développeurs, et le scribe cohabite avec eux : seul
+    // le filtre par identité empêche son coffre de devenir un projet.
+    const coffre = norm(await mkdtemp(join(tmpdir(), 'nodal-coexist-')));
+    await mkdir(join(coffre, 'notes-app'), { recursive: true });
+    await writeFile(join(coffre, 'notes-app', 'build.py'), 'print(1)');
+
+    const [scribe] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Scribe voisin',
+        slug: `scribe-voisin-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    await db.insert(agentWorkspaces).values({
+      entityId: seed.entityId,
+      agentId: scribe!.id,
+      label: 'Coffre',
+      path: coffre,
+    });
+    const [jobScribe] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: scribe!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'notes',
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: jobScribe!.id,
+      toolName: 'file_write',
+      toolInput: { path: `${coffre}/notes-app/build.py` },
+      toolOutput: '{"ok":true}',
+    });
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        projects.some((p) => p.name === 'notes-app'),
+        'le workspace d’un non-développeur a produit un projet',
+      ).toBe(false);
+      // Les vrais projets, eux, sont toujours là.
+      expect(projects.map((p) => p.name).sort()).toEqual(['calorie-counter', 'water-intake']);
+    } finally {
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, scribe!.id));
+      await rm(coffre, { recursive: true, force: true });
+    }
   });
 
   it('le workspace d’un agent NON-développeur ne produit AUCUN projet', async () => {

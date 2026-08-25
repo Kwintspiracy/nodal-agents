@@ -145,6 +145,17 @@ const PROJECTS_TTL_MS = 60_000;
 const projectsCache = new Map<string, { at: number; value: CodeProjectSummary[] }>();
 
 /**
+ * Vide le cache — réservé aux tests.
+ *
+ * Sans ça, deux assertions successives sur la même entité lisent la même liste
+ * mémoïsée : la seconde ne teste plus rien. Constaté en vérifiant par mutation
+ * un test de filtrage qui passait toujours, filtre débranché (revue du 25/08).
+ */
+export function _resetProjectsCacheForTests(): void {
+  projectsCache.clear();
+}
+
+/**
  * Les projets de code de l'entité, avec leurs détenteurs. Best-effort : toute
  * erreur rend une liste vide (le bloc Runtime omet alors la section) — jamais
  * une exception qui ferait échouer un job.
@@ -202,6 +213,17 @@ export async function listCodeProjectsForContext(
       ownersByRoot.set(norm(r.path), set);
     }
 
+    // ASYMÉTRIE ASSUMÉE avec l'onglet Code (revue du 25/08) : le scan des
+    // éditions n'est PAS filtré par agent, seuls les workspaces le sont. Un
+    // agent non-développeur qui écrit dans le workspace d'un développeur
+    // rafraîchit donc le projet ici, alors que SA session à lui n'apparaît pas
+    // dans l'onglet.
+    //
+    // C'est voulu, et les deux vues ne disent pas la même chose : l'onglet
+    // répond « quelles sessions de code ont eu lieu », ce module répond « quels
+    // projets existent et à qui ils sont ». Le projet existe bel et bien, et
+    // ses détenteurs restent des développeurs — le nom de l'auteur d'une
+    // écriture ponctuelle ne change ni l'un ni l'autre.
     const rows = await db
       .select({
         toolInput: toolCalls.toolInput,
