@@ -11221,19 +11221,46 @@ async function devTeamAgentIds(
   return new Set(rows.map((r) => r.agentId));
 }
 
+export interface DevTeamStatus {
+  /** Agents portant un skill d'équipe de dev. */
+  count: number;
+  /**
+   * Le skill du catalogue est INTROUVABLE alors qu'il devrait être livré au
+   * démarrage — signe qu'un skill du même nom, créé par l'utilisateur, occupe
+   * le slug. Le seeder refuse alors de s'en emparer (et il a raison), mais
+   * sans ce drapeau l'interface enverrait dans un mur : elle demanderait
+   * d'attacher un skill que l'utilisateur ne trouvera jamais, ou lui ferait
+   * attacher le sien — qui ne qualifie pas — en boucle.
+   */
+  catalogSkillMissing: boolean;
+}
+
 /**
- * Combien d'agents portent un skill d'équipe de dev. Sert UNIQUEMENT à
- * l'état vide de l'onglet Code : à zéro, le message explique le geste à
- * faire (attacher le skill) au lieu de laisser croire qu'aucun agent n'a
- * jamais codé.
+ * De quoi écrire un état vide qui dit la vérité, plutôt qu'un message qui
+ * suppose que rien n'a été fait.
  */
-export async function countDevTeamAgentsAction(): Promise<ActionResult<number>> {
+export async function getDevTeamStatusAction(): Promise<ActionResult<DevTeamStatus>> {
   try {
     const session = await getSession();
-    const ids = await devTeamAgentIds(getDb(), session.entityId);
-    return ok(ids.size);
+    const db = getDb();
+    const ids = await devTeamAgentIds(db, session.entityId);
+
+    // Le skill système n'est PAS scopé entité : il est seedé sous l'espace le
+    // plus ancien et reste assignable partout.
+    const [catalogRow] = await db
+      .select({ id: agentSkills.id })
+      .from(agentSkills)
+      .where(
+        and(
+          inArray(agentSkills.slug, [...DEV_TEAM_SKILL_SLUGS]),
+          eq(agentSkills.createdBy, 'system'),
+        ),
+      )
+      .limit(1);
+
+    return ok({ count: ids.size, catalogSkillMissing: !catalogRow });
   } catch (err) {
-    return fail('unknown', err instanceof Error ? err.message : 'Failed to count dev agents');
+    return fail('unknown', err instanceof Error ? err.message : 'Failed to read dev team status');
   }
 }
 

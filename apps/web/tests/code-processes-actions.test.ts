@@ -12,6 +12,7 @@ import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agen
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
+  inArray,
   agents,
   agentJobs,
   agentWorkspaces,
@@ -707,6 +708,46 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
       result.data.find((r) => r.id === racineId),
       'le porteur du skill était au milieu de la chaîne : le pipeline a disparu',
     ).toBeTruthy();
+  });
+
+  it('un skill maison qui squatte le slug est SIGNALÉ, pas subi', async () => {
+    // Le cul-de-sac que la revue a déroulé (25/08) : si un skill de
+    // l'utilisateur occupe déjà le slug `dev`, le seeder refuse de s'en
+    // emparer — à raison. Mais alors le skill du catalogue n'existe nulle
+    // part, personne ne peut qualifier, et l'écran demandait d'attacher un
+    // skill introuvable. L'utilisateur attachait le sien, rien ne changeait,
+    // le message revenait : une boucle sans issue depuis l'interface, dont la
+    // seule sortie était écrite dans un log que personne ne lit.
+    const { getDevTeamStatusAction } = await import('../src/lib/actions.ts');
+
+    // État normal : le skill du catalogue est là (posé par le harnais).
+    const avant = await getDevTeamStatusAction();
+    expect(avant.ok).toBe(true);
+    if (avant.ok) expect(avant.data.catalogSkillMissing).toBe(false);
+
+    // On simule l'install où seul un homonyme de l'utilisateur existe.
+    await _testDb!
+      .update(agentSkills)
+      .set({ createdBy: 'user' })
+      .where(inArray(agentSkills.slug, ['dev', 'code-review']));
+
+    try {
+      const apres = await getDevTeamStatusAction();
+      expect(apres.ok).toBe(true);
+      if (!apres.ok) return;
+      expect(
+        apres.data.catalogSkillMissing,
+        'le squat du slug n’est pas détecté : l’écran enverra dans un mur',
+      ).toBe(true);
+      // Et plus personne ne qualifie, ce qui est correct — un skill maison
+      // ne fait pas d'un agent un développeur.
+      expect(apres.data.count).toBe(0);
+    } finally {
+      await _testDb!
+        .update(agentSkills)
+        .set({ createdBy: 'system' })
+        .where(inArray(agentSkills.slug, ['dev', 'code-review']));
+    }
   });
 
   it('un RELECTEUR (skill code-review) entre aussi dans l’onglet', async () => {

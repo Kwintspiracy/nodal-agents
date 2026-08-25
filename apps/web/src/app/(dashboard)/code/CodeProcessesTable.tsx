@@ -109,6 +109,7 @@ export default function CodeProcessesTable({
   initialRows,
   initialArchivedPaths,
   devTeamCount,
+  catalogSkillMissing,
   error,
 }: {
   initialRows: CodingProcessRow[];
@@ -120,6 +121,13 @@ export default function CodeProcessesTable({
    * fait. `null` = le comptage a échoué, et on ne prétend rien.
    */
   devTeamCount: number | null;
+  /**
+   * Le skill du catalogue n'a pas été livré — un skill du même nom, créé par
+   * l'utilisateur, occupe le slug. Sans ce cas, l'écran demanderait d'attacher
+   * un skill introuvable, ou ferait attacher le sien (qui ne qualifie pas)
+   * indéfiniment.
+   */
+  catalogSkillMissing?: boolean;
   error?: string;
 }) {
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
@@ -192,6 +200,21 @@ export default function CodeProcessesTable({
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-err">
         {error}
+      </div>
+    );
+  }
+
+  if (rows.length === 0 && devTeamCount === 0 && catalogSkillMissing) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
+        <p className="text-ink-2">A skill of yours is using the name “dev”.</p>
+        <p className="mx-auto mt-2 max-w-md">
+          This tab marks developers with the built-in{' '}
+          <span className="font-medium text-ink-2">Software development</span> skill, and it was not
+          installed because one of your own skills already holds that name. Rename yours in Skills,
+          then restart to receive it. If that skill came from an older Nodal install rather than
+          from you, delete it instead.
+        </p>
       </div>
     );
   }
