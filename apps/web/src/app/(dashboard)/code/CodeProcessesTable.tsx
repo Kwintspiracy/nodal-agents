@@ -208,7 +208,7 @@ export default function CodeProcessesTable({
       }
       toast.success(
         nextHidden
-          ? `${project.name} hidden. The folder is untouched, and agents stop being told about it.`
+          ? `${project.name} hidden. Agents stop seeing it too.`
           : `${project.name} is back.`,
       );
     });
@@ -264,7 +264,7 @@ export default function CodeProcessesTable({
         <p className="text-ink-2">Your agents have nowhere to write yet.</p>
         <p className="mx-auto mt-2 max-w-md">
           Open an agent and attach a folder. Anything written in there shows up here as a project,
-          one per subfolder — you can rename it, or hide it if you would rather not see it.
+          one per subfolder. Rename a project, or hide it if you would rather not see it.
         </p>
       </div>
     );
@@ -273,8 +273,8 @@ export default function CodeProcessesTable({
   if (rows.length === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        No activity yet. Every session that writes files shows up here, grouped by the folder it
-        wrote in. Ask an agent to build something and watch the project appear.
+        No activity yet. Sessions that write files show up here, grouped by the folder they wrote
+        in. Ask an agent to build something.
       </div>
     );
   }
@@ -516,7 +516,7 @@ function ProjectCard({
         {onRenameStart && !isRenaming && (
           <RowActionButton
             onClick={onRenameStart}
-            title="Name this project — your agents use it too"
+            title="Name this project. Your agents use it too."
           >
             Rename
           </RowActionButton>
@@ -524,7 +524,7 @@ function ProjectCard({
         {onHide && !isRenaming && (
           <RowActionButton
             onClick={onHide}
-            title="Hide it here and stop telling agents about it. The folder is untouched."
+            title="Hides it here and for your agents. The folder is untouched."
           >
             Hide
           </RowActionButton>
