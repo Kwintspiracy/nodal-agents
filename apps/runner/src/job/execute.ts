@@ -73,6 +73,7 @@ import {
   matchApprovalRule,
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   SHARED_WORKSPACE_LABEL,
+  CODE_EXECUTION_TOOL_NAMES,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -1672,14 +1673,12 @@ async function runJob(
   // tool has a matched rule here, fully_autonomous/destructive_gate can no
   // longer auto-approve it either — the brake outranks autonomy.
   {
-    const CODE_EXECUTION_TOOLS = [
-      'run_command',
-      'code_task',
-      'run_skill_script',
-      'skill_file_write',
-      'create_mcp',
-      'attach_mcp',
-    ];
+    // La liste vient de @nodal-agents/tools — source unique (revue sécurité du
+    // 25/08). Elle était recopiée ici : deux copies identiques, rien qui
+    // verrouille l'égalité. Un outil ajouté à la garde d'autonomie mais oublié
+    // dans cette copie serait resté balayable par une règle wildcard `*`
+    // auto_approve alors même que le frein est enclenché.
+    const CODE_EXECUTION_TOOLS = CODE_EXECUTION_TOOL_NAMES;
     const [brakeRow] = await db
       .select({ autoRunPaused: entitiesTable.autoRunPaused })
       .from(entitiesTable)

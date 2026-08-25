@@ -39,6 +39,7 @@ export {
   namespaceOf,
   namespaceRulePattern,
   isCodeExecutionTool,
+  CODE_EXECUTION_TOOL_NAMES,
 } from './execute';
 // Command classifiers moved to @nodal-agents/shared (2026-07-08) so the
 // approval-impact line (shared, rendered by runner AND web) can reuse the

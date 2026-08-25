@@ -33,7 +33,12 @@ import {
   agentWorkspaces,
   entities,
 } from '@nodal-agents/db';
-import { createToolRegistry, registerBuiltins, isCodeExecutionTool } from '@nodal-agents/tools';
+import {
+  createToolRegistry,
+  registerBuiltins,
+  isCodeExecutionTool,
+  CODE_EXECUTION_TOOL_NAMES,
+} from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
@@ -574,6 +579,89 @@ describe('Autonomy never grants code execution (P0 review fix)', () => {
     // Et un outil ordinaire reste relaxable — le correctif borne, il ne gèle pas.
     expect(isCodeExecutionTool('web_search')).toBe(false);
     expect(isCodeExecutionTool('file_write')).toBe(false);
+
+    // La liste EXPORTÉE est la même que celle du prédicat, et c'est elle que le
+    // frein d'urgence du runner consomme désormais (revue sécurité du 25/08).
+    // Elle vivait en double — un tableau recopié dans apps/runner/src/job/
+    // execute.ts. Deux copies identiques ce jour-là, rien qui verrouille
+    // l'égalité : un outil ajouté ici mais oublié là-bas serait resté balayable
+    // par une règle wildcard malgré le bouton rouge.
+    expect([...CODE_EXECUTION_TOOL_NAMES].sort()).toEqual(
+      [
+        'attach_mcp',
+        'code_task',
+        'create_mcp',
+        'run_command',
+        'run_skill_script',
+        'skill_file_write',
+      ].sort(),
+    );
+    for (const name of CODE_EXECUTION_TOOL_NAMES) {
+      expect(isCodeExecutionTool(name)).toBe(true);
+    }
+  });
+
+  it('un wildcard « * » auto_approve n’autorise PAS l’exécution de code', async () => {
+    // La porte dérobée de la même escalade (revue sécurité du 25/08) : une
+    // règle `*` auto_approve est attrapée en priorité 5/6, devient un
+    // matchedRule, et la garde d'autonomie — protégée par `!matchedRule` — ne
+    // s'appliquait donc plus. Un blanc-seing « tout auto » redonnait le shell.
+    await db
+      .update(entities)
+      .set({
+        autoRunPaused: false,
+        rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' },
+      })
+      .where(eq(entities.id, seed.entityId));
+    await db.insert(approvalRules).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      toolName: '*',
+      action: 'auto_approve',
+    });
+
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-wild-1',
+            toolName: 'run_command',
+            args: { command: 'echo bonjour', purpose: 'prouver que le wildcard ne suffit pas' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-wild-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    try {
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
+      expect(result.status, 'le wildcard a laissé filer la commande').toBe('awaiting_approval');
+
+      const [pending] = await db
+        .select()
+        .from(approvalRequests)
+        .where(
+          and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.toolName, 'run_command')),
+        );
+      expect(
+        pending,
+        'aucune demande d’approbation : le wildcard a exécuté le shell',
+      ).toBeDefined();
+      expect(pending!.executedAt, 'la commande a été exécutée malgré la demande').toBeNull();
+    } finally {
+      await db
+        .delete(approvalRules)
+        .where(and(eq(approvalRules.entityId, seed.entityId), eq(approvalRules.toolName, '*')));
+      await db
+        .update(entities)
+        .set({ rootGrants: DEFAULT_ROOT_GRANTS })
+        .where(eq(entities.id, seed.entityId));
+    }
   });
 
   it('une RÈGLE EXPLICITE par agent autorise toujours (le Yolo n’est pas cassé)', async () => {
