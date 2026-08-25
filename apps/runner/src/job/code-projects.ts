@@ -29,20 +29,20 @@ import {
   agentJobs,
   toolCalls,
 } from '@nodal-agents/db';
+import { devTeamSkillSlugs } from '@nodal-agents/catalog';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 
 /**
- * Les skills qui font d'un agent un membre de l'équipe de dev — même liste que
- * l'onglet Code (`DEV_TEAM_SKILL_SLUGS` dans apps/web/src/lib/actions.ts).
+ * Les skills qui font d'un agent un membre de l'équipe de dev.
  *
- * Les deux vues DOIVENT s'accorder : ce module dit aux agents quels projets
- * existent, l'onglet les montre au propriétaire. Sans ce filtre, le prompt
- * système annoncerait à tous les agents des projets que l'onglet ne montre
- * plus — un coffre de notes, des workflows d'images — avec leurs détenteurs,
- * et le désaccord serait invisible depuis l'interface.
+ * Importés du CATALOGUE, plus recopiés (constat de la revue Codex, 25/08) : la
+ * liste vivait ici ET dans l'onglet Code. Or les deux vues doivent répondre
+ * pareil — ce module dit aux agents quels projets existent, l'onglet les montre
+ * au propriétaire. Deux copies, c'est deux vérités dès qu'un slug bouge, et le
+ * désaccord ne se voit depuis aucun écran.
  */
-const DEV_TEAM_SKILL_SLUGS = ['dev', 'code-review'];
+const DEV_TEAM_SKILL_SLUGS = devTeamSkillSlugs;
 
 /** Outils dont l'input porte un chemin de fichier édité. */
 const EDIT_TOOLS = [

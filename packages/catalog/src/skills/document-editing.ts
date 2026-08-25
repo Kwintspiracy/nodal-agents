@@ -1,4 +1,4 @@
-﻿// catalog/skills/document-editing.ts â€” system skill, shipped with the product.
+// catalog/skills/document-editing.ts — system skill, shipped with the product.
 //
 // TOKEN-002: the Word third of `office-editing`. An agent that only writes
 // documents assigns this and drops the xlsx_* and pptx_* schemas (~5.8k of the
@@ -22,7 +22,7 @@ export const documentEditingSkill: SystemSkill = {
   slug: 'document-editing',
   name: 'Document editing',
   description:
-    'Create and edit Word documents in the agent workspace â€” headings, lists, tables, images, ' +
+    'Create and edit Word documents in the agent workspace — headings, lists, tables, images, ' +
     'append and find/replace. Documents only (no Excel or PowerPoint).',
   requiredBuiltins: [...DOCX_BUILTINS],
   toolGroup: true,
@@ -38,9 +38,9 @@ ${officeReadModifySave('docx_read', ['docx_replace_text', 'docx_append_paragraph
 
 Read with \`docx_read\` (text including tables); create with \`docx_create\` (headings, bold/italic, bullet and numbered lists, tables, images, page breaks); edit in place with \`docx_append_paragraphs\` (original formatting preserved) and \`docx_replace_text\` (literal find/replace).
 
-### Known limits â€” state them, never work around them silently
+### Known limits — state them, never work around them silently
 
-- **Text replacement is literal and run-scoped**: \`docx_replace_text\` replaces occurrences that live inside a single text run. Occurrences split across formatting runs are counted in \`skipped_fragmented\` â€” report them to the user rather than guessing.
+- **Text replacement is literal and run-scoped**: \`docx_replace_text\` replaces occurrences that live inside a single text run. Occurrences split across formatting runs are counted in \`skipped_fragmented\` — report them to the user rather than guessing.
 ${OFFICE_COMMON_LIMITS}
 
 ### When to ask for confirmation

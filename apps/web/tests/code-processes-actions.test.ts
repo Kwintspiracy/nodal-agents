@@ -12,7 +12,7 @@ import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agen
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
-  inArray,
+  eq,
   agents,
   agentJobs,
   agentWorkspaces,
@@ -720,33 +720,38 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     // seule sortie était écrite dans un log que personne ne lit.
     const { getDevTeamStatusAction } = await import('../src/lib/actions.ts');
 
-    // État normal : le skill du catalogue est là (posé par le harnais).
+    // Les deux skills du catalogue sont posés par le harnais.
+    await skillId('dev', 'Software development');
+    await skillId('code-review', 'Code review');
+
     const avant = await getDevTeamStatusAction();
     expect(avant.ok).toBe(true);
-    if (avant.ok) expect(avant.data.catalogSkillMissing).toBe(false);
+    if (avant.ok) expect(avant.data.missingCatalogSlugs).toEqual([]);
 
-    // On simule l'install où seul un homonyme de l'utilisateur existe.
+    // Un homonyme de l'utilisateur occupe SEULEMENT `dev`.
+    //
+    // C'est le cas que la revue Codex a trouvé : la détection interrogeait
+    // `slug IN ('dev','code-review') LIMIT 1`, satisfaite par `code-review`
+    // resté intact — le squat de `dev` passait donc inaperçu, et l'écran
+    // conseillait d'attacher un skill introuvable.
     await _testDb!
       .update(agentSkills)
       .set({ createdBy: 'user' })
-      .where(inArray(agentSkills.slug, ['dev', 'code-review']));
+      .where(eq(agentSkills.slug, 'dev'));
 
     try {
       const apres = await getDevTeamStatusAction();
       expect(apres.ok).toBe(true);
       if (!apres.ok) return;
       expect(
-        apres.data.catalogSkillMissing,
-        'le squat du slug n’est pas détecté : l’écran enverra dans un mur',
-      ).toBe(true);
-      // Et plus personne ne qualifie, ce qui est correct — un skill maison
-      // ne fait pas d'un agent un développeur.
-      expect(apres.data.count).toBe(0);
+        apres.data.missingCatalogSlugs,
+        'le squat de « dev » est masqué par « code-review » resté intact',
+      ).toEqual(['dev']);
     } finally {
       await _testDb!
         .update(agentSkills)
         .set({ createdBy: 'system' })
-        .where(inArray(agentSkills.slug, ['dev', 'code-review']));
+        .where(eq(agentSkills.slug, 'dev'));
     }
   });
 

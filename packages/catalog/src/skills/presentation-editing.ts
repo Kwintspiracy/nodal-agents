@@ -1,4 +1,4 @@
-﻿// catalog/skills/presentation-editing.ts â€” system skill, shipped with the product.
+// catalog/skills/presentation-editing.ts — system skill, shipped with the product.
 //
 // TOKEN-002: the PowerPoint third of `office-editing`. An agent that only
 // builds decks assigns this and drops the xlsx_* and docx_* schemas (~5.4k of
@@ -22,7 +22,7 @@ export const presentationEditingSkill: SystemSkill = {
   slug: 'presentation-editing',
   name: 'Presentation editing',
   description:
-    'Create and edit PowerPoint decks in the agent workspace â€” slides, bullets, images, tables, ' +
+    'Create and edit PowerPoint decks in the agent workspace — slides, bullets, images, tables, ' +
     'speaker notes, append and find/replace. Presentations only (no Excel or Word).',
   requiredBuiltins: [...PPTX_BUILTINS],
   toolGroup: true,
@@ -38,9 +38,9 @@ ${officeReadModifySave('pptx_read', ['pptx_replace_text', 'pptx_append_slides'])
 
 Read with \`pptx_read\` (per-slide text); create with \`pptx_create\` (titles, bullets, body, images, tables, speaker notes, colour theme); edit in place with \`pptx_append_slides\` (existing slides untouched) and \`pptx_replace_text\`.
 
-### Known limits â€” state them, never work around them silently
+### Known limits — state them, never work around them silently
 
-- **Text replacement is literal and run-scoped**: \`pptx_replace_text\` replaces occurrences that live inside a single text run. Occurrences split across formatting runs are counted in \`skipped_fragmented\` â€” report them to the user rather than guessing.
+- **Text replacement is literal and run-scoped**: \`pptx_replace_text\` replaces occurrences that live inside a single text run. Occurrences split across formatting runs are counted in \`skipped_fragmented\` — report them to the user rather than guessing.
 ${OFFICE_COMMON_LIMITS}
 
 ### When to ask for confirmation

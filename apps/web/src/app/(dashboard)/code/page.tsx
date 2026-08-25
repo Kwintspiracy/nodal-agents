@@ -33,7 +33,7 @@ export default async function CodePage() {
         // peut-être plein : un repli silencieux vers un état plausible est
         // exactement ce que l'invariant #4 interdit.
         devTeamCount={devTeamResult.ok ? devTeamResult.data.count : null}
-        catalogSkillMissing={devTeamResult.ok && devTeamResult.data.catalogSkillMissing}
+        missingCatalogSlugs={devTeamResult.ok ? devTeamResult.data.missingCatalogSlugs : []}
         error={!result.ok ? result.message : undefined}
       />
     </PageShell>

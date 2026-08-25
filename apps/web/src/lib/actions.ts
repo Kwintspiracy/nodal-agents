@@ -142,7 +142,7 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
-import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
+import { systemSkillSlugs, skillKindOfSlug, devTeamSkillSlugs } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -10998,7 +10998,10 @@ const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write'])
  * d'audit — deux relecteurs ont signalé l'absence comme un trou avant de
  * conclure l'inverse, d'où cette ligne.
  */
-const DEV_TEAM_SKILL_SLUGS = ['dev', 'code-review'] as const;
+// Importée du CATALOGUE, plus recopiée ici (constat de la revue Codex, 25/08) :
+// le contexte injecté aux agents en tenait sa propre copie, et deux copies
+// valent deux vérités dès qu'un slug bouge.
+const DEV_TEAM_SKILL_SLUGS = devTeamSkillSlugs;
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
 function extractFilePath(input: Record<string, unknown> | null): string | null {
@@ -11225,14 +11228,18 @@ export interface DevTeamStatus {
   /** Agents portant un skill d'équipe de dev. */
   count: number;
   /**
-   * Le skill du catalogue est INTROUVABLE alors qu'il devrait être livré au
+   * Les slugs du catalogue INTROUVABLES alors qu'ils devraient être livrés au
    * démarrage — signe qu'un skill du même nom, créé par l'utilisateur, occupe
-   * le slug. Le seeder refuse alors de s'en emparer (et il a raison), mais
-   * sans ce drapeau l'interface enverrait dans un mur : elle demanderait
-   * d'attacher un skill que l'utilisateur ne trouvera jamais, ou lui ferait
-   * attacher le sien — qui ne qualifie pas — en boucle.
+   * la place. Le seeder refuse alors de s'en emparer (et il a raison), mais
+   * sans cette information l'interface enverrait dans un mur : elle
+   * demanderait d'attacher un skill introuvable, ou ferait attacher le sien —
+   * qui ne qualifie pas — en boucle.
+   *
+   * Une LISTE, pas un booléen (constat de la revue Codex) : le message doit
+   * nommer le skill concerné, et `dev` manquant n'a pas les mêmes
+   * conséquences que `code-review` manquant.
    */
-  catalogSkillMissing: boolean;
+  missingCatalogSlugs: string[];
 }
 
 /**
@@ -11247,18 +11254,25 @@ export async function getDevTeamStatusAction(): Promise<ActionResult<DevTeamStat
 
     // Le skill système n'est PAS scopé entité : il est seedé sous l'espace le
     // plus ancien et reste assignable partout.
-    const [catalogRow] = await db
-      .select({ id: agentSkills.id })
+    //
+    // Chaque slug est vérifié SÉPARÉMENT (constat de la revue Codex) : un
+    // `IN (...) LIMIT 1` était satisfait par `code-review` seul, donc un
+    // squat du slug `dev` passait inaperçu et l'écran conseillait d'attacher
+    // un skill introuvable — précisément le cul-de-sac que ce drapeau existe
+    // pour éviter.
+    const catalogRows = await db
+      .select({ slug: agentSkills.slug })
       .from(agentSkills)
       .where(
         and(
           inArray(agentSkills.slug, [...DEV_TEAM_SKILL_SLUGS]),
           eq(agentSkills.createdBy, 'system'),
         ),
-      )
-      .limit(1);
+      );
+    const present = new Set(catalogRows.map((r) => r.slug));
+    const missingCatalogSlugs = DEV_TEAM_SKILL_SLUGS.filter((s) => !present.has(s));
 
-    return ok({ count: ids.size, catalogSkillMissing: !catalogRow });
+    return ok({ count: ids.size, missingCatalogSlugs });
   } catch (err) {
     return fail('unknown', err instanceof Error ? err.message : 'Failed to read dev team status');
   }

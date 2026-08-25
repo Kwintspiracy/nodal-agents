@@ -52,12 +52,16 @@ export interface SystemSkill {
    * read and edit, even if it also gates a builtin.
    *
    * DECLARED, not deduced (product decision 2026-08-25). The old rule was
-   * "system skill + gates ≥1 builtin ⇒ tool group", which quietly filed three
+   * "system skill + gates ≥1 builtin ⇒ tool group", which quietly filed
    * discipline-carrying skills under Tools: `code-review` (seven rules on how
-   * to judge work), `command-execution` (never install heavyweight software on
-   * your own initiative) and `code-task`. The owner could not find, read or
-   * edit them from the Skills page — for `code-review` that was noticed only
-   * when a dev-team message pointed at a page where the skill was not.
+   * to judge work) and `command-execution` (never install heavyweight software
+   * on your own initiative). The owner could not find, read or edit them from
+   * the Skills page — noticed only when a dev-team message pointed at a page
+   * where the skill was not. Both are back under Skills.
+   *
+   * `code-task` is the one deliberate exception, and it is an INTERFACE
+   * exception, not a doctrinal one: its Tools card carries the CLI
+   * configuration panel. See the note on the skill itself.
    */
   toolGroup?: boolean;
 }
