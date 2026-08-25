@@ -12,7 +12,15 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agents, agentWorkspaces, agentJobs, entities, toolCalls } from '@nodal-agents/db';
+import {
+  eq,
+  agents,
+  agentWorkspaces,
+  agentJobs,
+  codeProjects,
+  entities,
+  toolCalls,
+} from '@nodal-agents/db';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -65,16 +73,16 @@ beforeAll(async () => {
     .returning();
   leadAgentId = lead!.id;
 
-  // Le dossier partagé est COCHÉ « développement » — c'est la seule chose qui
-  // fait exister un projet depuis le 26/08. Ni l'extension des fichiers, ni
-  // les skills des agents n'entrent dans le calcul.
+  // Le dossier partagé, attaché aux deux agents. Depuis le 26/08 rien d'autre
+  // n'est demandé : ni extension, ni skill, ni case à cocher. Ce qui est écrit
+  // dans un dossier attaché devient un projet, et le propriétaire range ce
+  // qu'il ne veut pas voir.
   for (const agentId of [devAgentId, leadAgentId]) {
     await db.insert(agentWorkspaces).values({
       entityId: seed.entityId,
       agentId,
       label: 'Dev',
       path: ws,
-      isDevFolder: true,
     });
   }
 
@@ -151,12 +159,68 @@ describe('listCodeProjectsForContext', () => {
     ).toBe(false);
   });
 
-  it('dans une entité QUI A des développeurs, le workspace d’un non-dev ne produit rien', async () => {
-    // Le test jumeau ci-dessous sort par le raccourci « aucun développeur dans
-    // l'entité » : il ne touche donc jamais le filtre des workspaces lui-même
-    // (constat de la revue — en retirant ce filtre, il passait quand même).
-    // Ici l'entité a deux développeurs, et le scribe cohabite avec eux : seul
-    // le filtre par identité empêche son coffre de devenir un projet.
+  it('MASQUER un projet le retire du contexte des agents — la demande exacte de Quentin', async () => {
+    // « on fait en sorte que ça retire le dossier du contexte et de la mémoire
+    // des agents » (26/08).
+    //
+    // Jusque-là, l'archivage n'était lu QUE par l'interface : un projet rangé
+    // disparaissait de l'onglet Code et continuait d'être annoncé, détenteurs
+    // compris, dans le prompt système de tous les agents. Ranger quelque chose
+    // et continuer à en parler à tout le monde n'avait pas de sens.
+    const projet = `${racine}/dev/water-intake`;
+
+    const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+    expect(avant.map((p) => p.name).sort()).toEqual(['calorie-counter', 'water-intake']);
+
+    await db
+      .insert(codeProjects)
+      .values({ entityId: seed.entityId, projectPath: projet, hidden: true });
+    _resetProjectsCacheForTests();
+
+    try {
+      const apres = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        apres.some((p) => p.path === projet),
+        'un projet masqué est encore annoncé aux agents',
+      ).toBe(false);
+      // Les autres projets ne bougent pas : masquer vise UN projet, pas le lot.
+      expect(apres.map((p) => p.name)).toEqual(['calorie-counter']);
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.projectPath, projet));
+      _resetProjectsCacheForTests();
+    }
+  });
+
+  it('RENOMMER un projet change le nom que les agents entendent', async () => {
+    // Sans ça, « modifie le portail client » ne désignerait rien pour un agent
+    // alors que l'onglet affiche ce nom-là — l'écran et le prompt parleraient
+    // de la même chose avec deux vocabulaires.
+    const projet = `${racine}/dev/calorie-counter`;
+
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: projet,
+      displayName: 'Compteur de calories',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      const p = projects.find((x) => x.path === projet);
+      expect(p?.name, 'les agents entendent encore le nom du dossier').toBe('Compteur de calories');
+      // Le CHEMIN reste la vérité : c'est par lui que l'agent trouve l'app.
+      expect(p?.path).toBe(projet);
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.projectPath, projet));
+      _resetProjectsCacheForTests();
+    }
+  });
+
+  it('le coffre d’un scribe apparaît AUSSI — plus rien n’est deviné', async () => {
+    // Ce test disait l'inverse jusqu'au 26/08 : le coffre d'un agent
+    // non-développeur était filtré. Il ne l'est plus, et c'est le point de la
+    // décision — ce qui l'en sort maintenant, c'est le masquage, un geste
+    // explicite et réversible.
     const coffre = norm(await mkdtemp(join(tmpdir(), 'nodal-coexist-')));
     await mkdir(join(coffre, 'notes-app'), { recursive: true });
     await writeFile(join(coffre, 'notes-app', 'build.py'), 'print(1)');
@@ -196,13 +260,13 @@ describe('listCodeProjectsForContext', () => {
 
     try {
       const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
-      expect(
-        projects.some((p) => p.name === 'notes-app'),
-        'le workspace d’un non-développeur a produit un projet',
-      ).toBe(false);
-      // Les vrais projets, eux, sont toujours là.
-      expect(projects.map((p) => p.name).sort()).toEqual(['calorie-counter', 'water-intake']);
+      const notes = projects.find((p) => p.name === 'notes-app');
+      expect(notes, 'un dossier attaché n’a produit aucun projet').toBeTruthy();
+      expect(notes!.owners).toEqual(['Scribe voisin']);
+      // Les autres projets sont toujours là.
+      expect(projects.some((p) => p.name === 'calorie-counter')).toBe(true);
     } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobScribe!.id));
       await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, scribe!.id));
       await rm(coffre, { recursive: true, force: true });
     }
@@ -272,15 +336,13 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
-  it('un dossier coché couvre TOUT ce qu’il contient, quel que soit l’auteur', async () => {
-    // La règle demandée par Quentin le 26/08 : cocher `\\dev` fait de
-    // `\\dev\\calorie-counter` un projet. La case marque un PÉRIMÈTRE, donc
-    // tout ce qui vit dedans en fait partie — y compris le travail d'un agent
-    // qui n'a rien d'un développeur.
+  it('un dossier attaché couvre TOUT ce qu’il contient, quel que soit l’auteur', async () => {
+    // Attacher `\\dev` fait de `\\dev\\calorie-counter` un projet. Le dossier
+    // marque un PÉRIMÈTRE, donc tout ce qui vit dedans en fait partie — y
+    // compris le travail d'un agent qui n'a rien d'un développeur.
     //
-    // C'est délibéré et c'est ce qui rend la règle prévisible : le
-    // propriétaire n'a pas à se demander qui a écrit, seulement où. Un dossier
-    // qu'il ne veut pas voir ici, il ne le range pas sous un dossier coché.
+    // C'est ce qui rend la règle prévisible : le propriétaire n'a pas à se
+    // demander qui a écrit, seulement où.
     await mkdir(join(racine, 'dev', 'niche-app'), { recursive: true });
     await writeFile(join(racine, 'dev', 'niche-app', 'notes.py'), 'print(1)');
 
@@ -315,9 +377,9 @@ describe('listCodeProjectsForContext', () => {
       const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
       expect(
         projects.some((p) => p.name === 'niche-app'),
-        'un sous-dossier du dossier coché n’est pas devenu un projet',
+        'un sous-dossier du dossier attaché n’est pas devenu un projet',
       ).toBe(true);
-      // Et c'est bien le SOUS-DOSSIER, jamais le dossier coché lui-même.
+      // Et c'est bien le SOUS-DOSSIER, jamais le dossier attaché lui-même.
       expect(projects.some((p) => p.path === `${racine}/dev`)).toBe(false);
     } finally {
       await db.delete(toolCalls).where(eq(toolCalls.jobId, jobScribe!.id));
@@ -325,13 +387,9 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
-  it('le workspace d’un agent NON-développeur ne produit AUCUN projet', async () => {
-    // La convergence avec l'onglet Code (revue du 25/08). Ce module dit aux
-    // agents quels projets existent ; l'onglet les montre au propriétaire. Si
-    // seul l'onglet filtrait par identité, le prompt système annoncerait à
-    // tous les agents des projets invisibles dans l'interface — un coffre de
-    // notes, des workflows d'images — avec leurs détenteurs, et personne ne
-    // pourrait voir le désaccord.
+  it('un espace voisin ne voit QUE ses propres projets', async () => {
+    // Le cloisonnement par entité. Sans lui, le prompt système d'un espace
+    // annoncerait les projets d'un autre, détenteurs compris.
     const dossier = norm(await mkdtemp(join(tmpdir(), 'nodal-notdev-')));
     await mkdir(join(dossier, 'coffre'), { recursive: true });
     await writeFile(join(dossier, 'coffre', 'script.py'), 'print(1)');
@@ -365,8 +423,6 @@ describe('listCodeProjectsForContext', () => {
         task: 'notes',
       })
       .returning();
-    // Un VRAI fichier de code, écrit par un agent qui n'est pas développeur :
-    // c'est exactement le coffre Obsidian de juillet.
     await db.insert(toolCalls).values({
       entityId: autreEntite!.id,
       jobId: jobScribe!.id,
@@ -377,10 +433,12 @@ describe('listCodeProjectsForContext', () => {
 
     try {
       const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], autreEntite!.id);
+      // Son propre projet, et LUI SEUL.
+      expect(projects.map((p) => p.name)).toEqual(['coffre']);
       expect(
-        projects,
-        'un projet a été annoncé aux agents alors que l’onglet Code ne le montre pas',
-      ).toEqual([]);
+        projects.some((p) => p.path.startsWith(racine)),
+        'les projets de l’espace voisin ont fuité dans ce contexte',
+      ).toBe(false);
     } finally {
       await rm(dossier, { recursive: true, force: true });
     }

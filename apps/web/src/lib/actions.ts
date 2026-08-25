@@ -26,9 +26,8 @@ import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from 'node:fs/promises';
 import {
   deriveProjectRoot,
-  isInsideDevFolder,
-  isUnderPath,
-  samePath,
+  isInsideWorkspace,
+  normPath,
   type WorkspaceRef,
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
@@ -67,7 +66,7 @@ import {
   webhookTriggers,
   entityLlmKeys,
   agentWorkspaces,
-  codeProjectArchives,
+  codeProjects,
   entities,
   entityMembers,
   users,
@@ -1123,8 +1122,6 @@ export type AgentWorkspaceRow = {
   label: string;
   path: string;
   position: number;
-  /** Coché par le propriétaire : « ce qui vit là-dedans est du développement ». */
-  isDevFolder: boolean;
 };
 
 export async function listAgentWorkspacesAction(
@@ -1159,7 +1156,6 @@ export async function addAgentWorkspaceAction(
   agentId: string,
   label: string,
   path: string,
-  isDevFolder = false,
 ): Promise<ActionResult<{ id: string }>> {
   try {
     const session = await getSession();
@@ -1194,26 +1190,6 @@ export async function addAgentWorkspaceAction(
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agentRow) return fail('not_found', 'Agent not found');
 
-    // Un chemin DÉJÀ coché ailleurs dans l'espace reste coché ici (revue
-    // Codex, 26/08). Sans cet héritage, ajouter `Documents/Dev` à un second
-    // agent créait une ligne décochée : l'onglet Code continuait de traiter le
-    // chemin comme du développement — une autre ligne le dit — pendant que la
-    // fiche de cet agent affichait une case vide. Un dossier contient du code
-    // ou non ; cela ne dépend pas de l'agent qui le regarde.
-    // Comparaison NORMALISÉE, pas textuelle : `C:\Dev` et `c:/Dev` sont le
-    // même dossier (revue Codex, 26/08).
-    const existingForPath = (
-      await db
-        .select({ path: agentWorkspaces.path })
-        .from(agentWorkspaces)
-        .where(
-          and(
-            eq(agentWorkspaces.entityId, session.entityId),
-            eq(agentWorkspaces.isDevFolder, true),
-          ),
-        )
-    ).some((r) => samePath(r.path, trimmedPath));
-
     const [row] = await db
       .insert(agentWorkspaces)
       .values({
@@ -1222,7 +1198,6 @@ export async function addAgentWorkspaceAction(
         label: trimmedLabel,
         path: trimmedPath,
         position: 0,
-        isDevFolder: isDevFolder || existingForPath,
       })
       .returning({ id: agentWorkspaces.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -1247,74 +1222,6 @@ export async function addAgentWorkspaceAction(
       return fail('conflict', 'A workspace with this label already exists for this agent');
     }
     return fail('db_error', 'Failed to add workspace');
-  }
-}
-
-/**
- * Coche ou décoche « dossier de développement » sur un dossier.
- *
- * La bascule s'applique à TOUTES les lignes de l'espace qui portent le même
- * chemin, pas seulement à celle qu'on a cliquée. Sur cette install,
- * `Documents/Dev` est attaché à cinq agents : cocher serait cinq gestes, et
- * l'état mi-coché n'aurait aucun sens — un dossier contient du code ou non,
- * cela ne dépend pas de l'agent qui le regarde.
- */
-export async function setWorkspaceDevFolderAction(
-  workspaceId: string,
-  isDevFolder: boolean,
-): Promise<ActionResult<{ updated: number }>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(workspaceId).success) {
-      return fail('validation_failed', 'Invalid workspace id');
-    }
-    const db = getDb();
-
-    const [wsRow] = await db
-      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
-      .from(agentWorkspaces)
-      .where(eq(agentWorkspaces.id, workspaceId));
-    if (!wsRow) return fail('not_found', 'Workspace not found');
-
-    // Propriété vérifiée via l'agent, comme les autres actions de workspace.
-    const [agentRow] = await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
-    if (!agentRow) return fail('not_found', 'Workspace not found');
-
-    // Le MÊME dossier peut être écrit différemment d'une ligne à l'autre —
-    // `C:\Dev`, `c:/Dev`, un slash final (revue Codex, 26/08). Une comparaison
-    // SQL exacte n'en touchait qu'une, et les autres agents gardaient une case
-    // vide alors que la dérivation, elle, normalise et considère le dossier
-    // comme coché. On compare donc en mémoire, sur les chemins normalisés.
-    const sameFolder = (
-      await db
-        .select({ id: agentWorkspaces.id, path: agentWorkspaces.path })
-        .from(agentWorkspaces)
-        .where(eq(agentWorkspaces.entityId, session.entityId))
-    ).filter((r) => samePath(r.path, wsRow.path));
-
-    const updated = await db
-      .update(agentWorkspaces)
-      .set({ isDevFolder, updatedAt: new Date() })
-      .where(
-        and(
-          eq(agentWorkspaces.entityId, session.entityId),
-          inArray(
-            agentWorkspaces.id,
-            sameFolder.map((r) => r.id),
-          ),
-        ),
-      )
-      .returning({ id: agentWorkspaces.id });
-
-    revalidatePath(`/agents/${wsRow.agentId}/edit`);
-    revalidatePath('/code');
-    return ok({ updated: updated.length });
-  } catch (err) {
-    console.error('[setWorkspaceDevFolderAction]', err);
-    return fail('db_error', 'Failed to update the folder');
   }
 }
 
@@ -11233,16 +11140,14 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
 function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
   /**
-   * Ce pipeline a-t-il écrit dans un dossier COCHÉ « développement » ? C'est
-   * la condition de la v7 — sans elle, une écriture ne qualifie jamais.
+   * Ce pipeline a-t-il écrit dans un dossier RATTACHABLE — c'est-à-dire couvert
+   * par un des dossiers attachés à ses agents ?
+   *
+   * C'est la seule condition qui reste. Elle ne juge pas la NATURE de ce qui a
+   * été écrit : elle demande seulement qu'on sache OÙ, faute de quoi il n'y a
+   * ni projet à afficher ni ligne à grouper.
    */
-  touchedDevFolder: boolean,
-  /**
-   * L'agent a-t-il un dossier de développement ? Ne sert QU'aux signaux sans
-   * chemin de fichier — une review, une délégation à la CLI. Jamais à racheter
-   * une écriture tombée hors périmètre (revue Codex, 26/08).
-   */
-  agentHasDevFolder: boolean,
+  touchedWorkspace: boolean,
 ): boolean {
   // REFUSED calls deliberately still QUALIFY a pipeline, even though they
   // change nothing and are excluded from the file count and the Changes panel.
@@ -11261,28 +11166,25 @@ function pipelineQualifiesAsCoding(
   // one-level rollup that split a three-level session in half. Measured live on
   // the same data, one-level rollup showed 0 coding processes where the
   // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
-  // v7 : le DOSSIER commande. Rien d'écrit dans un dossier coché, aucune
-  // session de code — quels que soient les fichiers touchés et quel que soit
-  // l'agent. C'est ce qui sort le coffre Obsidian et les workflows ComfyUI de
-  // l'onglet sans juger un suffixe de fichier NI l'identité de l'auteur.
+  // v8 (26/08) : plus aucun filtrage. L'onglet montre les dossiers où les
+  // agents ont écrit, et c'est tout.
   //
-  // L'extension n'entre pas dans le calcul (règle du propriétaire : une
-  // exclusion par langage ratera tôt ou tard du vrai code). Un développeur qui
-  // édite le README de son projet édite bien son projet.
-  // Une écriture qui tombe dans un dossier coché : la preuve directe.
+  // Six définitions du « vrai code » ont été essayées avant d'en arriver là
+  // (0086 les liste) ; chacune se cassait sur un cas réel, parce que chacune
+  // devinait à la place du propriétaire. Ce qui les remplace n'est pas une
+  // septième devinette, c'est un GESTE : masquer ce qu'on ne veut pas voir.
+  // Une liste honnête et deux boutons valent mieux qu'un tri malin qui se
+  // trompe en silence.
+  //
+  // Conséquence assumée : un coffre de notes apparaît tant qu'on ne l'a pas
+  // masqué. C'est visible, et ça se règle en un clic — au lieu d'un vrai
+  // projet absent sans que rien ne le signale.
   const hasEdit = calls.some((c) => FILE_TOOL_NAMES.has(c.toolName));
-  if (hasEdit) return touchedDevFolder;
+  if (hasEdit) return touchedWorkspace;
 
   // AUCUNE écriture, mais un travail de code quand même : une délégation à la
-  // CLI, un verdict de review. Rien à ancrer, donc on se rabat sur l'agent —
-  // s'il a un dossier de développement, c'est là qu'il travaillait.
-  //
-  // Ce repli ne s'applique QU'ICI, après avoir constaté qu'il n'y a aucune
-  // écriture (revue Codex, 26/08). Appliqué plus haut, il rachetait les
-  // écritures tombées HORS périmètre : un agent polyvalent avec un dossier
-  // coché ramenait son coffre de notes dans l'onglet — exactement le trou que
-  // ce lot existe pour fermer.
-  if (!agentHasDevFolder) return false;
+  // CLI, un verdict de review. Ces outils sont spécifiques au code — leur seule
+  // présence suffit, il n'y a rien à ancrer.
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
     const input = c.toolInput as { mode?: string } | null;
@@ -11293,31 +11195,11 @@ function pipelineQualifiesAsCoding(
 }
 
 /**
- * Les CHEMINS que le propriétaire a cochés « dossier de développement ».
+ * TOUS les dossiers de l'entité, par agent.
  *
- * Dédupliqués : le même dossier est souvent attaché à plusieurs agents (cinq
- * fois `Documents/Dev` sur cette install), et une seule case cochée suffit à
- * marquer le chemin — cocher n'est jamais cinq gestes.
- *
- * Rendre une liste vide est un RÉSULTAT, pas un incident : il signifie « aucun
- * dossier désigné », et l'onglet le dit franchement au lieu d'afficher une
- * liste devinée (invariant #4).
- */
-async function devFolderPaths(db: ReturnType<typeof getDb>, entityId: string): Promise<string[]> {
-  const rows = await db
-    .select({ path: agentWorkspaces.path })
-    .from(agentWorkspaces)
-    .where(and(eq(agentWorkspaces.entityId, entityId), eq(agentWorkspaces.isDevFolder, true)));
-  return Array.from(new Set(rows.map((r) => r.path)));
-}
-
-/**
- * TOUS les dossiers de l'entité, par agent — cochés ou non.
- *
- * Les non cochés comptent autant que les autres : c'est par eux qu'un chemin
- * relatif se résout (`vault/note.md` → le dossier étiqueté `vault`), et donc
- * qu'on sait qu'il tombe HORS périmètre plutôt que de le coller au premier
- * dossier coché venu (revue Codex, 26/08).
+ * Le LABEL compte autant que le chemin : c'est par lui qu'un chemin relatif se
+ * résout (`vault/note.md` → le dossier étiqueté `vault`), et le résoudre est ce
+ * qui évite de le coller au premier dossier venu (revue Codex, 26/08).
  */
 async function workspacesByAgentId(
   db: ReturnType<typeof getDb>,
@@ -11328,14 +11210,13 @@ async function workspacesByAgentId(
       agentId: agentWorkspaces.agentId,
       label: agentWorkspaces.label,
       path: agentWorkspaces.path,
-      isDevFolder: agentWorkspaces.isDevFolder,
     })
     .from(agentWorkspaces)
     .where(eq(agentWorkspaces.entityId, entityId));
   const byAgent = new Map<string, WorkspaceRef[]>();
   for (const r of rows) {
     const arr = byAgent.get(r.agentId) ?? [];
-    arr.push({ label: r.label, path: r.path, isDevFolder: r.isDevFolder });
+    arr.push({ label: r.label, path: r.path });
     byAgent.set(r.agentId, arr);
   }
   return byAgent;
@@ -11350,31 +11231,36 @@ function workspacesOfPipeline(
   for (const agentId of participants) {
     for (const w of byAgent.get(agentId) ?? []) {
       const key = w.path.toLowerCase();
-      const prev = seen.get(key);
-      // Un chemin coché par UN agent l'est pour tous — un dossier contient du
-      // code ou non, cela ne dépend pas de qui le regarde.
-      if (!prev || (!prev.isDevFolder && w.isDevFolder)) seen.set(key, w);
+      if (!seen.has(key)) seen.set(key, w);
     }
   }
   return Array.from(seen.values());
 }
 
-export interface DevTeamStatus {
-  /** Nombre de dossiers de développement désignés dans cet espace. */
-  devFolderCount: number;
+export interface CodeTabStatus {
+  /** Nombre de dossiers attachés aux agents de cet espace. */
+  workspaceCount: number;
 }
 
 /**
- * De quoi écrire un état vide qui dit la vérité, plutôt qu'un message qui
- * suppose que rien n'a été fait.
+ * De quoi écrire un état vide qui dit la vérité.
+ *
+ * Zéro dossier attaché et zéro session ne racontent pas la même histoire :
+ * dans le premier cas les agents n'ont nulle part où écrire, et le dire
+ * (« attache un dossier à un agent ») vaut mieux que « aucune activité », qui
+ * accuse les agents de n'avoir rien fait alors que la liste est vide par
+ * construction.
  */
-export async function getDevTeamStatusAction(): Promise<ActionResult<DevTeamStatus>> {
+export async function getCodeTabStatusAction(): Promise<ActionResult<CodeTabStatus>> {
   try {
     const session = await getSession();
-    const paths = await devFolderPaths(getDb(), session.entityId);
-    return ok({ devFolderCount: paths.length });
+    const rows = await getDb()
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.entityId, session.entityId));
+    return ok({ workspaceCount: new Set(rows.map((r) => normPath(r.path).toLowerCase())).size });
   } catch (err) {
-    return fail('unknown', err instanceof Error ? err.message : 'Failed to read dev folders');
+    return fail('unknown', err instanceof Error ? err.message : 'Failed to read workspaces');
   }
 }
 
@@ -11515,10 +11401,9 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     const candidateJobIds = Array.from(callsByRoot.entries())
       .filter(([root, calls]) => {
         const ws = workspacesFor(root);
-        const touchedDevFolder =
+        const touchedWorkspace =
           deriveProjectRoot(rawPathsByRoot.get(root) ?? [], ws, devMemo) !== null;
-        const agentHasDevFolder = ws.some((w) => w.isDevFolder);
-        return pipelineQualifiesAsCoding(calls, touchedDevFolder, agentHasDevFolder);
+        return pipelineQualifiesAsCoding(calls, touchedWorkspace);
       })
       .map(([root]) => root);
 
@@ -11625,11 +11510,10 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
           if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
-          // Hors périmètre, hors décompte (revue Codex, 26/08) : un pipeline
-          // qui touche `/repo/app.ts` ET `vault/note.md` ne doit annoncer que
-          // le premier. Sans ce filtre, une session qualifiée par une seule
-          // écriture ramenait tout le reste avec elle.
-          if (fp && isInsideDevFolder(fp, workspacesFor(root))) {
+          // Un chemin qu'aucun dossier attaché ne couvre n'est pas rattachable
+          // à un projet : il ne compte pas dans le décompte de fichiers, faute
+          // de savoir sous quelle ligne il s'affiche (revue Codex, 26/08).
+          if (fp && isInsideWorkspace(fp, workspacesFor(root))) {
             set.add(canonicalChangePath(fp, workspaceRoots));
           }
         }
@@ -11676,16 +11560,11 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         const ws = workspacesFor(j.id);
         const projectPath =
           deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], ws, devMemo) ??
-          // Repli sans fichier ancrable : les dossiers COCHÉS de l'agent. La
-          // frontière de segment compte (revue Codex, 26/08) — sans elle, un
-          // `dev-notes` non coché passait pour un descendant de `dev` coché,
-          // le repli voyait deux candidats et perdait le bon projet.
+          // Repli sans fichier ancrable : l'unique dossier de l'agent, et
+          // seulement s'il existe encore sur le disque — `devMemo` porte aussi
+          // le contrôle d'existence.
           (j.agentId
-            ? fallbackProjectFromAgentWorkspaces(
-                (workspacesByAgent.get(j.agentId) ?? []).filter((p) =>
-                  ws.some((w) => w.isDevFolder && (samePath(p, w.path) || isUnderPath(p, w.path))),
-                ),
-              )
+            ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [], devMemo)
             : null);
         return {
           id: j.id,
@@ -12051,10 +11930,10 @@ export async function getCodingProcessDetailAction(
       // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
 
-      // Les dossiers des agents du pipeline, cochés ou non — MÊME règle que la
-      // liste (revue Codex, 26/08). Sans ça, la liste annonçait un fichier et
-      // le détail en montrait deux : le `vault/note.md` écrit au passage
-      // réapparaissait à l'ouverture, et pouvait même donner son nom au projet.
+      // Les dossiers des agents du pipeline — MÊME règle que la liste (revue
+      // Codex, 26/08). Sans ça, la liste annonçait un fichier et le détail en
+      // montrait deux, et un chemin non rattachable pouvait même donner son nom
+      // au projet.
       const detailAgentIds = new Set<string>();
       if (job.agentId) detailAgentIds.add(job.agentId);
       for (const d of descendants) if (d.agentId) detailAgentIds.add(d.agentId);
@@ -12072,8 +11951,8 @@ export async function getCodingProcessDetailAction(
         if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
-        // Hors périmètre, hors détail — comme dans la liste.
-        if (!isInsideDevFolder(change.filePath, detailWorkspaces)) continue;
+        // Non rattachable, hors détail — comme dans la liste.
+        if (!isInsideWorkspace(change.filePath, detailWorkspaces)) continue;
         rawChangePaths.push(change.filePath);
         const canonical = canonicalChangePath(change.filePath, workspaceRoots);
         const group = changeGroups.get(canonical) ?? {
@@ -12211,21 +12090,35 @@ export async function getCodingProcessDetailAction(
       const pipelineDurationMs =
         jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
 
-      let detailProjectPath = deriveProjectRoot(
-        rawChangePaths,
-        detailWorkspaces,
-        new Map<string, string | null>(),
-      );
-      // Même repli que la liste : les dossiers COCHÉS de l'agent racine.
+      const detailMemo = new Map<string, string | null>();
+      let detailProjectPath = deriveProjectRoot(rawChangePaths, detailWorkspaces, detailMemo);
+      // Même repli que la liste : l'unique dossier de l'agent racine.
       if (!detailProjectPath && job.agentId) {
         const agentWs = await db
           .select({ path: agentWorkspaces.path })
           .from(agentWorkspaces)
-          .where(
-            and(eq(agentWorkspaces.agentId, job.agentId), eq(agentWorkspaces.isDevFolder, true)),
-          );
-        detailProjectPath = fallbackProjectFromAgentWorkspaces(agentWs.map((w) => w.path));
+          .where(eq(agentWorkspaces.agentId, job.agentId));
+        detailProjectPath = fallbackProjectFromAgentWorkspaces(
+          agentWs.map((w) => w.path),
+          detailMemo,
+        );
       }
+      // Le nom choisi par le propriétaire l'emporte sur le nom du dossier — le
+      // détail doit titrer comme la liste, sinon on croit changer de projet en
+      // ouvrant une session.
+      const detailProjectName = detailProjectPath
+        ? (
+            await db
+              .select({ displayName: codeProjects.displayName })
+              .from(codeProjects)
+              .where(
+                and(
+                  eq(codeProjects.entityId, entityId),
+                  eq(codeProjects.projectPath, detailProjectPath),
+                ),
+              )
+          )[0]?.displayName?.trim() || projectNameFromPath(detailProjectPath)
+        : null;
 
       return ok({
         header: {
@@ -12239,7 +12132,7 @@ export async function getCodingProcessDetailAction(
           task: job.task,
           costUsd,
           projectPath: detailProjectPath,
-          projectName: detailProjectPath ? projectNameFromPath(detailProjectPath) : null,
+          projectName: detailProjectName,
           sessionType:
             verdicts.length > 0 && filesChanged === 0
               ? taskReferencesPullRequest(job.task)
@@ -12339,72 +12232,138 @@ export async function getCodingProcessDetailAction(
   }
 }
 
-// ─── Archivage des projets Code (décision Quentin 25/08) ─────────────────────
-// Les projets sont dérivés, jamais stockés — seule l'ARCHIVE persiste : un
-// état d'UI (« sors ce projet de mon espace actif »), AUCUN effet sur le
-// dossier réel, réversible d'un clic.
+// ─── Les deux gestes du propriétaire sur un projet (0086) ────────────────────
+//
+// Les projets sont dérivés, jamais stockés. Ce qui persiste, ce sont les deux
+// décisions qu'aucun indice du système ne donne : le NOM que le propriétaire
+// choisit, et ce qu'il MASQUE.
+//
+// Masquer n'a AUCUN effet sur le dossier réel — c'est réversible d'un clic. Ce
+// que ça change, depuis le 26/08 : le projet quitte aussi le bloc `## Runtime`
+// injecté aux agents (apps/runner/src/job/code-projects.ts). Jusque-là
+// l'archivage n'était lu que par l'interface, et un projet rangé continuait
+// d'être annoncé dans le prompt de tout le monde.
 
-export async function listArchivedCodeProjectsAction(): Promise<ActionResult<string[]>> {
+export interface CodeProjectPrefs {
+  projectPath: string;
+  displayName: string | null;
+  hidden: boolean;
+}
+
+export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodeProjectPrefs[]>> {
   try {
     const session = await getSession();
-    const db = getDb();
-    const rows = await db
-      .select({ projectPath: codeProjectArchives.projectPath })
-      .from(codeProjectArchives)
-      .where(eq(codeProjectArchives.entityId, session.entityId));
-    return ok(rows.map((r) => r.projectPath));
+    const rows = await getDb()
+      .select({
+        projectPath: codeProjects.projectPath,
+        displayName: codeProjects.displayName,
+        hidden: codeProjects.hidden,
+      })
+      .from(codeProjects)
+      .where(eq(codeProjects.entityId, session.entityId));
+    return ok(rows);
   } catch (err) {
-    console.error('[listArchivedCodeProjectsAction]', err);
-    return fail('db_error', 'Failed to load archived projects');
+    console.error('[listCodeProjectPrefsAction]', err);
+    return fail('db_error', 'Failed to load projects');
   }
 }
 
-const SetCodeProjectArchivedSchema = z.object({
+/**
+ * Le propriétaire, et lui seul (revue P1 du 25/08) : ranger l'espace de travail
+ * change ce que TOUT LE MONDE voit, agents compris depuis que le masquage porte
+ * jusqu'au contexte. Même garde EXACTE que le sélecteur de dossiers —
+ * comparaison directe avec `entities.userId`, sans exemption local-trust. En
+ * mono-utilisateur le propriétaire EST la session, donc rien ne change pour
+ * l'usage normal.
+ */
+async function assertProjectOwner(
+  db: ReturnType<typeof getDb>,
+  session: { entityId: string; userId: string },
+): Promise<string | null> {
+  const [ownerRow] = await db
+    .select({ userId: entities.userId })
+    .from(entities)
+    .where(eq(entities.id, session.entityId));
+  if (!ownerRow) return 'not_found';
+  return ownerRow.userId === session.userId ? null : 'forbidden';
+}
+
+const SetCodeProjectHiddenSchema = z.object({
   projectPath: z.string().min(1).max(4096),
-  archived: z.boolean(),
+  hidden: z.boolean(),
 });
 
-export async function setCodeProjectArchivedAction(raw: unknown): Promise<ActionResult<void>> {
+export async function setCodeProjectHiddenAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetCodeProjectArchivedSchema.safeParse(raw);
+    const parsed = SetCodeProjectHiddenSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-    // Owner-only (revue P1 du 25/08) : ranger l'espace de travail change ce
-    // que TOUT LE MONDE voit. Même garde EXACTE que le sélecteur de dossiers
-    // (comparaison directe avec entities.userId, sans exemption local-trust) —
-    // en mono-utilisateur le propriétaire EST la session, donc rien ne change
-    // pour l'usage normal.
-    const [ownerRow] = await db
-      .select({ userId: entities.userId })
-      .from(entities)
-      .where(eq(entities.id, session.entityId));
-    if (!ownerRow) return fail('not_found', 'Workspace not found');
-    if (ownerRow.userId !== session.userId) {
-      return fail('forbidden', 'Only the workspace owner can archive a project.');
-    }
-    if (parsed.data.archived) {
-      await db
-        .insert(codeProjectArchives)
-        .values({ entityId: session.entityId, projectPath: parsed.data.projectPath })
-        .onConflictDoNothing();
-    } else {
-      await db
-        .delete(codeProjectArchives)
-        .where(
-          and(
-            eq(codeProjectArchives.entityId, session.entityId),
-            eq(codeProjectArchives.projectPath, parsed.data.projectPath),
-          ),
-        );
-    }
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can hide a project.');
+
+    // UPSERT, pas insert/delete : la ligne porte AUSSI le nom choisi. Démasquer
+    // en supprimant la ligne effacerait un renommage au passage — c'est
+    // exactement le genre de perte silencieuse qu'on ne remarque qu'après.
+    await db
+      .insert(codeProjects)
+      .values({
+        entityId: session.entityId,
+        projectPath: parsed.data.projectPath,
+        hidden: parsed.data.hidden,
+      })
+      .onConflictDoUpdate({
+        target: [codeProjects.entityId, codeProjects.projectPath],
+        set: { hidden: parsed.data.hidden, updatedAt: new Date() },
+      });
     revalidatePath('/code');
     return ok(undefined);
   } catch (err) {
-    console.error('[setCodeProjectArchivedAction]', err);
-    return fail('db_error', 'Failed to update project archive');
+    console.error('[setCodeProjectHiddenAction]', err);
+    return fail('db_error', 'Failed to update the project');
+  }
+}
+
+const RenameCodeProjectSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  /** Vide = revenir au nom du dossier. */
+  displayName: z.string().max(120),
+});
+
+export async function renameCodeProjectAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = RenameCodeProjectSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can rename a project.');
+
+    // Un nom vidé rend son nom au DOSSIER : `NULL`, pas la chaîne vide, sinon
+    // le projet s'afficherait sans nom du tout.
+    const name = parsed.data.displayName.trim();
+    await db
+      .insert(codeProjects)
+      .values({
+        entityId: session.entityId,
+        projectPath: parsed.data.projectPath,
+        displayName: name === '' ? null : name,
+      })
+      .onConflictDoUpdate({
+        target: [codeProjects.entityId, codeProjects.projectPath],
+        set: { displayName: name === '' ? null : name, updatedAt: new Date() },
+      });
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[renameCodeProjectAction]', err);
+    return fail('db_error', 'Failed to rename the project');
   }
 }
 

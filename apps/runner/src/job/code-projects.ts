@@ -17,15 +17,27 @@
 // module ne fabrique QUE des données.
 
 import { existsSync } from 'node:fs';
-import { and, desc, eq, inArray, agentWorkspaces, agents, toolCalls } from '@nodal-agents/db';
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  agentWorkspaces,
+  agents,
+  codeProjects,
+  toolCalls,
+} from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 
-// Depuis le 26/08, ce module ne juge plus NI l'extension des fichiers, NI les
-// skills de l'agent : il lit les dossiers que le propriétaire a cochés
-// « développement ». Même règle que l'onglet Code, ce qui est indispensable —
-// ce module dit aux agents quels projets existent, l'onglet les montre au
-// propriétaire, et un désaccord entre les deux ne se voit depuis aucun écran.
+// Depuis le 26/08, ce module ne juge plus rien : ni l'extension des fichiers,
+// ni les skills de l'agent, ni une case sur le dossier. Il liste les dossiers
+// attachés aux agents, et applique les DEUX gestes du propriétaire — le nom
+// qu'il a choisi, et ce qu'il a masqué (`code_projects`, migration 0086).
+//
+// Même règle que l'onglet Code, ce qui est indispensable : ce module dit aux
+// agents quels projets existent, l'onglet les montre au propriétaire, et un
+// désaccord entre les deux ne se voit depuis aucun écran.
 
 /** Outils dont l'input porte un chemin de fichier édité. */
 const EDIT_TOOLS = [
@@ -167,9 +179,8 @@ export async function listCodeProjectsForContext(
   const cached = projectsCache.get(entityId);
   if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
   try {
-    // Les dossiers COCHÉS « développement », et qui les détient. Aucun dossier
-    // coché, aucun projet à annoncer — l'agent le saura par le silence, ce qui
-    // vaut mieux que de lui nommer un coffre de notes comme un projet.
+    // Les dossiers attachés aux agents de l'espace, et qui les détient. Aucun
+    // dossier attaché, aucun projet à annoncer.
     const wsRows = await db
       .select({
         agentId: agentWorkspaces.agentId,
@@ -178,8 +189,35 @@ export async function listCodeProjectsForContext(
       })
       .from(agentWorkspaces)
       .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-      .where(and(eq(agents.entityId, entityId), eq(agentWorkspaces.isDevFolder, true)));
+      .where(eq(agents.entityId, entityId));
     if (wsRows.length === 0) return [];
+
+    // Les deux gestes du propriétaire. Le MASQUAGE porte jusqu'ici : jusqu'au
+    // 26/08 l'archivage n'était lu que par l'interface, si bien qu'un projet
+    // rangé continuait d'être annoncé dans le prompt système de tous les
+    // agents. Ranger quelque chose et continuer à en parler à tout le monde
+    // n'avait pas de sens ; c'est la demande de Quentin, mot pour mot :
+    // « que ça retire le dossier du contexte et de la mémoire des agents ».
+    const projectRows = await db
+      .select({
+        projectPath: codeProjects.projectPath,
+        displayName: codeProjects.displayName,
+        hidden: codeProjects.hidden,
+      })
+      .from(codeProjects)
+      .where(eq(codeProjects.entityId, entityId));
+    // Clé insensible à la casse : sur Windows `C:\Dev` et `c:/dev` désignent le
+    // même dossier, et un masquage ne doit pas dépendre de la façon dont le
+    // chemin a été saisi.
+    const projectKey = (p: string): string => norm(p).toLowerCase();
+    const hiddenPaths = new Set(
+      projectRows.filter((r) => r.hidden).map((r) => projectKey(r.projectPath)),
+    );
+    const namesByPath = new Map(
+      projectRows
+        .filter((r) => r.displayName !== null && r.displayName.trim() !== '')
+        .map((r) => [projectKey(r.projectPath), r.displayName!.trim()]),
+    );
 
     // Racines uniques, plus longues d'abord (un workspace niché gagne).
     const roots = Array.from(new Set(wsRows.map((r) => norm(r.path))))
@@ -249,6 +287,9 @@ export async function listCodeProjectsForContext(
       if (!wsRoot) continue;
 
       const projectPath = projectRootFor(abs, wsRoot, rootMemo);
+      // Masqué par le propriétaire : il ne doit apparaître nulle part, ni dans
+      // la liste, ni dans le contexte des agents.
+      if (hiddenPaths.has(projectKey(projectPath))) continue;
       const entry = byPath.get(projectPath) ?? {
         owners: new Set(ownersByRoot.get(wsRoot) ?? []),
         lastActivityAt: row.createdAt ? row.createdAt.toISOString() : null,
@@ -261,7 +302,10 @@ export async function listCodeProjectsForContext(
       .sort((a, b) => (b[1].lastActivityAt ?? '').localeCompare(a[1].lastActivityAt ?? ''))
       .slice(0, MAX_PROJECTS)
       .map(([path, v]) => ({
-        name: path.split('/').filter(Boolean).pop() ?? path,
+        // Le nom choisi par le propriétaire l'emporte : les agents entendent
+        // le projet comme lui l'appelle, sinon « modifie le portail client »
+        // ne désignerait rien pour eux alors que l'onglet l'affiche ainsi.
+        name: namesByPath.get(projectKey(path)) ?? path.split('/').filter(Boolean).pop() ?? path,
         path,
         owners: Array.from(v.owners).sort(),
         lastActivityAt: v.lastActivityAt,

@@ -13,9 +13,15 @@
 //      filtrée) — les agents deviennent les acteurs de l'histoire du projet.
 //   3. Le détail d'une session (/code/[id]) est inchangé.
 //
-// L'ARCHIVAGE est un état d'UI persisté (code_project_archives) : le projet
-// sort de l'espace actif, le dossier réel n'est jamais touché, désarchivage
-// en un clic depuis la section « Archived ».
+// La page ne FILTRE plus rien (décision Quentin 26/08, migration 0086) : elle
+// montre les dossiers où les agents ont écrit, et donne au propriétaire les
+// deux gestes qu'aucun indice du système ne peut poser à sa place.
+//
+//   RENOMMER — le nom du dossier n'est pas toujours le nom du projet.
+//   MASQUER  — ce qu'on ne veut plus voir. Le dossier réel n'est JAMAIS
+//              touché, et le projet quitte AUSSI le contexte injecté aux
+//              agents (apps/runner/src/job/code-projects.ts). Réversible d'un
+//              clic depuis la section « Hidden ».
 //
 // Poll : listCodingProcessesAction toutes les 5s tant qu'une session est en
 // 'coding' — le regroupement est recalculé à chaque rafraîchissement.
@@ -25,7 +31,9 @@ import { toast } from 'sonner';
 import {
   listCodingProcessesAction,
   getCodingProcessDetailAction,
-  setCodeProjectArchivedAction,
+  setCodeProjectHiddenAction,
+  renameCodeProjectAction,
+  type CodeProjectPrefs,
   type CodingProcessRow,
   type CodingProcessDetail as CodingProcessDetailData,
 } from '@/lib/actions.ts';
@@ -34,13 +42,23 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
 import Select from '@/components/ui/Select';
+import TextInput from '@/components/ui/TextInput';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 
 const POLL_INTERVAL = 5000;
 
-/** Clé du tiroir des sessions sans projet dérivable. Jamais archivable. */
+/** Clé du tiroir des sessions sans projet dérivable. Ni renommable, ni masquable. */
 const OTHER_KEY = '__other__';
+
+/**
+ * La clé d'un projet : chemin slash-normalisé, sans slash final, en minuscules.
+ *
+ * Insensible à la casse parce que sur Windows `C:\Dev\app` et `c:/dev/app`
+ * désignent le même dossier. Sans ça, masquer depuis une session écrite d'une
+ * façon laisserait le projet visible depuis une autre.
+ */
+const projectKey = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 const STAGE_LABEL: Record<string, string> = {
   coding: 'Coding',
@@ -76,12 +94,12 @@ type Project = {
   latestStage: string;
 };
 
-function groupProjects(rows: CodingProcessRow[]): Project[] {
+function groupProjects(rows: CodingProcessRow[], names: Map<string, string>): Project[] {
   const byKey = new Map<string, Project>();
   // rows arrivent triées par activité décroissante — la première session d'un
   // groupe est donc la plus récente, et l'ordre des projets suit.
   for (const row of rows) {
-    const key = row.projectPath ?? OTHER_KEY;
+    const key = row.projectPath ? projectKey(row.projectPath) : OTHER_KEY;
     const existing = byKey.get(key);
     if (existing) {
       existing.sessions.push(row);
@@ -92,7 +110,8 @@ function groupProjects(rows: CodingProcessRow[]): Project[] {
     } else {
       byKey.set(key, {
         key,
-        name: row.projectName ?? 'Other sessions',
+        // Le nom choisi par le propriétaire l'emporte sur celui du dossier.
+        name: names.get(key) ?? row.projectName ?? 'Other sessions',
         path: row.projectPath,
         sessions: [row],
         agentNames: row.agentName ? [row.agentName] : [],
@@ -107,27 +126,41 @@ function groupProjects(rows: CodingProcessRow[]): Project[] {
 
 export default function CodeProcessesTable({
   initialRows,
-  initialArchivedPaths,
-  devFolderCount,
+  initialPrefs,
+  workspaceCount,
   error,
 }: {
   initialRows: CodingProcessRow[];
-  initialArchivedPaths: string[];
+  /** Les projets renommés et/ou masqués. Vide sur un espace qui n'a rien rangé. */
+  initialPrefs: CodeProjectPrefs[];
   /**
-   * Combien de dossiers sont coches « developpement ». A zero, la liste est
-   * vide PAR CONSTRUCTION et non faute d'activite : l'etat vide doit alors
-   * nommer le geste manquant plutot que d'accuser les agents de n'avoir rien
-   * fait. `null` = le comptage a echoue, et on ne pretend rien.
+   * Combien de dossiers sont attaches aux agents de cet espace. A zero, la
+   * liste est vide PAR CONSTRUCTION et non faute d'activite : les agents
+   * n'ont nulle part ou ecrire. L'etat vide doit alors nommer le geste
+   * manquant plutot que d'accuser les agents de n'avoir rien fait.
+   * `null` = le comptage a echoue, et on ne pretend rien.
    */
-  devFolderCount: number | null;
+  workspaceCount: number | null;
   error?: string;
 }) {
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
-  const [archived, setArchived] = useState<Set<string>>(() => new Set(initialArchivedPaths));
+  const [hidden, setHidden] = useState<Set<string>>(
+    () => new Set(initialPrefs.filter((p) => p.hidden).map((p) => projectKey(p.projectPath))),
+  );
+  const [names, setNames] = useState<Map<string, string>>(
+    () =>
+      new Map(
+        initialPrefs
+          .filter((p) => p.displayName !== null && p.displayName.trim() !== '')
+          .map((p) => [projectKey(p.projectPath), p.displayName!.trim()]),
+      ),
+  );
   const [selected, setSelected] = useState<string | null>(null);
   // Session ouverte dans le poste de travail projet ; null = la plus récente.
   const [sessionKey, setSessionKey] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  /** Projet en cours de renommage (clé), et le texte saisi. */
+  const [renaming, setRenaming] = useState<{ key: string; value: string } | null>(null);
 
   function openProjectView(key: string) {
     setSelected(key);
@@ -155,35 +188,72 @@ export default function CodeProcessesTable({
     return () => clearInterval(id);
   }, [rows]);
 
-  const projects = useMemo(() => groupProjects(rows), [rows]);
-  const activeProjects = projects.filter((p) => p.path === null || !archived.has(p.path));
-  const archivedProjects = projects.filter((p) => p.path !== null && archived.has(p.path));
+  const projects = useMemo(() => groupProjects(rows, names), [rows, names]);
+  const activeProjects = projects.filter((p) => !hidden.has(p.key));
+  const hiddenProjects = projects.filter((p) => p.path !== null && hidden.has(p.key));
 
-  function toggleArchive(project: Project, nextArchived: boolean) {
+  function toggleHidden(project: Project, nextHidden: boolean) {
     if (!project.path) return;
     const path = project.path;
-    setArchived((prev) => {
+    const key = project.key;
+    setHidden((prev) => {
       const next = new Set(prev);
-      if (nextArchived) next.add(path);
-      else next.delete(path);
+      if (nextHidden) next.add(key);
+      else next.delete(key);
       return next;
     });
-    void setCodeProjectArchivedAction({ projectPath: path, archived: nextArchived }).then((r) => {
+    void setCodeProjectHiddenAction({ projectPath: path, hidden: nextHidden }).then((r) => {
       if (!r.ok) {
         // Revert optimiste — l'état affiché ne doit jamais mentir sur la base.
-        setArchived((prev) => {
+        setHidden((prev) => {
           const next = new Set(prev);
-          if (nextArchived) next.delete(path);
-          else next.add(path);
+          if (nextHidden) next.delete(key);
+          else next.add(key);
           return next;
         });
         toast.error(r.message);
         return;
       }
       toast.success(
-        nextArchived
-          ? `${project.name} archived. The folder itself is untouched.`
-          : `${project.name} restored.`,
+        nextHidden
+          ? `${project.name} hidden. The folder is untouched, and agents stop being told about it.`
+          : `${project.name} is back.`,
+      );
+    });
+  }
+
+  function commitRename(project: Project, raw: string) {
+    setRenaming(null);
+    if (!project.path) return;
+    const path = project.path;
+    const key = project.key;
+    const value = raw.trim();
+    const previous = names.get(key);
+    if (value === (previous ?? '')) return;
+
+    setNames((prev) => {
+      const next = new Map(prev);
+      if (value === '') next.delete(key);
+      else next.set(key, value);
+      return next;
+    });
+    void renameCodeProjectAction({ projectPath: path, displayName: value }).then((r) => {
+      if (!r.ok) {
+        setNames((prev) => {
+          const next = new Map(prev);
+          if (previous === undefined) next.delete(key);
+          else next.set(key, previous);
+          return next;
+        });
+        toast.error(r.message);
+        return;
+      }
+      // Le nom voyage jusqu'au contexte des agents : le dire, sinon on croit
+      // n'avoir changé qu'une étiquette d'écran.
+      toast.success(
+        value === ''
+          ? 'Back to the folder name.'
+          : `Renamed to ${value}. Your agents use this name too.`,
       );
     });
   }
@@ -196,14 +266,13 @@ export default function CodeProcessesTable({
     );
   }
 
-  if (rows.length === 0 && devFolderCount === 0) {
+  if (rows.length === 0 && workspaceCount === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        <p className="text-ink-2">No development folders yet.</p>
+        <p className="text-ink-2">Your agents have nowhere to write yet.</p>
         <p className="mx-auto mt-2 max-w-md">
-          Open an agent, and tick <span className="font-medium text-ink-2">Development folder</span>{' '}
-          next to the folders it builds in. Everything written in there becomes a project here, one
-          per subfolder. Nothing else shows up.
+          Open an agent and attach a folder. Anything written in there shows up here as a project,
+          one per subfolder — you can rename it, or hide it if you would rather not see it.
         </p>
       </div>
     );
@@ -212,9 +281,8 @@ export default function CodeProcessesTable({
   if (rows.length === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        No coding activity yet. Every pipeline that edits code files shows up here — grouped by
-        project (the git repo or workspace it touched). Ask an agent to write some code and watch
-        the project appear.
+        No activity yet. Every session that writes files shows up here, grouped by the folder it
+        wrote in. Ask an agent to build something and watch the project appear.
       </div>
     );
   }
@@ -314,33 +382,42 @@ export default function CodeProcessesTable({
           <ProjectCard
             key={p.key}
             project={p}
+            renamedValue={renaming?.key === p.key ? renaming.value : null}
+            onRenameChange={(v) => setRenaming({ key: p.key, value: v })}
+            onRenameStart={
+              p.path
+                ? () => setRenaming({ key: p.key, value: names.get(p.key) ?? p.name })
+                : undefined
+            }
+            onRenameCommit={(v) => commitRename(p, v)}
+            onRenameCancel={() => setRenaming(null)}
             onOpen={() => openProjectView(p.key)}
-            onArchive={p.path ? () => toggleArchive(p, true) : undefined}
+            onHide={p.path ? () => toggleHidden(p, true) : undefined}
           />
         ))}
         {activeProjects.length === 0 && (
           <p className="rounded-2xl border border-rule-2 bg-paper px-6 py-8 text-center text-body-14 text-ink-4">
-            Everything is archived. Restore a project below to bring it back.
+            Everything is hidden. Bring a project back from the list below.
           </p>
         )}
       </div>
 
-      {archivedProjects.length > 0 && (
+      {hiddenProjects.length > 0 && (
         <div className="space-y-2.5">
           <TextButton
-            onClick={() => setShowArchived((v) => !v)}
+            onClick={() => setShowHidden((v) => !v)}
             className="!text-mono-11 uppercase tracking-[0.12em]"
           >
-            {showArchived ? '▾' : '▸'} Archived · {archivedProjects.length}
+            {showHidden ? '▾' : '▸'} Hidden · {hiddenProjects.length}
           </TextButton>
-          {showArchived &&
-            archivedProjects.map((p) => (
+          {showHidden &&
+            hiddenProjects.map((p) => (
               <ProjectCard
                 key={p.key}
                 project={p}
                 dimmed
                 onOpen={() => openProjectView(p.key)}
-                onUnarchive={() => toggleArchive(p, false)}
+                onUnhide={() => toggleHidden(p, false)}
               />
             ))}
         </div>
@@ -352,43 +429,81 @@ export default function CodeProcessesTable({
 function ProjectCard({
   project,
   dimmed = false,
+  renamedValue = null,
   onOpen,
-  onArchive,
-  onUnarchive,
+  onHide,
+  onUnhide,
+  onRenameStart,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
 }: {
   project: Project;
   dimmed?: boolean;
+  /** Non-null pendant le renommage : la saisie en cours. */
+  renamedValue?: string | null;
   onOpen: () => void;
-  onArchive?: () => void;
-  onUnarchive?: () => void;
+  onHide?: () => void;
+  onUnhide?: () => void;
+  onRenameStart?: () => void;
+  onRenameChange?: (v: string) => void;
+  onRenameCommit?: (v: string) => void;
+  onRenameCancel?: () => void;
 }) {
   const live = project.sessions.some((s) => s.stage === 'coding');
+  const isRenaming = renamedValue !== null;
   return (
     <div
       className={`flex flex-wrap items-center gap-3 rounded-2xl border border-rule-2 bg-paper px-5 py-4 ${
         dimmed ? 'opacity-60' : ''
       }`}
     >
-      <RowActionButton
-        onClick={onOpen}
-        className="!h-auto !min-w-0 !flex-1 !justify-start !rounded-lg !border-transparent !bg-transparent !p-0 !text-left"
-      >
-        <span className="block min-w-0">
-          <span className="flex items-center gap-2.5">
-            <span className="truncate text-medium-15 text-ink">{project.name}</span>
-            <StatusPill
-              variant={stageVariant(project.latestStage)}
-              label={stageLabel(project.latestStage)}
-            />
-            {live && <span className="animate-pulse text-body-12 text-ink-4">Live…</span>}
+      {isRenaming ? (
+        <div className="min-w-0 flex-1">
+          {/*
+            Renommage EN PLACE, pas de dialogue : le nom se corrige là où on
+            l'a lu. Entrée valide, Échap annule, et sortir du champ vaut
+            validation — un champ abandonné ne doit pas jeter la saisie en
+            silence.
+          */}
+          <TextInput
+            autoFocus
+            value={renamedValue}
+            maxLength={120}
+            aria-label="Project name"
+            onChange={(e) => onRenameChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onRenameCommit?.(renamedValue);
+              else if (e.key === 'Escape') onRenameCancel?.();
+            }}
+            onBlur={() => onRenameCommit?.(renamedValue)}
+          />
+          <span className="mt-1 block text-body-12 text-ink-4">
+            Enter to save, Escape to cancel. Empty goes back to the folder name.
           </span>
-          {project.path && (
-            <code className="mt-0.5 block truncate text-mono-12 text-ink-4" title={project.path}>
-              {project.path}
-            </code>
-          )}
-        </span>
-      </RowActionButton>
+        </div>
+      ) : (
+        <RowActionButton
+          onClick={onOpen}
+          className="!h-auto !min-w-0 !flex-1 !justify-start !rounded-lg !border-transparent !bg-transparent !p-0 !text-left"
+        >
+          <span className="block min-w-0">
+            <span className="flex items-center gap-2.5">
+              <span className="truncate text-medium-15 text-ink">{project.name}</span>
+              <StatusPill
+                variant={stageVariant(project.latestStage)}
+                label={stageLabel(project.latestStage)}
+              />
+              {live && <span className="animate-pulse text-body-12 text-ink-4">Live…</span>}
+            </span>
+            {project.path && (
+              <code className="mt-0.5 block truncate text-mono-12 text-ink-4" title={project.path}>
+                {project.path}
+              </code>
+            )}
+          </span>
+        </RowActionButton>
+      )}
 
       <div className="flex shrink-0 items-center gap-4">
         <span className="flex items-center -space-x-1.5">
@@ -406,14 +521,25 @@ function ProjectCard({
           {project.totalCostUsd > 0 ? `$${project.totalCostUsd.toFixed(2)}` : '—'}
         </span>
         <span className="text-mono-12 text-ink-4">{relativeTime(project.lastActivityAt)}</span>
-        {onArchive && (
-          <RowActionButton onClick={onArchive} title="Archive (UI only — the folder is untouched)">
-            Archive
+        {onRenameStart && !isRenaming && (
+          <RowActionButton
+            onClick={onRenameStart}
+            title="Name this project — your agents use it too"
+          >
+            Rename
           </RowActionButton>
         )}
-        {onUnarchive && (
-          <RowActionButton onClick={onUnarchive} title="Restore to the active list">
-            Restore
+        {onHide && !isRenaming && (
+          <RowActionButton
+            onClick={onHide}
+            title="Hide it here and stop telling agents about it. The folder is untouched."
+          >
+            Hide
+          </RowActionButton>
+        )}
+        {onUnhide && (
+          <RowActionButton onClick={onUnhide} title="Show it again">
+            Show
           </RowActionButton>
         )}
       </div>

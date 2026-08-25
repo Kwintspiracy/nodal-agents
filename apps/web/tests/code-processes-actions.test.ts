@@ -8,6 +8,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -95,31 +99,49 @@ beforeAll(async () => {
   _testEntityId = seed.entityId;
   _llmKeyId = seed.llmKeyId;
 
-  // LE dossier de développement de cette suite. Depuis la v7 (26/08), c'est la
-  // seule chose qui fait qu'une écriture entre dans l'onglet Code : ni son
-  // extension, ni l'identité de son auteur.
+  // De VRAIS dossiers sur le disque, pas des chemins inventés.
   //
-  // Un seul suffit pour tout le fichier — la lecture se fait par ESPACE, pas
-  // par agent, exactement comme sur une vraie install où `Documents/Dev` est
-  // partagé par cinq agents et coché une fois.
-  await db.insert(agentWorkspaces).values({
-    entityId: _testEntityId,
-    agentId: seed.agentId,
-    label: 'repo',
-    path: DEV_FOLDER,
-    isDevFolder: true,
-  });
+  // Depuis le 26/08, la dérivation vérifie qu'un projet existe encore avant de
+  // l'afficher (constat Quentin : « des dossiers supprimés apparaissent malgré
+  // tout »). Des chemins fictifs comme `/repo` rendraient donc cette suite
+  // entièrement décorative : tout serait filtré, et les assertions négatives
+  // passeraient pour de mauvaises raisons.
+  _tmpRoot = (await mkdtemp(join(tmpdir(), 'nodal-code-tab-'))).replace(/\\/g, '/');
+  DEV_FOLDER = `${_tmpRoot}/repo`;
+  VAULT = `${_tmpRoot}/vault`;
+  for (const d of [
+    `${DEV_FOLDER}/monapp`,
+    `${DEV_FOLDER}/app`,
+    `${DEV_FOLDER}/src`,
+    `${DEV_FOLDER}/mock-data`,
+    `${DEV_FOLDER}/deploy`,
+    `${VAULT}/Journal`,
+    `${VAULT}/Notes`,
+    `${VAULT}/notes`,
+    `${VAULT}/scripts`,
+  ]) {
+    await mkdir(d, { recursive: true });
+  }
+
+  // Les dossiers de l'agent de base. Un seul jeu suffit pour tout le fichier —
+  // la lecture se fait par ESPACE, pas par agent.
+  await db.insert(agentWorkspaces).values([
+    { entityId: _testEntityId, agentId: seed.agentId, label: 'repo', path: DEV_FOLDER },
+    { entityId: _testEntityId, agentId: seed.agentId, label: 'vault', path: VAULT },
+  ]);
 });
 
-/** Coché « développement » : tout ce qui est écrit là-dedans qualifie. */
-const DEV_FOLDER = '/repo';
-/** Hors périmètre : le coffre de notes, jamais dans l'onglet Code. */
-const VAULT = '/vault';
+let _tmpRoot = '';
+/** Le dossier de travail « code » de cette suite. */
+let DEV_FOLDER = '';
+/** Le coffre de notes. Depuis le 26/08 il apparaît AUSSI — et se masque. */
+let VAULT = '';
 
-afterAll(() => {
+afterAll(async () => {
   _resetMasterKeyCacheForTests();
   _testDb = null;
   vi.restoreAllMocks();
+  if (_tmpRoot) await rm(_tmpRoot, { recursive: true, force: true });
 });
 
 /**
@@ -150,15 +172,18 @@ async function skillId(slug: string, name: string): Promise<string> {
 }
 
 /**
- * `devFolder` par défaut = true : la quasi-totalité de cette suite décrit du
- * travail de développement, donc l'agent reçoit le dossier coché.
+ * Un agent et ses dossiers.
  *
- * Passer `false` fabrique un agent SANS dossier de développement — le preneur
- * de notes, l'agent bureautique, le générateur d'images — dont le travail ne
- * doit jamais apparaître dans l'onglet, quels que soient les fichiers touchés.
+ * `folders` par défaut = le dossier de code seul. `'vault'` y ajoute le coffre
+ * de notes — c'est ce qui fabrique l'agent POLYVALENT, celui qui code le matin
+ * et range ses notes l'après-midi. `'none'` fabrique un agent sans aucun
+ * dossier : ses écritures ne sont rattachables à rien.
  */
-async function makeAgent(name: string, opts: { devFolder?: boolean } = {}): Promise<string> {
-  const devFolder = opts.devFolder ?? true;
+async function makeAgent(
+  name: string,
+  opts: { folders?: 'repo' | 'repo+vault' | 'vault' | 'none' } = {},
+): Promise<string> {
+  const folders = opts.folders ?? 'repo';
   const [row] = await _testDb!
     .insert(agents)
     .values({
@@ -170,15 +195,14 @@ async function makeAgent(name: string, opts: { devFolder?: boolean } = {}): Prom
     })
     .returning();
   if (!row) throw new Error(`Failed to seed agent ${name}`);
-  if (devFolder) {
-    await _testDb!.insert(agentWorkspaces).values({
-      entityId: _testEntityId,
-      agentId: row.id,
-      label: 'repo',
-      path: DEV_FOLDER,
-      isDevFolder: true,
-    });
+  const values: Array<{ entityId: string; agentId: string; label: string; path: string }> = [];
+  if (folders === 'repo' || folders === 'repo+vault') {
+    values.push({ entityId: _testEntityId, agentId: row.id, label: 'repo', path: DEV_FOLDER });
   }
+  if (folders === 'vault' || folders === 'repo+vault') {
+    values.push({ entityId: _testEntityId, agentId: row.id, label: 'vault', path: VAULT });
+  }
+  if (values.length > 0) await _testDb!.insert(agentWorkspaces).values(values);
   return row.id;
 }
 
@@ -218,21 +242,21 @@ describe('listCodingProcessesAction', () => {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Edit',
-        toolInput: { file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/auth.ts`, old_string: 'a', new_string: 'b' },
         toolOutput: 'ok',
       },
       {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Edit',
-        toolInput: { file_path: '/repo/src/auth.ts', old_string: 'b', new_string: 'c' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/auth.ts`, old_string: 'b', new_string: 'c' },
         toolOutput: 'ok',
       },
       {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/repo/src/auth.test.ts', content: 'test content' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/auth.test.ts`, content: 'test content' },
         toolOutput: 'ok',
       },
     ]);
@@ -263,7 +287,7 @@ describe('listCodingProcessesAction', () => {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/repo/src/ghost.ts', content: 'never written' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/ghost.ts`, content: 'never written' },
         toolOutput:
           '<tool_use_error>Error: No such tool available: Write. Write is disabled for this session, in subagents as well as here.</tool_use_error>',
       },
@@ -271,7 +295,7 @@ describe('listCodingProcessesAction', () => {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Read',
-        toolInput: { file_path: '/repo/src/real.ts' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/real.ts` },
         toolOutput: 'file contents',
       },
     ]);
@@ -300,14 +324,14 @@ describe('listCodingProcessesAction', () => {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/repo/src/ghost.ts', content: 'never written' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/ghost.ts`, content: 'never written' },
         toolOutput: '<tool_use_error>Error: No such tool available: Write.</tool_use_error>',
       },
       {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/repo/src/real.ts', content: 'written for real' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/real.ts`, content: 'written for real' },
         toolOutput: 'File created successfully.',
       },
     ]);
@@ -334,29 +358,30 @@ describe('listCodingProcessesAction', () => {
   });
 
   it('the CLI absolute path and the Nodal workspace-relative path of the SAME file count as ONE (job cbdbfc6c)', async () => {
-    const agentId = await makeAgent('Audit Path Canon Agent', { devFolder: false });
+    const agentId = await makeAgent('Audit Path Canon Agent', { folders: 'none' });
     // The agent's workspace root — the prefix the canonicalizer must strip.
-    // Coché : depuis la v7, une écriture hors périmètre n'entre plus dans
-    // l'onglet, et ce test porte sur la canonicalisation, pas sur le filtrage.
+    // Un VRAI dossier : la dérivation vérifie l'existence du projet depuis le
+    // 26/08, et un chemin inventé rendrait ce test décoratif.
+    const canonRoot = `${_tmpRoot}/canon`;
+    await mkdir(`${canonRoot}/outputs/app`, { recursive: true });
     await _testDb!.insert(agentWorkspaces).values({
       entityId: _testEntityId,
       agentId,
       label: 'dev',
-      path: 'C:\\Users\\test\\Dev',
-      isDevFolder: true,
+      path: canonRoot,
     });
     const jobId = await makeJob(agentId, 'completed');
 
     // The recorded real shape of job cbdbfc6c: cli:Write with the ABSOLUTE
-    // Windows path, then file_write with the workspace-RELATIVE path — the
-    // same index.html, written twice through two tool families.
+    // path, then file_write with the workspace-RELATIVE path — the same
+    // index.html, written twice through two tool families.
     await _testDb!.insert(toolCalls).values([
       {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
         toolInput: {
-          file_path: 'C:\\Users\\test\\Dev\\outputs\\app\\index.html',
+          file_path: `${canonRoot}/outputs/app/index.html`,
           content: '<!DOCTYPE html>v1',
         },
         toolOutput: 'ok',
@@ -411,7 +436,7 @@ describe('listCodingProcessesAction', () => {
         entityId: _testEntityId,
         jobId: childJobId,
         toolName: 'file_edit',
-        toolInput: { path: '/repo/src/reviewed.ts', old_string: 'a', new_string: 'b' },
+        toolInput: { path: `${DEV_FOLDER}/src/reviewed.ts`, old_string: 'a', new_string: 'b' },
         toolOutput: 'ok',
       },
       {
@@ -461,7 +486,7 @@ describe('listCodingProcessesAction', () => {
       entityId: _testEntityId,
       jobId,
       toolName: 'cli:Write',
-      toolInput: { file_path: '/repo/src/done.ts', content: 'done' },
+      toolInput: { file_path: `${DEV_FOLDER}/src/done.ts`, content: 'done' },
       toolOutput: 'ok',
     });
 
@@ -492,12 +517,13 @@ describe('listCodingProcessesAction', () => {
     expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
   });
 
-  it('un agent bureautique (PAS de skill dev) reste EXCLU — v6 : c’est l’identité, pas le .pptx', async () => {
-    // v6 (25/08) : le garde-fou Office ne juge plus l'extension. Un agent qui
-    // écrit une présentation n'est pas un développeur — non parce que .pptx
-    // serait un format indigne, mais parce que personne ne l'a désigné
-    // développeur. Le même agent, s'il portait le skill dev, apparaîtrait.
-    const agentId = await makeAgent('Audit Code Office Agent', { devFolder: false });
+  it('un .pptx écrit hors de tout dossier attaché reste EXCLU — faute de savoir où le ranger', async () => {
+    // Ce test a longtemps prouvé qu'on savait reconnaître un agent
+    // bureautique. On ne cherche plus : ce qui l'exclut ici, c'est que
+    // `/workspace/...` n'est couvert par aucun dossier de l'agent. L'extension
+    // n'entre pas dans le calcul — un .pptx écrit dans un dossier attaché
+    // apparaîtrait, et se masquerait comme le reste.
+    const agentId = await makeAgent('Audit Code Office Agent', { folders: 'none' });
     const jobId = await makeJob(agentId, 'completed');
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
@@ -575,7 +601,7 @@ describe('listCodingProcessesAction', () => {
       entityId: _testEntityId,
       jobId,
       toolName: 'cli:Read',
-      toolInput: { file_path: '/repo/readme.md' },
+      toolInput: { file_path: `${DEV_FOLDER}/readme.md` },
       toolOutput: 'contents',
     });
 
@@ -601,7 +627,7 @@ describe('listCodingProcessesAction', () => {
       entityId: _testEntityId,
       jobId,
       toolName: 'cli:Write',
-      toolInput: { file_path: '/repo/x.ts', content: 'x' },
+      toolInput: { file_path: `${DEV_FOLDER}/x.ts`, content: 'x' },
       toolOutput: 'ok',
     });
 
@@ -615,15 +641,23 @@ describe('listCodingProcessesAction', () => {
   });
 });
 
-// ─── Définition v6 (décision Quentin 25/08) ───────────────────────────────────
-// C'est l'IDENTITÉ qui qualifie, jamais l'extension : « une exclusion par
-// langage ratera tôt ou tard du vrai code ». Le coffre Obsidian sort parce que
-// son agent n'est pas un développeur ; le README d'un développeur reste dans
-// son projet ; les mock-data .json d'une vraie app aussi.
+// ─── Définition v8 (décision Quentin 26/08) ───────────────────────────────────
+// L'onglet ne devine plus RIEN. Il montre les dossiers où les agents ont
+// écrit ; ce qu'on ne veut pas voir, on le masque. Six définitions du « vrai
+// code » ont été essayées avant d'en arriver là (migration 0086 les liste), et
+// chacune se cassait sur un cas réel.
+//
+// Les tests ci-dessous encodent le renversement : là où la v6/v7 prouvaient
+// qu'un coffre de notes RESTAIT DEHORS, on prouve désormais qu'il ENTRE — et
+// qu'un seul geste l'en sort, sans jamais toucher le dossier.
 
-describe('listCodingProcessesAction — v6, la qualification par identité', () => {
-  it('le coffre de notes est ABSENT — son agent n’est pas un développeur', async () => {
-    const agentId = await makeAgent('Vault Notes Agent', { devFolder: false });
+describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => {
+  it('le coffre de notes ENTRE dans la liste — c’est le prix assumé de ne plus deviner', async () => {
+    // Ce test disait exactement l'inverse jusqu'au 26/08. Le renversement est
+    // délibéré : les six façons de reconnaître « du vrai code » écartaient
+    // aussi du vrai travail, en silence. Un coffre visible qu'on masque en un
+    // clic vaut mieux qu'un projet absent dont rien ne signale l'absence.
+    const agentId = await makeAgent('Vault Notes Agent', { folders: 'vault' });
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values([
@@ -631,14 +665,18 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/vault/Notes/idees.md', content: '# Idées' },
+        toolInput: { file_path: `${VAULT}/Notes/idees.md`, content: '# Idées' },
         toolOutput: 'ok',
       },
       {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Edit',
-        toolInput: { file_path: '/vault/Journal/2026-08-25.md', old_string: 'a', new_string: 'b' },
+        toolInput: {
+          file_path: `${VAULT}/Journal/2026-08-25.md`,
+          old_string: 'a',
+          new_string: 'b',
+        },
         toolOutput: 'ok',
       },
     ]);
@@ -647,18 +685,100 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     const result = await listCodingProcessesAction();
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(
-      result.data.find((r) => r.id === jobId),
-      'le travail d’un agent non-développeur est apparu dans l’onglet Code',
-    ).toBeUndefined();
+    const row = result.data.find((r) => r.id === jobId);
+    expect(row, 'un travail réel a été filtré alors que plus rien ne filtre').toBeTruthy();
+    // Et il est rangé sous le bon projet : les sous-dossiers du coffre.
+    expect([`${VAULT}/Notes`, `${VAULT}/Journal`]).toContain(row?.projectPath);
   });
 
-  it('le MÊME markdown, écrit DANS le périmètre, qualifie — c’est le README d’un projet', async () => {
-    // Le pendant du test précédent : les mêmes fichiers, le même outil, un
-    // résultat opposé selon l'ENDROIT. Un développeur qui ne touche que sa doc
-    // reste dans l'onglet, et c'est la raison pour laquelle on ne juge jamais
-    // l'extension — « une exclusion par langage ratera tôt ou tard du vrai
-    // code », et elle rate aussi la doc d'un vrai projet.
+  it('MASQUER un projet le retire de la liste, sans toucher au dossier', async () => {
+    // LE geste qui remplace le filtrage. Il est réversible, il est explicite,
+    // et il porte jusqu'au contexte des agents (prouvé côté runner dans
+    // apps/runner/src/tests/job/code-projects-context.test.ts).
+    const { listCodingProcessesAction, setCodeProjectHiddenAction, listCodeProjectPrefsAction } =
+      await import('../src/lib/actions.ts');
+    const agentId = await makeAgent('Comfy Output Writer', { folders: 'vault' });
+    const jobId = await makeJob(agentId, 'completed');
+    const projet = `${VAULT}/notes`;
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: `${projet}/bruit.md`, content: '# bruit' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const avant = await listCodingProcessesAction();
+    expect(avant.ok).toBe(true);
+    if (!avant.ok) return;
+    expect(avant.data.find((r) => r.id === jobId)?.projectPath).toBe(projet);
+
+    const hide = await setCodeProjectHiddenAction({ projectPath: projet, hidden: true });
+    expect(hide.ok, hide.ok ? '' : hide.message).toBe(true);
+
+    // La ligne EXISTE en base et porte `hidden` — c'est elle que la page et le
+    // runner lisent pour écarter le projet.
+    const prefs = await listCodeProjectPrefsAction();
+    expect(prefs.ok).toBe(true);
+    if (prefs.ok) {
+      expect(
+        prefs.data.find((p) => p.projectPath === projet)?.hidden,
+        'le masquage n’a rien écrit',
+      ).toBe(true);
+    }
+
+    // Le dossier réel n'a pas bougé — masquer est un choix d'affichage.
+    expect(existsSync(projet), 'masquer a touché le dossier sur le disque').toBe(true);
+
+    await setCodeProjectHiddenAction({ projectPath: projet, hidden: false });
+  });
+
+  it('RENOMMER un projet change le nom affiché, le chemin reste la vérité', async () => {
+    const { listCodingProcessesAction, renameCodeProjectAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
+    const agentId = await makeAgent('Named Project Coder');
+    const jobId = await makeJob(agentId, 'completed');
+    const projet = `${DEV_FOLDER}/monapp`;
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: `${projet}/index.ts`, content: 'export {}' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const avant = await listCodingProcessesAction();
+    expect(avant.ok).toBe(true);
+    if (!avant.ok) return;
+    expect(avant.data.find((r) => r.id === jobId)?.projectName).toBe('monapp');
+
+    const renamed = await renameCodeProjectAction({
+      projectPath: projet,
+      displayName: 'Portail client',
+    });
+    expect(renamed.ok, renamed.ok ? '' : renamed.message).toBe(true);
+
+    // Le DÉTAIL d'une session titre avec le même nom : ouvrir une session ne
+    // doit pas donner l'impression de changer de projet.
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (detail.ok) {
+      expect(detail.data.header.projectName, 'le détail ignore le nom choisi').toBe(
+        'Portail client',
+      );
+      expect(detail.data.header.projectPath, 'le chemin a été altéré par le renommage').toBe(
+        projet,
+      );
+    }
+
+    await renameCodeProjectAction({ projectPath: projet, displayName: '' });
+  });
+
+  it('le MÊME markdown, écrit dans un dossier de code, est le README d’un projet', async () => {
+    // On ne juge jamais l'extension — « une exclusion par langage ratera tôt ou
+    // tard du vrai code », et elle rate aussi la doc d'un vrai projet.
     const agentId = await makeAgent('Doc Writing Coder');
     const jobId = await makeJob(agentId, 'completed');
 
@@ -680,23 +800,18 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     ).toBeTruthy();
   });
 
-  it('un agent SANS skill qui écrit du .ts est EXCLU — le test qui sépare vraiment v5 et v6', async () => {
-    // LE cas que la v6 introduit, et le seul que les autres exclusions ne
-    // prouvent pas : sur main, ce pipeline QUALIFIE (fichier de code = dev).
-    // C'est aussi le cas vécu du coffre Obsidian — il qualifiait à cause de
-    // vrais .py et .bat écrits dedans en juillet, pas à cause de son markdown.
-    //
-    // Sans ce test, une régression de `devTeamAgentIds` vers « tous les
-    // agents » ne ferait rougir aucune assertion : le défaut `['dev']` de
-    // makeAgent masque le trou partout ailleurs.
-    const agentId = await makeAgent('Vault Python Writer', { devFolder: false });
+  it('une écriture rattachable à AUCUN dossier reste dehors — rien à afficher', async () => {
+    // La seule exclusion qui subsiste, et elle ne devine rien : sans dossier
+    // qui couvre le chemin, il n'y a ni projet à nommer ni ligne où ranger la
+    // session.
+    const agentId = await makeAgent('Orphan Path Writer', { folders: 'none' });
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
       jobId,
       toolName: 'cli:Write',
-      toolInput: { file_path: '/vault/scripts/export.py', content: 'print(1)' },
+      toolInput: { file_path: `${_tmpRoot}/nulle-part/export.py`, content: 'print(1)' },
       toolOutput: 'ok',
     });
 
@@ -706,44 +821,49 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     if (!result.ok) return;
     expect(
       result.data.find((r) => r.id === jobId),
-      'un fichier de code a suffi à qualifier un agent non-développeur (retour à la v5)',
+      'une écriture qu’aucun dossier ne couvre a produit une ligne',
     ).toBeUndefined();
   });
 
-  it('un agent POLYVALENT ne ramène pas son coffre : seul le dossier coché compte', async () => {
-    // LE scénario de Quentin (26/08) : « si je décide d'utiliser un agent pour
-    // coder ET pour maintenir mon vault Obsidian, mon vault va se retrouver
-    // dans l'onglet Code ? »
-    //
-    // Non. L'agent a un dossier coché, mais ce qu'il écrit AILLEURS reste
-    // dehors. Le repli par agent ne sert qu'aux travaux sans fichier — une
-    // review, une délégation à la CLI — jamais à racheter une écriture tombée
-    // hors périmètre (constat P1 de la revue Codex).
-    const agentId = await makeAgent('Polyvalent Coder'); // a bien /repo coché
+  it('un projet dont le DOSSIER a été supprimé disparaît de la liste', async () => {
+    // Constat Quentin (26/08), de bout en bout cette fois : les tool_calls
+    // restent en base pour toujours, le dossier non. L'interface ne vérifiait
+    // pas l'existence alors que le contexte injecté aux agents, lui, le
+    // faisait — les deux vues se contredisaient.
+    const agentId = await makeAgent('Deleted Project Coder');
     const jobId = await makeJob(agentId, 'completed');
+    const projet = `${DEV_FOLDER}/ephemere`;
+    await mkdir(projet, { recursive: true });
 
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
       jobId,
       toolName: 'file_write',
-      toolInput: { path: `${VAULT}/Journal/2026-08-26.md`, content: '# Notes' },
+      toolInput: { path: `${projet}/a.ts`, content: 'export {}' },
       toolOutput: '{"ok":true}',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
-    const result = await listCodingProcessesAction();
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    const avant = await listCodingProcessesAction();
+    expect(avant.ok).toBe(true);
+    if (!avant.ok) return;
+    expect(avant.data.find((r) => r.id === jobId)?.projectPath).toBe(projet);
+
+    await rm(projet, { recursive: true, force: true });
+
+    const apres = await listCodingProcessesAction();
+    expect(apres.ok).toBe(true);
+    if (!apres.ok) return;
     expect(
-      result.data.find((r) => r.id === jobId),
-      'le coffre d’un agent par ailleurs développeur est entré dans l’onglet Code',
+      apres.data.find((r) => r.id === jobId),
+      'un projet supprimé du disque apparaît encore dans l’onglet',
     ).toBeUndefined();
   });
 
-  it('un pipeline qualifié ne compte QUE les fichiers du périmètre', async () => {
-    // Constat P2 de la revue Codex : une seule écriture dans un dossier coché
-    // qualifiait le pipeline, et tout le reste suivait — le `note.md` écrit au
-    // passage dans le coffre apparaissait parmi les fichiers changés.
+  it('un pipeline ne compte QUE les fichiers rattachables', async () => {
+    // Constat P2 de la revue Codex : une seule écriture rattachable qualifiait
+    // le pipeline, et tout le reste suivait — y compris des chemins qu'aucun
+    // dossier ne couvre.
     const agentId = await makeAgent('Mixed Perimeter Coder');
     const jobId = await makeJob(agentId, 'completed');
 
@@ -759,7 +879,7 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
         entityId: _testEntityId,
         jobId,
         toolName: 'file_write',
-        toolInput: { path: `${VAULT}/note.md`, content: '# hors sujet' },
+        toolInput: { path: `${_tmpRoot}/dehors/note.md`, content: '# hors sujet' },
         toolOutput: '{"ok":true}',
       },
     ]);
@@ -769,39 +889,17 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const row = result.data.find((r) => r.id === jobId);
-    expect(row, 'le pipeline aurait dû qualifier par son écriture dans le périmètre').toBeTruthy();
-    expect(row?.filesChanged, 'un fichier hors périmètre a été compté').toBe(1);
+    expect(row, 'le pipeline aurait dû qualifier par son écriture rattachable').toBeTruthy();
+    expect(row?.filesChanged, 'un fichier non rattachable a été compté').toBe(1);
   });
 
-  it('ajouter un dossier DÉJÀ coché ailleurs hérite de son état', async () => {
-    // Constat P2 de la revue Codex : la seconde ligne arrivait décochée, donc
-    // la fiche de cet agent montrait une case vide pendant que l'onglet Code
-    // traitait le chemin comme du développement — une autre ligne le disait.
-    const { addAgentWorkspaceAction, listAgentWorkspacesAction } =
-      await import('../src/lib/actions.ts');
-    const nouveau = await makeAgent('Nouveau Venu', { devFolder: false });
-
-    const added = await addAgentWorkspaceAction(nouveau, 'repo', DEV_FOLDER);
-    expect(added.ok, added.ok ? '' : added.message).toBe(true);
-
-    const list = await listAgentWorkspacesAction(nouveau);
-    expect(list.ok).toBe(true);
-    if (!list.ok) return;
-    expect(
-      list.data.find((w) => w.path === DEV_FOLDER)?.isDevFolder,
-      'le dossier arrive décoché alors qu’il est coché pour un autre agent',
-    ).toBe(true);
-  });
-
-  it('chaîne à 3 niveaux : le skill porté par le SEUL intermédiaire suffit', async () => {
+  it('chaîne à 3 niveaux : l’écriture du worker remonte au pipeline racine', async () => {
     // Constat majeur des deux relecteurs (25/08). L'orchestrateur délègue au
-    // lead, qui délègue au worker ; seul le LEAD est développeur, et il
-    // n'édite rien lui-même — il délègue. Comme les appels de délégation ne
-    // font pas partie du scan, il n'apparaissait jamais comme participant, et
-    // tout le pipeline disparaissait de l'onglet.
-    const orchestrateur = await makeAgent('Chain Orchestrator', { devFolder: false });
+    // lead, qui délègue au worker ; c'est le worker qui écrit, et le pipeline
+    // entier doit apparaître sous une seule ligne — celle de la racine.
+    const orchestrateur = await makeAgent('Chain Orchestrator', { folders: 'none' });
     const lead = await makeAgent('Chain Lead Dev');
-    const worker = await makeAgent('Chain Worker', { devFolder: false });
+    const worker = await makeAgent('Chain Worker');
 
     const racineId = await makeJob(orchestrateur, 'completed');
     const leadJobId = await makeJob(lead, 'completed', racineId);
@@ -822,11 +920,11 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     if (!result.ok) return;
     expect(
       result.data.find((r) => r.id === racineId),
-      'le porteur du skill était au milieu de la chaîne : le pipeline a disparu',
+      'l’écriture était au bout de la chaîne : le pipeline a disparu',
     ).toBeTruthy();
   });
 
-  it('un RELECTEUR (skill code-review) entre aussi dans l’onglet', async () => {
+  it('un RELECTEUR entre aussi dans l’onglet — review_verdict est un signal de code', async () => {
     const agentId = await makeAgent('Reviewer Agent');
     const jobId = await makeJob(agentId, 'completed');
 
@@ -876,14 +974,14 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/repo/README.md', content: '# Doc' },
+        toolInput: { file_path: `${DEV_FOLDER}/README.md`, content: '# Doc' },
         toolOutput: 'ok',
       },
       {
         entityId: _testEntityId,
         jobId,
         toolName: 'cli:Write',
-        toolInput: { file_path: '/repo/src/feature.ts', content: 'export {}' },
+        toolInput: { file_path: `${DEV_FOLDER}/src/feature.ts`, content: 'export {}' },
         toolOutput: 'ok',
       },
     ]);
@@ -895,37 +993,20 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     expect(result.data.find((r) => r.id === jobId)).toBeTruthy();
   });
 
-  it('un preneur de notes SANS dossier de dev ne qualifie pas, CLI ou pas', async () => {
-    const agentId = await makeAgent('Nodal Notes Writer', { devFolder: false });
+  it('sans aucun chemin exploitable, le projet est l’unique dossier de l’agent', async () => {
+    // Une review pure n'écrit aucun fichier : rien à ancrer. Le repli est
+    // l'unique dossier de l'agent — sans lui, ce travail disparaîtrait de
+    // l'onglet faute d'avoir touché un fichier. Un agent à 0 ou 2+ dossiers
+    // reste dans le tiroir « Autres » : on ne devine pas.
+    const agentId = await makeAgent('Solo Workspace Coder', { folders: 'none' });
     const jobId = await makeJob(agentId, 'completed');
-
-    await _testDb!.insert(toolCalls).values({
-      entityId: _testEntityId,
-      jobId,
-      toolName: 'file_write',
-      toolInput: { path: `${VAULT}/notes/reunion.md`, content: '# CR' },
-      toolOutput: '{"ok":true}',
-    });
-
-    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
-    const result = await listCodingProcessesAction();
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
-  });
-
-  it('sans aucun chemin exploitable, le projet est le dossier de dev de l’agent', async () => {
-    // Une review pure n'écrit aucun fichier : rien à ancrer. Le repli est le
-    // dossier de développement de l'agent — sans lui, ce travail
-    // disparaîtrait de l'onglet faute d'avoir touché un fichier.
-    const agentId = await makeAgent('Solo Workspace Coder', { devFolder: false });
-    const jobId = await makeJob(agentId, 'completed');
+    const solo = `${_tmpRoot}/MonApp`;
+    await mkdir(solo, { recursive: true });
     await _testDb!.insert(agentWorkspaces).values({
       entityId: _testEntityId,
       agentId,
       label: 'app',
-      path: 'D:\\Projets\\MonApp',
-      isDevFolder: true,
+      path: solo,
     });
 
     await _testDb!.insert(toolCalls).values({
@@ -942,7 +1023,7 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     if (!result.ok) return;
     const row = result.data.find((r) => r.id === jobId);
     expect(row, 'une review sans edition a disparu de l onglet').toBeTruthy();
-    expect(row?.projectPath).toBe('D:/Projets/MonApp');
+    expect(row?.projectPath).toBe(solo);
     expect(row?.projectName).toBe('MonApp');
   });
   it('sessionType : verdicts sans édition = review, et « PR #n » dans la tâche = pr_review', async () => {

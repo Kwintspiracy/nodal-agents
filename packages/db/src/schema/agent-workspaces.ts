@@ -7,16 +7,7 @@
 // Security guarantees are unchanged: resolveAndCheckPath in workspace.ts
 // applies the same realpath + boundary-check per selected workspace root.
 
-import {
-  pgTable,
-  text,
-  uuid,
-  integer,
-  boolean,
-  timestamp,
-  uniqueIndex,
-  index,
-} from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, integer, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { agents } from './agents.ts';
 import { entities } from './entities.ts';
 
@@ -38,23 +29,12 @@ export const agentWorkspaces = pgTable(
     path: text('path').notNull(),
     // UI display order; lower = appears first. Default 0.
     position: integer('position').default(0).notNull(),
-    /**
-     * Ticked by the owner: "what lives in here is development work."
-     *
-     * It marks a PERIMETER, not a project — ticking `Documents/Dev` does not
-     * make `Dev` a project, its first-level children are the projects.
-     *
-     * This is the one thing the product does NOT try to guess (0085). Judging
-     * by file extension missed real code; judging by the agent's skills only
-     * worked for our own skills; judging by folder structure (`package.json`,
-     * `.git`) would have swept in every cloned repo and unused template; and a
-     * flag on the AGENT answered "who" when the question is "where" — the same
-     * agent may write code in the morning and tidy a notes vault after lunch.
-     *
-     * A PATH counts as a dev folder when at least one of its rows is ticked:
-     * five agents sharing `Documents/Dev` is one gesture, not five.
-     */
-    isDevFolder: boolean('is_dev_folder').default(false).notNull(),
+    // `is_dev_folder` lived here for one day (0085, dropped by 0086). It asked
+    // the owner to tick which folders held "development work" so the Code tab
+    // could filter on it — but ticking a folder only moved the guess one level
+    // up: is the ticked folder the project, or does it contain projects? The
+    // tab no longer filters at all. See 0086 for the six definitions tried and
+    // why each was dropped.
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
