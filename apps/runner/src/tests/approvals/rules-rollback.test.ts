@@ -87,5 +87,46 @@ describe('capture + restauration d’une règle d’approbation', () => {
     const apres = await lignes();
     expect(apres, 'la ligne d’origine a été supprimée au lieu d’être restaurée').toHaveLength(1);
     expect(apres[0]!.action, 'un blocage explicite a été perdu').toBe('block');
+
+    await db
+      .delete(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, seed.entityId),
+          eq(approvalRules.agentId, seed.agentId),
+          eq(approvalRules.toolName, TOOL),
+        ),
+      );
+  });
+
+  it('une règle posée ENTRE-TEMPS par quelqu’un d’autre n’est pas effacée', async () => {
+    // Course réelle (revue du 25/08) : la carte capture « aucune règle », pose
+    // son auto_approve, puis la résolution échoue. Entre les deux, le
+    // propriétaire pose un `block` au dashboard sur le MÊME triplet. Un
+    // rollback aveugle supprimait ce blocage en silence : annuler son propre
+    // geste est une chose, annuler celui de quelqu'un d'autre en est une autre.
+    const avant = await getApprovalRule(db, target());
+    expect(avant).toBeNull();
+
+    await upsertAutoApproveRule(db, target());
+
+    // Le dashboard écrase le triplet pendant la fenêtre.
+    await db
+      .update(approvalRules)
+      .set({ action: 'block' })
+      .where(
+        and(
+          eq(approvalRules.entityId, seed.entityId),
+          eq(approvalRules.agentId, seed.agentId),
+          eq(approvalRules.toolName, TOOL),
+        ),
+      );
+
+    // La carte échoue et tente son rollback avec l'état qu'elle avait capturé.
+    await restoreApprovalRule(db, { ...target(), previousAction: avant });
+
+    const apres = await lignes();
+    expect(apres, 'le blocage posé au dashboard a été effacé par le rollback').toHaveLength(1);
+    expect(apres[0]!.action).toBe('block');
   });
 });

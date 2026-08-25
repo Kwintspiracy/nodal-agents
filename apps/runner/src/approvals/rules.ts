@@ -36,6 +36,13 @@ export async function getApprovalRule(db: RunnerDeps['db'], t: RuleTarget): Prom
  * précédente, ou la SUPPRESSION quand il n'y avait pas de ligne. Best-effort —
  * un rollback qui échoue est loggué, jamais propagé (on est déjà sur un
  * chemin d'échec).
+ *
+ * La restauration ne touche QUE la ligne que la carte a posée : le `where`
+ * exige que l'action courante soit encore `auto_approve` (revue du 25/08). Sans
+ * cette condition, un propriétaire qui pose un `block` au dashboard sur le même
+ * triplet pendant que la carte échoue voyait son blocage EFFACÉ en silence par
+ * le rollback — annuler son propre geste est une chose, annuler celui de
+ * quelqu'un d'autre en est une autre.
  */
 export async function restoreApprovalRule(
   db: RunnerDeps['db'],
@@ -46,6 +53,7 @@ export async function restoreApprovalRule(
       eq(approvalRules.entityId, t.entityId),
       eq(approvalRules.agentId, t.agentId),
       eq(approvalRules.toolName, t.toolName),
+      eq(approvalRules.action, 'auto_approve'),
     );
     if (t.previousAction === null) {
       await db.delete(approvalRules).where(where);
