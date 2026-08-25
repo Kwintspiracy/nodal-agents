@@ -380,6 +380,40 @@ describe('les deux gestes du propriétaire (lignes réelles)', () => {
     }
   });
 
+  it('masquer puis démasquer avec une AUTRE casse Windows défait bien le geste', async () => {
+    // Constat P1 de la revue Codex (26/08). Le même projet peut être remonté
+    // avec des casses différentes selon la session. Un upsert sur l'égalité
+    // SQL créait alors DEUX lignes : celle à `hidden=true` continuait de gagner
+    // dans l'interface comme dans le contexte, et le projet restait masqué sans
+    // aucun moyen de le rétablir. Un geste réversible qui ne se défait pas est
+    // pire qu'un geste absent.
+    const { setCodeProjectHiddenAction, listCodeProjectPrefsAction } =
+      await import('../actions.ts');
+    const majuscules = 'C:/Dev/MonApp';
+    const minuscules = 'c:/dev/monapp';
+
+    expect((await setCodeProjectHiddenAction({ projectPath: majuscules, hidden: true })).ok).toBe(
+      true,
+    );
+    expect((await setCodeProjectHiddenAction({ projectPath: minuscules, hidden: false })).ok).toBe(
+      true,
+    );
+
+    const rows = (
+      await testDb.select().from(codeProjects).where(eq(codeProjects.entityId, seed.entityId))
+    ).filter((r) => r.projectPath.toLowerCase() === minuscules);
+    expect(rows, 'une seconde ligne a été créée pour la même casse différente').toHaveLength(1);
+    expect(rows[0]!.hidden, 'le projet est resté masqué malgré le démasquage').toBe(false);
+
+    const list = await listCodeProjectPrefsAction();
+    expect(list.ok).toBe(true);
+    if (list.ok) {
+      expect(
+        list.data.filter((p) => p.projectPath.toLowerCase() === minuscules && p.hidden),
+      ).toHaveLength(0);
+    }
+  });
+
   it('renommer avec une chaîne vide rend son nom au DOSSIER (null, pas une chaîne vide)', async () => {
     const { renameCodeProjectAction } = await import('../actions.ts');
     const projectPath = `${racine}/repoB`;

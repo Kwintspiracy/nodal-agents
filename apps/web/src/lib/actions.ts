@@ -12357,6 +12357,57 @@ async function assertProjectOwner(
   return ownerRow.userId === session.userId ? null : 'forbidden';
 }
 
+/**
+ * Écrit un des deux gestes sur un projet, en retrouvant sa ligne par IDENTITÉ
+ * normalisée plutôt que par égalité de texte.
+ *
+ * UPSERT, jamais insert/delete : la ligne porte les DEUX gestes. Démasquer en
+ * supprimant la ligne effacerait un renommage au passage.
+ *
+ * Et l'identité passe par `projectKey`, pas par l'égalité SQL (revue Codex,
+ * 26/08). Sur Windows, le même projet peut être remonté avec des casses
+ * différentes selon la session : masquer `C:/Dev/App` puis démasquer
+ * `c:/dev/app` créait DEUX lignes, celle à `hidden=true` continuait de gagner
+ * dans l'interface comme dans le contexte, et le projet restait masqué sans
+ * aucun moyen de le rétablir. Un geste réversible qui ne se défait pas est
+ * pire qu'un geste absent.
+ *
+ * Le chemin d'origine est conservé tel qu'il a été écrit la première fois —
+ * c'est lui qu'on affiche ; seule la correspondance est normalisée.
+ */
+async function upsertCodeProject(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  projectPath: string,
+  patch: { hidden?: boolean; displayName?: string | null },
+): Promise<void> {
+  const existing = (
+    await db
+      .select({ id: codeProjects.id, projectPath: codeProjects.projectPath })
+      .from(codeProjects)
+      .where(eq(codeProjects.entityId, entityId))
+  ).find((r) => projectKey(r.projectPath) === projectKey(projectPath));
+
+  if (existing) {
+    await db
+      .update(codeProjects)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(codeProjects.id, existing.id));
+    return;
+  }
+
+  // Pas de ligne pour ce projet : on la crée. `onConflictDoUpdate` couvre la
+  // course où deux écritures de MÊME casse arrivent en même temps — la
+  // contrainte d'unicité porte sur le texte exact.
+  await db
+    .insert(codeProjects)
+    .values({ entityId, projectPath, ...patch })
+    .onConflictDoUpdate({
+      target: [codeProjects.entityId, codeProjects.projectPath],
+      set: { ...patch, updatedAt: new Date() },
+    });
+}
+
 const SetCodeProjectHiddenSchema = z.object({
   projectPath: z.string().min(1).max(4096),
   hidden: z.boolean(),
@@ -12374,20 +12425,9 @@ export async function setCodeProjectHiddenAction(raw: unknown): Promise<ActionRe
     if (denied === 'not_found') return fail('not_found', 'Workspace not found');
     if (denied) return fail('forbidden', 'Only the workspace owner can hide a project.');
 
-    // UPSERT, pas insert/delete : la ligne porte AUSSI le nom choisi. Démasquer
-    // en supprimant la ligne effacerait un renommage au passage — c'est
-    // exactement le genre de perte silencieuse qu'on ne remarque qu'après.
-    await db
-      .insert(codeProjects)
-      .values({
-        entityId: session.entityId,
-        projectPath: parsed.data.projectPath,
-        hidden: parsed.data.hidden,
-      })
-      .onConflictDoUpdate({
-        target: [codeProjects.entityId, codeProjects.projectPath],
-        set: { hidden: parsed.data.hidden, updatedAt: new Date() },
-      });
+    await upsertCodeProject(db, session.entityId, parsed.data.projectPath, {
+      hidden: parsed.data.hidden,
+    });
     revalidatePath('/code');
     return ok(undefined);
   } catch (err) {
@@ -12417,17 +12457,9 @@ export async function renameCodeProjectAction(raw: unknown): Promise<ActionResul
     // Un nom vidé rend son nom au DOSSIER : `NULL`, pas la chaîne vide, sinon
     // le projet s'afficherait sans nom du tout.
     const name = parsed.data.displayName.trim();
-    await db
-      .insert(codeProjects)
-      .values({
-        entityId: session.entityId,
-        projectPath: parsed.data.projectPath,
-        displayName: name === '' ? null : name,
-      })
-      .onConflictDoUpdate({
-        target: [codeProjects.entityId, codeProjects.projectPath],
-        set: { displayName: name === '' ? null : name, updatedAt: new Date() },
-      });
+    await upsertCodeProject(db, session.entityId, parsed.data.projectPath, {
+      displayName: name === '' ? null : name,
+    });
     revalidatePath('/code');
     return ok(undefined);
   } catch (err) {
