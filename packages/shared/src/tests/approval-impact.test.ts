@@ -100,3 +100,18 @@ describe('computeApprovalImpactLine — code_task (lot approbations 24/08)', () 
     );
   });
 });
+
+describe('computeApprovalImpactLine — outils de lecture gates par regle utilisateur', () => {
+  it('file_search dit « read-only », jamais « irreversible or destructive »', () => {
+    const line = computeApprovalImpactLine('file_search', { pattern: 'calorie', target: 'files' });
+    expect(line).toBe('Searches workspace files for "calorie" — read-only, changes nothing.');
+    expect(line).not.toContain('irreversible');
+  });
+
+  it('file_read et file_list aussi', () => {
+    expect(computeApprovalImpactLine('file_read', { path: 'src/app.js' })).toBe(
+      'Reads the file "src/app.js" — read-only, changes nothing.',
+    );
+    expect(computeApprovalImpactLine('file_list', {})).toContain('read-only');
+  });
+});

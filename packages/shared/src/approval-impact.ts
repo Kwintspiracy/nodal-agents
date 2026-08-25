@@ -95,6 +95,17 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
       return `Runs script "${str(input['script'])}" from skill "${str(input['skill'])}".`;
     case 'skill_file_write':
       return `Writes a file into skill "${str(input['skill'])}"'s bundle.`;
+    case 'file_search': {
+      // Gaté uniquement par une règle UTILISATEUR (riskLevel: read) — le
+      // catch-all « irreversible or destructive » mentait sur une recherche
+      // (constat live Quentin 25/08). Dire ce que c'est : une lecture.
+      const pat = typeof input['pattern'] === 'string' ? ` for "${input['pattern']}"` : '';
+      return `Searches workspace files${pat} — read-only, changes nothing.`;
+    }
+    case 'file_read':
+      return `Reads the file "${str(input['path'])}" — read-only, changes nothing.`;
+    case 'file_list':
+      return `Lists workspace files — read-only, changes nothing.`;
     case 'code_task':
       // Risque fonction de l'IMPACT réel (lot approbations, décision Quentin
       // 24/08) : un code_task tombait dans le default « irreversible or

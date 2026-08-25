@@ -239,3 +239,19 @@ describe('troncature des arguments', () => {
     expect(renderExplanationText(x)).not.toContain('caractères,');
   });
 });
+
+describe('explainApproval — effet des outils de lecture (constat live 25/08)', () => {
+  it('file_search est annonce « Lecture », jamais « Ecriture »', () => {
+    const x = explainApproval({
+      toolName: 'file_search',
+      toolInput: { pattern: 'calorie', target: 'files' },
+      mcp: null,
+    });
+    expect(x.effect).toBe('read');
+    expect(x.effectLabel).toBe('Lecture');
+    const text = renderExplanationText(x);
+    expect(text).toContain('Lecture');
+    expect(text).not.toContain('Écriture');
+    expect(text).not.toContain('irreversible');
+  });
+});
