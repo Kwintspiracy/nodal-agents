@@ -304,3 +304,52 @@ describe('buildSystemPrompt — runtime block integration', () => {
     );
   });
 });
+
+// ─── Projets de code dans le bloc Runtime (décision Quentin 25/08) ───────────
+// Trois sessions de suite, l'agent root a cherché à l'aveugle une app qu'il
+// aurait dû connaître. La section dit l'existence, l'emplacement ET le
+// détenteur — le routage devient une lecture, plus une devinette.
+
+describe('buildRuntimeBlock — code projects', () => {
+  const base: DeploymentContext = {
+    os: 'Windows',
+    networkMode: 'loopback',
+    authMode: 'local-trust',
+  };
+
+  it('rend chaque projet avec son chemin et ses détenteurs, + la consigne de délégation', () => {
+    const block = buildRuntimeBlock({
+      ...base,
+      codeProjects: [
+        {
+          name: 'calorie-counter',
+          path: 'C:/Users/kwint/Documents/Dev/outputs/calorie-counter',
+          owners: ['Dev C', 'Lead-Dev'],
+          lastActivityAt: '2026-08-25T02:00:00.000Z',
+        },
+        {
+          name: 'water-intake',
+          path: 'C:/Users/kwint/Documents/Dev/water-intake',
+          owners: ['Dev C'],
+          lastActivityAt: null,
+        },
+      ],
+    });
+
+    expect(block).toContain('### Code projects in this workspace');
+    expect(block).toContain(
+      '- **calorie-counter** — `C:/Users/kwint/Documents/Dev/outputs/calorie-counter` — worked on by: Dev C, Lead-Dev',
+    );
+    expect(block).toContain(
+      '- **water-intake** — `C:/Users/kwint/Documents/Dev/water-intake` — worked on by: Dev C',
+    );
+    // La consigne qui change le comportement : déléguer plutôt que chercher.
+    expect(block).toContain('DELEGATE');
+    expect(block).toContain('do not hunt for it');
+  });
+
+  it('aucun projet → aucune section (jamais un en-tête vide)', () => {
+    expect(buildRuntimeBlock(base)).not.toContain('Code projects');
+    expect(buildRuntimeBlock({ ...base, codeProjects: [] })).not.toContain('Code projects');
+  });
+});

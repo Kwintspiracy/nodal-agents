@@ -131,6 +131,26 @@ export interface DeploymentContext {
   installNotes?: string; // operator-authored, may be ''
   timezone?: string; // workspace IANA timezone (e.g. 'Europe/Paris')
   localTime?: string; // current wall-clock time in that timezone, human-readable
+  /**
+   * Les PROJETS de code de l'espace, dérivés de l'activité réelle (décision
+   * Quentin 25/08). Sans ça, un agent qui reçoit « modifie l'app X » ne sait
+   * ni où elle vit ni à qui la confier : constaté trois sessions de suite —
+   * recherches à l'aveugle, échec, ou pire, promesse creuse. La liste dit
+   * l'existence, l'emplacement, et QUI la détient (les agents dont le
+   * workspace la contient), pour que le routage devienne évident.
+   */
+  codeProjects?: CodeProjectSummary[];
+}
+
+export interface CodeProjectSummary {
+  /** Nom d'affichage (basename du dossier). */
+  name: string;
+  /** Chemin absolu du projet. */
+  path: string;
+  /** Agents dont un workspace contient ce projet — ses détenteurs naturels. */
+  owners: string[];
+  /** Dernière activité de code observée, ISO — null si inconnue. */
+  lastActivityAt: string | null;
 }
 
 // ─── buildRuntimeBlock ────────────────────────────────────────────────────────
@@ -209,6 +229,24 @@ export function buildRuntimeBlock(
   if (d.containerized) {
     lines.push(
       `- You run inside a container — to reach a service on the host machine, use \`host.docker.internal\` instead of \`127.0.0.1\`.`,
+    );
+  }
+
+  if (d.codeProjects && d.codeProjects.length > 0) {
+    lines.push(
+      ``,
+      `### Code projects in this workspace`,
+      ``,
+      `Apps and repos with real coding activity, and the agents whose workspace contains them:`,
+    );
+    for (const p of d.codeProjects) {
+      const owners = p.owners.length > 0 ? ` — worked on by: ${p.owners.join(', ')}` : '';
+      lines.push(`- **${p.name}** — \`${p.path}\`${owners}`);
+    }
+    lines.push(
+      ``,
+      `When a request concerns one of these projects, you already know where it lives — do not hunt for it. ` +
+        `If you have no workspace containing it, DELEGATE to an agent listed as working on it rather than searching or guessing.`,
     );
   }
 
