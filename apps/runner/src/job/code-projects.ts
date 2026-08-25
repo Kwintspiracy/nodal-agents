@@ -17,32 +17,15 @@
 // module ne fabrique QUE des données.
 
 import { existsSync } from 'node:fs';
-import {
-  and,
-  desc,
-  eq,
-  inArray,
-  agentWorkspaces,
-  agents,
-  agentSkills,
-  agentSkillAssignments,
-  agentJobs,
-  toolCalls,
-} from '@nodal-agents/db';
-import { devTeamSkillSlugs } from '@nodal-agents/catalog';
+import { and, desc, eq, inArray, agentWorkspaces, agents, toolCalls } from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 
-/**
- * Les skills qui font d'un agent un membre de l'équipe de dev.
- *
- * Importés du CATALOGUE, plus recopiés (constat de la revue Codex, 25/08) : la
- * liste vivait ici ET dans l'onglet Code. Or les deux vues doivent répondre
- * pareil — ce module dit aux agents quels projets existent, l'onglet les montre
- * au propriétaire. Deux copies, c'est deux vérités dès qu'un slug bouge, et le
- * désaccord ne se voit depuis aucun écran.
- */
-const DEV_TEAM_SKILL_SLUGS = devTeamSkillSlugs;
+// Depuis le 26/08, ce module ne juge plus NI l'extension des fichiers, NI les
+// skills de l'agent : il lit les dossiers que le propriétaire a cochés
+// « développement ». Même règle que l'onglet Code, ce qui est indispensable —
+// ce module dit aux agents quels projets existent, l'onglet les montre au
+// propriétaire, et un désaccord entre les deux ne se voit depuis aucun écran.
 
 /** Outils dont l'input porte un chemin de fichier édité. */
 const EDIT_TOOLS = [
@@ -106,42 +89,45 @@ function within(dir: string, root: string): boolean {
 }
 
 /**
- * Racine de projet d'un fichier : plus haut dossier marqué sous le workspace,
- * sinon 1er niveau. MÉMOÏSÉ par dossier (revue P1 du 25/08, finding bloquant) :
- * sans cache, chaque ligne scannée refaisait jusqu'à 24 remontées × 9 marqueurs
- * d'`existsSync` synchrones — jusqu'à ~324 000 accès disque par job, event
- * loop du runner gelé plusieurs secondes.
+ * Le projet d'un fichier, dans un dossier COCHÉ « développement ».
+ *
+ * JUMEAU de `projectUnderDevFolder` dans apps/web/src/lib/code-projects.ts —
+ * les deux vues doivent répondre pareil, sous peine d'annoncer aux agents des
+ * projets que l'onglet ne montre pas.
+ *
+ * Une seule règle : un projet est un ENFANT DIRECT du dossier coché, quelle
+ * que soit la profondeur du fichier édité. Cocher `Dev` ne fait pas de `Dev`
+ * un projet, ses sous-dossiers en sont. Seule exception, nécessaire : si le
+ * dossier coché porte lui-même un manifeste, c'est LUI le projet — sinon
+ * cocher directement un dépôt afficherait `apps`, `packages` et `docs` comme
+ * trois projets.
+ *
+ * Mémoïsé : le manifeste du dossier coché est lu une fois par entité, pas une
+ * fois par ligne scannée.
  */
-function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, string>): string {
+function projectRootFor(absFile: string, devRoot: string, memo: Map<string, string>): string {
   const dir = absFile.replace(/\/[^/]*$/, '');
-  const key = `${wsRoot}|${dir}`;
+  const key = `${devRoot}|${dir}`;
   const cached = memo.get(key);
   if (cached !== undefined) return cached;
 
-  let topmost: string | null = null;
-  let cur = dir;
-  for (let hops = 0; hops < 24 && cur && within(cur, wsRoot); hops++) {
-    if (hasMarker(cur)) topmost = cur;
-    const parent = cur.replace(/\/[^/]*$/, '');
-    if (parent === cur || parent === '' || /^[a-z]:$/i.test(parent)) break;
-    cur = parent;
+  const rootKey = `root|${devRoot}`;
+  let rootIsProject = memo.get(rootKey);
+  if (rootIsProject === undefined) {
+    rootIsProject = hasMarker(devRoot) ? 'yes' : 'no';
+    memo.set(rootKey, rootIsProject);
   }
+
   let result: string;
-  if (topmost) result = topmost;
-  else if (!within(dir, wsRoot) || dir === wsRoot) result = wsRoot;
-  else {
-    const child = dir.slice(wsRoot.length + 1).split('/')[0];
-    result = child ? `${wsRoot}/${child}` : wsRoot;
+  if (rootIsProject === 'yes' || !within(dir, devRoot) || dir === devRoot) {
+    result = devRoot;
+  } else {
+    const child = dir.slice(devRoot.length + 1).split('/')[0];
+    result = child ? `${devRoot}/${child}` : devRoot;
   }
   memo.set(key, result);
   return result;
 }
-
-/**
- * Profondeur de remontée des délégations. L'invariant #8 plafonne les chaînes
- * à 3 niveaux ; la marge absorbe une donnée abîmée sans jamais boucler.
- */
-const MAX_ANCESTOR_DEPTH = 8;
 
 /**
  * Cache par entité (revue P1 du 25/08) : `getDeploymentContext` tourne à
@@ -181,38 +167,18 @@ export async function listCodeProjectsForContext(
   const cached = projectsCache.get(entityId);
   if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
   try {
-    // Les agents DÉVELOPPEURS de l'entité. Un projet de code naît du travail
-    // d'un développeur, pas de n'importe quelle écriture de fichier : c'est la
-    // même règle d'identité que l'onglet Code, et elle doit valoir des deux
-    // côtés sous peine d'annoncer aux agents des projets que le propriétaire
-    // ne voit pas.
-    const devTeamRows = await db
-      .select({ agentId: agentSkillAssignments.agentId })
-      .from(agentSkillAssignments)
-      .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
-      .where(
-        and(
-          eq(agentSkillAssignments.entityId, entityId),
-          inArray(agentSkills.slug, DEV_TEAM_SKILL_SLUGS),
-          // Le skill du catalogue, pas un homonyme créé par l'utilisateur.
-          eq(agentSkills.createdBy, 'system'),
-        ),
-      );
-    const devTeam = new Set(devTeamRows.map((r) => r.agentId));
-    if (devTeam.size === 0) return [];
-
-    // Les workspaces des DÉVELOPPEURS — la carte « qui possède quoi ».
-    const wsRows = (
-      await db
-        .select({
-          agentId: agentWorkspaces.agentId,
-          agentName: agents.name,
-          path: agentWorkspaces.path,
-        })
-        .from(agentWorkspaces)
-        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-        .where(eq(agents.entityId, entityId))
-    ).filter((r) => devTeam.has(r.agentId));
+    // Les dossiers COCHÉS « développement », et qui les détient. Aucun dossier
+    // coché, aucun projet à annoncer — l'agent le saura par le silence, ce qui
+    // vaut mieux que de lui nommer un coffre de notes comme un projet.
+    const wsRows = await db
+      .select({
+        agentId: agentWorkspaces.agentId,
+        agentName: agents.name,
+        path: agentWorkspaces.path,
+      })
+      .from(agentWorkspaces)
+      .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+      .where(and(eq(agents.entityId, entityId), eq(agentWorkspaces.isDevFolder, true)));
     if (wsRows.length === 0) return [];
 
     // Racines uniques, plus longues d'abord (un workspace niché gagne).
@@ -227,92 +193,19 @@ export async function listCodeProjectsForContext(
       ownersByRoot.set(norm(r.path), set);
     }
 
-    // Le scan est filtré par l'AUTEUR de l'écriture, pas seulement par le
-    // workspace (revue du 25/08, second tour).
-    //
-    // Filtrer les seuls workspaces suffisait tant qu'ils étaient disjoints, et
-    // se retournait dans le cas NICHÉ : un non-développeur dont le workspace
-    // (`D:/work/notes`) vit à l'intérieur de celui d'un développeur
-    // (`D:/work`). Avant le filtre, la racine la plus longue gagnait et son
-    // écriture restait chez lui ; après, sa racine disparaît de la liste et la
-    // même écriture retombe dans le workspace du développeur — fabriquant un
-    // « projet » de notes ATTRIBUÉ au développeur, annoncé dans le prompt de
-    // tous les agents, et introuvable dans l'onglet Code. Le filtre aggravait
-    // ce qu'il devait corriger.
-    //
-    // La jointure sur le job ferme les deux à la fois : l'écriture d'un
-    // non-développeur ne crée ni ne rafraîchit plus aucun projet, où qu'elle
-    // tombe.
+    // Le scan n'est plus filtré par auteur : c'est le DOSSIER qui décide.
+    // Une écriture hors des dossiers cochés ne trouvera aucune racine plus bas
+    // et sera ignorée ; qui l'a faite n'entre pas dans le calcul.
     const rows = await db
       .select({
-        jobId: toolCalls.jobId,
         toolInput: toolCalls.toolInput,
         toolOutput: toolCalls.toolOutput,
         createdAt: toolCalls.createdAt,
-        authorId: agentJobs.agentId,
-        parentJobId: agentJobs.parentJobId,
       })
       .from(toolCalls)
-      .innerJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
       .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.toolName, EDIT_TOOLS)))
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
-
-    // La CHAÎNE, pas seulement l'auteur direct (revue du 25/08, troisième
-    // tour). Juger le seul émetteur laissait les deux vues appliquer des règles
-    // différentes : quand un développeur délègue à un worker qui ne porte pas
-    // encore le skill, l'onglet Code montre le pipeline (il regarde toute la
-    // chaîne) pendant que ce module omettait le projet (il ne regardait que
-    // l'auteur). Sous-annoncer est le bon sens de l'erreur, mais deux règles
-    // pour une même question restent deux vérités — et c'est exactement ce que
-    // cette PR existait pour supprimer.
-    const parentOfJob = new Map<string, string | null>();
-    const agentOfJob = new Map<string, string>();
-    for (const r of rows) {
-      if (!r.jobId) continue;
-      parentOfJob.set(r.jobId, r.parentJobId);
-      if (r.authorId) agentOfJob.set(r.jobId, r.authorId);
-    }
-    // Les ancêtres, niveau par niveau — bornés par la profondeur de délégation.
-    let toResolve = Array.from(
-      new Set(
-        rows
-          .map((r) => r.parentJobId)
-          .filter((id): id is string => id !== null && !agentOfJob.has(id)),
-      ),
-    );
-    for (let depth = 0; depth < MAX_ANCESTOR_DEPTH && toResolve.length > 0; depth++) {
-      const ancestors = await db
-        .select({
-          id: agentJobs.id,
-          parentJobId: agentJobs.parentJobId,
-          agentId: agentJobs.agentId,
-        })
-        .from(agentJobs)
-        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, toResolve)));
-      for (const a of ancestors) {
-        parentOfJob.set(a.id, a.parentJobId);
-        if (a.agentId) agentOfJob.set(a.id, a.agentId);
-      }
-      toResolve = Array.from(
-        new Set(
-          ancestors
-            .map((a) => a.parentJobId)
-            .filter((id): id is string => id !== null && !parentOfJob.has(id)),
-        ),
-      );
-    }
-
-    /** Un membre de l'équipe de dev figure-t-il dans la chaîne de ce job ? */
-    const chainHasDev = (jobId: string): boolean => {
-      let cursor: string | null = jobId;
-      for (let hop = 0; hop <= MAX_ANCESTOR_DEPTH && cursor; hop++) {
-        const agent = agentOfJob.get(cursor);
-        if (agent && devTeam.has(agent)) return true;
-        cursor = parentOfJob.get(cursor) ?? null;
-      }
-      return false;
-    };
 
     const rootMemo = new Map<string, string>();
     const existsMemo = new Map<string, boolean>();
@@ -331,12 +224,6 @@ export async function listCodeProjectsForContext(
 
     const byPath = new Map<string, { owners: Set<string>; lastActivityAt: string | null }>();
     for (const row of rows) {
-      // L'écriture d'un non-développeur ne fait naître aucun projet, où
-      // qu'elle tombe — y compris dans le workspace d'un développeur. Sauf si
-      // un développeur est ailleurs dans la chaîne : il a délégué, le travail
-      // est le sien.
-      if (!row.jobId || !chainHasDev(row.jobId)) continue;
-
       // Une écriture REFUSÉE n'a rien créé — même règle que l'onglet Code.
       const head = (row.toolOutput ?? '').slice(0, 400);
       if (head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head)) continue;

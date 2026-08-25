@@ -108,26 +108,18 @@ function groupProjects(rows: CodingProcessRow[]): Project[] {
 export default function CodeProcessesTable({
   initialRows,
   initialArchivedPaths,
-  devTeamCount,
-  missingCatalogSlugs,
+  devFolderCount,
   error,
 }: {
   initialRows: CodingProcessRow[];
   initialArchivedPaths: string[];
   /**
-   * Combien d'agents portent un skill d'équipe de dev. À zéro, la liste est
+   * Combien de dossiers sont cochés « développement ». À zéro, la liste est
    * vide PAR CONSTRUCTION et non faute d'activité : l'état vide doit alors
    * nommer le geste manquant plutôt que d'accuser les agents de n'avoir rien
    * fait. `null` = le comptage a échoué, et on ne prétend rien.
    */
-  devTeamCount: number | null;
-  /**
-   * Les skills du catalogue qui n'ont pas été livrés — un skill du même nom,
-   * créé par l'utilisateur, occupe la place. Sans ce cas, l'écran demanderait
-   * d'attacher un skill introuvable, ou ferait attacher le sien (qui ne
-   * qualifie pas) indéfiniment.
-   */
-  missingCatalogSlugs?: string[];
+  devFolderCount: number | null;
   error?: string;
 }) {
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
@@ -204,38 +196,14 @@ export default function CodeProcessesTable({
     );
   }
 
-  const squatted = missingCatalogSlugs ?? [];
-  if (rows.length === 0 && devTeamCount === 0 && squatted.length > 0) {
+  if (rows.length === 0 && devFolderCount === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        <p className="text-ink-2">
-          A skill of yours is using the name{' '}
-          {squatted.map((s, i) => (
-            <span key={s}>
-              {i > 0 ? ' and ' : ''}
-              <span className="font-medium">“{s}”</span>
-            </span>
-          ))}
-          .
-        </p>
+        <p className="text-ink-2">No development folders yet.</p>
         <p className="mx-auto mt-2 max-w-md">
-          This tab marks developers with built-in skills of those names, and they were not installed
-          because your own skills already hold them. Rename yours in Skills, then restart to receive
-          them. If a skill came from an older Nodal install rather than from you, delete it instead.
-        </p>
-      </div>
-    );
-  }
-
-  if (rows.length === 0 && devTeamCount === 0) {
-    return (
-      <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        <p className="text-ink-2">No developer agents yet.</p>
-        <p className="mx-auto mt-2 max-w-md">
-          Attach the <span className="font-medium text-ink-2">Software development</span> skill to
-          the agents that write code. It gives them the discipline to work by, and it puts their
-          work on this tab. Reviewers come in through{' '}
-          <span className="font-medium text-ink-2">Code review</span>.
+          Open an agent, and tick <span className="font-medium text-ink-2">Development folder</span>{' '}
+          next to the folders it builds in. Everything written in there becomes a project here, one
+          per subfolder. Nothing else shows up.
         </p>
       </div>
     );

@@ -143,6 +143,56 @@ describe('deriveProjectRoot (vrai disque)', () => {
     expect(deriveProjectRoot([`${racine}/monapp/src/x.ts`], [ws], memo())).toBe(ws);
   });
 
+  it('la profondeur ne change RIEN : le projet est l’enfant direct du dossier coché', async () => {
+    // Demande explicite de Quentin (26/08) : « si je tagge le dossier \dev
+    // comme dossier de coding, \dev\calorie-counter devra être un projet ».
+    //
+    // C'est le changement de comportement du lot. L'ancienne règle cherchait
+    // un manifeste à TOUS les niveaux et rendait donc `.../app`, parce que le
+    // `index.html` est là. Le rangement reste mauvais — c'est au skill « dev »
+    // de le corriger à la source — mais l'affichage devient prévisible.
+    await mkdir(join(racine, 'dev', 'calorie-counter', 'app'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'calorie-counter', 'app', 'index.html'), '<!doctype html>');
+    const coche = `${racine}/dev`;
+
+    expect(
+      deriveProjectRoot([`${racine}/dev/calorie-counter/app/index.html`], [coche], memo()),
+      'le projet a été pris plus bas que l’enfant direct',
+    ).toBe(`${racine}/dev/calorie-counter`);
+
+    // Et à n'importe quelle profondeur.
+    await mkdir(join(racine, 'dev', 'profond', 'a', 'b', 'c'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'profond', 'a', 'b', 'c', 'd.ts'), 'export {}');
+    expect(deriveProjectRoot([`${racine}/dev/profond/a/b/c/d.ts`], [coche], memo())).toBe(
+      `${racine}/dev/profond`,
+    );
+  });
+
+  it('une écriture HORS de tout dossier coché ne produit AUCUN projet', () => {
+    // Le cœur de la décision du 26/08, et le cas vécu : un agent développeur
+    // qui range aussi un coffre de notes. Le coffre n'est pas coché, donc il
+    // n'apparaît jamais — peu importe qui écrit et ce qu'il écrit.
+    expect(
+      deriveProjectRoot([`${racine}/repoA/src/x.ts`], [`${racine}/ailleurs`], memo()),
+      'une écriture hors périmètre a produit un projet',
+    ).toBeNull();
+    // Aucun dossier coché du tout : rien non plus.
+    expect(deriveProjectRoot([`${racine}/repoA/src/x.ts`], [], memo())).toBeNull();
+  });
+
+  it('un dossier coché NICHÉ dans un autre gagne — le plus spécifique', async () => {
+    // Sans le tri par longueur, le parent avalerait l'enfant et le projet
+    // remonterait d'un cran.
+    await mkdir(join(racine, 'dev', 'niche', 'monapp'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'niche', 'monapp', 'a.ts'), 'export {}');
+    const parent = `${racine}/dev`;
+    const enfant = `${racine}/dev/niche`;
+
+    expect(deriveProjectRoot([`${racine}/dev/niche/monapp/a.ts`], [parent, enfant], memo())).toBe(
+      `${racine}/dev/niche/monapp`,
+    );
+  });
+
   it('un chemin RELATIF (forme Nodal) est résolu par existence sur disque', () => {
     // Deux workspaces candidats — seul `racine` contient réellement le fichier.
     const other = `${racine}/repoB`;

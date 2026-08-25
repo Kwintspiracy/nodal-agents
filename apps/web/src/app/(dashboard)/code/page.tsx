@@ -29,11 +29,10 @@ export default async function CodePage() {
         initialRows={rows}
         initialArchivedPaths={archivedResult.ok ? archivedResult.data : []}
         // `null` quand la lecture a ÉCHOUÉ — pas 0. Retomber sur 0 ferait
-        // affirmer « aucun développeur désigné » à un espace qui en a
+        // affirmer « aucun dossier de développement » à un espace qui en a
         // peut-être plein : un repli silencieux vers un état plausible est
         // exactement ce que l'invariant #4 interdit.
-        devTeamCount={devTeamResult.ok ? devTeamResult.data.count : null}
-        missingCatalogSlugs={devTeamResult.ok ? devTeamResult.data.missingCatalogSlugs : []}
+        devFolderCount={devTeamResult.ok ? devTeamResult.data.devFolderCount : null}
         error={!result.ok ? result.message : undefined}
       />
     </PageShell>

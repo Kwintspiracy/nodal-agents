@@ -24,6 +24,7 @@ import {
   listKeyModelsAction,
   addAgentWorkspaceAction,
   removeAgentWorkspaceAction,
+  setWorkspaceDevFolderAction,
   uploadToWorkspaceAction,
   listWorkspaceFilesAction,
   deleteWorkspaceFileAction,
@@ -3061,6 +3062,27 @@ function SettingsTab(props: {
     });
   }
 
+  function handleToggleDevFolder(id: string, next: boolean) {
+    startWsTransition(async () => {
+      const result = await setWorkspaceDevFolderAction(id, next);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      const listResult = await listAgentWorkspacesAction(agentId);
+      if (listResult.ok) onWorkspacesChange(listResult.data);
+      // La bascule couvre toutes les lignes du MÊME chemin : le dire, sinon
+      // l'utilisateur croit n'avoir touché qu'un agent alors que le dossier
+      // est partagé.
+      const shared = result.data.updated > 1 ? ` (${result.data.updated} agents share it)` : '';
+      toast.success(
+        next
+          ? `Marked as a development folder${shared}`
+          : `No longer a development folder${shared}`,
+      );
+    });
+  }
+
   return (
     <div className="space-y-6 pb-24">
       {/* Identity */}
@@ -3506,6 +3528,29 @@ function SettingsTab(props: {
                     Remove
                   </RowActionButton>
                 </div>
+
+                {/*
+                  Le seul endroit où Nodal apprend ce qui est du développement.
+                  Rien n'est deviné : ni l'extension des fichiers, ni la
+                  structure du dossier, ni le skill de l'agent. La case marque
+                  un PÉRIMÈTRE — cocher `Dev` ne fait pas de `Dev` un projet,
+                  ses sous-dossiers en sont.
+                */}
+                <Checkbox
+                  tone="agent"
+                  checked={ws.isDevFolder}
+                  disabled={wsIsPending}
+                  onChange={(e) => handleToggleDevFolder(ws.id, e.target.checked)}
+                  containerClassName="!items-start border-b border-rule px-3 py-2"
+                  label={
+                    <span className="min-w-0">
+                      <span className="text-body-13 text-ink-2">Development folder</span>
+                      <span className="block text-body-12 text-ink-4">
+                        Work done here shows up in the Code tab, one project per subfolder.
+                      </span>
+                    </span>
+                  }
+                />
 
                 {/* File list */}
                 <div className="px-3 pt-2 pb-1">

@@ -139,24 +139,12 @@ export const toolGroupSkillSlugs: string[] = systemSkills
   .filter((s) => s.toolGroup === true)
   .map((s) => s.slug);
 
-/**
- * Les skills du catalogue qui font d'un agent un membre de l'ÉQUIPE DE DEV :
- * `dev` pour celui qui écrit le code, `code-review` pour celui qui le juge.
- *
- * SOURCE UNIQUE (constat de la revue Codex, 25/08). La liste vivait en double
- * — une copie dans l'onglet Code, une autre dans le contexte injecté aux
- * agents — et les deux vues doivent répondre pareil : l'une montre les projets
- * au propriétaire, l'autre les annonce aux agents. Deux copies, c'est deux
- * vérités dès qu'un slug bouge, et le désaccord ne se voit depuis aucun écran.
- *
- * Ce n'est pas de la métadonnée d'agent en dur (invariant #1) : le catalogue
- * EST la définition du produit, comme `baselineSkillSlugs` juste au-dessus. Ce
- * que l'invariant interdit, c'est qu'un agent, une équipe ou un routage soient
- * décrits ailleurs que dans la base — et l'appartenance d'un agent à l'équipe
- * reste bien lue en base, via ses assignations.
- */
-export const devTeamSkillSlugs: string[] = ['dev', 'code-review'].filter((slug) =>
-  systemSkills.some((s) => s.slug === slug),
-);
+// `devTeamSkillSlugs` a existé ici du 25 au 26/08 : les skills `dev` et
+// `code-review` désignaient alors les agents dont le travail entrait dans
+// l'onglet Code. Retiré — cette identité ne marchait que si l'utilisateur
+// employait NOS skills, jamais les siens ni ceux du catalogue communautaire.
+// Ce qui est du développement se coche désormais sur le DOSSIER
+// (`agent_workspaces.is_dev_folder`, migration 0085), et les deux skills
+// redeviennent ce qu'ils auraient dû rester : de la guidance.
 
 export type { SystemSkill, SkillKind };

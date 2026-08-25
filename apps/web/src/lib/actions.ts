@@ -142,7 +142,7 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
-import { systemSkillSlugs, skillKindOfSlug, devTeamSkillSlugs } from '@nodal-agents/catalog';
+import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -1119,6 +1119,8 @@ export type AgentWorkspaceRow = {
   label: string;
   path: string;
   position: number;
+  /** Coché par le propriétaire : « ce qui vit là-dedans est du développement ». */
+  isDevFolder: boolean;
 };
 
 export async function listAgentWorkspacesAction(
@@ -1153,6 +1155,7 @@ export async function addAgentWorkspaceAction(
   agentId: string,
   label: string,
   path: string,
+  isDevFolder = false,
 ): Promise<ActionResult<{ id: string }>> {
   try {
     const session = await getSession();
@@ -1195,6 +1198,7 @@ export async function addAgentWorkspaceAction(
         label: trimmedLabel,
         path: trimmedPath,
         position: 0,
+        isDevFolder,
       })
       .returning({ id: agentWorkspaces.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -1219,6 +1223,56 @@ export async function addAgentWorkspaceAction(
       return fail('conflict', 'A workspace with this label already exists for this agent');
     }
     return fail('db_error', 'Failed to add workspace');
+  }
+}
+
+/**
+ * Coche ou décoche « dossier de développement » sur un dossier.
+ *
+ * La bascule s'applique à TOUTES les lignes de l'espace qui portent le même
+ * chemin, pas seulement à celle qu'on a cliquée. Sur cette install,
+ * `Documents/Dev` est attaché à cinq agents : cocher serait cinq gestes, et
+ * l'état mi-coché n'aurait aucun sens — un dossier contient du code ou non,
+ * cela ne dépend pas de l'agent qui le regarde.
+ */
+export async function setWorkspaceDevFolderAction(
+  workspaceId: string,
+  isDevFolder: boolean,
+): Promise<ActionResult<{ updated: number }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(workspaceId).success) {
+      return fail('validation_failed', 'Invalid workspace id');
+    }
+    const db = getDb();
+
+    const [wsRow] = await db
+      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, workspaceId));
+    if (!wsRow) return fail('not_found', 'Workspace not found');
+
+    // Propriété vérifiée via l'agent, comme les autres actions de workspace.
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Workspace not found');
+
+    const updated = await db
+      .update(agentWorkspaces)
+      .set({ isDevFolder, updatedAt: new Date() })
+      .where(
+        and(eq(agentWorkspaces.entityId, session.entityId), eq(agentWorkspaces.path, wsRow.path)),
+      )
+      .returning({ id: agentWorkspaces.id });
+
+    revalidatePath(`/agents/${wsRow.agentId}/edit`);
+    revalidatePath('/code');
+    return ok({ updated: updated.length });
+  } catch (err) {
+    console.error('[setWorkspaceDevFolderAction]', err);
+    return fail('db_error', 'Failed to update the folder');
   }
 }
 
@@ -10969,39 +11023,34 @@ const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:
 const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
 
 /**
- * v6 — la qualification se fait par IDENTITÉ, plus par extension de fichier.
+ * v7 — le DOSSIER est coché, et rien n'est deviné.
  *
- * Les versions v4 et v5 devinaient le « dev » à partir de la NATURE des
- * fichiers édités : liste d'exclusion pour la bureautique et les médias,
- * markdown neutre. Deux échecs successifs l'ont condamnée. Le coffre Obsidian
- * s'invitait dans l'onglet Code parce que de vrais `.py` et `.bat` y avaient
- * été écrits en juillet ; les workflows ComfyUI menaçaient d'y entrer à leur
- * tour, et les exclure par leur `.json` aurait fait disparaître les
- * mock-data d'une vraie app.
+ * Quatre définitions ont été essayées et écartées, toutes parce qu'elles
+ * devinaient :
  *
- * D'où la règle posée par le propriétaire, non négociable : **jamais
- * d'exclusion par langage — une exclusion par langage ratera tôt ou tard du
- * vrai code.** Ce qui distingue une session de code n'est pas le suffixe du
- * fichier, c'est QUI l'a écrit. Un agent est développeur parce qu'il porte
- * le skill `dev` ; un relecteur parce qu'il porte `code-review`. Le coffre
- * sort de l'onglet parce que son agent n'est pas un développeur, pas parce
- * que le markdown serait moins noble que le TypeScript.
+ *  - la NATURE des fichiers édités (v4/v5) : « une exclusion par langage
+ *    ratera tôt ou tard du vrai code » — un `.json` de mock-data EST du code.
+ *    Et le coffre Obsidian qualifiait quand même, à cause de vrais `.py`
+ *    écrits dedans en juillet ;
+ *  - le SKILL porté par l'agent (v6) : ne marche que si l'utilisateur emploie
+ *    NOS skills, jamais les siens ni ceux du catalogue communautaire ;
+ *  - la STRUCTURE du dossier (`package.json`, `.git`…) : symétrique du premier
+ *    échec — « on va 100 % avoir des faux positifs », un dépôt cloné ou un
+ *    thème jamais touché en porte un ;
+ *  - une case sur l'AGENT : répond au « qui », pas au « où ». Le même agent
+ *    peut coder le matin et ranger un coffre de notes l'après-midi.
  *
- * Bénéfice second, et c'est ce qui a décidé : le skill est déjà la guidance
- * du développeur. Il ne s'ajoute donc pas comme un réglage de plus à
- * découvrir — il sert deux fins à la fois, guider et désigner.
+ * D'où la règle : le propriétaire coche les dossiers de développement, et une
+ * écriture qualifie si elle tombe dedans. La case marque un PÉRIMÈTRE, pas un
+ * projet — cocher `Dev` ne fait pas de `Dev` un projet, ses sous-dossiers en
+ * sont (cf. `deriveProjectRoot`).
  *
  * CE QUE CET ONGLET NE MONTRE PAS, ET CE N'EST PAS UN TROU : les écritures
- * d'un agent que personne n'a désigné développeur, refusées ou non, n'y
- * figurent pas. Leur diagnostic passe par la page Jobs, qui conserve le job
- * et sa chronologie d'appels. Cet onglet est une vue produit, pas la surface
- * d'audit — deux relecteurs ont signalé l'absence comme un trou avant de
- * conclure l'inverse, d'où cette ligne.
+ * hors des dossiers cochés, refusées ou non. Leur diagnostic passe par la page
+ * Jobs, qui conserve le job et sa chronologie d'appels. Cet onglet est une vue
+ * produit, pas la surface d'audit — deux relecteurs ont signalé l'absence
+ * comme un trou avant de conclure l'inverse, d'où cette ligne.
  */
-// Importée du CATALOGUE, plus recopiée ici (constat de la revue Codex, 25/08) :
-// le contexte injecté aux agents en tenait sa propre copie, et deux copies
-// valent deux vérités dès qu'un slug bouge.
-const DEV_TEAM_SKILL_SLUGS = devTeamSkillSlugs;
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
 function extractFilePath(input: Record<string, unknown> | null): string | null {
@@ -11142,11 +11191,10 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
 function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
   /**
-   * Un agent de l'équipe de dev a-t-il participé à ce pipeline ? Porte du
-   * skill `dev` (développeur) ou `code-review` (relecteur). C'est la
-   * condition d'IDENTITÉ de la v6 — sans elle, rien ne qualifie.
+   * Ce pipeline a-t-il écrit dans un dossier COCHÉ « développement » ? C'est
+   * la condition de la v7 — sans elle, rien ne qualifie.
    */
-  hasDevTeamAgent: boolean,
+  touchedDevFolder: boolean,
 ): boolean {
   // REFUSED calls deliberately still QUALIFY a pipeline, even though they
   // change nothing and are excluded from the file count and the Changes panel.
@@ -11165,19 +11213,20 @@ function pipelineQualifiesAsCoding(
   // one-level rollup that split a three-level session in half. Measured live on
   // the same data, one-level rollup showed 0 coding processes where the
   // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
-  // v6 : l'IDENTITÉ commande. Aucun agent de l'équipe de dev dans le
-  // pipeline, aucune session de code — quels que soient les fichiers touchés.
-  // C'est ce qui sort le coffre Obsidian et les workflows ComfyUI de l'onglet
-  // sans avoir à juger un suffixe de fichier (cf. DEV_TEAM_SKILL_SLUGS).
-  if (!hasDevTeamAgent) return false;
-
-  // L'identité ne suffit pas : un développeur qui répond à une question de
-  // son propriétaire n'a pas ouvert de session de code. Il faut une trace de
-  // travail — une édition, une délégation en écriture, ou un verdict.
+  // v7 : le DOSSIER commande. Rien d'écrit dans un dossier coché, aucune
+  // session de code — quels que soient les fichiers touchés et quel que soit
+  // l'agent. C'est ce qui sort le coffre Obsidian et les workflows ComfyUI de
+  // l'onglet sans juger un suffixe de fichier NI l'identité de l'auteur.
   //
-  // L'extension du fichier n'entre PLUS dans le calcul (règle du
-  // propriétaire : une exclusion par langage ratera tôt ou tard du vrai
-  // code). Un développeur qui édite un README édite le README de son projet.
+  // L'extension n'entre pas dans le calcul (règle du propriétaire : une
+  // exclusion par langage ratera tôt ou tard du vrai code). Un développeur qui
+  // édite le README de son projet édite bien son projet.
+  if (!touchedDevFolder) return false;
+
+  // Une écriture dans un dossier coché SUFFIT. `code_task` en mode écriture et
+  // `review_verdict` restent des qualifiants : ils prouvent un travail de code
+  // dont les fichiers n'apparaissent pas forcément dans ce scan — une session
+  // déléguée à la CLI, un verdict rendu sans édition.
   const hasEdit = calls.some((c) => FILE_TOOL_NAMES.has(c.toolName));
   if (hasEdit) return true;
   const hasWriteCodeTask = calls.some((c) => {
@@ -11190,56 +11239,39 @@ function pipelineQualifiesAsCoding(
 }
 
 /**
- * Les agents de l'entité qui portent `dev` ou `code-review` — l'équipe de dev.
+ * Les CHEMINS que le propriétaire a cochés « dossier de développement ».
  *
- * Rendre un Set vide est un RÉSULTAT, pas un incident : il signifie « aucun
- * développeur désigné », et l'onglet le dit alors franchement au lieu
- * d'afficher une liste devinée (invariant #4).
+ * Dédupliqués : le même dossier est souvent attaché à plusieurs agents (cinq
+ * fois `Documents/Dev` sur cette install), et une seule case cochée suffit à
+ * marquer le chemin — cocher n'est jamais cinq gestes.
+ *
+ * Rendre une liste vide est un RÉSULTAT, pas un incident : il signifie « aucun
+ * dossier désigné », et l'onglet le dit franchement au lieu d'afficher une
+ * liste devinée (invariant #4).
  */
-async function devTeamAgentIds(
+async function devFolderPaths(db: ReturnType<typeof getDb>, entityId: string): Promise<string[]> {
+  const rows = await db
+    .select({ path: agentWorkspaces.path })
+    .from(agentWorkspaces)
+    .where(and(eq(agentWorkspaces.entityId, entityId), eq(agentWorkspaces.isDevFolder, true)));
+  return Array.from(new Set(rows.map((r) => r.path)));
+}
+
+/** Les agents qui ont AU MOINS un dossier de développement. */
+async function agentsWithDevFolder(
   db: ReturnType<typeof getDb>,
   entityId: string,
 ): Promise<Set<string>> {
   const rows = await db
-    .select({ agentId: agentSkillAssignments.agentId })
-    .from(agentSkillAssignments)
-    .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
-    .where(
-      and(
-        eq(agentSkillAssignments.entityId, entityId),
-        inArray(agentSkills.slug, [...DEV_TEAM_SKILL_SLUGS]),
-        // Le skill du CATALOGUE, pas un homonyme. `dev` est un nom court et
-        // plausible : une install antérieure à cette version a pu créer son
-        // propre skill nommé ainsi, du temps où le slug n'était pas réservé.
-        // Sans ce filtre, ses porteurs deviendraient des « développeurs » par
-        // pure collision de nom (revue du 25/08).
-        //
-        // Le skill système n'est PAS filtré par entité, et c'est voulu : il est
-        // seedé sous l'entité la plus ancienne mais reste visible partout
-        // (cf. `systemSkillSlugs`). Filtrer ici priverait toute entité
-        // non-doyenne de son équipe de dev.
-        eq(agentSkills.createdBy, 'system'),
-      ),
-    );
+    .select({ agentId: agentWorkspaces.agentId })
+    .from(agentWorkspaces)
+    .where(and(eq(agentWorkspaces.entityId, entityId), eq(agentWorkspaces.isDevFolder, true)));
   return new Set(rows.map((r) => r.agentId));
 }
 
 export interface DevTeamStatus {
-  /** Agents portant un skill d'équipe de dev. */
-  count: number;
-  /**
-   * Les slugs du catalogue INTROUVABLES alors qu'ils devraient être livrés au
-   * démarrage — signe qu'un skill du même nom, créé par l'utilisateur, occupe
-   * la place. Le seeder refuse alors de s'en emparer (et il a raison), mais
-   * sans cette information l'interface enverrait dans un mur : elle
-   * demanderait d'attacher un skill introuvable, ou ferait attacher le sien —
-   * qui ne qualifie pas — en boucle.
-   *
-   * Une LISTE, pas un booléen (constat de la revue Codex) : le message doit
-   * nommer le skill concerné, et `dev` manquant n'a pas les mêmes
-   * conséquences que `code-review` manquant.
-   */
-  missingCatalogSlugs: string[];
+  /** Nombre de dossiers de développement désignés dans cet espace. */
+  devFolderCount: number;
 }
 
 /**
@@ -11249,32 +11281,10 @@ export interface DevTeamStatus {
 export async function getDevTeamStatusAction(): Promise<ActionResult<DevTeamStatus>> {
   try {
     const session = await getSession();
-    const db = getDb();
-    const ids = await devTeamAgentIds(db, session.entityId);
-
-    // Le skill système n'est PAS scopé entité : il est seedé sous l'espace le
-    // plus ancien et reste assignable partout.
-    //
-    // Chaque slug est vérifié SÉPARÉMENT (constat de la revue Codex) : un
-    // `IN (...) LIMIT 1` était satisfait par `code-review` seul, donc un
-    // squat du slug `dev` passait inaperçu et l'écran conseillait d'attacher
-    // un skill introuvable — précisément le cul-de-sac que ce drapeau existe
-    // pour éviter.
-    const catalogRows = await db
-      .select({ slug: agentSkills.slug })
-      .from(agentSkills)
-      .where(
-        and(
-          inArray(agentSkills.slug, [...DEV_TEAM_SKILL_SLUGS]),
-          eq(agentSkills.createdBy, 'system'),
-        ),
-      );
-    const present = new Set(catalogRows.map((r) => r.slug));
-    const missingCatalogSlugs = DEV_TEAM_SKILL_SLUGS.filter((s) => !present.has(s));
-
-    return ok({ count: ids.size, missingCatalogSlugs });
+    const paths = await devFolderPaths(getDb(), session.entityId);
+    return ok({ devFolderCount: paths.length });
   } catch (err) {
-    return fail('unknown', err instanceof Error ? err.message : 'Failed to read dev team status');
+    return fail('unknown', err instanceof Error ? err.message : 'Failed to read dev folders');
   }
 }
 
@@ -11355,6 +11365,10 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     >();
     // Les agents ayant participé à chaque pipeline, racine comprise.
     const agentsByRoot = new Map<string, Set<string>>();
+    // Les chemins BRUTS (avant canonicalisation) par pipeline — la
+    // qualification ET la dérivation de projet ont besoin de la forme absolue
+    // quand elle existe.
+    const rawPathsByRoot = new Map<string, string[]>();
     for (const c of relevantCalls) {
       if (!c.jobId) continue;
       const root = rootOf(c.jobId);
@@ -11362,16 +11376,28 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
       callsByRoot.set(root, arr);
 
-      // TOUTE la chaîne, pas seulement l'émetteur et la racine (revue du
-      // 25/08, constat majeur des DEUX relecteurs). Sur orchestrateur → lead →
-      // worker, le lead peut être le seul porteur du skill tout en n'éditant
-      // rien lui-même : il délègue. Or les délégations (`assign_*`) ne font pas
-      // partie des appels chargés ici, donc le lead n'apparaissait jamais comme
-      // participant et le pipeline entier disparaissait de l'onglet.
+      // Les chemins BRUTS de chaque pipeline, collectés ICI parce que la
+      // qualification en a besoin — c'est eux qui disent si l'écriture est
+      // tombée dans un dossier coché.
       //
-      // `agentOfJob` contient déjà tous les ancêtres résolus par la boucle
-      // ci-dessus ; il suffit de les parcourir. La remontée est bornée par la
-      // même profondeur, et s'arrête sur un parent inconnu.
+      // Les écritures REFUSÉES comptent, délibérément. Un pipeline dont toutes
+      // les écritures ont été rejetées est un agent qui ne fait rien en
+      // silence — la panne la plus dure à diagnostiquer (Dev C, neuf
+      // tentatives, neuf refus, une journée perdue). L'onglet est le seul
+      // endroit où elle se voit, donc la ligne reste, en annonçant honnêtement
+      // 0 fichier changé. Le compte de fichiers, lui, les exclut.
+      if (FILE_TOOL_NAMES.has(c.toolName)) {
+        const fp = extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null);
+        if (fp) {
+          const raws = rawPathsByRoot.get(root) ?? [];
+          raws.push(fp);
+          rawPathsByRoot.set(root, raws);
+        }
+      }
+
+      // Les agents du pipeline servent encore à l'affichage (colonne « agent »)
+      // et au repli de projet, plus à la qualification : depuis la v7, c'est le
+      // DOSSIER écrit qui décide, pas qui a écrit.
       const participants = agentsByRoot.get(root) ?? new Set<string>();
       let cursor: string | null = c.jobId;
       for (let hop = 0; hop <= ROLLUP_MAX_DEPTH && cursor; hop++) {
@@ -11382,12 +11408,23 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       agentsByRoot.set(root, participants);
     }
 
-    const devTeam = await devTeamAgentIds(db, entityId);
+    // Les dossiers cochés « développement ». Une écriture qui tombe dedans
+    // qualifie le pipeline ; le reste n'existe pas pour cet onglet.
+    const devFolders = await devFolderPaths(db, entityId);
+    const devAgents = await agentsWithDevFolder(db, entityId);
+    const devMemo = new Map<string, string | null>();
     const candidateJobIds = Array.from(callsByRoot.entries())
       .filter(([root, calls]) => {
-        const participants = agentsByRoot.get(root) ?? new Set<string>();
-        const hasDevTeamAgent = Array.from(participants).some((a) => devTeam.has(a));
-        return pipelineQualifiesAsCoding(calls, hasDevTeamAgent);
+        // Un chemin qui tombe dans un dossier coché : la preuve directe.
+        const byPath =
+          deriveProjectRoot(rawPathsByRoot.get(root) ?? [], devFolders, devMemo) !== null;
+        // Sinon, le travail sans chemin ancrable — un verdict de review, une
+        // session déléguée à la CLI — est rattaché à l'agent : s'il a un
+        // dossier de développement, c'est là qu'il travaillait. Sans ce repli,
+        // une review pure disparaîtrait de l'onglet faute d'avoir écrit un
+        // fichier.
+        const byAgent = Array.from(agentsByRoot.get(root) ?? []).some((a) => devAgents.has(a));
+        return pipelineQualifiesAsCoding(calls, byPath || byAgent);
       })
       .map(([root]) => root);
 
@@ -11487,29 +11524,17 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       // Nodal form = the same file) so the count never doubles.
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const filesByRoot = new Map<string, Set<string>>();
-      // Les chemins BRUTS (avant canonicalisation) par pipeline — la
-      // dérivation de projet a besoin de la forme absolue quand elle existe.
-      const rawPathsByRoot = new Map<string, string[]>();
       for (const [root, calls] of callsByRoot) {
         if (!candidateJobIds.includes(root)) continue;
         const set = new Set<string>();
-        const raws: string[] = [];
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
           if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
-          if (fp) {
-            set.add(canonicalChangePath(fp, workspaceRoots));
-            raws.push(fp);
-          }
+          if (fp) set.add(canonicalChangePath(fp, workspaceRoots));
         }
         filesByRoot.set(root, set);
-        rawPathsByRoot.set(root, raws);
       }
-
-      // Un seul cache git pour tout l'écran — les pipelines d'un même repo
-      // partagent leurs remontées de dossiers.
-      const gitMemo = new Map<string, string | null>();
 
       // Workspaces PAR AGENT — le repli des sessions sans fichier ancrable
       // (voir fallbackProjectFromAgentWorkspaces).
@@ -11549,9 +11574,13 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
 
       jobRows = jobs.map((j) => {
         const projectPath =
-          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], workspaceRoots, gitMemo) ??
+          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], devFolders, devMemo) ??
           (j.agentId
-            ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [])
+            ? fallbackProjectFromAgentWorkspaces(
+                (workspacesByAgent.get(j.agentId) ?? []).filter((p) =>
+                  devFolders.some((d) => p === d || p.startsWith(d)),
+                ),
+              )
             : null);
         return {
           id: j.id,

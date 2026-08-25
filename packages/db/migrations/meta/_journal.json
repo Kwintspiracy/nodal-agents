@@ -589,6 +589,13 @@
       "when": 1786000005000,
       "tag": "0084_release_wrong_auto_run_pause",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1786000006000,
+      "tag": "0085_workspaces_is_dev_folder",
+      "breakpoints": true
     }
   ]
 }

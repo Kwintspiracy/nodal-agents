@@ -40,10 +40,16 @@ function resolveAbsoluteChangePath(rawPath: string, workspaceRoots: string[]): s
 }
 
 /**
- * Marqueurs de racine de projet, au-delà de `.git` (constat Quentin 25/08 :
- * les apps que le codeur crée dans le workspace partagé `Dev\` n'ont pas de
- * dépôt git — `Dev\calorie-counter` DOIT être un projet, pas `Dev` entier).
- * Liste courte et conventionnelle — un manifeste ou un point d'entrée.
+ * Manifestes de projet. Servent à UNE SEULE question, et uniquement à la
+ * racine d'un dossier coché : ce dossier est-il lui-même un projet, ou un
+ * conteneur de projets ?
+ *
+ * Ils ne servent PLUS à chercher un projet à tous les niveaux. Cette recherche
+ * répondait « où commence le projet », mais elle décidait aussi, en pratique,
+ * ce qui était du code — et c'est une devinette dont le produit ne veut plus
+ * (décision Quentin 26/08). Elle rendait `outputs/calorie-counter/app` comme
+ * projet, parce que le `index.html` était là ; désormais c'est `outputs`, et
+ * c'est au skill « dev » de corriger le rangement à la source.
  */
 const PROJECT_MARKERS = [
   '.git',
@@ -66,122 +72,95 @@ function hasProjectMarker(dir: string): boolean {
 }
 
 /**
- * Remonte de `dir` vers la racine de PROJET : le PLUS HAUT dossier (dans les
- * bornes) portant un marqueur — la convention repo/monorepo, qui garde entier
- * un projet dont le workspace est la racine (`MonApp/package.json` gagne sur
- * `MonApp/src`). Mémoïsé par requête.
+ * Le projet d'un fichier, dans un dossier COCHÉ « développement ».
  *
- * `stopAt` : frontière HAUTE de la remontée — le workspace qui contient le
- * fichier. Sans elle, un fichier d'un dossier non-versionné remontait
- * jusqu'à un repo fortuit AU-DESSUS du workspace (attrapé par le test : un
- * `.git` dans le home de l'utilisateur transformait tout en un seul projet).
- * Le projet ne peut jamais être plus large que le workspace.
+ * Une seule règle : **un projet est un enfant direct du dossier coché.**
+ * Cocher `Documents/Dev` ne fait pas de `Dev` un projet — ses sous-dossiers en
+ * sont, quelle que soit la profondeur du fichier édité :
+ *
+ *   Dev/calorie-counter/app/index.html  →  Dev/calorie-counter
+ *   Dev/NodalAI/apps/web/src/page.tsx   →  Dev/NodalAI
+ *
+ * C'est aussi ce que le skill « dev » demande aux agents (« une app = un
+ * dossier au premier niveau »), donc l'affichage et la consigne disent enfin
+ * la même chose.
+ *
+ * SEULE exception, et elle est nécessaire : si le dossier coché porte
+ * lui-même un manifeste, c'est LUI le projet. Sans ça, cocher directement un
+ * dépôt afficherait `apps`, `packages` et `docs` comme trois projets. Une
+ * seule vérification, à la racine du dossier coché — jamais de remontée.
+ *
+ * Un fichier posé à la racine même du dossier coché rend ce dossier.
  */
-function findProjectRoot(
+function projectUnderDevFolder(
   dir: string,
+  devRoot: string,
   memo: Map<string, string | null>,
-  stopAt: string | null,
-): string | null {
-  const inBounds = (d: string): boolean => {
-    if (!stopAt) return true;
-    const isWin = /^[a-z]:\//i.test(d);
-    const a = isWin ? d.toLowerCase() : d;
-    const b = isWin ? stopAt.toLowerCase() : stopAt;
-    return a === b || a.startsWith(b + '/');
-  };
-  const key = (d: string) => `${stopAt ?? ''}|${d}`;
-  const cached = memo.get(key(dir));
-  if (cached !== undefined) return cached;
-
-  const visited: string[] = [];
-  let topmost: string | null = null;
-  let cur = dir;
-  for (let hops = 0; hops < 24 && cur && inBounds(cur); hops++) {
-    visited.push(cur);
-    if (hasProjectMarker(cur)) topmost = cur;
-    const parent = cur.replace(/\/[^/]*$/, '');
-    // Racine atteinte : '' (POSIX) ou 'c:' (Windows) — pas de projet au-dessus.
-    if (parent === cur || parent === '' || /^[a-z]:$/i.test(parent)) break;
-    cur = parent;
+): string {
+  const rootIsProject = memo.get(`root|${devRoot}`);
+  let isProject: boolean;
+  if (rootIsProject === undefined) {
+    isProject = hasProjectMarker(devRoot);
+    memo.set(`root|${devRoot}`, isProject ? devRoot : null);
+  } else {
+    isProject = rootIsProject !== null;
   }
-  for (const v of visited) memo.set(key(v), topmost);
-  return topmost;
-}
+  if (isProject) return devRoot;
 
-/**
- * Sans aucun marqueur : le SOUS-DOSSIER de premier niveau du workspace qui
- * contient le fichier — jamais le workspace-conteneur entier (toutes les apps
- * d'un `Dev\` partagé fusionneraient en un seul projet). Un fichier posé
- * directement à la racine du workspace rend le workspace lui-même.
- */
-function firstLevelChildUnder(dir: string, wsRoot: string): string {
   const isWin = /^[a-z]:\//i.test(dir);
   const a = isWin ? dir.toLowerCase() : dir;
-  const b = isWin ? wsRoot.toLowerCase() : wsRoot;
-  if (a === b || !a.startsWith(b + '/')) return wsRoot;
-  const rest = dir.slice(wsRoot.length + 1);
-  const child = rest.split('/')[0];
-  return child ? `${wsRoot}/${child}` : wsRoot;
+  const b = isWin ? devRoot.toLowerCase() : devRoot;
+  if (a === b || !a.startsWith(b + '/')) return devRoot;
+  const child = dir.slice(devRoot.length + 1).split('/')[0];
+  return child ? `${devRoot}/${child}` : devRoot;
 }
 
 /**
- * La racine de projet d'un pipeline, depuis les chemins BRUTS de ses éditions.
- * Vote majoritaire quand les fichiers se répartissent sur plusieurs repos —
+ * Le projet d'un pipeline, depuis les chemins BRUTS de ses éditions.
+ *
+ * `devFolders` : les dossiers que le propriétaire a cochés « développement ».
+ * Une écriture HORS de ces dossiers ne produit aucun projet — c'est toute la
+ * décision du 26/08. Le coffre Obsidian n'y est pas, donc il n'apparaît jamais,
+ * même quand un agent développeur y travaille.
+ *
+ * Vote majoritaire quand les fichiers se répartissent sur plusieurs projets :
  * le projet affiché est celui où le gros du travail a eu lieu.
  */
 export function deriveProjectRoot(
   rawPaths: string[],
-  workspaceRoots: string[],
-  gitMemo: Map<string, string | null>,
+  devFolders: string[],
+  memo: Map<string, string | null>,
 ): string | null {
-  const gitVotes = new Map<string, number>();
-  const wsVotes = new Map<string, number>();
+  const roots = devFolders
+    .map((r) => r.replace(/\\/g, '/').replace(/\/+$/, ''))
+    // Un dossier coché posé sur une RACINE DE DISQUE est ignoré : il
+    // engloberait la machine entière, et la règle « enfant direct » en tirerait
+    // des projets nommés `Users` ou `home`. Aucun projet vaut mieux qu'un
+    // projet inventé.
+    .filter((r) => r !== '' && !isDriveRoot(r))
+    // Du plus long au plus court : un dossier coché NICHÉ dans un autre gagne,
+    // sinon le parent avalerait l'enfant et le projet remonterait d'un cran.
+    .sort((a, b) => b.length - a.length);
+  if (roots.length === 0) return null;
+
+  const votes = new Map<string, number>();
   for (const raw of rawPaths) {
-    const abs = resolveAbsoluteChangePath(raw, workspaceRoots);
+    const abs = resolveAbsoluteChangePath(raw, roots);
     if (!abs) continue;
     const dir = abs.replace(/\/[^/]*$/, '');
     if (dir === '' || dir === abs) continue;
-    // Le workspace qui contient le fichier — repli de groupement ET frontière
-    // haute de la remontée git (workspaceRoots est trié du plus long au plus
-    // court, donc le premier match est le plus spécifique).
+
     const isWin = /^[a-z]:\//i.test(abs);
-    let wsRoot: string | null = null;
-    for (const root of workspaceRoots) {
-      const r = root.replace(/\\/g, '/').replace(/\/+$/, '');
-      // Un workspace posé sur une RACINE DE DISQUE est ignoré (revue P1 du
-      // 25/08) : il engloberait la machine entière, et le repli « sous-dossier
-      // de premier niveau » en tirerait des projets nommés `Users` ou `home`.
-      // Aucun projet vaut mieux qu'un projet inventé.
-      if (r === '' || isDriveRoot(r)) continue;
-      const matches = isWin
-        ? abs.toLowerCase().startsWith(r.toLowerCase() + '/')
-        : abs.startsWith(r + '/');
-      if (matches) {
-        wsRoot = r;
-        break;
-      }
-    }
-    // Un fichier qui n'est SOUS AUCUN workspace ne produit aucun projet
-    // (attrapé par le test « racine de disque », revue P1 du 25/08) : sans
-    // cette sortie, `findProjectRoot` était appelé avec une borne nulle,
-    // remontait sans limite et pouvait retenir un dépôt fortuit du home —
-    // précisément le trou que la borne workspace était censée fermer.
-    if (!wsRoot) continue;
-    const marked = findProjectRoot(dir, gitMemo, wsRoot);
-    if (marked) {
-      gitVotes.set(marked, (gitVotes.get(marked) ?? 0) + 1);
-      continue;
-    }
-    // Aucun marqueur : le sous-dossier de premier niveau sous le workspace —
-    // jamais le workspace-conteneur entier (constat Quentin 25/08).
-    if (wsRoot) {
-      const child = firstLevelChildUnder(dir, wsRoot);
-      wsVotes.set(child, (wsVotes.get(child) ?? 0) + 1);
-    }
+    const devRoot = roots.find((r) =>
+      isWin ? abs.toLowerCase().startsWith(r.toLowerCase() + '/') : abs.startsWith(r + '/'),
+    );
+    // Écriture hors de tout dossier de développement : rien.
+    if (!devRoot) continue;
+
+    const project = projectUnderDevFolder(dir, devRoot, memo);
+    votes.set(project, (votes.get(project) ?? 0) + 1);
   }
-  const top = (m: Map<string, number>): string | null =>
-    [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  const winner = top(gitVotes) ?? top(wsVotes);
+  const winner = [...votes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   return winner !== null && !isDriveRoot(winner) ? winner : null;
 }
 

@@ -94,7 +94,27 @@ beforeAll(async () => {
   _testUserId = seed.userId;
   _testEntityId = seed.entityId;
   _llmKeyId = seed.llmKeyId;
+
+  // LE dossier de développement de cette suite. Depuis la v7 (26/08), c'est la
+  // seule chose qui fait qu'une écriture entre dans l'onglet Code : ni son
+  // extension, ni l'identité de son auteur.
+  //
+  // Un seul suffit pour tout le fichier — la lecture se fait par ESPACE, pas
+  // par agent, exactement comme sur une vraie install où `Documents/Dev` est
+  // partagé par cinq agents et coché une fois.
+  await db.insert(agentWorkspaces).values({
+    entityId: _testEntityId,
+    agentId: seed.agentId,
+    label: 'repo',
+    path: DEV_FOLDER,
+    isDevFolder: true,
+  });
 });
+
+/** Coché « développement » : tout ce qui est écrit là-dedans qualifie. */
+const DEV_FOLDER = '/repo';
+/** Hors périmètre : le coffre de notes, jamais dans l'onglet Code. */
+const VAULT = '/vault';
 
 afterAll(() => {
   _resetMasterKeyCacheForTests();
@@ -130,12 +150,15 @@ async function skillId(slug: string, name: string): Promise<string> {
 }
 
 /**
- * `skills` par défaut = ['dev'] : la quasi-totalité de cette suite décrit le
- * travail d'un DÉVELOPPEUR. Passer `[]` fabrique un agent qui n'appartient pas
- * à l'équipe de dev — le coffre de notes, l'agent bureautique, le générateur
- * d'images — dont le travail ne doit JAMAIS apparaître dans l'onglet.
+ * `devFolder` par défaut = true : la quasi-totalité de cette suite décrit du
+ * travail de développement, donc l'agent reçoit le dossier coché.
+ *
+ * Passer `false` fabrique un agent SANS dossier de développement — le preneur
+ * de notes, l'agent bureautique, le générateur d'images — dont le travail ne
+ * doit jamais apparaître dans l'onglet, quels que soient les fichiers touchés.
  */
-async function makeAgent(name: string, skills: string[] = ['dev']): Promise<string> {
+async function makeAgent(name: string, opts: { devFolder?: boolean } = {}): Promise<string> {
+  const devFolder = opts.devFolder ?? true;
   const [row] = await _testDb!
     .insert(agents)
     .values({
@@ -147,11 +170,13 @@ async function makeAgent(name: string, skills: string[] = ['dev']): Promise<stri
     })
     .returning();
   if (!row) throw new Error(`Failed to seed agent ${name}`);
-  for (const slug of skills) {
-    await _testDb!.insert(agentSkillAssignments).values({
+  if (devFolder) {
+    await _testDb!.insert(agentWorkspaces).values({
       entityId: _testEntityId,
       agentId: row.id,
-      skillId: await skillId(slug, slug === 'dev' ? 'Software development' : 'Code review'),
+      label: 'repo',
+      path: DEV_FOLDER,
+      isDevFolder: true,
     });
   }
   return row.id;
@@ -298,7 +323,10 @@ describe('listCodingProcessesAction', () => {
     expect(detail.ok).toBe(true);
     if (!detail.ok) return;
     expect(detail.data.changes).toHaveLength(1);
-    expect(detail.data.changes[0]!.filePath).toBe('/repo/src/real.ts');
+    // Le chemin s'affiche RELATIF au dossier, maintenant que `/repo` est un
+    // workspace de l'agent — c'est la canonicalisation existante, et c'est la
+    // forme la plus lisible.
+    expect(detail.data.changes[0]!.filePath).toBe('src/real.ts');
     // The refused attempt still exists in the timeline — it is the signal
     // that the agent's posture is wrong, not something to hide.
     const calls = detail.data.activity.filter((a) => a.kind === 'call');
@@ -466,7 +494,7 @@ describe('listCodingProcessesAction', () => {
     // écrit une présentation n'est pas un développeur — non parce que .pptx
     // serait un format indigne, mais parce que personne ne l'a désigné
     // développeur. Le même agent, s'il portait le skill dev, apparaîtrait.
-    const agentId = await makeAgent('Audit Code Office Agent', []);
+    const agentId = await makeAgent('Audit Code Office Agent', { devFolder: false });
     const jobId = await makeJob(agentId, 'completed');
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
@@ -592,7 +620,7 @@ describe('listCodingProcessesAction', () => {
 
 describe('listCodingProcessesAction — v6, la qualification par identité', () => {
   it('le coffre de notes est ABSENT — son agent n’est pas un développeur', async () => {
-    const agentId = await makeAgent('Vault Notes Agent', []);
+    const agentId = await makeAgent('Vault Notes Agent', { devFolder: false });
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values([
@@ -656,7 +684,7 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     // Sans ce test, une régression de `devTeamAgentIds` vers « tous les
     // agents » ne ferait rougir aucune assertion : le défaut `['dev']` de
     // makeAgent masque le trou partout ailleurs.
-    const agentId = await makeAgent('Vault Python Writer', []);
+    const agentId = await makeAgent('Vault Python Writer', { devFolder: false });
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values({
@@ -683,9 +711,9 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     // n'édite rien lui-même — il délègue. Comme les appels de délégation ne
     // font pas partie du scan, il n'apparaissait jamais comme participant, et
     // tout le pipeline disparaissait de l'onglet.
-    const orchestrateur = await makeAgent('Chain Orchestrator', []);
-    const lead = await makeAgent('Chain Lead Dev', ['dev']);
-    const worker = await makeAgent('Chain Worker', []);
+    const orchestrateur = await makeAgent('Chain Orchestrator', { devFolder: false });
+    const lead = await makeAgent('Chain Lead Dev');
+    const worker = await makeAgent('Chain Worker', { devFolder: false });
 
     const racineId = await makeJob(orchestrateur, 'completed');
     const leadJobId = await makeJob(lead, 'completed', racineId);
@@ -710,53 +738,8 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     ).toBeTruthy();
   });
 
-  it('un skill maison qui squatte le slug est SIGNALÉ, pas subi', async () => {
-    // Le cul-de-sac que la revue a déroulé (25/08) : si un skill de
-    // l'utilisateur occupe déjà le slug `dev`, le seeder refuse de s'en
-    // emparer — à raison. Mais alors le skill du catalogue n'existe nulle
-    // part, personne ne peut qualifier, et l'écran demandait d'attacher un
-    // skill introuvable. L'utilisateur attachait le sien, rien ne changeait,
-    // le message revenait : une boucle sans issue depuis l'interface, dont la
-    // seule sortie était écrite dans un log que personne ne lit.
-    const { getDevTeamStatusAction } = await import('../src/lib/actions.ts');
-
-    // Les deux skills du catalogue sont posés par le harnais.
-    await skillId('dev', 'Software development');
-    await skillId('code-review', 'Code review');
-
-    const avant = await getDevTeamStatusAction();
-    expect(avant.ok).toBe(true);
-    if (avant.ok) expect(avant.data.missingCatalogSlugs).toEqual([]);
-
-    // Un homonyme de l'utilisateur occupe SEULEMENT `dev`.
-    //
-    // C'est le cas que la revue Codex a trouvé : la détection interrogeait
-    // `slug IN ('dev','code-review') LIMIT 1`, satisfaite par `code-review`
-    // resté intact — le squat de `dev` passait donc inaperçu, et l'écran
-    // conseillait d'attacher un skill introuvable.
-    await _testDb!
-      .update(agentSkills)
-      .set({ createdBy: 'user' })
-      .where(eq(agentSkills.slug, 'dev'));
-
-    try {
-      const apres = await getDevTeamStatusAction();
-      expect(apres.ok).toBe(true);
-      if (!apres.ok) return;
-      expect(
-        apres.data.missingCatalogSlugs,
-        'le squat de « dev » est masqué par « code-review » resté intact',
-      ).toEqual(['dev']);
-    } finally {
-      await _testDb!
-        .update(agentSkills)
-        .set({ createdBy: 'system' })
-        .where(eq(agentSkills.slug, 'dev'));
-    }
-  });
-
   it('un RELECTEUR (skill code-review) entre aussi dans l’onglet', async () => {
-    const agentId = await makeAgent('Reviewer Agent', ['code-review']);
+    const agentId = await makeAgent('Reviewer Agent');
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values({
@@ -824,15 +807,15 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     expect(result.data.find((r) => r.id === jobId)).toBeTruthy();
   });
 
-  it('un preneur de notes sans skill dev ne qualifie pas non plus, CLI ou pas', async () => {
-    const agentId = await makeAgent('Nodal Notes Writer', []);
+  it('un preneur de notes SANS dossier de dev ne qualifie pas, CLI ou pas', async () => {
+    const agentId = await makeAgent('Nodal Notes Writer', { devFolder: false });
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
       jobId,
       toolName: 'file_write',
-      toolInput: { path: 'notes/reunion.md', content: '# CR' },
+      toolInput: { path: `${VAULT}/notes/reunion.md`, content: '# CR' },
       toolOutput: '{"ok":true}',
     });
 
@@ -843,24 +826,25 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
   });
 
-  it('session dev sans chemin ancrable : repli sur l’UNIQUE workspace de l’agent', async () => {
-    const agentId = await makeAgent('Solo Workspace Coder');
+  it('sans aucun chemin exploitable, le projet est le dossier de dev de l’agent', async () => {
+    // Une review pure n'écrit aucun fichier : rien à ancrer. Le repli est le
+    // dossier de développement de l'agent — sans lui, ce travail
+    // disparaîtrait de l'onglet faute d'avoir touché un fichier.
+    const agentId = await makeAgent('Solo Workspace Coder', { devFolder: false });
     const jobId = await makeJob(agentId, 'completed');
     await _testDb!.insert(agentWorkspaces).values({
       entityId: _testEntityId,
       agentId,
       label: 'app',
       path: 'D:\\Projets\\MonApp',
+      isDevFolder: true,
     });
 
-    // Chemin relatif dont le fichier n'existe pas sur CE disque : la
-    // résolution par existence échoue, l'entité a plusieurs workspaces →
-    // aucun ancrage par fichier. Le repli = le seul workspace de l'AGENT.
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
       jobId,
-      toolName: 'file_edit',
-      toolInput: { path: 'src/main.ts', old_string: 'a', new_string: 'b' },
+      toolName: 'review_verdict',
+      toolInput: { verdict: 'approve', summary: 'ok' },
       toolOutput: '{"ok":true}',
     });
 
@@ -869,11 +853,10 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const row = result.data.find((r) => r.id === jobId);
-    expect(row).toBeTruthy();
+    expect(row, 'une review sans edition a disparu de l onglet').toBeTruthy();
     expect(row?.projectPath).toBe('D:/Projets/MonApp');
     expect(row?.projectName).toBe('MonApp');
   });
-
   it('sessionType : verdicts sans édition = review, et « PR #n » dans la tâche = pr_review', async () => {
     const agentId = await makeAgent('Session Type Reviewer');
 

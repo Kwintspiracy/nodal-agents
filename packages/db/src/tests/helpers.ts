@@ -503,6 +503,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       label text NOT NULL,
       path text NOT NULL,
       position integer NOT NULL DEFAULT 0,
+      is_dev_folder boolean NOT NULL DEFAULT false,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (agent_id, label)

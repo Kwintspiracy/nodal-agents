@@ -12,16 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import {
-  eq,
-  agents,
-  agentWorkspaces,
-  agentJobs,
-  agentSkills,
-  agentSkillAssignments,
-  entities,
-  toolCalls,
-} from '@nodal-agents/db';
+import { eq, agents, agentWorkspaces, agentJobs, entities, toolCalls } from '@nodal-agents/db';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,32 +65,16 @@ beforeAll(async () => {
     .returning();
   leadAgentId = lead!.id;
 
-  // Le skill « dev » du catalogue : un projet naît du travail d'un
-  // DÉVELOPPEUR, pas de n'importe quelle écriture de fichier. Même règle
-  // d'identité que l'onglet Code, pour que les deux vues ne se contredisent
-  // jamais (revue du 25/08).
-  const [devSkillRow] = await db
-    .insert(agentSkills)
-    .values({
-      entityId: seed.entityId,
-      name: 'Software development',
-      slug: 'dev',
-      content: 'test dev skill',
-      createdBy: 'system',
-    })
-    .returning();
-
+  // Le dossier partagé est COCHÉ « développement » — c'est la seule chose qui
+  // fait exister un projet depuis le 26/08. Ni l'extension des fichiers, ni
+  // les skills des agents n'entrent dans le calcul.
   for (const agentId of [devAgentId, leadAgentId]) {
     await db.insert(agentWorkspaces).values({
       entityId: seed.entityId,
       agentId,
       label: 'Dev',
       path: ws,
-    });
-    await db.insert(agentSkillAssignments).values({
-      entityId: seed.entityId,
-      agentId,
-      skillId: devSkillRow!.id,
+      isDevFolder: true,
     });
   }
 
@@ -297,16 +272,17 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
-  it('workspace NICHÉ : l’écriture d’un non-dev ne devient pas un projet du DÉVELOPPEUR', async () => {
-    // Le cas où le filtre par workspace seul se retournait (revue du 25/08,
-    // second tour). Le coffre du scribe vit À L'INTÉRIEUR du workspace des
-    // développeurs. Avant le filtre, la racine la plus longue gagnait et son
-    // écriture restait chez lui ; le filtre retirait sa racine, et la même
-    // écriture retombait chez les développeurs — fabriquant un projet de notes
-    // ATTRIBUÉ à Dev C et Lead-Dev, annoncé à tous les agents, et introuvable
-    // dans l'onglet Code. Le filtre aggravait ce qu'il devait corriger.
-    await mkdir(join(racine, 'dev', 'coffre-perso'), { recursive: true });
-    await writeFile(join(racine, 'dev', 'coffre-perso', 'notes.py'), 'print(1)');
+  it('un dossier coché couvre TOUT ce qu’il contient, quel que soit l’auteur', async () => {
+    // La règle demandée par Quentin le 26/08 : cocher `\\dev` fait de
+    // `\\dev\\calorie-counter` un projet. La case marque un PÉRIMÈTRE, donc
+    // tout ce qui vit dedans en fait partie — y compris le travail d'un agent
+    // qui n'a rien d'un développeur.
+    //
+    // C'est délibéré et c'est ce qui rend la règle prévisible : le
+    // propriétaire n'a pas à se demander qui a écrit, seulement où. Un dossier
+    // qu'il ne veut pas voir ici, il ne le range pas sous un dossier coché.
+    await mkdir(join(racine, 'dev', 'niche-app'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'niche-app', 'notes.py'), 'print(1)');
 
     const [scribe] = await db
       .insert(agents)
@@ -317,13 +293,6 @@ describe('listCodeProjectsForContext', () => {
         personality: 'x',
       })
       .returning();
-    // Son workspace est SOUS celui des développeurs.
-    await db.insert(agentWorkspaces).values({
-      entityId: seed.entityId,
-      agentId: scribe!.id,
-      label: 'Coffre',
-      path: `${racine}/dev/coffre-perso`,
-    });
     const [jobScribe] = await db
       .insert(agentJobs)
       .values({
@@ -338,21 +307,21 @@ describe('listCodeProjectsForContext', () => {
       entityId: seed.entityId,
       jobId: jobScribe!.id,
       toolName: 'file_write',
-      toolInput: { path: `${racine}/dev/coffre-perso/notes.py` },
+      toolInput: { path: `${racine}/dev/niche-app/notes.py` },
       toolOutput: '{"ok":true}',
     });
 
     try {
       const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
       expect(
-        projects.some((p) => p.name === 'coffre-perso'),
-        'le coffre d’un non-développeur est devenu un projet attribué aux développeurs',
-      ).toBe(false);
-      expect(projects.map((p) => p.name).sort()).toEqual(['calorie-counter', 'water-intake']);
+        projects.some((p) => p.name === 'niche-app'),
+        'un sous-dossier du dossier coché n’est pas devenu un projet',
+      ).toBe(true);
+      // Et c'est bien le SOUS-DOSSIER, jamais le dossier coché lui-même.
+      expect(projects.some((p) => p.path === `${racine}/dev`)).toBe(false);
     } finally {
-      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, scribe!.id));
       await db.delete(toolCalls).where(eq(toolCalls.jobId, jobScribe!.id));
-      await rm(join(racine, 'dev', 'coffre-perso'), { recursive: true, force: true });
+      await rm(join(racine, 'dev', 'niche-app'), { recursive: true, force: true });
     }
   });
 
