@@ -28,7 +28,11 @@ export default async function CodePage() {
       <CodeProcessesTable
         initialRows={rows}
         initialArchivedPaths={archivedResult.ok ? archivedResult.data : []}
-        devTeamCount={devTeamResult.ok ? devTeamResult.data : 0}
+        // `null` quand le comptage a ÉCHOUÉ — pas 0. Retomber sur 0 ferait
+        // affirmer « aucun développeur désigné » à un espace qui en a
+        // peut-être plein : un repli silencieux vers un état plausible est
+        // exactement ce que l'invariant #4 interdit.
+        devTeamCount={devTeamResult.ok ? devTeamResult.data : null}
         error={!result.ok ? result.message : undefined}
       />
     </PageShell>

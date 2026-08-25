@@ -112,7 +112,16 @@ async function skillId(slug: string, name: string): Promise<string> {
   if (cached) return cached;
   const [row] = await _testDb!
     .insert(agentSkills)
-    .values({ entityId: _testEntityId, name, slug, content: `test skill ${slug}` })
+    .values({
+      entityId: _testEntityId,
+      name,
+      slug,
+      content: `test skill ${slug}`,
+      // Le skill du CATALOGUE : la qualification exige `createdBy='system'`
+      // pour qu'un homonyme créé par l'utilisateur ne fabrique pas de faux
+      // développeurs. Le seeder du runner stampe cette valeur.
+      createdBy: 'system',
+    })
     .returning();
   if (!row) throw new Error(`Failed to seed skill ${slug}`);
   skillIdBySlug.set(slug, row.id);
@@ -634,6 +643,69 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     expect(
       result.data.find((r) => r.id === jobId),
       'le travail d’un développeur a été jugé sur l’extension de son fichier',
+    ).toBeTruthy();
+  });
+
+  it('un agent SANS skill qui écrit du .ts est EXCLU — le test qui sépare vraiment v5 et v6', async () => {
+    // LE cas que la v6 introduit, et le seul que les autres exclusions ne
+    // prouvent pas : sur main, ce pipeline QUALIFIE (fichier de code = dev).
+    // C'est aussi le cas vécu du coffre Obsidian — il qualifiait à cause de
+    // vrais .py et .bat écrits dedans en juillet, pas à cause de son markdown.
+    //
+    // Sans ce test, une régression de `devTeamAgentIds` vers « tous les
+    // agents » ne ferait rougir aucune assertion : le défaut `['dev']` de
+    // makeAgent masque le trou partout ailleurs.
+    const agentId = await makeAgent('Vault Python Writer', []);
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'cli:Write',
+      toolInput: { file_path: '/vault/scripts/export.py', content: 'print(1)' },
+      toolOutput: 'ok',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === jobId),
+      'un fichier de code a suffi à qualifier un agent non-développeur (retour à la v5)',
+    ).toBeUndefined();
+  });
+
+  it('chaîne à 3 niveaux : le skill porté par le SEUL intermédiaire suffit', async () => {
+    // Constat majeur des deux relecteurs (25/08). L'orchestrateur délègue au
+    // lead, qui délègue au worker ; seul le LEAD est développeur, et il
+    // n'édite rien lui-même — il délègue. Comme les appels de délégation ne
+    // font pas partie du scan, il n'apparaissait jamais comme participant, et
+    // tout le pipeline disparaissait de l'onglet.
+    const orchestrateur = await makeAgent('Chain Orchestrator', []);
+    const lead = await makeAgent('Chain Lead Dev', ['dev']);
+    const worker = await makeAgent('Chain Worker', []);
+
+    const racineId = await makeJob(orchestrateur, 'completed');
+    const leadJobId = await makeJob(lead, 'completed', racineId);
+    const workerJobId = await makeJob(worker, 'completed', leadJobId);
+
+    // C'est le WORKER qui édite — le lead n'a que délégué.
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId: workerJobId,
+      toolName: 'file_write',
+      toolInput: { path: 'src/feature.ts', content: 'export const x = 1;' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === racineId),
+      'le porteur du skill était au milieu de la chaîne : le pipeline a disparu',
     ).toBeTruthy();
   });
 

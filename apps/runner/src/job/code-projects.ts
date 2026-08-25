@@ -17,9 +17,31 @@
 // module ne fabrique QUE des données.
 
 import { existsSync } from 'node:fs';
-import { and, desc, eq, inArray, agentWorkspaces, agents, toolCalls } from '@nodal-agents/db';
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  agentWorkspaces,
+  agents,
+  agentSkills,
+  agentSkillAssignments,
+  toolCalls,
+} from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
+
+/**
+ * Les skills qui font d'un agent un membre de l'équipe de dev — même liste que
+ * l'onglet Code (`DEV_TEAM_SKILL_SLUGS` dans apps/web/src/lib/actions.ts).
+ *
+ * Les deux vues DOIVENT s'accorder : ce module dit aux agents quels projets
+ * existent, l'onglet les montre au propriétaire. Sans ce filtre, le prompt
+ * système annoncerait à tous les agents des projets que l'onglet ne montre
+ * plus — un coffre de notes, des workflows d'images — avec leurs détenteurs,
+ * et le désaccord serait invisible depuis l'interface.
+ */
+const DEV_TEAM_SKILL_SLUGS = ['dev', 'code-review'];
 
 /** Outils dont l'input porte un chemin de fichier édité. */
 const EDIT_TOOLS = [
@@ -134,12 +156,38 @@ export async function listCodeProjectsForContext(
   const cached = projectsCache.get(entityId);
   if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
   try {
-    // Les workspaces de l'entité, par agent — la carte « qui possède quoi ».
-    const wsRows = await db
-      .select({ agentName: agents.name, path: agentWorkspaces.path })
-      .from(agentWorkspaces)
-      .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-      .where(eq(agents.entityId, entityId));
+    // Les agents DÉVELOPPEURS de l'entité. Un projet de code naît du travail
+    // d'un développeur, pas de n'importe quelle écriture de fichier : c'est la
+    // même règle d'identité que l'onglet Code, et elle doit valoir des deux
+    // côtés sous peine d'annoncer aux agents des projets que le propriétaire
+    // ne voit pas.
+    const devTeamRows = await db
+      .select({ agentId: agentSkillAssignments.agentId })
+      .from(agentSkillAssignments)
+      .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
+      .where(
+        and(
+          eq(agentSkillAssignments.entityId, entityId),
+          inArray(agentSkills.slug, DEV_TEAM_SKILL_SLUGS),
+          // Le skill du catalogue, pas un homonyme créé par l'utilisateur.
+          eq(agentSkills.createdBy, 'system'),
+        ),
+      );
+    const devTeam = new Set(devTeamRows.map((r) => r.agentId));
+    if (devTeam.size === 0) return [];
+
+    // Les workspaces des DÉVELOPPEURS — la carte « qui possède quoi ».
+    const wsRows = (
+      await db
+        .select({
+          agentId: agentWorkspaces.agentId,
+          agentName: agents.name,
+          path: agentWorkspaces.path,
+        })
+        .from(agentWorkspaces)
+        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+        .where(eq(agents.entityId, entityId))
+    ).filter((r) => devTeam.has(r.agentId));
     if (wsRows.length === 0) return [];
 
     // Racines uniques, plus longues d'abord (un workspace niché gagne).

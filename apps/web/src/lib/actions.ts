@@ -11198,6 +11198,17 @@ async function devTeamAgentIds(
       and(
         eq(agentSkillAssignments.entityId, entityId),
         inArray(agentSkills.slug, [...DEV_TEAM_SKILL_SLUGS]),
+        // Le skill du CATALOGUE, pas un homonyme. `dev` est un nom court et
+        // plausible : une install antérieure à cette version a pu créer son
+        // propre skill nommé ainsi, du temps où le slug n'était pas réservé.
+        // Sans ce filtre, ses porteurs deviendraient des « développeurs » par
+        // pure collision de nom (revue du 25/08).
+        //
+        // Le skill système n'est PAS filtré par entité, et c'est voulu : il est
+        // seedé sous l'entité la plus ancienne mais reste visible partout
+        // (cf. `systemSkillSlugs`). Filtrer ici priverait toute entité
+        // non-doyenne de son équipe de dev.
+        eq(agentSkills.createdBy, 'system'),
       ),
     );
   return new Set(rows.map((r) => r.agentId));
@@ -11303,11 +11314,23 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
       callsByRoot.set(root, arr);
 
+      // TOUTE la chaîne, pas seulement l'émetteur et la racine (revue du
+      // 25/08, constat majeur des DEUX relecteurs). Sur orchestrateur → lead →
+      // worker, le lead peut être le seul porteur du skill tout en n'éditant
+      // rien lui-même : il délègue. Or les délégations (`assign_*`) ne font pas
+      // partie des appels chargés ici, donc le lead n'apparaissait jamais comme
+      // participant et le pipeline entier disparaissait de l'onglet.
+      //
+      // `agentOfJob` contient déjà tous les ancêtres résolus par la boucle
+      // ci-dessus ; il suffit de les parcourir. La remontée est bornée par la
+      // même profondeur, et s'arrête sur un parent inconnu.
       const participants = agentsByRoot.get(root) ?? new Set<string>();
-      const own = agentOfJob.get(c.jobId);
-      if (own) participants.add(own);
-      const rootAgent = agentOfJob.get(root);
-      if (rootAgent) participants.add(rootAgent);
+      let cursor: string | null = c.jobId;
+      for (let hop = 0; hop <= ROLLUP_MAX_DEPTH && cursor; hop++) {
+        const agent = agentOfJob.get(cursor);
+        if (agent) participants.add(agent);
+        cursor = parentOf.get(cursor) ?? null;
+      }
       agentsByRoot.set(root, participants);
     }
 

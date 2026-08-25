@@ -12,7 +12,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentWorkspaces, agentJobs, toolCalls } from '@nodal-agents/db';
+import {
+  agents,
+  agentWorkspaces,
+  agentJobs,
+  agentSkills,
+  agentSkillAssignments,
+  entities,
+  toolCalls,
+} from '@nodal-agents/db';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,12 +70,32 @@ beforeAll(async () => {
     .returning();
   leadAgentId = lead!.id;
 
+  // Le skill « dev » du catalogue : un projet naît du travail d'un
+  // DÉVELOPPEUR, pas de n'importe quelle écriture de fichier. Même règle
+  // d'identité que l'onglet Code, pour que les deux vues ne se contredisent
+  // jamais (revue du 25/08).
+  const [devSkillRow] = await db
+    .insert(agentSkills)
+    .values({
+      entityId: seed.entityId,
+      name: 'Software development',
+      slug: 'dev',
+      content: 'test dev skill',
+      createdBy: 'system',
+    })
+    .returning();
+
   for (const agentId of [devAgentId, leadAgentId]) {
     await db.insert(agentWorkspaces).values({
       entityId: seed.entityId,
       agentId,
       label: 'Dev',
       path: ws,
+    });
+    await db.insert(agentSkillAssignments).values({
+      entityId: seed.entityId,
+      agentId,
+      skillId: devSkillRow!.id,
     });
   }
 
@@ -134,6 +162,67 @@ describe('listCodeProjectsForContext', () => {
       projects.some((p) => p.name === 'ghost-app'),
       'un projet est né d’une écriture refusée',
     ).toBe(false);
+  });
+
+  it('le workspace d’un agent NON-développeur ne produit AUCUN projet', async () => {
+    // La convergence avec l'onglet Code (revue du 25/08). Ce module dit aux
+    // agents quels projets existent ; l'onglet les montre au propriétaire. Si
+    // seul l'onglet filtrait par identité, le prompt système annoncerait à
+    // tous les agents des projets invisibles dans l'interface — un coffre de
+    // notes, des workflows d'images — avec leurs détenteurs, et personne ne
+    // pourrait voir le désaccord.
+    const dossier = norm(await mkdtemp(join(tmpdir(), 'nodal-notdev-')));
+    await mkdir(join(dossier, 'coffre'), { recursive: true });
+    await writeFile(join(dossier, 'coffre', 'script.py'), 'print(1)');
+
+    const [autreEntite] = await db
+      .insert(entities)
+      .values({ userId: seed.userId, name: 'Espace sans dev', slug: `sans-dev-${Date.now()}` })
+      .returning();
+    const [scribe] = await db
+      .insert(agents)
+      .values({
+        entityId: autreEntite!.id,
+        name: 'Scribe',
+        slug: `scribe-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    await db.insert(agentWorkspaces).values({
+      entityId: autreEntite!.id,
+      agentId: scribe!.id,
+      label: 'Coffre',
+      path: dossier,
+    });
+    const [jobScribe] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: autreEntite!.id,
+        agentId: scribe!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'notes',
+      })
+      .returning();
+    // Un VRAI fichier de code, écrit par un agent qui n'est pas développeur :
+    // c'est exactement le coffre Obsidian de juillet.
+    await db.insert(toolCalls).values({
+      entityId: autreEntite!.id,
+      jobId: jobScribe!.id,
+      toolName: 'file_write',
+      toolInput: { path: `${dossier}/coffre/script.py` },
+      toolOutput: '{"ok":true}',
+    });
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], autreEntite!.id);
+      expect(
+        projects,
+        'un projet a été annoncé aux agents alors que l’onglet Code ne le montre pas',
+      ).toEqual([]);
+    } finally {
+      await rm(dossier, { recursive: true, force: true });
+    }
   });
 
   it('une entité sans workspace rend une liste vide (jamais une exception)', async () => {
