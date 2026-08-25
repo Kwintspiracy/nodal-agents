@@ -22,6 +22,7 @@ import {
   desc,
   eq,
   inArray,
+  agentJobs,
   agentWorkspaces,
   agents,
   codeProjects,
@@ -156,6 +157,49 @@ function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, strin
   }
   memo.set(key, result);
   return result;
+}
+
+/**
+ * Un chemin brut d'édition → sa forme ABSOLUE, ou null.
+ *
+ * Même ordre de règles que `resolveAbsoluteChangePath` de l'onglet Code, et
+ * ce n'est pas un hasard : les deux vues doivent situer un fichier au même
+ * endroit, sous peine d'annoncer aux agents des projets que l'interface ne
+ * montre pas (ou l'inverse).
+ *
+ *   1. absolu           → tel quel
+ *   2. `label/reste`    → le dossier de l'auteur qui porte ce label. C'est la
+ *                         forme que les outils Nodal enregistrent dès qu'un
+ *                         agent a plus d'un dossier ; la lire est une lecture
+ *                         de donnée, pas une devinette.
+ *   3. un seul dossier  → relatif à sa racine
+ *   4. sinon            → l'existence sur disque tranche, et si rien
+ *                         n'existe, on renonce plutôt que de choisir au hasard
+ */
+function resolveScannedPath(
+  p: string,
+  authorWorkspaces: Array<{ label: string; path: string }>,
+  roots: string[],
+  exists: (path: string) => boolean,
+): string | null {
+  if (isAbsolute(p)) return exists(p) ? p : null;
+  const rel = p.replace(/^\.\//, '');
+
+  const [first, ...rest] = rel.split('/');
+  const byLabel = authorWorkspaces.find((w) => w.label === first);
+  if (byLabel && rest.length > 0) {
+    const candidate = `${byLabel.path}/${rest.join('/')}`;
+    return exists(candidate) ? candidate : null;
+  }
+
+  if (authorWorkspaces.length === 1) {
+    const candidate = `${authorWorkspaces[0]!.path}/${rel}`;
+    return exists(candidate) ? candidate : null;
+  }
+
+  // Auteur inconnu (job supprimé) ou aucun label reconnu : on retombe sur
+  // l'ancien comportement, l'existence tranche parmi toutes les racines.
+  return roots.map((r) => `${r}/${rel}`).find(exists) ?? null;
 }
 
 /** Un projet tel que le SCAN le voit : sans nom choisi, sans masquage appliqué. */
@@ -293,6 +337,7 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
     .select({
       agentId: agentWorkspaces.agentId,
       agentName: agents.name,
+      label: agentWorkspaces.label,
       path: agentWorkspaces.path,
     })
     .from(agentWorkspaces)
@@ -307,22 +352,36 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       .sort((a, b) => b.length - a.length);
     if (roots.length === 0) return [];
     const ownersByRoot = new Map<string, Set<string>>();
+    /** Les dossiers de CHAQUE agent — la clé de lecture de ses chemins relatifs. */
+    const wsByAgent = new Map<string, Array<{ label: string; path: string }>>();
     for (const r of wsRows) {
       const set = ownersByRoot.get(norm(r.path)) ?? new Set<string>();
       set.add(r.agentName);
       ownersByRoot.set(norm(r.path), set);
+      const own = wsByAgent.get(r.agentId) ?? [];
+      own.push({ label: r.label, path: norm(r.path) });
+      wsByAgent.set(r.agentId, own);
     }
 
-    // Le scan n'est plus filtré par auteur : c'est le DOSSIER qui décide.
-    // Une écriture hors des dossiers attachés ne trouvera aucune racine plus bas
-    // et sera ignorée ; qui l'a faite n'entre pas dans le calcul.
+    // L'AUTEUR de chaque écriture, via son job.
+    //
+    // Il ne sert PAS à filtrer — c'est le dossier qui décide, pas qui a écrit.
+    // Il sert à LIRE le chemin : quand un agent a plusieurs dossiers, les outils
+    // Nodal enregistrent la forme `label/fichier.md`, et ce label n'est unique
+    // que par agent. Sans lui, le scan essayait `<racine>/vault/note.md` sous
+    // chaque racine — un chemin qui n'existe nulle part —, et ces écritures
+    // n'entraient jamais dans le contexte alors que l'onglet Code, lui, les
+    // résolvait (revue Codex, 26/08). Deux vues, deux vérités : exactement ce
+    // que ce module existe pour éviter.
     const rows = await db
       .select({
         toolInput: toolCalls.toolInput,
         toolOutput: toolCalls.toolOutput,
         createdAt: toolCalls.createdAt,
+        agentId: agentJobs.agentId,
       })
       .from(toolCalls)
+      .leftJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
       .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.toolName, EDIT_TOOLS)))
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
@@ -360,9 +419,12 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       if (!raw) continue;
 
       const p = norm(raw.trim());
-      // Résolution : absolu tel quel, sinon collé au workspace qui l'héberge.
-      const candidates = isAbsolute(p) ? [p] : roots.map((r) => `${r}/${p.replace(/^\.\//, '')}`);
-      const abs = candidates.find(existsCached);
+      const abs = resolveScannedPath(
+        p,
+        row.agentId ? (wsByAgent.get(row.agentId) ?? []) : [],
+        roots,
+        existsCached,
+      );
       if (!abs) continue;
 
       const wsRoot = roots.find((r) => within(abs, r));

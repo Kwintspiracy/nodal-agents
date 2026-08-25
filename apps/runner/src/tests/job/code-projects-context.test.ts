@@ -192,6 +192,69 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
+  it('une écriture RELATIVE par label entre dans le contexte, chez SON auteur', async () => {
+    // Constat P1 de la revue Codex (26/08). Dès qu'un agent a plus d'un
+    // dossier, les outils Nodal enregistrent `label/fichier` — et le scan ne
+    // lisait pas les labels : il essayait `<racine>/coffre/note.md` sous chaque
+    // racine, un chemin qui n'existe nulle part. Ces écritures n'entraient donc
+    // JAMAIS dans le contexte injecté, alors que l'onglet Code les résolvait.
+    // Deux vues, deux vérités.
+    //
+    // Le label n'étant unique que par AGENT, la résolution se fait chez
+    // l'auteur de l'appel, pas dans un sac commun.
+    const coffre = norm(await mkdtemp(join(tmpdir(), 'nodal-label-')));
+    await mkdir(join(coffre, 'carnet'), { recursive: true });
+    await writeFile(join(coffre, 'carnet', 'note.md'), '# note');
+
+    const [polyvalent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Agent polyvalent',
+        slug: `polyvalent-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    // DEUX dossiers : c'est ce qui force la forme `label/fichier`.
+    await db.insert(agentWorkspaces).values([
+      { entityId: seed.entityId, agentId: polyvalent!.id, label: 'Dev', path: `${racine}/dev` },
+      { entityId: seed.entityId, agentId: polyvalent!.id, label: 'coffre', path: coffre },
+    ]);
+    const [jobPoly] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: polyvalent!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'note',
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: jobPoly!.id,
+      toolName: 'file_write',
+      toolInput: { path: 'coffre/carnet/note.md' },
+      toolOutput: '{"ok":true}',
+    });
+    _resetProjectsCacheForTests();
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      const carnet = projects.find((p) => p.path === `${coffre}/carnet`);
+      expect(
+        carnet,
+        'une écriture relative par label n’est jamais entrée dans le contexte',
+      ).toBeTruthy();
+      expect(carnet!.owners).toEqual(['Agent polyvalent']);
+    } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobPoly!.id));
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, polyvalent!.id));
+      await rm(coffre, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
   it('masquer prend effet IMMÉDIATEMENT, sans attendre l’expiration du cache', async () => {
     // Constat Codex (26/08) : le cache de 60 s portait AUSSI les préférences.
     // Masquer un projet le laissait donc annoncé aux agents pendant une minute,

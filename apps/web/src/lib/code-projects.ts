@@ -57,6 +57,25 @@ export interface WorkspaceRef {
 }
 
 /**
+ * Une écriture, avec de quoi la situer : le chemin brut ET les dossiers de
+ * l'agent QUI L'A FAITE.
+ *
+ * Porter l'auteur est indispensable (revue Codex, 26/08). Un label n'est unique
+ * que par AGENT : dans un pipeline délégué, l'orchestrateur et son worker ont
+ * chacun un dossier étiqueté `workspace`. En mettant tous les dossiers du
+ * pipeline dans le même sac, `workspace/src/a.ts` écrit par le worker se
+ * résolvait contre le dossier de l'orchestrateur — le premier label trouvé
+ * gagnait. Mauvais projet, mauvais décompte de fichiers, et rien à l'écran pour
+ * le signaler : exactement le repli silencieux que l'invariant #4 interdit.
+ */
+export interface ChangeRef {
+  /** Le chemin tel que l'outil l'a enregistré (absolu, ou relatif à un label). */
+  rawPath: string;
+  /** Les dossiers de l'agent auteur — la clé de lecture des chemins relatifs. */
+  workspaces: WorkspaceRef[];
+}
+
+/**
  * Existence sur disque, mémoïsée.
  *
  * Le `memo` traverse toute une dérivation : les mêmes dossiers reviennent des
@@ -209,16 +228,24 @@ function workspaceRoots(workspaces: WorkspaceRef[]): string[] {
  * l'interface qui avait tort.
  */
 export function deriveProjectRoot(
-  rawPaths: string[],
-  workspaces: WorkspaceRef[],
+  changes: ChangeRef[],
+  /**
+   * Les dossiers de TOUT le pipeline. Ils servent à savoir si le fichier tombe
+   * dans le périmètre — jamais à résoudre un chemin relatif, ce que seuls les
+   * dossiers de l'auteur peuvent faire sans deviner.
+   *
+   * La distinction compte pour une délégation : le worker écrit, le dossier
+   * appartient au lead. Le fichier est bien du pipeline.
+   */
+  pipelineWorkspaces: WorkspaceRef[],
   memo: Map<string, string | null>,
 ): string | null {
-  const roots = workspaceRoots(workspaces);
+  const roots = workspaceRoots(pipelineWorkspaces);
   if (roots.length === 0) return null;
 
   const votes = new Map<string, number>();
-  for (const raw of rawPaths) {
-    const abs = resolveAbsoluteChangePath(raw, workspaces);
+  for (const change of changes) {
+    const abs = resolveAbsoluteChangePath(change.rawPath, change.workspaces);
     if (!abs) continue;
     const dir = abs.replace(/\/[^/]*$/, '');
     if (dir === '' || dir === abs) continue;
@@ -248,10 +275,10 @@ export function deriveProjectRoot(
  * a bien été édité, et son changement appartient à l'historique de la session.
  * C'est le DOSSIER DE PROJET dont la disparition efface la ligne.
  */
-export function isInsideWorkspace(rawPath: string, workspaces: WorkspaceRef[]): boolean {
-  const abs = resolveAbsoluteChangePath(rawPath, workspaces);
+export function isInsideWorkspace(change: ChangeRef, pipelineWorkspaces: WorkspaceRef[]): boolean {
+  const abs = resolveAbsoluteChangePath(change.rawPath, change.workspaces);
   if (!abs) return false;
-  return workspaceRoots(workspaces).some((r) => isUnderPath(abs, r) && !samePath(abs, r));
+  return workspaceRoots(pipelineWorkspaces).some((r) => isUnderPath(abs, r) && !samePath(abs, r));
 }
 
 /** `D:/APPS/NodalAI` → `NodalAI` — le nom d'affichage par défaut d'un projet. */

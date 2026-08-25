@@ -27,11 +27,12 @@ import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from
 import {
   deriveProjectRoot,
   isInsideWorkspace,
-  normPath,
+  type ChangeRef,
   type WorkspaceRef,
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
 } from './code-projects.ts';
+import { projectKey } from './project-key.ts';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -11230,7 +11231,10 @@ function workspacesOfPipeline(
   const seen = new Map<string, WorkspaceRef>();
   for (const agentId of participants) {
     for (const w of byAgent.get(agentId) ?? []) {
-      const key = w.path.toLowerCase();
+      // Clé qui ne replie la casse que sur Windows (revue Codex, 26/08) : sur
+      // un système sensible à la casse, `/srv/App` et `/srv/app` sont deux
+      // dossiers légitimes, et en écraser un ferait disparaître ses écritures.
+      const key = projectKey(w.path);
       if (!seen.has(key)) seen.set(key, w);
     }
   }
@@ -11258,7 +11262,7 @@ export async function getCodeTabStatusAction(): Promise<ActionResult<CodeTabStat
       .select({ path: agentWorkspaces.path })
       .from(agentWorkspaces)
       .where(eq(agentWorkspaces.entityId, session.entityId));
-    return ok({ workspaceCount: new Set(rows.map((r) => normPath(r.path).toLowerCase())).size });
+    return ok({ workspaceCount: new Set(rows.map((r) => projectKey(r.path))).size });
   } catch (err) {
     return fail('unknown', err instanceof Error ? err.message : 'Failed to read workspaces');
   }
@@ -11335,21 +11339,37 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     }
     const rootOf = (jobId: string): string => rollupRoot(jobId, parentOf);
 
+    // Chargé AVANT le regroupement : chaque écriture doit être rattachée aux
+    // dossiers de son auteur au moment où on la collecte.
+    const wsByAgent = await workspacesByAgentId(db, entityId);
+
     const callsByRoot = new Map<
       string,
-      Array<{ toolName: string; toolInput: unknown; toolOutput: string | null }>
+      Array<{
+        toolName: string;
+        toolInput: unknown;
+        toolOutput: string | null;
+        /** L'agent qui a passé l'appel — pour lire ses chemins relatifs. */
+        agentId: string | null;
+      }>
     >();
     // Les agents ayant participé à chaque pipeline, racine comprise.
     const agentsByRoot = new Map<string, Set<string>>();
-    // Les chemins BRUTS (avant canonicalisation) par pipeline — la
-    // qualification ET la dérivation de projet ont besoin de la forme absolue
-    // quand elle existe.
-    const rawPathsByRoot = new Map<string, string[]>();
+    // Les écritures par pipeline, chacune avec son AUTEUR : un chemin relatif
+    // ne se lit qu'avec les dossiers de l'agent qui l'a écrit (revue Codex,
+    // 26/08 — les labels ne sont uniques que par agent).
+    const changesByRoot = new Map<string, ChangeRef[]>();
     for (const c of relevantCalls) {
       if (!c.jobId) continue;
       const root = rootOf(c.jobId);
+      const callAgentId = agentOfJob.get(c.jobId) ?? null;
       const arr = callsByRoot.get(root) ?? [];
-      arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
+      arr.push({
+        toolName: c.toolName,
+        toolInput: c.toolInput,
+        toolOutput: c.toolOutput,
+        agentId: callAgentId,
+      });
       callsByRoot.set(root, arr);
 
       // Les chemins BRUTS de chaque pipeline, collectés ICI parce que la
@@ -11365,9 +11385,12 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       if (FILE_TOOL_NAMES.has(c.toolName)) {
         const fp = extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null);
         if (fp) {
-          const raws = rawPathsByRoot.get(root) ?? [];
-          raws.push(fp);
-          rawPathsByRoot.set(root, raws);
+          const raws = changesByRoot.get(root) ?? [];
+          raws.push({
+            rawPath: fp,
+            workspaces: callAgentId ? (wsByAgent.get(callAgentId) ?? []) : [],
+          });
+          changesByRoot.set(root, raws);
         }
       }
 
@@ -11384,9 +11407,6 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       agentsByRoot.set(root, participants);
     }
 
-    // Les dossiers cochés « développement ». Une écriture qui tombe dedans
-    // qualifie le pipeline ; le reste n'existe pas pour cet onglet.
-    const wsByAgent = await workspacesByAgentId(db, entityId);
     const devMemo = new Map<string, string | null>();
     /** Les dossiers vus par un pipeline — mémoïsé, plusieurs passes s'en servent. */
     const wsOfRoot = new Map<string, WorkspaceRef[]>();
@@ -11402,7 +11422,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       .filter(([root, calls]) => {
         const ws = workspacesFor(root);
         const touchedWorkspace =
-          deriveProjectRoot(rawPathsByRoot.get(root) ?? [], ws, devMemo) !== null;
+          deriveProjectRoot(changesByRoot.get(root) ?? [], ws, devMemo) !== null;
         return pipelineQualifiesAsCoding(calls, touchedWorkspace);
       })
       .map(([root]) => root);
@@ -11513,7 +11533,13 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           // Un chemin qu'aucun dossier attaché ne couvre n'est pas rattachable
           // à un projet : il ne compte pas dans le décompte de fichiers, faute
           // de savoir sous quelle ligne il s'affiche (revue Codex, 26/08).
-          if (fp && isInsideWorkspace(fp, workspacesFor(root))) {
+          if (
+            fp &&
+            isInsideWorkspace(
+              { rawPath: fp, workspaces: c.agentId ? (wsByAgent.get(c.agentId) ?? []) : [] },
+              workspacesFor(root),
+            )
+          ) {
             set.add(canonicalChangePath(fp, workspaceRoots));
           }
         }
@@ -11559,7 +11585,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       jobRows = jobs.map((j) => {
         const ws = workspacesFor(j.id);
         const projectPath =
-          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], ws, devMemo) ??
+          deriveProjectRoot(changesByRoot.get(j.id) ?? [], ws, devMemo) ??
           // Repli sans fichier ancrable : l'unique dossier de l'agent, et
           // seulement s'il existe encore sur le disque — `devMemo` porte aussi
           // le contrôle d'existence.
@@ -11937,23 +11963,31 @@ export async function getCodingProcessDetailAction(
       const detailAgentIds = new Set<string>();
       if (job.agentId) detailAgentIds.add(job.agentId);
       for (const d of descendants) if (d.agentId) detailAgentIds.add(d.agentId);
-      const detailWorkspaces = workspacesOfPipeline(
-        detailAgentIds,
-        await workspacesByAgentId(db, entityId),
-      );
+      const detailWsByAgent = await workspacesByAgentId(db, entityId);
+      const detailWorkspaces = workspacesOfPipeline(detailAgentIds, detailWsByAgent);
+      // Quel agent a passé quel appel — un chemin relatif ne se lit qu'avec les
+      // dossiers de son auteur (revue Codex, 26/08).
+      const agentOfDetailJob = new Map<string, string | null>();
+      agentOfDetailJob.set(job.id, job.agentId);
+      for (const d of descendants) agentOfDetailJob.set(d.id, d.agentId);
+      const wsOfCall = (jobId: string | null): WorkspaceRef[] => {
+        const agentId = jobId ? agentOfDetailJob.get(jobId) : null;
+        return agentId ? (detailWsByAgent.get(agentId) ?? []) : [];
+      };
 
       const changeGroups = new Map<string, CodingFileChangeGroup>();
-      // Chemins BRUTS pour la dérivation de projet du header (même règle que
-      // la liste — les deux surfaces doivent nommer le même projet).
-      const rawChangePaths: string[] = [];
+      // Les écritures BRUTES pour la dérivation de projet du header (même règle
+      // que la liste — les deux surfaces doivent nommer le même projet).
+      const rawChanges: ChangeRef[] = [];
       for (const tc of toolCallRows) {
         // A refused call wrote nothing — it must not appear as a change.
         if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
+        const ref: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         // Non rattachable, hors détail — comme dans la liste.
-        if (!isInsideWorkspace(change.filePath, detailWorkspaces)) continue;
-        rawChangePaths.push(change.filePath);
+        if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
+        rawChanges.push(ref);
         const canonical = canonicalChangePath(change.filePath, workspaceRoots);
         const group = changeGroups.get(canonical) ?? {
           filePath: canonical,
@@ -12091,7 +12125,7 @@ export async function getCodingProcessDetailAction(
         jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
 
       const detailMemo = new Map<string, string | null>();
-      let detailProjectPath = deriveProjectRoot(rawChangePaths, detailWorkspaces, detailMemo);
+      let detailProjectPath = deriveProjectRoot(rawChanges, detailWorkspaces, detailMemo);
       // Même repli que la liste : l'unique dossier de l'agent racine.
       if (!detailProjectPath && job.agentId) {
         const agentWs = await db

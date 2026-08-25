@@ -22,6 +22,7 @@ import {
   projectNameFromPath,
   isDriveRoot,
   isInsideWorkspace,
+  type WorkspaceRef,
 } from '../code-projects.ts';
 
 let testDb: TestDb;
@@ -104,17 +105,36 @@ afterAll(async () => {
 const ws = (...paths: string[]) =>
   paths.map((p) => ({ label: p.split('/').filter(Boolean).pop() ?? p, path: p }));
 
+/**
+ * Le cas COURANT : l'agent qui a écrit est aussi celui dont on regarde les
+ * dossiers. Les deux se séparent dans une délégation, et c'est le test
+ * « labels homonymes » plus bas qui couvre ce cas-là.
+ */
+const deriveFor = (
+  paths: string[],
+  workspaces: WorkspaceRef[],
+  memo: Map<string, string | null>,
+): string | null =>
+  deriveProjectRoot(
+    paths.map((rawPath) => ({ rawPath, workspaces })),
+    workspaces,
+    memo,
+  );
+
+const insideFor = (rawPath: string, workspaces: WorkspaceRef[]): boolean =>
+  isInsideWorkspace({ rawPath, workspaces }, workspaces);
+
 describe('deriveProjectRoot (vrai disque)', () => {
   const memo = () => new Map<string, string | null>();
 
   it('remonte au dépôt git depuis un fichier profond', () => {
-    const root = deriveProjectRoot([`${racine}/repoA/src/x.ts`], ws(racine), memo());
+    const root = deriveFor([`${racine}/repoA/src/x.ts`], ws(racine), memo());
     expect(root).toBe(`${racine}/repoA`);
   });
 
   it('deux repos = deux projets, et le vote majoritaire tranche un pipeline mixte', () => {
-    expect(deriveProjectRoot([`${racine}/repoB/y.ts`], ws(racine), memo())).toBe(`${racine}/repoB`);
-    const mixed = deriveProjectRoot(
+    expect(deriveFor([`${racine}/repoB/y.ts`], ws(racine), memo())).toBe(`${racine}/repoB`);
+    const mixed = deriveFor(
       [`${racine}/repoA/src/x.ts`, `${racine}/repoA/src/x.ts`, `${racine}/repoB/y.ts`],
       ws(racine),
       memo(),
@@ -125,7 +145,7 @@ describe('deriveProjectRoot (vrai disque)', () => {
   it('sans marqueur : le SOUS-DOSSIER de premier niveau, jamais le workspace-conteneur', () => {
     // Constat Quentin 25/08 (calorie-counter) : rendre le workspace entier
     // fusionnerait toutes les apps d'un Dev\ partagé en un seul projet.
-    const root = deriveProjectRoot([`${racine}/plain/z.md`], ws(racine), memo());
+    const root = deriveFor([`${racine}/plain/z.md`], ws(racine), memo());
     expect(root).toBe(`${racine}/plain`);
   });
 
@@ -137,10 +157,10 @@ describe('deriveProjectRoot (vrai disque)', () => {
     await writeFile(join(racine, 'dev', 'todo-app', 'main.js'), '// autre app');
     const racineDev = `${racine}/dev`;
 
-    expect(deriveProjectRoot([`${racine}/dev/calorie-counter/app.js`], ws(racineDev), memo())).toBe(
+    expect(deriveFor([`${racine}/dev/calorie-counter/app.js`], ws(racineDev), memo())).toBe(
       `${racine}/dev/calorie-counter`,
     );
-    expect(deriveProjectRoot([`${racine}/dev/todo-app/main.js`], ws(racineDev), memo())).toBe(
+    expect(deriveFor([`${racine}/dev/todo-app/main.js`], ws(racineDev), memo())).toBe(
       `${racine}/dev/todo-app`,
     );
   });
@@ -151,7 +171,7 @@ describe('deriveProjectRoot (vrai disque)', () => {
     await writeFile(join(racine, 'monapp', 'src', 'x.ts'), 'export {}');
     const app = `${racine}/monapp`;
 
-    expect(deriveProjectRoot([`${racine}/monapp/src/x.ts`], ws(app), memo())).toBe(app);
+    expect(deriveFor([`${racine}/monapp/src/x.ts`], ws(app), memo())).toBe(app);
   });
 
   it('la profondeur ne change RIEN : le projet est l’enfant direct du dossier attaché', async () => {
@@ -164,13 +184,13 @@ describe('deriveProjectRoot (vrai disque)', () => {
     const racineDev = `${racine}/dev`;
 
     expect(
-      deriveProjectRoot([`${racine}/dev/calorie-counter/app/index.html`], ws(racineDev), memo()),
+      deriveFor([`${racine}/dev/calorie-counter/app/index.html`], ws(racineDev), memo()),
       'le projet a été pris plus bas que l’enfant direct',
     ).toBe(`${racine}/dev/calorie-counter`);
 
     await mkdir(join(racine, 'dev', 'profond', 'a', 'b', 'c'), { recursive: true });
     await writeFile(join(racine, 'dev', 'profond', 'a', 'b', 'c', 'd.ts'), 'export {}');
-    expect(deriveProjectRoot([`${racine}/dev/profond/a/b/c/d.ts`], ws(racineDev), memo())).toBe(
+    expect(deriveFor([`${racine}/dev/profond/a/b/c/d.ts`], ws(racineDev), memo())).toBe(
       `${racine}/dev/profond`,
     );
   });
@@ -191,14 +211,14 @@ describe('deriveProjectRoot (vrai disque)', () => {
     const fichier = `${racine}/dev/ephemere/a.ts`;
 
     expect(
-      deriveProjectRoot([fichier], ws(racineDev), memo()),
+      deriveFor([fichier], ws(racineDev), memo()),
       'le projet n’apparaît pas alors que son dossier existe',
     ).toBe(`${racine}/dev/ephemere`);
 
     await rm(ephemere, { recursive: true, force: true });
 
     expect(
-      deriveProjectRoot([fichier], ws(racineDev), memo()),
+      deriveFor([fichier], ws(racineDev), memo()),
       'un dossier supprimé apparaît encore comme projet',
     ).toBeNull();
   });
@@ -214,21 +234,59 @@ describe('deriveProjectRoot (vrai disque)', () => {
 
     // `repoA` porte un `.git` : le dossier attaché EST le projet, ses
     // sous-dossiers ne le fragmentent pas.
-    expect(deriveProjectRoot(['dev/src/x.ts'], workspaces, memo())).toBe(`${racine}/repoA`);
+    expect(deriveFor(['dev/src/x.ts'], workspaces, memo())).toBe(`${racine}/repoA`);
     // Et le coffre est bien reconnu comme le coffre, pas comme du repoA.
-    expect(deriveProjectRoot(['vault/note.md'], workspaces, memo())).toBe(`${racine}/plain`);
+    expect(deriveFor(['vault/note.md'], workspaces, memo())).toBe(`${racine}/plain`);
 
-    expect(isInsideWorkspace('dev/src/x.ts', workspaces)).toBe(true);
-    expect(isInsideWorkspace('vault/note.md', workspaces)).toBe(true);
+    expect(insideFor('dev/src/x.ts', workspaces)).toBe(true);
+    expect(insideFor('vault/note.md', workspaces)).toBe(true);
+  });
+
+  it('labels HOMONYMES : le chemin relatif se lit chez SON auteur, pas chez le voisin', async () => {
+    // Constat P1 de la revue Codex (26/08). Un label n'est unique que par
+    // AGENT. Dans un pipeline délégué, l'orchestrateur et son worker ont chacun
+    // un dossier étiqueté `workspace` — mettre tous les dossiers du pipeline
+    // dans le même sac faisait gagner le premier label trouvé, et l'écriture du
+    // worker était attribuée au dossier de l'orchestrateur.
+    //
+    // Mauvais projet, mauvais décompte, et rien à l'écran pour le signaler.
+    await mkdir(join(racine, 'chef', 'notes'), { recursive: true });
+    await mkdir(join(racine, 'ouvrier', 'app'), { recursive: true });
+    await writeFile(join(racine, 'ouvrier', 'app', 'a.ts'), 'export {}');
+
+    const dossiersDuChef = [{ label: 'workspace', path: `${racine}/chef` }];
+    const dossiersDeLOuvrier = [{ label: 'workspace', path: `${racine}/ouvrier` }];
+    // Le pipeline voit les deux — c'est bien la mise en commun qui posait
+    // problème, pas le fait de connaître les deux dossiers.
+    const duPipeline = [...dossiersDuChef, ...dossiersDeLOuvrier];
+
+    expect(
+      deriveProjectRoot(
+        [{ rawPath: 'workspace/app/a.ts', workspaces: dossiersDeLOuvrier }],
+        duPipeline,
+        memo(),
+      ),
+      'l’écriture de l’ouvrier a été attribuée au dossier du chef',
+    ).toBe(`${racine}/ouvrier/app`);
+
+    // Et symétriquement, une écriture du CHEF reste chez le chef.
+    await writeFile(join(racine, 'chef', 'notes', 'b.md'), '# note');
+    expect(
+      deriveProjectRoot(
+        [{ rawPath: 'workspace/notes/b.md', workspaces: dossiersDuChef }],
+        duPipeline,
+        memo(),
+      ),
+    ).toBe(`${racine}/chef/notes`);
   });
 
   it('une écriture hors de TOUT dossier attaché ne produit AUCUN projet', () => {
     expect(
-      deriveProjectRoot([`${racine}/repoA/src/x.ts`], ws(`${racine}/plain`), memo()),
+      deriveFor([`${racine}/repoA/src/x.ts`], ws(`${racine}/plain`), memo()),
       'une écriture non rattachable a produit un projet',
     ).toBeNull();
-    expect(deriveProjectRoot([`${racine}/repoA/src/x.ts`], [], memo())).toBeNull();
-    expect(isInsideWorkspace(`${racine}/repoA/src/x.ts`, ws(`${racine}/plain`))).toBe(false);
+    expect(deriveFor([`${racine}/repoA/src/x.ts`], [], memo())).toBeNull();
+    expect(insideFor(`${racine}/repoA/src/x.ts`, ws(`${racine}/plain`))).toBe(false);
   });
 
   it('un dossier attaché NICHÉ dans un autre gagne — le plus spécifique', async () => {
@@ -239,20 +297,20 @@ describe('deriveProjectRoot (vrai disque)', () => {
     const parent = `${racine}/dev`;
     const enfant = `${racine}/dev/niche`;
 
-    expect(deriveProjectRoot([`${racine}/dev/niche/monapp/a.ts`], ws(parent, enfant), memo())).toBe(
+    expect(deriveFor([`${racine}/dev/niche/monapp/a.ts`], ws(parent, enfant), memo())).toBe(
       `${racine}/dev/niche/monapp`,
     );
   });
 
   it('un chemin RELATIF sans label connu est résolu par existence sur disque', () => {
     // Deux workspaces candidats — seul `racine` contient réellement le fichier.
-    const root = deriveProjectRoot(['repoA/src/x.ts'], ws(`${racine}/repoB`, racine), memo());
+    const root = deriveFor(['repoA/src/x.ts'], ws(`${racine}/repoB`, racine), memo());
     expect(root).toBe(`${racine}/repoA`);
   });
 
   it('aucun chemin exploitable → null (tiroir « Autres »)', () => {
-    expect(deriveProjectRoot([], ws(racine), memo())).toBeNull();
-    expect(deriveProjectRoot(['inconnu/relatif.ts'], [], memo())).toBeNull();
+    expect(deriveFor([], ws(racine), memo())).toBeNull();
+    expect(deriveFor(['inconnu/relatif.ts'], [], memo())).toBeNull();
   });
 
   it('projectNameFromPath rend le basename', () => {
@@ -400,8 +458,8 @@ describe('garde-fous ajoutés par la revue P1 (25/08)', () => {
 
     // Et de bout en bout : un workspace posé sur une racine ne produit rien.
     const memo = new Map<string, string | null>();
-    expect(deriveProjectRoot([`${racine}/plain/z.md`], ws('/'), memo)).toBeNull();
-    expect(deriveProjectRoot([`${racine}/plain/z.md`], ws('C:/'), memo)).toBeNull();
+    expect(deriveFor([`${racine}/plain/z.md`], ws('/'), memo)).toBeNull();
+    expect(deriveFor([`${racine}/plain/z.md`], ws('C:/'), memo)).toBeNull();
   });
 
   it('masquer ET renommer sont réservés au PROPRIÉTAIRE de l’espace', async () => {
