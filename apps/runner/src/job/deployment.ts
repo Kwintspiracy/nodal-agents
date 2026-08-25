@@ -14,6 +14,7 @@ import { getInstallNotes, entities, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resolveTimezone, formatLocalTime } from '@nodal-agents/shared';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
+import { listCodeProjectsForContext } from './code-projects.ts';
 
 /**
  * Map process.platform to a human-readable OS name for the Runtime block.
@@ -93,6 +94,12 @@ export async function getDeploymentContext(
   const timezone = resolveTimezone(storedTz);
   const localTime = formatLocalTime(timezone, new Date());
 
+  // Les projets de code de l'espace + leurs détenteurs (décision Quentin
+  // 25/08) : sans eux, un agent qui reçoit « modifie l'app X » cherche à
+  // l'aveugle au lieu de déléguer. Entity-scopé comme les install notes —
+  // sans entityId, pas d'isolation, donc pas de liste.
+  const codeProjects = entityId ? await listCodeProjectsForContext(db, entityId) : [];
+
   return {
     os: detectOs(),
     networkMode,
@@ -100,6 +107,7 @@ export async function getDeploymentContext(
     ...(lanAddresses !== undefined ? { lanAddresses } : {}),
     ...(containerized ? { containerized } : {}),
     ...(installNotes ? { installNotes } : {}),
+    ...(codeProjects.length > 0 ? { codeProjects } : {}),
     timezone,
     localTime,
   };

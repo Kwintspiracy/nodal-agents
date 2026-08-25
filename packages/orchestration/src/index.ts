@@ -96,4 +96,4 @@ export { buildTeamBlock } from './team-block';
 
 // ─── System prompt assembly ───────────────────────────────────────────────────
 export { buildSystemPrompt, buildRuntimeBlock } from './system-prompt';
-export type { JobContext, DeploymentContext } from './system-prompt';
+export type { JobContext, DeploymentContext, CodeProjectSummary } from './system-prompt';
