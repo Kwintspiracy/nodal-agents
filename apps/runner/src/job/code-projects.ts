@@ -8,10 +8,10 @@
 // cette app existe ni qu'elle appartient à l'équipe dev.
 //
 // Ce module dérive la liste (nom, chemin, détenteurs) depuis les éditions
-// RÉELLES enregistrées, avec la même règle que l'onglet Code : la racine du
-// projet est le plus haut dossier marqué (.git, package.json, index.html…)
-// sous le workspace, sinon le sous-dossier de premier niveau. Rien n'est
-// stocké : un projet naît de son activité, comme dans l'onglet.
+// RÉELLES enregistrées, avec la même règle que l'onglet Code : un projet est
+// un enfant direct d'un dossier attaché, sauf si ce dossier porte lui-même un
+// manifeste — auquel cas c'est lui le projet. Rien n'est stocké : un projet
+// naît de son activité, comme dans l'onglet.
 //
 // Le rendu final vit dans buildRuntimeBlock (packages/orchestration) — ce
 // module ne fabrique QUE des données.
@@ -93,6 +93,23 @@ export function isDriveRoot(p: string): boolean {
   return s === '' || s === '/' || /^[a-z]:$/i.test(s);
 }
 
+/**
+ * LA clé d'identité d'un projet — jumeau de `apps/web/src/lib/project-key.ts`.
+ *
+ * La casse n'est repliée QUE pour les chemins Windows (revue Codex, 26/08) :
+ * sur un système sensible à la casse, `/srv/App` et `/srv/app` sont deux
+ * dossiers différents, et les confondre ferait qu'en masquer un masquerait
+ * l'autre.
+ *
+ * Les deux copies doivent répondre pareil : l'une décide ce que l'interface
+ * montre, l'autre ce que les agents entendent, et un désaccord entre elles ne
+ * se voit depuis aucun écran.
+ */
+export function projectKey(p: string): string {
+  const s = norm(p);
+  return /^[a-z]:\//i.test(s) ? s.toLowerCase() : s;
+}
+
 function within(dir: string, root: string): boolean {
   const isWin = /^[a-z]:\//i.test(dir);
   const a = isWin ? dir.toLowerCase() : dir;
@@ -101,53 +118,68 @@ function within(dir: string, root: string): boolean {
 }
 
 /**
- * Le projet d'un fichier, dans un dossier COCHÉ « développement ».
+ * Le projet d'un fichier, dans un dossier attaché à un agent.
  *
- * JUMEAU de `projectUnderDevFolder` dans apps/web/src/lib/code-projects.ts —
+ * JUMEAU de `projectUnderWorkspace` dans apps/web/src/lib/code-projects.ts —
  * les deux vues doivent répondre pareil, sous peine d'annoncer aux agents des
  * projets que l'onglet ne montre pas.
  *
- * Une seule règle : un projet est un ENFANT DIRECT du dossier coché, quelle
- * que soit la profondeur du fichier édité. Cocher `Dev` ne fait pas de `Dev`
+ * Une seule règle : un projet est un ENFANT DIRECT du dossier attaché, quelle
+ * que soit la profondeur du fichier édité. Attacher `Dev` ne fait pas de `Dev`
  * un projet, ses sous-dossiers en sont. Seule exception, nécessaire : si le
- * dossier coché porte lui-même un manifeste, c'est LUI le projet — sinon
- * cocher directement un dépôt afficherait `apps`, `packages` et `docs` comme
+ * dossier attaché porte lui-même un manifeste, c'est LUI le projet — sinon
+ * attacher directement un dépôt afficherait `apps`, `packages` et `docs` comme
  * trois projets.
  *
- * Mémoïsé : le manifeste du dossier coché est lu une fois par entité, pas une
+ * Mémoïsé : le manifeste du dossier attaché est lu une fois par entité, pas une
  * fois par ligne scannée.
  */
-function projectRootFor(absFile: string, devRoot: string, memo: Map<string, string>): string {
+function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, string>): string {
   const dir = absFile.replace(/\/[^/]*$/, '');
-  const key = `${devRoot}|${dir}`;
+  const key = `${wsRoot}|${dir}`;
   const cached = memo.get(key);
   if (cached !== undefined) return cached;
 
-  const rootKey = `root|${devRoot}`;
+  const rootKey = `root|${wsRoot}`;
   let rootIsProject = memo.get(rootKey);
   if (rootIsProject === undefined) {
-    rootIsProject = hasMarker(devRoot) ? 'yes' : 'no';
+    rootIsProject = hasMarker(wsRoot) ? 'yes' : 'no';
     memo.set(rootKey, rootIsProject);
   }
 
   let result: string;
-  if (rootIsProject === 'yes' || !within(dir, devRoot) || dir === devRoot) {
-    result = devRoot;
+  if (rootIsProject === 'yes' || !within(dir, wsRoot) || dir === wsRoot) {
+    result = wsRoot;
   } else {
-    const child = dir.slice(devRoot.length + 1).split('/')[0];
-    result = child ? `${devRoot}/${child}` : devRoot;
+    const child = dir.slice(wsRoot.length + 1).split('/')[0];
+    result = child ? `${wsRoot}/${child}` : wsRoot;
   }
   memo.set(key, result);
   return result;
+}
+
+/** Un projet tel que le SCAN le voit : sans nom choisi, sans masquage appliqué. */
+interface RawProject {
+  path: string;
+  owners: string[];
+  lastActivityAt: string | null;
 }
 
 /**
  * Cache par entité (revue P1 du 25/08) : `getDeploymentContext` tourne à
  * CHAQUE job ET à chaque tour de chat. Un projet ne naît pas deux fois par
  * minute — 60 s de TTL suffisent, et le prix du scan est payé une fois.
+ *
+ * Le cache ne porte QUE le scan (revue Codex, 26/08). Il portait aussi les
+ * préférences, si bien que masquer un projet le laissait annoncé aux agents
+ * pendant une minute — alors que l'interface confirmait « vos agents ne le
+ * voient plus ». Un message vrai à l'écran et faux dans les faits est pire que
+ * pas de message. Les préférences sont donc relues à CHAQUE appel : c'est une
+ * lecture indexée sur une table qui compte une ligne par projet rangé, contre
+ * 1500 tool_calls et autant de vérifications disque pour le scan.
  */
 const PROJECTS_TTL_MS = 60_000;
-const projectsCache = new Map<string, { at: number; value: CodeProjectSummary[] }>();
+const projectsCache = new Map<string, { at: number; value: RawProject[] }>();
 
 /**
  * Vide le cache — réservé aux tests.
@@ -176,28 +208,17 @@ export async function listCodeProjectsForContext(
   db: RunnerDeps['db'],
   entityId: string,
 ): Promise<CodeProjectSummary[]> {
-  const cached = projectsCache.get(entityId);
-  if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
   try {
-    // Les dossiers attachés aux agents de l'espace, et qui les détient. Aucun
-    // dossier attaché, aucun projet à annoncer.
-    const wsRows = await db
-      .select({
-        agentId: agentWorkspaces.agentId,
-        agentName: agents.name,
-        path: agentWorkspaces.path,
-      })
-      .from(agentWorkspaces)
-      .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-      .where(eq(agents.entityId, entityId));
-    if (wsRows.length === 0) return [];
+    const raw = await scanProjects(db, entityId);
+    if (raw.length === 0) return [];
 
-    // Les deux gestes du propriétaire. Le MASQUAGE porte jusqu'ici : jusqu'au
-    // 26/08 l'archivage n'était lu que par l'interface, si bien qu'un projet
-    // rangé continuait d'être annoncé dans le prompt système de tous les
-    // agents. Ranger quelque chose et continuer à en parler à tout le monde
-    // n'avait pas de sens ; c'est la demande de Quentin, mot pour mot :
-    // « que ça retire le dossier du contexte et de la mémoire des agents ».
+    // Les deux gestes du propriétaire, relus à CHAQUE appel. Le MASQUAGE porte
+    // jusqu'ici : jusqu'au 26/08 l'archivage n'était lu que par l'interface,
+    // si bien qu'un projet rangé continuait d'être annoncé dans le prompt
+    // système de tous les agents. Ranger quelque chose et continuer à en parler
+    // à tout le monde n'avait pas de sens ; c'est la demande de Quentin, mot
+    // pour mot : « que ça retire le dossier du contexte et de la mémoire des
+    // agents ».
     const projectRows = await db
       .select({
         projectPath: codeProjects.projectPath,
@@ -206,10 +227,6 @@ export async function listCodeProjectsForContext(
       })
       .from(codeProjects)
       .where(eq(codeProjects.entityId, entityId));
-    // Clé insensible à la casse : sur Windows `C:\Dev` et `c:/dev` désignent le
-    // même dossier, et un masquage ne doit pas dépendre de la façon dont le
-    // chemin a été saisi.
-    const projectKey = (p: string): string => norm(p).toLowerCase();
     const hiddenPaths = new Set(
       projectRows.filter((r) => r.hidden).map((r) => projectKey(r.projectPath)),
     );
@@ -219,6 +236,71 @@ export async function listCodeProjectsForContext(
         .map((r) => [projectKey(r.projectPath), r.displayName!.trim()]),
     );
 
+    return (
+      raw
+        // Masqué par le propriétaire : nulle part, ni dans la liste, ni dans le
+        // contexte des agents.
+        .filter((p) => !hiddenPaths.has(projectKey(p.path)))
+        // Le plafond s'applique APRÈS le masquage : ranger un projet doit
+        // laisser la place au suivant, pas juste faire un trou dans les douze.
+        .slice(0, MAX_PROJECTS)
+        .map((p) => ({
+          // Le nom choisi par le propriétaire l'emporte : les agents entendent
+          // le projet comme lui l'appelle, sinon « modifie le portail client »
+          // ne désignerait rien pour eux alors que l'onglet l'affiche ainsi.
+          name:
+            namesByPath.get(projectKey(p.path)) ??
+            p.path.split('/').filter(Boolean).pop() ??
+            p.path,
+          path: p.path,
+          owners: p.owners,
+          lastActivityAt: p.lastActivityAt,
+        }))
+    );
+  } catch (err) {
+    // Un BUG DE PROGRAMMATION n'est pas un incident d'exécution : il remonte.
+    //
+    // Ce filet best-effort existe pour qu'une base momentanément injoignable
+    // ne fasse pas échouer un job — la liste des projets est du confort, pas du
+    // fonctionnel. Il avalait aussi les ReferenceError et TypeError : une
+    // colonne oubliée dans un import a rendu une liste vide pendant que toute
+    // une suite de tests continuait de passer sous les yeux (revue du 25/08).
+    // Un repli silencieux qui déguise un bug en « rien à afficher » est
+    // exactement ce que l'invariant #4 interdit.
+    if (err instanceof ReferenceError || err instanceof TypeError) throw err;
+    console.warn(
+      '[code-projects] listing failed (context will omit the section):',
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+}
+
+/**
+ * Le SCAN : la partie chère, et la seule qui soit mise en cache.
+ *
+ * 1500 tool_calls relus, autant de vérifications d'existence sur le disque, et
+ * une remontée de projet par fichier. Rien ici ne dépend des préférences du
+ * propriétaire — c'est ce qui permet de les appliquer après coup, donc à jour.
+ */
+async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<RawProject[]> {
+  const cached = projectsCache.get(entityId);
+  if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
+
+  // Les dossiers attachés aux agents de l'espace, et qui les détient. Aucun
+  // dossier attaché, aucun projet à annoncer.
+  const wsRows = await db
+    .select({
+      agentId: agentWorkspaces.agentId,
+      agentName: agents.name,
+      path: agentWorkspaces.path,
+    })
+    .from(agentWorkspaces)
+    .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+    .where(eq(agents.entityId, entityId));
+  if (wsRows.length === 0) return [];
+
+  {
     // Racines uniques, plus longues d'abord (un workspace niché gagne).
     const roots = Array.from(new Set(wsRows.map((r) => norm(r.path))))
       .filter((r) => !isDriveRoot(r))
@@ -232,7 +314,7 @@ export async function listCodeProjectsForContext(
     }
 
     // Le scan n'est plus filtré par auteur : c'est le DOSSIER qui décide.
-    // Une écriture hors des dossiers cochés ne trouvera aucune racine plus bas
+    // Une écriture hors des dossiers attachés ne trouvera aucune racine plus bas
     // et sera ignorée ; qui l'a faite n'entre pas dans le calcul.
     const rows = await db
       .select({
@@ -287,9 +369,6 @@ export async function listCodeProjectsForContext(
       if (!wsRoot) continue;
 
       const projectPath = projectRootFor(abs, wsRoot, rootMemo);
-      // Masqué par le propriétaire : il ne doit apparaître nulle part, ni dans
-      // la liste, ni dans le contexte des agents.
-      if (hiddenPaths.has(projectKey(projectPath))) continue;
       const entry = byPath.get(projectPath) ?? {
         owners: new Set(ownersByRoot.get(wsRoot) ?? []),
         lastActivityAt: row.createdAt ? row.createdAt.toISOString() : null,
@@ -298,35 +377,17 @@ export async function listCodeProjectsForContext(
       byPath.set(projectPath, entry);
     }
 
-    const result = Array.from(byPath.entries())
+    // Trié par activité, JAMAIS tronqué ici : le plafond s'applique après le
+    // masquage, sinon ranger un projet ferait un trou dans les douze au lieu
+    // de laisser la place au suivant.
+    const result: RawProject[] = Array.from(byPath.entries())
       .sort((a, b) => (b[1].lastActivityAt ?? '').localeCompare(a[1].lastActivityAt ?? ''))
-      .slice(0, MAX_PROJECTS)
       .map(([path, v]) => ({
-        // Le nom choisi par le propriétaire l'emporte : les agents entendent
-        // le projet comme lui l'appelle, sinon « modifie le portail client »
-        // ne désignerait rien pour eux alors que l'onglet l'affiche ainsi.
-        name: namesByPath.get(projectKey(path)) ?? path.split('/').filter(Boolean).pop() ?? path,
         path,
         owners: Array.from(v.owners).sort(),
         lastActivityAt: v.lastActivityAt,
       }));
     projectsCache.set(entityId, { at: Date.now(), value: result });
     return result;
-  } catch (err) {
-    // Un BUG DE PROGRAMMATION n'est pas un incident d'exécution : il remonte.
-    //
-    // Ce filet best-effort existe pour qu'une base momentanément injoignable
-    // ne fasse pas échouer un job — la liste des projets est du confort, pas du
-    // fonctionnel. Il avalait aussi les ReferenceError et TypeError : une
-    // colonne oubliée dans un import a rendu une liste vide pendant que toute
-    // une suite de tests continuait de passer sous les yeux (revue du 25/08).
-    // Un repli silencieux qui déguise un bug en « rien à afficher » est
-    // exactement ce que l'invariant #4 interdit.
-    if (err instanceof ReferenceError || err instanceof TypeError) throw err;
-    console.warn(
-      '[code-projects] listing failed (context will omit the section):',
-      err instanceof Error ? err.message : err,
-    );
-    return [];
   }
 }

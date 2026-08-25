@@ -43,6 +43,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
 import Select from '@/components/ui/Select';
 import TextInput from '@/components/ui/TextInput';
+import { projectKey } from '@/lib/project-key.ts';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 
@@ -50,15 +51,6 @@ const POLL_INTERVAL = 5000;
 
 /** Clé du tiroir des sessions sans projet dérivable. Ni renommable, ni masquable. */
 const OTHER_KEY = '__other__';
-
-/**
- * La clé d'un projet : chemin slash-normalisé, sans slash final, en minuscules.
- *
- * Insensible à la casse parce que sur Windows `C:\Dev\app` et `c:/dev/app`
- * désignent le même dossier. Sans ça, masquer depuis une session écrite d'une
- * façon laisserait le projet visible depuis une autre.
- */
-const projectKey = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 const STAGE_LABEL: Record<string, string> = {
   coding: 'Coding',

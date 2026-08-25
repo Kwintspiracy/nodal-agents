@@ -27,6 +27,7 @@ import { join } from 'node:path';
 import type { RunnerDeps } from '../../deps.ts';
 import {
   listCodeProjectsForContext,
+  projectKey as projectKeyOf,
   _resetProjectsCacheForTests,
 } from '../../job/code-projects.ts';
 
@@ -189,6 +190,51 @@ describe('listCodeProjectsForContext', () => {
       await db.delete(codeProjects).where(eq(codeProjects.projectPath, projet));
       _resetProjectsCacheForTests();
     }
+  });
+
+  it('masquer prend effet IMMÉDIATEMENT, sans attendre l’expiration du cache', async () => {
+    // Constat Codex (26/08) : le cache de 60 s portait AUSSI les préférences.
+    // Masquer un projet le laissait donc annoncé aux agents pendant une minute,
+    // pendant que l'interface confirmait « vos agents ne le voient plus ». Un
+    // message vrai à l'écran et faux dans les faits est pire que pas de message.
+    //
+    // Ce test ne vide PAS le cache après l'écriture — c'est tout son objet.
+    const projet = `${racine}/dev/water-intake`;
+
+    // Un premier appel remplit le cache.
+    const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+    expect(avant.some((p) => p.path === projet)).toBe(true);
+
+    await db
+      .insert(codeProjects)
+      .values({ entityId: seed.entityId, projectPath: projet, hidden: true });
+
+    try {
+      const apres = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        apres.some((p) => p.path === projet),
+        'le projet reste annoncé aux agents tant que le cache n’a pas expiré',
+      ).toBe(false);
+    } finally {
+      await db.delete(codeProjects).where(eq(codeProjects.projectPath, projet));
+      _resetProjectsCacheForTests();
+    }
+  });
+
+  it('la casse d’un chemin POSIX est PRÉSERVÉE : deux dossiers, deux projets', async () => {
+    // Constat Codex (26/08) : replier la casse sans condition confond
+    // `/srv/App` et `/srv/app`, qui sont deux dossiers distincts sur un système
+    // sensible à la casse. Leurs sessions se seraient groupées ensemble, et
+    // masquer l'un aurait masqué l'autre.
+    //
+    // Le test porte sur le prédicat, pas sur un vrai arbre disque : sur
+    // Windows on ne PEUT pas créer deux dossiers ne différant que par la casse,
+    // donc un test de bout en bout ne prouverait rien ici — et sur Linux il
+    // prouverait autre chose. Le jumeau web est
+    // apps/web/src/lib/project-key.ts.
+    expect(projectKeyOf('/srv/App')).not.toBe(projectKeyOf('/srv/app'));
+    // Windows, lui, se replie bien : c'est le même dossier écrit autrement.
+    expect(projectKeyOf('C:\\Dev\\App\\')).toBe(projectKeyOf('c:/dev/app'));
   });
 
   it('RENOMMER un projet change le nom que les agents entendent', async () => {
