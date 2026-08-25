@@ -10901,11 +10901,13 @@ const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write'])
  * n'écrit QUE du .md/.txt est de la prise de notes, pas du code, quel que
  * soit l'outil qui l'a écrite (CLI compris).
  *
- * `.json` est neutre aussi (2e constat, ComfyArtist) : un workflow ComfyUI
- * écrit en .json n'est pas du développement — et un vrai projet qui touche
- * son tsconfig.json touche toujours autre chose à côté.
+ * `.json` a été essayé ici puis RETIRÉ le jour même (décision Quentin) : un
+ * .json peut être du vrai code (mock-data d'une app) — « une exclusion par
+ * langage ratera tôt ou tard du vrai code ». Le bruit ComfyArtist (workflows
+ * .json) sera traité par IDENTITÉ (champ Dev/Auto/Exclu par agent, au plan),
+ * pas par extension.
  */
-const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'json']);
+const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
 
 const NON_DEV_EXTENSIONS = new Set([
   // bureautique

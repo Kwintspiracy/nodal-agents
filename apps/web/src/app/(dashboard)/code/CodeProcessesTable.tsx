@@ -1,24 +1,24 @@
-﻿'use client';
+'use client';
 
-// CodeProcessesTable — la page /code, organisée PAR PROJET (décision Quentin
-// 25/08) : « ce qui est intéressant, c'est de suivre le développement d'un
-// produit » — pas une liste plate de sessions où trois items consécutifs
-// concernent le même repo sans que rien ne le dise.
+// CodeProcessesTable � la page /code, organis�e PAR PROJET (d�cision Quentin
+// 25/08) : � ce qui est int�ressant, c'est de suivre le d�veloppement d'un
+// produit � � pas une liste plate de sessions o� trois items cons�cutifs
+// concernent le m�me repo sans que rien ne le dise.
 //
 // Trois niveaux :
-//   1. Les PROJETS (dérivés : racine git / workspace des fichiers touchés) —
-//      une carte par projet : sessions, agents, dernière activité, coût.
-//      Les sessions inclassables vivent dans le tiroir « Other sessions ».
+//   1. Les PROJETS (d�riv�s : racine git / workspace des fichiers touch�s) �
+//      une carte par projet : sessions, agents, derni�re activit�, co�t.
+//      Les sessions inclassables vivent dans le tiroir � Other sessions �.
 //   2. Un projet ouvert = sa CHRONOLOGIE de sessions (la table existante,
-//      filtrée) — les agents deviennent les acteurs de l'histoire du projet.
-//   3. Le détail d'une session (/code/[id]) est inchangé.
+//      filtr�e) � les agents deviennent les acteurs de l'histoire du projet.
+//   3. Le d�tail d'une session (/code/[id]) est inchang�.
 //
-// L'ARCHIVAGE est un état d'UI persisté (code_project_archives) : le projet
-// sort de l'espace actif, le dossier réel n'est jamais touché, désarchivage
-// en un clic depuis la section « Archived ».
+// L'ARCHIVAGE est un �tat d'UI persist� (code_project_archives) : le projet
+// sort de l'espace actif, le dossier r�el n'est jamais touch�, d�sarchivage
+// en un clic depuis la section � Archived �.
 //
 // Poll : listCodingProcessesAction toutes les 5s tant qu'une session est en
-// 'coding' — le regroupement est recalculé à chaque rafraîchissement.
+// 'coding' � le regroupement est recalcul� � chaque rafra�chissement.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -33,13 +33,13 @@ import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
-import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
+import Select from '@/components/ui/Select';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 
 const POLL_INTERVAL = 5000;
 
-/** Clé du tiroir des sessions sans projet dérivable. Jamais archivable. */
+/** Cl� du tiroir des sessions sans projet d�rivable. Jamais archivable. */
 const OTHER_KEY = '__other__';
 
 const STAGE_LABEL: Record<string, string> = {
@@ -47,7 +47,7 @@ const STAGE_LABEL: Record<string, string> = {
   delegated: 'Delegated',
   review: 'Review',
   done: 'Done',
-  done_approved: 'Done · Approved',
+  done_approved: 'Done � Approved',
   failed: 'Failed',
   chat: 'Chat',
   awaiting_approval: 'Blocked',
@@ -72,14 +72,14 @@ type Project = {
   agentNames: string[];
   totalCostUsd: number;
   lastActivityAt: string | null;
-  /** Étape de la session la plus récente — l'état « vivant » du projet. */
+  /** �tape de la session la plus r�cente � l'�tat � vivant � du projet. */
   latestStage: string;
 };
 
 function groupProjects(rows: CodingProcessRow[]): Project[] {
   const byKey = new Map<string, Project>();
-  // rows arrivent triées par activité décroissante — la première session d'un
-  // groupe est donc la plus récente, et l'ordre des projets suit.
+  // rows arrivent tri�es par activit� d�croissante � la premi�re session d'un
+  // groupe est donc la plus r�cente, et l'ordre des projets suit.
   for (const row of rows) {
     const key = row.projectPath ?? OTHER_KEY;
     const existing = byKey.get(key);
@@ -117,7 +117,7 @@ export default function CodeProcessesTable({
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
   const [archived, setArchived] = useState<Set<string>>(() => new Set(initialArchivedPaths));
   const [selected, setSelected] = useState<string | null>(null);
-  // Session ouverte dans le poste de travail projet ; null = la plus récente.
+  // Session ouverte dans le poste de travail projet ; null = la plus r�cente.
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -162,7 +162,7 @@ export default function CodeProcessesTable({
     });
     void setCodeProjectArchivedAction({ projectPath: path, archived: nextArchived }).then((r) => {
       if (!r.ok) {
-        // Revert optimiste — l'état affiché ne doit jamais mentir sur la base.
+        // Revert optimiste � l'�tat affich� ne doit jamais mentir sur la base.
         setArchived((prev) => {
           const next = new Set(prev);
           if (nextArchived) next.delete(path);
@@ -191,18 +191,18 @@ export default function CodeProcessesTable({
   if (rows.length === 0) {
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        No coding activity yet. Every pipeline that edits code files shows up here — grouped by
+        No coding activity yet. Every pipeline that edits code files shows up here � grouped by
         project (the git repo or workspace it touched). Ask an agent to write some code and watch
         the project appear.
       </div>
     );
   }
 
-  // ── Niveau 2 : le POSTE DE TRAVAIL d'un projet (décision Quentin 25/08 :
-  // « si je clique sur un projet, je veux les diffs, la review, les résultats
-  // de review, et explorer les sessions dans cette interface » — pas une page
-  // intermédiaire qui liste des sessions). Rail de sessions à gauche, détail
-  // complet (diffs / activity / verdicts / approbations) à droite.
+  // -- Niveau 2 : le POSTE DE TRAVAIL d'un projet (d�cision Quentin 25/08 :
+  // � si je clique sur un projet, je veux les diffs, la review, les r�sultats
+  // de review, et explorer les sessions dans cette interface � � pas une page
+  // interm�diaire qui liste des sessions). Rail de sessions � gauche, d�tail
+  // complet (diffs / activity / verdicts / approbations) � droite.
   const openProject = selected ? projects.find((p) => p.key === selected) : null;
   if (openProject) {
     const sessions = openProject.sessions;
@@ -217,9 +217,9 @@ export default function CodeProcessesTable({
 
     return (
       <div className="space-y-4">
-        {/* En-tête projet : identité + agrégats — le résumé avant le détail. */}
+        {/* En-t�te projet : identit� + agr�gats � le r�sum� avant le d�tail. */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-rule-2 bg-paper px-5 py-4">
-          <TextButton onClick={() => setSelected(null)}>← Projects</TextButton>
+          <TextButton onClick={() => setSelected(null)}>? Projects</TextButton>
           <span className="text-medium-15 text-ink">{openProject.name}</span>
           {openProject.path && (
             <code className="hidden text-mono-12 text-ink-4 md:inline" title={openProject.path}>
@@ -232,7 +232,7 @@ export default function CodeProcessesTable({
             </span>
             <span>{filesTotal} files</span>
             <span>
-              {openProject.totalCostUsd > 0 ? `$${openProject.totalCostUsd.toFixed(2)}` : '—'}
+              {openProject.totalCostUsd > 0 ? `$${openProject.totalCostUsd.toFixed(2)}` : '�'}
             </span>
             <span className="flex items-center -space-x-1.5">
               {openProject.agentNames.slice(0, 4).map((n) => (
@@ -242,20 +242,35 @@ export default function CodeProcessesTable({
           </span>
         </div>
 
-        {/* Sélecteur de session — un dropdown RICHE (retour Quentin 25/08 :
-            le <select> natif était « borrin et trop fin ») : la session
-            courante s'affiche en carte pleine (type, agent, tâche, étape,
-            âge), le panneau liste les autres avec les mêmes ingrédients. */}
-        <SessionPicker
-          sessions={sessions}
-          selectedKey={effectiveKey}
-          onSelect={(key) => setSessionKey(key)}
-        />
+        {/* S�lecteur de session � le <select> natif DS, libell�s COURTS et
+            une seule ligne (d�cision Quentin 25/08, option a : le contenu
+            riche appartient � l'�cran en dessous, pas au s�lecteur). */}
+        <Select
+          value={effectiveKey ?? ''}
+          onChange={(e) => setSessionKey(e.target.value)}
+          aria-label="Session"
+        >
+          {sessions.map((s) => {
+            const key = `${s.kind}-${s.id}`;
+            const type =
+              s.sessionType === 'pr_review'
+                ? 'PR review'
+                : s.sessionType === 'review'
+                  ? 'Review'
+                  : 'Coding';
+            return (
+              <option key={key} value={key}>
+                {type} � {s.agentName ?? 'Unknown agent'} � {stageLabel(s.stage)} �{' '}
+                {relativeTime(s.activityAt)}
+              </option>
+            );
+          })}
+        </Select>
 
-        {/* La session sélectionnée, en PLEINE largeur, une seule colonne :
-            verdict de review condensé, diffs par fichier repliables, activité
-            chronologique de tous les agents — le même poste de travail que
-            /code/[id], embarqué. */}
+        {/* La session s�lectionn�e, en PLEINE largeur, une seule colonne :
+            verdict de review condens�, diffs par fichier repliables, activit�
+            chronologique de tous les agents � le m�me poste de travail que
+            /code/[id], embarqu�. */}
         {current ? (
           <EmbeddedProcessDetail
             key={effectiveKey}
@@ -270,7 +285,7 @@ export default function CodeProcessesTable({
     );
   }
 
-  // ── Niveau 1 : les projets ────────────────────────────────────────────────
+  // -- Niveau 1 : les projets ------------------------------------------------
   return (
     <div className="space-y-6">
       <div className="space-y-2.5">
@@ -295,7 +310,7 @@ export default function CodeProcessesTable({
             onClick={() => setShowArchived((v) => !v)}
             className="!text-mono-11 uppercase tracking-[0.12em]"
           >
-            {showArchived ? '▾' : '▸'} Archived · {archivedProjects.length}
+            {showArchived ? '?' : '?'} Archived � {archivedProjects.length}
           </TextButton>
           {showArchived &&
             archivedProjects.map((p) => (
@@ -344,7 +359,7 @@ function ProjectCard({
               variant={stageVariant(project.latestStage)}
               label={stageLabel(project.latestStage)}
             />
-            {live && <span className="animate-pulse text-body-12 text-ink-4">Live…</span>}
+            {live && <span className="animate-pulse text-body-12 text-ink-4">Live�</span>}
           </span>
           {project.path && (
             <code className="mt-0.5 block truncate text-mono-12 text-ink-4" title={project.path}>
@@ -367,11 +382,11 @@ function ProjectCard({
           {project.sessions.length} session{project.sessions.length === 1 ? '' : 's'}
         </span>
         <span className="hidden text-mono-12 text-ink-3 sm:inline">
-          {project.totalCostUsd > 0 ? `$${project.totalCostUsd.toFixed(2)}` : '—'}
+          {project.totalCostUsd > 0 ? `$${project.totalCostUsd.toFixed(2)}` : '�'}
         </span>
         <span className="text-mono-12 text-ink-4">{relativeTime(project.lastActivityAt)}</span>
         {onArchive && (
-          <RowActionButton onClick={onArchive} title="Archive (UI only — the folder is untouched)">
+          <RowActionButton onClick={onArchive} title="Archive (UI only � the folder is untouched)">
             Archive
           </RowActionButton>
         )}
@@ -385,111 +400,15 @@ function ProjectCard({
   );
 }
 
-// ─── Sélecteur de session riche ──────────────────────────────────────────────
-
-function sessionTypeLabel(t: CodingProcessRow['sessionType']): string {
-  return t === 'pr_review' ? 'PR REVIEW' : t === 'review' ? 'REVIEW' : 'CODING';
-}
-
-/** La ligne riche d'une session — partagée entre le déclencheur et le panneau. */
-function SessionSummary({ s }: { s: CodingProcessRow }) {
-  return (
-    <span className="flex min-w-0 flex-1 items-center gap-3">
-      <AgentAvatar name={s.agentName ?? '?'} size="sm" shape="round" />
-      <MonoMicroTag tone={s.sessionType === 'coding' ? 'ink' : 'agent'}>
-        {sessionTypeLabel(s.sessionType)}
-      </MonoMicroTag>
-      <span className="min-w-0 flex-1 truncate text-body-14 text-ink" title={s.task}>
-        {s.task}
-      </span>
-      <StatusPill variant={stageVariant(s.stage)} label={stageLabel(s.stage)} />
-      {s.filesChanged > 0 && (
-        <span className="hidden shrink-0 text-mono-11 text-ink-4 sm:inline">
-          {s.filesChanged} files
-        </span>
-      )}
-      <span className="shrink-0 text-mono-11 text-ink-4">{relativeTime(s.activityAt)}</span>
-    </span>
-  );
-}
-
-function SessionPicker({
-  sessions,
-  selectedKey,
-  onSelect,
-}: {
-  sessions: CodingProcessRow[];
-  selectedKey: string | null;
-  onSelect: (key: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  // Fermeture au clic extérieur + Échap — le contrat minimal d'un popover.
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  const current = sessions.find((s) => `${s.kind}-${s.id}` === selectedKey) ?? sessions[0] ?? null;
-  if (!current) return null;
-
-  return (
-    <div ref={rootRef} className="relative">
-      <RowActionButton
-        onClick={() => setOpen((v) => !v)}
-        className="!h-auto !w-full !justify-start !rounded-xl !border-rule-2 !bg-paper !px-4 !py-3"
-      >
-        <SessionSummary s={current} />
-        <span className="ml-3 shrink-0 text-body-12 text-ink-4">
-          {open ? '▴' : '▾'} {sessions.length} session{sessions.length === 1 ? '' : 's'}
-        </span>
-      </RowActionButton>
-
-      {open && (
-        <div className="absolute inset-x-0 top-full z-20 mt-2 max-h-96 overflow-y-auto rounded-xl border border-rule-2 bg-paper shadow-2xl">
-          {sessions.map((s) => {
-            const key = `${s.kind}-${s.id}`;
-            const isCurrent = key === (selectedKey ?? `${sessions[0]!.kind}-${sessions[0]!.id}`);
-            return (
-              <div key={key} className="border-b border-rule-2 last:border-b-0">
-                <RowActionButton
-                  onClick={() => {
-                    onSelect(key);
-                    setOpen(false);
-                  }}
-                  className={`!h-auto !w-full !justify-start !rounded-none !border-transparent !px-4 !py-3 ${
-                    isCurrent ? '!bg-hover' : '!bg-transparent'
-                  }`}
-                >
-                  <SessionSummary s={s} />
-                </RowActionButton>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+// --- [retir�] S�lecteur riche (option b) � Quentin a tranch� pour le select
+// natif sobre : � le contenu riche appartient � l'�cran, pas au s�lecteur �.
 
 /**
- * Charge puis rend le détail d'une session DANS le poste de travail projet.
+ * Charge puis rend le d�tail d'une session DANS le poste de travail projet.
  * Le composant CodeProcessDetail exige un initialDetail (la page /code/[id]
- * le fournit côté serveur) — embarqué, ce wrapper le charge côté client, avec
- * un état de chargement honnête, puis remonte à chaque changement de session
- * (key posée par l'appelant).
+ * le fournit c�t� serveur) � embarqu�, ce wrapper le charge c�t� client, avec
+ * un �tat de chargement honn�te, puis remonte � chaque changement de session
+ * (key pos�e par l'appelant).
  */
 function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { sessionId: string } }) {
   const [detail, setDetail] = useState<CodingProcessDetailData | null>(null);
@@ -516,8 +435,8 @@ function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { session
     );
   }
   if (!detail) {
-    // Squelette animé (retour Quentin 25/08 : sans loader, « on pense que
-    // c'est planté ») — la silhouette des sections qui arrivent.
+    // Squelette anim� (retour Quentin 25/08 : sans loader, � on pense que
+    // c'est plant� �) � la silhouette des sections qui arrivent.
     return (
       <div className="animate-pulse space-y-4" aria-label="Loading session" role="status">
         <div className="h-24 rounded-xl border border-rule-2 bg-paper" />
@@ -528,7 +447,7 @@ function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { session
           <div className="h-10 border-b border-rule-2 bg-hover/40" />
           <div className="h-10" />
         </div>
-        <p className="text-center text-body-13 text-ink-4">Loading session…</p>
+        <p className="text-center text-body-13 text-ink-4">Loading session�</p>
       </div>
     );
   }

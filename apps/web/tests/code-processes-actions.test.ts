@@ -572,15 +572,15 @@ describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
     ).toBeUndefined();
   });
 
-  it('une session 100 % .json (workflow ComfyArtist) ne qualifie pas non plus', async () => {
-    const agentId = await makeAgent('Comfy Workflow Writer');
+  it('le .json QUALIFIE (décision Quentin : mock-data = vrai code ; le bruit Comfy se traitera par agent)', async () => {
+    const agentId = await makeAgent('Mock Data Writer');
     const jobId = await makeJob(agentId, 'completed');
 
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
       jobId,
       toolName: 'file_write',
-      toolInput: { path: 'workflows/Krea_Turbo_4K.json', content: '{"nodes":[]}' },
+      toolInput: { path: 'app/mock-data/users.json', content: '[{"id":1}]' },
       toolOutput: '{"ok":true}',
     });
 
@@ -590,8 +590,8 @@ describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
     if (!result.ok) return;
     expect(
       result.data.find((r) => r.id === jobId),
-      'un workflow .json a été qualifié « coding »',
-    ).toBeUndefined();
+      'un .json de mock-data a été exclu — l’exclusion par extension est revenue',
+    ).toBeTruthy();
   });
 
   it('un pipeline MIXTE (.md + .ts) reste un projet de code', async () => {

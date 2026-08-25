@@ -503,8 +503,12 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
     const elapsedMs = Date.now() - start;
 
     expect(res.status).toBe('awaiting_approval');
-    // No poll loop ran — well under one poll tick even on a loaded CI box.
-    expect(elapsedMs).toBeLessThan(1000);
+    // No poll loop ran. La borne mesure executeJob ENTIER (inserts pglite
+    // compris), pas le seul chemin de grâce : à <1000 elle a flaké sur un
+    // runner CI Windows chargé (1141 ms mesurées, PR #36) alors qu'aucun poll
+    // n'avait tourné. 3000 reste très en dessous de la moindre fenêtre de
+    // grâce réelle tout en absorbant la variance CI.
+    expect(elapsedMs).toBeLessThan(3000);
   });
 
   it('race post-suspend: an approval resolved between the last poll and the suspend write self-heals — flips to pending and triggers the worker', async () => {

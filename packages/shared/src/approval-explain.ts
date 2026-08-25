@@ -258,6 +258,17 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
     case 'skill_file_write':
       effect = 'write';
       break;
+    // Les outils de LECTURE peuvent être gatés par une RÈGLE utilisateur — le
+    // défaut « write » faisait alors annoncer « ⚠️ Écriture » pour une simple
+    // recherche (constat live Quentin 25/08 : « depuis quand une search ça
+    // écrit dans des fichiers ?? »). Une carte qui ment sur l'effet détruit
+    // la confiance dans toutes les autres.
+    case 'file_search':
+    case 'file_read':
+    case 'file_list':
+      effect = 'read';
+      target = typeof input['path'] === 'string' ? input['path'] : null;
+      break;
     default:
       effect = 'write';
   }
