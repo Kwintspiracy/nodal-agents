@@ -41,9 +41,19 @@
 // refuses a user/agent-supplied slug that collides with the catalog outright
 // (reservedSlugs param), closing the vector at the source too.
 //
-// Existing installs self-heal: this seeder runs on every boot and the UPDATE
-// branches below now also stamp createdBy='system', so a pre-F-6 row missing
-// the flag gets it on the next restart.
+// Existing installs self-heal — WITH ONE LIMIT since 2026-08-25. This seeder
+// runs on every boot and the UPDATE branches below stamp createdBy='system',
+// so a row that ALREADY carries the flag keeps healing. But the guard added
+// below (a catalog-slug row whose createdBy is not 'system' belongs to the
+// user and is left alone) runs FIRST, so a pre-F-6 row that never got the flag
+// is now treated as a user skill: never updated, and its holders excluded from
+// the dev team by the createdBy='system' filters in the Code tab and the
+// runtime context.
+//
+// There is no reliable way to tell "row written by an old seeder" from "skill
+// the user authored", so this is not guessed — it is surfaced. The warning
+// below names the slug and both remedies. The exposure window is narrow: only
+// installs that never booted between the P2b release and this one.
 
 import { eq, and } from '@nodal-agents/db';
 import { agentSkills, entities } from '@nodal-agents/db';
@@ -102,9 +112,11 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
     // nôtre n'est pas livré, et le journal dit exactement quoi renommer.
     if (existing && existing.createdBy !== 'system') {
       console.warn(
-        `[seed-skills] "${skill.slug}" existe déjà comme skill de l'utilisateur — ` +
-          `le skill système du même nom n'est PAS installé. ` +
-          `Renommez le vôtre pour recevoir celui du catalogue.`,
+        `[seed-skills] "${skill.slug}" already exists as a user-owned skill — ` +
+          `the catalog skill of the same name was NOT installed. ` +
+          `Rename yours to receive it. ` +
+          `If that skill came from an older Nodal install rather than from you, ` +
+          `delete it instead and restart to get the catalog version.`,
       );
       continue;
     }

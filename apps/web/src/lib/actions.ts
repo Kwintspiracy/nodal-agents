@@ -10990,6 +10990,13 @@ const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write'])
  * Bénéfice second, et c'est ce qui a décidé : le skill est déjà la guidance
  * du développeur. Il ne s'ajoute donc pas comme un réglage de plus à
  * découvrir — il sert deux fins à la fois, guider et désigner.
+ *
+ * CE QUE CET ONGLET NE MONTRE PAS, ET CE N'EST PAS UN TROU : les écritures
+ * d'un agent que personne n'a désigné développeur, refusées ou non, n'y
+ * figurent pas. Leur diagnostic passe par la page Jobs, qui conserve le job
+ * et sa chronologie d'appels. Cet onglet est une vue produit, pas la surface
+ * d'audit — deux relecteurs ont signalé l'absence comme un trou avant de
+ * conclure l'inverse, d'où cette ligne.
  */
 const DEV_TEAM_SKILL_SLUGS = ['dev', 'code-review'] as const;
 

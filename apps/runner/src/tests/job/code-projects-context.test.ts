@@ -233,6 +233,70 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
+  it('un développeur qui DÉLÈGUE reste l’auteur : le projet existe même si le worker n’a pas le skill', async () => {
+    // Les deux vues doivent juger la même chose (revue du 25/08, 3e tour).
+    // L'onglet Code regarde toute la CHAÎNE : si un développeur est quelque
+    // part dedans, le pipeline lui appartient. Ce module ne regardait que
+    // l'auteur de l'appel — donc, quand un développeur déléguait à un worker
+    // ne portant pas encore le skill, l'onglet montrait le travail pendant que
+    // le prompt taisait le projet. Deux règles pour une même question.
+    await mkdir(join(racine, 'dev', 'delegue-app'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'delegue-app', 'index.html'), '<!doctype html>');
+
+    const [worker] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Worker sans skill',
+        slug: `worker-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+
+    // Le job du LEAD (développeur) délègue à celui du worker.
+    const [jobLead] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: leadAgentId,
+        status: 'completed',
+        channel: 'api',
+        task: 'construis l’app',
+      })
+      .returning();
+    const [jobWorker] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: worker!.id,
+        parentJobId: jobLead!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'écris les fichiers',
+      })
+      .returning();
+
+    // C'est le worker qui écrit, et il n'a aucun skill.
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: jobWorker!.id,
+      toolName: 'file_write',
+      toolInput: { path: `${racine}/dev/delegue-app/index.html` },
+      toolOutput: '{"ok":true}',
+    });
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        projects.some((p) => p.name === 'delegue-app'),
+        'le travail délégué par un développeur a disparu du contexte',
+      ).toBe(true);
+    } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobWorker!.id));
+      await rm(join(racine, 'dev', 'delegue-app'), { recursive: true, force: true });
+    }
+  });
+
   it('workspace NICHÉ : l’écriture d’un non-dev ne devient pas un projet du DÉVELOPPEUR', async () => {
     // Le cas où le filtre par workspace seul se retournait (revue du 25/08,
     // second tour). Le coffre du scribe vit À L'INTÉRIEUR du workspace des

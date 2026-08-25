@@ -138,6 +138,12 @@ function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, strin
 }
 
 /**
+ * Profondeur de remontée des délégations. L'invariant #8 plafonne les chaînes
+ * à 3 niveaux ; la marge absorbe une donnée abîmée sans jamais boucler.
+ */
+const MAX_ANCESTOR_DEPTH = 8;
+
+/**
  * Cache par entité (revue P1 du 25/08) : `getDeploymentContext` tourne à
  * CHAQUE job ET à chaque tour de chat. Un projet ne naît pas deux fois par
  * minute — 60 s de TTL suffisent, et le prix du scan est payé une fois.
@@ -157,9 +163,16 @@ export function _resetProjectsCacheForTests(): void {
 }
 
 /**
- * Les projets de code de l'entité, avec leurs détenteurs. Best-effort : toute
- * erreur rend une liste vide (le bloc Runtime omet alors la section) — jamais
- * une exception qui ferait échouer un job.
+ * Les projets de code de l'entité, avec leurs détenteurs.
+ *
+ * Best-effort sur les INCIDENTS D'EXÉCUTION : une base momentanément
+ * injoignable rend une liste vide et le bloc Runtime omet la section, plutôt
+ * que de faire échouer un job pour une information de confort.
+ *
+ * PAS sur les BUGS : une ReferenceError ou une TypeError remonte et fait
+ * échouer le job. Le contrat était « ne jette jamais », et il déguisait un
+ * import oublié en « aucun projet » pendant qu'une suite de tests entière
+ * restait verte (revue du 25/08).
  */
 export async function listCodeProjectsForContext(
   db: RunnerDeps['db'],
@@ -229,19 +242,77 @@ export async function listCodeProjectsForContext(
     //
     // La jointure sur le job ferme les deux à la fois : l'écriture d'un
     // non-développeur ne crée ni ne rafraîchit plus aucun projet, où qu'elle
-    // tombe, et les deux vues cessent de diverger.
+    // tombe.
     const rows = await db
       .select({
+        jobId: toolCalls.jobId,
         toolInput: toolCalls.toolInput,
         toolOutput: toolCalls.toolOutput,
         createdAt: toolCalls.createdAt,
         authorId: agentJobs.agentId,
+        parentJobId: agentJobs.parentJobId,
       })
       .from(toolCalls)
       .innerJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
       .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.toolName, EDIT_TOOLS)))
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
+
+    // La CHAÎNE, pas seulement l'auteur direct (revue du 25/08, troisième
+    // tour). Juger le seul émetteur laissait les deux vues appliquer des règles
+    // différentes : quand un développeur délègue à un worker qui ne porte pas
+    // encore le skill, l'onglet Code montre le pipeline (il regarde toute la
+    // chaîne) pendant que ce module omettait le projet (il ne regardait que
+    // l'auteur). Sous-annoncer est le bon sens de l'erreur, mais deux règles
+    // pour une même question restent deux vérités — et c'est exactement ce que
+    // cette PR existait pour supprimer.
+    const parentOfJob = new Map<string, string | null>();
+    const agentOfJob = new Map<string, string>();
+    for (const r of rows) {
+      if (!r.jobId) continue;
+      parentOfJob.set(r.jobId, r.parentJobId);
+      if (r.authorId) agentOfJob.set(r.jobId, r.authorId);
+    }
+    // Les ancêtres, niveau par niveau — bornés par la profondeur de délégation.
+    let toResolve = Array.from(
+      new Set(
+        rows
+          .map((r) => r.parentJobId)
+          .filter((id): id is string => id !== null && !agentOfJob.has(id)),
+      ),
+    );
+    for (let depth = 0; depth < MAX_ANCESTOR_DEPTH && toResolve.length > 0; depth++) {
+      const ancestors = await db
+        .select({
+          id: agentJobs.id,
+          parentJobId: agentJobs.parentJobId,
+          agentId: agentJobs.agentId,
+        })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, toResolve)));
+      for (const a of ancestors) {
+        parentOfJob.set(a.id, a.parentJobId);
+        if (a.agentId) agentOfJob.set(a.id, a.agentId);
+      }
+      toResolve = Array.from(
+        new Set(
+          ancestors
+            .map((a) => a.parentJobId)
+            .filter((id): id is string => id !== null && !parentOfJob.has(id)),
+        ),
+      );
+    }
+
+    /** Un membre de l'équipe de dev figure-t-il dans la chaîne de ce job ? */
+    const chainHasDev = (jobId: string): boolean => {
+      let cursor: string | null = jobId;
+      for (let hop = 0; hop <= MAX_ANCESTOR_DEPTH && cursor; hop++) {
+        const agent = agentOfJob.get(cursor);
+        if (agent && devTeam.has(agent)) return true;
+        cursor = parentOfJob.get(cursor) ?? null;
+      }
+      return false;
+    };
 
     const rootMemo = new Map<string, string>();
     const existsMemo = new Map<string, boolean>();
@@ -261,8 +332,10 @@ export async function listCodeProjectsForContext(
     const byPath = new Map<string, { owners: Set<string>; lastActivityAt: string | null }>();
     for (const row of rows) {
       // L'écriture d'un non-développeur ne fait naître aucun projet, où
-      // qu'elle tombe — y compris dans le workspace d'un développeur.
-      if (!row.authorId || !devTeam.has(row.authorId)) continue;
+      // qu'elle tombe — y compris dans le workspace d'un développeur. Sauf si
+      // un développeur est ailleurs dans la chaîne : il a délégué, le travail
+      // est le sien.
+      if (!row.jobId || !chainHasDev(row.jobId)) continue;
 
       // Une écriture REFUSÉE n'a rien créé — même règle que l'onglet Code.
       const head = (row.toolOutput ?? '').slice(0, 400);
