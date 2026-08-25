@@ -26,6 +26,7 @@ import {
   agents,
   agentSkills,
   agentSkillAssignments,
+  agentJobs,
   toolCalls,
 } from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
@@ -213,24 +214,31 @@ export async function listCodeProjectsForContext(
       ownersByRoot.set(norm(r.path), set);
     }
 
-    // ASYMÉTRIE ASSUMÉE avec l'onglet Code (revue du 25/08) : le scan des
-    // éditions n'est PAS filtré par agent, seuls les workspaces le sont. Un
-    // agent non-développeur qui écrit dans le workspace d'un développeur
-    // rafraîchit donc le projet ici, alors que SA session à lui n'apparaît pas
-    // dans l'onglet.
+    // Le scan est filtré par l'AUTEUR de l'écriture, pas seulement par le
+    // workspace (revue du 25/08, second tour).
     //
-    // C'est voulu, et les deux vues ne disent pas la même chose : l'onglet
-    // répond « quelles sessions de code ont eu lieu », ce module répond « quels
-    // projets existent et à qui ils sont ». Le projet existe bel et bien, et
-    // ses détenteurs restent des développeurs — le nom de l'auteur d'une
-    // écriture ponctuelle ne change ni l'un ni l'autre.
+    // Filtrer les seuls workspaces suffisait tant qu'ils étaient disjoints, et
+    // se retournait dans le cas NICHÉ : un non-développeur dont le workspace
+    // (`D:/work/notes`) vit à l'intérieur de celui d'un développeur
+    // (`D:/work`). Avant le filtre, la racine la plus longue gagnait et son
+    // écriture restait chez lui ; après, sa racine disparaît de la liste et la
+    // même écriture retombe dans le workspace du développeur — fabriquant un
+    // « projet » de notes ATTRIBUÉ au développeur, annoncé dans le prompt de
+    // tous les agents, et introuvable dans l'onglet Code. Le filtre aggravait
+    // ce qu'il devait corriger.
+    //
+    // La jointure sur le job ferme les deux à la fois : l'écriture d'un
+    // non-développeur ne crée ni ne rafraîchit plus aucun projet, où qu'elle
+    // tombe, et les deux vues cessent de diverger.
     const rows = await db
       .select({
         toolInput: toolCalls.toolInput,
         toolOutput: toolCalls.toolOutput,
         createdAt: toolCalls.createdAt,
+        authorId: agentJobs.agentId,
       })
       .from(toolCalls)
+      .innerJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
       .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.toolName, EDIT_TOOLS)))
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
@@ -252,6 +260,10 @@ export async function listCodeProjectsForContext(
 
     const byPath = new Map<string, { owners: Set<string>; lastActivityAt: string | null }>();
     for (const row of rows) {
+      // L'écriture d'un non-développeur ne fait naître aucun projet, où
+      // qu'elle tombe — y compris dans le workspace d'un développeur.
+      if (!row.authorId || !devTeam.has(row.authorId)) continue;
+
       // Une écriture REFUSÉE n'a rien créé — même règle que l'onglet Code.
       const head = (row.toolOutput ?? '').slice(0, 400);
       if (head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head)) continue;
@@ -297,6 +309,16 @@ export async function listCodeProjectsForContext(
     projectsCache.set(entityId, { at: Date.now(), value: result });
     return result;
   } catch (err) {
+    // Un BUG DE PROGRAMMATION n'est pas un incident d'exécution : il remonte.
+    //
+    // Ce filet best-effort existe pour qu'une base momentanément injoignable
+    // ne fasse pas échouer un job — la liste des projets est du confort, pas du
+    // fonctionnel. Il avalait aussi les ReferenceError et TypeError : une
+    // colonne oubliée dans un import a rendu une liste vide pendant que toute
+    // une suite de tests continuait de passer sous les yeux (revue du 25/08).
+    // Un repli silencieux qui déguise un bug en « rien à afficher » est
+    // exactement ce que l'invariant #4 interdit.
+    if (err instanceof ReferenceError || err instanceof TypeError) throw err;
     console.warn(
       '[code-projects] listing failed (context will omit the section):',
       err instanceof Error ? err.message : err,

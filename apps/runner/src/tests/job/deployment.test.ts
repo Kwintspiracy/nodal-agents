@@ -16,15 +16,24 @@ import { getDeploymentContext } from '../../job/deployment.ts';
 // (thenable/catchable) with a `.limit` method attached to it.
 function makeFakeDb(installNotes = ''): Parameters<typeof getDeploymentContext>[0] {
   return {
-    select: () => ({
-      from: () => ({
-        where: () => {
-          const promise = Promise.resolve([]) as Promise<unknown[]> & { limit?: unknown };
-          promise.limit = () => Promise.resolve(installNotes ? [{ value: installNotes }] : []);
-          return promise;
-        },
-      }),
-    }),
+    select: () => {
+      // `where()` doit supporter les DEUX formes d'appel de
+      // getDeploymentContext : entity_settings enchaîne `.limit(n)`, la lecture
+      // du fuseau enchaîne `.catch(fn)` directement sur la requête non résolue.
+      // D'où une vraie Promise (thenable/catchable) portant un `.limit`.
+      const where = () => {
+        const promise = Promise.resolve([]) as Promise<unknown[]> & { limit?: unknown };
+        promise.limit = () => Promise.resolve(installNotes ? [{ value: installNotes }] : []);
+        return promise;
+      };
+      // `innerJoin` : la liste des projets de code joint des tables. Le mock
+      // l'ignorait, et l'absence passait inaperçue parce que le module avalait
+      // le TypeError et rendait une liste vide. Il ne l'avale plus — un mock
+      // qui ment sur la forme du client fait désormais échouer le test, ce qui
+      // est le but d'un mock.
+      const from = () => ({ where, innerJoin: () => ({ where, innerJoin: () => ({ where }) }) });
+      return { from };
+    },
     insert: () => ({
       values: () => ({
         onConflictDoUpdate: () => Promise.resolve(),

@@ -233,6 +233,65 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
+  it('workspace NICHÉ : l’écriture d’un non-dev ne devient pas un projet du DÉVELOPPEUR', async () => {
+    // Le cas où le filtre par workspace seul se retournait (revue du 25/08,
+    // second tour). Le coffre du scribe vit À L'INTÉRIEUR du workspace des
+    // développeurs. Avant le filtre, la racine la plus longue gagnait et son
+    // écriture restait chez lui ; le filtre retirait sa racine, et la même
+    // écriture retombait chez les développeurs — fabriquant un projet de notes
+    // ATTRIBUÉ à Dev C et Lead-Dev, annoncé à tous les agents, et introuvable
+    // dans l'onglet Code. Le filtre aggravait ce qu'il devait corriger.
+    await mkdir(join(racine, 'dev', 'coffre-perso'), { recursive: true });
+    await writeFile(join(racine, 'dev', 'coffre-perso', 'notes.py'), 'print(1)');
+
+    const [scribe] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Scribe niché',
+        slug: `scribe-niche-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    // Son workspace est SOUS celui des développeurs.
+    await db.insert(agentWorkspaces).values({
+      entityId: seed.entityId,
+      agentId: scribe!.id,
+      label: 'Coffre',
+      path: `${racine}/dev/coffre-perso`,
+    });
+    const [jobScribe] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: scribe!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'notes',
+      })
+      .returning();
+    await db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: jobScribe!.id,
+      toolName: 'file_write',
+      toolInput: { path: `${racine}/dev/coffre-perso/notes.py` },
+      toolOutput: '{"ok":true}',
+    });
+
+    try {
+      const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        projects.some((p) => p.name === 'coffre-perso'),
+        'le coffre d’un non-développeur est devenu un projet attribué aux développeurs',
+      ).toBe(false);
+      expect(projects.map((p) => p.name).sort()).toEqual(['calorie-counter', 'water-intake']);
+    } finally {
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, scribe!.id));
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobScribe!.id));
+      await rm(join(racine, 'dev', 'coffre-perso'), { recursive: true, force: true });
+    }
+  });
+
   it('le workspace d’un agent NON-développeur ne produit AUCUN projet', async () => {
     // La convergence avec l'onglet Code (revue du 25/08). Ce module dit aux
     // agents quels projets existent ; l'onglet les montre au propriétaire. Si

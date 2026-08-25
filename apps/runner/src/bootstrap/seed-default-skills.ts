@@ -81,10 +81,33 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
       .select({
         id: agentSkills.id,
         contentOverridden: agentSkills.contentOverridden,
+        createdBy: agentSkills.createdBy,
       })
       .from(agentSkills)
       .where(and(eq(agentSkills.slug, skill.slug), eq(agentSkills.entityId, targetEntityId)))
       .limit(1);
+
+    // Une row du propriétaire au slug du catalogue n'est PAS la nôtre : on la
+    // laisse et on le dit (revue du 25/08).
+    //
+    // Le cas n'est plus théorique depuis que `dev` est entré au catalogue —
+    // c'est un nom court et plausible, qu'une install a très bien pu donner à
+    // son propre skill avant que le slug soit réservé. Le seeder absorbait
+    // cette row : contenu écrasé si elle n'était pas marquée « modifiée », et
+    // dans tous les cas re-tamponnée `createdBy='system'`. Un texte écrit par
+    // l'utilisateur devenait alors un « skill système », assignable depuis
+    // n'importe quel espace, et ses porteurs des développeurs.
+    //
+    // Sauter bruyamment plutôt qu'absorber : l'utilisateur garde son skill, le
+    // nôtre n'est pas livré, et le journal dit exactement quoi renommer.
+    if (existing && existing.createdBy !== 'system') {
+      console.warn(
+        `[seed-skills] "${skill.slug}" existe déjà comme skill de l'utilisateur — ` +
+          `le skill système du même nom n'est PAS installé. ` +
+          `Renommez le vôtre pour recevoir celui du catalogue.`,
+      );
+      continue;
+    }
 
     if (!existing) {
       await db.insert(agentSkills).values({
