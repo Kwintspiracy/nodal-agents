@@ -33,7 +33,7 @@ import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
-import Select from '@/components/ui/Select';
+import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 
@@ -242,32 +242,15 @@ export default function CodeProcessesTable({
           </span>
         </div>
 
-        {/* Sélecteur de session — un DROPDOWN, pas une longue liste en dur
-            (spec Quentin 25/08). Plus récente sélectionnée par défaut ; chaque
-            option annonce sa nature (Coding / Review), l'agent, la tâche,
-            l'étape et l'âge. */}
-        <Select
-          value={effectiveKey ?? ''}
-          onChange={(e) => setSessionKey(e.target.value)}
-          aria-label="Session"
-        >
-          {sessions.map((s) => {
-            const key = `${s.kind}-${s.id}`;
-            const type =
-              s.sessionType === 'pr_review'
-                ? 'PR review'
-                : s.sessionType === 'review'
-                  ? 'Review'
-                  : 'Coding';
-            const task = s.task.length > 70 ? `${s.task.slice(0, 70)}…` : s.task;
-            return (
-              <option key={key} value={key}>
-                {type} · {s.agentName ?? 'Unknown agent'} · {task} · {stageLabel(s.stage)} ·{' '}
-                {relativeTime(s.activityAt)}
-              </option>
-            );
-          })}
-        </Select>
+        {/* Sélecteur de session — un dropdown RICHE (retour Quentin 25/08 :
+            le <select> natif était « borrin et trop fin ») : la session
+            courante s'affiche en carte pleine (type, agent, tâche, étape,
+            âge), le panneau liste les autres avec les mêmes ingrédients. */}
+        <SessionPicker
+          sessions={sessions}
+          selectedKey={effectiveKey}
+          onSelect={(key) => setSessionKey(key)}
+        />
 
         {/* La session sélectionnée, en PLEINE largeur, une seule colonne :
             verdict de review condensé, diffs par fichier repliables, activité
@@ -402,6 +385,105 @@ function ProjectCard({
   );
 }
 
+// ─── Sélecteur de session riche ──────────────────────────────────────────────
+
+function sessionTypeLabel(t: CodingProcessRow['sessionType']): string {
+  return t === 'pr_review' ? 'PR REVIEW' : t === 'review' ? 'REVIEW' : 'CODING';
+}
+
+/** La ligne riche d'une session — partagée entre le déclencheur et le panneau. */
+function SessionSummary({ s }: { s: CodingProcessRow }) {
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-3">
+      <AgentAvatar name={s.agentName ?? '?'} size="sm" shape="round" />
+      <MonoMicroTag tone={s.sessionType === 'coding' ? 'ink' : 'agent'}>
+        {sessionTypeLabel(s.sessionType)}
+      </MonoMicroTag>
+      <span className="min-w-0 flex-1 truncate text-body-14 text-ink" title={s.task}>
+        {s.task}
+      </span>
+      <StatusPill variant={stageVariant(s.stage)} label={stageLabel(s.stage)} />
+      {s.filesChanged > 0 && (
+        <span className="hidden shrink-0 text-mono-11 text-ink-4 sm:inline">
+          {s.filesChanged} files
+        </span>
+      )}
+      <span className="shrink-0 text-mono-11 text-ink-4">{relativeTime(s.activityAt)}</span>
+    </span>
+  );
+}
+
+function SessionPicker({
+  sessions,
+  selectedKey,
+  onSelect,
+}: {
+  sessions: CodingProcessRow[];
+  selectedKey: string | null;
+  onSelect: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Fermeture au clic extérieur + Échap — le contrat minimal d'un popover.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const current = sessions.find((s) => `${s.kind}-${s.id}` === selectedKey) ?? sessions[0] ?? null;
+  if (!current) return null;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <RowActionButton
+        onClick={() => setOpen((v) => !v)}
+        className="!h-auto !w-full !justify-start !rounded-xl !border-rule-2 !bg-paper !px-4 !py-3"
+      >
+        <SessionSummary s={current} />
+        <span className="ml-3 shrink-0 text-body-12 text-ink-4">
+          {open ? '▴' : '▾'} {sessions.length} session{sessions.length === 1 ? '' : 's'}
+        </span>
+      </RowActionButton>
+
+      {open && (
+        <div className="absolute inset-x-0 top-full z-20 mt-2 max-h-96 overflow-y-auto rounded-xl border border-rule-2 bg-paper shadow-2xl">
+          {sessions.map((s) => {
+            const key = `${s.kind}-${s.id}`;
+            const isCurrent = key === (selectedKey ?? `${sessions[0]!.kind}-${sessions[0]!.id}`);
+            return (
+              <div key={key} className="border-b border-rule-2 last:border-b-0">
+                <RowActionButton
+                  onClick={() => {
+                    onSelect(key);
+                    setOpen(false);
+                  }}
+                  className={`!h-auto !w-full !justify-start !rounded-none !border-transparent !px-4 !py-3 ${
+                    isCurrent ? '!bg-hover' : '!bg-transparent'
+                  }`}
+                >
+                  <SessionSummary s={s} />
+                </RowActionButton>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Charge puis rend le détail d'une session DANS le poste de travail projet.
  * Le composant CodeProcessDetail exige un initialDetail (la page /code/[id]
@@ -434,10 +516,20 @@ function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { session
     );
   }
   if (!detail) {
+    // Squelette animé (retour Quentin 25/08 : sans loader, « on pense que
+    // c'est planté ») — la silhouette des sections qui arrivent.
     return (
-      <p className="rounded-xl border border-rule-2 bg-paper px-6 py-10 text-center text-body-14 text-ink-4">
-        Loading session…
-      </p>
+      <div className="animate-pulse space-y-4" aria-label="Loading session" role="status">
+        <div className="h-24 rounded-xl border border-rule-2 bg-paper" />
+        <div className="h-12 rounded-xl border border-rule-2 bg-paper" />
+        <div className="space-y-0 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+          <div className="h-10 border-b border-rule-2 bg-hover/60" />
+          <div className="h-10 border-b border-rule-2" />
+          <div className="h-10 border-b border-rule-2 bg-hover/40" />
+          <div className="h-10" />
+        </div>
+        <p className="text-center text-body-13 text-ink-4">Loading session…</p>
+      </div>
     );
   }
   return <CodeProcessDetail query={query} initialDetail={detail} embedded />;

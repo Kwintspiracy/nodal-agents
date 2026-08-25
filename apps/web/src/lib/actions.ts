@@ -10900,8 +10900,12 @@ const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write'])
  * codeur édite son README au milieu de son .ts), mais une session qui
  * n'écrit QUE du .md/.txt est de la prise de notes, pas du code, quel que
  * soit l'outil qui l'a écrite (CLI compris).
+ *
+ * `.json` est neutre aussi (2e constat, ComfyArtist) : un workflow ComfyUI
+ * écrit en .json n'est pas du développement — et un vrai projet qui touche
+ * son tsconfig.json touche toujours autre chose à côté.
  */
-const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
+const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'json']);
 
 const NON_DEV_EXTENSIONS = new Set([
   // bureautique

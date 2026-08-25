@@ -572,6 +572,28 @@ describe('listCodingProcessesAction — v5, notes-only ne qualifie pas', () => {
     ).toBeUndefined();
   });
 
+  it('une session 100 % .json (workflow ComfyArtist) ne qualifie pas non plus', async () => {
+    const agentId = await makeAgent('Comfy Workflow Writer');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: 'workflows/Krea_Turbo_4K.json', content: '{"nodes":[]}' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === jobId),
+      'un workflow .json a été qualifié « coding »',
+    ).toBeUndefined();
+  });
+
   it('un pipeline MIXTE (.md + .ts) reste un projet de code', async () => {
     const agentId = await makeAgent('Mixed Docs Coder');
     const jobId = await makeJob(agentId, 'completed');
