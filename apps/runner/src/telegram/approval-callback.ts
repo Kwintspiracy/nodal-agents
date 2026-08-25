@@ -320,12 +320,36 @@ export async function handleApprovalCallback(
       return { handled: false, reason: 'rule_write_failed' };
     }
 
-    const confirmed = await resolveApprovalDecision(deps, env, {
-      approvalRequestId: parsed.approvalRequestId,
-      decision: 'approve',
-      resolvedBy: 'telegram',
-      notes: 'Always allowed from the Telegram card.',
-    });
+    // La règle est déjà COMMITÉE : à partir d'ici, toute sortie qui n'aboutit
+    // pas doit la retirer — y compris une sortie par EXCEPTION.
+    //
+    // Sans ce try, un blip de base au milieu de la résolution laissait la
+    // règle posée et faisait remonter l'erreur jusqu'au poller, qui rejoue le
+    // même clic sans avancer son offset. La seconde tentative relisait alors
+    // l'état laissé par la première : `previousRule` valait `auto_approve`, et
+    // un échec propre au rejeu « restaurait » ce blanc-seing au lieu de le
+    // supprimer. Résultat : un droit permanent SILENCIEUX qu'aucun geste
+    // n'avait validé, sous un message disant « rien n'a bougé ».
+    //
+    // On répare donc AVANT que le poller ne rejoue, puis on relance l'erreur :
+    // la seconde tentative repart d'un état propre.
+    let confirmed: Awaited<ReturnType<typeof resolveApprovalDecision>>;
+    try {
+      confirmed = await resolveApprovalDecision(deps, env, {
+        approvalRequestId: parsed.approvalRequestId,
+        decision: 'approve',
+        resolvedBy: 'telegram',
+        notes: 'Always allowed from the Telegram card.',
+      });
+    } catch (err) {
+      await restoreApprovalRule(deps.db, {
+        entityId: approval.entityId,
+        agentId: approval.agentId,
+        toolName: approval.toolName,
+        previousAction: previousRule,
+      });
+      throw err;
+    }
     if (!confirmed.ok) {
       // La résolution a échoué (job annulé, approbation expirée, déjà
       // résolue…) : le grant permanent n'a plus de raison d'être — on remet
