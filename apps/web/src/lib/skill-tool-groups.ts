@@ -27,6 +27,24 @@ import type { SkillRow } from './actions.ts';
 
 const TOOL_GROUP_SLUGS = new Set(toolGroupSkillSlugs);
 
-export function isToolGroupSkill(s: Pick<SkillRow, 'slug'>): boolean {
-  return TOOL_GROUP_SLUGS.has(s.slug);
+/**
+ * Le slug NE SUFFIT PAS : la ligne doit aussi être celle du catalogue (revue
+ * Codex, 2e passe).
+ *
+ * Depuis que le seeder préserve un skill de l'utilisateur portant un slug du
+ * catalogue au lieu de se l'approprier, une telle ligne existe pour de bon.
+ * Classée sur le seul slug, elle était rangée dans Tools comme un groupe
+ * d'outils — donc invisible dans Skills, et ingérable : l'utilisateur ne
+ * pouvait plus ni la lire, ni l'éditer, ni la renommer pour libérer la place.
+ * Le garde du seeder l'aurait protégée d'un écrasement pour la rendre
+ * inatteignable, ce qui n'est pas mieux.
+ *
+ * Le test porte sur `isSystem` (`createdBy === 'system'`), PAS sur
+ * `systemKind` : ce dernier est dérivé du slug, donc il vaut `capability` pour
+ * la ligne de l'utilisateur aussi et ne distingue rien. L'ancien prédicat n'en
+ * souffrait pas parce qu'il exigeait des `requiredBuiltins`, qu'un skill écrit
+ * par l'utilisateur n'a jamais.
+ */
+export function isToolGroupSkill(s: Pick<SkillRow, 'slug' | 'isSystem'>): boolean {
+  return s.isSystem && TOOL_GROUP_SLUGS.has(s.slug);
 }

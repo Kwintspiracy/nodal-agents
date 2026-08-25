@@ -11,13 +11,31 @@ import { describe, it, expect } from 'vitest';
 import { isToolGroupSkill } from '../skill-tool-groups.ts';
 import { systemSkills } from '@nodal-agents/catalog';
 
+/** Une ligne du catalogue, telle que le seeder l'écrit. */
+const duCatalogue = (slug: string) => ({ slug, isSystem: true });
+/** Une ligne écrite par l'utilisateur, qui se trouve porter le même nom. */
+const deLUtilisateur = (slug: string) => ({ slug, isSystem: false });
+
 describe('isToolGroupSkill', () => {
   it('range dans Tools les skills dont la valeur EST l’outil déverrouillé', () => {
     // Les familles Office : 24 builtins, un mode d'emploi, aucune posture.
-    expect(isToolGroupSkill({ slug: 'office-editing' })).toBe(true);
-    expect(isToolGroupSkill({ slug: 'spreadsheet-editing' })).toBe(true);
-    expect(isToolGroupSkill({ slug: 'document-editing' })).toBe(true);
-    expect(isToolGroupSkill({ slug: 'presentation-editing' })).toBe(true);
+    expect(isToolGroupSkill(duCatalogue('office-editing'))).toBe(true);
+    expect(isToolGroupSkill(duCatalogue('spreadsheet-editing'))).toBe(true);
+    expect(isToolGroupSkill(duCatalogue('document-editing'))).toBe(true);
+    expect(isToolGroupSkill(duCatalogue('presentation-editing'))).toBe(true);
+  });
+
+  it('un skill de l’UTILISATEUR au même nom reste gérable dans Skills', () => {
+    // Constat de la revue Codex. Le seeder préserve désormais une ligne de
+    // l'utilisateur qui occupe un slug du catalogue — elle existe donc pour de
+    // bon. Classée sur le seul slug, elle basculait dans Tools : invisible
+    // dans Skills, et impossible à renommer pour libérer la place. Protégée de
+    // l'écrasement pour devenir inatteignable, ce qui n'est pas mieux.
+    expect(
+      isToolGroupSkill(deLUtilisateur('office-editing')),
+      'le skill de l’utilisateur a été rangé dans Tools : il devient ingérable',
+    ).toBe(false);
+    expect(isToolGroupSkill(deLUtilisateur('code-task'))).toBe(false);
   });
 
   it('laisse « code-review » du côté des SKILLS, malgré son builtin', () => {
@@ -25,7 +43,7 @@ describe('isToolGroupSkill', () => {
     // `review_verdict`, donc l'ancienne déduction le rangeait dans Tools — et
     // sa discipline de relecteur devenait introuvable et non éditable.
     expect(
-      isToolGroupSkill({ slug: 'code-review' }),
+      isToolGroupSkill(duCatalogue('code-review')),
       'code-review est de nouveau rangé dans Tools : sa discipline redevient invisible',
     ).toBe(false);
 
@@ -35,12 +53,12 @@ describe('isToolGroupSkill', () => {
   });
 
   it('« dev » n’a jamais gaté d’outil et reste un skill', () => {
-    expect(isToolGroupSkill({ slug: 'dev' })).toBe(false);
+    expect(isToolGroupSkill(duCatalogue('dev'))).toBe(false);
   });
 
   it('un skill communautaire ou appris n’est jamais un groupe d’outils', () => {
-    expect(isToolGroupSkill({ slug: 'kanban' })).toBe(false);
-    expect(isToolGroupSkill({ slug: 'un-slug-invente-par-un-agent' })).toBe(false);
+    expect(isToolGroupSkill(deLUtilisateur('kanban'))).toBe(false);
+    expect(isToolGroupSkill(deLUtilisateur('un-slug-invente-par-un-agent'))).toBe(false);
   });
 
   it('la liste vient du CATALOGUE, pas d’une copie locale', () => {
@@ -49,13 +67,16 @@ describe('isToolGroupSkill', () => {
     const declares = systemSkills.filter((s) => s.toolGroup === true).map((s) => s.slug);
     expect(declares.length).toBeGreaterThan(0);
     for (const slug of declares) {
-      expect(isToolGroupSkill({ slug }), `${slug} est déclaré tool group mais n’y va pas`).toBe(
-        true,
-      );
+      expect(
+        isToolGroupSkill(duCatalogue(slug)),
+        `${slug} est déclaré tool group mais n’y va pas`,
+      ).toBe(true);
     }
     // Et aucun skill non déclaré ne s'y retrouve.
     for (const s of systemSkills.filter((x) => x.toolGroup !== true)) {
-      expect(isToolGroupSkill({ slug: s.slug }), `${s.slug} y va sans l’avoir déclaré`).toBe(false);
+      expect(isToolGroupSkill(duCatalogue(s.slug)), `${s.slug} y va sans l’avoir déclaré`).toBe(
+        false,
+      );
     }
   });
 });
