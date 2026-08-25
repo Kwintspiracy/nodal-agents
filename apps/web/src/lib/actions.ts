@@ -26,6 +26,7 @@ import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from 'node:fs/promises';
 import {
   deriveProjectRoot,
+  isInsideDevFolder,
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
 } from './code-projects.ts';
@@ -1190,6 +1191,24 @@ export async function addAgentWorkspaceAction(
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agentRow) return fail('not_found', 'Agent not found');
 
+    // Un chemin DÉJÀ coché ailleurs dans l'espace reste coché ici (revue
+    // Codex, 26/08). Sans cet héritage, ajouter `Documents/Dev` à un second
+    // agent créait une ligne décochée : l'onglet Code continuait de traiter le
+    // chemin comme du développement — une autre ligne le dit — pendant que la
+    // fiche de cet agent affichait une case vide. Un dossier contient du code
+    // ou non ; cela ne dépend pas de l'agent qui le regarde.
+    const [existingForPath] = await db
+      .select({ isDevFolder: agentWorkspaces.isDevFolder })
+      .from(agentWorkspaces)
+      .where(
+        and(
+          eq(agentWorkspaces.entityId, session.entityId),
+          eq(agentWorkspaces.path, trimmedPath),
+          eq(agentWorkspaces.isDevFolder, true),
+        ),
+      )
+      .limit(1);
+
     const [row] = await db
       .insert(agentWorkspaces)
       .values({
@@ -1198,7 +1217,7 @@ export async function addAgentWorkspaceAction(
         label: trimmedLabel,
         path: trimmedPath,
         position: 0,
-        isDevFolder,
+        isDevFolder: isDevFolder || Boolean(existingForPath),
       })
       .returning({ id: agentWorkspaces.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -11192,9 +11211,15 @@ function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
   /**
    * Ce pipeline a-t-il écrit dans un dossier COCHÉ « développement » ? C'est
-   * la condition de la v7 — sans elle, rien ne qualifie.
+   * la condition de la v7 — sans elle, une écriture ne qualifie jamais.
    */
   touchedDevFolder: boolean,
+  /**
+   * L'agent a-t-il un dossier de développement ? Ne sert QU'aux signaux sans
+   * chemin de fichier — une review, une délégation à la CLI. Jamais à racheter
+   * une écriture tombée hors périmètre (revue Codex, 26/08).
+   */
+  agentHasDevFolder: boolean,
 ): boolean {
   // REFUSED calls deliberately still QUALIFY a pipeline, even though they
   // change nothing and are excluded from the file count and the Changes panel.
@@ -11221,14 +11246,20 @@ function pipelineQualifiesAsCoding(
   // L'extension n'entre pas dans le calcul (règle du propriétaire : une
   // exclusion par langage ratera tôt ou tard du vrai code). Un développeur qui
   // édite le README de son projet édite bien son projet.
-  if (!touchedDevFolder) return false;
-
-  // Une écriture dans un dossier coché SUFFIT. `code_task` en mode écriture et
-  // `review_verdict` restent des qualifiants : ils prouvent un travail de code
-  // dont les fichiers n'apparaissent pas forcément dans ce scan — une session
-  // déléguée à la CLI, un verdict rendu sans édition.
+  // Une écriture qui tombe dans un dossier coché : la preuve directe.
   const hasEdit = calls.some((c) => FILE_TOOL_NAMES.has(c.toolName));
-  if (hasEdit) return true;
+  if (hasEdit) return touchedDevFolder;
+
+  // AUCUNE écriture, mais un travail de code quand même : une délégation à la
+  // CLI, un verdict de review. Rien à ancrer, donc on se rabat sur l'agent —
+  // s'il a un dossier de développement, c'est là qu'il travaillait.
+  //
+  // Ce repli ne s'applique QU'ICI, après avoir constaté qu'il n'y a aucune
+  // écriture (revue Codex, 26/08). Appliqué plus haut, il rachetait les
+  // écritures tombées HORS périmètre : un agent polyvalent avec un dossier
+  // coché ramenait son coffre de notes dans l'onglet — exactement le trou que
+  // ce lot existe pour fermer.
+  if (!agentHasDevFolder) return false;
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
     const input = c.toolInput as { mode?: string } | null;
@@ -11415,16 +11446,12 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     const devMemo = new Map<string, string | null>();
     const candidateJobIds = Array.from(callsByRoot.entries())
       .filter(([root, calls]) => {
-        // Un chemin qui tombe dans un dossier coché : la preuve directe.
-        const byPath =
+        const touchedDevFolder =
           deriveProjectRoot(rawPathsByRoot.get(root) ?? [], devFolders, devMemo) !== null;
-        // Sinon, le travail sans chemin ancrable — un verdict de review, une
-        // session déléguée à la CLI — est rattaché à l'agent : s'il a un
-        // dossier de développement, c'est là qu'il travaillait. Sans ce repli,
-        // une review pure disparaîtrait de l'onglet faute d'avoir écrit un
-        // fichier.
-        const byAgent = Array.from(agentsByRoot.get(root) ?? []).some((a) => devAgents.has(a));
-        return pipelineQualifiesAsCoding(calls, byPath || byAgent);
+        const agentHasDevFolder = Array.from(agentsByRoot.get(root) ?? []).some((a) =>
+          devAgents.has(a),
+        );
+        return pipelineQualifiesAsCoding(calls, touchedDevFolder, agentHasDevFolder);
       })
       .map(([root]) => root);
 
@@ -11531,7 +11558,13 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
           if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
-          if (fp) set.add(canonicalChangePath(fp, workspaceRoots));
+          // Hors périmètre, hors décompte (revue Codex, 26/08) : un pipeline
+          // qui touche `/repo/app.ts` ET `/vault/note.md` ne doit annoncer que
+          // le premier. Sans ce filtre, une session qualifiée par une seule
+          // écriture ramenait tout le reste avec elle.
+          if (fp && isInsideDevFolder(fp, devFolders)) {
+            set.add(canonicalChangePath(fp, workspaceRoots));
+          }
         }
         filesByRoot.set(root, set);
       }

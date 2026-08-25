@@ -164,6 +164,31 @@ export function deriveProjectRoot(
   return winner !== null && !isDriveRoot(winner) ? winner : null;
 }
 
+/**
+ * Ce chemin tombe-t-il dans l'un des dossiers cochés ?
+ *
+ * Sert à ne compter et n'afficher QUE les fichiers du périmètre : un pipeline
+ * qualifié par une écriture dans un dossier coché ramenait sinon tout le reste
+ * avec lui — le `/vault/note.md` écrit au passage apparaissait dans la liste
+ * des fichiers changés (revue Codex, 26/08).
+ *
+ * Un chemin RELATIF est accepté : il ne peut venir que d'un outil Nodal, donc
+ * d'un workspace de l'agent, et la dérivation de projet l'a déjà résolu. Le
+ * refuser ici ferait disparaître du décompte des fichiers réellement modifiés.
+ */
+export function isInsideDevFolder(rawPath: string, devFolders: string[]): boolean {
+  const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '');
+  const p = norm(rawPath.trim());
+  if (p === '') return false;
+  if (!isAbsoluteChangePath(p)) return true;
+  const isWin = /^[a-z]:\//i.test(p);
+  return devFolders.some((raw) => {
+    const r = norm(raw);
+    if (r === '' || isDriveRoot(r)) return false;
+    return isWin ? p.toLowerCase().startsWith(r.toLowerCase() + '/') : p.startsWith(r + '/');
+  });
+}
+
 /** `D:/APPS/NodalAI` → `NodalAI` — le nom d'affichage d'un projet. */
 export function projectNameFromPath(projectPath: string): string {
   return projectPath.split('/').filter(Boolean).pop() ?? projectPath;

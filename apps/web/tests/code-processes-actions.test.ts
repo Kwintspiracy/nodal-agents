@@ -650,10 +650,12 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
     ).toBeUndefined();
   });
 
-  it('le MÊME markdown, écrit par un DÉVELOPPEUR, qualifie — c’est le README de son projet', async () => {
-    // Le pendant du test précédent, et la raison d'être de la v6 : les mêmes
-    // fichiers, le même outil, un résultat opposé selon QUI écrit. Sous la v5,
-    // un développeur qui ne touchait que sa doc disparaissait de l'onglet.
+  it('le MÊME markdown, écrit DANS le périmètre, qualifie — c’est le README d’un projet', async () => {
+    // Le pendant du test précédent : les mêmes fichiers, le même outil, un
+    // résultat opposé selon l'ENDROIT. Un développeur qui ne touche que sa doc
+    // reste dans l'onglet, et c'est la raison pour laquelle on ne juge jamais
+    // l'extension — « une exclusion par langage ratera tôt ou tard du vrai
+    // code », et elle rate aussi la doc d'un vrai projet.
     const agentId = await makeAgent('Doc Writing Coder');
     const jobId = await makeJob(agentId, 'completed');
 
@@ -661,7 +663,7 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
       entityId: _testEntityId,
       jobId,
       toolName: 'cli:Write',
-      toolInput: { file_path: '/repos/monapp/README.md', content: '# MonApp' },
+      toolInput: { file_path: `${DEV_FOLDER}/monapp/README.md`, content: '# MonApp' },
       toolOutput: 'ok',
     });
 
@@ -703,6 +705,89 @@ describe('listCodingProcessesAction — v6, la qualification par identité', () 
       result.data.find((r) => r.id === jobId),
       'un fichier de code a suffi à qualifier un agent non-développeur (retour à la v5)',
     ).toBeUndefined();
+  });
+
+  it('un agent POLYVALENT ne ramène pas son coffre : seul le dossier coché compte', async () => {
+    // LE scénario de Quentin (26/08) : « si je décide d'utiliser un agent pour
+    // coder ET pour maintenir mon vault Obsidian, mon vault va se retrouver
+    // dans l'onglet Code ? »
+    //
+    // Non. L'agent a un dossier coché, mais ce qu'il écrit AILLEURS reste
+    // dehors. Le repli par agent ne sert qu'aux travaux sans fichier — une
+    // review, une délégation à la CLI — jamais à racheter une écriture tombée
+    // hors périmètre (constat P1 de la revue Codex).
+    const agentId = await makeAgent('Polyvalent Coder'); // a bien /repo coché
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: `${VAULT}/Journal/2026-08-26.md`, content: '# Notes' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === jobId),
+      'le coffre d’un agent par ailleurs développeur est entré dans l’onglet Code',
+    ).toBeUndefined();
+  });
+
+  it('un pipeline qualifié ne compte QUE les fichiers du périmètre', async () => {
+    // Constat P2 de la revue Codex : une seule écriture dans un dossier coché
+    // qualifiait le pipeline, et tout le reste suivait — le `note.md` écrit au
+    // passage dans le coffre apparaissait parmi les fichiers changés.
+    const agentId = await makeAgent('Mixed Perimeter Coder');
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'file_write',
+        toolInput: { path: `${DEV_FOLDER}/app/index.ts`, content: 'export {}' },
+        toolOutput: '{"ok":true}',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'file_write',
+        toolInput: { path: `${VAULT}/note.md`, content: '# hors sujet' },
+        toolOutput: '{"ok":true}',
+      },
+    ]);
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const row = result.data.find((r) => r.id === jobId);
+    expect(row, 'le pipeline aurait dû qualifier par son écriture dans le périmètre').toBeTruthy();
+    expect(row?.filesChanged, 'un fichier hors périmètre a été compté').toBe(1);
+  });
+
+  it('ajouter un dossier DÉJÀ coché ailleurs hérite de son état', async () => {
+    // Constat P2 de la revue Codex : la seconde ligne arrivait décochée, donc
+    // la fiche de cet agent montrait une case vide pendant que l'onglet Code
+    // traitait le chemin comme du développement — une autre ligne le disait.
+    const { addAgentWorkspaceAction, listAgentWorkspacesAction } =
+      await import('../src/lib/actions.ts');
+    const nouveau = await makeAgent('Nouveau Venu', { devFolder: false });
+
+    const added = await addAgentWorkspaceAction(nouveau, 'repo', DEV_FOLDER);
+    expect(added.ok, added.ok ? '' : added.message).toBe(true);
+
+    const list = await listAgentWorkspacesAction(nouveau);
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    expect(
+      list.data.find((w) => w.path === DEV_FOLDER)?.isDevFolder,
+      'le dossier arrive décoché alors qu’il est coché pour un autre agent',
+    ).toBe(true);
   });
 
   it('chaîne à 3 niveaux : le skill porté par le SEUL intermédiaire suffit', async () => {
