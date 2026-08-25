@@ -16,7 +16,12 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deriveProjectRoot, projectNameFromPath, isDriveRoot } from '../code-projects.ts';
+import {
+  deriveProjectRoot,
+  projectNameFromPath,
+  isDriveRoot,
+  isInsideDevFolder,
+} from '../code-projects.ts';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -91,19 +96,35 @@ afterAll(async () => {
   if (racine) await rm(racine, { recursive: true, force: true });
 });
 
+/**
+ * Des dossiers COCHÉS « développement ». Le label est dérivé du nom du dossier
+ * — c'est lui qui résout un chemin relatif de la forme Nodal (`label/a.ts`).
+ */
+const dev = (...paths: string[]) =>
+  paths.map((p) => ({
+    label: p.split('/').filter(Boolean).pop() ?? p,
+    path: p,
+    isDevFolder: true,
+  }));
+
+/** Un dossier attaché à l'agent mais NON coché — le coffre de notes. */
+const horsPerimetre = (label: string, path: string) => ({ label, path, isDevFolder: false });
+
 describe('deriveProjectRoot (vrai disque)', () => {
   const memo = () => new Map<string, string | null>();
 
   it('remonte au dépôt git depuis un fichier profond', () => {
-    const root = deriveProjectRoot([`${racine}/repoA/src/x.ts`], [racine], memo());
+    const root = deriveProjectRoot([`${racine}/repoA/src/x.ts`], dev(racine), memo());
     expect(root).toBe(`${racine}/repoA`);
   });
 
   it('deux repos = deux projets, et le vote majoritaire tranche un pipeline mixte', () => {
-    expect(deriveProjectRoot([`${racine}/repoB/y.ts`], [racine], memo())).toBe(`${racine}/repoB`);
+    expect(deriveProjectRoot([`${racine}/repoB/y.ts`], dev(racine), memo())).toBe(
+      `${racine}/repoB`,
+    );
     const mixed = deriveProjectRoot(
       [`${racine}/repoA/src/x.ts`, `${racine}/repoA/src/x.ts`, `${racine}/repoB/y.ts`],
-      [racine],
+      dev(racine),
       memo(),
     );
     expect(mixed, 'le vote majoritaire n’a pas choisi le repo dominant').toBe(`${racine}/repoA`);
@@ -112,7 +133,7 @@ describe('deriveProjectRoot (vrai disque)', () => {
   it('sans marqueur : le SOUS-DOSSIER de premier niveau, jamais le workspace-conteneur', () => {
     // Constat Quentin 25/08 (calorie-counter) : rendre le workspace entier
     // fusionnerait toutes les apps d'un Dev\ partagé en un seul projet.
-    const root = deriveProjectRoot([`${racine}/plain/z.md`], [racine], memo());
+    const root = deriveProjectRoot([`${racine}/plain/z.md`], dev(racine), memo());
     expect(root).toBe(`${racine}/plain`);
   });
 
@@ -125,11 +146,11 @@ describe('deriveProjectRoot (vrai disque)', () => {
     const ws = `${racine}/dev`;
 
     // calorie-counter porte un marqueur (index.html) → son dossier.
-    expect(deriveProjectRoot([`${racine}/dev/calorie-counter/app.js`], [ws], memo())).toBe(
+    expect(deriveProjectRoot([`${racine}/dev/calorie-counter/app.js`], dev(ws), memo())).toBe(
       `${racine}/dev/calorie-counter`,
     );
     // todo-app n'en porte aucun → le sous-dossier de premier niveau quand même.
-    expect(deriveProjectRoot([`${racine}/dev/todo-app/main.js`], [ws], memo())).toBe(
+    expect(deriveProjectRoot([`${racine}/dev/todo-app/main.js`], dev(ws), memo())).toBe(
       `${racine}/dev/todo-app`,
     );
   });
@@ -140,7 +161,7 @@ describe('deriveProjectRoot (vrai disque)', () => {
     await writeFile(join(racine, 'monapp', 'src', 'x.ts'), 'export {}');
     const ws = `${racine}/monapp`;
 
-    expect(deriveProjectRoot([`${racine}/monapp/src/x.ts`], [ws], memo())).toBe(ws);
+    expect(deriveProjectRoot([`${racine}/monapp/src/x.ts`], dev(ws), memo())).toBe(ws);
   });
 
   it('la profondeur ne change RIEN : le projet est l’enfant direct du dossier coché', async () => {
@@ -156,16 +177,47 @@ describe('deriveProjectRoot (vrai disque)', () => {
     const coche = `${racine}/dev`;
 
     expect(
-      deriveProjectRoot([`${racine}/dev/calorie-counter/app/index.html`], [coche], memo()),
+      deriveProjectRoot([`${racine}/dev/calorie-counter/app/index.html`], dev(coche), memo()),
       'le projet a été pris plus bas que l’enfant direct',
     ).toBe(`${racine}/dev/calorie-counter`);
 
     // Et à n'importe quelle profondeur.
     await mkdir(join(racine, 'dev', 'profond', 'a', 'b', 'c'), { recursive: true });
     await writeFile(join(racine, 'dev', 'profond', 'a', 'b', 'c', 'd.ts'), 'export {}');
-    expect(deriveProjectRoot([`${racine}/dev/profond/a/b/c/d.ts`], [coche], memo())).toBe(
+    expect(deriveProjectRoot([`${racine}/dev/profond/a/b/c/d.ts`], dev(coche), memo())).toBe(
       `${racine}/dev/profond`,
     );
+  });
+
+  it('un chemin RELATIF se résout par le LABEL, pas en le collant au dossier coché', () => {
+    // Constat P1 de la revue Codex (26/08). `vault/note.md` est la forme Nodal
+    // d'une écriture dans le dossier étiqueté `vault` — pas un chemin à coller
+    // au premier dossier coché venu. Traité comme tel, le coffre entrait dans
+    // l'onglet Code par la porte des chemins relatifs, après avoir été fermé
+    // partout ailleurs.
+    const workspaces = [
+      { label: 'dev', path: `${racine}/repoA`, isDevFolder: true },
+      horsPerimetre('vault', `${racine}/plain`),
+    ];
+
+    expect(
+      deriveProjectRoot(['vault/note.md'], workspaces, memo()),
+      'une écriture dans le coffre a été prise pour du développement',
+    ).toBeNull();
+
+    // Et le décompte des fichiers suit la même règle — c'est LÀ que le trou
+    // était : tout chemin relatif était tenu pour « forcément dans le
+    // périmètre », donc le `note.md` du coffre se comptait comme du code.
+    expect(
+      isInsideDevFolder('vault/note.md', workspaces),
+      'le fichier du coffre est compté comme un fichier de code',
+    ).toBe(false);
+    expect(isInsideDevFolder('dev/src/x.ts', workspaces)).toBe(true);
+
+    // Et le même mécanisme reconnaît une écriture qui vise BIEN le périmètre.
+    // `repoA` porte un `.git` : le dossier coché EST le projet, ses
+    // sous-dossiers ne le fragmentent pas.
+    expect(deriveProjectRoot(['dev/src/x.ts'], workspaces, memo())).toBe(`${racine}/repoA`);
   });
 
   it('une écriture HORS de tout dossier coché ne produit AUCUN projet', () => {
@@ -173,7 +225,7 @@ describe('deriveProjectRoot (vrai disque)', () => {
     // qui range aussi un coffre de notes. Le coffre n'est pas coché, donc il
     // n'apparaît jamais — peu importe qui écrit et ce qu'il écrit.
     expect(
-      deriveProjectRoot([`${racine}/repoA/src/x.ts`], [`${racine}/ailleurs`], memo()),
+      deriveProjectRoot([`${racine}/repoA/src/x.ts`], dev(`${racine}/ailleurs`), memo()),
       'une écriture hors périmètre a produit un projet',
     ).toBeNull();
     // Aucun dossier coché du tout : rien non plus.
@@ -188,20 +240,20 @@ describe('deriveProjectRoot (vrai disque)', () => {
     const parent = `${racine}/dev`;
     const enfant = `${racine}/dev/niche`;
 
-    expect(deriveProjectRoot([`${racine}/dev/niche/monapp/a.ts`], [parent, enfant], memo())).toBe(
-      `${racine}/dev/niche/monapp`,
-    );
+    expect(
+      deriveProjectRoot([`${racine}/dev/niche/monapp/a.ts`], dev(parent, enfant), memo()),
+    ).toBe(`${racine}/dev/niche/monapp`);
   });
 
   it('un chemin RELATIF (forme Nodal) est résolu par existence sur disque', () => {
     // Deux workspaces candidats — seul `racine` contient réellement le fichier.
     const other = `${racine}/repoB`;
-    const root = deriveProjectRoot(['repoA/src/x.ts'], [other, racine], memo());
+    const root = deriveProjectRoot(['repoA/src/x.ts'], dev(other, racine), memo());
     expect(root).toBe(`${racine}/repoA`);
   });
 
   it('aucun chemin exploitable → null (tiroir « Autres »)', () => {
-    expect(deriveProjectRoot([], [racine], memo())).toBeNull();
+    expect(deriveProjectRoot([], dev(racine), memo())).toBeNull();
     expect(deriveProjectRoot(['inconnu/relatif.ts'], [], memo())).toBeNull();
   });
 
@@ -297,8 +349,8 @@ describe('garde-fous ajoutés par la revue P1 (25/08)', () => {
 
     // Et de bout en bout : un workspace posé sur une racine ne produit rien.
     const memo = new Map<string, string | null>();
-    expect(deriveProjectRoot([`${racine}/plain/z.md`], ['/'], memo)).toBeNull();
-    expect(deriveProjectRoot([`${racine}/plain/z.md`], ['C:/'], memo)).toBeNull();
+    expect(deriveProjectRoot([`${racine}/plain/z.md`], dev('/'), memo)).toBeNull();
+    expect(deriveProjectRoot([`${racine}/plain/z.md`], dev('C:/'), memo)).toBeNull();
   });
 
   it('archiver un projet est réservé au PROPRIÉTAIRE de l’espace', async () => {

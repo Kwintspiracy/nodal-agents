@@ -27,6 +27,9 @@ import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from
 import {
   deriveProjectRoot,
   isInsideDevFolder,
+  isUnderPath,
+  samePath,
+  type WorkspaceRef,
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
 } from './code-projects.ts';
@@ -1197,17 +1200,19 @@ export async function addAgentWorkspaceAction(
     // chemin comme du développement — une autre ligne le dit — pendant que la
     // fiche de cet agent affichait une case vide. Un dossier contient du code
     // ou non ; cela ne dépend pas de l'agent qui le regarde.
-    const [existingForPath] = await db
-      .select({ isDevFolder: agentWorkspaces.isDevFolder })
-      .from(agentWorkspaces)
-      .where(
-        and(
-          eq(agentWorkspaces.entityId, session.entityId),
-          eq(agentWorkspaces.path, trimmedPath),
-          eq(agentWorkspaces.isDevFolder, true),
-        ),
-      )
-      .limit(1);
+    // Comparaison NORMALISÉE, pas textuelle : `C:\Dev` et `c:/Dev` sont le
+    // même dossier (revue Codex, 26/08).
+    const existingForPath = (
+      await db
+        .select({ path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(
+          and(
+            eq(agentWorkspaces.entityId, session.entityId),
+            eq(agentWorkspaces.isDevFolder, true),
+          ),
+        )
+    ).some((r) => samePath(r.path, trimmedPath));
 
     const [row] = await db
       .insert(agentWorkspaces)
@@ -1217,7 +1222,7 @@ export async function addAgentWorkspaceAction(
         label: trimmedLabel,
         path: trimmedPath,
         position: 0,
-        isDevFolder: isDevFolder || Boolean(existingForPath),
+        isDevFolder: isDevFolder || existingForPath,
       })
       .returning({ id: agentWorkspaces.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -1278,11 +1283,29 @@ export async function setWorkspaceDevFolderAction(
       .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
     if (!agentRow) return fail('not_found', 'Workspace not found');
 
+    // Le MÊME dossier peut être écrit différemment d'une ligne à l'autre —
+    // `C:\Dev`, `c:/Dev`, un slash final (revue Codex, 26/08). Une comparaison
+    // SQL exacte n'en touchait qu'une, et les autres agents gardaient une case
+    // vide alors que la dérivation, elle, normalise et considère le dossier
+    // comme coché. On compare donc en mémoire, sur les chemins normalisés.
+    const sameFolder = (
+      await db
+        .select({ id: agentWorkspaces.id, path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(eq(agentWorkspaces.entityId, session.entityId))
+    ).filter((r) => samePath(r.path, wsRow.path));
+
     const updated = await db
       .update(agentWorkspaces)
       .set({ isDevFolder, updatedAt: new Date() })
       .where(
-        and(eq(agentWorkspaces.entityId, session.entityId), eq(agentWorkspaces.path, wsRow.path)),
+        and(
+          eq(agentWorkspaces.entityId, session.entityId),
+          inArray(
+            agentWorkspaces.id,
+            sameFolder.map((r) => r.id),
+          ),
+        ),
       )
       .returning({ id: agentWorkspaces.id });
 
@@ -11288,16 +11311,52 @@ async function devFolderPaths(db: ReturnType<typeof getDb>, entityId: string): P
   return Array.from(new Set(rows.map((r) => r.path)));
 }
 
-/** Les agents qui ont AU MOINS un dossier de développement. */
-async function agentsWithDevFolder(
+/**
+ * TOUS les dossiers de l'entité, par agent — cochés ou non.
+ *
+ * Les non cochés comptent autant que les autres : c'est par eux qu'un chemin
+ * relatif se résout (`vault/note.md` → le dossier étiqueté `vault`), et donc
+ * qu'on sait qu'il tombe HORS périmètre plutôt que de le coller au premier
+ * dossier coché venu (revue Codex, 26/08).
+ */
+async function workspacesByAgentId(
   db: ReturnType<typeof getDb>,
   entityId: string,
-): Promise<Set<string>> {
+): Promise<Map<string, WorkspaceRef[]>> {
   const rows = await db
-    .select({ agentId: agentWorkspaces.agentId })
+    .select({
+      agentId: agentWorkspaces.agentId,
+      label: agentWorkspaces.label,
+      path: agentWorkspaces.path,
+      isDevFolder: agentWorkspaces.isDevFolder,
+    })
     .from(agentWorkspaces)
-    .where(and(eq(agentWorkspaces.entityId, entityId), eq(agentWorkspaces.isDevFolder, true)));
-  return new Set(rows.map((r) => r.agentId));
+    .where(eq(agentWorkspaces.entityId, entityId));
+  const byAgent = new Map<string, WorkspaceRef[]>();
+  for (const r of rows) {
+    const arr = byAgent.get(r.agentId) ?? [];
+    arr.push({ label: r.label, path: r.path, isDevFolder: r.isDevFolder });
+    byAgent.set(r.agentId, arr);
+  }
+  return byAgent;
+}
+
+/** Les dossiers de TOUS les agents d'un pipeline, dédupliqués par chemin. */
+function workspacesOfPipeline(
+  participants: Iterable<string>,
+  byAgent: Map<string, WorkspaceRef[]>,
+): WorkspaceRef[] {
+  const seen = new Map<string, WorkspaceRef>();
+  for (const agentId of participants) {
+    for (const w of byAgent.get(agentId) ?? []) {
+      const key = w.path.toLowerCase();
+      const prev = seen.get(key);
+      // Un chemin coché par UN agent l'est pour tous — un dossier contient du
+      // code ou non, cela ne dépend pas de qui le regarde.
+      if (!prev || (!prev.isDevFolder && w.isDevFolder)) seen.set(key, w);
+    }
+  }
+  return Array.from(seen.values());
 }
 
 export interface DevTeamStatus {
@@ -11441,16 +11500,24 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
 
     // Les dossiers cochés « développement ». Une écriture qui tombe dedans
     // qualifie le pipeline ; le reste n'existe pas pour cet onglet.
-    const devFolders = await devFolderPaths(db, entityId);
-    const devAgents = await agentsWithDevFolder(db, entityId);
+    const wsByAgent = await workspacesByAgentId(db, entityId);
     const devMemo = new Map<string, string | null>();
+    /** Les dossiers vus par un pipeline — mémoïsé, plusieurs passes s'en servent. */
+    const wsOfRoot = new Map<string, WorkspaceRef[]>();
+    const workspacesFor = (root: string): WorkspaceRef[] => {
+      const hit = wsOfRoot.get(root);
+      if (hit) return hit;
+      const ws = workspacesOfPipeline(agentsByRoot.get(root) ?? [], wsByAgent);
+      wsOfRoot.set(root, ws);
+      return ws;
+    };
+
     const candidateJobIds = Array.from(callsByRoot.entries())
       .filter(([root, calls]) => {
+        const ws = workspacesFor(root);
         const touchedDevFolder =
-          deriveProjectRoot(rawPathsByRoot.get(root) ?? [], devFolders, devMemo) !== null;
-        const agentHasDevFolder = Array.from(agentsByRoot.get(root) ?? []).some((a) =>
-          devAgents.has(a),
-        );
+          deriveProjectRoot(rawPathsByRoot.get(root) ?? [], ws, devMemo) !== null;
+        const agentHasDevFolder = ws.some((w) => w.isDevFolder);
         return pipelineQualifiesAsCoding(calls, touchedDevFolder, agentHasDevFolder);
       })
       .map(([root]) => root);
@@ -11559,10 +11626,10 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
           // Hors périmètre, hors décompte (revue Codex, 26/08) : un pipeline
-          // qui touche `/repo/app.ts` ET `/vault/note.md` ne doit annoncer que
+          // qui touche `/repo/app.ts` ET `vault/note.md` ne doit annoncer que
           // le premier. Sans ce filtre, une session qualifiée par une seule
           // écriture ramenait tout le reste avec elle.
-          if (fp && isInsideDevFolder(fp, devFolders)) {
+          if (fp && isInsideDevFolder(fp, workspacesFor(root))) {
             set.add(canonicalChangePath(fp, workspaceRoots));
           }
         }
@@ -11606,12 +11673,17 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       }
 
       jobRows = jobs.map((j) => {
+        const ws = workspacesFor(j.id);
         const projectPath =
-          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], devFolders, devMemo) ??
+          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], ws, devMemo) ??
+          // Repli sans fichier ancrable : les dossiers COCHÉS de l'agent. La
+          // frontière de segment compte (revue Codex, 26/08) — sans elle, un
+          // `dev-notes` non coché passait pour un descendant de `dev` coché,
+          // le repli voyait deux candidats et perdait le bon projet.
           (j.agentId
             ? fallbackProjectFromAgentWorkspaces(
                 (workspacesByAgent.get(j.agentId) ?? []).filter((p) =>
-                  devFolders.some((d) => p === d || p.startsWith(d)),
+                  ws.some((w) => w.isDevFolder && (samePath(p, w.path) || isUnderPath(p, w.path))),
                 ),
               )
             : null);
@@ -11811,6 +11883,7 @@ export async function getCodingProcessDetailAction(
       // level-by-level walk, same ROLLUP_MAX_DEPTH bound.
       const descendants: Array<{
         id: string;
+        agentId: string | null;
         agentName: string | null;
         totalDurationMs: number | null;
         parentJobId: string | null;
@@ -11822,6 +11895,10 @@ export async function getCodingProcessDetailAction(
           const rows = await db
             .select({
               id: agentJobs.id,
+              // Nécessaire pour retrouver les DOSSIERS des agents délégués —
+              // le détail doit appliquer la même règle de périmètre que la
+              // liste (revue Codex, 26/08).
+              agentId: agentJobs.agentId,
               agentName: agents.name,
               totalDurationMs: agentJobs.totalDurationMs,
               parentJobId: agentJobs.parentJobId,
@@ -11973,6 +12050,19 @@ export async function getCodingProcessDetailAction(
       // absolute form and the Nodal tools' workspace-relative form collapse
       // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
+
+      // Les dossiers des agents du pipeline, cochés ou non — MÊME règle que la
+      // liste (revue Codex, 26/08). Sans ça, la liste annonçait un fichier et
+      // le détail en montrait deux : le `vault/note.md` écrit au passage
+      // réapparaissait à l'ouverture, et pouvait même donner son nom au projet.
+      const detailAgentIds = new Set<string>();
+      if (job.agentId) detailAgentIds.add(job.agentId);
+      for (const d of descendants) if (d.agentId) detailAgentIds.add(d.agentId);
+      const detailWorkspaces = workspacesOfPipeline(
+        detailAgentIds,
+        await workspacesByAgentId(db, entityId),
+      );
+
       const changeGroups = new Map<string, CodingFileChangeGroup>();
       // Chemins BRUTS pour la dérivation de projet du header (même règle que
       // la liste — les deux surfaces doivent nommer le même projet).
@@ -11982,6 +12072,8 @@ export async function getCodingProcessDetailAction(
         if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
+        // Hors périmètre, hors détail — comme dans la liste.
+        if (!isInsideDevFolder(change.filePath, detailWorkspaces)) continue;
         rawChangePaths.push(change.filePath);
         const canonical = canonicalChangePath(change.filePath, workspaceRoots);
         const group = changeGroups.get(canonical) ?? {
@@ -12121,15 +12213,17 @@ export async function getCodingProcessDetailAction(
 
       let detailProjectPath = deriveProjectRoot(
         rawChangePaths,
-        workspaceRoots,
+        detailWorkspaces,
         new Map<string, string | null>(),
       );
-      // Même repli que la liste : l'unique workspace de l'agent racine.
+      // Même repli que la liste : les dossiers COCHÉS de l'agent racine.
       if (!detailProjectPath && job.agentId) {
         const agentWs = await db
           .select({ path: agentWorkspaces.path })
           .from(agentWorkspaces)
-          .where(eq(agentWorkspaces.agentId, job.agentId));
+          .where(
+            and(eq(agentWorkspaces.agentId, job.agentId), eq(agentWorkspaces.isDevFolder, true)),
+          );
         detailProjectPath = fallbackProjectFromAgentWorkspaces(agentWs.map((w) => w.path));
       }
 

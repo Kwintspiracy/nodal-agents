@@ -15,19 +15,74 @@ function isAbsoluteChangePath(p: string): boolean {
   return /^[a-z]:\//i.test(p) || p.startsWith('/');
 }
 
+/** Slash-normalisé, sans slash final. */
+export const normPath = (s: string): string => s.replace(/\\/g, '/').replace(/\/+$/, '');
+
 /**
- * Résout un chemin brut d'édition en chemin ABSOLU slash-normalisé. Un chemin
- * relatif (forme Nodal, workspace-relative) est testé contre chaque workspace
- * — l'existence sur disque tranche l'ambiguïté ; fichier disparu et plusieurs
- * workspaces → null (on ne devine pas).
+ * Le même dossier, écrit différemment ? `C:\Dev`, `c:/Dev` et `C:/Dev/` sont
+ * la même chose sur Windows (revue Codex, 26/08) : sans cette comparaison, la
+ * propagation de la case ne touchait qu'une des écritures et les autres agents
+ * gardaient une case vide.
  */
-function resolveAbsoluteChangePath(rawPath: string, workspaceRoots: string[]): string | null {
-  const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '');
-  const p = norm(rawPath.trim());
+export function samePath(a: string, b: string): boolean {
+  const x = normPath(a);
+  const y = normPath(b);
+  return /^[a-z]:\//i.test(x) || /^[a-z]:\//i.test(y)
+    ? x.toLowerCase() === y.toLowerCase()
+    : x === y;
+}
+
+/** `child` est-il DANS `parent` (ou `parent` lui-même) ? Frontière de segment. */
+export function isUnderPath(child: string, parent: string): boolean {
+  const c = normPath(child);
+  const p = normPath(parent);
+  if (p === '') return false;
+  // La frontière compte : sans le `/`, un dossier `dev` avalerait `dev-notes`
+  // (revue Codex, 26/08).
+  const isWin = /^[a-z]:\//i.test(c) || /^[a-z]:\//i.test(p);
+  const cc = isWin ? c.toLowerCase() : c;
+  const pp = isWin ? p.toLowerCase() : p;
+  return cc === pp || cc.startsWith(pp + '/');
+}
+
+/** Un dossier attaché à un agent, tel que la dérivation en a besoin. */
+export interface WorkspaceRef {
+  label: string;
+  path: string;
+  isDevFolder: boolean;
+}
+
+/**
+ * Résout un chemin brut d'édition en chemin ABSOLU slash-normalisé.
+ *
+ * Un chemin RELATIF est la forme Nodal : quand l'agent a plusieurs dossiers,
+ * son premier segment est le LABEL du dossier visé (`notes/a.md` → le dossier
+ * étiqueté `notes`). C'est une donnée, pas une énigme — la lire évite de
+ * deviner (revue Codex, 26/08 : coller le chemin au seul dossier coché faisait
+ * passer `vault/note.md` pour du développement).
+ *
+ * Sans label reconnu et avec un seul dossier, le chemin est relatif à sa
+ * racine. Sinon : null, on ne devine pas.
+ */
+function resolveAbsoluteChangePath(rawPath: string, workspaces: WorkspaceRef[]): string | null {
+  const p = normPath(rawPath.trim());
   if (p === '') return null;
   if (isAbsoluteChangePath(p)) return p;
   const rel = p.replace(/^\.\//, '');
-  const candidates = workspaceRoots.map((r) => `${norm(r)}/${rel}`).filter(isAbsoluteChangePath);
+
+  const [first, ...rest] = rel.split('/');
+  // TOUS les dossiers, cochés ou non : reconnaître le label du coffre est
+  // précisément ce qui permet de savoir que l'écriture tombe hors périmètre.
+  const byLabel = workspaces.find((w) => w.label === first);
+  if (byLabel && rest.length > 0) return `${normPath(byLabel.path)}/${rest.join('/')}`;
+
+  if (workspaces.length === 1) return `${normPath(workspaces[0]!.path)}/${rel}`;
+
+  // Plusieurs dossiers et aucun label reconnu : l'existence sur disque peut
+  // encore trancher, sinon on renonce.
+  const candidates = workspaces
+    .map((w) => `${normPath(w.path)}/${rel}`)
+    .filter(isAbsoluteChangePath);
   const existing = candidates.find((c) => {
     try {
       return fsExistsSync(c);
@@ -35,8 +90,7 @@ function resolveAbsoluteChangePath(rawPath: string, workspaceRoots: string[]): s
       return false;
     }
   });
-  if (existing) return existing;
-  return candidates.length === 1 ? candidates[0]! : null;
+  return existing ?? null;
 }
 
 /**
@@ -128,11 +182,12 @@ function projectUnderDevFolder(
  */
 export function deriveProjectRoot(
   rawPaths: string[],
-  devFolders: string[],
+  workspaces: WorkspaceRef[],
   memo: Map<string, string | null>,
 ): string | null {
-  const roots = devFolders
-    .map((r) => r.replace(/\\/g, '/').replace(/\/+$/, ''))
+  const roots = workspaces
+    .filter((w) => w.isDevFolder)
+    .map((w) => normPath(w.path))
     // Un dossier coché posé sur une RACINE DE DISQUE est ignoré : il
     // engloberait la machine entière, et la règle « enfant direct » en tirerait
     // des projets nommés `Users` ou `home`. Aucun projet vaut mieux qu'un
@@ -145,15 +200,15 @@ export function deriveProjectRoot(
 
   const votes = new Map<string, number>();
   for (const raw of rawPaths) {
-    const abs = resolveAbsoluteChangePath(raw, roots);
+    // Résolu contre TOUS les dossiers de l'agent, cochés ou non : c'est ce qui
+    // permet de reconnaître `vault/note.md` comme une écriture dans le coffre
+    // plutôt que de la coller au seul dossier coché.
+    const abs = resolveAbsoluteChangePath(raw, workspaces);
     if (!abs) continue;
     const dir = abs.replace(/\/[^/]*$/, '');
     if (dir === '' || dir === abs) continue;
 
-    const isWin = /^[a-z]:\//i.test(abs);
-    const devRoot = roots.find((r) =>
-      isWin ? abs.toLowerCase().startsWith(r.toLowerCase() + '/') : abs.startsWith(r + '/'),
-    );
+    const devRoot = roots.find((r) => isUnderPath(abs, r) && !samePath(abs, r));
     // Écriture hors de tout dossier de développement : rien.
     if (!devRoot) continue;
 
@@ -169,24 +224,21 @@ export function deriveProjectRoot(
  *
  * Sert à ne compter et n'afficher QUE les fichiers du périmètre : un pipeline
  * qualifié par une écriture dans un dossier coché ramenait sinon tout le reste
- * avec lui — le `/vault/note.md` écrit au passage apparaissait dans la liste
+ * avec lui — le `vault/note.md` écrit au passage apparaissait dans la liste
  * des fichiers changés (revue Codex, 26/08).
  *
- * Un chemin RELATIF est accepté : il ne peut venir que d'un outil Nodal, donc
- * d'un workspace de l'agent, et la dérivation de projet l'a déjà résolu. Le
- * refuser ici ferait disparaître du décompte des fichiers réellement modifiés.
+ * Un chemin RELATIF passe par la même résolution par LABEL que la dérivation
+ * de projet. Le tenir pour « forcément dans le périmètre » était une devinette,
+ * et elle faisait entrer le coffre.
  */
-export function isInsideDevFolder(rawPath: string, devFolders: string[]): boolean {
-  const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '');
-  const p = norm(rawPath.trim());
-  if (p === '') return false;
-  if (!isAbsoluteChangePath(p)) return true;
-  const isWin = /^[a-z]:\//i.test(p);
-  return devFolders.some((raw) => {
-    const r = norm(raw);
-    if (r === '' || isDriveRoot(r)) return false;
-    return isWin ? p.toLowerCase().startsWith(r.toLowerCase() + '/') : p.startsWith(r + '/');
-  });
+export function isInsideDevFolder(rawPath: string, workspaces: WorkspaceRef[]): boolean {
+  const abs = resolveAbsoluteChangePath(rawPath, workspaces);
+  if (!abs) return false;
+  return workspaces
+    .filter((w) => w.isDevFolder)
+    .map((w) => normPath(w.path))
+    .filter((r) => r !== '' && !isDriveRoot(r))
+    .some((r) => isUnderPath(abs, r) && !samePath(abs, r));
 }
 
 /** `D:/APPS/NodalAI` → `NodalAI` — le nom d'affichage d'un projet. */

@@ -334,13 +334,16 @@ describe('listCodingProcessesAction', () => {
   });
 
   it('the CLI absolute path and the Nodal workspace-relative path of the SAME file count as ONE (job cbdbfc6c)', async () => {
-    const agentId = await makeAgent('Audit Path Canon Agent');
+    const agentId = await makeAgent('Audit Path Canon Agent', { devFolder: false });
     // The agent's workspace root — the prefix the canonicalizer must strip.
+    // Coché : depuis la v7, une écriture hors périmètre n'entre plus dans
+    // l'onglet, et ce test porte sur la canonicalisation, pas sur le filtrage.
     await _testDb!.insert(agentWorkspaces).values({
       entityId: _testEntityId,
       agentId,
       label: 'dev',
       path: 'C:\\Users\\test\\Dev',
+      isDevFolder: true,
     });
     const jobId = await makeJob(agentId, 'completed');
 
