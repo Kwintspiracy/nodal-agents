@@ -298,6 +298,28 @@ export async function buildTeamBlock(
     lines.push(
       'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
     );
+    // WHERE a deliverable is written is the EXECUTING agent's call, never the
+    // orchestrator's (décision Quentin, 26/08 — constaté sur un run réel).
+    //
+    // Un orchestrateur SANS dossier attaché n'a que le workspace partagé, et
+    // son prompt le lui dit — correctement, pour lui. Il écrit donc « sauvegarde
+    // dans le workspace partagé » dans sa délégation. Ses exécutants, eux,
+    // peuvent AVOIR un dossier à eux et lire dans leur propre prompt que leur
+    // livrable y va : ils suivent quand même la consigne reçue, et le fichier
+    // repart dans le partagé.
+    //
+    // L'orchestrateur décide d'un emplacement avec SES dossiers en tête, pour
+    // un agent qui n'a pas les mêmes. L'information est chez l'exécutant : la
+    // décision doit y rester. On retire ici une décision à qui n'a pas de quoi
+    // la prendre, plutôt que de lui en donner davantage pour mal décider.
+    lines.push(
+      '📁 **Describe the deliverable, not its location.** Where a file is saved is decided by ' +
+        'the agent that writes it — it is the only one that knows its own workspaces. Do NOT put ' +
+        'a folder, a path, or a workspace name in a delegated task. THE ONE EXCEPTION: the user ' +
+        'named a specific location themselves — then pass it through verbatim, because it is ' +
+        'their instruction, not your choice. Ask the agent to return the exact path it used, and ' +
+        'report THAT.\n',
+    );
   }
   lines.push('Your agents:');
   for (const row of childRows) {

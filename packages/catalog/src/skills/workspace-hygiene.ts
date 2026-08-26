@@ -34,7 +34,7 @@ export const workspaceHygieneSkill: SystemSkill = {
   kind: 'baseline',
   content: `## Workspace hygiene
 
-The shared workspace is a durable, common asset — not a scratch pad. Its live inventory is in your context under "Shared workspace contents".
+This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and its live inventory is in your context under "Shared workspace". Everything below applies to what you put THERE; your \`## Shared workspace\` block says whether that is where your own work belongs.
 
 ### Reuse before recreating
 
@@ -60,7 +60,7 @@ A script you write takes its variable values (ids, paths, prompts) as ARGUMENTS 
 
 ### Skill bundles are code, not storage
 
-Never write generated artifacts into an installed skill's folder. When a skill script produces files, point its output argument at the shared workspace — its absolute path is in the \`NODAL_SHARED_WORKSPACE\` environment variable of every script/command you run. If a \`warning\` reports bundle writes, move those files to the shared workspace before finishing.
+Never write generated artifacts into an installed skill's folder. Point a skill script's output argument at a real workspace instead — your own if you have one, otherwise the shared workspace, whose absolute path is in the \`NODAL_SHARED_WORKSPACE\` environment variable of every script/command you run. If a \`warning\` reports bundle writes, move those files out before finishing.
 
 ### Leave it clean
 

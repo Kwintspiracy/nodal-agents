@@ -41,6 +41,30 @@ describe('workspace-hygiene', () => {
     expect(workspaceHygieneSkill.content).toContain('## Shared workspace');
   });
 
+  it('n’installe pas le partagé comme LE lieu des fichiers produits', () => {
+    // Constat du run 92e38e22 (26/08). Borner « One folder per kind » ne
+    // suffisait pas : deux autres phrases cadraient encore le partagé comme la
+    // destination par défaut de tout ce qu'un agent produit —
+    //   * l'ouverture, « The shared workspace is a durable, common asset » ;
+    //   * la section des bundles, « point its output argument at the shared
+    //     workspace », d'où Lead-Dev a tiré `NODAL_SHARED_WORKSPACE`.
+    // Elles sont vraies dans leur contexte, et se lisaient comme une consigne
+    // générale.
+    const c = workspaceHygieneSkill.content;
+    const ouverture = c.slice(0, c.indexOf('### '));
+    expect(
+      ouverture,
+      'l’ouverture ne dit pas que le skill parle du PARTAGÉ, pas de l’endroit où va ton travail',
+    ).toMatch(/shared/i);
+    expect(ouverture).toMatch(/## Shared workspace/);
+
+    const bundles = c.slice(c.indexOf('### Skill bundles'));
+    expect(
+      bundles,
+      'la section des bundles envoie encore les artefacts au partagé sans condition',
+    ).toMatch(/your own if you have one/i);
+  });
+
   it('garde sa discipline interne intacte', () => {
     // La correction devait BORNER la portée, pas vider le skill de son sujet.
     const c = workspaceHygieneSkill.content;

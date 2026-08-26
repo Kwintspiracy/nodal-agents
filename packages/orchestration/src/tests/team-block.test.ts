@@ -354,3 +354,51 @@ describe('buildTeamBlock', () => {
     }
   });
 });
+
+// ─── Où va le livrable : jamais la décision de l'orchestrateur ───────────────
+//
+// Constaté sur le run 92e38e22 (26/08). Alfred n'a AUCUN dossier attaché : pour
+// lui le workspace partagé est son espace de travail, et son prompt le lui dit
+// — correctement. Il a donc écrit « sauvegarde dans le shared workspace » dans
+// sa délégation. Lead-Dev et Dev C, eux, ONT `Documents/Dev` attaché et
+// lisaient dans leur propre prompt que leur livrable va là. Ils ont suivi la
+// consigne reçue, et l'app est repartie dans le partagé.
+//
+// Un orchestrateur décide d'un emplacement avec SES dossiers en tête, pour un
+// agent qui n'a pas les mêmes. L'information est chez l'exécutant.
+
+describe('buildTeamBlock — emplacement du livrable', () => {
+  it('interdit à l’orchestrateur de dicter un chemin, sauf demande de l’utilisateur', async () => {
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(db, entityId, `test-orch-path-${Date.now()}`, 'orchestrator');
+    const w = await seedAgent(db, entityId, `test-worker-path-${Date.now()}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+
+    expect(block, 'rien n’interdit de mettre un chemin dans une délégation').toMatch(
+      /Describe the deliverable, not its location/i,
+    );
+    expect(block, 'la décision n’est pas explicitement rendue à l’agent qui écrit').toMatch(
+      /decided by the agent that writes it/i,
+    );
+    // L'exception voulue par Quentin : si l'utilisateur a nommé l'endroit,
+    // c'est SON instruction, elle passe telle quelle.
+    expect(block, 'l’exception « l’utilisateur l’a demandé » a disparu').toMatch(
+      /THE ONE EXCEPTION/,
+    );
+  });
+
+  it('ne dit rien de tel quand l’agent ne PEUT pas déléguer', async () => {
+    // Sur la surface cli-runtime il n'y a aucun outil de délégation : une
+    // consigne sur « ce que tu mets dans une tâche déléguée » n'aurait pas
+    // d'objet, et le fichier tout entier est déjà bâti sur cette distinction.
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(db, entityId, `test-orch-cli-${Date.now()}`, 'orchestrator');
+    const w = await seedAgent(db, entityId, `test-worker-cli-${Date.now()}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+
+    const block = await buildTeamBlock(orch.id as AgentId, db, { delegation: false });
+    expect(block).not.toMatch(/Describe the deliverable, not its location/i);
+  });
+});
