@@ -1,0 +1,44 @@
+-- 0087 — un dossier peut être MASQUÉ de l'onglet Code, à la source.
+--
+-- Constat de Quentin (26/08), sur ses vraies données : son coffre Obsidian
+-- produisait 8 projets — `Research`, `Physique`, `Warhammer 40000`, `Santé`,
+-- `AI Consensus & Routing`, `HP AI Training`, `ComfyUI`, plus la racine — là où
+-- il n'en voyait qu'un auparavant. « Ça peut en compter des milliers. »
+--
+-- Il a raison sur le fond : ce nombre n'est borné par rien. Il croît avec les
+-- dossiers où l'agent preneur de notes écrit, et un coffre de notes a vocation
+-- à en avoir beaucoup. Masquer projet par projet ne tient pas à cette échelle.
+--
+-- CE N'EST PAS LE RETOUR DE `is_dev_folder` (0085), et la différence est le
+-- seul point qui compte :
+--
+--   INCLURE (0085, abandonnée)          MASQUER (celle-ci)
+--   ─────────────────────────────       ──────────────────────────────
+--   rien ne s'affiche sans le geste     tout s'affiche, on retire
+--   un oubli fait disparaître du        un oubli laisse du bruit VISIBLE
+--     vrai travail EN SILENCE
+--   il reste à deviner si le dossier    la question ne se pose plus : on
+--     coché EST un projet ou en           masque le sous-arbre entier
+--     CONTIENT
+--
+-- Masquer ne décide jamais de ce qui compte. C'est le même geste que le
+-- masquage d'un projet (0086), à une autre granularité — et le même mot, parce
+-- que c'est la même chose : un choix d'affichage, réversible, qui ne touche
+-- jamais le dossier réel.
+--
+-- Le dossier reste un workspace à part entière : l'agent y lit et y écrit
+-- comme avant. Seule la vue « projets » l'ignore — l'onglet Code comme le bloc
+-- `## Runtime` injecté aux agents.
+--
+-- Le LABEL du dossier masqué reste lu par la résolution des chemins relatifs.
+-- C'est indispensable : `vault/note.md` doit continuer d'être reconnu comme une
+-- écriture DANS le coffre, faute de quoi elle serait recollée au premier autre
+-- dossier venu (constat P1 de la revue Codex sur 0085, qui s'appliquerait mot
+-- pour mot ici).
+ALTER TABLE agent_workspaces
+  ADD COLUMN IF NOT EXISTS hidden_from_code boolean NOT NULL DEFAULT false;
+--> statement-breakpoint
+-- Lu à chaque chargement de l'onglet ET à chaque job : l'index garde la
+-- lecture triviale même quand un espace compte beaucoup de dossiers.
+CREATE INDEX IF NOT EXISTS idx_agent_workspaces_hidden_from_code
+  ON agent_workspaces (entity_id) WHERE hidden_from_code;

@@ -160,6 +160,99 @@ describe('listCodeProjectsForContext', () => {
     ).toBe(false);
   });
 
+  it('un DOSSIER masqué retire tous ses projets du contexte, et son label reste lu', async () => {
+    // Le pendant runner de la case posée sur le dossier (0087). L'onglet et le
+    // prompt doivent dire la même chose : masquer un coffre de notes le sort
+    // des deux, sinon les agents s'entendraient annoncer des projets que le
+    // propriétaire ne voit plus.
+    //
+    // Le second volet est le piège : le LABEL du dossier masqué doit rester lu.
+    // Sans lui, `coffre/note.md` ne serait plus reconnu comme une écriture dans
+    // le coffre et se recollerait au dossier suivant — le coffre réapparaîtrait
+    // sous un projet qui n'a rien demandé.
+    const coffre = norm(await mkdtemp(join(tmpdir(), 'nodal-masq-')));
+    for (const sujet of ['Physique', 'Warhammer']) {
+      await mkdir(join(coffre, sujet), { recursive: true });
+      await writeFile(join(coffre, sujet, 'note.md'), '# note');
+    }
+
+    const [scribe] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Scribe masque',
+        slug: `scribe-masq-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    // DEUX dossiers : c'est ce qui force la forme `label/fichier` et donc met
+    // la résolution par label en jeu.
+    const [wsCoffre] = await db
+      .insert(agentWorkspaces)
+      .values([
+        { entityId: seed.entityId, agentId: scribe!.id, label: 'coffre', path: coffre },
+        { entityId: seed.entityId, agentId: scribe!.id, label: 'Dev', path: `${racine}/dev` },
+      ])
+      .returning();
+    const [jobScribe] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: scribe!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'notes',
+      })
+      .returning();
+    await db.insert(toolCalls).values([
+      {
+        entityId: seed.entityId,
+        jobId: jobScribe!.id,
+        toolName: 'file_write',
+        toolInput: { path: 'coffre/Physique/note.md' },
+        toolOutput: '{"ok":true}',
+      },
+      {
+        entityId: seed.entityId,
+        jobId: jobScribe!.id,
+        toolName: 'file_write',
+        toolInput: { path: 'coffre/Warhammer/note.md' },
+        toolOutput: '{"ok":true}',
+      },
+    ]);
+    _resetProjectsCacheForTests();
+
+    try {
+      const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        avant.filter((p) => p.path.startsWith(coffre)).length,
+        'les sujets du coffre devraient être des projets tant qu’il n’est pas masqué',
+      ).toBe(2);
+
+      await db
+        .update(agentWorkspaces)
+        .set({ hiddenFromCode: true })
+        .where(eq(agentWorkspaces.id, wsCoffre!.id));
+      _resetProjectsCacheForTests();
+
+      const apres = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        apres.filter((p) => p.path.startsWith(coffre)),
+        'un dossier masqué est encore annoncé aux agents',
+      ).toHaveLength(0);
+      // Et surtout : ses écritures n'ont PAS été recollées ailleurs.
+      expect(
+        apres.some((p) => p.path === `${racine}/dev/Physique` || p.path === `${racine}/dev/coffre`),
+        'l’écriture du coffre masqué a été recollée au dossier suivant',
+      ).toBe(false);
+    } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobScribe!.id));
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.agentId, scribe!.id));
+      await rm(coffre, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
   it('MASQUER un projet le retire du contexte des agents — la demande exacte de Quentin', async () => {
     // « on fait en sorte que ça retire le dossier du contexte et de la mémoire
     // des agents » (26/08).

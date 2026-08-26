@@ -51,6 +51,7 @@ export default async function CodePage() {
         // plein : un repli silencieux vers un état plausible est exactement ce
         // que l'invariant #4 interdit.
         workspaceCount={statusResult.ok ? statusResult.data.workspaceCount : null}
+        hiddenWorkspaceCount={statusResult.ok ? statusResult.data.hiddenWorkspaceCount : 0}
         error={readError}
       />
     </PageShell>

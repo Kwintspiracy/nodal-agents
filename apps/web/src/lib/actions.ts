@@ -1123,6 +1123,8 @@ export type AgentWorkspaceRow = {
   label: string;
   path: string;
   position: number;
+  /** Masqué de l'onglet Code par le propriétaire (0087). */
+  hiddenFromCode: boolean;
 };
 
 export async function listAgentWorkspacesAction(
@@ -1191,6 +1193,26 @@ export async function addAgentWorkspaceAction(
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agentRow) return fail('not_found', 'Agent not found');
 
+    // Un chemin DÉJÀ masqué ailleurs dans l'espace arrive masqué ici (0087).
+    // Sans cet héritage, attacher le coffre à un second agent le ferait
+    // réapparaître dans l'onglet Code, avec une case vide sur cette fiche
+    // pendant qu'une autre ligne dit l'inverse. Un dossier est un coffre de
+    // notes ou non ; cela ne dépend pas de l'agent qui le regarde.
+    //
+    // Comparaison NORMALISÉE, pas textuelle : `C:\Vault` et `c:/vault` sont le
+    // même dossier.
+    const dejaMasque = (
+      await db
+        .select({ path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(
+          and(
+            eq(agentWorkspaces.entityId, session.entityId),
+            eq(agentWorkspaces.hiddenFromCode, true),
+          ),
+        )
+    ).some((r) => projectKey(r.path) === projectKey(trimmedPath));
+
     const [row] = await db
       .insert(agentWorkspaces)
       .values({
@@ -1199,6 +1221,7 @@ export async function addAgentWorkspaceAction(
         label: trimmedLabel,
         path: trimmedPath,
         position: 0,
+        hiddenFromCode: dejaMasque,
       })
       .returning({ id: agentWorkspaces.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -1223,6 +1246,74 @@ export async function addAgentWorkspaceAction(
       return fail('conflict', 'A workspace with this label already exists for this agent');
     }
     return fail('db_error', 'Failed to add workspace');
+  }
+}
+
+/**
+ * Masque ou réaffiche un dossier dans l'onglet Code (0087).
+ *
+ * La bascule s'applique à TOUTES les lignes de l'espace qui portent le même
+ * chemin, pas seulement à celle qu'on a cliquée. Sur cette install,
+ * `Documents/Dev` est attaché à cinq agents : masquer serait cinq gestes, et
+ * l'état mi-masqué n'aurait aucun sens — un dossier est un coffre de notes ou
+ * non, cela ne dépend pas de l'agent qui le regarde.
+ *
+ * Le MÊME dossier peut être écrit différemment d'une ligne à l'autre —
+ * `C:\Vault`, `c:/vault`, un slash final. Une comparaison SQL exacte n'en
+ * toucherait qu'une, et les autres agents garderaient une case vide alors que
+ * la dérivation, elle, normalise. On compare donc en mémoire, par `projectKey`.
+ */
+export async function setWorkspaceHiddenFromCodeAction(
+  workspaceId: string,
+  hiddenFromCode: boolean,
+): Promise<ActionResult<{ updated: number }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(workspaceId).success) {
+      return fail('validation_failed', 'Invalid workspace id');
+    }
+    const db = getDb();
+
+    const [wsRow] = await db
+      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, workspaceId));
+    if (!wsRow) return fail('not_found', 'Workspace not found');
+
+    // Propriété vérifiée via l'agent, comme les autres actions de workspace.
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Workspace not found');
+
+    const memeDossier = (
+      await db
+        .select({ id: agentWorkspaces.id, path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(eq(agentWorkspaces.entityId, session.entityId))
+    ).filter((r) => projectKey(r.path) === projectKey(wsRow.path));
+
+    const updated = await db
+      .update(agentWorkspaces)
+      .set({ hiddenFromCode, updatedAt: new Date() })
+      .where(
+        and(
+          eq(agentWorkspaces.entityId, session.entityId),
+          inArray(
+            agentWorkspaces.id,
+            memeDossier.map((r) => r.id),
+          ),
+        ),
+      )
+      .returning({ id: agentWorkspaces.id });
+
+    revalidatePath(`/agents/${wsRow.agentId}/edit`);
+    revalidatePath('/code');
+    return ok({ updated: updated.length });
+  } catch (err) {
+    console.error('[setWorkspaceHiddenFromCodeAction]', err);
+    return fail('db_error', 'Failed to update the folder');
   }
 }
 
@@ -11211,13 +11302,20 @@ async function workspacesByAgentId(
       agentId: agentWorkspaces.agentId,
       label: agentWorkspaces.label,
       path: agentWorkspaces.path,
+      hiddenFromCode: agentWorkspaces.hiddenFromCode,
     })
     .from(agentWorkspaces)
     .where(eq(agentWorkspaces.entityId, entityId));
+
+  // Un CHEMIN est masqué dès qu'une de ses lignes l'est (0087) : le même
+  // dossier attaché à cinq agents est UN geste, pas cinq. Un dossier est un
+  // coffre de notes ou non ; cela ne dépend pas de l'agent qui le regarde.
+  const hiddenPaths = new Set(rows.filter((r) => r.hiddenFromCode).map((r) => projectKey(r.path)));
+
   const byAgent = new Map<string, WorkspaceRef[]>();
   for (const r of rows) {
     const arr = byAgent.get(r.agentId) ?? [];
-    arr.push({ label: r.label, path: r.path });
+    arr.push({ label: r.label, path: r.path, hiddenFromCode: hiddenPaths.has(projectKey(r.path)) });
     byAgent.set(r.agentId, arr);
   }
   return byAgent;
@@ -11242,27 +11340,38 @@ function workspacesOfPipeline(
 }
 
 export interface CodeTabStatus {
-  /** Nombre de dossiers attachés aux agents de cet espace. */
+  /** Dossiers SUIVIS : attachés et non masqués. Ceux qui peuvent produire un projet. */
   workspaceCount: number;
+  /** Dossiers masqués de l'onglet (0087). */
+  hiddenWorkspaceCount: number;
 }
 
 /**
  * De quoi écrire un état vide qui dit la vérité.
  *
- * Zéro dossier attaché et zéro session ne racontent pas la même histoire :
- * dans le premier cas les agents n'ont nulle part où écrire, et le dire
- * (« attache un dossier à un agent ») vaut mieux que « aucune activité », qui
- * accuse les agents de n'avoir rien fait alors que la liste est vide par
- * construction.
+ * Trois situations, trois phrases différentes — et c'est tout l'objet de cette
+ * action. « Aucune activité » accuserait les agents de n'avoir rien fait alors
+ * que la liste peut être vide par construction :
+ *
+ *   0 dossier attaché          les agents n'ont nulle part où écrire ;
+ *   tous les dossiers masqués  c'est un choix, et il se défait ;
+ *   des dossiers suivis, 0 ligne   là seulement, il ne s'est rien passé.
  */
 export async function getCodeTabStatusAction(): Promise<ActionResult<CodeTabStatus>> {
   try {
     const session = await getSession();
     const rows = await getDb()
-      .select({ path: agentWorkspaces.path })
+      .select({ path: agentWorkspaces.path, hiddenFromCode: agentWorkspaces.hiddenFromCode })
       .from(agentWorkspaces)
       .where(eq(agentWorkspaces.entityId, session.entityId));
-    return ok({ workspaceCount: new Set(rows.map((r) => projectKey(r.path))).size });
+    // Un CHEMIN masqué l'est pour toutes ses lignes — on compte des dossiers,
+    // pas des attachements.
+    const hidden = new Set(rows.filter((r) => r.hiddenFromCode).map((r) => projectKey(r.path)));
+    const all = new Set(rows.map((r) => projectKey(r.path)));
+    return ok({
+      workspaceCount: [...all].filter((p) => !hidden.has(p)).length,
+      hiddenWorkspaceCount: hidden.size,
+    });
   } catch (err) {
     return fail('unknown', err instanceof Error ? err.message : 'Failed to read workspaces');
   }
@@ -11561,12 +11670,20 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       }
 
       // Workspaces PAR AGENT — le repli des sessions sans fichier ancrable
-      // (voir fallbackProjectFromAgentWorkspaces).
-      const agentWsRows = await db
-        .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
-        .from(agentWorkspaces)
-        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-        .where(eq(agents.entityId, entityId));
+      // (voir fallbackProjectFromAgentWorkspaces). Les dossiers MASQUÉS en sont
+      // exclus : le repli ne doit pas ramener par la porte de derrière un
+      // dossier que le propriétaire a sorti de l'onglet (0087).
+      const agentWsRows = (
+        await db
+          .select({
+            agentId: agentWorkspaces.agentId,
+            path: agentWorkspaces.path,
+            hiddenFromCode: agentWorkspaces.hiddenFromCode,
+          })
+          .from(agentWorkspaces)
+          .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+          .where(eq(agents.entityId, entityId))
+      ).filter((r) => !r.hiddenFromCode);
       const workspacesByAgent = new Map<string, string[]>();
       for (const r of agentWsRows) {
         const arr = workspacesByAgent.get(r.agentId) ?? [];
@@ -12173,10 +12290,13 @@ export async function getCodingProcessDetailAction(
       // ferait réapparaître le travail sous le dossier conteneur.
       const detailAVisePro = attemptedTargets.some((c) => isInsideWorkspace(c, detailWorkspaces));
       if (!detailProjectPath && !detailAVisePro && job.agentId) {
-        const agentWs = await db
-          .select({ path: agentWorkspaces.path })
-          .from(agentWorkspaces)
-          .where(eq(agentWorkspaces.agentId, job.agentId));
+        // Les dossiers masqués sont hors repli, comme dans la liste (0087).
+        const agentWs = (
+          await db
+            .select({ path: agentWorkspaces.path, hiddenFromCode: agentWorkspaces.hiddenFromCode })
+            .from(agentWorkspaces)
+            .where(eq(agentWorkspaces.agentId, job.agentId))
+        ).filter((w) => !w.hiddenFromCode);
         detailProjectPath = fallbackProjectFromAgentWorkspaces(
           agentWs.map((w) => w.path),
           detailMemo,

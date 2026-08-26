@@ -53,6 +53,16 @@ export function isUnderPath(child: string, parent: string): boolean {
 export interface WorkspaceRef {
   label: string;
   path: string;
+  /**
+   * Masqué de l'onglet Code par le propriétaire (0087).
+   *
+   * Le dossier reste un workspace : son LABEL sert toujours à résoudre les
+   * chemins relatifs, et c'est indispensable — sans lui, `vault/note.md` ne
+   * serait plus reconnu comme une écriture DANS le coffre et se recollerait au
+   * premier autre dossier venu (constat P1 de la revue Codex sur 0085). Seule
+   * la liste des RACINES DE PROJET l'ignore.
+   */
+  hiddenFromCode: boolean;
 }
 
 /**
@@ -201,6 +211,10 @@ function projectUnderWorkspace(
 function workspaceRoots(workspaces: WorkspaceRef[]): string[] {
   return (
     workspaces
+      // Un dossier masqué ne produit AUCUN projet (0087). C'est la seule chose
+      // que le masquage fait : il n'entre pas dans la résolution des chemins,
+      // qui continue de lire tous les labels.
+      .filter((w) => !w.hiddenFromCode)
       .map((w) => normPath(w.path))
       // Un dossier posé sur une RACINE DE DISQUE est ignoré : il engloberait la
       // machine entière, et la règle « enfant direct » en tirerait des projets

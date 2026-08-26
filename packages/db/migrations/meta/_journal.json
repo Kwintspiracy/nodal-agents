@@ -603,6 +603,13 @@
       "when": 1786000007000,
       "tag": "0086_code_projects_rename_and_hide",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1786000008000,
+      "tag": "0087_workspaces_hidden_from_code",
+      "breakpoints": true
     }
   ]
 }

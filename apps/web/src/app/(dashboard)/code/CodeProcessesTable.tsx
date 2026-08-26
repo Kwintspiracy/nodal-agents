@@ -120,6 +120,7 @@ export default function CodeProcessesTable({
   initialRows,
   initialPrefs,
   workspaceCount,
+  hiddenWorkspaceCount,
   error,
 }: {
   initialRows: CodingProcessRow[];
@@ -133,6 +134,8 @@ export default function CodeProcessesTable({
    * `null` = le comptage a echoue, et on ne pretend rien.
    */
   workspaceCount: number | null;
+  /** Dossiers masqués de l'onglet (0087) — pour ne pas confondre « rien » et « tout masqué ». */
+  hiddenWorkspaceCount: number;
   error?: string;
 }) {
   const [rows, setRows] = useState<CodingProcessRow[]>(initialRows);
@@ -259,13 +262,32 @@ export default function CodeProcessesTable({
   }
 
   if (rows.length === 0 && workspaceCount === 0) {
+    // Tout est masqué, ou rien n'est attaché : deux situations, deux phrases.
+    // Les confondre ferait dire « attache un dossier » à quelqu'un qui en a
+    // dix, tous masqués de sa main.
     return (
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
-        <p className="text-ink-2">Your agents have nowhere to write yet.</p>
-        <p className="mx-auto mt-2 max-w-md">
-          Open an agent and attach a folder. Anything written in there shows up here as a project,
-          one per subfolder. Rename a project, or hide it if you would rather not see it.
-        </p>
+        {hiddenWorkspaceCount > 0 ? (
+          <>
+            <p className="text-ink-2">
+              Every folder is hidden from this tab
+              {hiddenWorkspaceCount > 1 ? ` (${hiddenWorkspaceCount} of them)` : ''}.
+            </p>
+            <p className="mx-auto mt-2 max-w-md">
+              Open an agent and untick <span className="text-ink-2">Hide from the Code tab</span> on
+              a folder to see its work here again.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-ink-2">Your agents have nowhere to write yet.</p>
+            <p className="mx-auto mt-2 max-w-md">
+              Open an agent and attach a folder. Anything written in there shows up here as a
+              project, one per subfolder. Rename a project, or hide it if you would rather not see
+              it.
+            </p>
+          </>
+        )}
       </div>
     );
   }

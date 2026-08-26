@@ -932,6 +932,109 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     ).toBe(false);
   });
 
+  it('MASQUER un dossier retire TOUS ses projets d’un seul geste', async () => {
+    // Constat de Quentin (26/08) : son coffre Obsidian produisait 8 projets, un
+    // par dossier de premier niveau où l'agent avait écrit, et rien ne borne ce
+    // nombre. Masquer projet par projet ne tient pas à cette échelle.
+    //
+    // Ici : trois sujets dans le coffre, trois lignes. Une case, zéro ligne.
+    const {
+      listCodingProcessesAction,
+      setWorkspaceHiddenFromCodeAction,
+      listAgentWorkspacesAction,
+    } = await import('../src/lib/actions.ts');
+    const agentId = await makeAgent('Vault Sujet Writer', { folders: 'vault' });
+
+    const jobIds: string[] = [];
+    for (const sujet of ['Physique', 'Sante', 'Warhammer']) {
+      await mkdir(`${VAULT}/${sujet}`, { recursive: true });
+      const jobId = await makeJob(agentId, 'completed');
+      jobIds.push(jobId);
+      await _testDb!.insert(toolCalls).values({
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'file_write',
+        toolInput: { path: `${VAULT}/${sujet}/note.md`, content: '# note' },
+        toolOutput: '{"ok":true}',
+      });
+    }
+
+    const avant = await listCodingProcessesAction();
+    expect(avant.ok).toBe(true);
+    if (!avant.ok) return;
+    const projetsAvant = new Set(
+      avant.data.filter((r) => jobIds.includes(r.id)).map((r) => r.projectPath),
+    );
+    expect(projetsAvant.size, 'chaque sujet du coffre devrait être un projet distinct').toBe(3);
+
+    // LE geste : une case sur le dossier.
+    const list = await listAgentWorkspacesAction(agentId);
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    const coffre = list.data.find((w) => w.path === VAULT);
+    expect(coffre, 'le coffre n’est pas attaché à cet agent').toBeTruthy();
+
+    const hide = await setWorkspaceHiddenFromCodeAction(coffre!.id, true);
+    expect(hide.ok, hide.ok ? '' : hide.message).toBe(true);
+
+    try {
+      const apres = await listCodingProcessesAction();
+      expect(apres.ok).toBe(true);
+      if (!apres.ok) return;
+      expect(
+        apres.data.filter((r) => jobIds.includes(r.id)),
+        'les projets du coffre masqué sont encore dans l’onglet',
+      ).toHaveLength(0);
+    } finally {
+      await setWorkspaceHiddenFromCodeAction(coffre!.id, false);
+    }
+  });
+
+  it('la case se propage à TOUS les agents qui partagent le dossier', async () => {
+    // Sur cette install `Documents/Dev` est attaché à cinq agents. Masquer
+    // serait cinq gestes, et l'état mi-masqué n'aurait aucun sens : un dossier
+    // est un coffre de notes ou non, cela ne dépend pas de qui le regarde.
+    const { setWorkspaceHiddenFromCodeAction, listAgentWorkspacesAction } =
+      await import('../src/lib/actions.ts');
+    const un = await makeAgent('Partage Un', { folders: 'vault' });
+    const deux = await makeAgent('Partage Deux', { folders: 'vault' });
+
+    const listUn = await listAgentWorkspacesAction(un);
+    expect(listUn.ok).toBe(true);
+    if (!listUn.ok) return;
+    const wsUn = listUn.data.find((w) => w.path === VAULT)!;
+
+    const r = await setWorkspaceHiddenFromCodeAction(wsUn.id, true);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.updated, 'la bascule n’a touché qu’une ligne').toBeGreaterThan(1);
+
+    try {
+      const listDeux = await listAgentWorkspacesAction(deux);
+      expect(listDeux.ok).toBe(true);
+      if (!listDeux.ok) return;
+      expect(
+        listDeux.data.find((w) => w.path === VAULT)?.hiddenFromCode,
+        'le second agent affiche une case vide sur un dossier masqué',
+      ).toBe(true);
+
+      // Et un agent qui l'attache APRÈS coup hérite de l'état.
+      const troisieme = await makeAgent('Partage Trois', { folders: 'none' });
+      const { addAgentWorkspaceAction } = await import('../src/lib/actions.ts');
+      const added = await addAgentWorkspaceAction(troisieme, 'vault', VAULT);
+      expect(added.ok, added.ok ? '' : added.message).toBe(true);
+      const listTrois = await listAgentWorkspacesAction(troisieme);
+      expect(listTrois.ok).toBe(true);
+      if (!listTrois.ok) return;
+      expect(
+        listTrois.data.find((w) => w.path === VAULT)?.hiddenFromCode,
+        'un dossier déjà masqué revient visible en l’attachant à un nouvel agent',
+      ).toBe(true);
+    } finally {
+      await setWorkspaceHiddenFromCodeAction(wsUn.id, false);
+    }
+  });
+
   it('un pipeline ne compte QUE les fichiers rattachables', async () => {
     // Constat P2 de la revue Codex : une seule écriture rattachable qualifiait
     // le pipeline, et tout le reste suivait — y compris des chemins qu'aucun

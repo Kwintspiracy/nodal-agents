@@ -102,8 +102,16 @@ afterAll(async () => {
  * Des dossiers attachés à un agent. Le label est dérivé du nom du dossier —
  * c'est lui qui résout un chemin relatif de la forme Nodal (`label/a.ts`).
  */
-const ws = (...paths: string[]) =>
-  paths.map((p) => ({ label: p.split('/').filter(Boolean).pop() ?? p, path: p }));
+const ws = (...paths: string[]): WorkspaceRef[] =>
+  paths.map((p) => ({
+    label: p.split('/').filter(Boolean).pop() ?? p,
+    path: p,
+    hiddenFromCode: false,
+  }));
+
+/** Le même, MASQUÉ de l'onglet Code (0087). */
+const wsMasque = (...paths: string[]): WorkspaceRef[] =>
+  ws(...paths).map((w) => ({ ...w, hiddenFromCode: true }));
 
 /**
  * Le cas COURANT : l'agent qui a écrit est aussi celui dont on regarde les
@@ -228,8 +236,8 @@ describe('deriveProjectRoot (vrai disque)', () => {
     // d'une écriture dans le dossier étiqueté `vault` — pas un chemin à coller
     // au premier dossier venu.
     const workspaces = [
-      { label: 'dev', path: `${racine}/repoA` },
-      { label: 'vault', path: `${racine}/plain` },
+      { label: 'dev', path: `${racine}/repoA`, hiddenFromCode: false },
+      { label: 'vault', path: `${racine}/plain`, hiddenFromCode: false },
     ];
 
     // `repoA` porte un `.git` : le dossier attaché EST le projet, ses
@@ -254,8 +262,10 @@ describe('deriveProjectRoot (vrai disque)', () => {
     await mkdir(join(racine, 'ouvrier', 'app'), { recursive: true });
     await writeFile(join(racine, 'ouvrier', 'app', 'a.ts'), 'export {}');
 
-    const dossiersDuChef = [{ label: 'workspace', path: `${racine}/chef` }];
-    const dossiersDeLOuvrier = [{ label: 'workspace', path: `${racine}/ouvrier` }];
+    const dossiersDuChef = [{ label: 'workspace', path: `${racine}/chef`, hiddenFromCode: false }];
+    const dossiersDeLOuvrier = [
+      { label: 'workspace', path: `${racine}/ouvrier`, hiddenFromCode: false },
+    ];
     // Le pipeline voit les deux — c'est bien la mise en commun qui posait
     // problème, pas le fait de connaître les deux dossiers.
     const duPipeline = [...dossiersDuChef, ...dossiersDeLOuvrier];
@@ -278,6 +288,69 @@ describe('deriveProjectRoot (vrai disque)', () => {
         memo(),
       ),
     ).toBe(`${racine}/chef/notes`);
+  });
+
+  it('un dossier MASQUÉ ne produit AUCUN projet, quel que soit le nombre de sous-dossiers', async () => {
+    // Constat de Quentin (26/08), sur ses vraies données : son coffre Obsidian
+    // produisait 8 projets — un par dossier de premier niveau où le Researcher
+    // avait écrit. « Ça peut en compter des milliers. » Il a raison : ce nombre
+    // n'est borné par rien.
+    //
+    // Masquer le dossier les fait tous disparaître d'un seul geste.
+    const coffre = join(racine, 'coffre-masque');
+    for (const sujet of ['Physique', 'Santé', 'Warhammer', 'Research']) {
+      await mkdir(join(coffre, sujet), { recursive: true });
+      await writeFile(join(coffre, sujet, 'note.md'), '# note');
+    }
+    const ecrits = ['Physique', 'Santé', 'Warhammer', 'Research'].map(
+      (s) => `${norm(coffre)}/${s}/note.md`,
+    );
+
+    // Non masqué : quatre projets distincts, un par sujet.
+    const projetsVus = new Set(
+      ecrits.map((f) => deriveFor([f], ws(norm(coffre)), memo())).filter(Boolean),
+    );
+    expect(projetsVus.size, 'le coffre devrait produire un projet par sujet').toBe(4);
+
+    // Masqué : plus rien, pour chacun des quatre.
+    for (const f of ecrits) {
+      expect(
+        deriveFor([f], wsMasque(norm(coffre)), memo()),
+        `« ${f} » produit encore un projet alors que son dossier est masqué`,
+      ).toBeNull();
+    }
+    expect(insideFor(ecrits[0]!, wsMasque(norm(coffre)))).toBe(false);
+  });
+
+  it('le LABEL d’un dossier masqué reste lu — sinon ses écritures polluent un autre projet', async () => {
+    // Le piège de cette fonctionnalité, et il est vicieux : si masquer retirait
+    // le dossier de la RÉSOLUTION en plus de la liste des racines, alors
+    // `vault/note.md` ne serait plus reconnu comme une écriture dans le coffre.
+    // Il se recollerait au seul dossier restant — et le coffre réapparaîtrait
+    // sous le projet de l'agent, précisément là où on vient de le chasser.
+    //
+    // C'est le constat P1 que la revue Codex avait fait sur 0085 ; il
+    // s'appliquerait mot pour mot ici.
+    // Le piège se referme SEULEMENT si le recollage aboutit à un vrai dossier.
+    // Sans ce `repoA/vault`, retirer le coffre de la résolution rendrait quand
+    // même `null` — faute de chemin existant — et le test passerait sans rien
+    // prouver. Il serait décoratif.
+    await mkdir(join(racine, 'repoA', 'vault'), { recursive: true });
+    await writeFile(join(racine, 'repoA', 'vault', 'note.md'), '# leurre');
+
+    const workspaces: WorkspaceRef[] = [
+      { label: 'dev', path: `${racine}/repoA`, hiddenFromCode: false },
+      { label: 'vault', path: `${racine}/plain`, hiddenFromCode: true },
+    ];
+
+    expect(
+      deriveProjectRoot([{ rawPath: 'vault/note.md', workspaces }], workspaces, memo()),
+      'l’écriture du coffre masqué a été recollée à un autre dossier',
+    ).toBeNull();
+    // Et le dossier suivi, lui, continue de fonctionner normalement.
+    expect(deriveProjectRoot([{ rawPath: 'dev/src/x.ts', workspaces }], workspaces, memo())).toBe(
+      `${racine}/repoA`,
+    );
   });
 
   it('une écriture hors de TOUT dossier attaché ne produit AUCUN projet', () => {

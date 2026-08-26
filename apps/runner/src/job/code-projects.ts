@@ -357,6 +357,7 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       agentName: agents.name,
       label: agentWorkspaces.label,
       path: agentWorkspaces.path,
+      hiddenFromCode: agentWorkspaces.hiddenFromCode,
     })
     .from(agentWorkspaces)
     .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
@@ -364,9 +365,23 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
   if (wsRows.length === 0) return [];
 
   {
+    // Les dossiers MASQUÉS de l'onglet Code (0087) ne produisent aucun projet
+    // ici non plus — l'écran et le prompt doivent dire la même chose.
+    //
+    // Un CHEMIN est masqué dès qu'une de ses lignes l'est : le même dossier
+    // attaché à cinq agents est un seul geste.
+    //
+    // Leurs LABELS restent lus par `resolveScannedPath` : `vault/note.md` doit
+    // continuer d'être reconnu comme une écriture dans le coffre, sans quoi
+    // elle serait recollée au premier autre dossier venu — et réapparaîtrait
+    // sous un projet qui n'a rien demandé.
+    const hiddenRoots = new Set(
+      wsRows.filter((r) => r.hiddenFromCode).map((r) => projectKey(r.path)),
+    );
+
     // Racines uniques, plus longues d'abord (un workspace niché gagne).
     const roots = Array.from(new Set(wsRows.map((r) => norm(r.path))))
-      .filter((r) => !isDriveRoot(r))
+      .filter((r) => !isDriveRoot(r) && !hiddenRoots.has(projectKey(r)))
       .sort((a, b) => b.length - a.length);
     if (roots.length === 0) return [];
     const ownersByRoot = new Map<string, Set<string>>();

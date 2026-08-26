@@ -21,6 +21,7 @@ import {
   updateAgentAction,
   deleteAgentAction,
   listAgentWorkspacesAction,
+  setWorkspaceHiddenFromCodeAction,
   listKeyModelsAction,
   addAgentWorkspaceAction,
   removeAgentWorkspaceAction,
@@ -3061,6 +3062,22 @@ function SettingsTab(props: {
     });
   }
 
+  function handleToggleHiddenFromCode(id: string, next: boolean) {
+    startWsTransition(async () => {
+      const result = await setWorkspaceHiddenFromCodeAction(id, next);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      const listResult = await listAgentWorkspacesAction(agentId);
+      if (listResult.ok) onWorkspacesChange(listResult.data);
+      // La bascule couvre toutes les lignes du MÊME chemin : le dire, sinon on
+      // croit n'avoir touché qu'un agent alors que le dossier est partagé.
+      const partage = result.data.updated > 1 ? ` (${result.data.updated} agents share it)` : '';
+      toast.success(next ? `Hidden from Code${partage}` : `Back in the Code tab${partage}`);
+    });
+  }
+
   return (
     <div className="space-y-6 pb-24">
       {/* Identity */}
@@ -3508,13 +3525,34 @@ function SettingsTab(props: {
                 </div>
 
                 {/*
-                  Une case « Development folder » a vécu ici le 25/08. Elle
-                  demandait au propriétaire de désigner ce qui était du code,
-                  pour que l'onglet Code puisse filtrer — mais elle ne faisait
-                  que déplacer la devinette d'un cran : le dossier coché est-il
-                  le projet, ou en contient-il ? L'onglet ne filtre plus du
-                  tout, il range (migration 0086).
+                  Une case « Development folder » a vécu ici le 25/08 (0085).
+                  Elle demandait quoi INCLURE : rien ne s'affichait sans le
+                  geste, un dossier oublié perdait du vrai travail en silence,
+                  et il restait à deviner si le dossier coché ÉTAIT un projet
+                  ou en CONTENAIT. Abandonnée le 26/08.
+
+                  Celle-ci ne fait que RETIRER, et elle retire un sous-arbre
+                  entier : la question « est-ce un projet ? » ne se pose pas.
+                  Tout s'affiche par défaut, donc un oubli laisse du bruit
+                  visible plutôt qu'un manque silencieux (0087).
                 */}
+                <Checkbox
+                  tone="agent"
+                  checked={ws.hiddenFromCode}
+                  disabled={wsIsPending}
+                  onChange={(e) => handleToggleHiddenFromCode(ws.id, e.target.checked)}
+                  containerClassName="!items-start border-b border-rule px-3 py-2"
+                  label={
+                    <span className="min-w-0">
+                      <span className="text-body-13 text-ink-2">Hide from the Code tab</span>
+                      <span className="block text-body-12 text-ink-4">
+                        For a notes vault or an output folder. Nothing written here shows up as a
+                        project, and your agents stop being told about it. The folder itself is
+                        untouched.
+                      </span>
+                    </span>
+                  }
+                />
 
                 {/* File list */}
                 <div className="px-3 pt-2 pb-1">
