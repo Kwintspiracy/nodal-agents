@@ -28,6 +28,7 @@ import type { RunnerDeps } from '../../deps.ts';
 import {
   listCodeProjectsForContext,
   projectKey as projectKeyOf,
+  groupScannedWrites,
   _resetProjectsCacheForTests,
 } from '../../job/code-projects.ts';
 
@@ -623,6 +624,38 @@ describe('listCodeProjectsForContext', () => {
     expect(projectKeyOf('\\\\serveur\\part\\App')).toBe(projectKeyOf('//SERVEUR/part/app'));
     // Et il ne se confond pas avec un chemin POSIX.
     expect(projectKeyOf('//serveur/part/App')).not.toBe(projectKeyOf('/serveur/part/app'));
+  });
+
+  it('deux casses du MÊME projet Windows ne font qu’un projet, et ses détenteurs se cumulent', () => {
+    // Constat Codex (27/08) : le scan groupait sur le chemin littéral. Un projet
+    // écrit tantôt `C:/Dev/App`, tantôt `C:/Dev/app` était annoncé DEUX FOIS aux
+    // agents et mangeait deux places sur les douze — alors que l'onglet Code, qui
+    // groupe par projectKey, ne le montrait qu'une fois.
+    //
+    // Fonction pure exprès : sur Windows on ne peut pas créer deux dossiers ne
+    // différant que par la casse, donc un test de bout en bout ne prouverait
+    // rien ici (leçon des racines, 26/08).
+    const projets = groupScannedWrites([
+      { projectPath: 'C:/Dev/App', owners: ['Ada'], at: '2026-08-27T10:00:00.000Z' },
+      { projectPath: 'C:/Dev/app', owners: ['Lin'], at: '2026-08-27T09:00:00.000Z' },
+    ]);
+
+    expect(projets, 'le même projet Windows compté deux fois').toHaveLength(1);
+    // L'orthographe retenue est celle de l'écriture la plus récente.
+    expect(projets[0]!.path).toBe('C:/Dev/App');
+    expect(projets[0]!.lastActivityAt).toBe('2026-08-27T10:00:00.000Z');
+    // Et personne n'est perdu au passage : les deux auteurs restent détenteurs.
+    expect(projets[0]!.owners).toEqual(['Ada', 'Lin']);
+  });
+
+  it('deux casses d’un chemin POSIX restent DEUX projets', () => {
+    // Le pendant du test ci-dessus : replier sans condition confondrait deux
+    // dossiers réellement distincts sur un système sensible à la casse.
+    const projets = groupScannedWrites([
+      { projectPath: '/srv/App', owners: ['Ada'], at: '2026-08-27T10:00:00.000Z' },
+      { projectPath: '/srv/app', owners: ['Lin'], at: '2026-08-27T09:00:00.000Z' },
+    ]);
+    expect(projets).toHaveLength(2);
   });
 
   it('RENOMMER un projet change le nom que les agents entendent', async () => {

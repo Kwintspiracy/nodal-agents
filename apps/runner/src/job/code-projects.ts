@@ -1,4 +1,4 @@
-// job/code-projects.ts — les PROJETS de code de l'espace, pour le bloc
+﻿// job/code-projects.ts — les PROJETS de code de l'espace, pour le bloc
 // `## Runtime` de chaque agent (décision Quentin 25/08).
 //
 // POURQUOI : trois sessions de suite ont montré la même panne — « modifie
@@ -262,8 +262,50 @@ export function canonicalRoots(wsRows: ReadonlyArray<{ path: string; agentName: 
   return { roots: Array.from(parCle.values()).sort((a, b) => b.length - a.length), ownersByRoot };
 }
 
+/** Une écriture retenue par le scan, déjà résolue jusqu'à son dossier de projet. */
+export interface ScannedWrite {
+  projectPath: string;
+  owners: readonly string[];
+  /** ISO, ou `null` si la ligne n'a pas de date. */
+  at: string | null;
+}
+
+/**
+ * Regrouper les écritures en projets, par IDENTITÉ et non par chemin brut.
+ *
+ * Sous Windows, `C:/Dev/App/src/a.ts` et `C:/Dev/app/src/b.ts` sont le MÊME
+ * projet. Le scan groupait sur le chemin littéral : le projet apparaissait deux
+ * fois dans le contexte injecté et mangeait deux places sur les douze, alors
+ * que l'onglet Code, lui, ne le montrait qu'une fois — le désaccord entre les
+ * deux vues que ce module existe pour éviter (revue Codex, 27/08).
+ *
+ * `writes` est attendu de la plus RÉCENTE à la plus ancienne (l'ordre de la
+ * requête) : l'orthographe et la date retenues sont donc celles de la dernière
+ * écriture. Fonction pure, pour être prouvable sans dépendre de la casse du
+ * système de fichiers du testeur.
+ */
+export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[] {
+  const byKey = new Map<string, { path: string; owners: Set<string>; at: string | null }>();
+  for (const w of writes) {
+    const cle = projectKey(w.projectPath);
+    const entry = byKey.get(cle) ?? { path: w.projectPath, owners: new Set<string>(), at: w.at };
+    for (const o of w.owners) entry.owners.add(o);
+    byKey.set(cle, entry);
+  }
+  // Trié par activité, JAMAIS tronqué ici : le plafond s'applique après le
+  // masquage, sinon ranger un projet ferait un trou dans les douze au lieu de
+  // laisser la place au suivant.
+  return Array.from(byKey.values())
+    .sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''))
+    .map((v) => ({
+      path: v.path,
+      owners: Array.from(v.owners).sort(),
+      lastActivityAt: v.at,
+    }));
+}
+
 /** Un projet tel que le SCAN le voit : sans nom choisi, sans masquage appliqué. */
-interface RawProject {
+export interface RawProject {
   path: string;
   owners: string[];
   lastActivityAt: string | null;
@@ -485,7 +527,7 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       return ok;
     };
 
-    const byPath = new Map<string, { owners: Set<string>; lastActivityAt: string | null }>();
+    const writes: ScannedWrite[] = [];
     for (const row of rows) {
       // Une écriture REFUSÉE n'a rien créé — même règle que l'onglet Code.
       const head = (row.toolOutput ?? '').slice(0, 400);
@@ -520,24 +562,14 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       // supprimé au fil du travail ne fait pas disparaître son projet. Même
       // règle que l'onglet Code, au caractère près.
       if (!existsCached(projectPath)) continue;
-      const entry = byPath.get(projectPath) ?? {
-        owners: new Set(ownersByRoot.get(wsRoot) ?? []),
-        lastActivityAt: row.createdAt ? row.createdAt.toISOString() : null,
-      };
-      for (const o of ownersByRoot.get(wsRoot) ?? []) entry.owners.add(o);
-      byPath.set(projectPath, entry);
+      writes.push({
+        projectPath,
+        owners: Array.from(ownersByRoot.get(wsRoot) ?? []),
+        at: row.createdAt ? row.createdAt.toISOString() : null,
+      });
     }
 
-    // Trié par activité, JAMAIS tronqué ici : le plafond s'applique après le
-    // masquage, sinon ranger un projet ferait un trou dans les douze au lieu
-    // de laisser la place au suivant.
-    const result: RawProject[] = Array.from(byPath.entries())
-      .sort((a, b) => (b[1].lastActivityAt ?? '').localeCompare(a[1].lastActivityAt ?? ''))
-      .map(([path, v]) => ({
-        path,
-        owners: Array.from(v.owners).sort(),
-        lastActivityAt: v.lastActivityAt,
-      }));
+    const result = groupScannedWrites(writes);
     projectsCache.set(entityId, { at: Date.now(), value: result });
     return result;
   }
