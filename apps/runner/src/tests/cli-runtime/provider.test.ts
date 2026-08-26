@@ -129,16 +129,35 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     // n'en verrouillaient chacun qu'un et pouvaient écrire dans le même arbre
     // en même temps. Le contrat d'un seul créneau d'écriture ne tenait plus là
     // où il compte le plus.
-    const src = read('apps/runner/src/cli-runtime/run-job.ts');
-    expect(src, 'le verrou ne porte que sur cwd').toContain('const writeDirs =');
-    expect(src).toMatch(/for \(const dir of writeDirs\)/);
-    // Ordre STABLE : deux jobs demandant les mêmes dossiers les prennent dans
-    // le même ordre, donc l'un attend au lieu que les deux se bloquent.
-    expect(src, 'sans tri, deux jobs peuvent se bloquer mutuellement').toMatch(
-      /new Set\(args\.workspaces\.map\(\(w\) => w\.path\)\)\]\.sort\(\)/,
+    // Le chemin job a été corrigé d'abord, et le chemin CHAT est resté en
+    // arrière une revue de plus : deux copies, un seul correctif appliqué. La
+    // prise de verrous vit donc dans son propre module, et les DEUX chemins
+    // l'appellent — c'est ce que ce test vérifie.
+    const locks = read('apps/runner/src/cli-runtime/workspace-locks.ts');
+    // Ordre STABLE : deux sessions demandant les mêmes dossiers les prennent
+    // dans le même ordre, donc l'une attend au lieu que les deux se bloquent.
+    expect(locks, 'sans tri, deux sessions peuvent se bloquer mutuellement').toMatch(
+      /\[\.\.\.new Set\(dirs\)\]\.sort\(\)/,
     );
     // Et ceux déjà pris sont rendus si l'un échoue.
-    expect(src).toContain('await releaseHeld();');
+    expect(locks).toMatch(/catch[\s\S]{0,80}await release\(\)/);
+
+    for (const rel of [
+      'apps/runner/src/cli-runtime/run-job.ts',
+      'apps/runner/src/cli-runtime/run-chat.ts',
+    ]) {
+      const src = read(rel);
+      // L'ARGUMENT compte, pas la présence de l'appel : passer `[cwd]` à la
+      // fonction partagée rendrait le correctif décoratif — le chemin chat a
+      // vécu une revue entière dans cet état.
+      // Jusqu'au `);` FINAL : un `)` intermédiaire ferme `(w)`, pas l'appel.
+      const call = /acquireWorkspaceLocks\([\s\S]{0,240}?\n\s*\);/.exec(src)?.[0] ?? '';
+      expect(call, `${rel} : les verrous ne sont pas pris`).not.toBe('');
+      expect(call, `${rel} : le verrou ne porte que sur le premier dossier`).toMatch(
+        /\.map\(\(w\) => w\.path\)/,
+      );
+      expect(call).not.toMatch(/\[\s*cwd\s*\]/);
+    }
   });
 
   it('la liste des dossiers passe au prompt — le partagé n’a pas de ligne en base', () => {

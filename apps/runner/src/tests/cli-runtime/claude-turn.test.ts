@@ -1,4 +1,4 @@
-// claude-turn.test.ts — the runtime-agent stream parser and argv builder
+﻿// claude-turn.test.ts — the runtime-agent stream parser and argv builder
 // (étape E), validated against a RECORDED REAL stream from claude 2.1.234
 // (stream-fixture.jsonl, captured 2026-08-19): keyless-snapshot discipline —
 // the parser is tested on what the CLI actually printed.
@@ -143,6 +143,26 @@ describe('buildClaudeTurnArgs', () => {
     );
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebSearch');
+  });
+
+  it('les dossiers SECONDAIRES sont ouverts en écriture (--add-dir)', () => {
+    // Constat P2 de la revue Codex (27/08). Le prompt annonce les autres
+    // dossiers de l'agent et l'appelant les transmet, mais l'argv les jetait :
+    // en mode écriture, la CLI se voyait refuser des chemins qu'on venait de
+    // lui promettre. L'option existe — vérifiée sur le binaire installé.
+    const args = buildClaudeTurnArgs(
+      { ...base, mode: 'write' as const, extraWriteDirs: ['C:/Dev/autre', 'C:/Notes'] },
+      PERSONA_FILE,
+    );
+    const i = args.indexOf('--add-dir');
+    expect(i, 'les dossiers secondaires sont annoncés mais pas ouverts').toBeGreaterThan(-1);
+    expect(args.slice(i + 1, i + 3)).toEqual(['C:/Dev/autre', 'C:/Notes']);
+
+    // En lecture seule il n'y a rien à ouvrir : les outils d'écriture sont déjà
+    // retirés au modèle.
+    expect(buildClaudeTurnArgs({ ...base, extraWriteDirs: ['C:/x'] }, PERSONA_FILE)).not.toContain(
+      '--add-dir',
+    );
   });
 
   it('resume, model and effort flags appear only when provided', () => {

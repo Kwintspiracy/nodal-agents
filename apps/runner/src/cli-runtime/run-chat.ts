@@ -17,14 +17,8 @@ import {
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import { randomUUID } from 'node:crypto';
-import {
-  assertCliBudget,
-  recordCliRun,
-  acquireWorkspaceLock,
-  releaseWorkspaceLock,
-  WorkspaceLockedError,
-  assertRuntimeSessionKey,
-} from '@nodal-agents/tools';
+import { assertCliBudget, recordCliRun, assertRuntimeSessionKey } from '@nodal-agents/tools';
+import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
@@ -120,10 +114,21 @@ export async function runCliRuntimeChatTurn(args: {
   // Single write-slot per workspace, same contract as code_task/run-job. A
   // chat turn has no jobId — the lock token is a synthetic uuid (the column
   // is a bare uuid, not an FK), released in finally.
+  // TOUS les dossiers écrivables, pas seulement `cwd` — voir workspace-locks.ts.
+  //
+  // Le chemin job a été corrigé d'abord, et celui-ci est resté en arrière une
+  // revue de plus : deux copies, un seul correctif appliqué. C'est ce qui a fait
+  // sortir la prise de verrous dans son propre module.
   const lockToken = mode === 'write' ? randomUUID() : null;
+  let locks: HeldLocks = { release: async () => {} };
   if (lockToken) {
     try {
-      await acquireWorkspaceLock(db, cwd, lockToken, agentRow.id);
+      locks = await acquireWorkspaceLocks(
+        db,
+        wsRows.map((w) => w.path),
+        lockToken,
+        agentRow.id,
+      );
     } catch (err) {
       if (err instanceof WorkspaceLockedError) {
         return { ok: false, error: err.message.slice(0, 300) };
@@ -179,11 +184,7 @@ export async function runCliRuntimeChatTurn(args: {
     }
     throw err;
   } finally {
-    if (lockToken) {
-      await releaseWorkspaceLock(db, cwd, lockToken).catch((err: unknown) => {
-        console.warn('[cli-runtime] chat workspace lock release failed:', err);
-      });
-    }
+    await locks.release();
   }
 
   try {

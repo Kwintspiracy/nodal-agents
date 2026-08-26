@@ -25,14 +25,8 @@ import {
   listActiveChannelsForAgent,
 } from '@nodal-agents/delivery';
 import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
-import {
-  assertCliBudget,
-  recordCliRun,
-  acquireWorkspaceLock,
-  releaseWorkspaceLock,
-  WorkspaceLockedError,
-  assertRuntimeSessionKey,
-} from '@nodal-agents/tools';
+import { assertCliBudget, recordCliRun, assertRuntimeSessionKey } from '@nodal-agents/tools';
+import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
@@ -240,39 +234,22 @@ export async function runCliRuntimeJob(args: {
   // must not run concurrently with another write run (code_task or a second
   // runtime turn) in the same workspace — git index/deps state would race.
   //
-  // TOUS les dossiers écrivables, pas seulement `cwd` (revue Codex, 27/08).
-  // Depuis que les dossiers secondaires passent en `--add-dir`, deux agents aux
-  // `cwd` différents mais partageant un dossier — typiquement le workspace
-  // PARTAGÉ, ajouté automatiquement à tout le monde — n'en verrouillaient
-  // chacun qu'un, et pouvaient écrire dans le même arbre en même temps. Le
-  // contrat d'un seul créneau d'écriture ne tenait plus là où il compte le
-  // plus : à l'endroit que tous se partagent.
-  //
-  // Ordre STABLE (trié) : deux jobs qui demandent les mêmes dossiers les
-  // prennent dans le même ordre, donc l'un attend au lieu que les deux se
-  // bloquent à mi-chemin.
-  const writeDirs = mode === 'write' ? [...new Set(args.workspaces.map((w) => w.path))].sort() : [];
-  const held: string[] = [];
-  const releaseHeld = async (): Promise<void> => {
-    for (const dir of held) {
-      await releaseWorkspaceLock(db, dir, jobId).catch((err: unknown) => {
-        console.warn(`[cli-runtime] workspace lock release failed (job=${jobId}, ${dir}):`, err);
-      });
-    }
-    held.length = 0;
-  };
-  for (const dir of writeDirs) {
+  // TOUS les dossiers écrivables, pas seulement `cwd` — voir workspace-locks.ts.
+  let locks: HeldLocks = { release: async () => {} };
+  if (mode === 'write') {
     try {
-      await acquireWorkspaceLock(db, dir, jobId, agentRow.id);
-      held.push(dir);
+      locks = await acquireWorkspaceLocks(
+        db,
+        args.workspaces.map((w) => w.path),
+        jobId,
+        agentRow.id,
+      );
     } catch (err) {
-      // Rendre ceux déjà pris : un job qui échoue en gardant des verrous
-      // bloquerait tous les autres jusqu'à expiration.
-      await releaseHeld();
       if (err instanceof WorkspaceLockedError) return fail(err.message.slice(0, 300));
       throw err;
     }
   }
+  const releaseHeld = (): Promise<void> => locks.release();
 
   // The FULL Nodal prompt, not the raw personality field.
   //

@@ -1,4 +1,4 @@
-// cli-runtime/claude-turn.ts — one conversation turn of a RUNTIME agent
+﻿// cli-runtime/claude-turn.ts — one conversation turn of a RUNTIME agent
 // (étape E): the agent IS a Claude Code session. Nodal spawns the user's own
 // `claude` binary headless with `--output-format stream-json`, injects the
 // persona from DB (--append-system-prompt-file + message via stdin — free
@@ -85,9 +85,8 @@ export interface ClaudeTurnOptions {
    *
    * `cwd` n'est que le premier. Un agent multi-dossiers voit les autres dans son
    * prompt et se les voit refuser à l'écriture, ce qui est le pire des deux
-   * mondes (revue Codex, 27/08). Le chemin Codex les passe en `--add-dir` ; le
-   * chemin Claude ne les utilise pas encore — son comportement est inchangé, et
-   * ce champ est optionnel exprès pour ne rien changer chez lui par surprise.
+   * mondes (revue Codex, 27/08). Les DEUX CLI les reçoivent en `--add-dir` —
+   * l'option existe des deux côtés, vérifiée sur les binaires installés.
    */
   extraWriteDirs?: readonly string[];
   mode: 'read' | 'write';
@@ -125,6 +124,15 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     '--append-system-prompt-file',
     personalityFile,
   ];
+  // Les dossiers SECONDAIRES de l'agent (revue Codex, 27/08). `cwd` n'est que
+  // le premier : le prompt annonçait les autres et la CLI ne pouvait pas y
+  // écrire. `--add-dir <directories...>` existe bien — vérifié sur le binaire
+  // installé (`claude --help`), pas lu dans une doc.
+  //
+  // En lecture seule il n'y a rien à ouvrir : les outils d'écriture sont déjà
+  // retirés au modèle, et ajouter des racines n'y changerait rien.
+  const extraDirs = opts.mode === 'write' ? (opts.extraWriteDirs ?? []) : [];
+  if (extraDirs.length > 0) args.push('--add-dir', ...extraDirs);
   if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
   if (opts.model) args.push('--model', opts.model);
   if (opts.effort) args.push('--effort', opts.effort);
