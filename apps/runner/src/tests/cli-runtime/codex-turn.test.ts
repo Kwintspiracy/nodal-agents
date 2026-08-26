@@ -319,16 +319,21 @@ describe('buildCodexStdin', () => {
     expect(stdin.indexOf('You are Reviewer C.')).toBeLessThan(stdin.indexOf('lis note.txt'));
   });
 
-  it('à la REPRISE, la persona n’est PAS renvoyée — la session la porte déjà', () => {
-    // La repasser en ferait un message utilisateur dupliqué à chaque tour, payé
-    // à chaque tour. Chez Claude c'est un prompt SYSTÈME, d'où la différence.
+  it('le prompt est renvoyé à CHAQUE tour — il porte ce qui BOUGE entre deux tours', () => {
+    // Ce test disait l'inverse : la persona était omise à la reprise, « la
+    // session la porte déjà ». La revue Codex (27/08) a montré l'erreur — ce
+    // texte n'est pas qu'une personnalité, il porte la mémoire, l'équipe, les
+    // dossiers et l'instantané git. L'omettre gelait l'agent sur l'état du
+    // PREMIER message : un fichier ajouté, un coéquipier attaché, une branche
+    // changée restaient invisibles jusqu'à la fin du fil.
     const stdin = buildCodexStdin({
       message: 'et maintenant ?',
-      personality: 'You are Reviewer C.',
-      resumeSessionId: 'th_1',
+      personality: 'You are Reviewer C. Current branch: feat/x',
     });
-    expect(stdin).toBe('et maintenant ?');
-    expect(stdin).not.toContain('Reviewer C');
+    expect(stdin, 'un tour de reprise travaille sur un contexte périmé').toContain(
+      'Current branch: feat/x',
+    );
+    expect(stdin).toContain('et maintenant ?');
   });
 });
 

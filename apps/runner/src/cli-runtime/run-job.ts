@@ -93,6 +93,17 @@ export function buildCliRuntimeJobContext(args: {
   task?: string | null;
   chatId?: string | null;
   workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
+  /**
+   * Les dossiers que la CLI a RÉELLEMENT — le partagé compris.
+   *
+   * Sans cette liste, `buildSystemPrompt` retombe sur une requête dans
+   * `agent_workspaces`, où le workspace PARTAGÉ n'a pas de ligne : il est créé
+   * et injecté à l'exécution. L'agent recevait donc l'accès au dossier de
+   * transmission entre agents sans qu'on lui dise qu'il existe (revue Codex,
+   * 27/08). C'est la panne du 26/08 en miroir, sur le chemin CLI cette fois :
+   * le prompt et les outils ne voyaient pas les mêmes dossiers.
+   */
+  workspaces?: ReadonlyArray<{ label: string; path: string }>;
 }): Parameters<typeof buildSystemPrompt>[2] {
   return {
     origin: args.origin,
@@ -100,6 +111,7 @@ export function buildCliRuntimeJobContext(args: {
     ...(args.task ? { task: args.task } : {}),
     ...(args.chatId ? { telegramChatId: args.chatId } : {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
+    ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
   };
 }
 
@@ -227,10 +239,36 @@ export async function runCliRuntimeJob(args: {
   // Same single-write-slot contract as code_task: a write-mode CLI session
   // must not run concurrently with another write run (code_task or a second
   // runtime turn) in the same workspace — git index/deps state would race.
-  if (mode === 'write') {
+  //
+  // TOUS les dossiers écrivables, pas seulement `cwd` (revue Codex, 27/08).
+  // Depuis que les dossiers secondaires passent en `--add-dir`, deux agents aux
+  // `cwd` différents mais partageant un dossier — typiquement le workspace
+  // PARTAGÉ, ajouté automatiquement à tout le monde — n'en verrouillaient
+  // chacun qu'un, et pouvaient écrire dans le même arbre en même temps. Le
+  // contrat d'un seul créneau d'écriture ne tenait plus là où il compte le
+  // plus : à l'endroit que tous se partagent.
+  //
+  // Ordre STABLE (trié) : deux jobs qui demandent les mêmes dossiers les
+  // prennent dans le même ordre, donc l'un attend au lieu que les deux se
+  // bloquent à mi-chemin.
+  const writeDirs = mode === 'write' ? [...new Set(args.workspaces.map((w) => w.path))].sort() : [];
+  const held: string[] = [];
+  const releaseHeld = async (): Promise<void> => {
+    for (const dir of held) {
+      await releaseWorkspaceLock(db, dir, jobId).catch((err: unknown) => {
+        console.warn(`[cli-runtime] workspace lock release failed (job=${jobId}, ${dir}):`, err);
+      });
+    }
+    held.length = 0;
+  };
+  for (const dir of writeDirs) {
     try {
-      await acquireWorkspaceLock(db, cwd, jobId, agentRow.id);
+      await acquireWorkspaceLock(db, dir, jobId, agentRow.id);
+      held.push(dir);
     } catch (err) {
+      // Rendre ceux déjà pris : un job qui échoue en gardant des verrous
+      // bloquerait tous les autres jusqu'à expiration.
+      await releaseHeld();
       if (err instanceof WorkspaceLockedError) return fail(err.message.slice(0, 300));
       throw err;
     }
@@ -268,6 +306,7 @@ export async function runCliRuntimeJob(args: {
       task: job.task,
       chatId: job.chatId,
       workspaceGit,
+      workspaces: args.workspaces,
     }),
   );
 
@@ -297,16 +336,12 @@ export async function runCliRuntimeJob(args: {
     });
   } catch (err) {
     clearInterval(heartbeat);
-    if (mode === 'write') await releaseWorkspaceLock(db, cwd, jobId).catch(() => {});
+    await releaseHeld();
     if (isCliSetupError(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
   clearInterval(heartbeat);
-  if (mode === 'write') {
-    await releaseWorkspaceLock(db, cwd, jobId).catch((err: unknown) => {
-      console.warn(`[cli-runtime] workspace lock release failed (job=${jobId}):`, err);
-    });
-  }
+  await releaseHeld();
 
   // Audit — one cli_runs row per turn, success or failure (the cost is real).
   try {

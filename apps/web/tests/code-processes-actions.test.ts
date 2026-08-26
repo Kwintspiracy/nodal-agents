@@ -990,6 +990,46 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     }
   });
 
+  it('une écriture d’un agent CODEX compte ET s’affiche dans le panneau Changes', async () => {
+    // Constat P2 de la revue Codex (27/08). `cli:file_change` a d'abord été
+    // ajouté aux outils qui QUALIFIENT et COMPTENT, mais `extractChange` ne
+    // connaissait que les noms de Claude : la session annonçait « 1 fichier »
+    // et montrait un panneau VIDE. Un compteur sans contenu est pire qu'un
+    // zéro : il dit qu'il s'est passé quelque chose sans permettre de le voir.
+    const agentId = await makeAgent('Codex Runtime Coder');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'cli:file_change',
+      toolInput: {
+        id: 'item_1',
+        type: 'file_change',
+        file_path: `${DEV_FOLDER}/src/codex.ts`,
+        changes: [
+          { path: `${DEV_FOLDER}/src/codex.ts`, kind: 'update', diff: '@@ -1 +1 @@\n-a\n+b' },
+        ],
+      },
+      toolOutput: '{"ok":true}',
+    });
+
+    const { listCodingProcessesAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
+    const list = await listCodingProcessesAction();
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    expect(list.data.find((r) => r.id === jobId)?.filesChanged).toBe(1);
+
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) return;
+    expect(
+      detail.data.changes,
+      'le compteur annonce un fichier et le panneau est vide',
+    ).toHaveLength(1);
+    expect(detail.data.changes[0]!.filePath).toBe('src/codex.ts');
+  });
+
   it('un dossier masqué masque AUSSI les sessions sans chemin (code_task, verdict)', async () => {
     // Constat P2 de la revue Codex (27/08). Un `code_task` en écriture ou un
     // verdict de review qualifiait SANS CONDITION : pas de chemin, donc pas de

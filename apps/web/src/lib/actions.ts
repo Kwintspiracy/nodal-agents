@@ -11207,6 +11207,26 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
   const filePath = extractFilePath(input);
   if (!filePath || !input) return null;
 
+  // Une écriture d'un agent en runtime CODEX (revue Codex, 27/08). Elle
+  // qualifiait déjà le pipeline et comptait dans les fichiers changés, mais le
+  // panneau Changes restait VIDE : une session annonçant « 3 fichiers » sans
+  // rien montrer. Codex ne rend pas l'avant/après — seulement un `diff` par
+  // changement — donc on montre le diff quand il est là, et on ne fabrique
+  // aucun contenu quand il ne l'est pas.
+  if (toolName === 'cli:file_change') {
+    const changes = Array.isArray(input['changes']) ? input['changes'] : [];
+    const mine = changes.find(
+      (c) => c && typeof c === 'object' && (c as Record<string, unknown>)['path'] === filePath,
+    ) as Record<string, unknown> | undefined;
+    const diff = typeof mine?.['diff'] === 'string' ? mine['diff'] : null;
+    return {
+      filePath,
+      // `add` est une création, tout le reste (update, move) touche un existant.
+      kind: mine?.['kind'] === 'add' ? 'write' : 'edit',
+      oldText: null,
+      newText: diff,
+    };
+  }
   if (toolName === 'cli:Edit' || toolName === 'file_edit') {
     return {
       filePath,

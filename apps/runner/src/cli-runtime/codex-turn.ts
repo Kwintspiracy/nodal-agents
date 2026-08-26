@@ -14,14 +14,10 @@
 //      drapeau de prompt système, ni fichier d'instructions. Les seules entrées
 //      sont le prompt (argument ou stdin), `-c` (TOML) et `AGENTS.md` dans le
 //      dossier de travail. Écrire un `AGENTS.md` chez l'utilisateur serait
-//      salir son dépôt pour une raison qui ne le regarde pas. La persona voyage
-//      donc EN TÊTE DE STDIN, avec un en-tête qui la nomme.
-//
-//      Conséquence assumée : elle est envoyée au PREMIER tour seulement. À la
-//      reprise, elle est déjà dans le fil de la session ; la répéter la
-//      transformerait en message utilisateur dupliqué à chaque tour, payé à
-//      chaque tour. Claude, lui, la repasse à chaque fois parce que chez lui
-//      c'est un prompt SYSTÈME, pas un message.
+//      salir son dépôt pour une raison qui ne le regarde pas. Le prompt voyage
+//      donc EN TÊTE DE STDIN, avec un en-tête qui le nomme, et il est renvoyé à
+//      CHAQUE tour — voir `buildCodexStdin` pour pourquoi l'omettre à la
+//      reprise était une erreur.
 //
 //   2. **Le format d'événements est le sien.** `thread.started` porte l'identité
 //      de session, `item.started` / `item.completed` les outils, un
@@ -68,15 +64,22 @@ const CODEX_MESSAGE_HEADER = '=== THE REQUEST ===' as const;
 /**
  * Le texte envoyé sur stdin. Pur, donc prouvable.
  *
- * À la reprise (`resumeSessionId` présent), la persona est OMISE : la session
- * la porte déjà. Voir l'en-tête du fichier.
+ * Le prompt est renvoyé à CHAQUE tour, reprise comprise.
+ *
+ * La première version l'omettait à la reprise, en se disant que la session le
+ * portait déjà. C'était faux, et la revue Codex (27/08) l'a dit sans détour :
+ * ce texte n'est pas qu'une personnalité. Il porte la mémoire de l'entité,
+ * l'équipe, les dossiers, et l'instantané git — tout ce qui BOUGE entre deux
+ * tours. L'omettre gelait l'agent sur l'état du premier message : un fichier
+ * ajouté, un coéquipier attaché, une branche changée restaient invisibles
+ * jusqu'à la fin du fil.
+ *
+ * Le coût est réel — ce texte revient dans le fil à chaque tour — et c'est le
+ * même que celui que Claude paie avec `--append-system-prompt-file`, qu'il
+ * repasse aussi à chaque tour. Un agent juste et un peu plus cher vaut mieux
+ * qu'un agent bon marché qui travaille sur un état périmé.
  */
-export function buildCodexStdin(opts: {
-  message: string;
-  personality: string;
-  resumeSessionId?: string;
-}): string {
-  if (opts.resumeSessionId) return opts.message;
+export function buildCodexStdin(opts: { message: string; personality: string }): string {
   return `${CODEX_PERSONA_HEADER}\n${opts.personality}\n\n${CODEX_MESSAGE_HEADER}\n${opts.message}`;
 }
 
@@ -493,11 +496,7 @@ export async function runCodexTurn(opts: CodexTurnOptions): Promise<CodexTurnRes
     argv,
     env,
     cwd: opts.cwd,
-    stdin: buildCodexStdin({
-      message: opts.message,
-      personality: opts.personality,
-      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
-    }),
+    stdin: buildCodexStdin({ message: opts.message, personality: opts.personality }),
     timeoutMs: opts.timeoutMs,
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
     onLine: (line) => handleCodexLine(state, line, opts.onEvent),

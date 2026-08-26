@@ -122,6 +122,37 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     }
   });
 
+  it('TOUS les dossiers écrivables sont verrouillés, pas seulement le premier', () => {
+    // Constat P1 de la revue Codex (27/08). Depuis que les dossiers secondaires
+    // passent en `--add-dir`, deux agents aux `cwd` différents mais partageant
+    // un dossier — typiquement le workspace PARTAGÉ, ajouté à tout le monde —
+    // n'en verrouillaient chacun qu'un et pouvaient écrire dans le même arbre
+    // en même temps. Le contrat d'un seul créneau d'écriture ne tenait plus là
+    // où il compte le plus.
+    const src = read('apps/runner/src/cli-runtime/run-job.ts');
+    expect(src, 'le verrou ne porte que sur cwd').toContain('const writeDirs =');
+    expect(src).toMatch(/for \(const dir of writeDirs\)/);
+    // Ordre STABLE : deux jobs demandant les mêmes dossiers les prennent dans
+    // le même ordre, donc l'un attend au lieu que les deux se bloquent.
+    expect(src, 'sans tri, deux jobs peuvent se bloquer mutuellement').toMatch(
+      /new Set\(args\.workspaces\.map\(\(w\) => w\.path\)\)\]\.sort\(\)/,
+    );
+    // Et ceux déjà pris sont rendus si l'un échoue.
+    expect(src).toContain('await releaseHeld();');
+  });
+
+  it('la liste des dossiers passe au prompt — le partagé n’a pas de ligne en base', () => {
+    // Constat P2 de la revue Codex (27/08). Sans elle, `buildSystemPrompt`
+    // retombe sur `agent_workspaces`, où le workspace PARTAGÉ n'existe pas : il
+    // est créé et injecté à l'exécution. L'agent recevait l'accès au dossier de
+    // transmission sans qu'on lui dise qu'il existe.
+    const src = read('apps/runner/src/cli-runtime/run-job.ts');
+    const call = /buildCliRuntimeJobContext\(\{[\s\S]{0,400}?\}\)/.exec(src)?.[0] ?? '';
+    expect(call, 'le prompt et les outils ne voient pas les mêmes dossiers').toContain(
+      'workspaces: args.workspaces',
+    );
+  });
+
   it('le menu de l’interface propose tout ce que le runner sert, et rien de plus', () => {
     const web = read('apps/web/src/lib/cli-runtimes.ts');
     const list = /CLI_RUNTIMES = \[[^\]]*\]/.exec(web)?.[0] ?? '';
