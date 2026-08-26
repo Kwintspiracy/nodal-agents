@@ -10,6 +10,18 @@
 // generated images inside the comfyui skill bundle. The runner now injects a
 // live inventory of the shared workspace into each job's prompt (mechanism);
 // this skill is the matching behavior contract (discipline).
+//
+// CORRIGÉ le 26/08, sur un run réel de Quentin. « One folder per kind » ne
+// disait pas DE QUEL workspace il parlait, et se lisait donc comme « tout va
+// dans le partagé, rangé par genre ». Lead-Dev a fait construire une app par
+// Dev C dans `shared/outputs/color-wheel/` alors que les deux ont
+// `Documents/Dev` attaché — deux fois de suite, la seconde APRÈS que le bloc
+// `## Shared workspace` du prompt eut été corrigé pour dire l'inverse. Ce
+// skill est injecté à tous les agents en baseline : il gagnait.
+//
+// La section porte maintenant sa portée dans son titre, et renvoie au bloc du
+// prompt pour la question « où va mon travail ». Le skill garde son sujet — la
+// discipline INTERNE du partagé — sans plus décider ce qui doit y atterrir.
 
 import type { SystemSkill } from '../types';
 
@@ -28,13 +40,15 @@ The shared workspace is a durable, common asset — not a scratch pad. Its live 
 
 Before building a workflow, script, or document, check the inventory: if a file already covers the need, load it and adapt it (\`file_read\`, then edit or pass different arguments). Recreating an existing artifact under a new name is a failure mode, not a fresh start.
 
-### One folder per kind
+### One folder per kind — inside the shared workspace
 
-Save into the existing canonical folders — never invent parallel ones (no \`outputs_v2/\`, \`my_workflows/\`, files dumped at the root):
+These are the canonical folders **of the shared workspace**. When you save there, use them and never invent parallel ones (no \`outputs_v2/\`, \`my_workflows/\`, files dumped at the root):
 - \`workflows/\` — workflow definitions (JSON)
 - \`outputs/\` — generated artifacts (images, exports)
 - \`scripts/\` — reusable scripts
 - \`documents/\` — reports, notes, deliverables
+
+This layout does NOT decide *where* your work belongs. If you have a workspace of your own, what you build for your owner — an app, a project, a report they asked for — goes there, and the shared folders stay what they are: hand-offs and common assets. Your \`## Shared workspace\` block says which case you are in.
 
 ### One workflow = one graph
 
