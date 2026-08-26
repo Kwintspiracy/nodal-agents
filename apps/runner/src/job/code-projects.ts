@@ -220,6 +220,48 @@ function resolveScannedPath(
   return candidates.map((r) => `${r}/${rel}`).find(exists) ?? null;
 }
 
+/**
+ * Les RACINES exploitables d'un espace, et qui détient chacune.
+ *
+ * Dédupliquées par `projectKey`, pas par texte brut (revue Codex, 26/08). Deux
+ * agents attachant le MÊME dossier Windows avec des casses différentes —
+ * `C:/Dev` et `c:/dev` — produisaient deux racines ; `within` les fait toutes
+ * deux matcher, donc la première gagnait le rattachement, mais les détenteurs
+ * étaient indexés sur leur propre graphie. Résultat : un projet annoncé aux
+ * agents avec la MOITIÉ de ses détenteurs, sans que rien ne le signale.
+ *
+ * Une seule graphie survit pour l'affichage — la première rencontrée — et c'est
+ * la clé normalisée qui agrège.
+ *
+ * Fonction PURE, et extraite pour ça : testée sur `C:/Dev` vs `c:/dev` sans
+ * dépendre du système de fichiers de l'hôte. Un test qui fabriquerait deux
+ * dossiers ne différant que par la casse prouverait deux choses opposées selon
+ * qu'il tourne sur Windows (même dossier) ou sur la CI Linux (deux dossiers).
+ */
+export function canonicalRoots(wsRows: ReadonlyArray<{ path: string; agentName: string }>): {
+  roots: string[];
+  ownersByRoot: Map<string, Set<string>>;
+} {
+  const parCle = new Map<string, string>();
+  for (const r of wsRows) {
+    const p = norm(r.path);
+    if (isDriveRoot(p)) continue;
+    if (!parCle.has(projectKey(p))) parCle.set(projectKey(p), p);
+  }
+
+  const ownersByRoot = new Map<string, Set<string>>();
+  for (const r of wsRows) {
+    const affiche = parCle.get(projectKey(norm(r.path)));
+    if (!affiche) continue;
+    const set = ownersByRoot.get(affiche) ?? new Set<string>();
+    set.add(r.agentName);
+    ownersByRoot.set(affiche, set);
+  }
+
+  // Plus longues d'abord : un workspace niché gagne sur son parent.
+  return { roots: Array.from(parCle.values()).sort((a, b) => b.length - a.length), ownersByRoot };
+}
+
 /** Un projet tel que le SCAN le voit : sans nom choisi, sans masquage appliqué. */
 interface RawProject {
   path: string;
@@ -394,18 +436,12 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
     // PARENT visible. `listCodeProjectsForContext` écarte ensuite tout projet
     // qui tombe sous une racine masquée — sous-arbre compris.
     //
-    // Racines uniques, plus longues d'abord (un workspace niché gagne).
-    const roots = Array.from(new Set(wsRows.map((r) => norm(r.path))))
-      .filter((r) => !isDriveRoot(r))
-      .sort((a, b) => b.length - a.length);
+    const { roots, ownersByRoot } = canonicalRoots(wsRows);
     if (roots.length === 0) return [];
-    const ownersByRoot = new Map<string, Set<string>>();
+
     /** Les dossiers de CHAQUE agent — la clé de lecture de ses chemins relatifs. */
     const wsByAgent = new Map<string, Array<{ label: string; path: string }>>();
     for (const r of wsRows) {
-      const set = ownersByRoot.get(norm(r.path)) ?? new Set<string>();
-      set.add(r.agentName);
-      ownersByRoot.set(norm(r.path), set);
       const own = wsByAgent.get(r.agentId) ?? [];
       own.push({ label: r.label, path: norm(r.path) });
       wsByAgent.set(r.agentId, own);

@@ -132,7 +132,7 @@ import {
 import { loadThreadHistory } from './thread-history.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
-import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
+import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
@@ -1097,7 +1097,11 @@ async function runJob(
     ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
-    ...(workspaceInventory ? { workspaceInventory } : {}),
+    // La règle et son pourquoi vivent dans `inventoryForContext`.
+    ...(() => {
+      const inv = inventoryForContext(sharedWorkspacePath, workspaceInventory);
+      return inv === undefined ? {} : { workspaceInventory: inv };
+    })(),
     ...(workspaceGit ? { workspaceGit } : {}),
     deployment,
   };

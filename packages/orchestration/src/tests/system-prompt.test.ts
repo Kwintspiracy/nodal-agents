@@ -808,6 +808,41 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     expect(promptAvec).toContain('Source: shared workspace listing');
   });
 
+  it('la consigne survit à un partagé VIDE — c’est là qu’elle compte le plus', async () => {
+    // Constat P1 de la revue Codex (26/08). Le champ commandait DEUX choses à
+    // la fois : la présence d'un listing, et celle du bloc entier. Sur une
+    // install neuve, où le partagé est vide, l'agent perdait donc aussi la
+    // consigne « ton travail va dans ton dossier attaché » — précisément au
+    // moment où rien d'autre ne l'a encore mis sur les rails.
+    //
+    // Le runner passe `(empty)` quand le dossier existe mais est vide ; il
+    // n'omet le champ que si le partagé n'existe pas du tout.
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'VideMaisAttache',
+        slug: `vide-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+      })
+      .returning();
+    await db.insert(agentWorkspaces).values({
+      entityId,
+      agentId: agentRow!.id,
+      label: 'Dev',
+      path: 'C:\\Users\\kwint\\Documents\\Dev',
+    });
+
+    const prompt = await buildSystemPrompt(makeAgent(agentRow!.id, entityId, 'p'), db, {
+      workspaceInventory: '(empty)',
+    } as JobContext);
+
+    expect(prompt).toContain('hand-off area between agents');
+    expect(prompt, 'le dossier de destination n’est plus nommé').toContain('belongs in **Dev**');
+  });
+
   it("n'ajoute aucun cadre quand il n'y a pas d'inventaire", async () => {
     const { entityId } = await seedContext(db);
     const [agentRow] = await db

@@ -50,6 +50,30 @@ async function countFiles(dir: string, budget: { n: number }): Promise<number> {
 }
 
 /**
+ * Ce que le contexte de job doit porter — `undefined` pour ne rien rendre.
+ *
+ * Le champ commandait DEUX choses à la fois (revue Codex, 26/08) : la présence
+ * d'un listing, ET celle du bloc entier. Sur une install neuve, où le partagé
+ * est vide, `buildSharedWorkspaceInventory` rend `''` — et l'agent perdait donc
+ * aussi la consigne « ce que tu produis pour ton propriétaire va dans ton
+ * dossier attaché ». Précisément le moment où rien d'autre ne l'a encore mis
+ * sur les rails.
+ *
+ * Les deux questions sont séparées ici, et la distinction reste honnête :
+ * `sharedPath` n'est non-nul que si le `mkdir` a réussi, donc le dossier
+ * EXISTE. Un listing vide veut alors dire vide — pas « on n'a pas su
+ * regarder », ce qui serait un repli silencieux sur une phrase que l'agent
+ * lit avant d'écrire.
+ */
+export function inventoryForContext(
+  sharedPath: string | null,
+  listing: string,
+): string | undefined {
+  if (!sharedPath) return undefined;
+  return listing || '(empty)';
+}
+
+/**
  * Render a depth-2 inventory of `root` (the shared workspace), or '' when the
  * directory is missing or empty. Plain factual text, one line per root entry:
  *

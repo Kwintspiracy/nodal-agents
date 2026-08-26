@@ -12,6 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { gitProbeTarget } from '../../lib/workspace-git.ts';
+import { inventoryForContext } from '../../lib/workspace-inventory.ts';
 
 const PARTAGE = 'C:/Users/kwint/.nodalai/workspaces/e1/shared';
 const DEV = 'C:/Users/kwint/Documents/Dev';
@@ -43,5 +44,33 @@ describe('gitProbeTarget', () => {
     // `sharedWorkspacePath` est null quand la création du dossier a échoué.
     // Rendre autre chose que null ferait sonder un chemin inventé.
     expect(gitProbeTarget([], null)).toBeNull();
+  });
+});
+
+// ─── L'inventaire du partagé : présence du BLOC vs présence d'un LISTING ─────
+
+describe('inventoryForContext', () => {
+  it('un partagé VIDE porte quand même le bloc — c’est là que la consigne compte', () => {
+    // Constat P1 de la revue Codex (26/08). Le champ commandait les deux à la
+    // fois, donc sur une install neuve — partagé vide — l'agent perdait aussi
+    // la consigne « ce que tu produis pour ton propriétaire va dans ton dossier
+    // attaché ». Précisément quand rien d'autre ne l'a encore mis sur les rails.
+    expect(
+      inventoryForContext('C:/…/shared', ''),
+      'le bloc entier disparaît quand le partagé est vide',
+    ).toBe('(empty)');
+  });
+
+  it('un listing réel passe tel quel', () => {
+    expect(inventoryForContext('C:/…/shared', 'outputs/\nworkflows/\n')).toBe(
+      'outputs/\nworkflows/\n',
+    );
+  });
+
+  it('AUCUN partagé = aucun bloc', () => {
+    // `sharedPath` n'est null que si le mkdir a échoué : le dossier n'existe
+    // pas, et annoncer un workspace partagé serait faux.
+    expect(inventoryForContext(null, '')).toBeUndefined();
+    expect(inventoryForContext(null, 'outputs/')).toBeUndefined();
   });
 });
