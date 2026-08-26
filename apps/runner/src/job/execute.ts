@@ -134,6 +134,7 @@ import { triggerWorker } from '../routes/agent.ts';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
+import { resolveWorkspaceList } from '../lib/workspace-list.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { join } from 'node:path';
@@ -880,27 +881,49 @@ async function runJob(
     .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
   const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
 
-  // Entity-wide SHARED workspace: a common scratch/hand-off area every agent in
-  // this entity can read/write — for ARTIFACTS (reports, images, html, pptx) that
-  // siblings or later runs need. Auto-created (works out-of-box); complements the
-  // per-agent workspaces above (special tasks) and entity-wide memory (facts).
-  // Labeled SHARED_WORKSPACE_LABEL — the same constant the D1 overwrite gate
-  // keys off (packages/tools file-ops/workspace.ts); a drift here would
-  // silently disable that gate. The agent's file_* tools see it like any
-  // other workspace.
-  let sharedWorkspacePath: string | null = null;
-  if (job.entityId) {
+  // Entity-wide SHARED workspace — le repli des agents qui n'ont AUCUN dossier.
+  //
+  // UN AGENT, UN DOSSIER (décision Quentin, 26/08). Il était injecté à TOUT le
+  // monde, y compris aux agents à qui le propriétaire avait explicitement
+  // attaché un dossier. C'est la racine d'une journée entière de symptômes :
+  //
+  //   * le PROMPT ne le listait pas (sa liste vient de `agent_workspaces`),
+  //     alors que les OUTILS l'avaient. L'agent lisait « ton seul dossier est
+  //     Dev, tout est relatif à sa racine », écrivait `shared/outputs/x.html`
+  //     — que les outils routaient correctement vers le partagé — puis
+  //     construisait le chemin absolu en COLLANT les deux :
+  //     `C:\…\Documents\Dev\shared\outputs\x.html`. Un chemin qui n'existe
+  //     nulle part, et dont le début juste le rend crédible ;
+  //   * l'onglet Code ne connaît que les dossiers attachés : tout ce qui
+  //     partait dans le partagé lui était invisible ;
+  //   * il fallait une consigne de prompt, une section de skill et une règle de
+  //     délégation pour rattraper l'ambiguïté — trois rustines sur une cause.
+  //
+  // Le « hand-off entre agents » que le partagé servait à justifier passe déjà
+  // par le dossier ATTACHÉ quand il est commun : sur cette install les cinq
+  // agents de l'équipe dev partagent `Documents/Dev`, et le relecteur lit ce
+  // que le codeur y écrit sans passer par ailleurs.
+  //
+  // Reste vrai pour les agents SANS dossier : là, le partagé EST leur
+  // workspace, et rien ne change pour eux.
+  let sharedCandidate: string | null = null;
+  if (job.entityId && agentWorkspacesList.length === 0) {
     const sharedPath = join(workspacesRoot(), job.entityId, 'shared');
     try {
       mkdirSync(sharedPath, { recursive: true });
-      if (!agentWorkspacesList.some((w) => w.label === SHARED_WORKSPACE_LABEL)) {
-        agentWorkspacesList.push({ label: SHARED_WORKSPACE_LABEL, path: sharedPath });
-      }
-      sharedWorkspacePath = sharedPath;
+      sharedCandidate = sharedPath;
     } catch {
       // best-effort — a workspace we couldn't create is simply not offered
     }
   }
+  const resolved = resolveWorkspaceList(
+    agentWorkspacesList,
+    SHARED_WORKSPACE_LABEL,
+    sharedCandidate,
+  );
+  agentWorkspacesList.length = 0;
+  agentWorkspacesList.push(...resolved.workspaces);
+  const sharedWorkspacePath: string | null = resolved.sharedPath;
 
   // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
   // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude

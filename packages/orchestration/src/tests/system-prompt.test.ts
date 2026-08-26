@@ -742,15 +742,56 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     expect(prompt).toContain('rapport.md');
   });
 
-  it('le RÔLE du partagé dépend du dossier attaché — passage, ou workspace', async () => {
-    // Constat de Quentin (26/08), sur un run réel. Le bloc disait, sans
-    // condition, « save new files into the existing folder that matches their
-    // kind », suivi de l'inventaire. Lead-Dev l'a suivi à la lettre : il a fait
-    // construire une app par Dev C dans `shared/outputs/water-tracker/` alors
-    // que les deux ont `Documents/Dev` attaché. Le livrable atterrissait au
-    // milieu des sorties ComfyUI, et l'onglet Code n'en voyait rien.
+  it('un agent qui a un dossier ne reçoit AUCUN bloc de workspace partagé', async () => {
+    // UN AGENT, UN DOSSIER (26/08). Le runner n'injecte plus le partagé qu'aux
+    // agents qui n'ont rien, donc `workspaceInventory` ne leur parvient plus.
     //
-    // La règle qui remplace ça ne devine RIEN : elle lit une ligne en base.
+    // Ce test épingle la conséquence côté prompt : même si un inventaire
+    // arrivait par erreur, l'agent verrait un bloc qui dit « This is your
+    // workspace » sur un dossier qui n'est PAS le sien. C'est le mensonge qui
+    // fabriquait `Documents/Dev/shared/outputs/…` — il faut qu'il se voie.
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'AvecDossierSansPartage',
+        slug: `sanspartage-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+      })
+      .returning();
+    await db.insert(agentWorkspaces).values({
+      entityId,
+      agentId: agentRow!.id,
+      label: 'Dev',
+      path: 'C:\\Users\\kwint\\Documents\\Dev',
+    });
+
+    // Contexte SANS inventaire — ce que le runner produit désormais pour lui.
+    const prompt = await buildSystemPrompt(makeAgent(agentRow!.id, entityId, 'p'), db, {
+      origin: 'api',
+    } as JobContext);
+
+    // Le SKILL cite « ## Shared workspace » pour y renvoyer — c'est le BLOC
+    // qu'on traque, reconnaissable à sa première phrase.
+    expect(prompt, 'un bloc de workspace partagé est rendu à un agent qui a le sien').not.toContain(
+      'This is your workspace',
+    );
+    expect(prompt).not.toContain('Source: shared workspace listing');
+    // Et son propre dossier est bien là, au singulier, ce qui est enfin VRAI.
+    expect(prompt).toContain('Your workspace label is **Dev**');
+  });
+
+  it('le partagé reste le workspace de l’agent qui n’a AUCUN dossier', async () => {
+    // C'est le SEUL cas qui reste. Le partagé n'est plus injecté qu'aux agents
+    // sans dossier attaché ; pour eux il EST leur workspace, et ce bloc dit la
+    // vérité. Rien ne change de leur côté.
+    //
+    // Le pluriel a existé une demi-journée : le partagé allait à tout le monde,
+    // et il a fallu une variante « zone de passage » pour expliquer aux agents
+    // à dossier qu'il n'était pas chez eux. La cause a été retirée, la variante
+    // avec.
     const { entityId } = await seedContext(db);
     const inventaire = 'shared/\n  outputs/\n  workflows/\n';
 
@@ -771,49 +812,17 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     expect(promptSans).toContain('This is your workspace');
     expect(promptSans).toContain('save new files into the existing folder that matches their kind');
 
-    // 2. UN dossier attaché : le partagé n'est qu'une zone de passage, et le
-    //    prompt NOMME le dossier où va ce qui est produit pour le propriétaire.
-    const [avecDossier] = await db
-      .insert(agents)
-      .values({
-        entityId,
-        name: 'AvecDossier',
-        slug: `avec-${Date.now()}`,
-        personality: 'p',
-        role: 'agent',
-      })
-      .returning();
-    await db.insert(agentWorkspaces).values({
-      entityId,
-      agentId: avecDossier!.id,
-      label: 'Dev',
-      path: 'C:\\Users\\kwint\\Documents\\Dev',
-    });
-    const promptAvec = await buildSystemPrompt(makeAgent(avecDossier!.id, entityId, 'p'), db, {
-      workspaceInventory: inventaire,
-    } as JobContext);
-    expect(promptAvec).toContain('hand-off area between agents');
-    expect(promptAvec, 'le prompt ne nomme pas le dossier où doit aller le livrable').toContain(
-      'belongs in **Dev**',
-    );
-    expect(
-      promptAvec,
-      'l’ordre de ranger dans le partagé survit alors qu’un dossier est attaché',
-    ).not.toContain('save new files into the existing folder that matches their kind');
-
-    // L'inventaire reste montré aux DEUX : un agent qui a son dossier doit
-    // quand même voir ce qu'un autre lui a déposé — c'est la communication
-    // qu'on veut garder.
-    expect(promptAvec).toContain('outputs/');
-    expect(promptAvec).toContain('Source: shared workspace listing');
+    // 2. L'inventaire reste cadré comme une donnée externe, pas comme une
+    //    instruction : les NOMS de fichiers viennent de qui les a créés.
+    expect(promptSans).toContain('outputs/');
+    expect(promptSans).toContain('Source: shared workspace listing');
   });
 
-  it('la consigne survit à un partagé VIDE — c’est là qu’elle compte le plus', async () => {
+  it('un partagé VIDE garde son bloc — l’agent doit savoir qu’il est vide', async () => {
     // Constat P1 de la revue Codex (26/08). Le champ commandait DEUX choses à
     // la fois : la présence d'un listing, et celle du bloc entier. Sur une
-    // install neuve, où le partagé est vide, l'agent perdait donc aussi la
-    // consigne « ton travail va dans ton dossier attaché » — précisément au
-    // moment où rien d'autre ne l'a encore mis sur les rails.
+    // install neuve, où le partagé est vide, l'agent perdait donc le bloc
+    // entier — et avec lui la seule description de son espace de travail.
     //
     // Le runner passe `(empty)` quand le dossier existe mais est vide ; il
     // n'omet le champ que si le partagé n'existe pas du tout.
@@ -822,25 +831,21 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
       .insert(agents)
       .values({
         entityId,
-        name: 'VideMaisAttache',
+        name: 'VideSansDossier',
         slug: `vide-${Date.now()}`,
         personality: 'p',
         role: 'agent',
       })
       .returning();
-    await db.insert(agentWorkspaces).values({
-      entityId,
-      agentId: agentRow!.id,
-      label: 'Dev',
-      path: 'C:\\Users\\kwint\\Documents\\Dev',
-    });
 
     const prompt = await buildSystemPrompt(makeAgent(agentRow!.id, entityId, 'p'), db, {
       workspaceInventory: '(empty)',
     } as JobContext);
 
-    expect(prompt).toContain('hand-off area between agents');
-    expect(prompt, 'le dossier de destination n’est plus nommé').toContain('belongs in **Dev**');
+    expect(prompt, 'le bloc entier disparaît quand le partagé est vide').toContain(
+      '## Shared workspace',
+    );
+    expect(prompt).toContain('This is your workspace');
   });
 
   it("n'ajoute aucun cadre quand il n'y a pas d'inventaire", async () => {

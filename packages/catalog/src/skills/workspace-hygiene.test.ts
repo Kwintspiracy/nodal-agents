@@ -27,18 +27,28 @@ describe('workspace-hygiene', () => {
     ).toContain('shared workspace');
   });
 
-  it('renvoie explicitement le travail du propriétaire vers le dossier attaché', () => {
+  it('renvoie explicitement le travail vers le dossier propre de l’agent', () => {
     const c = workspaceHygieneSkill.content;
     expect(c, 'rien ne dit à un agent avec son propre dossier que son livrable y va').toMatch(
-      /workspace of your own/i,
+      /that folder is where your work goes/i,
     );
-    expect(c).toMatch(/goes there/i);
   });
 
-  it('ne prétend PAS trancher la question à la place du bloc de prompt', () => {
-    // C'est le prompt qui sait si l'agent a un dossier attaché — lui le lit en
-    // base. Le skill est un texte statique, il ne peut que renvoyer.
-    expect(workspaceHygieneSkill.content).toContain('## Shared workspace');
+  it('interdit nommément le `shared/` fabriqué à l’intérieur du dossier propre', () => {
+    // LE symptôme du 26/08 : `C:\…\Documents\Dev\shared\outputs\todo-app-v2\`.
+    // L'agent croyait n'avoir qu'un dossier, écrivait `shared/outputs/…`, et
+    // collait les deux pour annoncer un chemin qui n'existait nulle part.
+    // La cause est retirée (le partagé n'est plus injecté à ces agents) ; cette
+    // phrase existe pour que l'habitude ne survive pas à la cause.
+    expect(workspaceHygieneSkill.content).toMatch(/do not invent a .?shared\/.? path inside it/i);
+  });
+
+  it('dit à l’agent comment savoir s’il a un partagé', () => {
+    // Le skill est un texte statique : il ne peut pas savoir. Il renvoie donc
+    // aux deux blocs du prompt, qui eux le savent.
+    const c = workspaceHygieneSkill.content;
+    expect(c).toContain('## Shared workspace');
+    expect(c).toContain('## Workspace');
   });
 
   it('n’installe pas le partagé comme LE lieu des fichiers produits', () => {

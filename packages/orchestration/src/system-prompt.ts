@@ -839,16 +839,19 @@ export async function buildSystemPrompt(
   // L'inventaire reste montré aux DEUX : un agent qui a son dossier doit quand
   // même voir ce qu'un autre lui a déposé — c'est précisément la communication
   // qu'on veut garder. Seule la directive change.
-  const aUnDossierPropre = workspaceRows.length > 0;
+  // UN SEUL destinataire possible désormais : l'agent SANS dossier attaché.
+  //
+  // Le runner n'injecte plus le partagé qu'aux agents qui n'ont rien (26/08,
+  // `execute.ts`), donc un agent a soit SES dossiers, soit le partagé — jamais
+  // les deux. La variante « hand-off » écrite plus tôt dans la journée n'a plus
+  // de destinataire : elle rattrapait une ambiguïté qui n'existe plus.
+  //
+  // C'est le bon sens de la correction : on retire la cause au lieu d'empiler
+  // les phrases qui expliquent comment vivre avec.
   const inventoryBlock = jobContext?.workspaceInventory
     ? '\n\n## Shared workspace\n\n' +
-      (aUnDossierPropre
-        ? '`shared` is the hand-off area between agents — not where your work lives. ' +
-          'Use it to pass a file to another agent, and to pick up what one left for you. ' +
-          `Anything you produce for your owner — an app, a document, a report — belongs in **${workspaceRows[0]!.label}** instead. ` +
-          'Listing below (depth 2, captured at job start) so you can see what is waiting for you and reuse what already exists rather than recreating it:\n\n'
-        : 'This is your workspace. ' +
-          'Before creating a workflow, script, or document, check whether one listed here already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n') +
+      'This is your workspace. ' +
+      'Before creating a workflow, script, or document, check whether one listed here already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
       // INJECT-001. The listing is produced by the runner, but the NAMES in it
       // are written by whoever created the files — another agent, a download, a
       // channel attachment. A file called

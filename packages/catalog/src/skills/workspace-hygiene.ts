@@ -34,7 +34,7 @@ export const workspaceHygieneSkill: SystemSkill = {
   kind: 'baseline',
   content: `## Workspace hygiene
 
-This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and its live inventory is in your context under "Shared workspace". Everything below applies to what you put THERE; your \`## Shared workspace\` block says whether that is where your own work belongs.
+This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and its live inventory is in your context under "Shared workspace". Everything below applies to what you put THERE. If you have no \`## Shared workspace\` block, you do not have one: work in the folder your \`## Workspace\` block names, and ignore this skill's folder layout.
 
 ### Reuse before recreating
 
@@ -48,7 +48,7 @@ These are the canonical folders **of the shared workspace**. When you save there
 - \`scripts/\` — reusable scripts
 - \`documents/\` — reports, notes, deliverables
 
-This layout does NOT decide *where* your work belongs. If you have a workspace of your own, what you build for your owner — an app, a project, a report they asked for — goes there, and the shared folders stay what they are: hand-offs and common assets. Your \`## Shared workspace\` block says which case you are in.
+This layout applies to the shared workspace ONLY. If your \`## Workspace\` block names a folder of your own, that folder is where your work goes — do not invent a \`shared/\` path inside it, and do not reach for the folders above.
 
 ### One workflow = one graph
 
