@@ -80,6 +80,16 @@ export interface ClaudeTurnOptions {
   message: string;
   personality: string;
   cwd: string;
+  /**
+   * Les AUTRES dossiers attachés à l'agent, quand il en a plusieurs.
+   *
+   * `cwd` n'est que le premier. Un agent multi-dossiers voit les autres dans son
+   * prompt et se les voit refuser à l'écriture, ce qui est le pire des deux
+   * mondes (revue Codex, 27/08). Le chemin Codex les passe en `--add-dir` ; le
+   * chemin Claude ne les utilise pas encore — son comportement est inchangé, et
+   * ce champ est optionnel exprès pour ne rien changer chez lui par surprise.
+   */
+  extraWriteDirs?: readonly string[];
   mode: 'read' | 'write';
   extraDisallowed?: string[];
   model?: string;

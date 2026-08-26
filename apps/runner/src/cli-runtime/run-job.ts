@@ -282,6 +282,8 @@ export async function runCliRuntimeJob(args: {
       message: job.task ?? '',
       personality: systemPrompt,
       cwd,
+      // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
+      extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
       mode,
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,

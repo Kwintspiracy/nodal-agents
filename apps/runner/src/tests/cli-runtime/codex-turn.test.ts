@@ -179,7 +179,6 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     };
     const out = normalizeCodexToolInput('file_change', item) as Record<string, unknown>;
     expect(out['file_path']).toBe('C:/Dev/app/index.html');
-    expect(out['file_paths']).toEqual(['C:/Dev/app/index.html', 'C:/Dev/app/style.css']);
     // L'item d'origine est conservé : la traduction ajoute, elle n'efface pas.
     expect(out['changes']).toBe(item.changes);
 
@@ -206,6 +205,100 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     // Et les autres outils traversent intacts.
     const cmd = { id: 'i', type: 'command_execution', command: 'ls' };
     expect(normalizeCodexToolInput('command_execution', cmd)).toBe(cmd);
+  });
+
+  it('un file_change qui n’arrive QU’EN FIN produit quand même une ligne complète', () => {
+    // Constat P1 de la revue Codex (27/08). Codex rapporte normalement un
+    // `file_change` en `item.completed` SEUL. Le recorder apparie par
+    // identifiant : sans `tool_use` ouvert, il jetait l'événement, et
+    // l'écriture disparaissait de l'onglet Code comme du contexte des projets.
+    const state = newCodexParseState();
+    const events: CodexTurnEvent[] = [];
+    const line = JSON.stringify({
+      type: 'item.completed',
+      item: {
+        id: 'item_9',
+        type: 'file_change',
+        changes: [{ path: 'C:/Dev/app/index.html', kind: 'update' }],
+      },
+    });
+
+    // Il compte AUSSI pour le garde anti-boucle : une session qui n'écrit que
+    // des fichiers ne consommait aucun budget.
+    expect(handleCodexLine(state, line, (e) => events.push(e))).toBe(true);
+
+    const use = events.find((e) => e.kind === 'tool_use');
+    const result = events.find((e) => e.kind === 'tool_result');
+    expect(use, 'aucune ouverture : la ligne d’audit ne sera jamais écrite').toBeTruthy();
+    expect(result?.toolUseId).toBe(use?.toolUseId);
+    expect((use?.input as Record<string, unknown>)['file_path']).toBe('C:/Dev/app/index.html');
+  });
+
+  it('un changement MULTI-FICHIERS produit une ligne PAR fichier', () => {
+    // Constat P2 de la revue Codex (27/08). Les extracteurs de l'onglet Code et
+    // du contexte des projets lisent `file_path`, au singulier. Ranger les
+    // autres chemins dans un champ que personne ne lit revenait à ne compter que
+    // le premier fichier — et à perdre entièrement les éditions appartenant à un
+    // autre projet.
+    const state = newCodexParseState();
+    const events: CodexTurnEvent[] = [];
+    handleCodexLine(
+      state,
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_9',
+          type: 'file_change',
+          changes: [
+            { path: 'C:/Dev/app/index.html', kind: 'update' },
+            { path: 'C:/Dev/autre/main.py', kind: 'add' },
+          ],
+        },
+      }),
+      (e) => events.push(e),
+    );
+
+    const uses = events.filter((e) => e.kind === 'tool_use');
+    expect(uses, 'un seul fichier compté sur les deux').toHaveLength(2);
+    expect(uses.map((u) => (u.input as Record<string, unknown>)['file_path'])).toEqual([
+      'C:/Dev/app/index.html',
+      'C:/Dev/autre/main.py',
+    ]);
+    // Chaque ligne s'apparie avec SA fin : un identifiant partagé ferait
+    // s'écraser les deux dans la table d'appariement.
+    expect(new Set(uses.map((u) => u.toolUseId)).size).toBe(2);
+    expect(events.filter((e) => e.kind === 'tool_result')).toHaveLength(2);
+  });
+
+  it('un tour TUÉ par le délai est un échec, même s’il avait dit turn.completed', () => {
+    // Constat P2 de la revue Codex (27/08). Le flux était complet, le code de
+    // sortie null : le job se terminait « réussi » alors qu'on venait de tuer le
+    // processus. Ce qui est livré porterait le travail d'un tour interrompu.
+    const { state } = replay();
+    const turn = finishCodexTurn(state, null, true, 900_000, '');
+    expect(turn.isError, 'un tour tué passe pour un tour réussi').toBe(true);
+    expect(turn.errorDetail).toContain('cli_timeout');
+  });
+
+  it('les dossiers SECONDAIRES sont ouverts en écriture, et `-` reste en dernier', () => {
+    // Constat P1 de la revue Codex (27/08). `cwd` n'est que le premier dossier :
+    // sans `--add-dir`, un agent multi-dossiers voit les autres annoncés dans
+    // son prompt et se les voit refuser à l'écriture. Le prompt promettait ce
+    // que le bac à sable interdisait.
+    const args = buildCodexTurnArgs({
+      ...BASE,
+      mode: 'write',
+      extraWriteDirs: ['C:/Dev/autre', 'C:/Notes'],
+    });
+    expect(args[args.indexOf('--add-dir') + 1]).toBe('C:/Dev/autre');
+    expect(args.filter((a) => a === '--add-dir')).toHaveLength(2);
+    // `-` EN DERNIER, sans quoi les instructions ne sont plus lues sur stdin.
+    expect(args[args.length - 1]).toBe('-');
+
+    // En lecture seule il n'y a rien à ouvrir : le mode interdit déjà d'écrire.
+    expect(buildCodexTurnArgs({ ...BASE, extraWriteDirs: ['C:/Dev/autre'] })).not.toContain(
+      '--add-dir',
+    );
   });
 
   it('le plafond d’outils atteint force l’erreur, même si le tour s’est terminé', () => {

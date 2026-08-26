@@ -115,11 +115,27 @@ export function buildCodexTurnArgs(opts: CodexTurnOptions): string[] {
   if (opts.extraDisallowed && opts.extraDisallowed.length > 0) {
     throw new CodexRestrictionsUnsupportedError(opts.extraDisallowed);
   }
-  return buildProviderArgs('codex', opts.mode, {
+  const args = buildProviderArgs('codex', opts.mode, {
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.effort ? { effort: opts.effort } : {}),
     ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
   });
+
+  // Les dossiers SECONDAIRES de l'agent (revue Codex, 27/08). `cwd` n'est que
+  // le premier : sans `--add-dir`, un agent multi-dossiers voit les autres
+  // annoncés dans son prompt et se les voit refuser à l'écriture — le prompt
+  // promet ce que le bac à sable interdit.
+  //
+  // En lecture seule, il n'y a rien à ouvrir : le mode interdit déjà d'écrire
+  // partout, et ajouter des racines n'y changerait rien.
+  const extra = opts.mode === 'write' ? (opts.extraWriteDirs ?? []) : [];
+  if (extra.length === 0) return args;
+  // `-` doit rester EN DERNIER — c'est lui qui fait lire les instructions sur
+  // stdin. On insère donc avant lui plutôt qu'on n'ajoute à la fin.
+  const tail = args[args.length - 1] === '-' ? args.pop() : undefined;
+  for (const dir of extra) args.push('--add-dir', dir);
+  if (tail) args.push(tail);
+  return args;
 }
 
 /** L'état de lecture d'un flux `codex exec --json`. */
@@ -130,6 +146,10 @@ export interface CodexParseState {
   sawTurnCompleted: boolean;
   failure: string | null;
   unknownEventTypes: Set<string>;
+  /** Les appels d'outils dont le DÉBUT a été vu — voir la fin sans début. */
+  openToolIds: Set<string>;
+  /** Ceux déjà comptés pour le garde anti-boucle : jamais deux fois le même. */
+  countedToolIds: Set<string>;
 }
 
 export function newCodexParseState(): CodexParseState {
@@ -140,6 +160,8 @@ export function newCodexParseState(): CodexParseState {
     sawTurnCompleted: false,
     failure: null,
     unknownEventTypes: new Set(),
+    openToolIds: new Set(),
+    countedToolIds: new Set(),
   };
 }
 
@@ -197,26 +219,57 @@ export function isCodexToolItem(item: unknown): boolean {
  * « undetermined »). D'où la règle : on lit ce qui est là, et on n'invente
  * AUCUN chemin quand rien ne correspond.
  */
-export function normalizeCodexToolInput(toolName: string, input: unknown): unknown {
-  if (toolName !== 'file_change' || !input || typeof input !== 'object') return input;
+export function codexChangedPaths(input: unknown): string[] {
+  if (!input || typeof input !== 'object') return [];
   const item = input as Record<string, unknown>;
   const changes = Array.isArray(item['changes']) ? item['changes'] : [];
   const paths = changes
     .map((c) => (c && typeof c === 'object' ? (c as Record<string, unknown>)['path'] : null))
     .filter((p): p is string => typeof p === 'string' && p !== '');
-  const direct = typeof item['path'] === 'string' ? item['path'] : null;
-  const first = paths[0] ?? direct;
+  if (paths.length > 0) return paths;
+  return typeof item['path'] === 'string' && item['path'] !== '' ? [item['path']] : [];
+}
+
+export function normalizeCodexToolInput(toolName: string, input: unknown): unknown {
+  if (toolName !== 'file_change' || !input || typeof input !== 'object') return input;
+  const [first] = codexChangedPaths(input);
   // Rien de reconnaissable : on rend l'item tel quel plutôt que de fabriquer un
   // chemin. Une ligne d'audit sans `file_path` est lisible ; un mauvais chemin
   // fabrique un projet fantôme dans l'onglet.
   if (!first) return input;
-  return {
-    ...item,
-    // `file_path` est le nom que les deux surfaces cherchent — c'est la seule
-    // raison de ce champ.
-    file_path: first,
-    ...(paths.length > 1 ? { file_paths: paths } : {}),
-  };
+  // `file_path` est le nom que les deux surfaces cherchent — c'est la seule
+  // raison de ce champ.
+  return { ...(input as Record<string, unknown>), file_path: first };
+}
+
+/**
+ * Un appel d'outil Codex → les appels que l'audit doit voir.
+ *
+ * UN par fichier touché quand c'est un `file_change` : les extracteurs de
+ * l'onglet Code et du contexte des projets lisent `file_path`, au singulier, et
+ * rien d'autre (revue Codex, 27/08). Ranger les autres chemins dans un
+ * `file_paths` que personne ne lit revenait à ne compter que le premier fichier
+ * — et à perdre entièrement les éditions appartenant à un autre projet.
+ *
+ * L'identifiant est suffixé par l'index pour que chaque ligne s'apparie avec sa
+ * propre fin ; sans ça, deux `tool_use` partageraient un identifiant et le
+ * second écraserait le premier dans la table d'appariement.
+ */
+export function expandToolCalls(
+  id: string,
+  name: string,
+  input: unknown,
+): Array<{ toolUseId: string; toolName: string; input: unknown }> {
+  const paths = name === 'file_change' ? codexChangedPaths(input) : [];
+  if (paths.length <= 1) {
+    return [{ toolUseId: id, toolName: name, input: normalizeCodexToolInput(name, input) }];
+  }
+  const base = (input ?? {}) as Record<string, unknown>;
+  return paths.map((p, i) => ({
+    toolUseId: `${id}#${String(i)}`,
+    toolName: name,
+    input: { ...base, file_path: p },
+  }));
 }
 
 /**
@@ -246,18 +299,30 @@ export function handleCodexLine(
   const live = parseLiveToolEvent('codex', trimmed);
   if (live) {
     if (live.kind === 'use') {
-      onEvent?.({
-        kind: 'tool_use',
-        toolUseId: live.event.id,
-        toolName: live.event.name,
-        input: normalizeCodexToolInput(live.event.name, live.event.input),
-      });
+      state.openToolIds.add(live.event.id);
+      for (const call of expandToolCalls(live.event.id, live.event.name, live.event.input)) {
+        onEvent?.({ kind: 'tool_use', ...call });
+      }
     } else {
-      onEvent?.({
-        kind: 'tool_result',
-        toolUseId: live.event.id,
-        output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
-      });
+      // Une FIN sans DÉBUT n'est pas une anomalie chez Codex : un `file_change`
+      // arrive normalement en `item.completed` seul (revue Codex, 27/08). Le
+      // recorder apparie par identifiant — sans `tool_use` ouvert, il jetait
+      // l'événement, et l'écriture disparaissait de l'onglet Code comme du
+      // contexte des projets. On ouvre donc la paire ici, juste avant de la
+      // fermer : mieux vaut une ligne complète a posteriori que rien.
+      const item = evt['item'] as Record<string, unknown> | undefined;
+      const calls = state.openToolIds.has(live.event.id)
+        ? [{ toolUseId: live.event.id }]
+        : expandToolCalls(live.event.id, live.event.name, item);
+      state.openToolIds.delete(live.event.id);
+      for (const call of calls) {
+        if ('toolName' in call) onEvent?.({ kind: 'tool_use', ...call });
+        onEvent?.({
+          kind: 'tool_result',
+          toolUseId: call.toolUseId,
+          output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
+        });
+      }
     }
   }
 
@@ -282,13 +347,27 @@ export function handleCodexLine(
     // silencieusement le plafond de l'invariant #8.
     //
     // On compte donc sur l'ITEM, pas sur ce que l'audit sait rendre.
-    return isCodexToolItem(evt['item']);
+    const item = evt['item'] as Record<string, unknown> | undefined;
+    if (!isCodexToolItem(item)) return false;
+    if (typeof item?.['id'] === 'string') state.countedToolIds.add(item['id']);
+    return true;
   }
   if (type === 'item.completed') {
     const item = evt['item'] as Record<string, unknown> | undefined;
     if (item?.['type'] === 'agent_message' && typeof item['text'] === 'string') {
       state.messages.push(item['text']);
       onEvent?.({ kind: 'assistant_text', text: item['text'] });
+      return false;
+    }
+    // Un outil qui n'a JAMAIS eu de `item.started` n'a rien compté jusqu'ici.
+    // C'est le cas normal d'un `file_change` (revue Codex, 27/08) : sans cette
+    // ligne, une session qui n'écrit que des fichiers ne consomme aucun budget
+    // et échappe entièrement au plafond de l'invariant #8.
+    const id = typeof item?.['id'] === 'string' ? item['id'] : null;
+    const jamaisOuvert = id !== null && !state.countedToolIds.has(id);
+    if (isCodexToolItem(item) && jamaisOuvert) {
+      state.countedToolIds.add(id);
+      return true;
     }
     return false;
   }
@@ -345,6 +424,12 @@ export function finishCodexTurn(
     capDetail !== null ||
     state.failure !== null ||
     streamIncomplete ||
+    // Un tour TUÉ par le délai est un échec, même s'il avait émis
+    // `turn.completed` avant de se figer (revue Codex, 27/08) : sans ça, le
+    // flux était complet, le code de sortie null, et le job se terminait
+    // « réussi » alors qu'on venait de le tuer. Ce qui est livré à
+    // l'utilisateur porterait le travail d'un processus qu'on a interrompu.
+    timedOut ||
     (exitCode !== null && exitCode !== 0);
 
   const errorDetail =

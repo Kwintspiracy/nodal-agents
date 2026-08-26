@@ -161,6 +161,8 @@ export async function runCliRuntimeChatTurn(args: {
       message,
       personality: systemPrompt,
       cwd,
+      // Comme le chemin job — voir ClaudeTurnOptions.extraWriteDirs.
+      extraWriteDirs: wsRows.slice(1).map((w) => w.path),
       mode,
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,
