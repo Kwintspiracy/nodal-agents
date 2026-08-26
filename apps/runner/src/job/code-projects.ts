@@ -46,6 +46,9 @@ const EDIT_TOOLS = [
   'cli:Write',
   'cli:MultiEdit',
   'cli:NotebookEdit',
+  // Le nom que porte une écriture d'un agent en runtime CODEX — même raison que
+  // dans l'onglet Code, et le même besoin d'accord entre les deux vues.
+  'cli:file_change',
   'file_edit',
   'file_write',
 ];

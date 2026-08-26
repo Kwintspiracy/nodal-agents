@@ -20,6 +20,7 @@ import {
   newCodexParseState,
   finishCodexTurn,
   CODEX_PERSONA_HEADER,
+  normalizeCodexToolInput,
   type CodexTurnEvent,
   type CodexTurnOptions,
 } from '../../cli-runtime/codex-turn.ts';
@@ -135,6 +136,76 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     const lines = FIXTURE.split('\n').filter((l) => l.trim() !== '');
     const flags = lines.map((l) => handleCodexLine(state, l));
     expect(flags.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('TOUT appel d’outil compte pour le garde anti-boucle, pas seulement ceux qu’on audite', () => {
+    // Constat P1 de la revue Codex (27/08). Le compteur suivait
+    // `parseLiveToolEvent`, qui ne reconnaît que `command_execution` et
+    // `file_change` — alors que les symboles du binaire (codex-cli 0.148.0) en
+    // listent sept de plus. Une session bouclant sur `web_search` ou
+    // `mcp_tool_call` n'incrémentait RIEN et dépassait le plafond de
+    // l'invariant #8 en silence.
+    const state = newCodexParseState();
+    for (const type of ['web_search', 'mcp_tool_call', 'todo_list', 'dynamic_tool_call']) {
+      const line = `{"type":"item.started","item":{"id":"i_${type}","type":"${type}"}}`;
+      expect(handleCodexLine(state, line), `${type} ne compte pas comme un appel d'outil`).toBe(
+        true,
+      );
+    }
+    // Un type INÉDIT compte aussi : la liste des outils grandit à chaque
+    // version, celle de ce qui n'en est pas est stable. Un garde-fou doit
+    // serrer un peu trop, jamais pas assez.
+    expect(
+      handleCodexLine(state, '{"type":"item.started","item":{"id":"i_x","type":"outil_de_2027"}}'),
+    ).toBe(true);
+    // Et ce qui n'est PAS un outil ne gonfle pas le compteur.
+    expect(
+      handleCodexLine(state, '{"type":"item.started","item":{"id":"i_m","type":"agent_message"}}'),
+    ).toBe(false);
+  });
+
+  it('un file_change devient lisible par les surfaces Code — sinon l’écriture est invisible', () => {
+    // Constat P1 de la revue Codex (27/08). Codex porte ses fichiers dans un
+    // tableau `changes` ; l'onglet Code et le contexte des projets cherchent un
+    // `file_path` direct. Sans traduction, les écritures d'un agent Codex en
+    // mode écriture n'apparaissaient NULLE PART.
+    const item = {
+      id: 'item_1',
+      type: 'file_change',
+      changes: [
+        { path: 'C:/Dev/app/index.html', kind: 'update' },
+        { path: 'C:/Dev/app/style.css', kind: 'add' },
+      ],
+    };
+    const out = normalizeCodexToolInput('file_change', item) as Record<string, unknown>;
+    expect(out['file_path']).toBe('C:/Dev/app/index.html');
+    expect(out['file_paths']).toEqual(['C:/Dev/app/index.html', 'C:/Dev/app/style.css']);
+    // L'item d'origine est conservé : la traduction ajoute, elle n'efface pas.
+    expect(out['changes']).toBe(item.changes);
+
+    // Et surtout : elle est BRANCHÉE sur le flux. Prouver la fonction seule
+    // laisserait passer un câblage oublié — c'est-à-dire toute la panne, la
+    // fonction restant parfaite dans son coin.
+    const state = newCodexParseState();
+    const events: CodexTurnEvent[] = [];
+    handleCodexLine(state, JSON.stringify({ type: 'item.started', item }), (e) => events.push(e));
+    const use = events.find((e) => e.kind === 'tool_use');
+    expect(
+      (use?.input as Record<string, unknown> | undefined)?.['file_path'],
+      'la normalisation n’est pas appliquée au flux',
+    ).toBe('C:/Dev/app/index.html');
+  });
+
+  it('un file_change SANS chemin reconnaissable n’en invente aucun', () => {
+    // La forme vient des symboles du binaire, pas d'un flux réel — le mode
+    // écriture n'a pas pu être observé sur cette machine. Donc : on lit ce qui
+    // est là, et rien de plus. Un mauvais chemin fabriquerait un projet fantôme
+    // dans l'onglet, ce qui est pire qu'une ligne sans chemin.
+    const item = { id: 'item_1', type: 'file_change', changes: [{ kind: 'update' }] };
+    expect(normalizeCodexToolInput('file_change', item)).toBe(item);
+    // Et les autres outils traversent intacts.
+    const cmd = { id: 'i', type: 'command_execution', command: 'ls' };
+    expect(normalizeCodexToolInput('command_execution', cmd)).toBe(cmd);
   });
 
   it('le plafond d’outils atteint force l’erreur, même si le tour s’est terminé', () => {

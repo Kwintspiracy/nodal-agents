@@ -227,6 +227,81 @@ describe('runChatTurn — delegated-task visibility', () => {
     );
   });
 
+  it('le chat du tableau de bord voit AUSSI la délégation EN LIGNE (assign_*)', async () => {
+    // Constat P2 de la revue Codex (27/08). Le registre des délégations en ligne
+    // n'était branché que sur `loadThreadHistory` — donc Telegram, Slack,
+    // Discord. Ici, non. Or c'est la surface où le propriétaire parle le plus à
+    // ses agents : un compte rendu de délégation inventé y restait
+    // indiscernable d'un vrai, exactement la panne que ce registre ferme.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'App du soir' })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+
+    const [rootJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        conversationId: conv.id,
+        task: 'fais-moi une app',
+        status: 'completed',
+        result: 'App livrée et validée.',
+      })
+      .returning({ id: agentJobs.id });
+    if (!rootJob) throw new Error('root job insert failed');
+
+    // L'enfant de délégation EN LIGNE : lié par parent_job_id, JAMAIS par
+    // agent_tasks — c'est précisément ce qui le rendait invisible.
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'internal',
+      task: 'construis l’app',
+      status: 'completed',
+      parentJobId: rootJob.id,
+      toolsUsed: ['file_write', 'review_verdict'],
+    });
+
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: 'fais-moi une app',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'App livrée et validée.',
+        jobId: rootJob.id,
+      },
+    ]);
+
+    const capturedCalls: ModelMessage[][] = [];
+    setActiveLlmClient(makeMockLlmClient('Oui.', capturedCalls));
+
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'qui l’a relue ?',
+    });
+
+    expect(result.ok).toBe(true);
+    const seenByModel = flattenText(capturedCalls[0]!);
+    expect(seenByModel, 'la délégation en ligne reste invisible dans le chat').toContain(
+      'Delegated to',
+    );
+    expect(seenByModel).toContain('file_write');
+  });
+
   it('does NOT surface a delegated task that has not finished yet', async () => {
     const [conv] = await db
       .insert(conversations)

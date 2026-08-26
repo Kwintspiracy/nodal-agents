@@ -11076,7 +11076,20 @@ function deriveJobStage(
 //       never becomes a "coding session" on file_write alone.
 // cli:Bash, cli:Read/Glob, review_verdict, and a read-mode code_task do NOT
 // qualify by themselves — nor does merely having a cli_runs row.
-const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:NotebookEdit']);
+// `cli:file_change` est le nom que porte une écriture d'un agent en runtime
+// CODEX — son flux ne connaît pas les noms d'outils de Claude (revue Codex,
+// 27/08). Sans lui dans cette liste, un agent Codex en mode écriture ne
+// figurait NULLE PART dans l'onglet Code. Le chemin, lui, est remis en forme
+// à la source (apps/runner/src/cli-runtime/codex-turn.ts,
+// `normalizeCodexToolInput`) pour que `file_path` soit là où les deux surfaces
+// le cherchent.
+const EDIT_TOOL_NAMES = new Set([
+  'cli:Edit',
+  'cli:Write',
+  'cli:MultiEdit',
+  'cli:NotebookEdit',
+  'cli:file_change',
+]);
 const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
 
 /**

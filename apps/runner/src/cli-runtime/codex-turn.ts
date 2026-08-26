@@ -151,6 +151,75 @@ function asNumber(v: unknown): number {
 }
 
 /**
+ * Les types d'item qui SONT un appel d'outil.
+ *
+ * Relevés dans les symboles du binaire installé (codex-cli 0.148.0, 27/08) et
+ * non devinés : `command_execution`, `file_change`, `mcp_tool_call`,
+ * `collab_tool_call`, `web_search`, `todo_list`, `dynamic_tool_call`. Le
+ * `agent_message` et la compaction de contexte n'en sont pas.
+ *
+ * La liste sert au COMPTAGE anti-boucle, pas à l'audit : un type inconnu d'une
+ * version future compte quand même dès qu'il ressemble à un outil (voir
+ * `isCodexToolItem`), parce que sous-compter, ici, c'est laisser filer une
+ * boucle.
+ */
+const CODEX_NON_TOOL_ITEMS = new Set(['agent_message', 'context_compaction', 'reasoning']);
+
+/**
+ * Cet item est-il un appel d'outil ?
+ *
+ * Écrit en NÉGATIF exprès : la liste des outils grandit à chaque version du
+ * CLI, celle de ce qui n'en est pas est stable. Un type inédit compte donc
+ * comme un outil — le plafond anti-boucle serre un peu trop plutôt que pas
+ * assez, ce qui est le seul sens acceptable pour un garde-fou.
+ */
+export function isCodexToolItem(item: unknown): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const t = (item as Record<string, unknown>)['type'];
+  return typeof t === 'string' && !CODEX_NON_TOOL_ITEMS.has(t);
+}
+
+/**
+ * L'entrée d'un appel d'outil, remise dans la forme que les surfaces Code
+ * attendent.
+ *
+ * Un `file_change` de Codex porte ses fichiers dans un tableau `changes`, alors
+ * que l'onglet Code et le contexte des projets (`apps/web/src/lib/actions.ts`,
+ * `apps/runner/src/job/code-projects.ts`) cherchent un `file_path` direct — la
+ * forme des outils Claude. Sans cette traduction, les écritures d'un agent
+ * Codex en mode écriture n'apparaissaient nulle part : ni onglet, ni projets
+ * annoncés aux agents (revue Codex, 27/08).
+ *
+ * ⚠️ La forme vient des symboles du binaire (`FileChangeItem`, `FileUpdateChange`
+ * avec `path` / `kind` add|delete|update) et d'une lecture défensive, PAS d'un
+ * flux réel : le mode écriture n'a pas pu être observé sur cette machine (voir
+ * le journal de la sonde, `scripts/probe-codex-sandbox.mjs`, qui rend
+ * « undetermined »). D'où la règle : on lit ce qui est là, et on n'invente
+ * AUCUN chemin quand rien ne correspond.
+ */
+export function normalizeCodexToolInput(toolName: string, input: unknown): unknown {
+  if (toolName !== 'file_change' || !input || typeof input !== 'object') return input;
+  const item = input as Record<string, unknown>;
+  const changes = Array.isArray(item['changes']) ? item['changes'] : [];
+  const paths = changes
+    .map((c) => (c && typeof c === 'object' ? (c as Record<string, unknown>)['path'] : null))
+    .filter((p): p is string => typeof p === 'string' && p !== '');
+  const direct = typeof item['path'] === 'string' ? item['path'] : null;
+  const first = paths[0] ?? direct;
+  // Rien de reconnaissable : on rend l'item tel quel plutôt que de fabriquer un
+  // chemin. Une ligne d'audit sans `file_path` est lisible ; un mauvais chemin
+  // fabrique un projet fantôme dans l'onglet.
+  if (!first) return input;
+  return {
+    ...item,
+    // `file_path` est le nom que les deux surfaces cherchent — c'est la seule
+    // raison de ce champ.
+    file_path: first,
+    ...(paths.length > 1 ? { file_paths: paths } : {}),
+  };
+}
+
+/**
  * Traite UNE ligne du flux. Rend `true` quand la ligne ouvre un appel d'outil —
  * c'est le signal que `spawn-turn.ts` compte pour le garde anti-boucle.
  *
@@ -165,6 +234,14 @@ export function handleCodexLine(
   const trimmed = line.trim();
   if (trimmed === '') return false;
 
+  let evt: Record<string, unknown>;
+  try {
+    evt = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    state.unknownEventTypes.add('(non-json-line)');
+    return false;
+  }
+
   // Les outils d'abord, par le lecteur que `code_task` utilise déjà.
   const live = parseLiveToolEvent('codex', trimmed);
   if (live) {
@@ -173,7 +250,7 @@ export function handleCodexLine(
         kind: 'tool_use',
         toolUseId: live.event.id,
         toolName: live.event.name,
-        input: live.event.input,
+        input: normalizeCodexToolInput(live.event.name, live.event.input),
       });
     } else {
       onEvent?.({
@@ -182,14 +259,6 @@ export function handleCodexLine(
         output: (live.event.output ?? '').slice(0, OUTPUT_CAP),
       });
     }
-  }
-
-  let evt: Record<string, unknown>;
-  try {
-    evt = JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
-    state.unknownEventTypes.add('(non-json-line)');
-    return false;
   }
 
   const type = evt['type'];
@@ -203,7 +272,18 @@ export function handleCodexLine(
   // qui se déclenche toujours ne signale plus rien : c'est la vraie dérive de
   // protocole qu'il aurait noyée.
   if (type === 'turn.started') return false;
-  if (type === 'item.started') return live?.kind === 'use';
+  if (type === 'item.started') {
+    // Le compteur anti-boucle voit TOUT appel d'outil, pas seulement ceux qui
+    // méritent une ligne d'audit (revue Codex, 27/08). `parseLiveToolEvent` ne
+    // reconnaît que `command_execution` et `file_change` ; les symboles du
+    // binaire (codex-cli 0.148.0) en listent sept de plus — `mcp_tool_call`,
+    // `web_search`, `todo_list`, `collab_tool_call`, `dynamic_tool_call`… Une
+    // session qui boucle sur l'un d'eux n'incrémentait rien et dépassait
+    // silencieusement le plafond de l'invariant #8.
+    //
+    // On compte donc sur l'ITEM, pas sur ce que l'audit sait rendre.
+    return isCodexToolItem(evt['item']);
+  }
   if (type === 'item.completed') {
     const item = evt['item'] as Record<string, unknown> | undefined;
     if (item?.['type'] === 'agent_message' && typeof item['text'] === 'string') {
