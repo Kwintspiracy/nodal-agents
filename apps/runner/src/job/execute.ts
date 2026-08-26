@@ -911,8 +911,8 @@ async function runJob(
   const sharedWorkspacePath: string | null = resolved.sharedPath;
 
   // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
-  // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude
-  // Code): the whole Nodal LLM loop below is skipped and the turn is served
+  // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude Code
+  // or Codex): the whole Nodal LLM loop below is skipped and the turn is served
   // by the user's own CLI under their subscription. Returning through runJob's
   // normal exit keeps the wrapper semantics intact (maybeResumeParent — a
   // runtime agent can be a delegated worker in a team).

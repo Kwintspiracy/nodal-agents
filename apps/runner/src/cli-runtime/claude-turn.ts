@@ -23,11 +23,10 @@
 // Unknown types are counted, never guessed at (invariant #4) — the summary
 // logs them so CLI drift is visible instead of silent.
 
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
+import { spawnCliTurn } from './spawn-turn.ts';
 import {
   resolveCliPath,
   buildSpawnArgv,
@@ -315,148 +314,35 @@ function spawnClaudeTurn(
   personaFile: string,
 ): Promise<ClaudeTurnResult> {
   const { argv, envExtra } = buildSpawnArgv(cli, buildClaudeTurnArgs(opts, personaFile));
-  const [command, ...rest] = argv;
-  const env = { ...buildChildEnv(process.env), ...envExtra };
-  const isWindows = process.platform === 'win32';
-  const startedAt = Date.now();
+  const env = { ...buildChildEnv(process.env), ...envExtra } as unknown as NodeJS.ProcessEnv;
+  const state = newStreamParseState();
 
-  return new Promise<ClaudeTurnResult>((resolve) => {
-    const child = spawn(command as string, rest, {
-      cwd: opts.cwd,
-      shell: false,
-      detached: !isWindows,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: env as unknown as NodeJS.ProcessEnv,
-    });
-
-    // The message is written then CLOSED — a piped-but-open stdin stalls the
-    // CLI (étape-A finding 1). EPIPE (child died first) is not our failure.
-    child.stdin?.on('error', () => {});
-    child.stdin?.end(opts.message);
-
-    const state = newStreamParseState();
-    let stdoutBuffer = '';
-    let stderr = '';
-    let timedOut = false;
-    let settled = false;
-    // Anti-loop guard (invariant #8): count tool_use events, kill past the cap.
-    let toolCalls = 0;
-    let toolCapExceeded: number | undefined;
-
-    const onEvent = (evt: ClaudeTurnEvent): void => {
-      if (
-        evt.kind === 'tool_use' &&
-        opts.maxToolCalls !== undefined &&
-        toolCapExceeded === undefined
-      ) {
-        toolCalls += 1;
-        if (toolCalls > opts.maxToolCalls) {
-          toolCapExceeded = opts.maxToolCalls;
-          killTree();
-          graceTimer = setTimeout(() => finish(null), 3000);
-        }
-      }
-      opts.onEvent?.(evt);
-    };
-
-    // One decoder per stream — chunk boundaries do not align with UTF-8
-    // character boundaries; per-chunk toString() corrupts split characters.
-    const outDecoder = new StringDecoder('utf8');
-    const errDecoder = new StringDecoder('utf8');
-
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdoutBuffer += outDecoder.write(chunk);
-      let nl: number;
-      while ((nl = stdoutBuffer.indexOf('\n')) >= 0) {
-        const line = stdoutBuffer.slice(0, nl);
-        stdoutBuffer = stdoutBuffer.slice(nl + 1);
-        try {
-          handleStreamLine(state, line, onEvent);
-        } catch (err) {
-          console.warn('[cli-runtime] stream line handling failed:', err);
-        }
-      }
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < 50_000) stderr += errDecoder.write(chunk);
-    });
-
-    const killTree = (): void => {
-      if (child.pid) {
-        if (isWindows) {
-          // taskkill /T resolves the tree from a live snapshot — killing the
-          // parent first orphans the children. taskkill alone (it kills the
-          // root too); child.kill only once taskkill failed.
-          try {
-            const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-              windowsHide: true,
-            });
-            tk.on('close', (code) => {
-              if (code !== 0) {
-                try {
-                  child.kill('SIGKILL');
-                } catch {
-                  /* already dead */
-                }
-              }
-            });
-            tk.on('error', () => {
-              try {
-                child.kill('SIGKILL');
-              } catch {
-                /* already dead */
-              }
-            });
-            return;
-          } catch {
-            /* taskkill unavailable — fall through */
-          }
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }
-      }
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    };
-
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (graceTimer) clearTimeout(graceTimer);
-      // Flush a trailing unterminated line (the result line usually ends with \n,
-      // but never assume).
-      if (stdoutBuffer.trim() !== '') handleStreamLine(state, stdoutBuffer, onEvent);
+  return spawnCliTurn<ClaudeTurnResult>({
+    argv,
+    env,
+    cwd: opts.cwd,
+    stdin: opts.message,
+    timeoutMs: opts.timeoutMs,
+    ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
+    // Rend `true` sur un appel d'outil : c'est ce qui nourrit le garde
+    // anti-boucle, que la mécanique de processus applique sans rien savoir du
+    // format des événements.
+    onLine: (line) => {
+      let sawToolUse = false;
+      handleStreamLine(state, line, (evt) => {
+        if (evt.kind === 'tool_use') sawToolUse = true;
+        opts.onEvent?.(evt);
+      });
+      return sawToolUse;
+    },
+    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(
           `[cli-runtime] unknown stream event types (CLI drift?): ` +
             [...state.unknownEventTypes].join(', '),
         );
       }
-      resolve(
-        finishTurn(state, exitCode, timedOut, Date.now() - startedAt, stderr, toolCapExceeded),
-      );
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree();
-      graceTimer = setTimeout(() => finish(null), 3000);
-    }, opts.timeoutMs);
-
-    child.on('error', (err: Error) => {
-      stderr += `\nspawn_error: ${err.message}`;
-      finish(null);
-    });
-    child.on('close', (code: number | null) => finish(code));
+      return finishTurn(state, exitCode, timedOut, durationMs, stderr, toolCapExceeded);
+    },
   });
 }

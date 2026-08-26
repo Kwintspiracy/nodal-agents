@@ -29,7 +29,8 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
-import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
+import { type ClaudeTurnEvent } from './claude-turn.ts';
+import { resolveRuntime, isCliNotFound, type CliTurnResult } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
@@ -46,7 +47,9 @@ export async function runCliRuntimeChatTurn(args: {
   // Same shared-table guard as the job path — see assertRuntimeSessionKey.
   const conversationId = assertRuntimeSessionKey(args.conversationId);
 
-  if (agentRow.runtime !== 'claude-code') {
+  // Le MÊME tableau que le chemin job — voir provider.ts.
+  const binding = resolveRuntime(agentRow.runtime);
+  if (!binding) {
     return { ok: false, error: `runtime_not_supported:${agentRow.runtime}` };
   }
 
@@ -77,7 +80,7 @@ export async function runCliRuntimeChatTurn(args: {
 
   const perms = agentRow.cliPermissions ?? {};
   const mode: 'read' | 'write' = perms.mode ?? 'read';
-  const defaults = agentRow.cliDefaults?.claude ?? {};
+  const defaults = agentRow.cliDefaults?.[binding.provider] ?? {};
 
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
   const onEvent = (evt: ClaudeTurnEvent): void => {
@@ -142,9 +145,9 @@ export async function runCliRuntimeChatTurn(args: {
     buildCliRuntimeJobContext({ origin: 'dashboard', task: message, workspaceGit }),
   );
 
-  let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
+  let turn: CliTurnResult;
   try {
-    turn = await runClaudeTurn({
+    turn = await binding.run({
       message,
       personality: systemPrompt,
       cwd,
@@ -159,7 +162,7 @@ export async function runCliRuntimeChatTurn(args: {
       onEvent,
     });
   } catch (err) {
-    if (err instanceof ClaudeCliNotFoundError) {
+    if (isCliNotFound(err)) {
       return { ok: false, error: err.message.slice(0, 300) };
     }
     throw err;
@@ -176,7 +179,7 @@ export async function runCliRuntimeChatTurn(args: {
       entityId,
       agentId: agentRow.id,
       jobId: null,
-      provider: 'claude',
+      provider: binding.provider,
       mode,
       source: 'subscription',
       sessionId: turn.sessionId,
@@ -203,7 +206,7 @@ export async function runCliRuntimeChatTurn(args: {
         entityId,
         agentId: agentRow.id,
         conversationKey: conversationId,
-        provider: 'claude',
+        provider: binding.provider,
         sessionId: turn.sessionId,
       })
       .onConflictDoUpdate({

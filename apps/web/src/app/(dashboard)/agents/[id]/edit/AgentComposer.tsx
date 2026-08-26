@@ -6,6 +6,15 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Brain } from '@phosphor-icons/react';
 import { skillProvenanceIcon, skillProvenanceTag } from '@/components/SkillProvenance.tsx';
 import { segmentSkillsByProvenance } from '@/lib/skill-provenance.ts';
+import {
+  CLI_RUNTIMES,
+  CLI_RUNTIME_LABELS,
+  CLI_RUNTIME_OPTION_LABELS,
+  CLI_RUNTIME_PROVIDER,
+  cliRuntimeDisclaimer,
+  isCliRuntimeValue,
+  type CliRuntimeValue,
+} from '@/lib/cli-runtimes.ts';
 import PageShell from '@/components/ui/PageShell';
 import { toast } from 'sonner';
 import {
@@ -304,8 +313,9 @@ export default function AgentComposer({
   const [runtime, setRuntime] = useState<string>(agent.runtime ?? 'nodal');
   // Any non-'nodal' runtime is a coding CLI harness: the runner hands it only
   // the personality, so the Nodal-loop settings below are inert for it.
-  // Written against the runtime being ≠ 'nodal' rather than === 'claude-code'
-  // so the codex runtime inherits the same honesty for free when it ships.
+  // Written against the runtime being ≠ 'nodal' rather than === 'claude-code' —
+  // et c'est ce qui a fait que le runtime Codex (27/08) n'a rien eu à changer
+  // ici : la même honnêteté s'applique à lui sans une ligne de plus.
   const isCliRuntime = runtime !== 'nodal';
   // Lifted like `runtime` above: the CLI posture (read vs write) is edited in
   // the runtime card but SHOWN in the hero, so both must read one state.
@@ -2894,8 +2904,12 @@ function SettingsTab(props: {
   const canChangeRuntime = isLocalTrustSettings || isOwner;
   const [savingRuntime, setSavingRuntime] = useState(false);
   const [confirmRuntimeOpen, setConfirmRuntimeOpen] = useState(false);
+  // Quelle CLI la confirmation est en train de proposer. Sans ça, la boîte
+  // nommait Claude Code quoi qu'on ait choisi — un agent Codex confirmé sur le
+  // nom d'un autre harnais.
+  const [pendingRuntime, setPendingRuntime] = useState<CliRuntimeValue>('claude-code');
 
-  async function applyRuntime(next: 'nodal' | 'claude-code') {
+  async function applyRuntime(next: 'nodal' | 'claude-code' | 'codex') {
     setSavingRuntime(true);
     const result = await setAgentRuntimeAction({ agentId, runtime: next });
     if (!result.ok) {
@@ -2910,7 +2924,7 @@ function SettingsTab(props: {
     // agent that attempted 9 writes, was refused 9 times, and looked healthy.
     // The confirm dialog states this before it happens; read-only stays one
     // toggle away in the runtime card, for a CLI reviewer agent.
-    if (next === 'claude-code') {
+    if (next !== 'nodal') {
       const modeResult = await setCliRuntimeModeAction({ agentId, mode: 'write' });
       if (modeResult.ok) onChangeCliMode('write');
       else toast.error(modeResult.message);
@@ -2918,18 +2932,21 @@ function SettingsTab(props: {
     setSavingRuntime(false);
     onChangeRuntime(next);
     toast.success(
-      next === 'claude-code'
-        ? 'This agent now runs on Claude Code, in write mode.'
-        : 'This agent is back on its Nodal model.',
+      next === 'nodal'
+        ? 'This agent is back on its Nodal model.'
+        : `This agent now runs on ${CLI_RUNTIME_LABELS[next]}, in write mode.`,
     );
   }
 
   function handleRuntimeSelect(next: string) {
     if (next === runtime) return;
-    if (next === 'claude-code') {
-      setConfirmRuntimeOpen(true);
-    } else {
+    if (next === 'nodal') {
       void applyRuntime('nodal');
+      return;
+    }
+    if (isCliRuntimeValue(next)) {
+      setPendingRuntime(next);
+      setConfirmRuntimeOpen(true);
     }
   }
 
@@ -3184,8 +3201,8 @@ function SettingsTab(props: {
         <SectionHead
           label="Model"
           hint={
-            runtime === 'claude-code'
-              ? "This agent's loop is driven by the Claude Code harness, not a Nodal LLM key."
+            isCliRuntimeValue(runtime)
+              ? `This agent's loop is driven by the ${CLI_RUNTIME_LABELS[runtime]} harness, not a Nodal LLM key.`
               : 'LLM key + model identifier passed to the runner.'
           }
         />
@@ -3198,7 +3215,11 @@ function SettingsTab(props: {
           >
             <option value="nodal">Nodal — its own LLM, its tools and skills</option>
             <optgroup label="A coding CLI IS the agent (no Nodal loop)">
-              <option value="claude-code">Claude Code — your subscription</option>
+              {CLI_RUNTIMES.map((r) => (
+                <option key={r} value={r}>
+                  {CLI_RUNTIME_OPTION_LABELS[r]}
+                </option>
+              ))}
             </optgroup>
           </Select>
           {!canChangeRuntime && (
@@ -3210,13 +3231,13 @@ function SettingsTab(props: {
 
         <ConfirmDialog
           open={confirmRuntimeOpen}
-          title="Switch to Claude Code?"
-          message={`${CLAUDE_CODE_DISCLAIMER} It starts in WRITE mode — it can edit files in this agent's workspace. Switch it to read-only below if you want a reviewer rather than a coder.`}
-          confirmLabel="Switch to Claude Code"
+          title={`Switch to ${CLI_RUNTIME_LABELS[pendingRuntime]}?`}
+          message={`${cliRuntimeDisclaimer(pendingRuntime)} It starts in WRITE mode — it can edit files in this agent's workspace. Switch it to read-only below if you want a reviewer rather than a coder.`}
+          confirmLabel={`Switch to ${CLI_RUNTIME_LABELS[pendingRuntime]}`}
           destructive={false}
           onConfirm={() => {
             setConfirmRuntimeOpen(false);
-            void applyRuntime('claude-code');
+            void applyRuntime(pendingRuntime);
           }}
           onCancel={() => setConfirmRuntimeOpen(false)}
         />
@@ -3476,9 +3497,10 @@ function SettingsTab(props: {
         )}
       </SectionCard>
 
-      {runtime === 'claude-code' && (
+      {isCliRuntimeValue(runtime) && (
         <ClaudeCodeRuntimeCard
           agentId={agentId}
+          runtime={runtime}
           mode={cliMode}
           onChangeMode={onChangeCliMode}
           cliDailyBudgetUsd={cliDailyBudgetUsd}
@@ -3765,22 +3787,25 @@ function SettingsTab(props: {
   );
 }
 
-// ─── Claude Code runtime card ──────────────────────────────────────────────────
+// ─── Carte du runtime CLI ─────────────────────────────────────────────────────
 //
-// Shown in place of the Nodal LLM config once agents.runtime === 'claude-code'
-// (étape E). Nodal no longer drives this agent's loop — only the perimeter
-// (channels/cron/workspaces/CLI daily budget/approvals) stays Nodal's, which is
-// exactly what CLAUDE_CODE_DISCLAIMER says (reused verbatim as both the
-// permanent disclaimer here and the switch-to confirmation message above).
-// Reuses the exact same building blocks as CodeTaskSection/ProviderRow —
-// nothing here is a fork, just a different agent-level gate (runtime vs a
-// skill assignment) around the same code_task machinery.
-
-const CLAUDE_CODE_DISCLAIMER =
-  'This agent is driven by the Claude Code harness on this machine. Nodal relays its messages and enforces the perimeter (workspace, budget, approvals) but does not drive its loop. Runs use your subscription.';
+// Affichée à la place de la configuration LLM Nodal dès que `agents.runtime`
+// désigne une CLI (étape E). Nodal ne pilote plus la boucle de cet agent — seul
+// le périmètre reste le sien (canaux, cron, dossiers, budget quotidien,
+// approbations), ce que dit exactement `cliRuntimeDisclaimer`, réutilisé mot
+// pour mot comme mise en garde permanente ici et comme message de confirmation
+// plus haut. Elle réemploie les mêmes briques que CodeTaskSection/ProviderRow —
+// rien ici n'est une copie, juste une porte différente (le runtime plutôt qu'un
+// skill assigné) autour de la même machinerie `code_task`.
+//
+// Elle était figée sur Claude Code : titre, mise en garde et ligne de
+// diagnostic portaient ce nom en dur. Paramétrée le 27/08 par le runtime, sans
+// quoi un agent Codex aurait affiché le nom d'un autre harnais et testé le
+// mauvais binaire.
 
 function ClaudeCodeRuntimeCard({
   agentId,
+  runtime,
   mode,
   onChangeMode,
   cliDailyBudgetUsd,
@@ -3788,6 +3813,7 @@ function ClaudeCodeRuntimeCard({
   workspaces,
 }: {
   agentId: string;
+  runtime: CliRuntimeValue;
   /** Lifted to AgentComposer — the hero badge renders the same value. */
   mode: 'read' | 'write';
   onChangeMode: (v: 'read' | 'write') => void;
@@ -3795,6 +3821,8 @@ function ClaudeCodeRuntimeCard({
   cliDefaults: AgentRow['cliDefaults'];
   workspaces: AgentWorkspaceRow[];
 }) {
+  const label = CLI_RUNTIME_LABELS[runtime];
+  const provider = CLI_RUNTIME_PROVIDER[runtime];
   const [savingMode, setSavingMode] = useState(false);
   const [confirmWriteOpen, setConfirmWriteOpen] = useState(false);
 
@@ -3849,7 +3877,10 @@ function ClaudeCodeRuntimeCard({
   }
 
   async function handleSaveDefaults(model: string | null, effort: string | null) {
-    const result = await setCliDefaultsAction({ agentId, provider: 'claude', model, effort });
+    // Le fournisseur du RUNTIME, pas 'claude' par principe : sinon régler le
+    // modèle d'un agent Codex l'écrivait sous la clé de l'autre CLI, où le
+    // runner ne le lit jamais — le réglage semblait pris et ne changeait rien.
+    const result = await setCliDefaultsAction({ agentId, provider, model, effort });
     if (!result.ok) {
       toast.error(result.message);
       return;
@@ -3862,11 +3893,11 @@ function ClaudeCodeRuntimeCard({
   return (
     <SectionCard>
       <SectionHead
-        label="Run this agent ON Claude Code"
-        hint="The agent's whole turn is served by Claude Code — there is no Nodal reasoning loop. Different from CALLING a coding CLI as a tool, which is on the Autonomy tab (and its provider defaults on Tools). What Nodal keeps is listed below."
+        label={`Run this agent ON ${label}`}
+        hint={`The agent's whole turn is served by ${label} — there is no Nodal reasoning loop. Different from CALLING a coding CLI as a tool, which is on the Autonomy tab (and its provider defaults on Tools). What Nodal keeps is listed below.`}
       />
 
-      <p className="text-body-13 leading-[1.5]! text-ink-3">{CLAUDE_CODE_DISCLAIMER}</p>
+      <p className="text-body-13 leading-[1.5]! text-ink-3">{cliRuntimeDisclaimer(runtime)}</p>
 
       <div
         className={`mt-3 rounded-md border px-3 py-2 text-body-13 ${
@@ -3898,8 +3929,8 @@ function ClaudeCodeRuntimeCard({
 
       <ConfirmDialog
         open={confirmWriteOpen}
-        title="Allow Claude Code to write?"
-        message="Write mode lets the Claude Code harness edit files in this agent's workspace. Only enable for an agent you fully trust."
+        title={`Allow ${label} to write?`}
+        message={`Write mode lets the ${label} harness edit files in this agent's workspace. Only enable for an agent you fully trust.`}
         confirmLabel="Enable write mode"
         destructive
         onConfirm={() => {
@@ -3914,9 +3945,9 @@ function ClaudeCodeRuntimeCard({
           Diagnostics and defaults
         </div>
         <ProviderRow
-          label="Claude Code"
-          provider="claude"
-          defaults={cliDefaults?.claude}
+          label={label}
+          provider={provider}
+          defaults={cliDefaults?.[provider]}
           onSaveDefaults={(model, effort) => handleSaveDefaults(model, effort)}
         />
       </div>

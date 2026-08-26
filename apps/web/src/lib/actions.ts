@@ -529,7 +529,7 @@ export type AgentRow = {
     claude?: { model?: string; effort?: string; enabled?: boolean };
     codex?: { model?: string; effort?: string; enabled?: boolean };
   } | null;
-  /** 'nodal' (default) | 'claude-code' | 'codex' (reserved). See packages/db/src/schema/agents.ts. */
+  /** 'nodal' (default) | 'claude-code' | 'codex'. See packages/db/src/schema/agents.ts. */
   runtime: string;
   /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
   cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
@@ -6361,19 +6361,23 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
   }
 }
 
-// ─── Agent runtime (étape E — Claude Code as an agent's own harness) ─────────
+// ─── Agent runtime (étape E — une CLI de code EST le harnais de l'agent) ─────
 //
-// agents.runtime: 'nodal' (default) | 'claude-code' | 'codex' (reserved,
-// refused here — the Zod enum only accepts 'nodal'/'claude-code', so a
-// request for 'codex' fails validation the same way the runner fails loud on
-// it today). Switching to 'claude-code' hands the agent's LOOP, tools and
-// context to the Claude Code harness on this machine; channels, cron,
-// workspaces, the CLI daily budget and approvals stay Nodal's — see the
-// column comment in packages/db/src/schema/agents.ts for the full contract.
+// agents.runtime: 'nodal' (défaut) | 'claude-code' | 'codex'. Basculer sur une
+// CLI confie la BOUCLE, les outils et le contexte de l'agent au harnais installé
+// sur cette machine ; les canaux, le cron, les dossiers, le budget quotidien et
+// les approbations restent ceux de Nodal — voir le commentaire de colonne dans
+// packages/db/src/schema/agents.ts pour le contrat complet.
+//
+// `codex` a été RÉSERVÉ du 19/08 au 27/08 : la contrainte SQL l'acceptait, ce
+// Zod le refusait, et le runner échouait fort dessus. Ouvert le 27/08 avec son
+// module de tour (apps/runner/src/cli-runtime/codex-turn.ts). La liste servie
+// ici et le tableau du runner doivent rester d'accord : un runtime accepté ici
+// mais absent de `resolveRuntime` produirait un agent qui plante à chaque tour.
 
 const SetAgentRuntimeSchema = z.object({
   agentId: z.string().guid(),
-  runtime: z.enum(['nodal', 'claude-code']),
+  runtime: z.enum(['nodal', 'claude-code', 'codex']),
 });
 
 export async function setAgentRuntimeAction(raw: unknown): Promise<ActionResult<void>> {

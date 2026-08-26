@@ -77,6 +77,8 @@ export {
   resolveCliPath,
   buildSpawnArgv,
   runCli,
+  buildProviderArgs,
+  parseLiveToolEvent,
   assertWorkspacesConfigured,
   resolveAndCheckPath,
   extractClaudeUsage,

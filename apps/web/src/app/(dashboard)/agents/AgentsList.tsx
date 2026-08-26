@@ -64,6 +64,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { cliRuntimeEngineLabel } from '@/lib/cli-runtimes.ts';
 import {
   DndContext,
   closestCenter,
@@ -964,12 +965,15 @@ function EmptyDropHint() {
 
 /**
  * What drives this agent, displayed honestly (retour Quentin 20/08) : a
- * runtime agent IS a Claude Code session — showing its stored Nodal model
- * (kept for a switch back) read as « toujours glm » despite the assignment.
+ * runtime agent IS a CLI session — showing its stored Nodal model (kept for a
+ * switch back) read as « toujours glm » despite the assignment.
+ *
+ * Le nom du harnais vient de la liste partagée : cette ligne connaissait
+ * `'claude-code'` en dur, et un agent Codex y aurait affiché son modèle Nodal
+ * dormant — exactement la confusion que ce libellé existe pour éviter.
  */
 function agentEngineLabel(agent: AgentRow): string | null {
-  if (agent.runtime === 'claude-code') return 'Claude Code (subscription)';
-  return agent.model || null;
+  return cliRuntimeEngineLabel(agent.runtime ?? '') ?? agent.model ?? null;
 }
 
 function OrchestratorHeaderContent({ orchestrator }: { orchestrator: AgentRow }) {

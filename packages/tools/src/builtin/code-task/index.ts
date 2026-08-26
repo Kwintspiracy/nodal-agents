@@ -68,6 +68,7 @@ export {
   type NormalizedCliResult,
 } from './providers';
 export { resolveCliPath, buildSpawnArgv, runCli } from './process';
+export { parseLiveToolEvent } from './live-events';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 

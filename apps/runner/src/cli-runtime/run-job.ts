@@ -38,7 +38,8 @@ import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
-import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
+import { type ClaudeTurnEvent } from './claude-turn.ts';
+import { resolveRuntime, isCliNotFound, type CliTurnResult } from './provider.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
@@ -59,7 +60,10 @@ const RUNTIME_TURN_TIMEOUT_MS = 900_000;
 export interface CliRuntimeAgentRow extends Agent {
   runtime: string;
   cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
-  cliDefaults: { claude?: { model?: string; effort?: string } } | null;
+  cliDefaults: {
+    claude?: { model?: string; effort?: string };
+    codex?: { model?: string; effort?: string };
+  } | null;
 }
 
 export interface CliRuntimeJobRow {
@@ -113,8 +117,9 @@ export async function runCliRuntimeJob(args: {
     return { status: 'failed', error: code };
   };
 
-  // 'codex' is reserved data — implemented later behind the same seam.
-  if (agentRow.runtime !== 'claude-code') {
+  // Quel CLI sert ce runtime — voir provider.ts, l'unique tableau.
+  const binding = resolveRuntime(agentRow.runtime);
+  if (!binding) {
     return fail(`runtime_not_supported:${agentRow.runtime}`);
   }
 
@@ -164,7 +169,10 @@ export async function runCliRuntimeJob(args: {
 
   const perms = agentRow.cliPermissions ?? {};
   const mode: 'read' | 'write' = perms.mode ?? 'read';
-  const defaults = agentRow.cliDefaults?.claude ?? {};
+  // Les défauts du fournisseur QUI TOURNE — pas ceux de Claude par principe.
+  // Lire `cliDefaults.claude` en dur donnait à un agent Codex le modèle d'un
+  // autre CLI, qui l'aurait refusé au lancement.
+  const defaults = agentRow.cliDefaults?.[binding.provider] ?? {};
 
   // Live observability (vs dsh's thrown-away stream): each CLI-internal tool
   // event becomes a tool_calls row as it happens, so the existing Runs page
@@ -255,9 +263,9 @@ export async function runCliRuntimeJob(args: {
     void touchJob(db, jobId).catch(() => {});
   }, 60_000);
 
-  let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
+  let turn: CliTurnResult;
   try {
-    turn = await runClaudeTurn({
+    turn = await binding.run({
       message: job.task ?? '',
       personality: systemPrompt,
       cwd,
@@ -275,7 +283,7 @@ export async function runCliRuntimeJob(args: {
   } catch (err) {
     clearInterval(heartbeat);
     if (mode === 'write') await releaseWorkspaceLock(db, cwd, jobId).catch(() => {});
-    if (err instanceof ClaudeCliNotFoundError) return fail(err.message.slice(0, 300));
+    if (isCliNotFound(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
   clearInterval(heartbeat);
@@ -291,7 +299,7 @@ export async function runCliRuntimeJob(args: {
       entityId: job.entityId,
       agentId: agentRow.id,
       jobId,
-      provider: 'claude',
+      provider: binding.provider,
       mode,
       source: 'subscription',
       sessionId: turn.sessionId,
@@ -320,7 +328,7 @@ export async function runCliRuntimeJob(args: {
         entityId: job.entityId,
         agentId: agentRow.id,
         conversationKey,
-        provider: 'claude',
+        provider: binding.provider,
         sessionId: turn.sessionId,
       })
       .onConflictDoUpdate({
@@ -347,7 +355,7 @@ export async function runCliRuntimeJob(args: {
     return fail(code.slice(0, 400));
   }
 
-  await completeJob(db, jobId, turn.finalText, ['cli:claude-code']);
+  await completeJob(db, jobId, turn.finalText, [binding.toolLabel]);
 
   // Channel delivery — the CLI's text VERBATIM (invariant #2: the LLM speaks,
   // Nodal relays; no synthesis). Same guardrails as deliverCompletedRoots.
