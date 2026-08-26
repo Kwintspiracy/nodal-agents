@@ -67,6 +67,15 @@ describe('inventoryForContext', () => {
     );
   });
 
+  it('un partagé ILLISIBLE le DIT, il ne se fait pas passer pour vide', () => {
+    // Constat Codex (27/08). `mkdir` prouve que le dossier est là, pas qu'il est
+    // lisible : une permission refusée rendait « (empty) », et l'agent recréait
+    // en confiance ce qu'il n'avait pas pu voir (invariant #4).
+    const inv = inventoryForContext('C:/…/shared', null);
+    expect(inv, 'un partagé illisible se déguise en partagé vide').not.toBe('(empty)');
+    expect(inv).toContain('could not be read');
+  });
+
   it('AUCUN partagé = aucun bloc', () => {
     // `sharedPath` n'est null que si le mkdir a échoué : le dossier n'existe
     // pas, et annoncer un workspace partagé serait faux.

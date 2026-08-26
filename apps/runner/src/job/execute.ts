@@ -1086,7 +1086,7 @@ async function runJob(
   // so it reuses artifacts instead of recreating them (see workspace-inventory.ts).
   const workspaceInventory = sharedWorkspacePath
     ? await buildSharedWorkspaceInventory(sharedWorkspacePath)
-    : '';
+    : null;
   // Git posture — an agent working in a repository did not know it was in one
   // (see workspace-git.ts). Probed once, here, next to the inventory: same
   // split, the runner computes and the orchestration renders.
