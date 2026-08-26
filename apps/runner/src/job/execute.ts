@@ -133,7 +133,7 @@ import { loadThreadHistory } from './thread-history.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
-import { probeWorkspaceGit } from '../lib/workspace-git.ts';
+import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
 import { join } from 'node:path';
@@ -1082,7 +1082,14 @@ async function runJob(
   // Git posture — an agent working in a repository did not know it was in one
   // (see workspace-git.ts). Probed once, here, next to the inventory: same
   // split, the runner computes and the orchestration renders.
-  const workspaceGit = sharedWorkspacePath ? await probeWorkspaceGit(sharedWorkspacePath) : null;
+  //
+  // Le dossier ATTACHÉ quand il y en a un, le partagé sinon — la règle et son
+  // pourquoi vivent dans `gitProbeTarget` (lib/workspace-git.ts).
+  const gitProbePath = gitProbeTarget(
+    wsRows.map((w) => w.path),
+    sharedWorkspacePath,
+  );
+  const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.task ? { task: job.task } : {}),
