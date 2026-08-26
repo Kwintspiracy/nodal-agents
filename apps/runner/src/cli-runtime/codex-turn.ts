@@ -197,6 +197,12 @@ export function handleCodexLine(
     if (typeof evt['thread_id'] === 'string') state.sessionId = evt['thread_id'];
     return false;
   }
+  // Cycle de vie sans information à extraire, mais BIEN connu : sans cette
+  // branche, `turn.started` tombait dans les types inconnus et chaque tour
+  // RÉUSSI journalisait « CLI drift? » (revue Codex, 27/08). Un avertissement
+  // qui se déclenche toujours ne signale plus rien : c'est la vraie dérive de
+  // protocole qu'il aurait noyée.
+  if (type === 'turn.started') return false;
   if (type === 'item.started') return live?.kind === 'use';
   if (type === 'item.completed') {
     const item = evt['item'] as Record<string, unknown> | undefined;

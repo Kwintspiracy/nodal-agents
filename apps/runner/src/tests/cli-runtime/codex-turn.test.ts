@@ -115,6 +115,18 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     expect(state.unknownEventTypes.has('quelque.chose.de.neuf')).toBe(true);
   });
 
+  it('un tour RÉUSSI ne signale AUCUNE dérive de protocole', () => {
+    // Constat P2 de la revue Codex (27/08). `turn.started` est dans tous les
+    // flux réels — la fixture comprise — et n'avait pas de branche : chaque tour
+    // réussi journalisait « CLI drift? ». Un avertissement qui se déclenche
+    // toujours ne signale plus rien, et c'est la VRAIE dérive qu'il noie.
+    const { state } = replay();
+    expect(
+      [...state.unknownEventTypes],
+      'un flux parfaitement normal est signalé comme une dérive',
+    ).toEqual([]);
+  });
+
   it('le garde anti-boucle est nourri par les DÉBUTS d’outils, pas par les fins', () => {
     // `handleCodexLine` rend `true` pour qu'un tour parti en boucle soit tué
     // (invariant #8). Compter aussi les fins doublerait le compte et tuerait un

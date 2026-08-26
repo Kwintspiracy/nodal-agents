@@ -34,7 +34,7 @@ import {
   assertRuntimeSessionKey,
 } from '@nodal-agents/tools';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { buildCliAuditRow } from './audit.ts';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
@@ -207,13 +207,16 @@ export async function runCliRuntimeJob(args: {
         .values({
           entityId: job.entityId,
           jobId,
-          // Namespaced so a CLI-internal Read is never confused with a Nodal
-          // builtin in the Logs/Runs surfaces.
-          toolName: `cli:${started.name}`,
-          toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-          toolOutput: evt.output ?? '',
-          durationMs: Date.now() - started.startedAt,
-          toolCallId: evt.toolUseId,
+          // Le masquage et le préfixe vivent dans audit.ts, partagés avec le
+          // chemin chat — voir ce fichier pour ce qui est masqué et pourquoi.
+          ...buildCliAuditRow({
+            toolName: started.name,
+            toolInput: started.input,
+            toolOutput: evt.output,
+            toolCallId: evt.toolUseId,
+            startedAt: started.startedAt,
+            now: Date.now(),
+          }),
         })
         .catch((err: unknown) => {
           console.warn(`[cli-runtime] tool_calls insert failed (job=${jobId}):`, err);

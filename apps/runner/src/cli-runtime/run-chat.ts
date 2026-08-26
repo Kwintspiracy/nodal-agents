@@ -26,7 +26,7 @@ import {
   assertRuntimeSessionKey,
 } from '@nodal-agents/tools';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { buildCliAuditRow } from './audit.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
@@ -101,11 +101,15 @@ export async function runCliRuntimeChatTurn(args: {
         .values({
           entityId,
           jobId: null,
-          toolName: `cli:${started.name}`,
-          toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-          toolOutput: evt.output ?? '',
-          durationMs: Date.now() - started.startedAt,
-          toolCallId: evt.toolUseId,
+          // Même construction que le chemin job — voir audit.ts.
+          ...buildCliAuditRow({
+            toolName: started.name,
+            toolInput: started.input,
+            toolOutput: evt.output,
+            toolCallId: evt.toolUseId,
+            startedAt: started.startedAt,
+            now: Date.now(),
+          }),
         })
         .catch((err: unknown) => {
           console.warn('[cli-runtime] chat tool_calls insert failed:', err);
