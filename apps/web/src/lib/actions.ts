@@ -27,6 +27,7 @@ import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from
 import {
   deriveProjectRoot,
   isInsideWorkspace,
+  resolveChangePath,
   type ChangeRef,
   type WorkspaceRef,
   projectNameFromPath,
@@ -11667,14 +11668,16 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           // Un chemin qu'aucun dossier attaché ne couvre n'est pas rattachable
           // à un projet : il ne compte pas dans le décompte de fichiers, faute
           // de savoir sous quelle ligne il s'affiche (revue Codex, 26/08).
-          if (
-            fp &&
-            isInsideWorkspace(
-              { rawPath: fp, workspaces: c.agentId ? (wsByAgent.get(c.agentId) ?? []) : [] },
-              workspacesFor(root),
-            )
-          ) {
-            set.add(canonicalChangePath(fp, workspaceRoots));
+          if (!fp) continue;
+          const ref: ChangeRef = {
+            rawPath: fp,
+            workspaces: c.agentId ? (wsByAgent.get(c.agentId) ?? []) : [],
+          };
+          if (isInsideWorkspace(ref, workspacesFor(root))) {
+            // Canoniser la forme ABSOLUE, pas le chemin brut (revue Codex,
+            // 26/08) : `dev/src/a.ts` et `<racine>/dev/src/a.ts` sont le même
+            // fichier, et seule la première est déjà réduite.
+            set.add(canonicalChangePath(resolveChangePath(ref) ?? fp, workspaceRoots));
           }
         }
         filesByRoot.set(root, set);
@@ -12157,7 +12160,12 @@ export async function getCodingProcessDetailAction(
         // Non rattachable, hors détail — comme dans la liste.
         if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
         rawChanges.push(ref);
-        const canonical = canonicalChangePath(change.filePath, workspaceRoots);
+        // Même canonicalisation que la liste : sur la forme ABSOLUE, sinon le
+        // même fichier apparaît deux fois selon l'outil qui l'a écrit.
+        const canonical = canonicalChangePath(
+          resolveChangePath(ref) ?? change.filePath,
+          workspaceRoots,
+        );
         const group = changeGroups.get(canonical) ?? {
           filePath: canonical,
           addedLines: 0,

@@ -319,6 +319,23 @@ export function isInsideWorkspace(change: ChangeRef, pipelineWorkspaces: Workspa
   return workspaceRoots(pipelineWorkspaces).some((r) => isUnderPath(abs, r) && !samePath(abs, r));
 }
 
+/**
+ * La forme ABSOLUE d'une écriture, ou null si on ne sait pas la situer.
+ *
+ * Exposée pour la CANONICALISATION (revue Codex, 26/08). Dès qu'un agent a
+ * plusieurs dossiers, les outils Nodal enregistrent `label/chemin` — et
+ * `canonicalChangePath` ne sait retirer un préfixe que d'un chemin ABSOLU.
+ * `dev/src/a.ts` en ressortait donc tel quel, pendant que la même édition faite
+ * par une CLI, elle absolue, devenait `src/a.ts` : deux clés pour un seul
+ * fichier, compté deux fois dans le panneau des changements.
+ *
+ * C'est exactement le bug que `canonicalChangePath` existe pour fermer (job
+ * cbdbfc6c, 20/08), rouvert par la forme à label.
+ */
+export function resolveChangePath(change: ChangeRef): string | null {
+  return resolveAbsoluteChangePath(change.rawPath, change.workspaces);
+}
+
 /** `D:/APPS/NodalAI` → `NodalAI` — le nom d'affichage par défaut d'un projet. */
 export function projectNameFromPath(projectPath: string): string {
   return projectPath.split('/').filter(Boolean).pop() ?? projectPath;

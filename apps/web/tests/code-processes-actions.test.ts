@@ -1035,6 +1035,53 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     }
   });
 
+  it('la forme à LABEL et la forme absolue du même fichier ne comptent qu’UNE fois', async () => {
+    // Constat P2 de la revue Codex (26/08), et c'est le jumeau du bug
+    // cbdbfc6c : `canonicalChangePath` ne sait retirer un préfixe que d'un
+    // chemin ABSOLU. Dès qu'un agent a plusieurs dossiers, les outils Nodal
+    // enregistrent `label/chemin` — qui ressortait tel quel, pendant que la
+    // même édition faite par une CLI devenait `src/a.ts`. Deux clés, un seul
+    // fichier, compté deux fois dans le panneau des changements.
+    const { listCodingProcessesAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
+    // DEUX dossiers : c'est ce qui force la forme `label/chemin`.
+    const agentId = await makeAgent('Double Forme Coder', { folders: 'repo+vault' });
+    const jobId = await makeJob(agentId, 'completed');
+
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: `${DEV_FOLDER}/src/double.ts`, content: 'v1' },
+        toolOutput: 'ok',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'file_edit',
+        toolInput: { path: 'repo/src/double.ts', old_string: 'v1', new_string: 'v2' },
+        toolOutput: '{"ok":true}',
+      },
+    ]);
+
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.data.find((r) => r.id === jobId)?.filesChanged,
+      'le même fichier a été compté deux fois selon l’outil qui l’a écrit',
+    ).toBe(1);
+
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (detail.ok) {
+      expect(detail.data.changes, 'le détail montre deux fichiers pour un seul').toHaveLength(1);
+      // Les DEUX éditions sont conservées : elles se suivent sur le même fichier.
+      expect(detail.data.changes[0]!.edits).toHaveLength(2);
+    }
+  });
+
   it('un pipeline ne compte QUE les fichiers rattachables', async () => {
     // Constat P2 de la revue Codex : une seule écriture rattachable qualifiait
     // le pipeline, et tout le reste suivait — y compris des chemins qu'aucun
