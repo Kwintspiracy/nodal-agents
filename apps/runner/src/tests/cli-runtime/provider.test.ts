@@ -83,6 +83,35 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     }
   });
 
+  it('la session est cherchée PAR FOURNISSEUR — sinon une bascule tend la session de l’autre CLI', () => {
+    // Constat P2 de la revue Codex (27/08). L'index unique de `cli_sessions` ne
+    // porte que (agent, conversation) : basculer un agent de Claude Code à Codex
+    // sur la même conversation lui tendait l'identifiant de session de l'AUTRE
+    // CLI, que sa commande de reprise refuse. Chaque tour repartait en erreur.
+    //
+    // Lu sur le texte : la requête vit dans une fonction qui a besoin d'une base
+    // et d'un job entier ; ce qu'on veut prouver ici tient en une clause.
+    for (const rel of [
+      'apps/runner/src/cli-runtime/run-job.ts',
+      'apps/runner/src/cli-runtime/run-chat.ts',
+    ]) {
+      const src = read(rel);
+      const lookup =
+        /select\(\{ sessionId: cliSessions.sessionId \}\)[\s\S]{0,900}?\.limit\(1\)/.exec(
+          src,
+        )?.[0] ?? '';
+      expect(lookup, `${rel} : la lecture de session ignore le fournisseur`).toContain(
+        'eq(cliSessions.provider',
+      );
+      // Et l'écriture repose le fournisseur, sans quoi la ligne garderait le nom
+      // de l'ancien CLI tout en portant la session du nouveau.
+      const upsert = /onConflictDoUpdate\(\{[\s\S]{0,700}?\}\)/.exec(src)?.[0] ?? '';
+      expect(upsert, `${rel} : l'upsert laisse l'ancien fournisseur en place`).toContain(
+        'provider: binding.provider',
+      );
+    }
+  });
+
   it('le menu de l’interface propose tout ce que le runner sert, et rien de plus', () => {
     const web = read('apps/web/src/lib/cli-runtimes.ts');
     const list = /CLI_RUNTIMES = \[[^\]]*\]/.exec(web)?.[0] ?? '';
@@ -98,5 +127,20 @@ describe('les quatre listes de runtimes disent la même chose', () => {
         `l'interface propose "${value}", que le runner ne sert pas`,
       ).not.toBeNull();
     }
+  });
+
+  it('un harnais SANS coût rapporté ne se voit pas proposer de plafond en dollars', () => {
+    // Constat P1 de la revue Codex (27/08). Le plafond quotidien se calcule en
+    // sommant `cli_runs.cost_usd` ; Codex n'en écrit aucun, donc la somme reste
+    // à zéro et le plafond n'est jamais atteint. Le champ était affiché quand
+    // même, sous une carte affirmant que Nodal fait respecter le budget.
+    const web = read('apps/web/src/lib/cli-runtimes.ts');
+    const table = /CLI_RUNTIME_REPORTS_COST[\s\S]{0,200}?\};/.exec(web)?.[0] ?? '';
+    expect(table, 'Codex est annoncé comme rapportant un coût').toMatch(/codex:\s*false/);
+    expect(table).toMatch(/'claude-code':\s*true/);
+
+    // Et la carte lit cette table plutôt que d'afficher le champ sans condition.
+    const card = read('apps/web/src/app/(dashboard)/agents/[id]/edit/AgentComposer.tsx');
+    expect(card, 'le plafond en dollars est affiché sans condition').toContain('reportsCost ? (');
   });
 });

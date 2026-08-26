@@ -11,6 +11,7 @@ import {
   CLI_RUNTIME_LABELS,
   CLI_RUNTIME_OPTION_LABELS,
   CLI_RUNTIME_PROVIDER,
+  CLI_RUNTIME_REPORTS_COST,
   cliRuntimeDisclaimer,
   isCliRuntimeValue,
   type CliRuntimeValue,
@@ -3823,6 +3824,7 @@ function ClaudeCodeRuntimeCard({
 }) {
   const label = CLI_RUNTIME_LABELS[runtime];
   const provider = CLI_RUNTIME_PROVIDER[runtime];
+  const reportsCost = CLI_RUNTIME_REPORTS_COST[runtime];
   const [savingMode, setSavingMode] = useState(false);
   const [confirmWriteOpen, setConfirmWriteOpen] = useState(false);
 
@@ -3956,31 +3958,46 @@ function ClaudeCodeRuntimeCard({
         <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
           Daily budget (USD)
         </div>
-        <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
-        <div className="mt-2 flex items-center gap-2">
-          <TextInput
-            type="number"
-            min={0}
-            max={1000}
-            step={0.5}
-            value={budgetInput}
-            onChange={(e) => setBudgetInput(e.target.value)}
-            className="w-28 font-mono"
-          />
-          <PrimaryButton
-            variant="neutral"
-            type="button"
-            onClick={() => void handleSaveBudget()}
-            disabled={savingBudget}
-          >
-            {savingBudget ? 'Saving…' : 'Save'}
-          </PrimaryButton>
-        </div>
-        <p className="mt-2 text-body-13 text-ink-3">
-          {spentUsd !== null
-            ? `Spent today: $${spentUsd.toFixed(2)}`
-            : (usageError ?? 'Loading spend…')}
-        </p>
+        {reportsCost ? (
+          <>
+            <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
+            <div className="mt-2 flex items-center gap-2">
+              <TextInput
+                type="number"
+                min={0}
+                max={1000}
+                step={0.5}
+                value={budgetInput}
+                onChange={(e) => setBudgetInput(e.target.value)}
+                className="w-28 font-mono"
+              />
+              <PrimaryButton
+                variant="neutral"
+                type="button"
+                onClick={() => void handleSaveBudget()}
+                disabled={savingBudget}
+              >
+                {savingBudget ? 'Saving…' : 'Save'}
+              </PrimaryButton>
+            </div>
+            <p className="mt-2 text-body-13 text-ink-3">
+              {spentUsd !== null
+                ? `Spent today: $${spentUsd.toFixed(2)}`
+                : (usageError ?? 'Loading spend…')}
+            </p>
+          </>
+        ) : (
+          // Le champ ne s'affiche PAS pour un harnais qui ne rapporte aucun coût
+          // (constat P1 de la revue Codex, 27/08). Le plafond se calcule en
+          // sommant `cli_runs.cost_usd` ; Codex n'en écrit aucun, donc la somme
+          // reste à zéro et le plafond n'est jamais atteint. Laisser saisir un
+          // nombre qui ne borne rien, sous une carte affirmant que Nodal fait
+          // respecter le budget, serait un mensonge d'écran.
+          <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">
+            {label} reports no cost, so a dollar cap cannot bound it. What bounds a turn here is the
+            per-turn time limit and the tool-call cap. Runs still show up in Logs.
+          </p>
+        )}
       </div>
     </SectionCard>
   );

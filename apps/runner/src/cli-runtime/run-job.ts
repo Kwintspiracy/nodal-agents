@@ -1,4 +1,4 @@
-// cli-runtime/run-job.ts — the JOB path of a runtime agent (étape E).
+﻿// cli-runtime/run-job.ts — the JOB path of a runtime agent (étape E).
 //
 // executeJob diverts here as soon as the loaded agent has runtime !==
 // 'nodal': the whole Nodal LLM loop is skipped and the turn is served by the
@@ -161,7 +161,17 @@ export async function runCliRuntimeJob(args: {
       .select({ sessionId: cliSessions.sessionId })
       .from(cliSessions)
       .where(
-        and(eq(cliSessions.agentId, agentRow.id), eq(cliSessions.conversationKey, conversationKey)),
+        and(
+          eq(cliSessions.agentId, agentRow.id),
+          eq(cliSessions.conversationKey, conversationKey),
+          // Le FOURNISSEUR fait partie de l'identité d'une session (revue
+          // Codex, 27/08). L'index unique ne porte que (agent, conversation) :
+          // basculer un agent de Claude Code à Codex sur la même conversation
+          // lui tendait l'identifiant de session de l'AUTRE CLI, que sa
+          // commande de reprise refuse. Sans ce filtre, chaque tour repartait
+          // en erreur de reprise après une bascule de runtime.
+          eq(cliSessions.provider, binding.provider),
+        ),
       )
       .limit(1);
     resumeSessionId = existing?.sessionId;
@@ -333,7 +343,11 @@ export async function runCliRuntimeJob(args: {
       })
       .onConflictDoUpdate({
         target: [cliSessions.agentId, cliSessions.conversationKey],
-        set: { sessionId: turn.sessionId, updatedAt: sql`now()` },
+        // `provider` est REPOSÉ, pas seulement l'identifiant : l'index unique ne
+        // porte que (agent, conversation), donc après une bascule de runtime la
+        // ligne gardait le nom de l'ancien CLI tout en portant la session du
+        // nouveau. La ligne se serait contredite elle-même.
+        set: { sessionId: turn.sessionId, provider: binding.provider, updatedAt: sql`now()` },
       })
       .catch((err: unknown) => {
         console.warn(`[cli-runtime] cli_sessions upsert failed (job=${jobId}):`, err);

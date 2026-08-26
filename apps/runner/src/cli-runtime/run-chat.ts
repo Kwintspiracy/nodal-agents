@@ -74,7 +74,13 @@ export async function runCliRuntimeChatTurn(args: {
     .select({ sessionId: cliSessions.sessionId })
     .from(cliSessions)
     .where(
-      and(eq(cliSessions.agentId, agentRow.id), eq(cliSessions.conversationKey, conversationId)),
+      and(
+        eq(cliSessions.agentId, agentRow.id),
+        eq(cliSessions.conversationKey, conversationId),
+        // Même règle que le chemin job : le fournisseur fait partie de
+        // l'identité d'une session. Voir run-job.ts.
+        eq(cliSessions.provider, binding.provider),
+      ),
     )
     .limit(1);
 
@@ -211,7 +217,8 @@ export async function runCliRuntimeChatTurn(args: {
       })
       .onConflictDoUpdate({
         target: [cliSessions.agentId, cliSessions.conversationKey],
-        set: { sessionId: turn.sessionId, updatedAt: sql`now()` },
+        // `provider` reposé — voir run-job.ts.
+        set: { sessionId: turn.sessionId, provider: binding.provider, updatedAt: sql`now()` },
       })
       .catch((err: unknown) => {
         console.warn('[cli-runtime] chat cli_sessions upsert failed:', err);
