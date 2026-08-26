@@ -298,28 +298,20 @@ export async function buildTeamBlock(
     lines.push(
       'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
     );
-    // WHERE a deliverable is written is the EXECUTING agent's call, never the
-    // orchestrator's (décision Quentin, 26/08 — constaté sur un run réel).
+    // Une règle « ne dicte pas de chemin en déléguant » a vécu ici quelques
+    // heures le 26/08. Retirée : c'est une INSTRUCTION D'AGENT, pas une loi du
+    // harnais (invariant #3 — « fix at agent layer, never patch the runtime »).
     //
-    // Un orchestrateur SANS dossier attaché n'a que le workspace partagé, et
-    // son prompt le lui dit — correctement, pour lui. Il écrit donc « sauvegarde
-    // dans le workspace partagé » dans sa délégation. Ses exécutants, eux,
-    // peuvent AVOIR un dossier à eux et lire dans leur propre prompt que leur
-    // livrable y va : ils suivent quand même la consigne reçue, et le fichier
-    // repart dans le partagé.
+    // Elle s'imposait à tous les orchestrateurs de toutes les installs pour un
+    // besoin qui appartient à un espace de travail précis. Le harnais dit ce
+    // qui EST — voici tes agents, voici tes outils. Ce qu'on en fait relève de
+    // la personnalité, qui vit en base et se corrige en une minute sans revue
+    // de code.
     //
-    // L'orchestrateur décide d'un emplacement avec SES dossiers en tête, pour
-    // un agent qui n'a pas les mêmes. L'information est chez l'exécutant : la
-    // décision doit y rester. On retire ici une décision à qui n'a pas de quoi
-    // la prendre, plutôt que de lui en donner davantage pour mal décider.
-    lines.push(
-      '📁 **Describe the deliverable, not its location.** Where a file is saved is decided by ' +
-        'the agent that writes it — it is the only one that knows its own workspaces. Do NOT put ' +
-        'a folder, a path, or a workspace name in a delegated task. THE ONE EXCEPTION: the user ' +
-        'named a specific location themselves — then pass it through verbatim, because it is ' +
-        'their instruction, not your choice. Ask the agent to return the exact path it used, and ' +
-        'report THAT.\n',
-    );
+    // Ce que le harnais devait vraiment corriger, il l'a été ailleurs : le bloc
+    // `## Workspaces` annonçait UN dossier là où les outils en avaient DEUX.
+    // C'était un fait faux, donc un bug ; la destination d'un livrable est un
+    // comportement, donc une consigne.
   }
   lines.push('Your agents:');
   for (const row of childRows) {
