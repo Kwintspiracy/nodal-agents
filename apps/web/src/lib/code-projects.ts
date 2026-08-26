@@ -207,14 +207,34 @@ function projectUnderWorkspace(
   return child ? `${wsRoot}/${child}` : wsRoot;
 }
 
-/** Les racines exploitables d'un agent : ses dossiers, les plus profonds d'abord. */
+/**
+ * Ce chemin tombe-t-il dans un dossier MASQUÉ ? (0087)
+ *
+ * Le test porte sur le SOUS-ARBRE, pas sur l'égalité (revue Codex, 26/08).
+ * Retirer seulement la racine masquée de la liste laissait un dossier PARENT
+ * visible ramasser ses écritures : `/data` attaché et visible, `/data/vault`
+ * attaché et masqué, et une note du coffre ressortait comme projet `/data/vault`
+ * — le masquage contourné par le haut.
+ */
+function isUnderHiddenWorkspace(abs: string, workspaces: WorkspaceRef[]): boolean {
+  return workspaces
+    .filter((w) => w.hiddenFromCode)
+    .map((w) => normPath(w.path))
+    .filter((r) => r !== '')
+    .some((r) => isUnderPath(abs, r));
+}
+
+/**
+ * Les racines exploitables d'un agent : ses dossiers, les plus profonds d'abord.
+ *
+ * Les dossiers masqués Y RESTENT, délibérément. C'est le tri par longueur qui
+ * fait le travail : un coffre masqué niché sous un dossier suivi gagne le
+ * match, et le projet qu'il produit est ensuite écarté parce qu'il tombe sous
+ * une racine masquée. En le retirant d'ici, le parent visible l'aurait ramassé.
+ */
 function workspaceRoots(workspaces: WorkspaceRef[]): string[] {
   return (
     workspaces
-      // Un dossier masqué ne produit AUCUN projet (0087). C'est la seule chose
-      // que le masquage fait : il n'entre pas dans la résolution des chemins,
-      // qui continue de lire tous les labels.
-      .filter((w) => !w.hiddenFromCode)
       .map((w) => normPath(w.path))
       // Un dossier posé sur une RACINE DE DISQUE est ignoré : il engloberait la
       // machine entière, et la règle « enfant direct » en tirerait des projets
@@ -268,6 +288,8 @@ export function deriveProjectRoot(
     if (!wsRoot) continue;
 
     const project = projectUnderWorkspace(dir, wsRoot, memo);
+    // Masqué par le propriétaire, à n'importe quel niveau au-dessus (0087).
+    if (isUnderHiddenWorkspace(project, pipelineWorkspaces)) continue;
     if (!existsMemo(project, memo)) continue;
     votes.set(project, (votes.get(project) ?? 0) + 1);
   }
@@ -291,6 +313,9 @@ export function deriveProjectRoot(
 export function isInsideWorkspace(change: ChangeRef, pipelineWorkspaces: WorkspaceRef[]): boolean {
   const abs = resolveAbsoluteChangePath(change.rawPath, change.workspaces);
   if (!abs) return false;
+  // Un fichier d'un dossier masqué n'est pas comptable non plus : il n'a aucune
+  // ligne où s'afficher.
+  if (isUnderHiddenWorkspace(abs, pipelineWorkspaces)) return false;
   return workspaceRoots(pipelineWorkspaces).some((r) => isUnderPath(abs, r) && !samePath(abs, r));
 }
 

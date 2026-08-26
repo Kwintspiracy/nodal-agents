@@ -253,6 +253,97 @@ describe('listCodeProjectsForContext', () => {
     }
   });
 
+  it('masquer un dossier prend effet IMMÉDIATEMENT, et un dossier NICHÉ ne ressort pas par le parent', async () => {
+    // Deux constats de la revue Codex (26/08), sur le même montage :
+    //
+    //  * le scan est mis en cache 60 s. Y cuire la visibilité ferait qu'un
+    //    dossier masqué resterait annoncé aux agents pendant une minute — et un
+    //    dossier réaffiché, absent d'autant. Ce test ne vide PAS le cache après
+    //    la bascule, c'est tout son objet.
+    //  * `/data` suivi, `/data/coffre` masqué : écarter la seule racine masquée
+    //    laissait le parent visible ramasser ses écritures, et le coffre
+    //    ressortait comme projet. Le masquage contourné par le haut.
+    const parent = norm(await mkdtemp(join(tmpdir(), 'nodal-niche-')));
+    await mkdir(join(parent, 'coffre', 'Physique'), { recursive: true });
+    await writeFile(join(parent, 'coffre', 'Physique', 'note.md'), '# note');
+    await mkdir(join(parent, 'app'), { recursive: true });
+    await writeFile(join(parent, 'app', 'x.ts'), 'export {}');
+
+    const [ag] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Agent niche',
+        slug: `niche-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    const [wsParent, wsCoffre] = await db
+      .insert(agentWorkspaces)
+      .values([
+        { entityId: seed.entityId, agentId: ag!.id, label: 'data', path: parent },
+        { entityId: seed.entityId, agentId: ag!.id, label: 'coffre', path: `${parent}/coffre` },
+      ])
+      .returning();
+    const [jobNiche] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: ag!.id,
+        status: 'completed',
+        channel: 'api',
+        task: 'mix',
+      })
+      .returning();
+    await db.insert(toolCalls).values([
+      {
+        entityId: seed.entityId,
+        jobId: jobNiche!.id,
+        toolName: 'file_write',
+        toolInput: { path: `${parent}/coffre/Physique/note.md` },
+        toolOutput: '{"ok":true}',
+      },
+      {
+        entityId: seed.entityId,
+        jobId: jobNiche!.id,
+        toolName: 'file_write',
+        toolInput: { path: `${parent}/app/x.ts` },
+        toolOutput: '{"ok":true}',
+      },
+    ]);
+    _resetProjectsCacheForTests();
+
+    try {
+      // Un premier appel remplit le cache, coffre encore visible.
+      const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(avant.some((p) => p.path === `${parent}/coffre/Physique`)).toBe(true);
+
+      await db
+        .update(agentWorkspaces)
+        .set({ hiddenFromCode: true })
+        .where(eq(agentWorkspaces.id, wsCoffre!.id));
+      // PAS de purge du cache : c'est la moitié du test.
+
+      const apres = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+      expect(
+        apres.some((p) => p.path.startsWith(`${parent}/coffre`)),
+        'le coffre reste annoncé aux agents tant que le cache n’a pas expiré',
+      ).toBe(false);
+      expect(
+        apres.some((p) => p.path === `${parent}/coffre`),
+        'le coffre masqué est ressorti par son dossier parent',
+      ).toBe(false);
+      // Le parent, lui, continue de produire ses propres projets.
+      expect(apres.some((p) => p.path === `${parent}/app`)).toBe(true);
+    } finally {
+      await db.delete(toolCalls).where(eq(toolCalls.jobId, jobNiche!.id));
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, wsParent!.id));
+      await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, wsCoffre!.id));
+      await rm(parent, { recursive: true, force: true });
+      _resetProjectsCacheForTests();
+    }
+  });
+
   it('MASQUER un projet le retire du contexte des agents — la demande exacte de Quentin', async () => {
     // « on fait en sorte que ça retire le dossier du contexte et de la mémoire
     // des agents » (26/08).

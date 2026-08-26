@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq, codeProjects, entities, users } from '@nodal-agents/db';
+import { and, eq, agents, agentWorkspaces, codeProjects, entities, users } from '@nodal-agents/db';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -322,6 +322,40 @@ describe('deriveProjectRoot (vrai disque)', () => {
     expect(insideFor(ecrits[0]!, wsMasque(norm(coffre)))).toBe(false);
   });
 
+  it('un dossier masqué NICHÉ sous un dossier suivi ne ressort pas par le parent', async () => {
+    // Constat P1 de la revue Codex (26/08), et le trou que je n'avais pas vu.
+    //
+    // `/data` attaché et suivi, `/data/vault` attaché et MASQUÉ. En retirant
+    // seulement la racine masquée de la liste, le parent visible ramassait ses
+    // écritures : la note du coffre ressortait comme projet `/data/vault`. Le
+    // masquage contourné par le haut, en une ligne de configuration banale.
+    const parent = join(racine, 'data');
+    const coffre = join(parent, 'vault');
+    await mkdir(join(coffre, 'Physique'), { recursive: true });
+    await writeFile(join(coffre, 'Physique', 'note.md'), '# note');
+    await mkdir(join(parent, 'app'), { recursive: true });
+    await writeFile(join(parent, 'app', 'x.ts'), 'export {}');
+
+    const workspaces: WorkspaceRef[] = [
+      { label: 'data', path: norm(parent), hiddenFromCode: false },
+      { label: 'vault', path: norm(coffre), hiddenFromCode: true },
+    ];
+
+    expect(
+      deriveProjectRoot(
+        [{ rawPath: `${norm(coffre)}/Physique/note.md`, workspaces }],
+        workspaces,
+        memo(),
+      ),
+      'le coffre masqué est ressorti par son dossier parent',
+    ).toBeNull();
+
+    // Et le parent continue de produire ses propres projets, normalement.
+    expect(
+      deriveProjectRoot([{ rawPath: `${norm(parent)}/app/x.ts`, workspaces }], workspaces, memo()),
+    ).toBe(`${norm(parent)}/app`);
+  });
+
   it('le LABEL d’un dossier masqué reste lu — sinon ses écritures polluent un autre projet', async () => {
     // Le piège de cette fonctionnalité, et il est vicieux : si masquer retirait
     // le dossier de la RÉSOLUTION en plus de la liste des racines, alors
@@ -596,6 +630,54 @@ describe('garde-fous ajoutés par la revue P1 (25/08)', () => {
     const memo = new Map<string, string | null>();
     expect(deriveFor([`${racine}/plain/z.md`], ws('/'), memo)).toBeNull();
     expect(deriveFor([`${racine}/plain/z.md`], ws('C:/'), memo)).toBeNull();
+  });
+
+  it('masquer un DOSSIER est réservé au PROPRIÉTAIRE — ça change ce que tout le monde voit', async () => {
+    // Constat P1 de la revue Codex (26/08). Cette bascule n'est pas de la
+    // configuration d'agent : elle retire un dossier de l'onglet Code pour
+    // l'espace entier, et du contexte de TOUS les agents. Un membre
+    // non-propriétaire pouvait faire disparaître un dossier partagé.
+    const { setWorkspaceHiddenFromCodeAction } = await import('../actions.ts');
+    const [agent] = await testDb
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Proprio Guard Agent',
+        slug: `proprio-guard-${Date.now()}`,
+        personality: 'x',
+      })
+      .returning();
+    const [wsRow] = await testDb
+      .insert(agentWorkspaces)
+      .values({
+        entityId: seed.entityId,
+        agentId: agent!.id,
+        label: 'coffre',
+        path: `${racine}/plain`,
+      })
+      .returning();
+
+    await testDb
+      .update(entities)
+      .set({ userId: foreignOwnerUserId })
+      .where(eq(entities.id, seed.entityId));
+    try {
+      const r = await setWorkspaceHiddenFromCodeAction(wsRow!.id, true);
+      expect(r.ok).toBe(false);
+      expect(r.ok ? '' : r.code).toBe('forbidden');
+
+      const [apres] = await testDb
+        .select()
+        .from(agentWorkspaces)
+        .where(eq(agentWorkspaces.id, wsRow!.id));
+      expect(apres!.hiddenFromCode, 'un non-propriétaire a masqué un dossier partagé').toBe(false);
+    } finally {
+      await testDb
+        .update(entities)
+        .set({ userId: seed.userId })
+        .where(eq(entities.id, seed.entityId));
+      await testDb.delete(agentWorkspaces).where(eq(agentWorkspaces.id, wsRow!.id));
+    }
   });
 
   it('masquer ET renommer sont réservés au PROPRIÉTAIRE de l’espace', async () => {

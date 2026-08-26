@@ -274,6 +274,24 @@ export async function listCodeProjectsForContext(
     const raw = await scanProjects(db, entityId);
     if (raw.length === 0) return [];
 
+    // Les DOSSIERS masqués (0087), relus à chaque appel eux aussi — le scan est
+    // mis en cache, la visibilité ne doit pas l'être.
+    //
+    // Le test porte sur le SOUS-ARBRE (revue Codex, 26/08) : écarter la seule
+    // racine masquée laisserait un dossier PARENT visible ramasser ses
+    // écritures. `/data` suivi, `/data/vault` masqué, et une note du coffre
+    // ressortirait comme projet — le masquage contourné par le haut.
+    const hiddenWorkspaces = (
+      await db
+        .select({ path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+        .where(and(eq(agents.entityId, entityId), eq(agentWorkspaces.hiddenFromCode, true)))
+    )
+      .map((r) => norm(r.path))
+      .filter((p) => p !== '');
+    const sousDossierMasque = (p: string): boolean => hiddenWorkspaces.some((r) => within(p, r));
+
     // Les deux gestes du propriétaire, relus à CHAQUE appel. Le MASQUAGE porte
     // jusqu'ici : jusqu'au 26/08 l'archivage n'était lu que par l'interface,
     // si bien qu'un projet rangé continuait d'être annoncé dans le prompt
@@ -301,8 +319,8 @@ export async function listCodeProjectsForContext(
     return (
       raw
         // Masqué par le propriétaire : nulle part, ni dans la liste, ni dans le
-        // contexte des agents.
-        .filter((p) => !hiddenPaths.has(projectKey(p.path)))
+        // contexte des agents. Par projet, ou par dossier entier.
+        .filter((p) => !hiddenPaths.has(projectKey(p.path)) && !sousDossierMasque(p.path))
         // Le plafond s'applique APRÈS le masquage : ranger un projet doit
         // laisser la place au suivant, pas juste faire un trou dans les douze.
         .slice(0, MAX_PROJECTS)
@@ -365,23 +383,20 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
   if (wsRows.length === 0) return [];
 
   {
-    // Les dossiers MASQUÉS de l'onglet Code (0087) ne produisent aucun projet
-    // ici non plus — l'écran et le prompt doivent dire la même chose.
+    // Le masquage des dossiers (0087) N'EST PAS appliqué ici, et c'est
+    // délibéré : ce scan est mis en cache 60 s. Y cuire la visibilité ferait
+    // qu'un dossier masqué resterait annoncé aux agents pendant une minute, et
+    // qu'un dossier réaffiché resterait absent d'autant — exactement le défaut
+    // que la revue avait déjà trouvé sur les préférences de projet.
     //
-    // Un CHEMIN est masqué dès qu'une de ses lignes l'est : le même dossier
-    // attaché à cinq agents est un seul geste.
+    // Les racines masquées restent donc dans la liste, ce qui a un second
+    // mérite : le tri par longueur leur fait gagner le match sur un dossier
+    // PARENT visible. `listCodeProjectsForContext` écarte ensuite tout projet
+    // qui tombe sous une racine masquée — sous-arbre compris.
     //
-    // Leurs LABELS restent lus par `resolveScannedPath` : `vault/note.md` doit
-    // continuer d'être reconnu comme une écriture dans le coffre, sans quoi
-    // elle serait recollée au premier autre dossier venu — et réapparaîtrait
-    // sous un projet qui n'a rien demandé.
-    const hiddenRoots = new Set(
-      wsRows.filter((r) => r.hiddenFromCode).map((r) => projectKey(r.path)),
-    );
-
     // Racines uniques, plus longues d'abord (un workspace niché gagne).
     const roots = Array.from(new Set(wsRows.map((r) => norm(r.path))))
-      .filter((r) => !isDriveRoot(r) && !hiddenRoots.has(projectKey(r)))
+      .filter((r) => !isDriveRoot(r))
       .sort((a, b) => b.length - a.length);
     if (roots.length === 0) return [];
     const ownersByRoot = new Map<string, Set<string>>();

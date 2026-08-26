@@ -1280,12 +1280,23 @@ export async function setWorkspaceHiddenFromCodeAction(
       .where(eq(agentWorkspaces.id, workspaceId));
     if (!wsRow) return fail('not_found', 'Workspace not found');
 
-    // Propriété vérifiée via l'agent, comme les autres actions de workspace.
+    // L'agent appartient bien à cet espace.
     const [agentRow] = await db
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
     if (!agentRow) return fail('not_found', 'Workspace not found');
+
+    // Et la session est celle du PROPRIÉTAIRE (revue Codex, 26/08).
+    //
+    // Cette bascule n'est pas de la configuration d'agent : elle change ce que
+    // TOUT LE MONDE voit dans l'onglet Code, et ce que TOUS les agents
+    // s'entendent annoncer. Un membre non-propriétaire pouvait faire
+    // disparaître un dossier partagé pour l'espace entier. Même garde que le
+    // masquage et le renommage d'un projet, qui ont exactement la même portée.
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can hide a folder.');
 
     const memeDossier = (
       await db

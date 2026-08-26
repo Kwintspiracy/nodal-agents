@@ -16,9 +16,13 @@ import {
   readdirSync,
   realpathSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = 'D:/APPS/NodalAI';
+// La racine se DÉDUIT de l'emplacement du script (invariant #6 : aucune valeur
+// propre à une machine). Un chemin en dur ne marchait que sur un seul poste, et
+// sur tout autre il serait allé poser des liens ailleurs (revue Codex, 26/08).
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_NM = join(ROOT, 'apps/web/node_modules');
 
 /** Every workspace package directory. */
