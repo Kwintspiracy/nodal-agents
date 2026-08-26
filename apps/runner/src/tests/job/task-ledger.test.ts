@@ -257,14 +257,14 @@ describe('loadInlineDelegationLedger', () => {
   /** Un enfant de délégation EN LIGNE : lié par parent_job_id, pas par agent_tasks. */
   async function insertInlineChild(
     parentId: string,
-    opts: { toolsUsed?: string[]; status?: string } = {},
+    opts: { toolsUsed?: string[]; status?: string; channel?: string } = {},
   ): Promise<string> {
     const [row] = await db
       .insert(agentJobs)
       .values({
         entityId: seed.entityId,
         agentId: seed.agentId,
-        channel: 'internal',
+        channel: opts.channel ?? 'internal',
         task: 'build the app',
         status: opts.status ?? 'completed',
         parentJobId: parentId,
@@ -352,6 +352,19 @@ describe('loadInlineDelegationLedger', () => {
     const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
     expect(line.length, `ligne trop longue : ${line}`).toBeLessThan(140);
     expect(line).not.toContain('result:');
+  });
+
+  it('ignore un enfant du TABLEAU DE TÂCHES — sinon il compterait double', async () => {
+    // `create_task` pose son enfant avec le MÊME parent_job_id que la
+    // délégation en ligne (execute-ready.ts:207). Sans le filtre de canal, le
+    // même enfant serait rendu deux fois : une par loadTaskLedger, une ici.
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: ['file_write'], channel: 'task-board' });
+
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    expect(ledger.get(parent) ?? [], 'enfant du tableau de tâches compté deux fois').toHaveLength(
+      0,
+    );
   });
 
   it('ne mélange pas les enfants de deux tours différents', async () => {

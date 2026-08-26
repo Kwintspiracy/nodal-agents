@@ -25,7 +25,7 @@
 // finished acting yet, so surfacing it as a ledger fact would be premature.
 // `cancelled` tasks are also excluded: nothing happened to report.
 
-import { eq, and, inArray, desc } from '@nodal-agents/db';
+import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
 import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -39,6 +39,9 @@ const TERMINAL_TASK_STATUSES = ['done', 'blocked'] as const;
 
 /** Statuts d'un job enfant qui a fini d'agir — même intention que ci-dessus. */
 const TERMINAL_JOB_STATUSES = ['completed', 'failed'] as const;
+
+/** Le canal des jobs que pose `create_task` (execute-ready.ts). */
+const TASK_BOARD_CHANNEL = 'task-board';
 
 export interface TaskLedgerEntry {
   title: string;
@@ -177,6 +180,12 @@ export interface InlineDelegationEntry {
  * Les enfants encore en cours sont exclus : ils n'ont pas fini d'agir, et les
  * annoncer comme un fait serait prématuré. Même règle que le registre des
  * tâches au-dessus.
+ *
+ * Le canal `task-board` est exclu, lui, pour une autre raison : `create_task`
+ * pose SON enfant avec le même `parent_job_id` (execute-ready.ts:207,
+ * `parentJobId: task.rootJobId`). Sans ce filtre, un enfant du tableau de
+ * tâches serait rendu deux fois — une par `loadTaskLedger`, une ici — et
+ * mangerait deux fois le budget d'historique pour la même action.
  */
 export async function loadInlineDelegationLedger(
   db: RunnerDeps['db'],
@@ -199,6 +208,7 @@ export async function loadInlineDelegationLedger(
       and(
         inArray(agentJobs.parentJobId, ids),
         inArray(agentJobs.status, TERMINAL_JOB_STATUSES as unknown as string[]),
+        ne(agentJobs.channel, TASK_BOARD_CHANNEL),
       ),
     )
     .orderBy(desc(agentJobs.createdAt));
