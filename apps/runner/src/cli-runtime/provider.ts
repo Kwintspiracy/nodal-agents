@@ -12,7 +12,11 @@
 
 import { runClaudeTurn, ClaudeCliNotFoundError } from './claude-turn.ts';
 import type { ClaudeTurnOptions, ClaudeTurnResult } from './claude-turn.ts';
-import { runCodexTurn, CodexCliNotFoundError } from './codex-turn.ts';
+import {
+  runCodexTurn,
+  CodexCliNotFoundError,
+  CodexRestrictionsUnsupportedError,
+} from './codex-turn.ts';
 
 /** Le contrat commun d'un tour, quel que soit le CLI derrière. */
 export type CliTurnOptions = ClaudeTurnOptions;
@@ -44,7 +48,17 @@ export function resolveRuntime(runtime: string): RuntimeBinding | null {
   return RUNTIMES[runtime] ?? null;
 }
 
-/** Vrai pour l'erreur « le binaire n'est pas installé », des deux CLI. */
-export function isCliNotFound(err: unknown): err is Error {
-  return err instanceof ClaudeCliNotFoundError || err instanceof CodexCliNotFoundError;
+/**
+ * Vrai pour une erreur de CONFIGURATION qui empêche de lancer le tour : le
+ * binaire absent, ou une restriction que ce harnais ne sait pas appliquer.
+ *
+ * Ces cas-là deviennent un job échoué avec un message actionnable, jamais une
+ * exception non rattrapée — et jamais, surtout, un tour lancé quand même.
+ */
+export function isCliSetupError(err: unknown): err is Error {
+  return (
+    err instanceof ClaudeCliNotFoundError ||
+    err instanceof CodexCliNotFoundError ||
+    err instanceof CodexRestrictionsUnsupportedError
+  );
 }

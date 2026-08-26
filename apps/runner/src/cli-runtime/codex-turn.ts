@@ -81,21 +81,39 @@ export function buildCodexStdin(opts: {
 }
 
 /**
+ * Une restriction d'outils que Codex ne sait pas appliquer.
+ *
+ * Codex ne se confine pas en retirant des outils au modèle (la méthode de
+ * Claude) mais par un bac à sable du système : une liste de noms d'outils
+ * interdits n'a rien à quoi s'accrocher.
+ *
+ * La première version se contentait de le JOURNALISER et lançait la CLI sans
+ * restriction. La revue Codex (27/08) a nommé ce que ça permettait : basculer un
+ * agent restreint de Claude Code vers Codex lui RENDAIT les outils qu'on lui
+ * avait explicitement retirés — en mode écriture, c'est une élévation de
+ * permissions obtenue par un menu déroulant. Un repli silencieux exactement là
+ * où il coûte le plus cher (invariant #4).
+ */
+export class CodexRestrictionsUnsupportedError extends Error {
+  constructor(tools: readonly string[]) {
+    super(
+      `codex_cannot_restrict_tools: this agent forbids ${tools.join(', ')}, and the codex CLI ` +
+        `cannot enforce a per-tool ban — it confines by OS sandbox, not by removing tools. ` +
+        `Clear those restrictions, or keep this agent on a harness that supports them.`,
+    );
+    this.name = 'CodexRestrictionsUnsupportedError';
+  }
+}
+
+/**
  * L'argv d'un tour, délégué à `buildProviderArgs` — l'unique constructeur
  * d'argv Codex de la base.
  *
- * `extraDisallowed` n'a pas d'équivalent : Codex ne se confine pas en retirant
- * des outils au modèle (c'est la méthode de Claude) mais par un bac à sable du
- * système. Refuser des outils par leur nom n'a donc rien à quoi s'accrocher.
- * Le silence serait un repli déguisé (invariant #4) : l'appelant est prévenu
- * par le journal, une fois, avec les noms qu'il croyait interdire.
+ * Lève quand l'agent porte des restrictions d'outils : voir ci-dessus.
  */
 export function buildCodexTurnArgs(opts: CodexTurnOptions): string[] {
   if (opts.extraDisallowed && opts.extraDisallowed.length > 0) {
-    console.warn(
-      `[cli-runtime] codex ignore extraDisallowed (${opts.extraDisallowed.join(', ')}) : ` +
-        `son confinement est un bac à sable système, pas une liste d'outils retirés.`,
-    );
+    throw new CodexRestrictionsUnsupportedError(opts.extraDisallowed);
   }
   return buildProviderArgs('codex', opts.mode, {
     ...(opts.model ? { model: opts.model } : {}),

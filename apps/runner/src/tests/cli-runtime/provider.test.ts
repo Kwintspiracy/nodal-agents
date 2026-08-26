@@ -1,4 +1,4 @@
-// provider.test.ts — LE tableau des runtimes servis, et son accord avec ce que
+﻿// provider.test.ts — LE tableau des runtimes servis, et son accord avec ce que
 // l'interface propose.
 //
 // Le 27/08, ouvrir Codex a demandé de toucher quatre endroits : la contrainte
@@ -13,9 +13,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveRuntime, isCliNotFound } from '../../cli-runtime/provider.ts';
+import { resolveRuntime, isCliSetupError } from '../../cli-runtime/provider.ts';
 import { ClaudeCliNotFoundError } from '../../cli-runtime/claude-turn.ts';
-import { CodexCliNotFoundError } from '../../cli-runtime/codex-turn.ts';
+import {
+  CodexCliNotFoundError,
+  CodexRestrictionsUnsupportedError,
+} from '../../cli-runtime/codex-turn.ts';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
 
@@ -45,9 +48,16 @@ describe('resolveRuntime', () => {
   it('reconnaît le binaire manquant des DEUX CLI', () => {
     // Une seule des deux reconnue, et l'autre remonterait en exception non
     // rattrapée au lieu d'un job échoué avec la consigne d'installation.
-    expect(isCliNotFound(new ClaudeCliNotFoundError())).toBe(true);
-    expect(isCliNotFound(new CodexCliNotFoundError())).toBe(true);
-    expect(isCliNotFound(new Error('boom'))).toBe(false);
+    expect(isCliSetupError(new ClaudeCliNotFoundError())).toBe(true);
+    expect(isCliSetupError(new CodexCliNotFoundError())).toBe(true);
+    expect(isCliSetupError(new Error('boom'))).toBe(false);
+  });
+
+  it('une restriction inapplicable est une erreur de CONFIGURATION, pas un plantage', () => {
+    // Elle doit devenir un job échoué avec un message actionnable — sinon elle
+    // remonterait en exception non rattrapée, et le tour se lirait comme une
+    // panne du runner plutôt que comme un réglage impossible.
+    expect(isCliSetupError(new CodexRestrictionsUnsupportedError(['Bash']))).toBe(true);
   });
 });
 

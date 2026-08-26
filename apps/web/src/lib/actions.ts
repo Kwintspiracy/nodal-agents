@@ -1,4 +1,4 @@
-'use server';
+﻿'use server';
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
@@ -11256,6 +11256,20 @@ function pipelineQualifiesAsCoding(
    * ni projet à afficher ni ligne à grouper.
    */
   touchedWorkspace: boolean,
+  /**
+   * Reste-t-il un dossier VISIBLE parmi ceux des agents du pipeline ?
+   *
+   * Un pipeline dont TOUS les dossiers sont masqués ne doit pas ressurgir par
+   * la porte de service (revue Codex, 27/08) : les signaux sans chemin
+   * ci-dessous (`code_task` en écriture, verdict de review) qualifiaient sans
+   * condition, donc une session dont le seul dossier venait d'être masqué
+   * réapparaissait dans « Other sessions » — faute de projet nommable, elle
+   * n'était même pas rattachable au geste qui devait la faire disparaître.
+   *
+   * `true` aussi quand l'agent n'a AUCUN dossier : rien n'a été masqué, il n'y
+   * a donc aucun geste à respecter.
+   */
+  hasVisibleWorkspace: boolean,
 ): boolean {
   // REFUSED calls deliberately still QUALIFY a pipeline, even though they
   // change nothing and are excluded from the file count and the Changes panel.
@@ -11293,6 +11307,14 @@ function pipelineQualifiesAsCoding(
   // AUCUNE écriture, mais un travail de code quand même : une délégation à la
   // CLI, un verdict de review. Ces outils sont spécifiques au code — leur seule
   // présence suffit, il n'y a rien à ancrer.
+  //
+  // « Rien à ancrer » est justement pourquoi le masquage doit être vérifié ici :
+  // sans chemin, la dérivation de projet n'a aucun repli visible, et la session
+  // atterrit dans « Other sessions » — y compris quand tous les dossiers de ses
+  // agents sont masqués. Le geste du propriétaire serait resté sans effet sur
+  // exactement les sessions qu'il ne peut pas nommer.
+  if (!hasVisibleWorkspace) return false;
+
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
     const input = c.toolInput as { mode?: string } | null;
@@ -11562,7 +11584,10 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         // projet nommable, et annonce honnêtement 0 fichier changé.
         const changes = changesByRoot.get(root) ?? [];
         const touchedWorkspace = changes.some((c) => isInsideWorkspace(c, ws));
-        return pipelineQualifiesAsCoding(calls, touchedWorkspace);
+        // Aucun dossier du tout ≠ tous masqués : le premier n'a fait l'objet
+        // d'aucun geste, le second en porte un. Voir le paramètre.
+        const hasVisibleWorkspace = ws.length === 0 || ws.some((w) => !w.hiddenFromCode);
+        return pipelineQualifiesAsCoding(calls, touchedWorkspace, hasVisibleWorkspace);
       })
       .map(([root]) => root);
 

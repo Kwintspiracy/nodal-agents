@@ -990,6 +990,83 @@ describe('listCodingProcessesAction — v8, on range au lieu de deviner', () => 
     }
   });
 
+  it('un dossier masqué masque AUSSI les sessions sans chemin (code_task, verdict)', async () => {
+    // Constat P2 de la revue Codex (27/08). Un `code_task` en écriture ou un
+    // verdict de review qualifiait SANS CONDITION : pas de chemin, donc pas de
+    // projet dérivable, donc pas de repli visible — la session atterrissait dans
+    // « Other sessions » même quand le seul dossier de son agent venait d'être
+    // masqué. Le geste du propriétaire restait sans effet sur exactement les
+    // sessions qu'il ne peut pas nommer, et il n'avait aucun second bouton pour
+    // les faire disparaître.
+    const {
+      listCodingProcessesAction,
+      setWorkspaceHiddenFromCodeAction,
+      listAgentWorkspacesAction,
+    } = await import('../src/lib/actions.ts');
+    const agentId = await makeAgent('Vault Sans Chemin', { folders: 'vault' });
+
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'code_task',
+      toolInput: { mode: 'write', task: 'range le coffre' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const avant = await listCodingProcessesAction();
+    expect(avant.ok).toBe(true);
+    if (!avant.ok) return;
+    expect(
+      avant.data.some((r) => r.id === jobId),
+      'la session sans chemin n’apparaît pas avant masquage',
+    ).toBe(true);
+
+    const list = await listAgentWorkspacesAction(agentId);
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    const coffre = list.data.find((w) => w.path === VAULT);
+    const hide = await setWorkspaceHiddenFromCodeAction(coffre!.id, true);
+    expect(hide.ok, hide.ok ? '' : hide.message).toBe(true);
+
+    try {
+      const apres = await listCodingProcessesAction();
+      expect(apres.ok).toBe(true);
+      if (!apres.ok) return;
+      expect(
+        apres.data.filter((r) => r.id === jobId),
+        'la session ressurgit par « Other sessions » malgré le masquage',
+      ).toHaveLength(0);
+    } finally {
+      await setWorkspaceHiddenFromCodeAction(coffre!.id, false);
+    }
+  });
+
+  it('un agent SANS aucun dossier garde ses sessions sans chemin — rien n’a été masqué', async () => {
+    // Le pendant du test ci-dessus, et la limite à ne pas franchir : aucun
+    // dossier ≠ tous masqués. Le premier n'a fait l'objet d'aucun geste ; filtrer
+    // là-dessus ferait disparaître du travail que personne n'a demandé à cacher.
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const agentId = await makeAgent('Sans Dossier Coder', { folders: 'none' });
+
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'code_task',
+      toolInput: { mode: 'write', task: 'fais un truc' },
+      toolOutput: '{"ok":true}',
+    });
+
+    const res = await listCodingProcessesAction();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(
+      res.data.some((r) => r.id === jobId),
+      'une session sans dossier disparaît alors que rien n’a été masqué',
+    ).toBe(true);
+  });
+
   it('la case se propage à TOUS les agents qui partagent le dossier', async () => {
     // Sur cette install `Documents/Dev` est attaché à cinq agents. Masquer
     // serait cinq gestes, et l'état mi-masqué n'aurait aucun sens : un dossier

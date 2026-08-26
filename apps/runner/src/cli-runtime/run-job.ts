@@ -39,7 +39,7 @@ import { failJob, completeJob, touchJob } from '../job/state.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
-import { resolveRuntime, isCliNotFound, type CliTurnResult } from './provider.ts';
+import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
@@ -293,7 +293,7 @@ export async function runCliRuntimeJob(args: {
   } catch (err) {
     clearInterval(heartbeat);
     if (mode === 'write') await releaseWorkspaceLock(db, cwd, jobId).catch(() => {});
-    if (isCliNotFound(err)) return fail(err.message.slice(0, 300));
+    if (isCliSetupError(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
   clearInterval(heartbeat);

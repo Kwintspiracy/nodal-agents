@@ -1,4 +1,4 @@
-// codex-turn.test.ts — le lecteur de flux et le constructeur d'argv du runtime
+﻿// codex-turn.test.ts — le lecteur de flux et le constructeur d'argv du runtime
 // Codex, éprouvés sur un flux RÉEL enregistré.
 //
 // `codex-stream-fixture.jsonl` a été capturé le 27/08 en lançant vraiment
@@ -179,6 +179,23 @@ describe('buildCodexTurnArgs', () => {
     expect(args.slice(0, 3)).toEqual(['exec', 'resume', 'th_42']);
     expect(args).not.toContain('--sandbox');
     expect(args).toContain('sandbox_mode="read-only"');
+  });
+
+  it('une restriction d’outils fait ÉCHOUER le tour — jamais un lancement sans elle', () => {
+    // Constat P1 de la revue Codex (27/08). La première version se contentait
+    // de journaliser et lançait la CLI sans restriction : basculer un agent
+    // restreint de Claude Code vers Codex lui RENDAIT les outils qu'on lui
+    // avait explicitement retirés. En mode écriture, une élévation de
+    // permissions obtenue par un menu déroulant.
+    expect(() => buildCodexTurnArgs({ ...BASE, extraDisallowed: ['Bash'] })).toThrow(
+      /codex_cannot_restrict_tools/,
+    );
+    // Le message doit nommer ce qui est interdit et dire quoi faire.
+    expect(() => buildCodexTurnArgs({ ...BASE, extraDisallowed: ['Bash', 'WebSearch'] })).toThrow(
+      /Bash, WebSearch/,
+    );
+    // Une liste VIDE n'est pas une restriction : elle ne bloque rien.
+    expect(() => buildCodexTurnArgs({ ...BASE, extraDisallowed: [] })).not.toThrow();
   });
 
   it('modèle et effort n’apparaissent que s’ils sont demandés', () => {

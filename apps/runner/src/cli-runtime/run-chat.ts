@@ -1,4 +1,4 @@
-// cli-runtime/run-chat.ts — the DASHBOARD-CHAT path of a runtime agent
+﻿// cli-runtime/run-chat.ts — the DASHBOARD-CHAT path of a runtime agent
 // (étape E). Same contract as run-job.ts but for a chat turn: the user's
 // message goes to the agent's Claude Code session (resumed per conversation),
 // the CLI's final text is persisted as the assistant chat message VERBATIM
@@ -30,7 +30,7 @@ import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
-import { resolveRuntime, isCliNotFound, type CliTurnResult } from './provider.ts';
+import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
@@ -168,7 +168,7 @@ export async function runCliRuntimeChatTurn(args: {
       onEvent,
     });
   } catch (err) {
-    if (isCliNotFound(err)) {
+    if (isCliSetupError(err)) {
       return { ok: false, error: err.message.slice(0, 300) };
     }
     throw err;
