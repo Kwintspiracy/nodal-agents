@@ -50,7 +50,12 @@ import { eq, and, ne, gt, desc, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
-import { loadTaskLedger, formatTaskLedgerLines } from './task-ledger.ts';
+import {
+  loadTaskLedger,
+  formatTaskLedgerLines,
+  loadInlineDelegationLedger,
+  formatInlineDelegationLines,
+} from './task-ledger.ts';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -245,6 +250,16 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     chronological.map((r) => r.id),
   );
 
+  // Délégation EN LIGNE (`assign_*`, incident du 26/08 — voir task-ledger.ts).
+  // Le registre au-dessus ne couvre que le fan-out `create_task` ; celui-ci lit
+  // les `agent_jobs` enfants. Sans lui, un tour où l'orchestrateur a réellement
+  // délégué et un tour où il a inventé le compte rendu arrivent identiques dans
+  // l'historique — c'est ce qui laissait la confabulation se répéter.
+  const inlineLedger = await loadInlineDelegationLedger(
+    opts.db,
+    chronological.map((r) => r.id),
+  );
+
   // Each "block" is a contiguous slice of messages we keep or drop together
   // — either a 2-message `[user, assistant-text]` pair (no send-tool path)
   // or a 3-message `[user, assistant-tool-call, tool-result]` block (when
@@ -276,7 +291,15 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     // Delegated-task ledger (see file header) — this job's own create_task
     // fan-out, if any, sourced from each child task's OWN job.tools_used.
     const delegatedLedgerLines = formatTaskLedgerLines(taskLedger.get(row.id) ?? []);
-    const allLedgerLines = [...(ledgerLine ? [ledgerLine] : []), ...delegatedLedgerLines];
+    // Les délégations EN LIGNE de ce tour — actions seulement, pas de résultat :
+    // il est déjà dans la prose du parent, et le redire coûtait 531 caractères
+    // par tour là où 75 suffisent (mesuré sur une install réelle).
+    const inlineLedgerLines = formatInlineDelegationLines(inlineLedger.get(row.id) ?? []);
+    const allLedgerLines = [
+      ...(ledgerLine ? [ledgerLine] : []),
+      ...delegatedLedgerLines,
+      ...inlineLedgerLines,
+    ];
 
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
     if (sendTool) {
