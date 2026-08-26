@@ -273,19 +273,30 @@ export async function runCliRuntimeJob(args: {
   //
   // Sonde le cwd reel de la session, pas le workspace partage : c est la que la
   // CLI travaille.
-  const workspaceGit = await probeWorkspaceGit(cwd);
-
-  const systemPrompt = await buildSystemPrompt(
-    agentRow,
-    db,
-    buildCliRuntimeJobContext({
-      origin: job.channel ?? 'unknown',
-      task: job.task,
-      chatId: job.chatId,
-      workspaceGit,
-      workspaces: args.workspaces,
-    }),
-  );
+  //
+  // Sous le MÊME filet que le tour lui-même (revue Codex, 27/08) : la sonde et
+  // l'assemblage du prompt touchent le disque et la base. Une panne passagère
+  // s'y produisait après la prise des verrous et avant le `try` — les dossiers,
+  // le PARTAGÉ compris, restaient bloqués une demi-heure pour tout le monde,
+  // jusqu'à la reprise du verrou périmé.
+  let systemPrompt: string;
+  try {
+    const workspaceGit = await probeWorkspaceGit(cwd);
+    systemPrompt = await buildSystemPrompt(
+      agentRow,
+      db,
+      buildCliRuntimeJobContext({
+        origin: job.channel ?? 'unknown',
+        task: job.task,
+        chatId: job.chatId,
+        workspaceGit,
+        workspaces: args.workspaces,
+      }),
+    );
+  } catch (err) {
+    await releaseHeld();
+    throw err;
+  }
 
   // Keep the job alive under the 5-minute reaper for the whole CLI run.
   const heartbeat = setInterval(() => {

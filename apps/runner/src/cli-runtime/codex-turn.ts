@@ -149,8 +149,12 @@ export interface CodexParseState {
   sawTurnCompleted: boolean;
   failure: string | null;
   unknownEventTypes: Set<string>;
-  /** Les appels d'outils dont le DÉBUT a été vu — voir la fin sans début. */
-  openToolIds: Set<string>;
+  /**
+   * Les appels d'outils dont le DÉBUT a été vu, et sous quels identifiants ils
+   * ont été ouverts : un changement multi-fichiers en ouvre plusieurs pour un
+   * seul identifiant d'item. Voir la fermeture.
+   */
+  openToolIds: Map<string, string[]>;
   /** Ceux déjà comptés pour le garde anti-boucle : jamais deux fois le même. */
   countedToolIds: Set<string>;
 }
@@ -163,7 +167,7 @@ export function newCodexParseState(): CodexParseState {
     sawTurnCompleted: false,
     failure: null,
     unknownEventTypes: new Set(),
-    openToolIds: new Set(),
+    openToolIds: new Map(),
     countedToolIds: new Set(),
   };
 }
@@ -302,10 +306,16 @@ export function handleCodexLine(
   const live = parseLiveToolEvent('codex', trimmed);
   if (live) {
     if (live.kind === 'use') {
-      state.openToolIds.add(live.event.id);
-      for (const call of expandToolCalls(live.event.id, live.event.name, live.event.input)) {
-        onEvent?.({ kind: 'tool_use', ...call });
-      }
+      const calls = expandToolCalls(live.event.id, live.event.name, live.event.input);
+      // Les identifiants EXPANSÉS sont retenus, pas juste le brut : un
+      // changement multi-fichiers ouvre `id#0`, `id#1`… et la fin ne porte que
+      // `id`. Fermer sur le brut ne fermait AUCUNE des lignes ouvertes, et
+      // toutes disparaissaient de l'audit (revue Codex, 27/08).
+      state.openToolIds.set(
+        live.event.id,
+        calls.map((c) => c.toolUseId),
+      );
+      for (const call of calls) onEvent?.({ kind: 'tool_use', ...call });
     } else {
       // Une FIN sans DÉBUT n'est pas une anomalie chez Codex : un `file_change`
       // arrive normalement en `item.completed` seul (revue Codex, 27/08). Le
@@ -314,12 +324,20 @@ export function handleCodexLine(
       // contexte des projets. On ouvre donc la paire ici, juste avant de la
       // fermer : mieux vaut une ligne complète a posteriori que rien.
       const item = evt['item'] as Record<string, unknown> | undefined;
-      const calls = state.openToolIds.has(live.event.id)
-        ? [{ toolUseId: live.event.id }]
+      const opened = state.openToolIds.get(live.event.id);
+      const calls: Array<{ toolUseId: string; toolName?: string; input?: unknown }> = opened
+        ? opened.map((toolUseId) => ({ toolUseId }))
         : expandToolCalls(live.event.id, live.event.name, item);
       state.openToolIds.delete(live.event.id);
       for (const call of calls) {
-        if ('toolName' in call) onEvent?.({ kind: 'tool_use', ...call });
+        if (call.toolName !== undefined) {
+          onEvent?.({
+            kind: 'tool_use',
+            toolUseId: call.toolUseId,
+            toolName: call.toolName,
+            input: call.input,
+          });
+        }
         onEvent?.({
           kind: 'tool_result',
           toolUseId: call.toolUseId,

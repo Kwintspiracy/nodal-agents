@@ -160,6 +160,29 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     }
   });
 
+  it('une panne pendant l’assemblage du prompt REND les verrous', () => {
+    // Constat P1 de la revue Codex (27/08). La sonde git et `buildSystemPrompt`
+    // touchent le disque et la base ; elles vivaient APRÈS la prise des verrous
+    // et AVANT le `try`. Une panne passagère y laissait tous les dossiers —
+    // le PARTAGÉ compris, donc ceux de tout le monde — bloqués une demi-heure,
+    // jusqu'à la reprise du verrou périmé.
+    for (const rel of [
+      'apps/runner/src/cli-runtime/run-job.ts',
+      'apps/runner/src/cli-runtime/run-chat.ts',
+    ]) {
+      const src = read(rel);
+      // L'assemblage est DANS un try dont le catch rend les verrous.
+      const bloc =
+        /try \{[\s\S]{0,900}?buildSystemPrompt\([\s\S]{0,600}?\} catch[\s\S]{0,200}?\}/.exec(
+          src,
+        )?.[0] ?? '';
+      expect(bloc, `${rel} : l'assemblage du prompt n'a pas de filet`).not.toBe('');
+      expect(bloc, `${rel} : les verrous fuient si le prompt échoue`).toMatch(
+        /(releaseHeld\(\)|locks\.release\(\))/,
+      );
+    }
+  });
+
   it('la liste des dossiers passe au prompt — le partagé n’a pas de ligne en base', () => {
     // Constat P2 de la revue Codex (27/08). Sans elle, `buildSystemPrompt`
     // retombe sur `agent_workspaces`, où le workspace PARTAGÉ n'existe pas : il

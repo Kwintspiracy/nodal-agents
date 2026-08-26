@@ -48,7 +48,10 @@ export async function runCliRuntimeChatTurn(args: {
   }
 
   const wsRows = await db
-    .select({ path: agentWorkspaces.path })
+    // Le LABEL compte : c'est sous ce nom que le prompt annonce chaque dossier,
+    // et c'est par lui qu'un chemin relatif se résout. Le sélectionner ici
+    // évite de fabriquer une étiquette vide au moment de bâtir le contexte.
+    .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
     .from(agentWorkspaces)
     .where(eq(agentWorkspaces.agentId, agentRow.id))
     .orderBy(agentWorkspaces.position, agentWorkspaces.label);
@@ -152,13 +155,26 @@ export async function runCliRuntimeChatTurn(args: {
   // signal. Assumé ici parce qu'un tour de chat CLI dure des minutes ; si ça
   // devenait sensible, c'est le TIMEOUT de la sonde qu'il faudrait réduire, pas
   // la sonde qu'il faudrait retirer.
-  const workspaceGit = await probeWorkspaceGit(cwd);
-
-  const systemPrompt = await buildSystemPrompt(
-    agentRow,
-    db,
-    buildCliRuntimeJobContext({ origin: 'dashboard', task: message, workspaceGit }),
-  );
+  //
+  // Sous le MÊME filet que le tour — voir run-job.ts : une panne passagère ici
+  // laissait les dossiers verrouillés une demi-heure pour tout le monde.
+  let systemPrompt: string;
+  try {
+    const workspaceGit = await probeWorkspaceGit(cwd);
+    systemPrompt = await buildSystemPrompt(
+      agentRow,
+      db,
+      buildCliRuntimeJobContext({
+        origin: 'dashboard',
+        task: message,
+        workspaceGit,
+        workspaces: wsRows,
+      }),
+    );
+  } catch (err) {
+    await locks.release();
+    throw err;
+  }
 
   let turn: CliTurnResult;
   try {

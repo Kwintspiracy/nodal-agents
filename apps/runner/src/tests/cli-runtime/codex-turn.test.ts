@@ -270,6 +270,34 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     expect(events.filter((e) => e.kind === 'tool_result')).toHaveLength(2);
   });
 
+  it('un multi-fichiers ouvert PUIS fermé s’apparie ligne à ligne', () => {
+    // Constat P2 de la revue Codex (27/08). Quand Codex émet les DEUX
+    // événements, le début ouvrait `id#0`, `id#1`… et la fin ne fermait que
+    // `id` : le recorder n'appariait AUCUNE ligne, et toutes les éditions
+    // disparaissaient de l'audit. Le correctif du tour précédent avait déplacé
+    // la panne au lieu de la fermer.
+    const item = {
+      id: 'item_3',
+      type: 'file_change',
+      changes: [
+        { path: 'C:/Dev/app/a.ts', kind: 'update' },
+        { path: 'C:/Dev/app/b.ts', kind: 'update' },
+      ],
+    };
+    const state = newCodexParseState();
+    const events: CodexTurnEvent[] = [];
+    handleCodexLine(state, JSON.stringify({ type: 'item.started', item }), (e) => events.push(e));
+    handleCodexLine(state, JSON.stringify({ type: 'item.completed', item }), (e) => events.push(e));
+
+    const uses = events.filter((e) => e.kind === 'tool_use');
+    const results = events.filter((e) => e.kind === 'tool_result');
+    expect(uses).toHaveLength(2);
+    // Chaque ouverture a SA fermeture, sur le même identifiant.
+    expect(results.map((r) => r.toolUseId).sort()).toEqual(uses.map((u) => u.toolUseId).sort());
+    // Et le début ne se rouvre pas une seconde fois à la fermeture.
+    expect(uses.filter((u) => u.toolUseId === results[0]!.toolUseId)).toHaveLength(1);
+  });
+
   it('un tour TUÉ par le délai est un échec, même s’il avait dit turn.completed', () => {
     // Constat P2 de la revue Codex (27/08). Le flux était complet, le code de
     // sortie null : le job se terminait « réussi » alors qu'on venait de tuer le
