@@ -1,29 +1,31 @@
 // lib/workspace-list.ts — les dossiers qu'un agent voit RÉELLEMENT.
 //
-// UN AGENT, UN DOSSIER (décision Quentin, 26/08).
+// UNE SEULE LISTE, celle que les outils ont (décision Quentin, 26/08).
 //
-// Le workspace partagé de l'espace était injecté à TOUS les agents, y compris
-// à ceux à qui le propriétaire avait explicitement attaché un dossier. C'est la
-// racine d'une journée entière de symptômes :
+// Le défaut d'origine : le PROMPT construisait sa liste par une requête sur
+// `agent_workspaces`, pendant que les OUTILS recevaient cette liste PLUS le
+// workspace partagé, injecté ici. Deux sources pour une même vérité, et le
+// prompt mentait :
 //
-//   * le PROMPT ne listait pas le partagé — sa liste vient de
-//     `agent_workspaces` — alors que les OUTILS l'avaient. L'agent lisait
-//     « ton seul dossier est Dev, tout est relatif à sa racine », écrivait
-//     `shared/outputs/x.html` (les outils routaient correctement vers le
-//     partagé), puis construisait le chemin absolu en COLLANT les deux :
-//     `C:\…\Documents\Dev\shared\outputs\x.html`. Un chemin qui n'existe nulle
-//     part, et dont le début juste le rend crédible ;
-//   * l'onglet Code ne connaît que les dossiers attachés : tout ce qui partait
-//     dans le partagé lui était invisible ;
-//   * il a fallu une consigne de prompt, une section de skill et une règle de
-//     délégation pour rattraper l'ambiguïté — trois rustines sur une cause.
+//   « Your workspace label is **Dev** […] bare relative paths […] both resolve
+//     to the same root »
 //
-// Le « hand-off entre agents » que le partagé servait à justifier passe déjà
-// par le dossier ATTACHÉ quand il est commun : cinq agents d'une même équipe
-// partageant `Documents/Dev` se relisent sans passer par ailleurs.
+// L'agent écrivait donc `shared/outputs/x.html` — que les outils routaient
+// correctement vers le partagé — puis, croyant tout relatif à `Dev`, annonçait
+// `C:\…\Documents\Dev\shared\outputs\x.html`. Un chemin qui n'existe nulle
+// part, et dont le début juste le rend crédible.
 //
-// Extrait de `executeJob` (1 500 lignes) pour être testable : la règle tient en
-// une ligne, mais elle décide de tout ce qui précède.
+// PREMIÈRE TENTATIVE, ÉCARTÉE : ne plus injecter le partagé aux agents qui ont
+// un dossier. Ça réglait le symptôme et cassait autre chose — objection de
+// Quentin, décisive : « si mon agent a besoin de partager un fichier avec un
+// autre agent, comment il fait ? » Le partagé est le SEUL terrain commun entre
+// un agent qui tient un coffre Obsidian et un agent qui génère des images. Le
+// retirer à quiconque reçoit un dossier les désolidarise du reste de l'équipe.
+// Mon raisonnement généralisait depuis un cas particulier — cinq agents dev
+// partageant `Documents/Dev`, donc se relisant sans le partagé.
+//
+// On répare un mensonge en disant la vérité, pas en amputant une capacité :
+// tout le monde garde le partagé, et le prompt liste ce que les outils ont.
 
 /** Un dossier tel que les outils le voient. */
 export interface WorkspaceEntry {
@@ -32,17 +34,22 @@ export interface WorkspaceEntry {
 }
 
 /**
- * La liste finale : les dossiers attachés, ou le partagé s'il n'y en a AUCUN.
+ * La liste finale : les dossiers attachés, PLUS le workspace partagé.
  *
- * Jamais les deux. Rendre `null` pour `sharedPath` signifie « pas de partagé
- * pour cet agent » — ce qui vaut aussi quand sa création a échoué.
+ * Le partagé arrive en dernier — l'ordre compte, le prompt présente le premier
+ * comme le dossier de référence, et c'est celui du propriétaire.
+ *
+ * `sharedPath` à `null` signifie que sa création a échoué : on n'invente alors
+ * aucune entrée, plutôt que d'offrir un dossier qui n'existe pas.
  */
 export function resolveWorkspaceList(
   attached: ReadonlyArray<WorkspaceEntry>,
   sharedLabel: string,
   sharedPath: string | null,
 ): { workspaces: WorkspaceEntry[]; sharedPath: string | null } {
-  if (attached.length > 0) return { workspaces: [...attached], sharedPath: null };
-  if (!sharedPath) return { workspaces: [], sharedPath: null };
-  return { workspaces: [{ label: sharedLabel, path: sharedPath }], sharedPath };
+  if (!sharedPath) return { workspaces: [...attached], sharedPath: null };
+  if (attached.some((w) => w.label === sharedLabel)) {
+    return { workspaces: [...attached], sharedPath };
+  }
+  return { workspaces: [...attached, { label: sharedLabel, path: sharedPath }], sharedPath };
 }

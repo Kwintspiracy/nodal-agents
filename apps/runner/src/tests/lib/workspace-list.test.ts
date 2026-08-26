@@ -20,40 +20,47 @@ const VAULT = { label: 'Obsidian Vault', path: 'D:/Obsidian Vaults/Kwint Vault' 
 const SHARED = 'C:/Users/kwint/.nodalai/workspaces/e1/shared';
 
 describe('resolveWorkspaceList', () => {
-  it('un agent qui a un dossier n’en voit QUE lui — jamais le partagé en plus', () => {
+  it('un agent qui a un dossier garde AUSSI le partagé — c’est son lien avec les autres', () => {
+    // Objection décisive de Quentin sur une première version de ce correctif,
+    // qui retirait le partagé à quiconque avait un dossier : « si mon agent a
+    // besoin de partager un fichier avec un autre agent, comment il fait ? »
+    // Le partagé est le SEUL terrain commun entre un agent qui tient un coffre
+    // Obsidian et un agent qui génère des images.
     const r = resolveWorkspaceList([DEV], 'shared', SHARED);
-    expect(r.workspaces, 'le partagé a été ajouté à un agent qui a son dossier').toEqual([DEV]);
     expect(
-      r.sharedPath,
-      'le partagé reste annoncé, donc son inventaire et ses consignes reviennent',
-    ).toBeNull();
+      r.workspaces,
+      'le partagé a disparu : l’agent n’a plus aucun moyen d’échanger un fichier',
+    ).toEqual([DEV, { label: 'shared', path: SHARED }]);
+    expect(r.sharedPath).toBe(SHARED);
   });
 
-  it('plusieurs dossiers attachés : tous, et toujours pas le partagé', () => {
+  it('le dossier du PROPRIÉTAIRE reste en tête — le prompt présente le premier', () => {
     const r = resolveWorkspaceList([DEV, VAULT], 'shared', SHARED);
-    expect(r.workspaces).toEqual([DEV, VAULT]);
-    expect(r.sharedPath).toBeNull();
+    expect(r.workspaces.map((w) => w.label)).toEqual(['Dev', 'Obsidian Vault', 'shared']);
   });
 
-  it('AUCUN dossier attaché : le partagé devient son workspace', () => {
+  it('AUCUN dossier attaché : le partagé est son seul workspace', () => {
     // Le cas des agents utilitaires — générateur d'images, assistant de chat.
-    // Rien ne change pour eux, et c'est le seul cas où le partagé apparaît.
     const r = resolveWorkspaceList([], 'shared', SHARED);
     expect(r.workspaces).toEqual([{ label: 'shared', path: SHARED }]);
     expect(r.sharedPath).toBe(SHARED);
   });
 
-  it('aucun dossier ET pas de partagé : liste vide, rien d’inventé', () => {
+  it('pas de partagé disponible : rien d’inventé', () => {
     // `sharedPath` est null quand le mkdir a échoué. Fabriquer une entrée ferait
     // écrire l'agent dans un dossier qui n'existe pas.
-    const r = resolveWorkspaceList([], 'shared', null);
-    expect(r.workspaces).toEqual([]);
+    const r = resolveWorkspaceList([DEV], 'shared', null);
+    expect(r.workspaces).toEqual([DEV]);
     expect(r.sharedPath).toBeNull();
   });
 
+  it('n’ajoute pas un second partagé si l’espace en porte déjà un', () => {
+    const deja = [DEV, { label: 'shared', path: SHARED }];
+    const r = resolveWorkspaceList(deja, 'shared', SHARED);
+    expect(r.workspaces).toHaveLength(2);
+  });
+
   it('ne modifie pas la liste qu’on lui passe', () => {
-    // `executeJob` réutilise le tableau d'origine ; une mutation surprise s'y
-    // propagerait sans bruit.
     const attached = [DEV];
     resolveWorkspaceList(attached, 'shared', SHARED);
     expect(attached).toHaveLength(1);

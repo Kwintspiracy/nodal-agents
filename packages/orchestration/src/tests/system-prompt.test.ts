@@ -742,21 +742,70 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     expect(prompt).toContain('rapport.md');
   });
 
-  it('un agent qui a un dossier ne reçoit AUCUN bloc de workspace partagé', async () => {
-    // UN AGENT, UN DOSSIER (26/08). Le runner n'injecte plus le partagé qu'aux
-    // agents qui n'ont rien, donc `workspaceInventory` ne leur parvient plus.
+  it('le prompt liste les dossiers que les OUTILS ont, partagé compris', async () => {
+    // LA cause du chemin fantôme `C:\…\Documents\Dev\shared\outputs\x.html`
+    // (26/08). Le bloc se construisait par sa propre requête sur
+    // `agent_workspaces`, qui ne contient pas le workspace partagé — injecté au
+    // runtime. Le prompt annonçait donc UN dossier, au singulier, en affirmant
+    // que « bare relative paths » et « label/path » résolvaient au même endroit.
     //
-    // Ce test épingle la conséquence côté prompt : même si un inventaire
-    // arrivait par erreur, l'agent verrait un bloc qui dit « This is your
-    // workspace » sur un dossier qui n'est PAS le sien. C'est le mensonge qui
-    // fabriquait `Documents/Dev/shared/outputs/…` — il faut qu'il se voie.
+    // L'agent écrivait `shared/outputs/x.html`, les outils routaient
+    // correctement vers le partagé, et lui, croyant tout relatif à `Dev`,
+    // collait sa racine au chemin relatif pour annoncer un chemin inexistant.
     const { entityId } = await seedContext(db);
     const [agentRow] = await db
       .insert(agents)
       .values({
         entityId,
-        name: 'AvecDossierSansPartage',
-        slug: `sanspartage-${Date.now()}`,
+        name: 'DeuxDossiers',
+        slug: `deux-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+      })
+      .returning();
+    // La DB n'a QUE le dossier attaché — comme en vrai.
+    await db.insert(agentWorkspaces).values({
+      entityId,
+      agentId: agentRow!.id,
+      label: 'Dev',
+      path: 'C:\\Users\\kwint\\Documents\\Dev',
+    });
+
+    const prompt = await buildSystemPrompt(makeAgent(agentRow!.id, entityId, 'p'), db, {
+      origin: 'api',
+      // Ce que le runtime donne réellement aux outils.
+      workspaces: [
+        { label: 'Dev', path: 'C:\\Users\\kwint\\Documents\\Dev' },
+        { label: 'shared', path: 'C:\\Users\\kwint\\.nodalai\\workspaces\\e1\\shared' },
+      ],
+    } as JobContext);
+
+    expect(prompt, 'le bloc est resté au singulier alors que l’agent a deux dossiers').toContain(
+      '## Workspaces',
+    );
+    expect(prompt, 'le partagé n’est pas listé — l’agent ne connaît pas son chemin').toContain(
+      'C:\\Users\\kwint\\.nodalai\\workspaces\\e1\\shared',
+    );
+    expect(prompt).toContain('**shared**');
+    // Et surtout : la phrase qui affirmait que tout résout au même endroit ne
+    // doit plus apparaître, puisqu'elle est fausse dès qu'il y a deux racines.
+    expect(
+      prompt,
+      'le prompt affirme encore que le relatif et le label mènent au même endroit',
+    ).not.toContain('Both resolve to the same root');
+  });
+
+  it('sans liste du runtime, le prompt retombe sur la requête DB', async () => {
+    // Repli pour les appelants qui n'ont pas de runtime sous la main —
+    // l'aperçu du prompt dans le dashboard, par exemple. Il vaut mieux la
+    // liste incomplète que pas de bloc du tout.
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SansRuntime',
+        slug: `sansrt-${Date.now()}`,
         personality: 'p',
         role: 'agent',
       })
@@ -768,34 +817,23 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
       path: 'C:\\Users\\kwint\\Documents\\Dev',
     });
 
-    // Contexte SANS inventaire — ce que le runner produit désormais pour lui.
     const prompt = await buildSystemPrompt(makeAgent(agentRow!.id, entityId, 'p'), db, {
-      origin: 'api',
+      origin: 'dashboard',
     } as JobContext);
-
-    // Le SKILL cite « ## Shared workspace » pour y renvoyer — c'est le BLOC
-    // qu'on traque, reconnaissable à sa première phrase.
-    expect(prompt, 'un bloc de workspace partagé est rendu à un agent qui a le sien').not.toContain(
-      'This is your workspace',
-    );
-    expect(prompt).not.toContain('Source: shared workspace listing');
-    // Et son propre dossier est bien là, au singulier, ce qui est enfin VRAI.
     expect(prompt).toContain('Your workspace label is **Dev**');
   });
 
-  it('le partagé reste le workspace de l’agent qui n’a AUCUN dossier', async () => {
-    // C'est le SEUL cas qui reste. Le partagé n'est plus injecté qu'aux agents
-    // sans dossier attaché ; pour eux il EST leur workspace, et ce bloc dit la
-    // vérité. Rien ne change de leur côté.
+  it('le bloc du partagé le décrit pour ce qu’il est, sans décider où va le travail', async () => {
+    // Cette phrase a eu DEUX versions fausses dans la même journée :
+    //   « This is your workspace »        — faux pour qui a aussi le sien ;
+    //   « hand-off area […] belongs in Dev » — faux pour qui n'a que le partagé.
     //
-    // Le pluriel a existé une demi-journée : le partagé allait à tout le monde,
-    // et il a fallu une variante « zone de passage » pour expliquer aux agents
-    // à dossier qu'il n'était pas chez eux. La cause a été retirée, la variante
-    // avec.
+    // Les deux compensaient le mensonge du bloc `## Workspace`, qui annonçait
+    // un seul dossier. Il les liste désormais tous : ce bloc-ci peut se
+    // contenter de dire ce qu'est le partagé, pour tout le monde.
     const { entityId } = await seedContext(db);
     const inventaire = 'shared/\n  outputs/\n  workflows/\n';
 
-    // 1. AUCUN dossier attaché : le partagé EST son workspace.
     const [sansDossier] = await db
       .insert(agents)
       .values({
@@ -809,7 +847,11 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     const promptSans = await buildSystemPrompt(makeAgent(sansDossier!.id, entityId, 'p'), db, {
       workspaceInventory: inventaire,
     } as JobContext);
-    expect(promptSans).toContain('This is your workspace');
+    expect(promptSans).toContain('common hand-off area');
+    expect(
+      promptSans,
+      'le bloc s’approprie le partagé alors qu’il ne sait pas si l’agent a le sien',
+    ).not.toContain('This is your workspace');
     expect(promptSans).toContain('save new files into the existing folder that matches their kind');
 
     // 2. L'inventaire reste cadré comme une donnée externe, pas comme une
@@ -843,9 +885,8 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     } as JobContext);
 
     expect(prompt, 'le bloc entier disparaît quand le partagé est vide').toContain(
-      '## Shared workspace',
+      'common hand-off area',
     );
-    expect(prompt).toContain('This is your workspace');
   });
 
   it("n'ajoute aucun cadre quand il n'y a pas d'inventaire", async () => {

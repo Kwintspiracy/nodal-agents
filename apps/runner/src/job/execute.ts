@@ -881,33 +881,18 @@ async function runJob(
     .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
   const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
 
-  // Entity-wide SHARED workspace — le repli des agents qui n'ont AUCUN dossier.
+  // Entity-wide SHARED workspace : le SEUL terrain commun entre agents.
   //
-  // UN AGENT, UN DOSSIER (décision Quentin, 26/08). Il était injecté à TOUT le
-  // monde, y compris aux agents à qui le propriétaire avait explicitement
-  // attaché un dossier. C'est la racine d'une journée entière de symptômes :
+  // Injecté à tout le monde, délibérément — c'est ce qui permet à un agent qui
+  // tient un coffre de notes de passer un fichier à un agent qui génère des
+  // images. Le retirer à quiconque reçoit un dossier propre les désolidariserait
+  // du reste de l'équipe (objection de Quentin, 26/08, sur une première version
+  // de ce correctif qui faisait exactement ça).
   //
-  //   * le PROMPT ne le listait pas (sa liste vient de `agent_workspaces`),
-  //     alors que les OUTILS l'avaient. L'agent lisait « ton seul dossier est
-  //     Dev, tout est relatif à sa racine », écrivait `shared/outputs/x.html`
-  //     — que les outils routaient correctement vers le partagé — puis
-  //     construisait le chemin absolu en COLLANT les deux :
-  //     `C:\…\Documents\Dev\shared\outputs\x.html`. Un chemin qui n'existe
-  //     nulle part, et dont le début juste le rend crédible ;
-  //   * l'onglet Code ne connaît que les dossiers attachés : tout ce qui
-  //     partait dans le partagé lui était invisible ;
-  //   * il fallait une consigne de prompt, une section de skill et une règle de
-  //     délégation pour rattraper l'ambiguïté — trois rustines sur une cause.
-  //
-  // Le « hand-off entre agents » que le partagé servait à justifier passe déjà
-  // par le dossier ATTACHÉ quand il est commun : sur cette install les cinq
-  // agents de l'équipe dev partagent `Documents/Dev`, et le relecteur lit ce
-  // que le codeur y écrit sans passer par ailleurs.
-  //
-  // Reste vrai pour les agents SANS dossier : là, le partagé EST leur
-  // workspace, et rien ne change pour eux.
+  // La liste finale part ensuite AUSSI au prompt, via `jobContext.workspaces` —
+  // et c'est là qu'était le vrai défaut. Voir lib/workspace-list.ts.
   let sharedCandidate: string | null = null;
-  if (job.entityId && agentWorkspacesList.length === 0) {
+  if (job.entityId) {
     const sharedPath = join(workspacesRoot(), job.entityId, 'shared');
     try {
       mkdirSync(sharedPath, { recursive: true });
@@ -1115,6 +1100,10 @@ async function runJob(
   const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
+    // LA liste, celle que les outils ont — partagé compris. Le prompt la
+    // construisait par sa propre requête sur `agent_workspaces`, qui ne le
+    // contient pas : il annonçait un dossier là où l'agent en avait deux.
+    workspaces: agentWorkspacesList,
     ...(job.task ? { task: job.task } : {}),
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
     ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),

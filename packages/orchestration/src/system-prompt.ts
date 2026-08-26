@@ -94,6 +94,23 @@ export interface JobContext {
    */
   workspaceInventory?: string;
   /**
+   * Les dossiers que les OUTILS ont réellement — dossiers attachés PLUS le
+   * workspace partagé de l'espace (apps/runner/src/lib/workspace-list.ts).
+   *
+   * Sans ce champ, le bloc `## Workspace` se construisait par sa propre requête
+   * sur `agent_workspaces`, qui ne contient pas le partagé. Deux sources pour
+   * une même vérité, et le prompt mentait : il annonçait UN dossier là où les
+   * outils en avaient deux, et affirmait que « bare relative paths » et
+   * « label/path » résolvaient au même endroit. L'agent écrivait donc
+   * `shared/outputs/x.html`, correctement routé vers le partagé, puis annonçait
+   * `C:\…\Documents\Dev\shared\outputs\x.html` en collant sa racine au chemin
+   * relatif — un chemin qui n'existe nulle part (constaté le 26/08).
+   *
+   * Absent ⇒ repli sur la requête DB, pour les appelants qui n'ont pas de
+   * runtime sous la main (l'aperçu du dashboard, par exemple).
+   */
+  workspaces?: ReadonlyArray<{ label: string; path: string }>;
+  /**
    * Git state of the workspace, probed by the runner at job start
    * (apps/runner/src/lib/workspace-git.ts). Undefined when the workspace is not
    * a repository, or when git could not answer — in both cases the block is
@@ -724,8 +741,11 @@ export async function buildSystemPrompt(
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).
+  // La liste du RUNTIME quand elle est là — celle que les outils ont vraiment,
+  // partagé compris. La requête DB n'est qu'un repli pour les appelants sans
+  // runtime (l'aperçu du dashboard). Voir JobContext.workspaces.
   const workspacesBlock = buildWorkspacesBlock(
-    workspaceRows,
+    jobContext?.workspaces ?? workspaceRows,
     jobContext?.surface !== 'cli-runtime',
   );
 
@@ -839,19 +859,20 @@ export async function buildSystemPrompt(
   // L'inventaire reste montré aux DEUX : un agent qui a son dossier doit quand
   // même voir ce qu'un autre lui a déposé — c'est précisément la communication
   // qu'on veut garder. Seule la directive change.
-  // UN SEUL destinataire possible désormais : l'agent SANS dossier attaché.
+  // UNE SEULE formulation, vraie pour tout le monde (26/08).
   //
-  // Le runner n'injecte plus le partagé qu'aux agents qui n'ont rien (26/08,
-  // `execute.ts`), donc un agent a soit SES dossiers, soit le partagé — jamais
-  // les deux. La variante « hand-off » écrite plus tôt dans la journée n'a plus
-  // de destinataire : elle rattrapait une ambiguïté qui n'existe plus.
-  //
-  // C'est le bon sens de la correction : on retire la cause au lieu d'empiler
-  // les phrases qui expliquent comment vivre avec.
+  // Elle a dit « This is your workspace » — faux pour un agent qui a aussi le
+  // sien — puis « hand-off area […] belongs in **Dev** », faux pour un agent
+  // qui n'a que le partagé. Les deux variantes tentaient de compenser le fait
+  // que le bloc `## Workspace` mentait sur le nombre de dossiers. Il ne ment
+  // plus : il les liste tous, avec leurs chemins. Ce bloc-ci peut donc se
+  // contenter de décrire le partagé pour ce qu'il est, sans décider à la place
+  // du reste du prompt où va le travail.
   const inventoryBlock = jobContext?.workspaceInventory
     ? '\n\n## Shared workspace\n\n' +
-      'This is your workspace. ' +
-      'Before creating a workflow, script, or document, check whether one listed here already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
+      'The `shared` workspace is the common hand-off area — every agent here can read and write it, ' +
+      'which is how a file reaches a teammate. ' +
+      'Before creating a workflow, script, or document THERE, check whether one listed below already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
       // INJECT-001. The listing is produced by the runner, but the NAMES in it
       // are written by whoever created the files — another agent, a download, a
       // channel attachment. A file called
