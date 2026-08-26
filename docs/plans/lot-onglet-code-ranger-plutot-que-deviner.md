@@ -104,6 +104,24 @@ prochain `pnpm install` réussi. Elles ne masquent aucun problème de code.
   l'install est en `local-auth`, je n'ai pas de session.
 - Les tokens Discord + Slack fuités le 08/08 restent à révoquer (hors lot).
 
+## Micro-PR de nettoyage — APRÈS le merge (décision Quentin, 26/08)
+
+**Renommer l'outil `code_task`.** Le nom laisse croire à « une fonction qui
+code », alors que c'est un **appel au harnais CLI installé** (Claude Code ou
+Codex), sous l'abonnement du propriétaire. Candidats : `cli_code`,
+`run_coding_cli` (rime avec `run_command`, son cousin le plus proche),
+`cli_delegate`. Le skill `code-task` suit.
+
+Reporté volontairement : le nom est une DONNÉE, pas seulement du texte — il vit
+dans `tool_calls.tool_name`, `approval_rules`, `approval_requests` et le slug du
+skill. Le faire avant le merge mêlerait une migration de renommage à un lot déjà
+long.
+
+Portée mesurée le 26/08 : 137 occurrences dans 26 fichiers de code + 14 de test ;
+25 fichiers pour le slug `code-task`. En base sur cette install : 16 `tool_calls`,
+1 règle d'approbation (Reviewer C), 6 demandes, 1 skill. Migration nécessaire pour
+que l'historique et la règle de Reviewer C survivent.
+
 ## Ce qui attend une décision
 
 - **Une session dont le projet a été supprimé tombe dans « Other sessions ».**
