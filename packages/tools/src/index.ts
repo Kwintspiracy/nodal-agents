@@ -1,4 +1,4 @@
-// @nodal-agents/tools — public API
+﻿// @nodal-agents/tools — public API
 
 // Types
 export type {
@@ -89,6 +89,7 @@ export {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  workspaceLockKey,
   assertRuntimeSessionKey,
   CODE_TASK_KEY_PREFIX,
 } from './builtin/index';

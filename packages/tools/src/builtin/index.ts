@@ -1,4 +1,4 @@
-// Built-in tools registration
+﻿// Built-in tools registration
 // Call registerBuiltins(registry) once at startup to make all built-in tools available.
 
 import type { ToolRegistry } from '../types';
@@ -92,6 +92,7 @@ export {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  workspaceLockKey,
   assertRuntimeSessionKey,
   CODE_TASK_KEY_PREFIX,
 } from './code-task';

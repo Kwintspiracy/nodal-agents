@@ -1,4 +1,4 @@
-// cli-runtime/workspace-locks.ts — le créneau d'écriture unique d'une session
+﻿// cli-runtime/workspace-locks.ts — le créneau d'écriture unique d'une session
 // CLI, sur TOUS ses dossiers.
 //
 // Le contrat existait déjà (un seul travail en écriture par dossier à la fois,
@@ -17,6 +17,7 @@ import {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  workspaceLockKey,
 } from '@nodal-agents/tools';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
@@ -54,7 +55,27 @@ export async function acquireWorkspaceLocks(
     held.length = 0;
   };
 
-  for (const dir of [...new Set(dirs)].sort()) {
+  // Dédupliqué par CLÉ DE VERROU, pas par chaîne brute.
+  //
+  // Le tour précédent a fait normaliser la clé côté base ; celle-ci restait
+  // naïve. Un agent ayant le même dossier attaché deux fois sous deux
+  // orthographes — `C:/Common` et `c:\common\` — voyait donc deux entrées ici,
+  // prenait le verrou, puis se heurtait À LUI-MÊME sur la seconde : tout était
+  // rendu et la session refusée en `workspace_locked` (revue Codex, 27/08). Le
+  // correctif d'avant avait créé ce cas-là.
+  //
+  // On garde la première ORTHOGRAPHE rencontrée : elle sert aux messages, et la
+  // clé normalisée est recalculée à la prise.
+  const parCle = new Map<string, string>();
+  for (const dir of dirs) {
+    const cle = workspaceLockKey(dir);
+    if (!parCle.has(cle)) parCle.set(cle, dir);
+  }
+  // Ordre STABLE sur la CLÉ : deux sessions demandant les mêmes dossiers écrits
+  // différemment doivent quand même les prendre dans le même ordre.
+  const ordonnes = [...parCle.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+  for (const [, dir] of ordonnes) {
     try {
       await acquireWorkspaceLock(db, dir, token, agentId);
       held.push(dir);

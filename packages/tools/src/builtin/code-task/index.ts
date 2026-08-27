@@ -1,4 +1,4 @@
-// builtin/code-task/index.ts — the code_task built-in tool (étape B of the
+﻿// builtin/code-task/index.ts — the code_task built-in tool (étape B of the
 // subscription-runtimes plan).
 //
 // Delegates a complete dev task (analyse, debug, code, review) to the coding
@@ -46,6 +46,7 @@ export {
   CliBudgetExceededError,
   CliProviderDisabledError,
   WorkspaceLockedError,
+  workspaceLockKey,
   ReadOnlyAgentError,
 } from './db';
 export {

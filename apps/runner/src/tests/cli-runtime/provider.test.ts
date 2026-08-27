@@ -133,15 +133,11 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     // arrière une revue de plus : deux copies, un seul correctif appliqué. La
     // prise de verrous vit donc dans son propre module, et les DEUX chemins
     // l'appellent — c'est ce que ce test vérifie.
-    const locks = read('apps/runner/src/cli-runtime/workspace-locks.ts');
-    // Ordre STABLE : deux sessions demandant les mêmes dossiers les prennent
-    // dans le même ordre, donc l'une attend au lieu que les deux se bloquent.
-    expect(locks, 'sans tri, deux sessions peuvent se bloquer mutuellement').toMatch(
-      /\[\.\.\.new Set\(dirs\)\]\.sort\(\)/,
-    );
-    // Et ceux déjà pris sont rendus si l'un échoue.
-    expect(locks).toMatch(/catch[\s\S]{0,80}await release\(\)/);
-
+    // Le COMPORTEMENT du module — ordre stable, déduplication par identité,
+    // rien laissé derrière en cas de refus — est prouvé sur une vraie base dans
+    // `workspace-locks.test.ts`. Ici on vérifie seulement ce qu'un test de
+    // comportement ne peut pas voir : que les DEUX points d'entrée l'appellent
+    // avec la liste complète de leurs dossiers.
     for (const rel of [
       'apps/runner/src/cli-runtime/run-job.ts',
       'apps/runner/src/cli-runtime/run-chat.ts',
