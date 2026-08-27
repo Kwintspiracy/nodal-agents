@@ -1,4 +1,4 @@
-// builtin/code-task/db.ts — budget, audit record, and workspace write-lock.
+﻿// builtin/code-task/db.ts — budget, audit record, and workspace write-lock.
 //
 // All SQL goes through the @nodal-agents/db barrel (the dep-cruiser rule
 // forbids importing pg/drizzle-orm node_modules outside packages/db; the
@@ -154,6 +154,31 @@ export class WorkspaceLockedError extends Error {
 }
 
 /**
+ * LA clé d'un verrou de dossier.
+ *
+ * Le même dossier s'écrit de plusieurs façons — `C:/Common`, `c:\common`,
+ * `C:\Common\` — et le verrou vit dans une colonne texte : trois orthographes,
+ * trois verrous, aucun ne bloquant les autres. Deux sessions en écriture
+ * pouvaient donc modifier les mêmes fichiers en même temps (revue Codex,
+ * 27/08), ce que le contrat d'un seul créneau promet d'empêcher. Le risque est
+ * apparu en ouvrant les dossiers SECONDAIRES à l'écriture : jusque-là chaque
+ * session ne verrouillait que son propre `cwd`.
+ *
+ * Normalisé ICI plutôt que chez les appelants : `code_task` et le runtime
+ * passent tous les deux par cette fonction, et normaliser d'un seul côté aurait
+ * fait cesser les deux de se voir — pire que le défaut d'origine.
+ *
+ * Même règle d'identité que les projets (`projectKey`) : la casse n'est repliée
+ * que sur les chemins Windows, où elle n'est pas significative. Sur un système
+ * sensible à la casse, `/srv/App` et `/srv/app` sont deux dossiers.
+ */
+export function workspaceLockKey(workspacePath: string): string {
+  const s = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const isWindows = /^[a-z]:\//i.test(s) || s.startsWith('//');
+  return isWindows ? s.toLowerCase() : s;
+}
+
+/**
  * Acquire the single write-slot for a workspace. Atomic INSERT … ON CONFLICT
  * DO NOTHING; on conflict, one conditional-UPDATE attempt to steal a stale
  * lock (holder older than 30 min — a crashed runner must not wedge the
@@ -161,10 +186,11 @@ export class WorkspaceLockedError extends Error {
  */
 export async function acquireWorkspaceLock(
   db: AnyDrizzleDb,
-  workspacePath: string,
+  rawWorkspacePath: string,
   jobId: string,
   agentId: string,
 ): Promise<void> {
+  const workspacePath = workspaceLockKey(rawWorkspacePath);
   const inserted = await db
     .insert(workspaceLocks)
     .values({ workspacePath, jobId, agentId })
@@ -197,9 +223,12 @@ export async function acquireWorkspaceLock(
 /** Release the lock — only if THIS job still holds it (a stealer may have won). */
 export async function releaseWorkspaceLock(
   db: AnyDrizzleDb,
-  workspacePath: string,
+  rawWorkspacePath: string,
   jobId: string,
 ): Promise<void> {
+  // La MÊME clé qu'à la prise, sinon le verrou ne se rend jamais et le dossier
+  // reste bloqué jusqu'à expiration.
+  const workspacePath = workspaceLockKey(rawWorkspacePath);
   await db
     .delete(workspaceLocks)
     .where(and(eq(workspaceLocks.workspacePath, workspacePath), eq(workspaceLocks.jobId, jobId)));

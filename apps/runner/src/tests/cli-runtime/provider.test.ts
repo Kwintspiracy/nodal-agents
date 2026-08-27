@@ -183,6 +183,23 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     }
   });
 
+  it('le chat construit la MÊME liste de dossiers que le job — partagé compris', () => {
+    // Constat de la revue Codex (27/08). Le partagé n'a AUCUNE ligne en base :
+    // il est fabriqué à l'exécution, et seul `execute.ts` l'ajoutait. Depuis le
+    // chat du tableau de bord, un agent en runtime CLI ne pouvait donc ni lire
+    // ni écrire les fichiers de transmission de l'équipe — et un agent SANS
+    // dossier attaché y échouait en `workspace_not_configured` alors que ses
+    // jobs tournaient très bien. Deux points d'entrée, deux réalités.
+    for (const rel of [
+      'apps/runner/src/job/execute.ts',
+      'apps/runner/src/cli-runtime/run-chat.ts',
+    ]) {
+      const src = read(rel);
+      expect(src, `${rel} : le partagé n'est pas ajouté`).toContain('ensureSharedWorkspace(');
+      expect(src, `${rel} : la liste n'est pas résolue`).toContain('resolveWorkspaceList(');
+    }
+  });
+
   it('la liste des dossiers passe au prompt — le partagé n’a pas de ligne en base', () => {
     // Constat P2 de la revue Codex (27/08). Sans elle, `buildSystemPrompt`
     // retombe sur `agent_workspaces`, où le workspace PARTAGÉ n'existe pas : il

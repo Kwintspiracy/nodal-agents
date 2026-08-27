@@ -31,6 +31,7 @@ import {
   CliBudgetExceededError,
   CliProviderDisabledError,
   WorkspaceLockedError,
+  workspaceLockKey,
 } from '../builtin/code-task/db';
 import { buildChildEnv } from '../builtin/child-env';
 
@@ -493,20 +494,52 @@ describe('code_task DB seams', () => {
     await releaseWorkspaceLock(db, ws, otherJob);
   });
 
+  it('le MÊME dossier écrit autrement partage le MÊME verrou', async () => {
+    // Constat de la revue Codex (27/08). Le verrou vit dans une colonne texte :
+    // `C:/Common`, `c:\common` et `C:\Common\` désignent le même dossier et
+    // produisaient trois verrous, dont aucun ne bloquait les autres. Deux
+    // sessions en écriture pouvaient donc modifier les mêmes fichiers en même
+    // temps — ce que le contrat d'un seul créneau promet d'empêcher. Le risque
+    // est apparu en ouvrant les dossiers SECONDAIRES à l'écriture : jusque-là
+    // chaque session ne verrouillait que son propre dossier de travail.
+    const autre = '00000000-0000-0000-0000-0000000000bb';
+    await acquireWorkspaceLock(db, 'C:/Common', jobId, agentId);
+    for (const orthographe of ['c:\\common', 'C:\\Common\\', 'C:/COMMON']) {
+      await expect(
+        acquireWorkspaceLock(db, orthographe, autre, agentId),
+        `"${orthographe}" ouvre un second créneau sur le même dossier`,
+      ).rejects.toThrow(WorkspaceLockedError);
+    }
+    // Et il se REND sous n'importe laquelle de ses formes : sinon le dossier
+    // resterait bloqué jusqu'à expiration.
+    await releaseWorkspaceLock(db, 'c:\\common\\', jobId);
+    await acquireWorkspaceLock(db, 'C:/Common', autre, agentId);
+    await releaseWorkspaceLock(db, 'C:/Common', autre);
+  });
+
+  it('la casse d’un chemin POSIX reste SIGNIFICATIVE — deux dossiers, deux verrous', () => {
+    // Le pendant : sur un système sensible à la casse, `/srv/App` et `/srv/app`
+    // sont deux dossiers. Les confondre bloquerait un travail légitime.
+    expect(workspaceLockKey('/srv/App')).not.toBe(workspaceLockKey('/srv/app'));
+    expect(workspaceLockKey('C:\\Dev\\App\\')).toBe(workspaceLockKey('c:/dev/app'));
+    // Un partage réseau est un chemin Windows, lui aussi insensible à la casse.
+    expect(workspaceLockKey('\\\\serveur\\part\\App')).toBe(workspaceLockKey('//SERVEUR/part/app'));
+  });
+
   it('a STALE lock (>30 min) is stolen atomically instead of wedging the workspace', async () => {
     const ws = 'D:\\ws\\stale';
     await acquireWorkspaceLock(db, ws, jobId, agentId);
     await db
       .update(workspaceLocks)
       .set({ acquiredAt: sql`now() - interval '31 minutes'` })
-      .where(eq(workspaceLocks.workspacePath, ws));
+      .where(eq(workspaceLocks.workspacePath, workspaceLockKey(ws)));
 
     const thief = '00000000-0000-0000-0000-0000000000aa';
     await acquireWorkspaceLock(db, ws, thief, agentId); // steal succeeds
     const [row] = await db
       .select({ jobId: workspaceLocks.jobId })
       .from(workspaceLocks)
-      .where(eq(workspaceLocks.workspacePath, ws));
+      .where(eq(workspaceLocks.workspacePath, workspaceLockKey(ws)));
     expect(row?.jobId).toBe(thief);
 
     // the original holder's release is a no-op — it no longer owns the lock
@@ -514,7 +547,7 @@ describe('code_task DB seams', () => {
     const [still] = await db
       .select({ jobId: workspaceLocks.jobId })
       .from(workspaceLocks)
-      .where(eq(workspaceLocks.workspacePath, ws));
+      .where(eq(workspaceLocks.workspacePath, workspaceLockKey(ws)));
     expect(still?.jobId).toBe(thief);
     await releaseWorkspaceLock(db, ws, thief);
   });

@@ -1,4 +1,4 @@
-// job/execute.ts — executeJob: the main LLM loop
+﻿// job/execute.ts — executeJob: the main LLM loop
 // Invariants enforced:
 //   2: no hardcoded user-facing strings (error codes only)
 //   3: no agent-specific band-aids (fail loud on all errors)
@@ -131,14 +131,11 @@ import {
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { triggerWorker } from '../routes/agent.ts';
-import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
-import { resolveWorkspaceList } from '../lib/workspace-list.ts';
+import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
@@ -891,16 +888,8 @@ async function runJob(
   //
   // La liste finale part ensuite AUSSI au prompt, via `jobContext.workspaces` —
   // et c'est là qu'était le vrai défaut. Voir lib/workspace-list.ts.
-  let sharedCandidate: string | null = null;
-  if (job.entityId) {
-    const sharedPath = join(workspacesRoot(), job.entityId, 'shared');
-    try {
-      mkdirSync(sharedPath, { recursive: true });
-      sharedCandidate = sharedPath;
-    } catch {
-      // best-effort — a workspace we couldn't create is simply not offered
-    }
-  }
+  // Création partagée avec le chemin CHAT — voir lib/workspace-list.ts.
+  const sharedCandidate = ensureSharedWorkspace(job.entityId);
   const resolved = resolveWorkspaceList(
     agentWorkspacesList,
     SHARED_WORKSPACE_LABEL,

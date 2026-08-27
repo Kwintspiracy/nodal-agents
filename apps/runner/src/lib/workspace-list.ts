@@ -27,10 +27,39 @@
 // On répare un mensonge en disant la vérité, pas en amputant une capacité :
 // tout le monde garde le partagé, et le prompt liste ce que les outils ont.
 
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { workspacesRoot } from './workspaces-root.ts';
+
 /** Un dossier tel que les outils le voient. */
 export interface WorkspaceEntry {
   label: string;
   path: string;
+}
+
+/**
+ * Le dossier PARTAGÉ d'un espace, créé au besoin. `null` si on n'a pas pu.
+ *
+ * Il n'a AUCUNE ligne dans `agent_workspaces` : il est fabriqué à l'exécution.
+ * Une requête sur cette table ne le trouve donc jamais — et c'est exactement ce
+ * qui manquait au chemin CHAT (revue Codex, 27/08) : un agent en runtime CLI ne
+ * pouvait ni lire ni écrire les fichiers de transmission de l'équipe depuis le
+ * tableau de bord, et un agent SANS dossier attaché y échouait en
+ * `workspace_not_configured` alors que ses jobs, eux, tournaient très bien.
+ *
+ * Sorti ici pour que les deux points d'entrée du runtime construisent la même
+ * liste — la duplication est précisément ce qui a laissé le chat en arrière.
+ */
+export function ensureSharedWorkspace(entityId: string | null): string | null {
+  if (!entityId) return null;
+  const sharedPath = join(workspacesRoot(), entityId, 'shared');
+  try {
+    mkdirSync(sharedPath, { recursive: true });
+    return sharedPath;
+  } catch {
+    // best-effort — un dossier qu'on n'a pas su créer n'est simplement pas offert
+    return null;
+  }
 }
 
 /**
