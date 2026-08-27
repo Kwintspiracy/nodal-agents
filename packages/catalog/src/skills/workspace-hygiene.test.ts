@@ -43,12 +43,26 @@ describe('workspace-hygiene', () => {
     expect(workspaceHygieneSkill.content).toMatch(/do not invent a .?shared\/.? path inside it/i);
   });
 
-  it('dit à l’agent comment savoir s’il a un partagé', () => {
+  it('dit à l’agent comment savoir s’il a un partagé — par la LISTE, pas par l’inventaire', () => {
     // Le skill est un texte statique : il ne peut pas savoir. Il renvoie donc
-    // aux deux blocs du prompt, qui eux le savent.
+    // aux blocs du prompt, qui eux le savent.
+    //
+    // Il renvoyait à l'INVENTAIRE (« si tu n'as pas de bloc `## Shared
+    // workspace`, tu n'en as pas »), et c'était faux pour tout agent en runtime
+    // CLI : ces chemins montent bien le partagé dans `## Workspaces` mais ne
+    // construisent jamais l'inventaire. On leur affirmait donc que le dossier
+    // de transmission de l'équipe n'existe pas alors qu'il est là et
+    // accessible en écriture (revue Codex, 27/08).
+    //
+    // La liste des dossiers est ce que les OUTILS peuvent atteindre : c'est
+    // elle qui fait foi. L'inventaire ne dit que ce qu'il y a dedans.
     const c = workspaceHygieneSkill.content;
-    expect(c).toContain('## Shared workspace');
-    expect(c).toContain('## Workspace');
+    const consigne = c.slice(0, c.indexOf('### Reuse'));
+    expect(consigne, 'la présence du partagé se déduit du bloc Workspaces').toContain(
+      '`## Workspaces` block lists a folder labelled `shared`',
+    );
+    // Et l'absence d'inventaire ne vaut PLUS absence de dossier.
+    expect(consigne).toContain('never that the folder is missing');
   });
 
   it('n’installe pas le partagé comme LE lieu des fichiers produits', () => {

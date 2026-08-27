@@ -466,6 +466,24 @@ describe('code_task DB seams', () => {
     await expect(assertCliBudget(db, agentId)).rejects.toThrow(/\$10\.50/);
   });
 
+  it('un fournisseur SANS coût rapporté n’est pas bloqué par les dépenses des autres', async () => {
+    // Constat de la revue Codex (27/08). L'écran annonce « aucun plafond en
+    // dollars ne borne ce harnais » et masque le champ — parce que Codex
+    // n'écrit aucun coût. Mais le runner sommait TOUTES les dépenses de
+    // l'agent, Claude et code_task compris : un agent basculé sur Codex après
+    // une journée sous Claude se retrouvait bloqué jusqu'au lendemain, pour un
+    // plafond qu'on venait de lui dire inapplicable, et sans champ pour le
+    // relever. L'écran et le runner se contredisaient.
+    //
+    // Le plafond mord toujours pour Claude — c'est la ligne au-dessus qui le
+    // prouve, avec les mêmes $10.50 déjà dépensés.
+    await expect(assertCliBudget(db, agentId, 'claude')).rejects.toThrow(CliBudgetExceededError);
+    await assertCliBudget(db, agentId, 'codex');
+    // Et sans fournisseur nommé, la garde s'applique comme avant : aucun
+    // appelant ne perd sa protection en n'ayant rien changé.
+    await expect(assertCliBudget(db, agentId)).rejects.toThrow(CliBudgetExceededError);
+  });
+
   it('budget 0 = uncapped (same convention as daily_token_limit)', async () => {
     await db.update(agents).set({ cliDailyBudgetUsd: 0 }).where(eq(agents.id, agentId));
     await assertCliBudget(db, agentId); // $10.50 spent, no cap → passes

@@ -74,17 +74,46 @@ export function assertCliProviderEnabled(
 }
 
 /**
+ * Les fournisseurs qui ne rapportent AUCUN coût.
+ *
+ * Codex n'en écrit pas dans `cli_runs` : ses tours n'ajoutent rien à la somme,
+ * et le plafond en dollars ne peut donc rien borner chez lui. L'interface le dit
+ * (`CLI_RUNTIME_REPORTS_COST`, apps/web/src/lib/cli-runtimes.ts) et cesse de
+ * proposer le champ.
+ */
+const UNMETERED_PROVIDERS = new Set(['codex']);
+
+/**
  * Enforce the per-agent daily cap on notional CLI cost BEFORE spawning, and
  * return the agent's CLI config (one roundtrip serves both needs).
  * Budget 0 = uncapped. Fails loud — never silently skips the run.
+ *
+ * `provider` : quand il ne rapporte aucun coût, la garde ne s'applique pas.
+ *
+ * Sans ce paramètre, l'écran et le runner se contredisaient (revue Codex,
+ * 27/08) : la carte annonçait « aucun plafond en dollars ne borne ce harnais »
+ * et masquait le champ, pendant que le runner sommait TOUTES les dépenses de
+ * l'agent — Claude et `code_task` compris. Un agent basculé sur Codex après une
+ * journée de travail sous Claude se retrouvait bloqué jusqu'au lendemain, pour
+ * un plafond qu'on venait de lui dire inapplicable, et sans champ pour le
+ * relever.
+ *
+ * Ça ne desserre rien : un tour Codex n'ajoute aucun dollar à la somme, donc le
+ * sauter ne laisse passer aucune dépense. Ce qui borne un tour Codex, c'est le
+ * délai par tour et le plafond d'appels d'outils.
  */
-export async function assertCliBudget(db: AnyDrizzleDb, agentId: string): Promise<CliAgentConfig> {
+export async function assertCliBudget(
+  db: AnyDrizzleDb,
+  agentId: string,
+  provider?: string,
+): Promise<CliAgentConfig> {
   const [agentRow] = await db
     .select({ budget: agents.cliDailyBudgetUsd, defaults: agents.cliDefaults })
     .from(agents)
     .where(eq(agents.id, agentId))
     .limit(1);
   const config: CliAgentConfig = { defaults: agentRow?.defaults ?? null };
+  if (provider !== undefined && UNMETERED_PROVIDERS.has(provider)) return config;
   const budget = agentRow?.budget ?? 0;
   if (budget <= 0) return config; // 0 = no cap (same convention as daily_token_limit)
 

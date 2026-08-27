@@ -79,7 +79,7 @@ export async function runCliRuntimeChatTurn(args: {
   if (!cwd) return { ok: false, error: 'workspace_not_configured' };
 
   try {
-    await assertCliBudget(db, agentRow.id);
+    await assertCliBudget(db, agentRow.id, binding.provider);
   } catch (err) {
     return {
       ok: false,

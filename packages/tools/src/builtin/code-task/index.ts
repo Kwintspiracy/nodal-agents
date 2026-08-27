@@ -235,7 +235,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
 
     // Budget gate BEFORE any spawn (fail loud, run never starts).
-    const cliConfig = await assertCliBudget(ctx.db, ctx.agentId);
+    const cliConfig = await assertCliBudget(ctx.db, ctx.agentId, input.provider);
 
     // Owner allow-list: a provider the owner switched off is refused loud
     // BEFORE resolving the binary (invariant #9 at the provider level).

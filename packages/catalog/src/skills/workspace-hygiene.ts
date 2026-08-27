@@ -1,4 +1,4 @@
-// catalog/skills/workspace-hygiene.ts — system skill, shipped with the product.
+﻿// catalog/skills/workspace-hygiene.ts — system skill, shipped with the product.
 //
 // Source of truth for the 'content' field. The bootstrap seeder upserts this
 // row at boot; users can override per-install via the dashboard (preserved via
@@ -34,7 +34,9 @@ export const workspaceHygieneSkill: SystemSkill = {
   kind: 'baseline',
   content: `## Workspace hygiene
 
-This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and its live inventory is in your context under "Shared workspace". Everything below applies to what you put THERE. If you have no \`## Shared workspace\` block, you do not have one: work in the folder your \`## Workspace\` block names, and ignore this skill's folder layout.
+This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and everything below applies to what you put THERE.
+
+You have one when your \`## Workspaces\` block lists a folder labelled \`shared\` — that block is what your tools can actually reach, so it is the only thing to check. When a \`## Shared workspace\` block is also present, it lists what is already in there; its absence means the listing was not built for this turn, never that the folder is missing. If no \`shared\` folder is listed at all, work in the folder your \`## Workspaces\` block names and ignore this skill's folder layout.
 
 ### Reuse before recreating
 

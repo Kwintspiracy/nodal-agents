@@ -147,7 +147,7 @@ export async function runCliRuntimeJob(args: {
 
   // Daily notional budget — same counter as code_task (cli_runs).
   try {
-    await assertCliBudget(db, agentRow.id);
+    await assertCliBudget(db, agentRow.id, binding.provider);
   } catch (err) {
     return fail(err instanceof Error ? err.message.slice(0, 300) : 'cli_daily_budget_exceeded');
   }
