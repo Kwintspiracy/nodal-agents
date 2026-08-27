@@ -1,4 +1,4 @@
-// code-task.test.ts — the code_task builtin's pure seams (argv construction,
+﻿// code-task.test.ts — the code_task builtin's pure seams (argv construction,
 // CLI-output parsing, spawn shim, PATH resolution) plus its DB seams (daily
 // budget, workspace write-lock) on pglite.
 //
@@ -8,9 +8,10 @@
 // actually printed, not against what we hope they print.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, delimiter } from 'node:path';
+import { join, delimiter, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { agents, cliRuns, workspaceLocks, eq, sql, type AnyDrizzleDb } from '@nodal-agents/db';
 import {
@@ -80,7 +81,7 @@ describe('buildProviderArgs', () => {
   });
 
   it('codex read: stdin sentinel `-`, sandbox read-only, personal MCP servers neutralized', () => {
-    const args = buildProviderArgs('codex', 'read');
+    const args = buildProviderArgs('codex', 'read', { platform: 'linux' });
     expect(args).toEqual([
       'exec',
       '--json',
@@ -90,6 +91,76 @@ describe('buildProviderArgs', () => {
       '--ignore-user-config',
       '-',
     ]);
+  });
+
+  it('codex sur WINDOWS : le mécanisme de confinement est nommé, sinon rien n’est écrit', () => {
+    // Mesuré le 27/08, quatre runs, une variable à la fois. Sur Windows le bac à
+    // sable par défaut n'existe pas : `--sandbox workspace-write` était bien
+    // passé, le tour se terminait normalement, et le modèle répondait
+    // « l'environnement interdit toute écriture » sans qu'aucune erreur
+    // n'apparaisse. La seule différence avec un `codex` lancé à la main était
+    // `--ignore-user-config`, qui protège les MCP personnels du propriétaire et
+    // jetait ce réglage avec le reste.
+    //
+    // Conséquence : sur cette plateforme, ni `code_task` ni un agent en runtime
+    // Codex ne pouvaient écrire QUOI QUE CE SOIT.
+    const win = buildProviderArgs('codex', 'write', { platform: 'win32' });
+    expect(win, 'sur Windows, aucune écriture n’aboutit').toContain('windows.sandbox="elevated"');
+    // Toujours après `--ignore-user-config` : on nomme le mécanisme SANS
+    // rouvrir la porte aux serveurs MCP personnels.
+    expect(win).toContain('--ignore-user-config');
+    // `-` reste EN DERNIER : c'est lui qui fait lire les instructions sur stdin.
+    expect(win[win.length - 1]).toBe('-');
+
+    // Ailleurs, rien à nommer : le bac à sable du système s'applique seul.
+    expect(buildProviderArgs('codex', 'write', { platform: 'linux' })).not.toContain(
+      'windows.sandbox="elevated"',
+    );
+  });
+
+  it('la SONDE mesure le même argv que le produit', () => {
+    // `scripts/probe-codex-sandbox.mjs` est du Node pur : il ne peut pas
+    // importer ce constructeur et recopie l'argv à la main. Le 27/08 la copie a
+    // dérivé — le produit a gagné le réglage Windows, la sonde non — et la
+    // sonde a passé une journée à mesurer un argv que personne n'expédie, en
+    // rapportant « aucune commande tentée ». Une sonde qui garde le produit
+    // doit tenir le même langage que lui.
+    const probe = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../../scripts/probe-codex-sandbox.mjs'),
+      'utf8',
+    );
+    const win = buildProviderArgs('codex', 'write', { platform: 'win32' });
+    for (const flag of ['--ignore-user-config', 'windows.sandbox="elevated"']) {
+      expect(win).toContain(flag);
+      expect(probe, `la sonde ne passe pas ${flag}`).toContain(flag);
+    }
+    // Et elle ne tente PAS son évasion dans le dossier TEMP : `workspace-write`
+    // l'accorde par conception, donc l'évasion « réussissait » exactement quand
+    // le bac à sable fonctionnait. Une garde qui crie au feu quand tout va bien
+    // pousse à fermer une fonctionnalité qui marche.
+    expect(probe, 'la sonde vise TEMP, le seul endroit autorisé').toMatch(
+      /const outside = join\(homedir\(\)/,
+    );
+  });
+
+  it('le réglage Windows ne DESSERRE rien — il nomme, il n’autorise pas', () => {
+    // ⚠️ Le garde-fou de ce correctif. Un commentaire du dépôt accusait ce
+    // réglage d'avoir désactivé le confinement le 21/08 ; la mesure le
+    // disculpe, et ces deux assertions fixent ce qui a été mesuré :
+    //   - lecture seule + elevated → refuse d'écrire dans son propre dossier ;
+    //   - écriture + elevated → refuse d'écrire hors du dossier de travail.
+    // Le mode demandé reste donc ce qui décide, sur Windows comme ailleurs.
+    const read = buildProviderArgs('codex', 'read', { platform: 'win32' });
+    expect(read[read.indexOf('--sandbox') + 1], 'la lecture seule devient écrivable').toBe(
+      'read-only',
+    );
+    const write = buildProviderArgs('codex', 'write', { platform: 'win32' });
+    expect(write[write.indexOf('--sandbox') + 1]).toBe('workspace-write');
+    // Et jamais le mode qui, lui, supprimerait vraiment le bac à sable.
+    for (const args of [read, write]) {
+      expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+      expect(args).not.toContain('danger-full-access');
+    }
   });
 
   it('codex write: sandbox workspace-write', () => {
