@@ -209,7 +209,31 @@ immédiat et tout autre dossier de Documents. Seul TEMP s'ouvre, que
    aussi l'argv du produit à la main, et la copie avait dérivé ; un test tient
    maintenant les deux en phase.
 
-## Ce que la revue a corrigé — vingt-deux passes complètes de `codex review --base main`
+## La revue est CLOSE
+
+Dernière passe, le 27/08 à 16h : **« No actionable defects were identified in
+the changed code. »** La boucle revue → correction → revue a tourné jusqu'à ce
+que Codex ne demande plus rien, comme le veut la règle du dépôt.
+
+Vingt-huit passes complètes, vingt-quatre constats, chacun fermé par un test qui
+échoue d'abord et — pour les correctifs sensibles — vérifié par mutation.
+
+**Ce que cette boucle a appris**, et qui vaut plus que le décompte :
+
+- Les défauts les plus graves **ne portaient pas sur la nouveauté du lot**. Ils
+  dormaient dans du code qui tourne tous les jours — la sortie des outils écrite
+  en clair dans l'audit, une restriction d'outils contournable en changeant de
+  harnais, un garde anti-boucle qui sous-comptait. C'est la nouveauté qui les a
+  éclairés.
+- **Cinq constats venaient d'un correctif précédent.** Une revue unique les
+  aurait tous manqués.
+- **Quatre fois**, un premier test s'est révélé ne rien prouver : il vérifiait la
+  fonction corrigée pendant que le CÂBLAGE restait faux, et passait avec le bug
+  en place. À chaque fois c'est la mutation qui l'a montré.
+- Les derniers constats étaient tous de la même famille : **l'écran ou le prompt
+  disait une chose, le runner en faisait une autre.**
+
+## Ce que la revue a corrigé — le détail
 
 C'est la colonne la plus utile à relire : chaque ligne est un constat qui aurait
 été redécouvert plus tard, à l'usage.
