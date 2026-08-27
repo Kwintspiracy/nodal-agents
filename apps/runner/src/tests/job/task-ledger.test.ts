@@ -14,6 +14,8 @@ import {
   formatTaskLedgerEntry,
   formatTaskLedgerLines,
   MAX_TASKS_PER_EXCHANGE,
+  loadInlineDelegationLedger,
+  formatInlineDelegationLines,
 } from '../../job/task-ledger.ts';
 
 let db: TestDb;
@@ -233,5 +235,146 @@ describe('loadTaskLedger', () => {
       '[Task "a" completed: actions — web_search; result: ok]',
       '[Task "b" failed: error: (no result)]',
     ]);
+  });
+});
+
+// ─── Délégation EN LIGNE (`assign_*`) — incident du 26/08 ────────────────────
+//
+// Un orchestrateur a annoncé sur Telegram, quatre fois dans la journée :
+// « app livrée et validée par Reviewer C (2 passes) », avec le nom du relecteur
+// et le nombre de passes. Aucune délégation, aucune écriture, aucun fichier.
+//
+// Les deux registres au-dessus l'ont laissé passer : celui de thread-history ne
+// se déclenche que sur STATE_CHANGING_TOOLS (où `assign_<slug>` ne peut pas
+// figurer — ce serait un slug d'agent en dur, invariant #1), et celui-ci ne
+// lisait que `agent_tasks`, la table que pose `create_task`. La délégation en
+// ligne crée un `agent_jobs` enfant et ne touche jamais `agent_tasks`.
+//
+// Dans l'historique, un vrai compte rendu et un inventé arrivaient donc nus
+// tous les deux.
+
+describe('loadInlineDelegationLedger', () => {
+  /** Un enfant de délégation EN LIGNE : lié par parent_job_id, pas par agent_tasks. */
+  async function insertInlineChild(
+    parentId: string,
+    opts: { toolsUsed?: string[]; status?: string; channel?: string } = {},
+  ): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: opts.channel ?? 'internal',
+        task: 'build the app',
+        status: opts.status ?? 'completed',
+        parentJobId: parentId,
+        ...(opts.toolsUsed !== undefined ? { toolsUsed: opts.toolsUsed } : {}),
+      })
+      .returning({ id: agentJobs.id });
+    return row!.id;
+  }
+
+  async function insertParent(): Promise<string> {
+    const [row] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 'fais-moi une app',
+        status: 'completed',
+      })
+      .returning({ id: agentJobs.id });
+    return row!.id;
+  }
+
+  it('rend les actions RÉELLES de l’enfant, pas la prose du parent', async () => {
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: ['file_write', 'review_verdict'] });
+
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    const entries = ledger.get(parent) ?? [];
+    expect(entries, 'la délégation en ligne reste invisible').toHaveLength(1);
+    expect(entries[0]!.toolsUsed).toEqual(['file_write', 'review_verdict']);
+  });
+
+  it('LE cas du 26/08 : un tour SANS délégation ne produit AUCUNE ligne', async () => {
+    // C'est ce contraste qui manquait. Le tour inventé n'a aucun enfant ; il
+    // n'aura donc aucune ligne, là où les vrais tours en portent une. Le motif
+    // « demande d'app → compte rendu de livraison » cesse d'être uniforme.
+    const parent = await insertParent();
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    expect(ledger.get(parent) ?? []).toHaveLength(0);
+  });
+
+  it('un enfant qui n’a RIEN appelé le dit noir sur blanc', async () => {
+    // Le cas le plus utile : la délégation a eu lieu et n'a rien produit. La
+    // prose du parent peut affirmer le contraire ; cette ligne, non.
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: [] });
+
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
+    expect(line).toContain('no tool used');
+  });
+
+  it('ignore un enfant ENCORE EN COURS — il n’a pas fini d’agir', async () => {
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: ['file_write'], status: 'processing' });
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    expect(ledger.get(parent) ?? []).toHaveLength(0);
+  });
+
+  it('garde un enfant en ÉCHEC — un échec est un fait à rapporter', async () => {
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: ['file_write'], status: 'failed' });
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
+    expect(line).toContain('failed');
+  });
+
+  it('plafonne à MAX_TASKS_PER_EXCHANGE — un tour bavard ne mange pas le budget', async () => {
+    const parent = await insertParent();
+    for (let i = 0; i < MAX_TASKS_PER_EXCHANGE + 3; i++) {
+      await insertInlineChild(parent, { toolsUsed: ['file_write'] });
+    }
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    expect(ledger.get(parent) ?? []).toHaveLength(MAX_TASKS_PER_EXCHANGE);
+  });
+
+  it('la ligne reste COURTE — elle porte les actions, pas le résultat', async () => {
+    // Mesuré sur une install réelle : rendre aussi le résultat coûtait 531
+    // caractères par tour concerné, soit 27 % du budget de thread-history sur
+    // huit tours. Le résultat est déjà dans la prose du parent.
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: ['file_write', 'file_edit', 'review_verdict'] });
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    const line = formatInlineDelegationLines(ledger.get(parent) ?? [])[0]!;
+    expect(line.length, `ligne trop longue : ${line}`).toBeLessThan(140);
+    expect(line).not.toContain('result:');
+  });
+
+  it('ignore un enfant du TABLEAU DE TÂCHES — sinon il compterait double', async () => {
+    // `create_task` pose son enfant avec le MÊME parent_job_id que la
+    // délégation en ligne (execute-ready.ts:207). Sans le filtre de canal, le
+    // même enfant serait rendu deux fois : une par loadTaskLedger, une ici.
+    const parent = await insertParent();
+    await insertInlineChild(parent, { toolsUsed: ['file_write'], channel: 'task-board' });
+
+    const ledger = await loadInlineDelegationLedger(db, [parent]);
+    expect(ledger.get(parent) ?? [], 'enfant du tableau de tâches compté deux fois').toHaveLength(
+      0,
+    );
+  });
+
+  it('ne mélange pas les enfants de deux tours différents', async () => {
+    const a = await insertParent();
+    const b = await insertParent();
+    await insertInlineChild(a, { toolsUsed: ['file_write'] });
+    await insertInlineChild(b, { toolsUsed: ['web_search'] });
+
+    const ledger = await loadInlineDelegationLedger(db, [a, b]);
+    expect(ledger.get(a)![0]!.toolsUsed).toEqual(['file_write']);
+    expect(ledger.get(b)![0]!.toolsUsed).toEqual(['web_search']);
   });
 });

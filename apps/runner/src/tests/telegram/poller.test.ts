@@ -1,4 +1,4 @@
-﻿// poller.test.ts — runTelegramPoller's loop semantics: offset advances atomically,
+// poller.test.ts — runTelegramPoller's loop semantics: offset advances atomically,
 // invalid token exits, transient errors back off and retry, abort signal stops cleanly.
 
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';

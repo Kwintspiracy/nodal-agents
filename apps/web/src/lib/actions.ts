@@ -26,9 +26,14 @@ import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from 'node:fs/promises';
 import {
   deriveProjectRoot,
+  isInsideWorkspace,
+  resolveChangePath,
+  type ChangeRef,
+  type WorkspaceRef,
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
 } from './code-projects.ts';
+import { projectKey } from './project-key.ts';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -63,7 +68,7 @@ import {
   webhookTriggers,
   entityLlmKeys,
   agentWorkspaces,
-  codeProjectArchives,
+  codeProjects,
   entities,
   entityMembers,
   users,
@@ -524,7 +529,7 @@ export type AgentRow = {
     claude?: { model?: string; effort?: string; enabled?: boolean };
     codex?: { model?: string; effort?: string; enabled?: boolean };
   } | null;
-  /** 'nodal' (default) | 'claude-code' | 'codex' (reserved). See packages/db/src/schema/agents.ts. */
+  /** 'nodal' (default) | 'claude-code' | 'codex'. See packages/db/src/schema/agents.ts. */
   runtime: string;
   /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
   cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
@@ -1119,6 +1124,8 @@ export type AgentWorkspaceRow = {
   label: string;
   path: string;
   position: number;
+  /** Masqué de l'onglet Code par le propriétaire (0087). */
+  hiddenFromCode: boolean;
 };
 
 export async function listAgentWorkspacesAction(
@@ -1187,6 +1194,26 @@ export async function addAgentWorkspaceAction(
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agentRow) return fail('not_found', 'Agent not found');
 
+    // Un chemin DÉJÀ masqué ailleurs dans l'espace arrive masqué ici (0087).
+    // Sans cet héritage, attacher le coffre à un second agent le ferait
+    // réapparaître dans l'onglet Code, avec une case vide sur cette fiche
+    // pendant qu'une autre ligne dit l'inverse. Un dossier est un coffre de
+    // notes ou non ; cela ne dépend pas de l'agent qui le regarde.
+    //
+    // Comparaison NORMALISÉE, pas textuelle : `C:\Vault` et `c:/vault` sont le
+    // même dossier.
+    const dejaMasque = (
+      await db
+        .select({ path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(
+          and(
+            eq(agentWorkspaces.entityId, session.entityId),
+            eq(agentWorkspaces.hiddenFromCode, true),
+          ),
+        )
+    ).some((r) => projectKey(r.path) === projectKey(trimmedPath));
+
     const [row] = await db
       .insert(agentWorkspaces)
       .values({
@@ -1195,6 +1222,7 @@ export async function addAgentWorkspaceAction(
         label: trimmedLabel,
         path: trimmedPath,
         position: 0,
+        hiddenFromCode: dejaMasque,
       })
       .returning({ id: agentWorkspaces.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -1219,6 +1247,85 @@ export async function addAgentWorkspaceAction(
       return fail('conflict', 'A workspace with this label already exists for this agent');
     }
     return fail('db_error', 'Failed to add workspace');
+  }
+}
+
+/**
+ * Masque ou réaffiche un dossier dans l'onglet Code (0087).
+ *
+ * La bascule s'applique à TOUTES les lignes de l'espace qui portent le même
+ * chemin, pas seulement à celle qu'on a cliquée. Sur cette install,
+ * `Documents/Dev` est attaché à cinq agents : masquer serait cinq gestes, et
+ * l'état mi-masqué n'aurait aucun sens — un dossier est un coffre de notes ou
+ * non, cela ne dépend pas de l'agent qui le regarde.
+ *
+ * Le MÊME dossier peut être écrit différemment d'une ligne à l'autre —
+ * `C:\Vault`, `c:/vault`, un slash final. Une comparaison SQL exacte n'en
+ * toucherait qu'une, et les autres agents garderaient une case vide alors que
+ * la dérivation, elle, normalise. On compare donc en mémoire, par `projectKey`.
+ */
+export async function setWorkspaceHiddenFromCodeAction(
+  workspaceId: string,
+  hiddenFromCode: boolean,
+): Promise<ActionResult<{ updated: number }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(workspaceId).success) {
+      return fail('validation_failed', 'Invalid workspace id');
+    }
+    const db = getDb();
+
+    const [wsRow] = await db
+      .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, workspaceId));
+    if (!wsRow) return fail('not_found', 'Workspace not found');
+
+    // L'agent appartient bien à cet espace.
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Workspace not found');
+
+    // Et la session est celle du PROPRIÉTAIRE (revue Codex, 26/08).
+    //
+    // Cette bascule n'est pas de la configuration d'agent : elle change ce que
+    // TOUT LE MONDE voit dans l'onglet Code, et ce que TOUS les agents
+    // s'entendent annoncer. Un membre non-propriétaire pouvait faire
+    // disparaître un dossier partagé pour l'espace entier. Même garde que le
+    // masquage et le renommage d'un projet, qui ont exactement la même portée.
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can hide a folder.');
+
+    const memeDossier = (
+      await db
+        .select({ id: agentWorkspaces.id, path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(eq(agentWorkspaces.entityId, session.entityId))
+    ).filter((r) => projectKey(r.path) === projectKey(wsRow.path));
+
+    const updated = await db
+      .update(agentWorkspaces)
+      .set({ hiddenFromCode, updatedAt: new Date() })
+      .where(
+        and(
+          eq(agentWorkspaces.entityId, session.entityId),
+          inArray(
+            agentWorkspaces.id,
+            memeDossier.map((r) => r.id),
+          ),
+        ),
+      )
+      .returning({ id: agentWorkspaces.id });
+
+    revalidatePath(`/agents/${wsRow.agentId}/edit`);
+    revalidatePath('/code');
+    return ok({ updated: updated.length });
+  } catch (err) {
+    console.error('[setWorkspaceHiddenFromCodeAction]', err);
+    return fail('db_error', 'Failed to update the folder');
   }
 }
 
@@ -6254,19 +6361,23 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
   }
 }
 
-// ─── Agent runtime (étape E — Claude Code as an agent's own harness) ─────────
+// ─── Agent runtime (étape E — une CLI de code EST le harnais de l'agent) ─────
 //
-// agents.runtime: 'nodal' (default) | 'claude-code' | 'codex' (reserved,
-// refused here — the Zod enum only accepts 'nodal'/'claude-code', so a
-// request for 'codex' fails validation the same way the runner fails loud on
-// it today). Switching to 'claude-code' hands the agent's LOOP, tools and
-// context to the Claude Code harness on this machine; channels, cron,
-// workspaces, the CLI daily budget and approvals stay Nodal's — see the
-// column comment in packages/db/src/schema/agents.ts for the full contract.
+// agents.runtime: 'nodal' (défaut) | 'claude-code' | 'codex'. Basculer sur une
+// CLI confie la BOUCLE, les outils et le contexte de l'agent au harnais installé
+// sur cette machine ; les canaux, le cron, les dossiers, le budget quotidien et
+// les approbations restent ceux de Nodal — voir le commentaire de colonne dans
+// packages/db/src/schema/agents.ts pour le contrat complet.
+//
+// `codex` a été RÉSERVÉ du 19/08 au 27/08 : la contrainte SQL l'acceptait, ce
+// Zod le refusait, et le runner échouait fort dessus. Ouvert le 27/08 avec son
+// module de tour (apps/runner/src/cli-runtime/codex-turn.ts). La liste servie
+// ici et le tableau du runner doivent rester d'accord : un runtime accepté ici
+// mais absent de `resolveRuntime` produirait un agent qui plante à chaque tour.
 
 const SetAgentRuntimeSchema = z.object({
   agentId: z.string().guid(),
-  runtime: z.enum(['nodal', 'claude-code']),
+  runtime: z.enum(['nodal', 'claude-code', 'codex']),
 });
 
 export async function setAgentRuntimeAction(raw: unknown): Promise<ActionResult<void>> {
@@ -10965,80 +11076,51 @@ function deriveJobStage(
 //       never becomes a "coding session" on file_write alone.
 // cli:Bash, cli:Read/Glob, review_verdict, and a read-mode code_task do NOT
 // qualify by themselves — nor does merely having a cli_runs row.
-const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:NotebookEdit']);
+// `cli:file_change` est le nom que porte une écriture d'un agent en runtime
+// CODEX — son flux ne connaît pas les noms d'outils de Claude (revue Codex,
+// 27/08). Sans lui dans cette liste, un agent Codex en mode écriture ne
+// figurait NULLE PART dans l'onglet Code. Le chemin, lui, est remis en forme
+// à la source (apps/runner/src/cli-runtime/codex-turn.ts,
+// `normalizeCodexToolInput`) pour que `file_path` soit là où les deux surfaces
+// le cherchent.
+const EDIT_TOOL_NAMES = new Set([
+  'cli:Edit',
+  'cli:Write',
+  'cli:MultiEdit',
+  'cli:NotebookEdit',
+  'cli:file_change',
+]);
 const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
 
 /**
- * Le garde-fou Office de la définition v4 (décision Quentin 23/08) : ce ne
- * sont plus les OUTILS qui disent « dev », c'est la NATURE des fichiers
- * édités. Liste d'EXCLUSION volontairement courte — bureautique, média,
- * archives. Tout le reste qualifie, extension inconnue comprise : un vrai
- * codeur écrit du .vue, .rs, .tf, .svelte… qu'aucune liste d'inclusion ne
- * couvrira jamais, et le rater est pire que d'afficher un .txt de trop
- * (« un codeur sans CLI est un codeur quand même »).
- */
-/**
- * v5 (constat Quentin 25/08, vault Obsidian) : le NOTES-ONLY ne qualifie pas.
- * Le markdown/texte est NEUTRE — il ne disqualifie pas un vrai repo (un
- * codeur édite son README au milieu de son .ts), mais une session qui
- * n'écrit QUE du .md/.txt est de la prise de notes, pas du code, quel que
- * soit l'outil qui l'a écrite (CLI compris).
+ * v7 — le DOSSIER est coché, et rien n'est deviné.
  *
- * `.json` a été essayé ici puis RETIRÉ le jour même (décision Quentin) : un
- * .json peut être du vrai code (mock-data d'une app) — « une exclusion par
- * langage ratera tôt ou tard du vrai code ». Le bruit ComfyArtist (workflows
- * .json) sera traité par IDENTITÉ (champ Dev/Auto/Exclu par agent, au plan),
- * pas par extension.
+ * Quatre définitions ont été essayées et écartées, toutes parce qu'elles
+ * devinaient :
+ *
+ *  - la NATURE des fichiers édités (v4/v5) : « une exclusion par langage
+ *    ratera tôt ou tard du vrai code » — un `.json` de mock-data EST du code.
+ *    Et le coffre Obsidian qualifiait quand même, à cause de vrais `.py`
+ *    écrits dedans en juillet ;
+ *  - le SKILL porté par l'agent (v6) : ne marche que si l'utilisateur emploie
+ *    NOS skills, jamais les siens ni ceux du catalogue communautaire ;
+ *  - la STRUCTURE du dossier (`package.json`, `.git`…) : symétrique du premier
+ *    échec — « on va 100 % avoir des faux positifs », un dépôt cloné ou un
+ *    thème jamais touché en porte un ;
+ *  - une case sur l'AGENT : répond au « qui », pas au « où ». Le même agent
+ *    peut coder le matin et ranger un coffre de notes l'après-midi.
+ *
+ * D'où la règle : le propriétaire coche les dossiers de développement, et une
+ * écriture qualifie si elle tombe dedans. La case marque un PÉRIMÈTRE, pas un
+ * projet — cocher `Dev` ne fait pas de `Dev` un projet, ses sous-dossiers en
+ * sont (cf. `deriveProjectRoot`).
+ *
+ * CE QUE CET ONGLET NE MONTRE PAS, ET CE N'EST PAS UN TROU : les écritures
+ * hors des dossiers cochés, refusées ou non. Leur diagnostic passe par la page
+ * Jobs, qui conserve le job et sa chronologie d'appels. Cet onglet est une vue
+ * produit, pas la surface d'audit — deux relecteurs ont signalé l'absence
+ * comme un trou avant de conclure l'inverse, d'où cette ligne.
  */
-const NEUTRAL_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
-
-const NON_DEV_EXTENSIONS = new Set([
-  // bureautique
-  'doc',
-  'docx',
-  'xls',
-  'xlsx',
-  'ppt',
-  'pptx',
-  'odt',
-  'ods',
-  'odp',
-  'pdf',
-  'rtf',
-  // image / audio / vidéo (le .svg reste dev : c'est un asset de repo)
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'bmp',
-  'ico',
-  'mp3',
-  'wav',
-  'ogg',
-  'mp4',
-  'mov',
-  'avi',
-  'mkv',
-  'webm',
-  // archives
-  'zip',
-  'tar',
-  'gz',
-  '7z',
-  'rar',
-]);
-
-/** True quand le chemin édité ressemble à du travail de dev (voir NON_DEV_EXTENSIONS / NEUTRAL_EXTENSIONS). */
-function isDevFilePath(path: string | null): boolean {
-  if (!path) return false;
-  const base = path.split(/[\\/]/).pop() ?? path;
-  const dot = base.lastIndexOf('.');
-  // Sans extension (Makefile, Dockerfile, LICENSE…) = dev.
-  if (dot <= 0) return true;
-  const ext = base.slice(dot + 1).toLowerCase();
-  return !NON_DEV_EXTENSIONS.has(ext) && !NEUTRAL_EXTENSIONS.has(ext);
-}
 
 /** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
 function extractFilePath(input: Record<string, unknown> | null): string | null {
@@ -11125,6 +11207,26 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
   const filePath = extractFilePath(input);
   if (!filePath || !input) return null;
 
+  // Une écriture d'un agent en runtime CODEX (revue Codex, 27/08). Elle
+  // qualifiait déjà le pipeline et comptait dans les fichiers changés, mais le
+  // panneau Changes restait VIDE : une session annonçant « 3 fichiers » sans
+  // rien montrer. Codex ne rend pas l'avant/après — seulement un `diff` par
+  // changement — donc on montre le diff quand il est là, et on ne fabrique
+  // aucun contenu quand il ne l'est pas.
+  if (toolName === 'cli:file_change') {
+    const changes = Array.isArray(input['changes']) ? input['changes'] : [];
+    const mine = changes.find(
+      (c) => c && typeof c === 'object' && (c as Record<string, unknown>)['path'] === filePath,
+    ) as Record<string, unknown> | undefined;
+    const diff = typeof mine?.['diff'] === 'string' ? mine['diff'] : null;
+    return {
+      filePath,
+      // `add` est une création, tout le reste (update, move) touche un existant.
+      kind: mine?.['kind'] === 'add' ? 'write' : 'edit',
+      oldText: null,
+      newText: diff,
+    };
+  }
   if (toolName === 'cli:Edit' || toolName === 'file_edit') {
     return {
       filePath,
@@ -11171,8 +11273,36 @@ function extractChange(toolName: string, rawInput: unknown): CodingChangeView | 
   return null;
 }
 
+// PAS exportée : ce fichier est `'use server'`, où tout export doit être une
+// fonction async — un helper synchrone exporté fait échouer le BUILD (pas le
+// typecheck, qui l'accepte sans broncher). Les tests passent par
+// listCodingProcessesAction, ce qui est de toute façon la bonne granularité :
+// ils prouvent le comportement observable, pas le prédicat isolé.
 function pipelineQualifiesAsCoding(
   calls: Array<{ toolName: string; toolInput: unknown; toolOutput?: string | null }>,
+  /**
+   * Ce pipeline a-t-il écrit dans un dossier RATTACHABLE — c'est-à-dire couvert
+   * par un des dossiers attachés à ses agents ?
+   *
+   * C'est la seule condition qui reste. Elle ne juge pas la NATURE de ce qui a
+   * été écrit : elle demande seulement qu'on sache OÙ, faute de quoi il n'y a
+   * ni projet à afficher ni ligne à grouper.
+   */
+  touchedWorkspace: boolean,
+  /**
+   * Reste-t-il un dossier VISIBLE parmi ceux des agents du pipeline ?
+   *
+   * Un pipeline dont TOUS les dossiers sont masqués ne doit pas ressurgir par
+   * la porte de service (revue Codex, 27/08) : les signaux sans chemin
+   * ci-dessous (`code_task` en écriture, verdict de review) qualifiaient sans
+   * condition, donc une session dont le seul dossier venait d'être masqué
+   * réapparaissait dans « Other sessions » — faute de projet nommable, elle
+   * n'était même pas rattachable au geste qui devait la faire disparaître.
+   *
+   * `true` aussi quand l'agent n'a AUCUN dossier : rien n'a été masqué, il n'y
+   * a donc aucun geste à respecter.
+   */
+  hasVisibleWorkspace: boolean,
 ): boolean {
   // REFUSED calls deliberately still QUALIFY a pipeline, even though they
   // change nothing and are excluded from the file count and the Changes panel.
@@ -11191,22 +11321,33 @@ function pipelineQualifiesAsCoding(
   // one-level rollup that split a three-level session in half. Measured live on
   // the same data, one-level rollup showed 0 coding processes where the
   // transitive rollup shows 5. Fixed in `coding-rollup.ts`.
-  // v5 (constat Quentin 25/08, vault Obsidian) : la NATURE des fichiers
-  // décide pour TOUT LE MONDE, outils CLI compris. La v4 laissait n'importe
-  // quel cli:Edit/cli:Write qualifier inconditionnellement — un agent
-  // runtime qui prenait des notes dans un vault 100 % markdown devenait un
-  // « projet de code ». Désormais une seule règle : au moins UNE édition
-  // (exécutée OU refusée — le cas Dev C reste couvert, ses tentatives
-  // visaient des fichiers dev) sur un fichier de code/config. Le repli
-  // « marqueur cli sauve des éditions non-dev » (relique v3) disparaît avec.
-  const hasDevEdit = calls.some(
-    (c) =>
-      FILE_TOOL_NAMES.has(c.toolName) &&
-      isDevFilePath(extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null)),
-  );
-  if (hasDevEdit) return true;
-  // Les intentions de dev EXPLICITES qualifient sans édition : déléguer du
-  // code en écriture, ou rendre un verdict de review.
+  // v8 (26/08) : plus aucun filtrage. L'onglet montre les dossiers où les
+  // agents ont écrit, et c'est tout.
+  //
+  // Six définitions du « vrai code » ont été essayées avant d'en arriver là
+  // (0086 les liste) ; chacune se cassait sur un cas réel, parce que chacune
+  // devinait à la place du propriétaire. Ce qui les remplace n'est pas une
+  // septième devinette, c'est un GESTE : masquer ce qu'on ne veut pas voir.
+  // Une liste honnête et deux boutons valent mieux qu'un tri malin qui se
+  // trompe en silence.
+  //
+  // Conséquence assumée : un coffre de notes apparaît tant qu'on ne l'a pas
+  // masqué. C'est visible, et ça se règle en un clic — au lieu d'un vrai
+  // projet absent sans que rien ne le signale.
+  const hasEdit = calls.some((c) => FILE_TOOL_NAMES.has(c.toolName));
+  if (hasEdit) return touchedWorkspace;
+
+  // AUCUNE écriture, mais un travail de code quand même : une délégation à la
+  // CLI, un verdict de review. Ces outils sont spécifiques au code — leur seule
+  // présence suffit, il n'y a rien à ancrer.
+  //
+  // « Rien à ancrer » est justement pourquoi le masquage doit être vérifié ici :
+  // sans chemin, la dérivation de projet n'a aucun repli visible, et la session
+  // atterrit dans « Other sessions » — y compris quand tous les dossiers de ses
+  // agents sont masqués. Le geste du propriétaire serait resté sans effet sur
+  // exactement les sessions qu'il ne peut pas nommer.
+  if (!hasVisibleWorkspace) return false;
+
   const hasWriteCodeTask = calls.some((c) => {
     if (c.toolName !== 'code_task') return false;
     const input = c.toolInput as { mode?: string } | null;
@@ -11214,6 +11355,97 @@ function pipelineQualifiesAsCoding(
   });
   if (hasWriteCodeTask) return true;
   return calls.some((c) => c.toolName === 'review_verdict');
+}
+
+/**
+ * TOUS les dossiers de l'entité, par agent.
+ *
+ * Le LABEL compte autant que le chemin : c'est par lui qu'un chemin relatif se
+ * résout (`vault/note.md` → le dossier étiqueté `vault`), et le résoudre est ce
+ * qui évite de le coller au premier dossier venu (revue Codex, 26/08).
+ */
+async function workspacesByAgentId(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+): Promise<Map<string, WorkspaceRef[]>> {
+  const rows = await db
+    .select({
+      agentId: agentWorkspaces.agentId,
+      label: agentWorkspaces.label,
+      path: agentWorkspaces.path,
+      hiddenFromCode: agentWorkspaces.hiddenFromCode,
+    })
+    .from(agentWorkspaces)
+    .where(eq(agentWorkspaces.entityId, entityId));
+
+  // Un CHEMIN est masqué dès qu'une de ses lignes l'est (0087) : le même
+  // dossier attaché à cinq agents est UN geste, pas cinq. Un dossier est un
+  // coffre de notes ou non ; cela ne dépend pas de l'agent qui le regarde.
+  const hiddenPaths = new Set(rows.filter((r) => r.hiddenFromCode).map((r) => projectKey(r.path)));
+
+  const byAgent = new Map<string, WorkspaceRef[]>();
+  for (const r of rows) {
+    const arr = byAgent.get(r.agentId) ?? [];
+    arr.push({ label: r.label, path: r.path, hiddenFromCode: hiddenPaths.has(projectKey(r.path)) });
+    byAgent.set(r.agentId, arr);
+  }
+  return byAgent;
+}
+
+/** Les dossiers de TOUS les agents d'un pipeline, dédupliqués par chemin. */
+function workspacesOfPipeline(
+  participants: Iterable<string>,
+  byAgent: Map<string, WorkspaceRef[]>,
+): WorkspaceRef[] {
+  const seen = new Map<string, WorkspaceRef>();
+  for (const agentId of participants) {
+    for (const w of byAgent.get(agentId) ?? []) {
+      // Clé qui ne replie la casse que sur Windows (revue Codex, 26/08) : sur
+      // un système sensible à la casse, `/srv/App` et `/srv/app` sont deux
+      // dossiers légitimes, et en écraser un ferait disparaître ses écritures.
+      const key = projectKey(w.path);
+      if (!seen.has(key)) seen.set(key, w);
+    }
+  }
+  return Array.from(seen.values());
+}
+
+export interface CodeTabStatus {
+  /** Dossiers SUIVIS : attachés et non masqués. Ceux qui peuvent produire un projet. */
+  workspaceCount: number;
+  /** Dossiers masqués de l'onglet (0087). */
+  hiddenWorkspaceCount: number;
+}
+
+/**
+ * De quoi écrire un état vide qui dit la vérité.
+ *
+ * Trois situations, trois phrases différentes — et c'est tout l'objet de cette
+ * action. « Aucune activité » accuserait les agents de n'avoir rien fait alors
+ * que la liste peut être vide par construction :
+ *
+ *   0 dossier attaché          les agents n'ont nulle part où écrire ;
+ *   tous les dossiers masqués  c'est un choix, et il se défait ;
+ *   des dossiers suivis, 0 ligne   là seulement, il ne s'est rien passé.
+ */
+export async function getCodeTabStatusAction(): Promise<ActionResult<CodeTabStatus>> {
+  try {
+    const session = await getSession();
+    const rows = await getDb()
+      .select({ path: agentWorkspaces.path, hiddenFromCode: agentWorkspaces.hiddenFromCode })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.entityId, session.entityId));
+    // Un CHEMIN masqué l'est pour toutes ses lignes — on compte des dossiers,
+    // pas des attachements.
+    const hidden = new Set(rows.filter((r) => r.hiddenFromCode).map((r) => projectKey(r.path)));
+    const all = new Set(rows.map((r) => projectKey(r.path)));
+    return ok({
+      workspaceCount: [...all].filter((p) => !hidden.has(p)).length,
+      hiddenWorkspaceCount: hidden.size,
+    });
+  } catch (err) {
+    return fail('unknown', err instanceof Error ? err.message : 'Failed to read workspaces');
+  }
 }
 
 export async function listCodingProcessesAction(): Promise<ActionResult<CodingProcessRow[]>> {
@@ -11256,13 +11488,26 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     // parent is left. One `IN (…)` query per level of delegation, and a real
     // pipeline is at most 3 deep (invariant #8, maxDelegationDepth).
     const parentOf = new Map<string, string | null>();
+    // L'agent de CHAQUE job du pipeline, y compris les ancêtres : la
+    // qualification par identité (v6) demande de savoir si un membre de
+    // l'équipe de dev a participé, à n'importe quelle profondeur. Sur une
+    // chaîne orchestrateur → lead → développeur, c'est le job du BAS qui
+    // porte le skill, et c'est le job du HAUT qui devient la ligne affichée.
+    const agentOfJob = new Map<string, string>();
     let toResolve = referencedJobIds;
     for (let depth = 0; depth < ROLLUP_MAX_DEPTH && toResolve.length > 0; depth++) {
       const rows = await db
-        .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+        .select({
+          id: agentJobs.id,
+          parentJobId: agentJobs.parentJobId,
+          agentId: agentJobs.agentId,
+        })
         .from(agentJobs)
         .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, toResolve)));
-      for (const r of rows) parentOf.set(r.id, r.parentJobId);
+      for (const r of rows) {
+        parentOf.set(r.id, r.parentJobId);
+        if (r.agentId) agentOfJob.set(r.id, r.agentId);
+      }
       // Parents we now know about but haven't looked up yet.
       toResolve = Array.from(
         new Set(
@@ -11274,20 +11519,109 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     }
     const rootOf = (jobId: string): string => rollupRoot(jobId, parentOf);
 
+    // Chargé AVANT le regroupement : chaque écriture doit être rattachée aux
+    // dossiers de son auteur au moment où on la collecte.
+    const wsByAgent = await workspacesByAgentId(db, entityId);
+
     const callsByRoot = new Map<
       string,
-      Array<{ toolName: string; toolInput: unknown; toolOutput: string | null }>
+      Array<{
+        toolName: string;
+        toolInput: unknown;
+        toolOutput: string | null;
+        /** L'agent qui a passé l'appel — pour lire ses chemins relatifs. */
+        agentId: string | null;
+      }>
     >();
+    // Les agents ayant participé à chaque pipeline, racine comprise.
+    const agentsByRoot = new Map<string, Set<string>>();
+    // Les écritures par pipeline, chacune avec son AUTEUR : un chemin relatif
+    // ne se lit qu'avec les dossiers de l'agent qui l'a écrit (revue Codex,
+    // 26/08 — les labels ne sont uniques que par agent).
+    const changesByRoot = new Map<string, ChangeRef[]>();
     for (const c of relevantCalls) {
       if (!c.jobId) continue;
       const root = rootOf(c.jobId);
+      const callAgentId = agentOfJob.get(c.jobId) ?? null;
       const arr = callsByRoot.get(root) ?? [];
-      arr.push({ toolName: c.toolName, toolInput: c.toolInput, toolOutput: c.toolOutput });
+      arr.push({
+        toolName: c.toolName,
+        toolInput: c.toolInput,
+        toolOutput: c.toolOutput,
+        agentId: callAgentId,
+      });
       callsByRoot.set(root, arr);
+
+      // Les chemins BRUTS de chaque pipeline, collectés ICI parce que la
+      // qualification en a besoin — c'est eux qui disent si l'écriture est
+      // tombée dans un dossier coché.
+      //
+      // Les écritures REFUSÉES comptent, délibérément. Un pipeline dont toutes
+      // les écritures ont été rejetées est un agent qui ne fait rien en
+      // silence — la panne la plus dure à diagnostiquer (Dev C, neuf
+      // tentatives, neuf refus, une journée perdue). L'onglet est le seul
+      // endroit où elle se voit, donc la ligne reste, en annonçant honnêtement
+      // 0 fichier changé. Le compte de fichiers, lui, les exclut.
+      if (FILE_TOOL_NAMES.has(c.toolName)) {
+        const fp = extractFilePath((c.toolInput as Record<string, unknown> | null) ?? null);
+        if (fp) {
+          const raws = changesByRoot.get(root) ?? [];
+          raws.push({
+            rawPath: fp,
+            workspaces: callAgentId ? (wsByAgent.get(callAgentId) ?? []) : [],
+          });
+          changesByRoot.set(root, raws);
+        }
+      }
+
+      // Les agents du pipeline servent encore à l'affichage (colonne « agent »)
+      // et au repli de projet, plus à la qualification : depuis la v7, c'est le
+      // DOSSIER écrit qui décide, pas qui a écrit.
+      const participants = agentsByRoot.get(root) ?? new Set<string>();
+      let cursor: string | null = c.jobId;
+      for (let hop = 0; hop <= ROLLUP_MAX_DEPTH && cursor; hop++) {
+        const agent = agentOfJob.get(cursor);
+        if (agent) participants.add(agent);
+        cursor = parentOf.get(cursor) ?? null;
+      }
+      agentsByRoot.set(root, participants);
     }
 
+    const devMemo = new Map<string, string | null>();
+    /** Les dossiers vus par un pipeline — mémoïsé, plusieurs passes s'en servent. */
+    const wsOfRoot = new Map<string, WorkspaceRef[]>();
+    const workspacesFor = (root: string): WorkspaceRef[] => {
+      const hit = wsOfRoot.get(root);
+      if (hit) return hit;
+      const ws = workspacesOfPipeline(agentsByRoot.get(root) ?? [], wsByAgent);
+      wsOfRoot.set(root, ws);
+      return ws;
+    };
+
     const candidateJobIds = Array.from(callsByRoot.entries())
-      .filter(([, calls]) => pipelineQualifiesAsCoding(calls))
+      .filter(([root, calls]) => {
+        const ws = workspacesFor(root);
+        // QUALIFIER, ce n'est pas DÉRIVER (revue Codex, 26/08). La question
+        // posée ici est « cette écriture visait-elle un dossier attaché ? »,
+        // pas « le projet existe-t-il sur le disque ? ».
+        //
+        // Passer par `deriveProjectRoot` faisait disparaître le cas le plus
+        // important de l'onglet : un agent qui tente de créer une NOUVELLE app
+        // et dont toutes les écritures sont refusées. Le dossier n'existe pas —
+        // justement parce que rien n'a abouti — donc aucun projet n'était
+        // dérivé, donc la session entière était filtrée. L'onglet cachait
+        // exactement la panne qu'il existe pour montrer (Dev C, neuf
+        // tentatives, neuf refus, une journée perdue).
+        //
+        // La session apparaît donc, dans le tiroir « Other sessions » faute de
+        // projet nommable, et annonce honnêtement 0 fichier changé.
+        const changes = changesByRoot.get(root) ?? [];
+        const touchedWorkspace = changes.some((c) => isInsideWorkspace(c, ws));
+        // Aucun dossier du tout ≠ tous masqués : le premier n'a fait l'objet
+        // d'aucun geste, le second en porte un. Voir le paramètre.
+        const hasVisibleWorkspace = ws.length === 0 || ws.some((w) => !w.hiddenFromCode);
+        return pipelineQualifiesAsCoding(calls, touchedWorkspace, hasVisibleWorkspace);
+      })
       .map(([root]) => root);
 
     let jobRows: CodingProcessRow[] = [];
@@ -11386,37 +11720,46 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       // Nodal form = the same file) so the count never doubles.
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const filesByRoot = new Map<string, Set<string>>();
-      // Les chemins BRUTS (avant canonicalisation) par pipeline — la
-      // dérivation de projet a besoin de la forme absolue quand elle existe.
-      const rawPathsByRoot = new Map<string, string[]>();
       for (const [root, calls] of callsByRoot) {
         if (!candidateJobIds.includes(root)) continue;
         const set = new Set<string>();
-        const raws: string[] = [];
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
           if (isRefusedToolCall(c.toolOutput)) continue; // attempted ≠ changed
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
-          if (fp) {
-            set.add(canonicalChangePath(fp, workspaceRoots));
-            raws.push(fp);
+          // Un chemin qu'aucun dossier attaché ne couvre n'est pas rattachable
+          // à un projet : il ne compte pas dans le décompte de fichiers, faute
+          // de savoir sous quelle ligne il s'affiche (revue Codex, 26/08).
+          if (!fp) continue;
+          const ref: ChangeRef = {
+            rawPath: fp,
+            workspaces: c.agentId ? (wsByAgent.get(c.agentId) ?? []) : [],
+          };
+          if (isInsideWorkspace(ref, workspacesFor(root))) {
+            // Canoniser la forme ABSOLUE, pas le chemin brut (revue Codex,
+            // 26/08) : `dev/src/a.ts` et `<racine>/dev/src/a.ts` sont le même
+            // fichier, et seule la première est déjà réduite.
+            set.add(canonicalChangePath(resolveChangePath(ref) ?? fp, workspaceRoots));
           }
         }
         filesByRoot.set(root, set);
-        rawPathsByRoot.set(root, raws);
       }
 
-      // Un seul cache git pour tout l'écran — les pipelines d'un même repo
-      // partagent leurs remontées de dossiers.
-      const gitMemo = new Map<string, string | null>();
-
       // Workspaces PAR AGENT — le repli des sessions sans fichier ancrable
-      // (voir fallbackProjectFromAgentWorkspaces).
-      const agentWsRows = await db
-        .select({ agentId: agentWorkspaces.agentId, path: agentWorkspaces.path })
-        .from(agentWorkspaces)
-        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-        .where(eq(agents.entityId, entityId));
+      // (voir fallbackProjectFromAgentWorkspaces). Les dossiers MASQUÉS en sont
+      // exclus : le repli ne doit pas ramener par la porte de derrière un
+      // dossier que le propriétaire a sorti de l'onglet (0087).
+      const agentWsRows = (
+        await db
+          .select({
+            agentId: agentWorkspaces.agentId,
+            path: agentWorkspaces.path,
+            hiddenFromCode: agentWorkspaces.hiddenFromCode,
+          })
+          .from(agentWorkspaces)
+          .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+          .where(eq(agents.entityId, entityId))
+      ).filter((r) => !r.hiddenFromCode);
       const workspacesByAgent = new Map<string, string[]>();
       for (const r of agentWsRows) {
         const arr = workspacesByAgent.get(r.agentId) ?? [];
@@ -11447,10 +11790,25 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       }
 
       jobRows = jobs.map((j) => {
+        const ws = workspacesFor(j.id);
+        const jobChanges = changesByRoot.get(j.id) ?? [];
+        // Le repli ne vaut QUE pour une session sans aucun fichier à ancrer —
+        // une review, une délégation à la CLI (revue Codex, 26/08).
+        //
+        // Appliqué sans cette condition, il rattrapait les cas où la dérivation
+        // a délibérément renoncé : projet supprimé du disque, ou nouvelle app
+        // dont toutes les écritures ont été refusées. Le travail supprimé
+        // réapparaissait alors sous le dossier CONTENEUR — exactement le
+        // fantôme que ce lot existe pour faire disparaître, sous un autre nom.
+        //
+        // Une session qui visait un projet et n'en a pas retombe donc dans
+        // « Other sessions », ce qui est la vérité : elle a eu lieu, et il n'y
+        // a rien à nommer.
+        const aVisePro = jobChanges.some((c) => isInsideWorkspace(c, ws));
         const projectPath =
-          deriveProjectRoot(rawPathsByRoot.get(j.id) ?? [], workspaceRoots, gitMemo) ??
-          (j.agentId
-            ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [])
+          deriveProjectRoot(jobChanges, ws, devMemo) ??
+          (!aVisePro && j.agentId
+            ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [], devMemo)
             : null);
         return {
           id: j.id,
@@ -11648,6 +12006,7 @@ export async function getCodingProcessDetailAction(
       // level-by-level walk, same ROLLUP_MAX_DEPTH bound.
       const descendants: Array<{
         id: string;
+        agentId: string | null;
         agentName: string | null;
         totalDurationMs: number | null;
         parentJobId: string | null;
@@ -11659,6 +12018,10 @@ export async function getCodingProcessDetailAction(
           const rows = await db
             .select({
               id: agentJobs.id,
+              // Nécessaire pour retrouver les DOSSIERS des agents délégués —
+              // le détail doit appliquer la même règle de périmètre que la
+              // liste (revue Codex, 26/08).
+              agentId: agentJobs.agentId,
               agentName: agents.name,
               totalDurationMs: agentJobs.totalDurationMs,
               parentJobId: agentJobs.parentJobId,
@@ -11810,17 +12173,61 @@ export async function getCodingProcessDetailAction(
       // absolute form and the Nodal tools' workspace-relative form collapse
       // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
+
+      // Les dossiers des agents du pipeline — MÊME règle que la liste (revue
+      // Codex, 26/08). Sans ça, la liste annonçait un fichier et le détail en
+      // montrait deux, et un chemin non rattachable pouvait même donner son nom
+      // au projet.
+      const detailAgentIds = new Set<string>();
+      if (job.agentId) detailAgentIds.add(job.agentId);
+      for (const d of descendants) if (d.agentId) detailAgentIds.add(d.agentId);
+      const detailWsByAgent = await workspacesByAgentId(db, entityId);
+      const detailWorkspaces = workspacesOfPipeline(detailAgentIds, detailWsByAgent);
+      // Quel agent a passé quel appel — un chemin relatif ne se lit qu'avec les
+      // dossiers de son auteur (revue Codex, 26/08).
+      const agentOfDetailJob = new Map<string, string | null>();
+      agentOfDetailJob.set(job.id, job.agentId);
+      for (const d of descendants) agentOfDetailJob.set(d.id, d.agentId);
+      const wsOfCall = (jobId: string | null): WorkspaceRef[] => {
+        const agentId = jobId ? agentOfDetailJob.get(jobId) : null;
+        return agentId ? (detailWsByAgent.get(agentId) ?? []) : [];
+      };
+
       const changeGroups = new Map<string, CodingFileChangeGroup>();
-      // Chemins BRUTS pour la dérivation de projet du header (même règle que
-      // la liste — les deux surfaces doivent nommer le même projet).
-      const rawChangePaths: string[] = [];
+      // Les écritures BRUTES pour la dérivation de projet du header (même règle
+      // que la liste — les deux surfaces doivent nommer le même projet).
+      const rawChanges: ChangeRef[] = [];
+      /**
+       * Les écritures TENTÉES, refusées comprises.
+       *
+       * Elles ne servent qu'à une question : cette session visait-elle un
+       * projet ? La liste, elle, garde les refus dans son calcul — les écarter
+       * ici faisait croire au détail qu'il n'y avait rien à ancrer, donc le
+       * repli s'appliquait et nommait un projet que la liste ne nommait pas
+       * (revue Codex, 26/08). Deux surfaces, deux réponses, sur la session la
+       * plus importante de l'écran : celle où tout a été refusé.
+       *
+       * Elles n'entrent JAMAIS dans les diffs ni dans le compte de fichiers :
+       * un appel refusé n'a rien écrit.
+       */
+      const attemptedTargets: ChangeRef[] = [];
       for (const tc of toolCallRows) {
-        // A refused call wrote nothing — it must not appear as a change.
-        if (isRefusedToolCall(tc.toolOutput)) continue;
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
-        rawChangePaths.push(change.filePath);
-        const canonical = canonicalChangePath(change.filePath, workspaceRoots);
+        const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
+        attemptedTargets.push(attempted);
+        // A refused call wrote nothing — it must not appear as a change.
+        if (isRefusedToolCall(tc.toolOutput)) continue;
+        const ref: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
+        // Non rattachable, hors détail — comme dans la liste.
+        if (!isInsideWorkspace(ref, detailWorkspaces)) continue;
+        rawChanges.push(ref);
+        // Même canonicalisation que la liste : sur la forme ABSOLUE, sinon le
+        // même fichier apparaît deux fois selon l'outil qui l'a écrit.
+        const canonical = canonicalChangePath(
+          resolveChangePath(ref) ?? change.filePath,
+          workspaceRoots,
+        );
         const group = changeGroups.get(canonical) ?? {
           filePath: canonical,
           addedLines: 0,
@@ -11956,19 +12363,48 @@ export async function getCodingProcessDetailAction(
       const pipelineDurationMs =
         jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
 
-      let detailProjectPath = deriveProjectRoot(
-        rawChangePaths,
-        workspaceRoots,
-        new Map<string, string | null>(),
-      );
-      // Même repli que la liste : l'unique workspace de l'agent racine.
-      if (!detailProjectPath && job.agentId) {
-        const agentWs = await db
-          .select({ path: agentWorkspaces.path })
-          .from(agentWorkspaces)
-          .where(eq(agentWorkspaces.agentId, job.agentId));
-        detailProjectPath = fallbackProjectFromAgentWorkspaces(agentWs.map((w) => w.path));
+      const detailMemo = new Map<string, string | null>();
+      let detailProjectPath = deriveProjectRoot(rawChanges, detailWorkspaces, detailMemo);
+      // Même repli que la liste, MÊME condition : uniquement quand il n'y avait
+      // aucun fichier à ancrer. Sinon il rattraperait les cas où la dérivation
+      // a délibérément renoncé (projet supprimé, écritures toutes refusées) et
+      // ferait réapparaître le travail sous le dossier conteneur.
+      const detailAVisePro = attemptedTargets.some((c) => isInsideWorkspace(c, detailWorkspaces));
+      if (!detailProjectPath && !detailAVisePro && job.agentId) {
+        // Les dossiers masqués sont hors repli, comme dans la liste (0087).
+        const agentWs = (
+          await db
+            .select({ path: agentWorkspaces.path, hiddenFromCode: agentWorkspaces.hiddenFromCode })
+            .from(agentWorkspaces)
+            .where(eq(agentWorkspaces.agentId, job.agentId))
+        ).filter((w) => !w.hiddenFromCode);
+        detailProjectPath = fallbackProjectFromAgentWorkspaces(
+          agentWs.map((w) => w.path),
+          detailMemo,
+        );
       }
+      // Le nom choisi par le propriétaire l'emporte sur le nom du dossier — le
+      // détail doit titrer comme la liste, sinon on croit changer de projet en
+      // ouvrant une session.
+      //
+      // La correspondance passe par `projectKey`, PAS par une égalité SQL
+      // (revue Codex, 26/08) : sur Windows, deux sessions du même dossier
+      // peuvent avoir été enregistrées avec des casses différentes. La liste
+      // les groupe déjà ainsi ; une égalité stricte aurait fait retomber le
+      // titre sur le nom du dossier dès qu'on ouvrait la « mauvaise » session.
+      const detailProjectName = detailProjectPath
+        ? (
+            await db
+              .select({
+                projectPath: codeProjects.projectPath,
+                displayName: codeProjects.displayName,
+              })
+              .from(codeProjects)
+              .where(eq(codeProjects.entityId, entityId))
+          )
+            .find((r) => projectKey(r.projectPath) === projectKey(detailProjectPath!))
+            ?.displayName?.trim() || projectNameFromPath(detailProjectPath)
+        : null;
 
       return ok({
         header: {
@@ -11982,7 +12418,7 @@ export async function getCodingProcessDetailAction(
           task: job.task,
           costUsd,
           projectPath: detailProjectPath,
-          projectName: detailProjectPath ? projectNameFromPath(detailProjectPath) : null,
+          projectName: detailProjectName,
           sessionType:
             verdicts.length > 0 && filesChanged === 0
               ? taskReferencesPullRequest(job.task)
@@ -12082,72 +12518,184 @@ export async function getCodingProcessDetailAction(
   }
 }
 
-// ─── Archivage des projets Code (décision Quentin 25/08) ─────────────────────
-// Les projets sont dérivés, jamais stockés — seule l'ARCHIVE persiste : un
-// état d'UI (« sors ce projet de mon espace actif »), AUCUN effet sur le
-// dossier réel, réversible d'un clic.
+// ─── Les deux gestes du propriétaire sur un projet (0086) ────────────────────
+//
+// Les projets sont dérivés, jamais stockés. Ce qui persiste, ce sont les deux
+// décisions qu'aucun indice du système ne donne : le NOM que le propriétaire
+// choisit, et ce qu'il MASQUE.
+//
+// Masquer n'a AUCUN effet sur le dossier réel — c'est réversible d'un clic. Ce
+// que ça change, depuis le 26/08 : le projet quitte aussi le bloc `## Runtime`
+// injecté aux agents (apps/runner/src/job/code-projects.ts). Jusque-là
+// l'archivage n'était lu que par l'interface, et un projet rangé continuait
+// d'être annoncé dans le prompt de tout le monde.
 
-export async function listArchivedCodeProjectsAction(): Promise<ActionResult<string[]>> {
+export interface CodeProjectPrefs {
+  projectPath: string;
+  displayName: string | null;
+  hidden: boolean;
+}
+
+export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodeProjectPrefs[]>> {
   try {
     const session = await getSession();
-    const db = getDb();
-    const rows = await db
-      .select({ projectPath: codeProjectArchives.projectPath })
-      .from(codeProjectArchives)
-      .where(eq(codeProjectArchives.entityId, session.entityId));
-    return ok(rows.map((r) => r.projectPath));
+    const rows = await getDb()
+      .select({
+        projectPath: codeProjects.projectPath,
+        displayName: codeProjects.displayName,
+        hidden: codeProjects.hidden,
+      })
+      .from(codeProjects)
+      .where(eq(codeProjects.entityId, session.entityId));
+    return ok(rows);
   } catch (err) {
-    console.error('[listArchivedCodeProjectsAction]', err);
-    return fail('db_error', 'Failed to load archived projects');
+    console.error('[listCodeProjectPrefsAction]', err);
+    return fail('db_error', 'Failed to load projects');
   }
 }
 
-const SetCodeProjectArchivedSchema = z.object({
+/**
+ * Le propriétaire, et lui seul (revue P1 du 25/08) : ranger l'espace de travail
+ * change ce que TOUT LE MONDE voit, agents compris depuis que le masquage porte
+ * jusqu'au contexte. Même garde EXACTE que le sélecteur de dossiers —
+ * comparaison directe avec `entities.userId`, sans exemption local-trust. En
+ * mono-utilisateur le propriétaire EST la session, donc rien ne change pour
+ * l'usage normal.
+ */
+async function assertProjectOwner(
+  db: ReturnType<typeof getDb>,
+  session: { entityId: string; userId: string },
+): Promise<string | null> {
+  const [ownerRow] = await db
+    .select({ userId: entities.userId })
+    .from(entities)
+    .where(eq(entities.id, session.entityId));
+  if (!ownerRow) return 'not_found';
+  return ownerRow.userId === session.userId ? null : 'forbidden';
+}
+
+/**
+ * Écrit un des deux gestes sur un projet, en retrouvant sa ligne par IDENTITÉ
+ * normalisée plutôt que par égalité de texte.
+ *
+ * UPSERT, jamais insert/delete : la ligne porte les DEUX gestes. Démasquer en
+ * supprimant la ligne effacerait un renommage au passage.
+ *
+ * Et l'identité passe par `projectKey`, pas par l'égalité SQL (revue Codex,
+ * 26/08). Sur Windows, le même projet peut être remonté avec des casses
+ * différentes selon la session : masquer `C:/Dev/App` puis démasquer
+ * `c:/dev/app` créait DEUX lignes, celle à `hidden=true` continuait de gagner
+ * dans l'interface comme dans le contexte, et le projet restait masqué sans
+ * aucun moyen de le rétablir. Un geste réversible qui ne se défait pas est
+ * pire qu'un geste absent.
+ *
+ * Le chemin d'origine est conservé tel qu'il a été écrit la première fois —
+ * c'est lui qu'on affiche ; seule la correspondance est normalisée.
+ */
+async function upsertCodeProject(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  projectPath: string,
+  patch: { hidden?: boolean; displayName?: string | null },
+): Promise<void> {
+  // TOUTES les lignes qui désignent ce projet, pas seulement la première
+  // (revue Codex, 26/08). La contrainte d'unicité porte sur le TEXTE exact,
+  // héritée de `code_project_archives` (0083) : une base mise à jour peut donc
+  // déjà contenir deux lignes ne différant que par la casse, et une écriture
+  // concurrente peut encore en créer. N'en corriger qu'une laisserait l'autre
+  // à `hidden=true`, et le projet resterait masqué pour toujours.
+  //
+  // Les mettre toutes à jour converge : la première écriture qui suit remet
+  // l'ensemble d'accord, quelle que soit la façon dont les doublons sont nés.
+  const matches = (
+    await db
+      .select({ id: codeProjects.id, projectPath: codeProjects.projectPath })
+      .from(codeProjects)
+      .where(eq(codeProjects.entityId, entityId))
+  ).filter((r) => projectKey(r.projectPath) === projectKey(projectPath));
+
+  if (matches.length > 0) {
+    await db
+      .update(codeProjects)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(
+        inArray(
+          codeProjects.id,
+          matches.map((r) => r.id),
+        ),
+      );
+    return;
+  }
+
+  // Pas de ligne pour ce projet : on la crée. `onConflictDoUpdate` couvre la
+  // course où deux écritures de MÊME casse arrivent en même temps — la
+  // contrainte d'unicité porte sur le texte exact.
+  await db
+    .insert(codeProjects)
+    .values({ entityId, projectPath, ...patch })
+    .onConflictDoUpdate({
+      target: [codeProjects.entityId, codeProjects.projectPath],
+      set: { ...patch, updatedAt: new Date() },
+    });
+}
+
+const SetCodeProjectHiddenSchema = z.object({
   projectPath: z.string().min(1).max(4096),
-  archived: z.boolean(),
+  hidden: z.boolean(),
 });
 
-export async function setCodeProjectArchivedAction(raw: unknown): Promise<ActionResult<void>> {
+export async function setCodeProjectHiddenAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetCodeProjectArchivedSchema.safeParse(raw);
+    const parsed = SetCodeProjectHiddenSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-    // Owner-only (revue P1 du 25/08) : ranger l'espace de travail change ce
-    // que TOUT LE MONDE voit. Même garde EXACTE que le sélecteur de dossiers
-    // (comparaison directe avec entities.userId, sans exemption local-trust) —
-    // en mono-utilisateur le propriétaire EST la session, donc rien ne change
-    // pour l'usage normal.
-    const [ownerRow] = await db
-      .select({ userId: entities.userId })
-      .from(entities)
-      .where(eq(entities.id, session.entityId));
-    if (!ownerRow) return fail('not_found', 'Workspace not found');
-    if (ownerRow.userId !== session.userId) {
-      return fail('forbidden', 'Only the workspace owner can archive a project.');
-    }
-    if (parsed.data.archived) {
-      await db
-        .insert(codeProjectArchives)
-        .values({ entityId: session.entityId, projectPath: parsed.data.projectPath })
-        .onConflictDoNothing();
-    } else {
-      await db
-        .delete(codeProjectArchives)
-        .where(
-          and(
-            eq(codeProjectArchives.entityId, session.entityId),
-            eq(codeProjectArchives.projectPath, parsed.data.projectPath),
-          ),
-        );
-    }
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can hide a project.');
+
+    await upsertCodeProject(db, session.entityId, parsed.data.projectPath, {
+      hidden: parsed.data.hidden,
+    });
     revalidatePath('/code');
     return ok(undefined);
   } catch (err) {
-    console.error('[setCodeProjectArchivedAction]', err);
-    return fail('db_error', 'Failed to update project archive');
+    console.error('[setCodeProjectHiddenAction]', err);
+    return fail('db_error', 'Failed to update the project');
+  }
+}
+
+const RenameCodeProjectSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  /** Vide = revenir au nom du dossier. */
+  displayName: z.string().max(120),
+});
+
+export async function renameCodeProjectAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = RenameCodeProjectSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can rename a project.');
+
+    // Un nom vidé rend son nom au DOSSIER : `NULL`, pas la chaîne vide, sinon
+    // le projet s'afficherait sans nom du tout.
+    const name = parsed.data.displayName.trim();
+    await upsertCodeProject(db, session.entityId, parsed.data.projectPath, {
+      displayName: name === '' ? null : name,
+    });
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[renameCodeProjectAction]', err);
+    return fail('db_error', 'Failed to rename the project');
   }
 }
 

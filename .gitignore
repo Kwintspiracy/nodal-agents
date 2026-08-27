@@ -95,3 +95,7 @@ apps/web/tests/e2e/.artifacts/
 # with a repo-local store-dir; it is a CACHE, rebuilt from the lockfile, and
 # has no business in version control.
 .pnpm-store/
+
+# Artefacts du MCP Playwright — captures de page et logs console des reviews.
+# Generes a chaque run, jamais relus, et ils faisaient echouer le hook de format.
+.playwright-mcp/

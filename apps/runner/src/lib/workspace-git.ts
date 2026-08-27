@@ -63,6 +63,32 @@ async function git(cwd: string, args: string[]): Promise<string | null> {
 }
 
 /**
+ * QUEL dossier sonder — le dossier attaché s'il y en a un, le partagé sinon.
+ *
+ * La sonde portait sur le partagé, sans condition (corrigé le 26/08). Un agent
+ * dont le vrai travail est dans `Documents/Dev/NodalAI` — un vrai dépôt —
+ * s'entendait décrire l'état git d'un répertoire de brouillon : une information
+ * FAUSSE à la place d'une information utile, dans le bloc même censé lui éviter
+ * de committer au mauvais endroit.
+ *
+ * Le partagé reste le repli pour les agents SANS dossier attaché : là, il est
+ * bien leur workspace, et la question « suis-je dans un dépôt ? » porte sur lui.
+ *
+ * Le PREMIER dossier attaché, dans l'ordre `position, label` — le même que
+ * celui que le prompt présente en premier, pour que les deux blocs parlent du
+ * même endroit.
+ *
+ * Extrait de `executeJob` pour être testable : enfoui dans une fonction de
+ * 1 500 lignes, ce choix n'était prouvable par aucun test.
+ */
+export function gitProbeTarget(
+  attachedPaths: ReadonlyArray<string>,
+  sharedPath: string | null,
+): string | null {
+  return attachedPaths[0] ?? sharedPath;
+}
+
+/**
  * Probe `cwd` for a git repository. Returns null when there is none, when git
  * is unavailable, or when the probe times out.
  *

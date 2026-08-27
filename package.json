@@ -18,6 +18,7 @@
     "hygiene:check": "node scripts/check-commit-hygiene.mjs --all",
     "hooks:install": "node scripts/install-hooks.mjs",
     "prepare": "node scripts/install-hooks.mjs",
+    "release:check": "node scripts/release-check.mjs",
     "pack:build": "node scripts/build-pack.mjs",
     "pack:smoke": "node scripts/smoke-pack.mjs",
     "pack:upgrade": "node scripts/smoke-upgrade.mjs",

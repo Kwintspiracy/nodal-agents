@@ -79,6 +79,11 @@ export {
   resolveCliPath,
   buildSpawnArgv,
   runCli,
+  // L'UNIQUE constructeur d'argv Codex, et l'UNIQUE lecteur de ses événements
+  // d'outils : le runtime Codex (apps/runner/src/cli-runtime/codex-turn.ts) les
+  // emprunte au lieu d'en écrire une deuxième version, qui aurait dérivé.
+  buildProviderArgs,
+  parseLiveToolEvent,
   extractClaudeUsage,
   extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
@@ -87,6 +92,7 @@ export {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  workspaceLockKey,
   assertRuntimeSessionKey,
   CODE_TASK_KEY_PREFIX,
 } from './code-task';

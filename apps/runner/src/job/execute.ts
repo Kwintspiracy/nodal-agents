@@ -131,13 +131,11 @@ import {
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { triggerWorker } from '../routes/agent.ts';
-import { workspacesRoot } from '../lib/workspaces-root.ts';
-import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
-import { probeWorkspaceGit } from '../lib/workspace-git.ts';
+import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
+import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
+import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { isMcpOriginJob } from '../lib/mcp-provenance.ts';
 import { checkpointsRoot } from '@nodal-agents/checkpoints';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
@@ -880,31 +878,30 @@ async function runJob(
     .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
   const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
 
-  // Entity-wide SHARED workspace: a common scratch/hand-off area every agent in
-  // this entity can read/write — for ARTIFACTS (reports, images, html, pptx) that
-  // siblings or later runs need. Auto-created (works out-of-box); complements the
-  // per-agent workspaces above (special tasks) and entity-wide memory (facts).
-  // Labeled SHARED_WORKSPACE_LABEL — the same constant the D1 overwrite gate
-  // keys off (packages/tools file-ops/workspace.ts); a drift here would
-  // silently disable that gate. The agent's file_* tools see it like any
-  // other workspace.
-  let sharedWorkspacePath: string | null = null;
-  if (job.entityId) {
-    const sharedPath = join(workspacesRoot(), job.entityId, 'shared');
-    try {
-      mkdirSync(sharedPath, { recursive: true });
-      if (!agentWorkspacesList.some((w) => w.label === SHARED_WORKSPACE_LABEL)) {
-        agentWorkspacesList.push({ label: SHARED_WORKSPACE_LABEL, path: sharedPath });
-      }
-      sharedWorkspacePath = sharedPath;
-    } catch {
-      // best-effort — a workspace we couldn't create is simply not offered
-    }
-  }
+  // Entity-wide SHARED workspace : le SEUL terrain commun entre agents.
+  //
+  // Injecté à tout le monde, délibérément — c'est ce qui permet à un agent qui
+  // tient un coffre de notes de passer un fichier à un agent qui génère des
+  // images. Le retirer à quiconque reçoit un dossier propre les désolidariserait
+  // du reste de l'équipe (objection de Quentin, 26/08, sur une première version
+  // de ce correctif qui faisait exactement ça).
+  //
+  // La liste finale part ensuite AUSSI au prompt, via `jobContext.workspaces` —
+  // et c'est là qu'était le vrai défaut. Voir lib/workspace-list.ts.
+  // Création partagée avec le chemin CHAT — voir lib/workspace-list.ts.
+  const sharedCandidate = ensureSharedWorkspace(job.entityId);
+  const resolved = resolveWorkspaceList(
+    agentWorkspacesList,
+    SHARED_WORKSPACE_LABEL,
+    sharedCandidate,
+  );
+  agentWorkspacesList.length = 0;
+  agentWorkspacesList.push(...resolved.workspaces);
+  const sharedWorkspacePath: string | null = resolved.sharedPath;
 
   // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
-  // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude
-  // Code): the whole Nodal LLM loop below is skipped and the turn is served
+  // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude Code
+  // or Codex): the whole Nodal LLM loop below is skipped and the turn is served
   // by the user's own CLI under their subscription. Returning through runJob's
   // normal exit keeps the wrapper semantics intact (maybeResumeParent — a
   // runtime agent can be a delegated worker in a team).
@@ -1078,19 +1075,34 @@ async function runJob(
   // so it reuses artifacts instead of recreating them (see workspace-inventory.ts).
   const workspaceInventory = sharedWorkspacePath
     ? await buildSharedWorkspaceInventory(sharedWorkspacePath)
-    : '';
+    : null;
   // Git posture — an agent working in a repository did not know it was in one
   // (see workspace-git.ts). Probed once, here, next to the inventory: same
   // split, the runner computes and the orchestration renders.
-  const workspaceGit = sharedWorkspacePath ? await probeWorkspaceGit(sharedWorkspacePath) : null;
+  //
+  // Le dossier ATTACHÉ quand il y en a un, le partagé sinon — la règle et son
+  // pourquoi vivent dans `gitProbeTarget` (lib/workspace-git.ts).
+  const gitProbePath = gitProbeTarget(
+    wsRows.map((w) => w.path),
+    sharedWorkspacePath,
+  );
+  const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
+    // LA liste, celle que les outils ont — partagé compris. Le prompt la
+    // construisait par sa propre requête sur `agent_workspaces`, qui ne le
+    // contient pas : il annonçait un dossier là où l'agent en avait deux.
+    workspaces: agentWorkspacesList,
     ...(job.task ? { task: job.task } : {}),
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
     ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
-    ...(workspaceInventory ? { workspaceInventory } : {}),
+    // La règle et son pourquoi vivent dans `inventoryForContext`.
+    ...(() => {
+      const inv = inventoryForContext(sharedWorkspacePath, workspaceInventory);
+      return inv === undefined ? {} : { workspaceInventory: inv };
+    })(),
     ...(workspaceGit ? { workspaceGit } : {}),
     deployment,
   };

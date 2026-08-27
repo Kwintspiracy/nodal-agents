@@ -20,16 +20,17 @@ import { randomUUID } from 'node:crypto';
 import {
   assertCliBudget,
   recordCliRun,
-  acquireWorkspaceLock,
-  releaseWorkspaceLock,
-  WorkspaceLockedError,
   assertRuntimeSessionKey,
+  SHARED_WORKSPACE_LABEL,
 } from '@nodal-agents/tools';
+import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
+import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { buildCliAuditRow } from './audit.ts';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
-import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
+import { type ClaudeTurnEvent } from './claude-turn.ts';
+import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
@@ -46,20 +47,39 @@ export async function runCliRuntimeChatTurn(args: {
   // Same shared-table guard as the job path — see assertRuntimeSessionKey.
   const conversationId = assertRuntimeSessionKey(args.conversationId);
 
-  if (agentRow.runtime !== 'claude-code') {
+  // Le MÊME tableau que le chemin job — voir provider.ts.
+  const binding = resolveRuntime(agentRow.runtime);
+  if (!binding) {
     return { ok: false, error: `runtime_not_supported:${agentRow.runtime}` };
   }
 
-  const wsRows = await db
-    .select({ path: agentWorkspaces.path })
+  const attached = await db
+    // Le LABEL compte : c'est sous ce nom que le prompt annonce chaque dossier,
+    // et c'est par lui qu'un chemin relatif se résout. Le sélectionner ici
+    // évite de fabriquer une étiquette vide au moment de bâtir le contexte.
+    .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
     .from(agentWorkspaces)
     .where(eq(agentWorkspaces.agentId, agentRow.id))
     .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+
+  // La MÊME liste que le chemin job — le partagé compris (revue Codex, 27/08).
+  //
+  // Ce dossier n'a aucune ligne en base : il est fabriqué à l'exécution, et
+  // `execute.ts` l'ajoutait de son côté seulement. Depuis ce chat, un agent en
+  // runtime CLI ne pouvait donc ni lire ni écrire les fichiers de transmission
+  // de l'équipe — et un agent SANS dossier attaché échouait en
+  // `workspace_not_configured` alors que ses jobs tournaient très bien. Deux
+  // points d'entrée pour le même agent, deux réalités.
+  const { workspaces: wsRows } = resolveWorkspaceList(
+    attached,
+    SHARED_WORKSPACE_LABEL,
+    ensureSharedWorkspace(entityId),
+  );
   const cwd = wsRows[0]?.path;
   if (!cwd) return { ok: false, error: 'workspace_not_configured' };
 
   try {
-    await assertCliBudget(db, agentRow.id);
+    await assertCliBudget(db, agentRow.id, binding.provider);
   } catch (err) {
     return {
       ok: false,
@@ -71,13 +91,19 @@ export async function runCliRuntimeChatTurn(args: {
     .select({ sessionId: cliSessions.sessionId })
     .from(cliSessions)
     .where(
-      and(eq(cliSessions.agentId, agentRow.id), eq(cliSessions.conversationKey, conversationId)),
+      and(
+        eq(cliSessions.agentId, agentRow.id),
+        eq(cliSessions.conversationKey, conversationId),
+        // Même règle que le chemin job : le fournisseur fait partie de
+        // l'identité d'une session. Voir run-job.ts.
+        eq(cliSessions.provider, binding.provider),
+      ),
     )
     .limit(1);
 
   const perms = agentRow.cliPermissions ?? {};
   const mode: 'read' | 'write' = perms.mode ?? 'read';
-  const defaults = agentRow.cliDefaults?.claude ?? {};
+  const defaults = agentRow.cliDefaults?.[binding.provider] ?? {};
 
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
   const onEvent = (evt: ClaudeTurnEvent): void => {
@@ -92,11 +118,15 @@ export async function runCliRuntimeChatTurn(args: {
         .values({
           entityId,
           jobId: null,
-          toolName: `cli:${started.name}`,
-          toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-          toolOutput: evt.output ?? '',
-          durationMs: Date.now() - started.startedAt,
-          toolCallId: evt.toolUseId,
+          // Même construction que le chemin job — voir audit.ts.
+          ...buildCliAuditRow({
+            toolName: started.name,
+            toolInput: started.input,
+            toolOutput: evt.output,
+            toolCallId: evt.toolUseId,
+            startedAt: started.startedAt,
+            now: Date.now(),
+          }),
         })
         .catch((err: unknown) => {
           console.warn('[cli-runtime] chat tool_calls insert failed:', err);
@@ -107,10 +137,21 @@ export async function runCliRuntimeChatTurn(args: {
   // Single write-slot per workspace, same contract as code_task/run-job. A
   // chat turn has no jobId — the lock token is a synthetic uuid (the column
   // is a bare uuid, not an FK), released in finally.
+  // TOUS les dossiers écrivables, pas seulement `cwd` — voir workspace-locks.ts.
+  //
+  // Le chemin job a été corrigé d'abord, et celui-ci est resté en arrière une
+  // revue de plus : deux copies, un seul correctif appliqué. C'est ce qui a fait
+  // sortir la prise de verrous dans son propre module.
   const lockToken = mode === 'write' ? randomUUID() : null;
+  let locks: HeldLocks = { release: async () => {} };
   if (lockToken) {
     try {
-      await acquireWorkspaceLock(db, cwd, lockToken, agentRow.id);
+      locks = await acquireWorkspaceLocks(
+        db,
+        wsRows.map((w) => w.path),
+        lockToken,
+        agentRow.id,
+      );
     } catch (err) {
       if (err instanceof WorkspaceLockedError) {
         return { ok: false, error: err.message.slice(0, 300) };
@@ -134,20 +175,35 @@ export async function runCliRuntimeChatTurn(args: {
   // signal. Assumé ici parce qu'un tour de chat CLI dure des minutes ; si ça
   // devenait sensible, c'est le TIMEOUT de la sonde qu'il faudrait réduire, pas
   // la sonde qu'il faudrait retirer.
-  const workspaceGit = await probeWorkspaceGit(cwd);
-
-  const systemPrompt = await buildSystemPrompt(
-    agentRow,
-    db,
-    buildCliRuntimeJobContext({ origin: 'dashboard', task: message, workspaceGit }),
-  );
-
-  let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
+  //
+  // Sous le MÊME filet que le tour — voir run-job.ts : une panne passagère ici
+  // laissait les dossiers verrouillés une demi-heure pour tout le monde.
+  let systemPrompt: string;
   try {
-    turn = await runClaudeTurn({
+    const workspaceGit = await probeWorkspaceGit(cwd);
+    systemPrompt = await buildSystemPrompt(
+      agentRow,
+      db,
+      buildCliRuntimeJobContext({
+        origin: 'dashboard',
+        task: message,
+        workspaceGit,
+        workspaces: wsRows,
+      }),
+    );
+  } catch (err) {
+    await locks.release();
+    throw err;
+  }
+
+  let turn: CliTurnResult;
+  try {
+    turn = await binding.run({
       message,
       personality: systemPrompt,
       cwd,
+      // Comme le chemin job — voir ClaudeTurnOptions.extraWriteDirs.
+      extraWriteDirs: wsRows.slice(1).map((w) => w.path),
       mode,
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,
@@ -159,16 +215,12 @@ export async function runCliRuntimeChatTurn(args: {
       onEvent,
     });
   } catch (err) {
-    if (err instanceof ClaudeCliNotFoundError) {
+    if (isCliSetupError(err)) {
       return { ok: false, error: err.message.slice(0, 300) };
     }
     throw err;
   } finally {
-    if (lockToken) {
-      await releaseWorkspaceLock(db, cwd, lockToken).catch((err: unknown) => {
-        console.warn('[cli-runtime] chat workspace lock release failed:', err);
-      });
-    }
+    await locks.release();
   }
 
   try {
@@ -176,7 +228,7 @@ export async function runCliRuntimeChatTurn(args: {
       entityId,
       agentId: agentRow.id,
       jobId: null,
-      provider: 'claude',
+      provider: binding.provider,
       mode,
       source: 'subscription',
       sessionId: turn.sessionId,
@@ -203,12 +255,13 @@ export async function runCliRuntimeChatTurn(args: {
         entityId,
         agentId: agentRow.id,
         conversationKey: conversationId,
-        provider: 'claude',
+        provider: binding.provider,
         sessionId: turn.sessionId,
       })
       .onConflictDoUpdate({
         target: [cliSessions.agentId, cliSessions.conversationKey],
-        set: { sessionId: turn.sessionId, updatedAt: sql`now()` },
+        // `provider` reposé — voir run-job.ts.
+        set: { sessionId: turn.sessionId, provider: binding.provider, updatedAt: sql`now()` },
       })
       .catch((err: unknown) => {
         console.warn('[cli-runtime] chat cli_sessions upsert failed:', err);

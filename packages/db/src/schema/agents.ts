@@ -88,12 +88,16 @@ export const agents = pgTable(
       codex?: { model?: string; effort?: string; enabled?: boolean };
     } | null>(),
     // Which harness drives this agent (étape E). 'nodal' (default) = the
-    // Nodal runner loop. 'claude-code' = the agent IS a Claude Code session:
-    // persona from DB via --append-system-prompt, channels/cron/workspaces/
-    // budget/approvals stay Nodal's, but the LOOP, tools and context are the
-    // CLI's — said as-is to the user (dispatcher, not brain). 'codex' is
-    // reserved (fails loud runtime_not_supported until implemented). A DATA
-    // field, never a hardcoded per-agent branch (invariant #1).
+    // Nodal runner loop. 'claude-code' and 'codex' = the agent IS a session of
+    // that CLI: persona from DB, channels/cron/workspaces/budget/approvals stay
+    // Nodal's, but the LOOP, tools and context are the CLI's — said as-is to
+    // the user (dispatcher, not brain). A DATA field, never a hardcoded
+    // per-agent branch (invariant #1).
+    //
+    // 'codex' a été RÉSERVÉ ici du 19/08 au 27/08 : accepté par la contrainte,
+    // refusé par le Zod de l'action et par le runner. Ouvert le 27/08 —
+    // apps/runner/src/cli-runtime/provider.ts porte désormais LE tableau des
+    // runtimes servis ; cette contrainte et lui doivent rester d'accord.
     runtime: text('runtime').default('nodal').notNull(),
     // Runtime-agent permission posture, as DATA: mode 'read' (default when
     // NULL) hides the CLI's write tools; 'write' allows workspace edits

@@ -74,17 +74,46 @@ export function assertCliProviderEnabled(
 }
 
 /**
+ * Les fournisseurs qui ne rapportent AUCUN coût.
+ *
+ * Codex n'en écrit pas dans `cli_runs` : ses tours n'ajoutent rien à la somme,
+ * et le plafond en dollars ne peut donc rien borner chez lui. L'interface le dit
+ * (`CLI_RUNTIME_REPORTS_COST`, apps/web/src/lib/cli-runtimes.ts) et cesse de
+ * proposer le champ.
+ */
+const UNMETERED_PROVIDERS = new Set(['codex']);
+
+/**
  * Enforce the per-agent daily cap on notional CLI cost BEFORE spawning, and
  * return the agent's CLI config (one roundtrip serves both needs).
  * Budget 0 = uncapped. Fails loud — never silently skips the run.
+ *
+ * `provider` : quand il ne rapporte aucun coût, la garde ne s'applique pas.
+ *
+ * Sans ce paramètre, l'écran et le runner se contredisaient (revue Codex,
+ * 27/08) : la carte annonçait « aucun plafond en dollars ne borne ce harnais »
+ * et masquait le champ, pendant que le runner sommait TOUTES les dépenses de
+ * l'agent — Claude et `code_task` compris. Un agent basculé sur Codex après une
+ * journée de travail sous Claude se retrouvait bloqué jusqu'au lendemain, pour
+ * un plafond qu'on venait de lui dire inapplicable, et sans champ pour le
+ * relever.
+ *
+ * Ça ne desserre rien : un tour Codex n'ajoute aucun dollar à la somme, donc le
+ * sauter ne laisse passer aucune dépense. Ce qui borne un tour Codex, c'est le
+ * délai par tour et le plafond d'appels d'outils.
  */
-export async function assertCliBudget(db: AnyDrizzleDb, agentId: string): Promise<CliAgentConfig> {
+export async function assertCliBudget(
+  db: AnyDrizzleDb,
+  agentId: string,
+  provider?: string,
+): Promise<CliAgentConfig> {
   const [agentRow] = await db
     .select({ budget: agents.cliDailyBudgetUsd, defaults: agents.cliDefaults })
     .from(agents)
     .where(eq(agents.id, agentId))
     .limit(1);
   const config: CliAgentConfig = { defaults: agentRow?.defaults ?? null };
+  if (provider !== undefined && UNMETERED_PROVIDERS.has(provider)) return config;
   const budget = agentRow?.budget ?? 0;
   if (budget <= 0) return config; // 0 = no cap (same convention as daily_token_limit)
 
@@ -154,6 +183,31 @@ export class WorkspaceLockedError extends Error {
 }
 
 /**
+ * LA clé d'un verrou de dossier.
+ *
+ * Le même dossier s'écrit de plusieurs façons — `C:/Common`, `c:\common`,
+ * `C:\Common\` — et le verrou vit dans une colonne texte : trois orthographes,
+ * trois verrous, aucun ne bloquant les autres. Deux sessions en écriture
+ * pouvaient donc modifier les mêmes fichiers en même temps (revue Codex,
+ * 27/08), ce que le contrat d'un seul créneau promet d'empêcher. Le risque est
+ * apparu en ouvrant les dossiers SECONDAIRES à l'écriture : jusque-là chaque
+ * session ne verrouillait que son propre `cwd`.
+ *
+ * Normalisé ICI plutôt que chez les appelants : `code_task` et le runtime
+ * passent tous les deux par cette fonction, et normaliser d'un seul côté aurait
+ * fait cesser les deux de se voir — pire que le défaut d'origine.
+ *
+ * Même règle d'identité que les projets (`projectKey`) : la casse n'est repliée
+ * que sur les chemins Windows, où elle n'est pas significative. Sur un système
+ * sensible à la casse, `/srv/App` et `/srv/app` sont deux dossiers.
+ */
+export function workspaceLockKey(workspacePath: string): string {
+  const s = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const isWindows = /^[a-z]:\//i.test(s) || s.startsWith('//');
+  return isWindows ? s.toLowerCase() : s;
+}
+
+/**
  * Acquire the single write-slot for a workspace. Atomic INSERT … ON CONFLICT
  * DO NOTHING; on conflict, one conditional-UPDATE attempt to steal a stale
  * lock (holder older than 30 min — a crashed runner must not wedge the
@@ -161,10 +215,11 @@ export class WorkspaceLockedError extends Error {
  */
 export async function acquireWorkspaceLock(
   db: AnyDrizzleDb,
-  workspacePath: string,
+  rawWorkspacePath: string,
   jobId: string,
   agentId: string,
 ): Promise<void> {
+  const workspacePath = workspaceLockKey(rawWorkspacePath);
   const inserted = await db
     .insert(workspaceLocks)
     .values({ workspacePath, jobId, agentId })
@@ -197,9 +252,12 @@ export async function acquireWorkspaceLock(
 /** Release the lock — only if THIS job still holds it (a stealer may have won). */
 export async function releaseWorkspaceLock(
   db: AnyDrizzleDb,
-  workspacePath: string,
+  rawWorkspacePath: string,
   jobId: string,
 ): Promise<void> {
+  // La MÊME clé qu'à la prise, sinon le verrou ne se rend jamais et le dossier
+  // reste bloqué jusqu'à expiration.
+  const workspacePath = workspaceLockKey(rawWorkspacePath);
   await db
     .delete(workspaceLocks)
     .where(and(eq(workspaceLocks.workspacePath, workspacePath), eq(workspaceLocks.jobId, jobId)));

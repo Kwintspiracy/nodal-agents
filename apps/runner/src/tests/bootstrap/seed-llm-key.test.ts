@@ -1,4 +1,4 @@
-﻿// seed-llm-key.test.ts — Brique 25 seeder guard logic
+// seed-llm-key.test.ts — Brique 25 seeder guard logic
 //
 // Tests:
 //   1. local-auth single-user → seeds correctly (the case Quentin hit)

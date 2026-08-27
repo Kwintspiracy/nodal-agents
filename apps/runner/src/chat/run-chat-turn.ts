@@ -19,7 +19,12 @@ import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
-import { loadTaskLedger, formatTaskLedgerLines } from '../job/task-ledger.ts';
+import {
+  loadTaskLedger,
+  formatTaskLedgerLines,
+  loadInlineDelegationLedger,
+  formatInlineDelegationLines,
+} from '../job/task-ledger.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -359,13 +364,24 @@ export async function runChatTurn(opts: {
   // Delegated-task visibility (2026-07-12 incident — see task-ledger.ts): one
   // batched query for every escalated job's own create_task fan-out, keyed by
   // jobId (= agent_tasks.root_job_id).
-  const taskLedger = await loadTaskLedger(
-    db,
-    rows.map((r) => r.jobId),
-  );
+  const jobIds = rows.map((r) => r.jobId);
+  const taskLedger = await loadTaskLedger(db, jobIds);
+  // Et la délégation EN LIGNE (`assign_*`), qui ne passe PAS par `agent_tasks`.
+  //
+  // Le registre a d'abord été branché sur `loadThreadHistory` seulement, donc
+  // sur Telegram, Slack et Discord — pas ici (revue Codex, 27/08). Or un tour
+  // de chat dans le tableau de bord escalade par le même chemin : sans cette
+  // ligne, un compte rendu de délégation inventé y restait indiscernable d'un
+  // vrai. Exactement la panne que ce registre existe pour fermer, laissée
+  // ouverte sur la surface où le propriétaire parle le plus à ses agents.
+  const inlineLedger = await loadInlineDelegationLedger(db, jobIds);
   const ledgerLinesByJobId = new Map<string, string[]>();
-  for (const [jobId, entries] of taskLedger) {
-    ledgerLinesByJobId.set(jobId, formatTaskLedgerLines(entries));
+  for (const jobId of new Set(jobIds.filter((id): id is string => !!id))) {
+    const lines = [
+      ...formatTaskLedgerLines(taskLedger.get(jobId) ?? []),
+      ...formatInlineDelegationLines(inlineLedger.get(jobId) ?? []),
+    ];
+    if (lines.length > 0) ledgerLinesByJobId.set(jobId, lines);
   }
 
   // Build one "block" (1 or 2 ModelMessages) per row, so the budget trim

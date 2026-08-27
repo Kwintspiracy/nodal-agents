@@ -1,4 +1,4 @@
-﻿// execute.test.ts — full E2E job loop with mocked LLM, asserts each transition
+// execute.test.ts — full E2E job loop with mocked LLM, asserts each transition
 // Tests:
 //   - pending → processing → completed on return_result
 //   - anti-loop: 51 tool_use blocks → tool_call_limit_exceeded

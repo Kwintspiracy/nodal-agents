@@ -94,6 +94,23 @@ export interface JobContext {
    */
   workspaceInventory?: string;
   /**
+   * Les dossiers que les OUTILS ont réellement — dossiers attachés PLUS le
+   * workspace partagé de l'espace (apps/runner/src/lib/workspace-list.ts).
+   *
+   * Sans ce champ, le bloc `## Workspace` se construisait par sa propre requête
+   * sur `agent_workspaces`, qui ne contient pas le partagé. Deux sources pour
+   * une même vérité, et le prompt mentait : il annonçait UN dossier là où les
+   * outils en avaient deux, et affirmait que « bare relative paths » et
+   * « label/path » résolvaient au même endroit. L'agent écrivait donc
+   * `shared/outputs/x.html`, correctement routé vers le partagé, puis annonçait
+   * `C:\…\Documents\Dev\shared\outputs\x.html` en collant sa racine au chemin
+   * relatif — un chemin qui n'existe nulle part (constaté le 26/08).
+   *
+   * Absent ⇒ repli sur la requête DB, pour les appelants qui n'ont pas de
+   * runtime sous la main (l'aperçu du dashboard, par exemple).
+   */
+  workspaces?: ReadonlyArray<{ label: string; path: string }>;
+  /**
    * Git state of the workspace, probed by the runner at job start
    * (apps/runner/src/lib/workspace-git.ts). Undefined when the workspace is not
    * a repository, or when git could not answer — in both cases the block is
@@ -724,8 +741,11 @@ export async function buildSystemPrompt(
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).
+  // La liste du RUNTIME quand elle est là — celle que les outils ont vraiment,
+  // partagé compris. La requête DB n'est qu'un repli pour les appelants sans
+  // runtime (l'aperçu du dashboard). Voir JobContext.workspaces.
   const workspacesBlock = buildWorkspacesBlock(
-    workspaceRows,
+    jobContext?.workspaces ?? workspaceRows,
     jobContext?.surface !== 'cli-runtime',
   );
 
@@ -817,10 +837,42 @@ export async function buildSystemPrompt(
   // Live inventory of the shared workspace (JobContext.workspaceInventory —
   // computed by the runner). Volatile by nature: it reflects the disk NOW.
   // Factual listing only; behavioral conventions belong to agent-layer skills.
+  //
+  // Le RÔLE du partagé dépend de l'agent (décision Quentin, 26/08), et cela se
+  // LIT — ça ne se devine pas : a-t-il un dossier attaché, oui ou non ?
+  //
+  //   aucun dossier attaché  →  le partagé EST son workspace ;
+  //   un dossier attaché     →  le partagé n'est qu'une zone de PASSAGE entre
+  //                             agents. Ce qui est produit pour le propriétaire
+  //                             va dans son dossier.
+  //
+  // POURQUOI ce texte a changé. Le bloc disait, sans condition, « save new
+  // files into the existing folder that matches their kind », suivi de
+  // l'inventaire. C'est une instruction directe, et les agents l'ont suivie à
+  // la lettre : le 26/08, Lead-Dev a fait construire une app par Dev C dans
+  // `shared/outputs/water-tracker/` alors que les deux ont `Documents/Dev`
+  // attaché. Le livrable atterrissait au milieu de centaines de PNG ComfyUI, et
+  // l'onglet Code — qui ne connaît que les dossiers attachés — n'en voyait
+  // rien. Le dossier attaché avait UNE ligne dans le prompt, le partagé un
+  // inventaire complet doublé d'un ordre : le déséquilibre faisait le reste.
+  //
+  // L'inventaire reste montré aux DEUX : un agent qui a son dossier doit quand
+  // même voir ce qu'un autre lui a déposé — c'est précisément la communication
+  // qu'on veut garder. Seule la directive change.
+  // UNE SEULE formulation, vraie pour tout le monde (26/08).
+  //
+  // Elle a dit « This is your workspace » — faux pour un agent qui a aussi le
+  // sien — puis « hand-off area […] belongs in **Dev** », faux pour un agent
+  // qui n'a que le partagé. Les deux variantes tentaient de compenser le fait
+  // que le bloc `## Workspace` mentait sur le nombre de dossiers. Il ne ment
+  // plus : il les liste tous, avec leurs chemins. Ce bloc-ci peut donc se
+  // contenter de décrire le partagé pour ce qu'il est, sans décider à la place
+  // du reste du prompt où va le travail.
   const inventoryBlock = jobContext?.workspaceInventory
-    ? '\n\n## Shared workspace contents\n\n' +
-      'Current listing of the `shared` workspace (depth 2, captured at job start). ' +
-      'Before creating a workflow, script, or document, check whether one listed here already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
+    ? '\n\n## Shared workspace\n\n' +
+      'The `shared` workspace is the common hand-off area — every agent here can read and write it, ' +
+      'which is how a file reaches a teammate. ' +
+      'Before creating a workflow, script, or document THERE, check whether one listed below already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
       // INJECT-001. The listing is produced by the runner, but the NAMES in it
       // are written by whoever created the files — another agent, a download, a
       // channel attachment. A file called
@@ -839,9 +891,13 @@ export async function buildSystemPrompt(
   // state drift while the job runs — a model told "you are on main" an hour ago
   // will commit to main. Hermes reached the same conclusion and states it the
   // same way: re-check with `git` before acting.
+  // « This workspace » ne suffisait plus (26/08) : depuis que la sonde porte sur
+  // le dossier ATTACHÉ plutôt que sur le partagé, un agent qui a les deux ne
+  // saurait pas duquel on parle. Le `root:` ci-dessous le dit — la phrase y
+  // renvoie explicitement.
   const gitBlock = jobContext?.workspaceGit
     ? '\n\n## Git\n\n' +
-      'This workspace is a git repository. Snapshot taken at job start — branch and ' +
+      'The workspace rooted at the path below is a git repository. Snapshot taken at job start — branch and ' +
       'working-tree state change as work proceeds, so re-check with `git status` / ' +
       '`git branch --show-current` before acting on any of it:\n\n' +
       // The branch name comes from the repository, i.e. from whoever created

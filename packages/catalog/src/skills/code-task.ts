@@ -14,6 +14,14 @@ export const codeTaskSkill: SystemSkill = {
   description:
     "Delegate complete dev tasks (analyse, review, debug, implement) to the coding CLI installed on this machine — Claude Code or Codex — running under the owner's subscription. Read-only by default; every run requires approval unless Yolo is enabled.",
   requiredBuiltins: ['code_task'],
+  // Reste un GROUPE D'OUTILS malgré sa guidance, pour une raison d'interface
+  // et non de doctrine : sa carte dans l'onglet Tools porte le panneau de
+  // configuration de la CLI (providers, modèle, effort, sonde de santé). Le
+  // déplacer vers Skills emporterait ce panneau avec lui.
+  //
+  // Contrepartie assumée : son texte n'est pas éditable depuis Skills. Si un
+  // jour la configuration déménage, ce drapeau doit tomber.
+  toolGroup: true,
   content: `## Coding CLI (code_task)
 
 This skill unlocks the \`code_task\` tool: it hands a complete dev task to the **coding CLI installed and logged in by the owner** on this machine — \`provider: "claude"\` (Claude Code) or \`provider: "codex"\` (OpenAI Codex). The CLI is itself a full autonomous coding agent: it explores the working directory, reasons, and returns a final answer. Its usage counts against the **owner's subscription**.

@@ -42,4 +42,26 @@ export interface SystemSkill {
   requiredBuiltins?: string[];
   /** Behavior layer (see SkillKind). Defaults to 'capability' when omitted. */
   kind?: SkillKind;
+  /**
+   * Present this skill as a TOOL GROUP on the agent's Tools tab, and hide it
+   * from every Skills surface.
+   *
+   * Set it only when the skill's value IS the tools it unlocks — a switch with
+   * a manual attached, like the Office families (24 xlsx/docx/pptx builtins).
+   * Leave it off when the skill carries a discipline the owner would want to
+   * read and edit, even if it also gates a builtin.
+   *
+   * DECLARED, not deduced (product decision 2026-08-25). The old rule was
+   * "system skill + gates ≥1 builtin ⇒ tool group", which quietly filed
+   * discipline-carrying skills under Tools: `code-review` (seven rules on how
+   * to judge work) and `command-execution` (never install heavyweight software
+   * on your own initiative). The owner could not find, read or edit them from
+   * the Skills page — noticed only when a dev-team message pointed at a page
+   * where the skill was not. Both are back under Skills.
+   *
+   * `code-task` is the one deliberate exception, and it is an INTERFACE
+   * exception, not a doctrinal one: its Tools card carries the CLI
+   * configuration panel. See the note on the skill itself.
+   */
+  toolGroup?: boolean;
 }

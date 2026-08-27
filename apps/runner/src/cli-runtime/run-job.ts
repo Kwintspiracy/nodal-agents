@@ -25,20 +25,15 @@ import {
   listActiveChannelsForAgent,
 } from '@nodal-agents/delivery';
 import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
-import {
-  assertCliBudget,
-  recordCliRun,
-  acquireWorkspaceLock,
-  releaseWorkspaceLock,
-  WorkspaceLockedError,
-  assertRuntimeSessionKey,
-} from '@nodal-agents/tools';
+import { assertCliBudget, recordCliRun, assertRuntimeSessionKey } from '@nodal-agents/tools';
+import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { buildCliAuditRow } from './audit.ts';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
-import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
+import { type ClaudeTurnEvent } from './claude-turn.ts';
+import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
@@ -59,7 +54,10 @@ const RUNTIME_TURN_TIMEOUT_MS = 900_000;
 export interface CliRuntimeAgentRow extends Agent {
   runtime: string;
   cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
-  cliDefaults: { claude?: { model?: string; effort?: string } } | null;
+  cliDefaults: {
+    claude?: { model?: string; effort?: string };
+    codex?: { model?: string; effort?: string };
+  } | null;
 }
 
 export interface CliRuntimeJobRow {
@@ -89,6 +87,17 @@ export function buildCliRuntimeJobContext(args: {
   task?: string | null;
   chatId?: string | null;
   workspaceGit?: Awaited<ReturnType<typeof probeWorkspaceGit>>;
+  /**
+   * Les dossiers que la CLI a RÉELLEMENT — le partagé compris.
+   *
+   * Sans cette liste, `buildSystemPrompt` retombe sur une requête dans
+   * `agent_workspaces`, où le workspace PARTAGÉ n'a pas de ligne : il est créé
+   * et injecté à l'exécution. L'agent recevait donc l'accès au dossier de
+   * transmission entre agents sans qu'on lui dise qu'il existe (revue Codex,
+   * 27/08). C'est la panne du 26/08 en miroir, sur le chemin CLI cette fois :
+   * le prompt et les outils ne voyaient pas les mêmes dossiers.
+   */
+  workspaces?: ReadonlyArray<{ label: string; path: string }>;
 }): Parameters<typeof buildSystemPrompt>[2] {
   return {
     origin: args.origin,
@@ -96,6 +105,7 @@ export function buildCliRuntimeJobContext(args: {
     ...(args.task ? { task: args.task } : {}),
     ...(args.chatId ? { telegramChatId: args.chatId } : {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
+    ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
   };
 }
 
@@ -113,8 +123,9 @@ export async function runCliRuntimeJob(args: {
     return { status: 'failed', error: code };
   };
 
-  // 'codex' is reserved data — implemented later behind the same seam.
-  if (agentRow.runtime !== 'claude-code') {
+  // Quel CLI sert ce runtime — voir provider.ts, l'unique tableau.
+  const binding = resolveRuntime(agentRow.runtime);
+  if (!binding) {
     return fail(`runtime_not_supported:${agentRow.runtime}`);
   }
 
@@ -136,7 +147,7 @@ export async function runCliRuntimeJob(args: {
 
   // Daily notional budget — same counter as code_task (cli_runs).
   try {
-    await assertCliBudget(db, agentRow.id);
+    await assertCliBudget(db, agentRow.id, binding.provider);
   } catch (err) {
     return fail(err instanceof Error ? err.message.slice(0, 300) : 'cli_daily_budget_exceeded');
   }
@@ -156,7 +167,17 @@ export async function runCliRuntimeJob(args: {
       .select({ sessionId: cliSessions.sessionId })
       .from(cliSessions)
       .where(
-        and(eq(cliSessions.agentId, agentRow.id), eq(cliSessions.conversationKey, conversationKey)),
+        and(
+          eq(cliSessions.agentId, agentRow.id),
+          eq(cliSessions.conversationKey, conversationKey),
+          // Le FOURNISSEUR fait partie de l'identité d'une session (revue
+          // Codex, 27/08). L'index unique ne porte que (agent, conversation) :
+          // basculer un agent de Claude Code à Codex sur la même conversation
+          // lui tendait l'identifiant de session de l'AUTRE CLI, que sa
+          // commande de reprise refuse. Sans ce filtre, chaque tour repartait
+          // en erreur de reprise après une bascule de runtime.
+          eq(cliSessions.provider, binding.provider),
+        ),
       )
       .limit(1);
     resumeSessionId = existing?.sessionId;
@@ -164,7 +185,10 @@ export async function runCliRuntimeJob(args: {
 
   const perms = agentRow.cliPermissions ?? {};
   const mode: 'read' | 'write' = perms.mode ?? 'read';
-  const defaults = agentRow.cliDefaults?.claude ?? {};
+  // Les défauts du fournisseur QUI TOURNE — pas ceux de Claude par principe.
+  // Lire `cliDefaults.claude` en dur donnait à un agent Codex le modèle d'un
+  // autre CLI, qui l'aurait refusé au lancement.
+  const defaults = agentRow.cliDefaults?.[binding.provider] ?? {};
 
   // Live observability (vs dsh's thrown-away stream): each CLI-internal tool
   // event becomes a tool_calls row as it happens, so the existing Runs page
@@ -189,13 +213,16 @@ export async function runCliRuntimeJob(args: {
         .values({
           entityId: job.entityId,
           jobId,
-          // Namespaced so a CLI-internal Read is never confused with a Nodal
-          // builtin in the Logs/Runs surfaces.
-          toolName: `cli:${started.name}`,
-          toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
-          toolOutput: evt.output ?? '',
-          durationMs: Date.now() - started.startedAt,
-          toolCallId: evt.toolUseId,
+          // Le masquage et le préfixe vivent dans audit.ts, partagés avec le
+          // chemin chat — voir ce fichier pour ce qui est masqué et pourquoi.
+          ...buildCliAuditRow({
+            toolName: started.name,
+            toolInput: started.input,
+            toolOutput: evt.output,
+            toolCallId: evt.toolUseId,
+            startedAt: started.startedAt,
+            now: Date.now(),
+          }),
         })
         .catch((err: unknown) => {
           console.warn(`[cli-runtime] tool_calls insert failed (job=${jobId}):`, err);
@@ -206,14 +233,23 @@ export async function runCliRuntimeJob(args: {
   // Same single-write-slot contract as code_task: a write-mode CLI session
   // must not run concurrently with another write run (code_task or a second
   // runtime turn) in the same workspace — git index/deps state would race.
+  //
+  // TOUS les dossiers écrivables, pas seulement `cwd` — voir workspace-locks.ts.
+  let locks: HeldLocks = { release: async () => {} };
   if (mode === 'write') {
     try {
-      await acquireWorkspaceLock(db, cwd, jobId, agentRow.id);
+      locks = await acquireWorkspaceLocks(
+        db,
+        args.workspaces.map((w) => w.path),
+        jobId,
+        agentRow.id,
+      );
     } catch (err) {
       if (err instanceof WorkspaceLockedError) return fail(err.message.slice(0, 300));
       throw err;
     }
   }
+  const releaseHeld = (): Promise<void> => locks.release();
 
   // The FULL Nodal prompt, not the raw personality field.
   //
@@ -237,30 +273,44 @@ export async function runCliRuntimeJob(args: {
   //
   // Sonde le cwd reel de la session, pas le workspace partage : c est la que la
   // CLI travaille.
-  const workspaceGit = await probeWorkspaceGit(cwd);
-
-  const systemPrompt = await buildSystemPrompt(
-    agentRow,
-    db,
-    buildCliRuntimeJobContext({
-      origin: job.channel ?? 'unknown',
-      task: job.task,
-      chatId: job.chatId,
-      workspaceGit,
-    }),
-  );
+  //
+  // Sous le MÊME filet que le tour lui-même (revue Codex, 27/08) : la sonde et
+  // l'assemblage du prompt touchent le disque et la base. Une panne passagère
+  // s'y produisait après la prise des verrous et avant le `try` — les dossiers,
+  // le PARTAGÉ compris, restaient bloqués une demi-heure pour tout le monde,
+  // jusqu'à la reprise du verrou périmé.
+  let systemPrompt: string;
+  try {
+    const workspaceGit = await probeWorkspaceGit(cwd);
+    systemPrompt = await buildSystemPrompt(
+      agentRow,
+      db,
+      buildCliRuntimeJobContext({
+        origin: job.channel ?? 'unknown',
+        task: job.task,
+        chatId: job.chatId,
+        workspaceGit,
+        workspaces: args.workspaces,
+      }),
+    );
+  } catch (err) {
+    await releaseHeld();
+    throw err;
+  }
 
   // Keep the job alive under the 5-minute reaper for the whole CLI run.
   const heartbeat = setInterval(() => {
     void touchJob(db, jobId).catch(() => {});
   }, 60_000);
 
-  let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
+  let turn: CliTurnResult;
   try {
-    turn = await runClaudeTurn({
+    turn = await binding.run({
       message: job.task ?? '',
       personality: systemPrompt,
       cwd,
+      // Les autres dossiers attachés — voir ClaudeTurnOptions.extraWriteDirs.
+      extraWriteDirs: args.workspaces.slice(1).map((w) => w.path),
       mode,
       extraDisallowed: perms.extraDisallowed,
       model: defaults.model,
@@ -274,16 +324,12 @@ export async function runCliRuntimeJob(args: {
     });
   } catch (err) {
     clearInterval(heartbeat);
-    if (mode === 'write') await releaseWorkspaceLock(db, cwd, jobId).catch(() => {});
-    if (err instanceof ClaudeCliNotFoundError) return fail(err.message.slice(0, 300));
+    await releaseHeld();
+    if (isCliSetupError(err)) return fail(err.message.slice(0, 300));
     throw err;
   }
   clearInterval(heartbeat);
-  if (mode === 'write') {
-    await releaseWorkspaceLock(db, cwd, jobId).catch((err: unknown) => {
-      console.warn(`[cli-runtime] workspace lock release failed (job=${jobId}):`, err);
-    });
-  }
+  await releaseHeld();
 
   // Audit — one cli_runs row per turn, success or failure (the cost is real).
   try {
@@ -291,7 +337,7 @@ export async function runCliRuntimeJob(args: {
       entityId: job.entityId,
       agentId: agentRow.id,
       jobId,
-      provider: 'claude',
+      provider: binding.provider,
       mode,
       source: 'subscription',
       sessionId: turn.sessionId,
@@ -320,12 +366,16 @@ export async function runCliRuntimeJob(args: {
         entityId: job.entityId,
         agentId: agentRow.id,
         conversationKey,
-        provider: 'claude',
+        provider: binding.provider,
         sessionId: turn.sessionId,
       })
       .onConflictDoUpdate({
         target: [cliSessions.agentId, cliSessions.conversationKey],
-        set: { sessionId: turn.sessionId, updatedAt: sql`now()` },
+        // `provider` est REPOSÉ, pas seulement l'identifiant : l'index unique ne
+        // porte que (agent, conversation), donc après une bascule de runtime la
+        // ligne gardait le nom de l'ancien CLI tout en portant la session du
+        // nouveau. La ligne se serait contredite elle-même.
+        set: { sessionId: turn.sessionId, provider: binding.provider, updatedAt: sql`now()` },
       })
       .catch((err: unknown) => {
         console.warn(`[cli-runtime] cli_sessions upsert failed (job=${jobId}):`, err);
@@ -347,7 +397,7 @@ export async function runCliRuntimeJob(args: {
     return fail(code.slice(0, 400));
   }
 
-  await completeJob(db, jobId, turn.finalText, ['cli:claude-code']);
+  await completeJob(db, jobId, turn.finalText, [binding.toolLabel]);
 
   // Channel delivery — the CLI's text VERBATIM (invariant #2: the LLM speaks,
   // Nodal relays; no synthesis). Same guardrails as deliverCompletedRoots.

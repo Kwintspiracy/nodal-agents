@@ -298,6 +298,20 @@ export async function buildTeamBlock(
     lines.push(
       'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
     );
+    // Une règle « ne dicte pas de chemin en déléguant » a vécu ici quelques
+    // heures le 26/08. Retirée : c'est une INSTRUCTION D'AGENT, pas une loi du
+    // harnais (invariant #3 — « fix at agent layer, never patch the runtime »).
+    //
+    // Elle s'imposait à tous les orchestrateurs de toutes les installs pour un
+    // besoin qui appartient à un espace de travail précis. Le harnais dit ce
+    // qui EST — voici tes agents, voici tes outils. Ce qu'on en fait relève de
+    // la personnalité, qui vit en base et se corrige en une minute sans revue
+    // de code.
+    //
+    // Ce que le harnais devait vraiment corriger, il l'a été ailleurs : le bloc
+    // `## Workspaces` annonçait UN dossier là où les outils en avaient DEUX.
+    // C'était un fait faux, donc un bug ; la destination d'un livrable est un
+    // comportement, donc une consigne.
   }
   lines.push('Your agents:');
   for (const row of childRows) {

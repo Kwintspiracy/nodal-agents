@@ -15,11 +15,30 @@
 //     codex exec --json --sandbox read-only --skip-git-repo-check --ignore-user-config -
 //     → "l'accès au système de fichiers est en lecture seule", nothing written
 //
-// The sandbox works on Windows. What disabled it was the OWNER'S OWN
-// `~/.codex/config.toml` — here `[windows] sandbox = "elevated"` — which every
-// Nodal-spawned run was loading. Ruled out along the way: `trust_level =
-// "trusted"` projects, since a directory outside every trusted project behaved
-// identically.
+// The sandbox works on Windows. What made the two runs differ was the OWNER'S
+// OWN `~/.codex/config.toml`, which every Nodal-spawned run was loading. Ruled
+// out along the way: `trust_level = "trusted"` projects, since a directory
+// outside every trusted project behaved identically.
+//
+// ⚠️ CORRECTION (2026-08-27). This paragraph used to name `[windows] sandbox =
+// "elevated"` as the setting that "disabled" the sandbox. **That accusation was
+// wrong**, and it cost a day: it made the missing setting look dangerous, so
+// nobody put it back, and codex could not write ANYTHING through Nodal on
+// Windows — neither `code_task` nor a runtime agent.
+//
+// Measured, four runs, same task, same directory, one variable at a time:
+//
+//   --sandbox workspace-write --ignore-user-config                        → no write
+//   --sandbox workspace-write                          (config loaded)    → WROTE
+//   --sandbox workspace-write --ignore-user-config -c approval_policy=…   → no write
+//   --sandbox workspace-write --ignore-user-config -c windows.sandbox=…   → WROTE
+//
+// `elevated` names WHICH Windows confinement mechanism to use. Without it there
+// is none, so the CLI refuses every write — the safe default, and an inert
+// write mode. Two more runs proved it loosens nothing: read-only + elevated
+// still refuses to write inside its own directory, and workspace-write +
+// elevated still refuses to write outside it. `buildProviderArgs` therefore
+// passes it on win32, and `code-task-sandbox.test.ts` pins both guards.
 //
 // So the real defect was never the platform. It was that **Nodal's confinement
 // depended on a user configuration file Nodal did not control**: any setting in

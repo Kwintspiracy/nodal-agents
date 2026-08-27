@@ -50,14 +50,58 @@ async function countFiles(dir: string, budget: { n: number }): Promise<number> {
 }
 
 /**
- * Render a depth-2 inventory of `root` (the shared workspace), or '' when the
- * directory is missing or empty. Plain factual text, one line per root entry:
+ * Ce que le contexte de job doit porter — `undefined` pour ne rien rendre.
+ *
+ * Le champ commandait DEUX choses à la fois (revue Codex, 26/08) : la présence
+ * d'un listing, ET celle du bloc entier. Sur une install neuve, où le partagé
+ * est vide, `buildSharedWorkspaceInventory` rend `''` — et l'agent perdait donc
+ * aussi la consigne « ce que tu produis pour ton propriétaire va dans ton
+ * dossier attaché ». Précisément le moment où rien d'autre ne l'a encore mis
+ * sur les rails.
+ *
+ * Les deux questions sont séparées ici, et la distinction reste honnête :
+ * `sharedPath` n'est non-nul que si le `mkdir` a réussi, donc le dossier
+ * EXISTE. Un listing vide veut alors dire vide — pas « on n'a pas su
+ * regarder », ce qui serait un repli silencieux sur une phrase que l'agent
+ * lit avant d'écrire.
+ *
+ * Et « on n'a pas su regarder » EXISTE quand même (revue Codex, 27/08) : une
+ * permission refusée, une erreur d'E/S passagère. `mkdir` prouve que le dossier
+ * est là, pas qu'il est lisible. Ce cas-là arrive ici comme `null` et se dit,
+ * au lieu de se déguiser en « vide » — sinon l'agent recrée en toute confiance
+ * ce qu'il n'a simplement pas pu voir (invariant #4).
+ */
+export function inventoryForContext(
+  sharedPath: string | null,
+  listing: string | null,
+): string | undefined {
+  if (!sharedPath) return undefined;
+  if (listing === null) return '(could not be read — assume nothing about what is in there)';
+  return listing || '(empty)';
+}
+
+/**
+ * Render a depth-2 inventory of `root` (the shared workspace).
+ *
+ * `''` when the directory is empty, `null` when it could NOT be read — les deux
+ * ne se confondent pas : le second se dit à l'agent, le premier est un fait.
+ * Plain factual text, one line per root entry:
  *
  *   - workflows/ (19 files): a.json, b.json, …
  *   - note.md
  */
-export async function buildSharedWorkspaceInventory(root: string): Promise<string> {
-  const entries = (await safeReaddir(root))
+export async function buildSharedWorkspaceInventory(root: string): Promise<string | null> {
+  let rootEntries;
+  try {
+    rootEntries = await readdir(root, { withFileTypes: true });
+  } catch {
+    // La RACINE, elle, ne se rattrape pas en silence : un `[]` ici deviendrait
+    // « (empty) » dans le prompt. Plus bas, un sous-dossier illisible reste
+    // toléré — il ne condamne pas tout l'inventaire.
+    return null;
+  }
+
+  const entries = rootEntries
     .filter((e) => !IGNORED.has(e.name) && !e.name.startsWith('.'))
     .sort((a, b) => {
       // Directories first, then files — both alphabetical.

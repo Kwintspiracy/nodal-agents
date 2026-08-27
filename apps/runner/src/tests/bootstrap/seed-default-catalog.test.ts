@@ -1,4 +1,4 @@
-﻿// seed-default-catalog.test.ts — regression for system-skill seeding: every
+// seed-default-catalog.test.ts — regression for system-skill seeding: every
 // install gets the same system skills out of the box, and user overrides are
 // preserved on subsequent boots. Agents are NOT seeded — every agent is
 // created by the user.
@@ -115,6 +115,40 @@ describe('seedDefaultSkills', () => {
     expect(row?.content).toBe(userContent); // user override untouched
     expect(row?.defaultContent).toBe(systemSkills.find((s) => s.slug === 'obsidian')!.content); // default refreshed to latest canonical
     expect(row?.contentOverridden).toBe(true);
+  });
+
+  it('un skill de l’UTILISATEUR au slug du catalogue n’est jamais absorbé', async () => {
+    // Depuis que `dev` est au catalogue, la collision est plausible : c'est un
+    // nom court qu'une install a pu donner à son propre skill avant que le
+    // slug soit réservé. Le seeder l'absorbait — contenu écrasé, et surtout
+    // row re-tamponnée `createdBy='system'`, ce qui transformait un texte
+    // utilisateur en skill système assignable depuis n'importe quel espace et
+    // faisait de ses porteurs des développeurs.
+    const { db: db2 } = await spinUpTestDb();
+    const fixture = await seedSingleEntityFixture(db2);
+    const monContenu = 'MON PROPRE SKILL DEV';
+    await db2.insert(agentSkills).values({
+      entityId: fixture.entityId,
+      slug: 'dev',
+      name: 'Mon dev à moi',
+      content: monContenu,
+      createdBy: 'user',
+    });
+
+    await seedDefaultSkills(db2, env);
+
+    const rows = await db2
+      .select({
+        content: agentSkills.content,
+        createdBy: agentSkills.createdBy,
+      })
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'dev'));
+
+    // Une seule row, celle de l'utilisateur, intacte et toujours à lui.
+    expect(rows, 'le seeder a dupliqué ou remplacé le skill de l’utilisateur').toHaveLength(1);
+    expect(rows[0]!.content, 'le contenu de l’utilisateur a été écrasé').toBe(monContenu);
+    expect(rows[0]!.createdBy, 'un contenu utilisateur a été promu « skill système »').toBe('user');
   });
 });
 

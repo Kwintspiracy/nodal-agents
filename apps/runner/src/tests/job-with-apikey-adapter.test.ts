@@ -1,4 +1,4 @@
-﻿// job-with-apikey-adapter.test.ts — regression test for the api_key resolver path
+// job-with-apikey-adapter.test.ts — regression test for the api_key resolver path
 //
 // Brique 34quinquies wired api_key connectors (PATs / API keys stored in
 // connectors.api_key) to the adapter registry. The resolver in execute.ts

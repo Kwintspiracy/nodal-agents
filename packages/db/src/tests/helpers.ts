@@ -476,13 +476,16 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       UNIQUE (entity_id, slug)
     );
 
-    -- 0083 — archivage UI des projets de l'onglet Code (dérivés, jamais en base
-    -- eux-mêmes ; seule l'archive persiste).
-    CREATE TABLE IF NOT EXISTS code_project_archives (
+    -- 0086 — les deux gestes du propriétaire sur les projets de l'onglet Code
+    -- (renommer, masquer). Les projets eux-mêmes sont dérivés, jamais stockés.
+    CREATE TABLE IF NOT EXISTS code_projects (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       project_path text NOT NULL,
-      archived_at timestamptz NOT NULL DEFAULT now(),
+      display_name text,
+      hidden boolean NOT NULL DEFAULT false,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (entity_id, project_path)
     );
 
@@ -503,6 +506,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       label text NOT NULL,
       path text NOT NULL,
       position integer NOT NULL DEFAULT 0,
+      hidden_from_code boolean NOT NULL DEFAULT false,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (agent_id, label)

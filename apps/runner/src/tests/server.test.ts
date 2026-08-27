@@ -1,4 +1,4 @@
-﻿// server.test.ts — boot Hono, /health returns 200
+// server.test.ts — boot Hono, /health returns 200
 // Minimal smoke test to verify server starts and responds.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';

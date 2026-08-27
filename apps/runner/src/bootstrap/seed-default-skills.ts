@@ -41,9 +41,19 @@
 // refuses a user/agent-supplied slug that collides with the catalog outright
 // (reservedSlugs param), closing the vector at the source too.
 //
-// Existing installs self-heal: this seeder runs on every boot and the UPDATE
-// branches below now also stamp createdBy='system', so a pre-F-6 row missing
-// the flag gets it on the next restart.
+// Existing installs self-heal — WITH ONE LIMIT since 2026-08-25. This seeder
+// runs on every boot and the UPDATE branches below stamp createdBy='system',
+// so a row that ALREADY carries the flag keeps healing. But the guard added
+// below (a catalog-slug row whose createdBy is not 'system' belongs to the
+// user and is left alone) runs FIRST, so a pre-F-6 row that never got the flag
+// is now treated as a user skill: never updated, and its holders excluded from
+// the dev team by the createdBy='system' filters in the Code tab and the
+// runtime context.
+//
+// There is no reliable way to tell "row written by an old seeder" from "skill
+// the user authored", so this is not guessed — it is surfaced. The warning
+// below names the slug and both remedies. The exposure window is narrow: only
+// installs that never booted between the P2b release and this one.
 
 import { eq, and } from '@nodal-agents/db';
 import { agentSkills, entities } from '@nodal-agents/db';
@@ -81,10 +91,44 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
       .select({
         id: agentSkills.id,
         contentOverridden: agentSkills.contentOverridden,
+        createdBy: agentSkills.createdBy,
       })
       .from(agentSkills)
       .where(and(eq(agentSkills.slug, skill.slug), eq(agentSkills.entityId, targetEntityId)))
       .limit(1);
+
+    // Une row du propriétaire au slug du catalogue n'est PAS la nôtre : on la
+    // laisse et on le dit (revue du 25/08).
+    //
+    // Le cas n'est plus théorique depuis que `dev` est entré au catalogue —
+    // c'est un nom court et plausible, qu'une install a très bien pu donner à
+    // son propre skill avant que le slug soit réservé. Le seeder absorbait
+    // cette row : contenu écrasé si elle n'était pas marquée « modifiée », et
+    // dans tous les cas re-tamponnée `createdBy='system'`. Un texte écrit par
+    // l'utilisateur devenait alors un « skill système », assignable depuis
+    // n'importe quel espace, et ses porteurs des développeurs.
+    //
+    // Sauter bruyamment plutôt qu'absorber : l'utilisateur garde son skill, le
+    // nôtre n'est pas livré, et le journal dit exactement quel geste poser.
+    //
+    // Le geste doit être POSSIBLE (revue Codex, 26/08). Ce message disait
+    // « renommez le vôtre » — or un slug est immuable par construction :
+    // `UpdateSkillSchema` le retire du payload, délibérément, parce que c'est
+    // l'identifiant stable d'un skill. On demandait donc à l'utilisateur une
+    // manœuvre qu'aucun écran ne permet, et le skill du catalogue restait
+    // indisponible sans issue. Un message d'échec qui n'est pas actionnable ne
+    // vaut guère mieux qu'un repli silencieux.
+    if (existing && existing.createdBy !== 'system') {
+      console.warn(
+        `[seed-skills] "${skill.slug}" already exists as a skill you own — ` +
+          `the catalog skill of the same name was NOT installed, and your own is untouched. ` +
+          `A slug cannot be changed once created: to receive the catalog skill, copy your ` +
+          `content into a new skill under a different slug, delete this one, and restart. ` +
+          `If it came from an older Nodal install rather than from you, deleting it and ` +
+          `restarting is enough.`,
+      );
+      continue;
+    }
 
     if (!existing) {
       await db.insert(agentSkills).values({

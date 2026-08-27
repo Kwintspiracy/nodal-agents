@@ -1,4 +1,4 @@
-﻿// job-with-mcp-server.test.ts — regression for the MCP resolver path.
+// job-with-mcp-server.test.ts — regression for the MCP resolver path.
 //
 // The worker tool-assembly block in execute.ts must, for each assigned MCP
 // server: decrypt mcp_servers.api_key, connect via createMcpTools, merge the

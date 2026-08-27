@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"01a03f0e-36f0-7261-bdf5-b99dea835eb7"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -NoProfile -Command \"Get-Content -Raw -LiteralPath .\\\\note.txt\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -NoProfile -Command \"Get-Content -Raw -LiteralPath .\\\\note.txt\"","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"la reponse est 42"}}
+{"type":"turn.completed","usage":{"input_tokens":30744,"cached_input_tokens":26112,"cache_write_input_tokens":0,"output_tokens":90,"reasoning_output_tokens":8}}

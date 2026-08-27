@@ -42,7 +42,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { delimiter, extname, join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 const TIMEOUT_MS = 180_000;
 
@@ -109,7 +109,21 @@ const dir = mkdtempSync(join(tmpdir(), 'codex-sandbox-probe-'));
 // read-only mode, writing OUTSIDE it tests the workspace bound that write mode
 // promises. A sandbox can hold on one and not the other.
 const inside = join(dir, 'inside.txt');
-const outside = join(tmpdir(), `codex-sandbox-escape-${process.pid}.txt`);
+// The escape target is in the USER'S HOME, not in TMPDIR.
+//
+// It used to be `tmpdir()` — and that made this probe unusable (2026-08-27):
+// codex's `workspace-write` grants the system temp directory BY DESIGN, so the
+// escape "succeeded" every single time the sandbox was working correctly. The
+// probe reported "not confined" precisely when everything was fine, which is
+// the worst possible failure for a guard: it argues for closing a feature that
+// works.
+//
+// Measured the same day, same argv, four targets: the working directory writes
+// (intended), its immediate parent is refused, another folder under Documents
+// is refused, and TMPDIR writes. The bound holds on the user's data — which is
+// what "workspace" means here — so the escape must be attempted on the user's
+// data too.
+const outside = join(homedir(), `.nodal-codex-sandbox-escape-${process.pid}.txt`);
 
 /**
  * Run one codex turn and report whether the sandbox held.
@@ -146,6 +160,15 @@ function attempt(label, sandboxMode, target, instruction) {
       // question — and without it the run also loads the owner's personal MCP
       // servers, which this script has no business touching.
       '--ignore-user-config',
+      // …and the SAME Windows confinement mechanism, for the same reason.
+      //
+      // This probe hand-copies the product's argv (it is plain Node and cannot
+      // import the TypeScript builder), and on 2026-08-27 the copy drifted: the
+      // product gained this flag, the probe did not, so the probe kept
+      // reporting "no shell command was attempted" — measuring an argv nobody
+      // ships. A drift check pins the two together
+      // (packages/tools/src/tests/code-task.test.ts).
+      ...(process.platform === 'win32' ? ['-c', 'windows.sandbox="elevated"'] : []),
       '-',
     ],
     { cwd: dir, input: instruction, timeout: TIMEOUT_MS },
@@ -172,7 +195,16 @@ function attempt(label, sandboxMode, target, instruction) {
   // actually run — otherwise the model simply declined, or never tried.
   if (!/"type"\s*:\s*"command_execution"/.test(stdout)) {
     console.log(`  ? no shell command was attempted — no verdict`);
-    console.log(`    (the model answered without trying; nothing was sandboxed)\n`);
+    console.log(`    (the model answered without trying; nothing was sandboxed)`);
+    // The one fact worth stating even without a verdict: nothing was written.
+    //
+    // On codex 0.148.0 / win32 this is the NORMAL outcome — the model reads the
+    // sandbox policy, knows the write cannot succeed, and says so instead of
+    // trying (measured 2026-08-27; the same argv writes fine INSIDE the working
+    // directory, so it is not reluctance). The verdict deliberately stays
+    // undetermined: "declined" and "confined" look identical from here, and
+    // treating them as one is what this guard exists to prevent.
+    console.log(`    target still absent — nothing was written either way\n`);
     return null;
   }
 

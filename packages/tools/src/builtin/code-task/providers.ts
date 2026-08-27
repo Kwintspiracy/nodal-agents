@@ -127,6 +127,8 @@ export interface ProviderRunOptions {
    *     applies, which is the posture we want anyway.
    */
   resumeSessionId?: string;
+  /** Injectable pour les tests — sinon la plateforme réelle. */
+  platform?: NodeJS.Platform;
 }
 
 export function buildProviderArgs(
@@ -203,6 +205,32 @@ export function buildProviderArgs(
         '--ignore-user-config',
       ]
     : ['exec', '--json', '--sandbox', sandboxMode, '--skip-git-repo-check', '--ignore-user-config'];
+
+  // WINDOWS : dire QUEL mécanisme de confinement utiliser, sinon aucun ne l'est
+  // et la CLI refuse toute écriture (mesuré le 27/08, sonde d'isolation).
+  //
+  // Le symptôme était déroutant : `--sandbox workspace-write` était bien passé,
+  // le tour se terminait normalement, et le modèle répondait « l'environnement
+  // interdit toute écriture ». Aucun message d'erreur, aucun refus de commande —
+  // il annonçait l'impossibilité et s'arrêtait. La même commande lancée à la
+  // main dans un terminal écrivait sans problème : la SEULE différence était
+  // `--ignore-user-config`, qui protège les serveurs MCP personnels du
+  // propriétaire… et jetait ce réglage-là avec le reste.
+  //
+  // ⚠️ Ce que ce réglage NE fait PAS, mesuré avant de l'ajouter (les deux
+  // gardes que `code-task-sandbox.test.ts` fixe) :
+  //   - il ne rend PAS un run `read-only` capable d'écrire — refusé, testé ;
+  //   - il ne laisse PAS un run `workspace-write` sortir de son dossier —
+  //     refusé, testé.
+  // Il ne desserre donc rien : il fournit le mécanisme sans lequel Windows
+  // n'avait que le refus total comme posture sûre.
+  //
+  // Un commentaire de `sandbox.ts` accusait ce réglage d'avoir désactivé le
+  // confinement le 21/08. La mesure le disculpe — c'était autre chose dans ce
+  // fichier. Le commentaire a été corrigé là-bas.
+  if ((opts.platform ?? process.platform) === 'win32') {
+    args.push('-c', 'windows.sandbox="elevated"');
+  }
 
   if (opts.model) args.push('-m', opts.model);
   if (opts.effort) args.push('-c', `model_reasoning_effort="${opts.effort}"`);

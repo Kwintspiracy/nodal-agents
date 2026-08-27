@@ -10,6 +10,90 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.7 — Aug 27, 2026
+
+Your agents work in the folder you gave them, the Code tab shows what they
+actually built, and a coding CLI can now *be* an agent — Codex as well as
+Claude Code.
+
+**An agent writes where you told it to**
+
+- **The folder you attach is the folder it uses.** Four runs in a row had
+  delivered into the shared hand-off area while a real project folder sat
+  attached and unused. The cause was not disobedience: the system prompt
+  announced `## Workspace`, singular, while the tools saw two — so the agent
+  wrote to the only one it knew about, then reported a path that existed
+  nowhere. The prompt now lists exactly what the tools have.
+- **The shared workspace is named for what it is** — the hand-off area between
+  agents, not the place your deliverables go. Every agent keeps it: taking it
+  away from agents that have their own folder would cut them off from the rest
+  of the team.
+- **Git awareness reaches the right folder.** The repository probe pointed at
+  the shared area instead of the attached project.
+
+**The Code tab stops guessing**
+
+- **It shows the folders your agents wrote in — and gives you two gestures:
+  rename and hide.** Seven different definitions of "real code" were tried and
+  dropped, each breaking on a real case: file extensions, the agent's skills, a
+  `package.json` at the root, a checkbox on the agent, a checkbox on the folder.
+  What replaces them is not an eighth guess.
+- **Hiding reaches the agents too.** A hidden project leaves the `## Runtime`
+  block of every agent in the workspace — not just the screen. The folder on
+  disk is never touched, and one click brings it back.
+- **The name you choose travels.** Rename a project and your agents hear it
+  under that name; "modify the client portal" finally designates something.
+- **A deleted folder stops producing a ghost project.** Its session stays,
+  under "Other sessions" — it did happen.
+
+**An agent can be a coding CLI — Codex included**
+
+- **Codex is selectable next to Claude Code** (agent → Overview → Model). The
+  whole turn is served by that CLI: Nodal keeps the perimeter — folders,
+  budget, approvals, channels — and relays its answer verbatim.
+- **Write mode works on Windows.** It silently did nothing: `--sandbox
+  workspace-write` was passed, the turn completed normally, and the model
+  answered "the environment forbids all writing" with no error anywhere. Codex
+  has no default confinement mechanism on Windows and must be told which one to
+  use — a setting that lives in your own config, which Nodal deliberately
+  ignores to keep your personal MCP servers out of its runs. Measured over four
+  runs, one variable at a time; the confinement itself was re-measured before
+  shipping the fix, and still refuses to write outside the working directory.
+- **Codex reports no cost, and the screen says so** instead of offering a
+  dollar cap that cannot bound anything.
+
+**Agents stop reporting work they did not do**
+
+- An orchestrator announced "app delivered and reviewed by Reviewer C (2
+  passes)" four times in one day, naming the reviewer and the number of passes.
+  No delegation, no write, no file. It was not lying — it was completing a
+  pattern, because nothing in its history distinguished a real hand-off from an
+  invented one. Delegation now leaves a structural trace on the turn that made
+  it, so a turn **without** delegation carries no line at all — that contrast is
+  what was missing. The most useful case is `no tool used`: the delegation
+  happened and produced nothing, where prose can claim otherwise.
+
+**Hardening** — twenty-eight review passes, twenty-four findings
+
+The most serious ones were not in this release's new code. They were asleep in
+code that runs every day, and the new work brought them to light:
+
+- **Tool output was written to the audit trail in clear text** — the content of
+  every file a CLI session read, tokens included. The tool path had redacted it
+  from the start; the runtime path never had, for Claude as well as Codex.
+- **A tool restriction could be lifted by switching harness.** An agent with
+  tools explicitly removed got them back when moved to a provider that cannot
+  enforce that kind of ban. It now refuses the turn and says why.
+- **The single-writer lock could be bypassed by spelling.** `C:/Common` and
+  `c:\common` produced two separate locks, so two write sessions could edit the
+  same files at once.
+- **The anti-loop guard undercounted parallel tool calls** — six simultaneous
+  calls counted as one, so the more a model parallelised, the less budget it
+  consumed.
+- Also: locks leaking when prompt assembly failed, a killed turn reporting
+  success, a failed file change counted as a changed file, and a session
+  resuming with the other CLI's session id after a harness switch.
+
 ## v0.8.6 — Aug 23, 2026
 
 Your terminal can now hand work to your agents, and the dashboard follows you

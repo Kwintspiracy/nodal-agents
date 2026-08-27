@@ -77,6 +77,8 @@ export {
   resolveCliPath,
   buildSpawnArgv,
   runCli,
+  buildProviderArgs,
+  parseLiveToolEvent,
   assertWorkspacesConfigured,
   resolveAndCheckPath,
   extractClaudeUsage,
@@ -87,6 +89,7 @@ export {
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   WorkspaceLockedError,
+  workspaceLockKey,
   assertRuntimeSessionKey,
   CODE_TASK_KEY_PREFIX,
 } from './builtin/index';

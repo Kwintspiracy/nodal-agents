@@ -25,6 +25,7 @@ export const documentEditingSkill: SystemSkill = {
     'Create and edit Word documents in the agent workspace — headings, lists, tables, images, ' +
     'append and find/replace. Documents only (no Excel or PowerPoint).',
   requiredBuiltins: [...DOCX_BUILTINS],
+  toolGroup: true,
   content: `## Document editing discipline
 
 This skill unlocks the \`docx_*\` tools for working with Word documents stored in the agent's workspace.

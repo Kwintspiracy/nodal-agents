@@ -25,6 +25,7 @@ export const presentationEditingSkill: SystemSkill = {
     'Create and edit PowerPoint decks in the agent workspace — slides, bullets, images, tables, ' +
     'speaker notes, append and find/replace. Presentations only (no Excel or Word).',
   requiredBuiltins: [...PPTX_BUILTINS],
+  toolGroup: true,
   content: `## Presentation editing discipline
 
 This skill unlocks the \`pptx_*\` tools for working with PowerPoint decks stored in the agent's workspace.

@@ -1,4 +1,4 @@
-﻿// delegation-parallel-tools.test.ts — regression for the unmatched_tool_use bug
+// delegation-parallel-tools.test.ts — regression for the unmatched_tool_use bug
 // reproduced live on jobs 24c8802d-... and ac64d2ef-... (2026-05-16).
 //
 // Bug: when an orchestrator LLM emits [assign_<child>, save_memory] in the

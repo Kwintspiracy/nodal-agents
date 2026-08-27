@@ -1,4 +1,4 @@
-﻿// agent.test.ts — POST /api/agent creates a row, returns jobId
+// agent.test.ts — POST /api/agent creates a row, returns jobId
 // Asserts on the real DB row, not just call counts (invariant 5).
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';

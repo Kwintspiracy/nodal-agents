@@ -25,8 +25,8 @@
 // finished acting yet, so surfacing it as a ledger fact would be premature.
 // `cancelled` tasks are also excluded: nothing happened to report.
 
-import { eq, and, inArray, desc } from '@nodal-agents/db';
-import { agentTasks, agentJobs } from '@nodal-agents/db';
+import { eq, ne, and, inArray, desc } from '@nodal-agents/db';
+import { agentTasks, agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 
 /** Max ledger entries surfaced per root job — keeps a busy fan-out bounded. */
@@ -36,6 +36,12 @@ export const MAX_TASKS_PER_EXCHANGE = 3;
 const RESULT_TRUNCATE_CHARS = 200;
 
 const TERMINAL_TASK_STATUSES = ['done', 'blocked'] as const;
+
+/** Statuts d'un job enfant qui a fini d'agir — même intention que ci-dessus. */
+const TERMINAL_JOB_STATUSES = ['completed', 'failed'] as const;
+
+/** Le canal des jobs que pose `create_task` (execute-ready.ts). */
+const TASK_BOARD_CHANNEL = 'task-board';
 
 export interface TaskLedgerEntry {
   title: string;
@@ -129,4 +135,115 @@ export function formatTaskLedgerEntry(entry: TaskLedgerEntry): string {
 /** Format every entry for one root job into ready-to-append ledger lines. */
 export function formatTaskLedgerLines(entries: readonly TaskLedgerEntry[]): string[] {
   return entries.map(formatTaskLedgerEntry);
+}
+
+// ─── Délégation EN LIGNE (`assign_*`) ────────────────────────────────────────
+//
+// Incident du 26/08. Un orchestrateur a annoncé sur Telegram, quatre fois dans
+// la journée : « app livrée et validée par Reviewer C (2 passes) », avec le nom
+// du relecteur et le nombre de passes. Aucune délégation, aucune écriture,
+// aucun fichier. Il ne mentait pas : il complétait un motif.
+//
+// POURQUOI les deux registres existants l'ont laissé passer :
+//
+//   * celui de `thread-history` ne se déclenche que sur STATE_CHANGING_TOOLS,
+//     où les outils de délégation ne peuvent pas figurer — ils s'appellent
+//     `assign_<slug>`, et écrire un slug d'agent dans le runtime est
+//     exactement ce que l'invariant #1 interdit ;
+//   * celui du dessus ne lit que `agent_tasks`, la table du tableau de tâches
+//     que pose `create_task`. La délégation EN LIGNE crée un `agent_jobs`
+//     enfant via `parent_job_id` et ne touche jamais `agent_tasks`.
+//
+// Résultat : dans l'historique, un vrai compte rendu et un compte rendu inventé
+// arrivaient nus tous les deux. Rien ne les distinguait, et chaque fabrication
+// rejoignait le fil pour renforcer le motif au tour suivant.
+//
+// Ce qu'on rend ici : les ACTIONS, pas le résultat. Le résultat du travail est
+// déjà dans la prose du parent — le redire coûterait cher pour rien. Mesuré sur
+// une install réelle : la ligne complète pesait 531 caractères par tour
+// concerné, soit 27 % du budget de `thread-history` sur huit tours ; réduite
+// aux actions, elle tient en ~75.
+
+/** Une délégation en ligne, telle que la base l'a enregistrée. */
+export interface InlineDelegationEntry {
+  agentName: string;
+  status: string;
+  toolsUsed: string[];
+}
+
+/**
+ * Le registre des délégations EN LIGNE d'une série de tours.
+ *
+ * Clé : le job PARENT. Source : les `agent_jobs` enfants (`parent_job_id`) et
+ * leur propre `tools_used` — jamais la prose du parent.
+ *
+ * Les enfants encore en cours sont exclus : ils n'ont pas fini d'agir, et les
+ * annoncer comme un fait serait prématuré. Même règle que le registre des
+ * tâches au-dessus.
+ *
+ * Le canal `task-board` est exclu, lui, pour une autre raison : `create_task`
+ * pose SON enfant avec le même `parent_job_id` (execute-ready.ts:207,
+ * `parentJobId: task.rootJobId`). Sans ce filtre, un enfant du tableau de
+ * tâches serait rendu deux fois — une par `loadTaskLedger`, une ici — et
+ * mangerait deux fois le budget d'historique pour la même action.
+ */
+export async function loadInlineDelegationLedger(
+  db: RunnerDeps['db'],
+  parentJobIds: readonly (string | null)[],
+): Promise<Map<string, InlineDelegationEntry[]>> {
+  const ledger = new Map<string, InlineDelegationEntry[]>();
+  const ids = [...new Set(parentJobIds.filter((id): id is string => !!id))];
+  if (ids.length === 0) return ledger;
+
+  const rows = await db
+    .select({
+      parentJobId: agentJobs.parentJobId,
+      agentName: agents.name,
+      status: agentJobs.status,
+      toolsUsed: agentJobs.toolsUsed,
+    })
+    .from(agentJobs)
+    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+    .where(
+      and(
+        inArray(agentJobs.parentJobId, ids),
+        inArray(agentJobs.status, TERMINAL_JOB_STATUSES as unknown as string[]),
+        ne(agentJobs.channel, TASK_BOARD_CHANNEL),
+      ),
+    )
+    .orderBy(desc(agentJobs.createdAt));
+
+  for (const row of rows) {
+    if (!row.parentJobId) continue;
+    const list = ledger.get(row.parentJobId) ?? [];
+    if (list.length >= MAX_TASKS_PER_EXCHANGE) continue; // newest-first — borné ici
+    list.push({
+      agentName: row.agentName ?? 'an agent',
+      // `status` est nullable en base ; un statut absent n'est pas « terminé ».
+      // Le dire plutôt que de laisser croire à une réussite (invariant #4).
+      status: row.status ?? 'unknown',
+      toolsUsed: Array.isArray(row.toolsUsed) ? (row.toolsUsed as string[]) : [],
+    });
+    ledger.set(row.parentJobId, list);
+  }
+
+  for (const [key, list] of ledger) ledger.set(key, list.reverse()); // chronologique
+  return ledger;
+}
+
+/**
+ * `[Delegated to X (completed) — actions: file_write ×2, review_verdict]`
+ *
+ * `no tool used` quand l'enfant n'a rien appelé : c'est le cas le plus utile de
+ * tous. Il dit noir sur blanc qu'une délégation a eu lieu et n'a rien produit,
+ * là où la prose du parent peut affirmer le contraire.
+ */
+export function formatInlineDelegationEntry(entry: InlineDelegationEntry): string {
+  const tools = formatTools(entry.toolsUsed);
+  return `[Delegated to ${entry.agentName} (${entry.status}) — actions: ${tools || 'no tool used'}]`;
+}
+
+/** Format every in-line delegation of one parent job into ledger lines. */
+export function formatInlineDelegationLines(entries: readonly InlineDelegationEntry[]): string[] {
+  return entries.map(formatInlineDelegationEntry);
 }

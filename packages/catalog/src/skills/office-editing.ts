@@ -28,6 +28,7 @@ export const officeEditingSkill: SystemSkill = {
     'Grants all three formats at once — if the agent only needs one, assign Spreadsheet, ' +
     'Document or Presentation editing instead and save the other formats’ context cost.',
   requiredBuiltins: [...XLSX_BUILTINS, ...DOCX_BUILTINS, ...PPTX_BUILTINS],
+  toolGroup: true,
   content: `## Office editing discipline
 
 This skill unlocks the \`xlsx_*\`, \`docx_*\`, and \`pptx_*\` tools for working with Office files stored in the agent's workspace.

@@ -354,3 +354,39 @@ describe('buildTeamBlock', () => {
     }
   });
 });
+
+// ─── Le harnais ne dicte pas de COMPORTEMENT ─────────────────────────────────
+//
+// Une règle « ne dicte pas de chemin en déléguant » a vécu ici quelques heures
+// le 26/08, pour corriger un run où l'orchestrateur imposait le workspace
+// partagé à des exécutants qui avaient leur propre dossier.
+//
+// Retirée : c'est une INSTRUCTION D'AGENT, pas une loi du harnais — invariant
+// #3, « fix at agent layer, never patch the runtime ». Elle s'imposait à tous
+// les orchestrateurs de toutes les installs pour un besoin qui appartient à un
+// espace de travail précis, et la personnalité d'un agent se corrige en une
+// minute sans revue de code.
+//
+// Ce test existe pour que la rustine ne revienne pas par habitude.
+
+describe('buildTeamBlock — ce qui n’a rien à y faire', () => {
+  it('ne dicte AUCUN comportement de rangement de fichier', async () => {
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(db, entityId, `test-orch-path-${Date.now()}`, 'orchestrator');
+    const w = await seedAgent(db, entityId, `test-worker-path-${Date.now()}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+
+    // Le bloc décrit l'ÉQUIPE et les OUTILS de délégation — des faits. Où
+    // ranger un livrable est un comportement : il appartient à la personnalité.
+    expect(
+      block,
+      'une consigne de rangement est revenue dans le harnais — elle va dans la personnalité',
+    ).not.toMatch(/deliverable, not its location|where a file is saved|folder, a path/i);
+
+    // Ce que le bloc doit toujours faire, lui, reste là.
+    expect(block).toContain('create_task');
+    expect(block).toContain('Your agents:');
+  });
+});

@@ -23,11 +23,10 @@
 // Unknown types are counted, never guessed at (invariant #4) — the summary
 // logs them so CLI drift is visible instead of silent.
 
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
+import { spawnCliTurn } from './spawn-turn.ts';
 import {
   resolveCliPath,
   buildSpawnArgv,
@@ -81,6 +80,21 @@ export interface ClaudeTurnOptions {
   message: string;
   personality: string;
   cwd: string;
+  /**
+   * Les AUTRES dossiers attachés à l'agent, quand il en a plusieurs.
+   *
+   * `cwd` n'est que le premier. Un agent multi-dossiers voit les autres dans son
+   * prompt et se les voit refuser à l'écriture, ce qui est le pire des deux
+   * mondes (revue Codex, 27/08). Les DEUX CLI les reçoivent en `--add-dir` —
+   * l'option existe des deux côtés, vérifiée sur les binaires installés.
+   *
+   * Le nom porte « write » parce que l'appelant les calcule pour l'écriture,
+   * mais chez Claude le drapeau ouvre l'ACCÈS : ces dossiers lui sont donc
+   * passés dans les deux modes, sans quoi un relecteur ne peut pas lire ce que
+   * son prompt lui annonce. Chez Codex il ouvre l'écriture seule (son aide le
+   * dit), donc le mode lecture n'en a pas besoin.
+   */
+  extraWriteDirs?: readonly string[];
   mode: 'read' | 'write';
   extraDisallowed?: string[];
   model?: string;
@@ -116,6 +130,20 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     '--append-system-prompt-file',
     personalityFile,
   ];
+  // Les dossiers SECONDAIRES de l'agent (revue Codex, 27/08). `cwd` n'est que
+  // le premier : le prompt annonçait les autres et la CLI n'y avait pas accès.
+  // `--add-dir <directories...>` existe bien — vérifié sur le binaire installé
+  // (`claude --help`), pas lu dans une doc.
+  //
+  // Dans les DEUX modes, et c'est une correction du tour précédent : chez
+  // Claude, `--add-dir` ouvre l'ACCÈS, pas le droit d'écrire. Le limiter au
+  // mode écriture privait un relecteur en lecture seule de `Read` et `Glob` sur
+  // les dossiers que son propre prompt lui annonçait — un décalage silencieux
+  // entre ce qu'on lui dit et ce qu'il peut. Les outils d'écriture, eux, sont
+  // retirés séparément par `--disallowedTools` ; ouvrir un dossier ne les rend
+  // pas.
+  const extraDirs = opts.extraWriteDirs ?? [];
+  if (extraDirs.length > 0) args.push('--add-dir', ...extraDirs);
   if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
   if (opts.model) args.push('--model', opts.model);
   if (opts.effort) args.push('--effort', opts.effort);
@@ -212,6 +240,31 @@ export function handleStreamLine(
     return;
   }
   state.unknownEventTypes.add(String(type));
+}
+
+/**
+ * Traite une ligne et rend le NOMBRE d'appels d'outils qu'elle ouvre.
+ *
+ * Exporté pour être prouvable : le compte est ce qui nourrit le garde
+ * anti-boucle, et la version précédente le réduisait à un booléen dans une
+ * closure — Claude groupe ses appels PARALLÈLES dans un seul événement, donc
+ * six appels simultanés n'en comptaient qu'un (revue Codex, 27/08). Plus le
+ * modèle parallélisait, moins il consommait de budget.
+ *
+ * Un test sur `handleStreamLine` seul n'aurait rien prouvé de tout ça : il
+ * aurait vérifié le parseur pendant que le CÂBLAGE restait faux.
+ */
+export function countToolUses(
+  state: StreamParseState,
+  line: string,
+  onEvent?: (evt: ClaudeTurnEvent) => void,
+): number {
+  let toolUses = 0;
+  handleStreamLine(state, line, (evt) => {
+    if (evt.kind === 'tool_use') toolUses += 1;
+    onEvent?.(evt);
+  });
+  return toolUses;
 }
 
 /**
@@ -315,148 +368,33 @@ function spawnClaudeTurn(
   personaFile: string,
 ): Promise<ClaudeTurnResult> {
   const { argv, envExtra } = buildSpawnArgv(cli, buildClaudeTurnArgs(opts, personaFile));
-  const [command, ...rest] = argv;
-  const env = { ...buildChildEnv(process.env), ...envExtra };
-  const isWindows = process.platform === 'win32';
-  const startedAt = Date.now();
+  const env = { ...buildChildEnv(process.env), ...envExtra } as unknown as NodeJS.ProcessEnv;
+  const state = newStreamParseState();
 
-  return new Promise<ClaudeTurnResult>((resolve) => {
-    const child = spawn(command as string, rest, {
-      cwd: opts.cwd,
-      shell: false,
-      detached: !isWindows,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: env as unknown as NodeJS.ProcessEnv,
-    });
-
-    // The message is written then CLOSED — a piped-but-open stdin stalls the
-    // CLI (étape-A finding 1). EPIPE (child died first) is not our failure.
-    child.stdin?.on('error', () => {});
-    child.stdin?.end(opts.message);
-
-    const state = newStreamParseState();
-    let stdoutBuffer = '';
-    let stderr = '';
-    let timedOut = false;
-    let settled = false;
-    // Anti-loop guard (invariant #8): count tool_use events, kill past the cap.
-    let toolCalls = 0;
-    let toolCapExceeded: number | undefined;
-
-    const onEvent = (evt: ClaudeTurnEvent): void => {
-      if (
-        evt.kind === 'tool_use' &&
-        opts.maxToolCalls !== undefined &&
-        toolCapExceeded === undefined
-      ) {
-        toolCalls += 1;
-        if (toolCalls > opts.maxToolCalls) {
-          toolCapExceeded = opts.maxToolCalls;
-          killTree();
-          graceTimer = setTimeout(() => finish(null), 3000);
-        }
-      }
-      opts.onEvent?.(evt);
-    };
-
-    // One decoder per stream — chunk boundaries do not align with UTF-8
-    // character boundaries; per-chunk toString() corrupts split characters.
-    const outDecoder = new StringDecoder('utf8');
-    const errDecoder = new StringDecoder('utf8');
-
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdoutBuffer += outDecoder.write(chunk);
-      let nl: number;
-      while ((nl = stdoutBuffer.indexOf('\n')) >= 0) {
-        const line = stdoutBuffer.slice(0, nl);
-        stdoutBuffer = stdoutBuffer.slice(nl + 1);
-        try {
-          handleStreamLine(state, line, onEvent);
-        } catch (err) {
-          console.warn('[cli-runtime] stream line handling failed:', err);
-        }
-      }
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < 50_000) stderr += errDecoder.write(chunk);
-    });
-
-    const killTree = (): void => {
-      if (child.pid) {
-        if (isWindows) {
-          // taskkill /T resolves the tree from a live snapshot — killing the
-          // parent first orphans the children. taskkill alone (it kills the
-          // root too); child.kill only once taskkill failed.
-          try {
-            const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-              windowsHide: true,
-            });
-            tk.on('close', (code) => {
-              if (code !== 0) {
-                try {
-                  child.kill('SIGKILL');
-                } catch {
-                  /* already dead */
-                }
-              }
-            });
-            tk.on('error', () => {
-              try {
-                child.kill('SIGKILL');
-              } catch {
-                /* already dead */
-              }
-            });
-            return;
-          } catch {
-            /* taskkill unavailable — fall through */
-          }
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }
-      }
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    };
-
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (graceTimer) clearTimeout(graceTimer);
-      // Flush a trailing unterminated line (the result line usually ends with \n,
-      // but never assume).
-      if (stdoutBuffer.trim() !== '') handleStreamLine(state, stdoutBuffer, onEvent);
+  return spawnCliTurn<ClaudeTurnResult>({
+    argv,
+    env,
+    cwd: opts.cwd,
+    stdin: opts.message,
+    timeoutMs: opts.timeoutMs,
+    ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
+    // Rend le NOMBRE d'appels d'outils de la ligne : c'est ce qui nourrit le
+    // garde anti-boucle, que la mécanique de processus applique sans rien
+    // savoir du format des événements.
+    //
+    // Un COMPTE, pas un booléen (revue Codex, 27/08) : Claude groupe ses appels
+    // parallèles dans un seul événement, et six appels simultanés n'en
+    // comptaient qu'un. Plus le modèle parallélisait, moins il consommait de
+    // budget — l'inverse exact de ce qu'un plafond doit faire.
+    onLine: (line) => countToolUses(state, line, opts.onEvent),
+    finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(
           `[cli-runtime] unknown stream event types (CLI drift?): ` +
             [...state.unknownEventTypes].join(', '),
         );
       }
-      resolve(
-        finishTurn(state, exitCode, timedOut, Date.now() - startedAt, stderr, toolCapExceeded),
-      );
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree();
-      graceTimer = setTimeout(() => finish(null), 3000);
-    }, opts.timeoutMs);
-
-    child.on('error', (err: Error) => {
-      stderr += `\nspawn_error: ${err.message}`;
-      finish(null);
-    });
-    child.on('close', (code: number | null) => finish(code));
+      return finishTurn(state, exitCode, timedOut, durationMs, stderr, toolCapExceeded);
+    },
   });
 }

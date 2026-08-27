@@ -499,7 +499,7 @@ describe('setReviewerReadOnlyPresetAction', () => {
   });
 });
 
-// ─── setAgentRuntimeAction — pose/repose runtime, refuses 'codex' ─────────────
+// ─── setAgentRuntimeAction — pose/repose le runtime, liste FERMÉE ────────────
 
 describe('setAgentRuntimeAction', () => {
   it('sets runtime to claude-code, then back to nodal', async () => {
@@ -525,11 +525,33 @@ describe('setAgentRuntimeAction', () => {
     expect(afterRevert?.runtime).toBe('nodal');
   });
 
-  it('refuses "codex" at validation — the Zod enum only accepts nodal/claude-code', async () => {
-    const agentId = await makeAgent('Audit2 Runtime Codex Refused Agent');
+  it('accepte "codex" — le siège réservé est ouvert depuis le 27/08', async () => {
+    // Ce test assertait l'inverse pendant huit jours : la contrainte SQL
+    // acceptait `codex`, ce Zod le refusait, et le runner échouait fort dessus.
+    // L'ouverture est venue avec son module de tour
+    // (apps/runner/src/cli-runtime/codex-turn.ts) ; sans lui, accepter ici
+    // aurait donné un agent qu'on peut choisir et qui plante à chaque tour.
+    const agentId = await makeAgent('Audit2 Runtime Codex Agent');
     const { setAgentRuntimeAction } = await import('../src/lib/actions.ts');
 
     const result = await setAgentRuntimeAction({ agentId, runtime: 'codex' });
+    expect(result.ok, 'le runtime Codex reste refusé par la validation').toBe(true);
+
+    const [row] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.runtime).toBe('codex');
+  });
+
+  it('un runtime INCONNU reste refusé — la liste est fermée', async () => {
+    // Le pendant du test ci-dessus : ouvrir Codex ne doit pas ouvrir la porte à
+    // n'importe quelle chaîne. La contrainte SQL la refuserait de toute façon,
+    // mais en erreur de base plutôt qu'en message de validation.
+    const agentId = await makeAgent('Audit2 Runtime Unknown Agent');
+    const { setAgentRuntimeAction } = await import('../src/lib/actions.ts');
+
+    const result = await setAgentRuntimeAction({ agentId, runtime: 'gemini-cli' });
     expect(result.ok).toBe(false);
 
     const [row] = await _testDb!

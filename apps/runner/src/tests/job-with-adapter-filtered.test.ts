@@ -1,4 +1,4 @@
-﻿// job-with-adapter-filtered.test.ts — per-operation whitelist regression test
+// job-with-adapter-filtered.test.ts — per-operation whitelist regression test
 //
 // Tests:
 //  - When enabledOperations=['drive_list_files'], only that tool is instantiated

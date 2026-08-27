@@ -1,4 +1,4 @@
-﻿// approve.test.ts — awaiting_approval → processing on POST
+// approve.test.ts — awaiting_approval → processing on POST
 // Asserts that approving/rejecting an approval request sets the right DB state.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';

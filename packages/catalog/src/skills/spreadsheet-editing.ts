@@ -41,6 +41,7 @@ export const spreadsheetEditingSkill: SystemSkill = {
     'Create and edit Excel workbooks in the agent workspace — values, formulae, formatting, ' +
     'rows/columns, merges and freeze panes. Spreadsheets only (no Word or PowerPoint).',
   requiredBuiltins: [...XLSX_BUILTINS],
+  toolGroup: true,
   content: `## Spreadsheet editing discipline
 
 This skill unlocks the \`xlsx_*\` tools for working with Excel workbooks stored in the agent's workspace.

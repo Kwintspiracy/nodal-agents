@@ -22,9 +22,15 @@ afterEach(async () => {
 });
 
 describe('buildSharedWorkspaceInventory', () => {
-  it('returns empty string for a missing or empty directory', async () => {
-    expect(await buildSharedWorkspaceInventory(join(root, 'nope'))).toBe('');
-    expect(await buildSharedWorkspaceInventory(root)).toBe('');
+  it('un dossier VIDE rend "", un dossier ILLISIBLE rend null — jamais la même chose', async () => {
+    // Constat Codex (27/08). Les deux se rendaient `''`, donc « (empty) » dans
+    // le prompt : l'agent lisait « il n'y a rien » là où la vérité était « on
+    // n'a pas su regarder », et recréait en confiance ce qu'il n'avait pas vu.
+    expect(await buildSharedWorkspaceInventory(root), 'un dossier vide est vide').toBe('');
+    expect(
+      await buildSharedWorkspaceInventory(join(root, 'nope')),
+      'un dossier qu’on ne peut pas lire se déguise en dossier vide',
+    ).toBeNull();
   });
 
   it('lists directories first with recursive file counts and child names, then root files', async () => {
@@ -42,7 +48,7 @@ describe('buildSharedWorkspaceInventory', () => {
     expect(text).toContain('- outputs/ (1 file): v3/');
     expect(text).toContain('- note.md');
     // Directories listed before files.
-    expect(text.indexOf('workflows/')).toBeLessThan(text.indexOf('note.md'));
+    expect(text!.indexOf('workflows/')).toBeLessThan(text!.indexOf('note.md'));
   });
 
   it('ignores node_modules and dot-entries entirely', async () => {
@@ -67,7 +73,7 @@ describe('buildSharedWorkspaceInventory', () => {
     expect(text).toContain('- file-00.txt');
     expect(text).toContain('5 more root entries elided');
     // 30 shown + 1 elision line.
-    expect(text.split('\n')).toHaveLength(31);
+    expect(text!.split('\n')).toHaveLength(31);
   });
 
   it('caps child names per directory with an ellipsis', async () => {
