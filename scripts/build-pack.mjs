@@ -20,6 +20,7 @@ import {
   readFileSync,
   existsSync,
   statSync,
+  lstatSync,
   readdirSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -420,7 +421,24 @@ function dirSizeMB(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.name.endsWith('.tgz')) continue; // un tarball d'un run précédent
     const p = resolve(dir, entry.name);
-    total += entry.isDirectory() ? dirSizeMB(p) * 1024 * 1024 : statSync(p).size;
+    if (entry.isDirectory()) {
+      total += dirSizeMB(p) * 1024 * 1024;
+      continue;
+    }
+    // `lstatSync`, pas `statSync` : sous Linux `node_modules/.bin` est plein de
+    // LIENS symboliques, et `statSync` suit le lien — un lien vers une cible
+    // absente fait tomber tout le script en ENOENT. C'est ce qui a cassé la CI
+    // le 27/08, une heure après l'ajout de cette garde : elle passait sous
+    // Windows, où npm écrit des shims et non des liens.
+    //
+    // On mesure donc le lien lui-même (quelques octets), ce qui est aussi la
+    // bonne mesure : le tarball ne duplique pas la cible.
+    try {
+      total += lstatSync(p).size;
+    } catch {
+      // Un fichier qui disparaît sous nos pieds ne doit pas faire échouer un
+      // simple calcul de taille.
+    }
   }
   return total / 1024 / 1024;
 }
