@@ -1,4 +1,4 @@
-// cli-runtime/spawn-turn.ts — la MÉCANIQUE de processus d'un tour de runtime,
+﻿// cli-runtime/spawn-turn.ts — la MÉCANIQUE de processus d'un tour de runtime,
 // partagée par les deux CLI.
 //
 // Elle vivait entière dans `claude-turn.ts`. Quand le runtime Codex est arrivé
@@ -31,11 +31,16 @@ export interface SpawnTurnOptions<TResult> {
    */
   maxToolCalls?: number;
   /**
-   * Une ligne complète de stdout. Rend `true` quand cette ligne est un APPEL
-   * D'OUTIL — c'est ce qui alimente le compteur ci-dessus. Le parseur du CLI
-   * est seul à savoir le reconnaître.
+   * Une ligne complète de stdout. Rend le NOMBRE d'appels d'outils qu'elle
+   * ouvre — c'est ce qui alimente le compteur ci-dessus.
+   *
+   * Un nombre, pas un booléen (revue Codex, 27/08). Claude groupe ses appels
+   * PARALLÈLES dans un seul événement de flux : la première version rendait
+   * `true` pour la ligne entière, donc six appels simultanés n'en comptaient
+   * qu'un. Un tour pouvait dépasser largement le plafond de l'invariant #8
+   * sans jamais être tué — et plus il paralléllise, moins il compte.
    */
-  onLine: (line: string) => boolean;
+  onLine: (line: string) => number;
   /** Réduit l'issue du processus en résultat de tour. */
   finish: (outcome: {
     exitCode: number | null;
@@ -88,15 +93,15 @@ export function spawnCliTurn<TResult>(opts: SpawnTurnOptions<TResult>): Promise<
     const errDecoder = new StringDecoder('utf8');
 
     const consume = (line: string): void => {
-      let wasToolCall = false;
+      let opened = 0;
       try {
-        wasToolCall = opts.onLine(line);
+        opened = opts.onLine(line);
       } catch (err) {
         console.warn('[cli-runtime] stream line handling failed:', err);
         return;
       }
-      if (!wasToolCall || opts.maxToolCalls === undefined || toolCapExceeded !== undefined) return;
-      toolCalls += 1;
+      if (opened <= 0 || opts.maxToolCalls === undefined || toolCapExceeded !== undefined) return;
+      toolCalls += opened;
       if (toolCalls > opts.maxToolCalls) {
         toolCapExceeded = opts.maxToolCalls;
         killTree();

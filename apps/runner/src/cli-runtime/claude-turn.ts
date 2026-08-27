@@ -87,6 +87,12 @@ export interface ClaudeTurnOptions {
    * prompt et se les voit refuser à l'écriture, ce qui est le pire des deux
    * mondes (revue Codex, 27/08). Les DEUX CLI les reçoivent en `--add-dir` —
    * l'option existe des deux côtés, vérifiée sur les binaires installés.
+   *
+   * Le nom porte « write » parce que l'appelant les calcule pour l'écriture,
+   * mais chez Claude le drapeau ouvre l'ACCÈS : ces dossiers lui sont donc
+   * passés dans les deux modes, sans quoi un relecteur ne peut pas lire ce que
+   * son prompt lui annonce. Chez Codex il ouvre l'écriture seule (son aide le
+   * dit), donc le mode lecture n'en a pas besoin.
    */
   extraWriteDirs?: readonly string[];
   mode: 'read' | 'write';
@@ -125,13 +131,18 @@ export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: st
     personalityFile,
   ];
   // Les dossiers SECONDAIRES de l'agent (revue Codex, 27/08). `cwd` n'est que
-  // le premier : le prompt annonçait les autres et la CLI ne pouvait pas y
-  // écrire. `--add-dir <directories...>` existe bien — vérifié sur le binaire
-  // installé (`claude --help`), pas lu dans une doc.
+  // le premier : le prompt annonçait les autres et la CLI n'y avait pas accès.
+  // `--add-dir <directories...>` existe bien — vérifié sur le binaire installé
+  // (`claude --help`), pas lu dans une doc.
   //
-  // En lecture seule il n'y a rien à ouvrir : les outils d'écriture sont déjà
-  // retirés au modèle, et ajouter des racines n'y changerait rien.
-  const extraDirs = opts.mode === 'write' ? (opts.extraWriteDirs ?? []) : [];
+  // Dans les DEUX modes, et c'est une correction du tour précédent : chez
+  // Claude, `--add-dir` ouvre l'ACCÈS, pas le droit d'écrire. Le limiter au
+  // mode écriture privait un relecteur en lecture seule de `Read` et `Glob` sur
+  // les dossiers que son propre prompt lui annonçait — un décalage silencieux
+  // entre ce qu'on lui dit et ce qu'il peut. Les outils d'écriture, eux, sont
+  // retirés séparément par `--disallowedTools` ; ouvrir un dossier ne les rend
+  // pas.
+  const extraDirs = opts.extraWriteDirs ?? [];
   if (extraDirs.length > 0) args.push('--add-dir', ...extraDirs);
   if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
   if (opts.model) args.push('--model', opts.model);
@@ -229,6 +240,31 @@ export function handleStreamLine(
     return;
   }
   state.unknownEventTypes.add(String(type));
+}
+
+/**
+ * Traite une ligne et rend le NOMBRE d'appels d'outils qu'elle ouvre.
+ *
+ * Exporté pour être prouvable : le compte est ce qui nourrit le garde
+ * anti-boucle, et la version précédente le réduisait à un booléen dans une
+ * closure — Claude groupe ses appels PARALLÈLES dans un seul événement, donc
+ * six appels simultanés n'en comptaient qu'un (revue Codex, 27/08). Plus le
+ * modèle parallélisait, moins il consommait de budget.
+ *
+ * Un test sur `handleStreamLine` seul n'aurait rien prouvé de tout ça : il
+ * aurait vérifié le parseur pendant que le CÂBLAGE restait faux.
+ */
+export function countToolUses(
+  state: StreamParseState,
+  line: string,
+  onEvent?: (evt: ClaudeTurnEvent) => void,
+): number {
+  let toolUses = 0;
+  handleStreamLine(state, line, (evt) => {
+    if (evt.kind === 'tool_use') toolUses += 1;
+    onEvent?.(evt);
+  });
+  return toolUses;
 }
 
 /**
@@ -342,17 +378,15 @@ function spawnClaudeTurn(
     stdin: opts.message,
     timeoutMs: opts.timeoutMs,
     ...(opts.maxToolCalls !== undefined ? { maxToolCalls: opts.maxToolCalls } : {}),
-    // Rend `true` sur un appel d'outil : c'est ce qui nourrit le garde
-    // anti-boucle, que la mécanique de processus applique sans rien savoir du
-    // format des événements.
-    onLine: (line) => {
-      let sawToolUse = false;
-      handleStreamLine(state, line, (evt) => {
-        if (evt.kind === 'tool_use') sawToolUse = true;
-        opts.onEvent?.(evt);
-      });
-      return sawToolUse;
-    },
+    // Rend le NOMBRE d'appels d'outils de la ligne : c'est ce qui nourrit le
+    // garde anti-boucle, que la mécanique de processus applique sans rien
+    // savoir du format des événements.
+    //
+    // Un COMPTE, pas un booléen (revue Codex, 27/08) : Claude groupe ses appels
+    // parallèles dans un seul événement, et six appels simultanés n'en
+    // comptaient qu'un. Plus le modèle parallélisait, moins il consommait de
+    // budget — l'inverse exact de ce qu'un plafond doit faire.
+    onLine: (line) => countToolUses(state, line, opts.onEvent),
     finish: ({ exitCode, timedOut, durationMs, stderr, toolCapExceeded }) => {
       if (state.unknownEventTypes.size > 0) {
         console.warn(

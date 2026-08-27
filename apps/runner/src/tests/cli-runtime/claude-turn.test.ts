@@ -12,6 +12,7 @@ import {
   handleStreamLine,
   newStreamParseState,
   finishTurn,
+  countToolUses,
   type ClaudeTurnEvent,
 } from '../../cli-runtime/claude-turn.ts';
 
@@ -89,6 +90,56 @@ describe('handleStreamLine on the recorded real stream', () => {
   });
 });
 
+describe('le garde anti-boucle compte les appels PARALLÈLES', () => {
+  it('un événement portant six tool_use en compte six, pas un', () => {
+    // Constat P1 de la revue Codex (27/08), sur mon propre refactor. La
+    // mécanique de processus recevait un BOOLÉEN par ligne : Claude groupe ses
+    // appels parallèles dans un seul événement, donc six appels simultanés n'en
+    // comptaient qu'un. Plus le modèle parallélisait, moins il consommait de
+    // budget — l'inverse exact de ce qu'un plafond doit faire, et un tour
+    // pouvait dépasser largement les 50 de l'invariant #8 sans être tué.
+    const state = newStreamParseState();
+    const ligne = JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: Array.from({ length: 6 }, (_, i) => ({
+          type: 'tool_use',
+          id: `toolu_${String(i)}`,
+          name: 'Read',
+          input: { file_path: `/a/${String(i)}.ts` },
+        })),
+      },
+    });
+
+    // `countToolUses` est CE QUE la mécanique de processus appelle — pas une
+    // reproduction dans le test. Compter à part aurait vérifié le parseur
+    // pendant que le câblage restait faux.
+    expect(countToolUses(state, ligne), 'les appels parallèles sont écrasés en un seul').toBe(6);
+  });
+
+  it('une ligne sans appel d’outil ne consomme aucun budget', () => {
+    const state = newStreamParseState();
+    const texte = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'je regarde' }] },
+    });
+    expect(countToolUses(state, texte)).toBe(0);
+    expect(countToolUses(state, '')).toBe(0);
+  });
+
+  it('la mécanique ADDITIONNE le compte au lieu d’incrémenter de un', () => {
+    // L'autre moitié du câblage : rendre six ne sert à rien si le compteur
+    // n'avance que d'un cran par ligne.
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../cli-runtime/spawn-turn.ts'),
+      'utf8',
+    );
+    expect(src, 'le compteur avance d’un cran quel que soit le nombre d’appels').toContain(
+      'toolCalls += opened',
+    );
+  });
+});
+
 describe('finishTurn anti-loop guard (invariant #8)', () => {
   it('a hit cap forces isError with tool_call_limit_exceeded — even if a result raced in', () => {
     const state = newStreamParseState();
@@ -145,24 +196,33 @@ describe('buildClaudeTurnArgs', () => {
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebSearch');
   });
 
-  it('les dossiers SECONDAIRES sont ouverts en écriture (--add-dir)', () => {
-    // Constat P2 de la revue Codex (27/08). Le prompt annonce les autres
-    // dossiers de l'agent et l'appelant les transmet, mais l'argv les jetait :
-    // en mode écriture, la CLI se voyait refuser des chemins qu'on venait de
-    // lui promettre. L'option existe — vérifiée sur le binaire installé.
-    const args = buildClaudeTurnArgs(
-      { ...base, mode: 'write' as const, extraWriteDirs: ['C:/Dev/autre', 'C:/Notes'] },
-      PERSONA_FILE,
-    );
-    const i = args.indexOf('--add-dir');
-    expect(i, 'les dossiers secondaires sont annoncés mais pas ouverts').toBeGreaterThan(-1);
-    expect(args.slice(i + 1, i + 3)).toEqual(['C:/Dev/autre', 'C:/Notes']);
+  it('les dossiers SECONDAIRES sont ouverts — dans les DEUX modes', () => {
+    // Constat P2 de la revue Codex (27/08), puis correction du tour suivant.
+    // Le prompt annonce les autres dossiers de l'agent, mais l'argv les jetait.
+    //
+    // Et les limiter au mode écriture était encore faux : chez Claude,
+    // `--add-dir` ouvre l'ACCÈS, pas le droit d'écrire. Un relecteur en lecture
+    // seule se voyait donc refuser `Read` et `Glob` sur des dossiers que son
+    // propre prompt lui annonçait — un décalage silencieux entre ce qu'on lui
+    // dit et ce qu'il peut.
+    for (const mode of ['read', 'write'] as const) {
+      const args = buildClaudeTurnArgs(
+        { ...base, mode, extraWriteDirs: ['C:/Dev/autre', 'C:/Notes'] },
+        PERSONA_FILE,
+      );
+      const i = args.indexOf('--add-dir');
+      expect(i, `mode ${mode} : dossiers annoncés mais pas accessibles`).toBeGreaterThan(-1);
+      expect(args.slice(i + 1, i + 3)).toEqual(['C:/Dev/autre', 'C:/Notes']);
+    }
 
-    // En lecture seule il n'y a rien à ouvrir : les outils d'écriture sont déjà
-    // retirés au modèle.
-    expect(buildClaudeTurnArgs({ ...base, extraWriteDirs: ['C:/x'] }, PERSONA_FILE)).not.toContain(
-      '--add-dir',
-    );
+    // Ouvrir un dossier ne rend PAS les outils d'écriture : ils sont retirés
+    // séparément, et ils doivent le rester.
+    const lecture = buildClaudeTurnArgs({ ...base, extraWriteDirs: ['C:/x'] }, PERSONA_FILE);
+    expect(lecture).toContain('--disallowedTools');
+    expect(lecture).not.toContain('--permission-mode');
+
+    // Sans dossier secondaire, pas de drapeau.
+    expect(buildClaudeTurnArgs(base, PERSONA_FILE)).not.toContain('--add-dir');
   });
 
   it('resume, model and effort flags appear only when provided', () => {
