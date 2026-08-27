@@ -298,6 +298,59 @@ describe('handleCodexLine sur le flux réel enregistré', () => {
     expect(uses.filter((u) => u.toolUseId === results[0]!.toolUseId)).toHaveLength(1);
   });
 
+  it('un file_change en ÉCHEC ne compte pas comme un fichier changé', () => {
+    // Constat de la revue Codex (27/08). Codex dit son échec dans un champ
+    // `status` que personne ne lit : les surfaces Code ne reconnaissent que
+    // `<tool_use_error>` et `{"ok":false}`. Un changement échoué était donc
+    // compté comme un fichier CHANGÉ, affiché dans le panneau Changes, et
+    // pouvait faire naître un projet dans le contexte des agents — un travail
+    // qui n'a jamais eu lieu, annoncé comme fait.
+    const state = newCodexParseState();
+    const events: CodexTurnEvent[] = [];
+    handleCodexLine(
+      state,
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_5',
+          type: 'file_change',
+          status: 'failed',
+          changes: [{ path: 'C:/Dev/app/a.ts', kind: 'update' }],
+        },
+      }),
+      (e) => events.push(e),
+    );
+
+    const result = events.find((e) => e.kind === 'tool_result');
+    expect(result?.output, 'un échec passe pour une écriture réussie').toContain(
+      '<tool_use_error>',
+    );
+    // La sortie d'origine reste derrière l'enveloppe : l'audit doit rester
+    // lisible, pas se réduire à un marqueur.
+    expect(result?.output).toContain('file_change');
+  });
+
+  it('un file_change RÉUSSI n’est pas marqué comme refusé', () => {
+    // Le pendant : marquer trop large ferait disparaître du vrai travail de
+    // l'onglet Code — l'inverse exact du défaut qu'on répare.
+    const state = newCodexParseState();
+    const events: CodexTurnEvent[] = [];
+    handleCodexLine(
+      state,
+      JSON.stringify({
+        type: 'item.completed',
+        item: {
+          id: 'item_6',
+          type: 'file_change',
+          status: 'completed',
+          changes: [{ path: 'C:/Dev/app/a.ts', kind: 'update' }],
+        },
+      }),
+      (e) => events.push(e),
+    );
+    expect(events.find((e) => e.kind === 'tool_result')?.output).not.toContain('<tool_use_error>');
+  });
+
   it('un tour TUÉ par le délai est un échec, même s’il avait dit turn.completed', () => {
     // Constat P2 de la revue Codex (27/08). Le flux était complet, le code de
     // sortie null : le job se terminait « réussi » alors qu'on venait de tuer le
