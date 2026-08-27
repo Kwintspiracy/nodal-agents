@@ -1,4 +1,4 @@
-﻿// curator.test.ts â€” Tier-2 CURATOR (learning-loop Phase C).
+// curator.test.ts â€” Tier-2 CURATOR (learning-loop Phase C).
 //
 // All assertions on real DB state (agent_skills rows, entities rows).
 // The LLM consolidation model is mocked via the same createLlmClient interception

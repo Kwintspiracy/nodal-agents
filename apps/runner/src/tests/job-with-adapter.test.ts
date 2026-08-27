@@ -1,4 +1,4 @@
-﻿// job-with-adapter.test.ts — integration test for connector adapter tool injection
+// job-with-adapter.test.ts — integration test for connector adapter tool injection
 //
 // Tests:
 //  - Agent assigned to Google Drive connector executes a job.

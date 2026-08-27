@@ -1,4 +1,4 @@
-﻿// worker.test.ts — tool whitelist enforced, anti-loop trips at limits,
+// worker.test.ts — tool whitelist enforced, anti-loop trips at limits,
 // message structure validated, awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll } from 'vitest';

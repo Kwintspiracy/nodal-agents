@@ -1,4 +1,4 @@
-﻿// cli-runtime/claude-turn.ts — one conversation turn of a RUNTIME agent
+// cli-runtime/claude-turn.ts — one conversation turn of a RUNTIME agent
 // (étape E): the agent IS a Claude Code session. Nodal spawns the user's own
 // `claude` binary headless with `--output-format stream-json`, injects the
 // persona from DB (--append-system-prompt-file + message via stdin — free

@@ -1,4 +1,4 @@
-﻿// claude-turn.test.ts — the runtime-agent stream parser and argv builder
+// claude-turn.test.ts — the runtime-agent stream parser and argv builder
 // (étape E), validated against a RECORDED REAL stream from claude 2.1.234
 // (stream-fixture.jsonl, captured 2026-08-19): keyless-snapshot discipline —
 // the parser is tested on what the CLI actually printed.

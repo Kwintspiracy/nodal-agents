@@ -1,4 +1,4 @@
-﻿// builtin/code-task/providers.ts — the two CLI providers behind one interface.
+// builtin/code-task/providers.ts — the two CLI providers behind one interface.
 //
 // Pure functions only (argv construction + output parsing) so every provider
 // behavior is unit-testable against RECORDED CLI output, without spawning

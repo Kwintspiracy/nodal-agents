@@ -1,4 +1,4 @@
-﻿// job/code-projects.ts — les PROJETS de code de l'espace, pour le bloc
+// job/code-projects.ts — les PROJETS de code de l'espace, pour le bloc
 // `## Runtime` de chaque agent (décision Quentin 25/08).
 //
 // POURQUOI : trois sessions de suite ont montré la même panne — « modifie

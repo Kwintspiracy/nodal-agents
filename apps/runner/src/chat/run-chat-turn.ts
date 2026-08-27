@@ -1,4 +1,4 @@
-﻿// chat/run-chat-turn.ts — generate one in-app chat reply WITHOUT creating a job.
+// chat/run-chat-turn.ts — generate one in-app chat reply WITHOUT creating a job.
 //
 // Conversation-first (V4): a chat turn is NOT a job. This produces a pure-text
 // reply using the agent's personality + AUTO-INJECTED memory (recall is free —

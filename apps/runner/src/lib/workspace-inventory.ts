@@ -1,4 +1,4 @@
-﻿// lib/workspace-inventory.ts — shallow listing of the entity's SHARED workspace,
+// lib/workspace-inventory.ts — shallow listing of the entity's SHARED workspace,
 // injected into the system prompt at job start (JobContext.workspaceInventory).
 //
 // Why: without a live inventory the agent starts every job blind to what

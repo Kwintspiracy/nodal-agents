@@ -1,4 +1,4 @@
-﻿// code-task.test.ts — the code_task builtin's pure seams (argv construction,
+// code-task.test.ts — the code_task builtin's pure seams (argv construction,
 // CLI-output parsing, spawn shim, PATH resolution) plus its DB seams (daily
 // budget, workspace write-lock) on pglite.
 //

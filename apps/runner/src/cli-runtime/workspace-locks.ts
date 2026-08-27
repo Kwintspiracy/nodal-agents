@@ -1,4 +1,4 @@
-﻿// cli-runtime/workspace-locks.ts — le créneau d'écriture unique d'une session
+// cli-runtime/workspace-locks.ts — le créneau d'écriture unique d'une session
 // CLI, sur TOUS ses dossiers.
 //
 // Le contrat existait déjà (un seul travail en écriture par dossier à la fois,

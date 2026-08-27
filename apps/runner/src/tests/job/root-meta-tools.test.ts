@@ -1,4 +1,4 @@
-﻿// root-meta-tools.test.ts — regression for the ROOT meta-tool gating bug.
+// root-meta-tools.test.ts — regression for the ROOT meta-tool gating bug.
 //
 // The bug: meta-tool gating was originally placed inside the WORKER `else`
 // branch of execute.ts. But a ROOT is ALWAYS an orchestrator (the web action

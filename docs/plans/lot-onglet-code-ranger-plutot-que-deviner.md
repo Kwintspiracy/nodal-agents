@@ -1,4 +1,4 @@
-﻿<!-- artifact: https://claude.ai/code/artifact/6d2d8b02-dd70-42b0-93e5-83ab8ea17702 -->
+<!-- artifact: https://claude.ai/code/artifact/6d2d8b02-dd70-42b0-93e5-83ab8ea17702 -->
 
 # Lot « l'onglet Code cesse de deviner » — 26/08/2026
 

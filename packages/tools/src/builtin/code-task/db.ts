@@ -1,4 +1,4 @@
-﻿// builtin/code-task/db.ts — budget, audit record, and workspace write-lock.
+// builtin/code-task/db.ts — budget, audit record, and workspace write-lock.
 //
 // All SQL goes through the @nodal-agents/db barrel (the dep-cruiser rule
 // forbids importing pg/drizzle-orm node_modules outside packages/db; the

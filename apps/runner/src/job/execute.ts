@@ -1,4 +1,4 @@
-﻿// job/execute.ts — executeJob: the main LLM loop
+// job/execute.ts — executeJob: the main LLM loop
 // Invariants enforced:
 //   2: no hardcoded user-facing strings (error codes only)
 //   3: no agent-specific band-aids (fail loud on all errors)

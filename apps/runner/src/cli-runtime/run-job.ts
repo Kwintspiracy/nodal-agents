@@ -1,4 +1,4 @@
-﻿// cli-runtime/run-job.ts — the JOB path of a runtime agent (étape E).
+// cli-runtime/run-job.ts — the JOB path of a runtime agent (étape E).
 //
 // executeJob diverts here as soon as the loaded agent has runtime !==
 // 'nodal': the whole Nodal LLM loop is skipped and the turn is served by the

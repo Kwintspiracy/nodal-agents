@@ -1,4 +1,4 @@
-﻿// manager.test.ts — startTelegramManager spawns one poller per agent with a
+// manager.test.ts — startTelegramManager spawns one poller per agent with a
 // bot token, restarts a poller on token change, and cleans up on stop.
 //
 // We mock fetch so the pollers immediately return [] (no updates), but the

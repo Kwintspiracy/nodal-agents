@@ -1,4 +1,4 @@
-﻿// cli-runtime/audit.ts — la ligne `tool_calls` d'un appel d'outil INTERNE à une
+// cli-runtime/audit.ts — la ligne `tool_calls` d'un appel d'outil INTERNE à une
 // session CLI.
 //
 // Elle était construite deux fois, à l'identique, dans run-job.ts et

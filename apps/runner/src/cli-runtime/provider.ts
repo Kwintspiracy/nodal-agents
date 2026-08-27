@@ -1,4 +1,4 @@
-﻿// cli-runtime/provider.ts — LE point où la valeur `agents.runtime` devient une
+// cli-runtime/provider.ts — LE point où la valeur `agents.runtime` devient une
 // CLI, et le seul.
 //
 // Le chemin job et le chemin chat posaient chacun leur propre garde

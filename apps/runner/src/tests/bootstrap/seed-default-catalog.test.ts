@@ -1,4 +1,4 @@
-﻿// seed-default-catalog.test.ts — regression for system-skill seeding: every
+// seed-default-catalog.test.ts — regression for system-skill seeding: every
 // install gets the same system skills out of the box, and user overrides are
 // preserved on subsequent boots. Agents are NOT seeded — every agent is
 // created by the user.

@@ -1,4 +1,4 @@
-﻿// provider.test.ts — LE tableau des runtimes servis, et son accord avec ce que
+// provider.test.ts — LE tableau des runtimes servis, et son accord avec ce que
 // l'interface propose.
 //
 // Le 27/08, ouvrir Codex a demandé de toucher quatre endroits : la contrainte

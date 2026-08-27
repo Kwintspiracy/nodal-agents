@@ -1,4 +1,4 @@
-﻿// cli-runtime/run-chat.ts — the DASHBOARD-CHAT path of a runtime agent
+// cli-runtime/run-chat.ts — the DASHBOARD-CHAT path of a runtime agent
 // (étape E). Same contract as run-job.ts but for a chat turn: the user's
 // message goes to the agent's Claude Code session (resumed per conversation),
 // the CLI's final text is persisted as the assistant chat message VERBATIM

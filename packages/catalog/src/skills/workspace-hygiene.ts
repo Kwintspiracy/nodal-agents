@@ -1,4 +1,4 @@
-﻿// catalog/skills/workspace-hygiene.ts — system skill, shipped with the product.
+// catalog/skills/workspace-hygiene.ts — system skill, shipped with the product.
 //
 // Source of truth for the 'content' field. The bootstrap seeder upserts this
 // row at boot; users can override per-install via the dashboard (preserved via

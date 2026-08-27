@@ -1,4 +1,4 @@
-﻿// lib/cli-runtimes.ts — LA liste des harnais CLI qu'un agent peut porter, côté
+// lib/cli-runtimes.ts — LA liste des harnais CLI qu'un agent peut porter, côté
 // interface.
 //
 // Elle existait en trois exemplaires indépendants : le `<select>` du composeur,

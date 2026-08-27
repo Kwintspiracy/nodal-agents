@@ -1,4 +1,4 @@
-﻿// cli-runtime/codex-turn.ts — un tour de conversation d'un agent dont le
+// cli-runtime/codex-turn.ts — un tour de conversation d'un agent dont le
 // runtime est Codex : l'agent EST une session `codex exec`.
 //
 // Le pendant de `claude-turn.ts`, et volontairement écrit dans le même ordre :

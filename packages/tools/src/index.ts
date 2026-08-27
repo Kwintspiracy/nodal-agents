@@ -1,4 +1,4 @@
-﻿// @nodal-agents/tools — public API
+// @nodal-agents/tools — public API
 
 // Types
 export type {

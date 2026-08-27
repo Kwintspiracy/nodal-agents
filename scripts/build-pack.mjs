@@ -31,11 +31,33 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
 const packDir = resolve(repoRoot, 'pack');
 
-const HEAP = '--max-old-space-size=4096';
+// Le tas du build web.
+//
+// 4096 suffisait quand ce script a été écrit ; le 27/08 le build meurt en
+// SIGABRT (status 134) à cette valeur, et passe à 12288. Le dashboard a grossi,
+// c'est tout — mais la panne était trompeuse : `pnpm --filter … build` lancé à
+// la main RÉUSSISSAIT, parce que la ligne ci-dessous ÉCRASE le NODE_OPTIONS de
+// l'appelant. Même commande, deux issues, selon qu'on passe par le script.
+//
+// Un réglage explicite de l'appelant est donc respecté désormais : ce script
+// pose un plancher, il ne rabote plus.
+const HEAP_FLOOR_MB = 12288;
+
+function heapEnv() {
+  const inherited = process.env['NODE_OPTIONS'] ?? '';
+  const asked = /--max-old-space-size=(\d+)/.exec(inherited);
+  if (asked && Number(asked[1]) >= HEAP_FLOOR_MB) return inherited;
+  const withoutHeap = inherited.replace(/--max-old-space-size=\d+/g, '').trim();
+  return `${withoutHeap} --max-old-space-size=${String(HEAP_FLOOR_MB)}`.trim();
+}
 
 function run(cmd) {
   console.log(`\n▶ ${cmd}`);
-  execSync(cmd, { stdio: 'inherit', cwd: repoRoot, env: { ...process.env, NODE_OPTIONS: HEAP } });
+  execSync(cmd, {
+    stdio: 'inherit',
+    cwd: repoRoot,
+    env: { ...process.env, NODE_OPTIONS: heapEnv() },
+  });
 }
 
 function sizeMB(p) {
@@ -142,6 +164,42 @@ cpSync(resolve(repoRoot, 'apps/web/.next/static'), resolve(webOut, '.next/static
 const publicSrc = resolve(repoRoot, 'apps/web/public');
 if (existsSync(publicSrc)) {
   cpSync(publicSrc, resolve(webOut, 'public'), { recursive: true });
+}
+
+// ─── 5a. Drop the trace manifests ───────────────────────────────────────────
+//
+// `*.nft.json` sont les manifestes de TRAÇAGE de Next : la liste des fichiers
+// qu'une page a touchés. Ils servent à FABRIQUER le standalone, jamais à le
+// faire tourner — le serveur ne les ouvre pas.
+//
+// Le 27/08 ils pesaient **140 Mo chacun**, dix-neuf fois, soit 2,6 Go des
+// 2,97 Go du pack. Le tarball atteignait 277 Mo et le registre npm l'a refusé
+// en `413 Payload Too Large` — après le build, après le smoke-test, au moment
+// le plus tardif possible.
+//
+// La cause de leur taille est locale à cette machine : `pnpm install` étant
+// cassé (Node 26.4.0), les liens d'espace de travail sont posés à la main, et
+// le traçage suit ces jonctions jusque dans des dossiers qui n'ont rien à voir
+// avec le projet — extensions d'éditeur, applications Windows. D'où les
+// avertissements « Failed to copy traced files » qui accompagnent chaque build
+// ici. Les retirer supprime le symptôme ET le poids, sur toute machine.
+let tracesDropped = 0;
+let tracesBytes = 0;
+(function dropTraces(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = resolve(dir, entry.name);
+    if (entry.isDirectory()) dropTraces(p);
+    else if (entry.name.endsWith('.nft.json')) {
+      tracesBytes += statSync(p).size;
+      rmSync(p);
+      tracesDropped++;
+    }
+  }
+})(resolve(webOut, '.next'));
+if (tracesDropped > 0) {
+  console.log(
+    `✔ Dropped ${String(tracesDropped)} trace manifests (${(tracesBytes / 1024 / 1024).toFixed(0)} MB) — build-time only`,
+  );
 }
 
 // ─── 5b. Chunk integrity gate ───────────────────────────────────────────────
@@ -345,7 +403,40 @@ if (existsSync(resolve(repoRoot, 'README.md'))) {
   cpSync(resolve(repoRoot, 'README.md'), resolve(packDir, 'README.md'));
 }
 
+// ─── 8b. Size gate ──────────────────────────────────────────────────────────
+//
+// Le registre npm refuse un tarball trop gros par un `413 Payload Too Large`,
+// et il le fait AU MOMENT DU PUBLISH — c'est-à-dire après le build, après le
+// smoke-test, quand tout semblait prêt. C'est arrivé le 27/08 : 277 Mo de
+// tarball, refusés, pour des manifestes de traçage qui n'avaient rien à faire
+// là (voir l'étape 5a).
+//
+// Le seuil porte sur le contenu NON COMPRESSÉ, seule mesure disponible ici
+// sans produire le tarball. Un pack sain pèse ~350 Mo décompressés ; 1 Go
+// laisse de la marge tout en attrapant une dérive d'un ordre de grandeur.
+const MAX_UNPACKED_MB = 1024;
+function dirSizeMB(dir) {
+  let total = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.endsWith('.tgz')) continue; // un tarball d'un run précédent
+    const p = resolve(dir, entry.name);
+    total += entry.isDirectory() ? dirSizeMB(p) * 1024 * 1024 : statSync(p).size;
+  }
+  return total / 1024 / 1024;
+}
+const unpackedMB = dirSizeMB(packDir);
+if (unpackedMB > MAX_UNPACKED_MB) {
+  throw new Error(
+    `Pack too large: ${unpackedMB.toFixed(0)} MB unpacked (limit ${String(MAX_UNPACKED_MB)} MB).\n\n` +
+      '  npm would refuse this with 413 Payload Too Large at publish time.\n' +
+      '  Find what grew:  Get-ChildItem pack -Recurse -File | Sort-Object Length -Descending | Select -First 10\n',
+  );
+}
+
 // ─── 9. Report ──────────────────────────────────────────────────────────────
+console.log(
+  `\n✔ Pack size: ${unpackedMB.toFixed(0)} MB unpacked (limit ${String(MAX_UNPACKED_MB)})`,
+);
 console.log('\n✔ Pack assembled at', packDir);
 console.log('  cli.js   ', sizeMB(resolve(packDir, 'cli.js')));
 console.log('  runner.js', sizeMB(resolve(packDir, 'runner.js')));

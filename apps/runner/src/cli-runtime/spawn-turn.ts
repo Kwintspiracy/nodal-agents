@@ -1,4 +1,4 @@
-﻿// cli-runtime/spawn-turn.ts — la MÉCANIQUE de processus d'un tour de runtime,
+// cli-runtime/spawn-turn.ts — la MÉCANIQUE de processus d'un tour de runtime,
 // partagée par les deux CLI.
 //
 // Elle vivait entière dans `claude-turn.ts`. Quand le runtime Codex est arrivé
