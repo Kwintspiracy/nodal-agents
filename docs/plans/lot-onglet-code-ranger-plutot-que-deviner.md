@@ -1,4 +1,4 @@
-<!-- artifact: https://claude.ai/code/artifact/6d2d8b02-dd70-42b0-93e5-83ab8ea17702 -->
+﻿<!-- artifact: https://claude.ai/code/artifact/6d2d8b02-dd70-42b0-93e5-83ab8ea17702 -->
 
 # Lot « l'onglet Code cesse de deviner » — 26/08/2026
 
@@ -209,7 +209,7 @@ immédiat et tout autre dossier de Documents. Seul TEMP s'ouvre, que
    aussi l'argv du produit à la main, et la copie avait dérivé ; un test tient
    maintenant les deux en phase.
 
-## Ce que la revue a corrigé — vingt-trois passes de `codex review --base main`
+## Ce que la revue a corrigé — vingt-deux passes complètes de `codex review --base main`
 
 C'est la colonne la plus utile à relire : chaque ligne est un constat qui aurait
 été redécouvert plus tard, à l'usage.
