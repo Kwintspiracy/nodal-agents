@@ -315,7 +315,15 @@ prochain `pnpm install` réussi. Elles ne masquent aucun problème de code.
   l'install est en `local-auth`, je n'ai pas de session.
 - Les tokens Discord + Slack fuités le 08/08 restent à révoquer (hors lot).
 
-## Micro-PR de nettoyage — APRÈS le merge (décision Quentin, 26/08)
+## Renommage de `code_task` — ABANDONNÉ (décision Quentin, 27/08)
+
+> « non. on ne fais pas le renommage. c'est pas urgent. »
+
+Ce qui suit reste écrit pour la trace : le raisonnement tient toujours, la
+priorité non. **Ne pas le reproposer** — si le sujet revient, il viendra de
+Quentin.
+
+### Le raisonnement, pour mémoire
 
 **Renommer l'outil `code_task`.** Le nom laisse croire à « une fonction qui
 code », alors que c'est un **appel au harnais CLI installé** (Claude Code ou
