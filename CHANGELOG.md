@@ -10,6 +10,55 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.8 — Aug 28, 2026
+
+Your bot tokens stop being readable in the database, a Slack bot that loses its
+connection comes back on its own, and a database outage no longer destroys the
+log that would explain it.
+
+**Every credential is now encrypted at rest**
+
+- **Bot tokens leave the clear.** The Discord, Slack, WhatsApp and Telegram
+  credentials — and the secret that authenticates your inbound webhooks — were
+  the last values stored readable in the database. They are now encrypted with
+  the same key as your API keys and OAuth credentials. Existing installs are
+  migrated on the next start, in place, with nothing to do.
+- **Reading the database is no longer enough to use them.** A webhook secret is
+  compared after decryption, so a copy of your database does not let anyone
+  fire your agents.
+- **A credential that cannot be decrypted says so.** Restoring a backup without
+  its key used to look exactly like "no bot configured here". It now fails
+  loudly, naming the file to restore.
+
+**A Slack bot that drops comes back**
+
+- **A revoked or rotated token no longer leaves an agent silently offline.**
+  When the connection died for good, nothing brought it back — the bot simply
+  stopped answering, with a single line in a log nobody was reading. The
+  connection is now re-established on its own, with the credentials as they
+  stand at that moment, so rotating a token is enough to recover.
+- **Retries slow down instead of hammering.** A token that is wrong forever is
+  retried on a widening interval rather than every 30 seconds, and stops
+  writing a line each time.
+
+**A database outage no longer erases its own explanation**
+
+- **Repeated failures collapse.** With the database unreachable, seventeen
+  places wrote the same failure every 30 seconds — one real log had 7 412 such
+  lines out of 61 359. Since logs rotate, a long outage pushed out the earlier
+  lines that said *why* it started. The first failure is still logged in full,
+  repeats are counted, and recovery says how many there were.
+- **Failures say what actually went wrong.** A failing query used to be logged
+  with the SQL and nothing else. The underlying reason — connection refused,
+  authentication failed, a missing table — now appears with it.
+
+**Also**
+
+- **GLM 5.3 Flash** joins the model catalogue: a larger context than GLM 5.3,
+  roughly nineteen times cheaper, and it can read images.
+
+---
+
 ## v0.8.7 — Aug 27, 2026
 
 Your agents work in the folder you gave them, the Code tab shows what they
