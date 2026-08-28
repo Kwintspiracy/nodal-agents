@@ -892,6 +892,33 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       contextWindow: 1_048_576,
       pricing: { inputPerMillionUsd: 1.4, outputPerMillionUsd: 4.4 },
     },
+    {
+      modelId: 'z-ai/glm-5.3-flash',
+      label: 'GLM 5.3 Flash',
+      // The cheap, fast sibling of 5.3 — ~19x cheaper in, ~18x cheaper out,
+      // and a LARGER context (1.31M vs 1.05M). Two real differences from the
+      // full 5.3, both read off OpenRouter's /api/v1/models on 2026-08-28:
+      //   - it is MULTIMODAL (input_modalities: text, image, video) where 5.3
+      //     is text-only, so it is in VISION_MODEL_IDS below;
+      //   - reasoning is supported (`reasoning`, `reasoning_effort` are in
+      //     supported_parameters) but NOT mandatory the way 5.2/5.3's is —
+      //     nothing upstream says this one always thinks, so 'off' stays on
+      //     the UI scale rather than being hidden on a guess.
+      // forcedToolChoice:false follows the family posture: `tool_choice` is
+      // accepted, but nothing states 'required' is honoured, and the runtime
+      // tool_choice floor relaxes it anyway.
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+        },
+      },
+      contextWindow: 1_310_720,
+      pricing: { inputPerMillionUsd: 0.075, outputPerMillionUsd: 0.25 },
+    },
     // Moonshot (Kimi)
     {
       modelId: 'moonshotai/kimi-k2.6',
@@ -1088,6 +1115,10 @@ export const VISION_MODEL_IDS = new Set<string>([
   'openai/gpt-5.6-luna-pro',
   'openai/gpt-5.6-terra-pro',
   'qwen/qwen3.8-max',
+  // Verified via OpenRouter /api/v1/models input_modalities on 2026-08-28:
+  // z-ai/glm-5.3-flash reports ["text","image","video"]. The full z-ai/glm-5.3
+  // reports ["text"] only and is deliberately NOT in this set.
+  'z-ai/glm-5.3-flash',
   // Verified via OpenRouter /api/v1/models input_modalities (2026-07-20).
   // qwen/qwen3.7-max is deliberately absent — text-only per the same source.
   'x-ai/grok-4.5',

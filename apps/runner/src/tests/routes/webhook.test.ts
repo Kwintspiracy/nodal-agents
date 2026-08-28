@@ -19,6 +19,7 @@ import {
   channelAllowedConversations,
 } from '@nodal-agents/db';
 import type { WebhookTriggerInsert } from '@nodal-agents/db';
+import { encryptChannelSecret, decryptChannelSecret } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -26,6 +27,7 @@ import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { interpolateTemplate, resetWebhookRateLimiterForTests } from '../../routes/webhook.ts';
+import { isValidWorkerSecret } from '../../lib/worker-secret.ts';
 
 // triggerWorker's fire-and-forget POST to /api/worker hits fetch — stub it at
 // the boundary so tests are hermetic and can assert it fired with the jobId.
@@ -493,5 +495,55 @@ describe('POST /webhooks/:slug/:secret — rate limit', () => {
     // A different trigger's own budget is untouched.
     const otherRes = await post(otherTrigger.slug, SECRET, { i: 1 });
     expect(otherRes.status).toBe(202);
+  });
+});
+
+describe('POST /webhooks/:slug/:secret — secret encrypted at rest', () => {
+  // webhook_triggers.secret was the last plaintext credential column after the
+  // channel tokens were closed (2026-08-28). It is a real bearer credential:
+  // whoever holds it fires a job on an agent. It is now stored as enc:v1: and
+  // decrypted at comparison time.
+  it('authenticates a caller against an ENCRYPTED stored secret', async () => {
+    const trigger = await makeTrigger({ secret: encryptChannelSecret(SECRET) });
+
+    const res = await post(trigger.slug, SECRET, { customer: { name: 'Ada' }, items: [] });
+
+    expect(res.status).toBe(202);
+    // …and a job really was created, not just a 202 shell.
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.agentId, seed.agentId));
+    expect(jobs.length).toBeGreaterThan(0);
+  });
+
+  it('still authenticates against a LEGACY plaintext secret (pre-migration row)', async () => {
+    const trigger = await makeTrigger({ secret: SECRET });
+    const res = await post(trigger.slug, SECRET, { customer: { name: 'Ada' }, items: [] });
+    expect(res.status).toBe(202);
+  });
+
+  it('never stores the bearer secret in a form DB access alone can replay', async () => {
+    // Asserted on the ROW, not through the URL: an enc:v1 blob is base64 and
+    // contains '/' and ':', so posting it as a path segment 404s on ROUTING
+    // long before authentication is reached. A URL-level test here would pass
+    // whether or not the fix exists and would prove nothing.
+    const stored = encryptChannelSecret(SECRET);
+    const trigger = await makeTrigger({ secret: stored });
+
+    const [row] = await db
+      .select({ secret: webhookTriggers.secret })
+      .from(webhookTriggers)
+      .where(eq(webhookTriggers.id, trigger.id));
+
+    expect(row?.secret).toBeDefined();
+    expect(row?.secret).not.toBe(SECRET); // the clear value is NOT at rest
+    expect(row?.secret?.startsWith('enc:v1:')).toBe(true);
+    // And what IS at rest does not authenticate: comparison happens against
+    // the decrypted value, so the blob is not its own bearer token.
+    expect(isValidWorkerSecret(stored, decryptChannelSecret(stored, 'test'))).toBe(false);
+  });
+
+  it('rejects a wrong secret against an encrypted row', async () => {
+    const trigger = await makeTrigger({ secret: encryptChannelSecret(SECRET) });
+    const res = await post(trigger.slug, 'b'.repeat(32), { customer: { name: 'Ada' }, items: [] });
+    expect(res.status).toBe(404);
   });
 });

@@ -26,13 +26,14 @@
 // Pairing state (qr/status) is NEVER persisted — module-scoped, in-memory
 // only inside this handle, cleared the moment a binding despawns.
 
-import { createHash } from 'node:crypto';
 import { eq, and } from '@nodal-agents/db';
 import {
   agents,
   channelBindings,
   channelAllowedConversations,
   getChannelBinding,
+  getBindingCredentials,
+  credentialsFingerprint,
 } from '@nodal-agents/db';
 import {
   ensureWhatsAppSocket,
@@ -92,25 +93,6 @@ interface ActiveSocket {
 
 const DEFAULT_REFRESH_MS = 30_000;
 
-function hashCredentials(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex');
-}
-
-/** Parse a channel_bindings.credentials JSON blob down to its `sessionDir`, or
- *  null when it's missing/unparseable — same tolerant shape as
- *  whatsapp-adapter.ts's requireSessionDir, but non-throwing (a manager scan
- *  logs + skips a bad binding rather than crashing the whole refresh). */
-function parseSessionDir(rawCredentials: string): string | null {
-  try {
-    const parsed: unknown = JSON.parse(rawCredentials);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const sessionDir = (parsed as Record<string, unknown>)['sessionDir'];
-    return typeof sessionDir === 'string' && sessionDir ? sessionDir : null;
-  } catch {
-    return null;
-  }
-}
-
 export function startWhatsAppManager(
   deps: RunnerDeps,
   opts: WhatsAppManagerOpts,
@@ -167,11 +149,26 @@ export function startWhatsAppManager(
 
     for (const row of rows) {
       if (!row.entityId) continue;
-      seen.add(row.agentId);
       // One failing agent (bad credential, a spawnOne throw, …) must not
       // reject the whole refresh — every other binding still needs its scan.
+      // `seen.add` only after the credential reads back, same reasoning as
+      // discord/manager.ts: a binding we cannot decrypt is despawned, loudly,
+      // rather than left running on a credential nobody can verify.
       try {
-        const hash = hashCredentials(row.credentials);
+        // The blob is encrypted at rest; decrypt ONCE and fingerprint the
+        // PLAINTEXT. Hashing the stored value would see a rotation on every
+        // refresh (fresh AES-GCM IV per write) and relink the WhatsApp socket
+        // in a loop — which for this channel means knocking the linked device
+        // offline repeatedly, not just a reconnect.
+        const creds = await getBindingCredentials(deps.db, row.agentId, 'whatsapp');
+        if (!creds) {
+          console.warn(
+            `[whatsapp-manager agent=${row.agentId}] binding has no readable credentials; skipping`,
+          );
+          continue;
+        }
+        seen.add(row.agentId);
+        const hash = credentialsFingerprint(creds);
 
         const existing = active.get(row.agentId);
         if (existing) {
@@ -180,12 +177,12 @@ export function startWhatsAppManager(
             closeSocket(existing.sessionDir);
             active.delete(row.agentId);
             pairing.delete(row.agentId);
-            await spawnOne(row.agentId, row.entityId, row.credentials, hash);
+            spawnOne(row.agentId, row.entityId, creds, hash);
           }
           continue;
         }
 
-        await spawnOne(row.agentId, row.entityId, row.credentials, hash);
+        spawnOne(row.agentId, row.entityId, creds, hash);
       } catch (err) {
         console.error(
           `[whatsapp-manager agent=${row.agentId}] refresh failed for this binding: ${
@@ -205,13 +202,13 @@ export function startWhatsAppManager(
     }
   }
 
-  async function spawnOne(
+  function spawnOne(
     agentId: string,
     entityId: string,
-    rawCredentials: string,
+    creds: Record<string, string>,
     credentialsHash: string,
-  ): Promise<void> {
-    const sessionDir = parseSessionDir(rawCredentials);
+  ): void {
+    const sessionDir = creds['sessionDir'] ?? null;
     if (!sessionDir) {
       console.warn(
         `[whatsapp-manager agent=${agentId}] binding has no usable sessionDir credential; ` +
@@ -395,8 +392,12 @@ export function startWhatsAppManager(
       // gap that still matters at this point.
       if (active.has(agentId)) return 'started';
 
-      const hash = hashCredentials(binding.credentials);
-      await spawnOne(agentId, agentRow.entityId, binding.credentials, hash);
+      // Same decrypt-then-fingerprint contract as refreshInternal above, so a
+      // socket started from the dashboard's "Connect" and one started by the
+      // poll tick agree on the hash and never respawn each other.
+      const creds = await getBindingCredentials(deps.db, agentId, 'whatsapp');
+      if (!creds) return 'no_binding';
+      spawnOne(agentId, agentRow.entityId, creds, credentialsFingerprint(creds));
       return active.has(agentId) ? 'started' : 'no_binding';
     },
   };

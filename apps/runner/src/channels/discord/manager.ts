@@ -8,13 +8,19 @@
 //     a gateway for each.
 //   - Every `refreshIntervalMs` (default 30s): re-fetch, diff against running
 //     gateways, start newcomers, respawn ones whose credentials rotated
-//     (compared by a hash of the raw credentials string, since the token
-//     itself lives inside that JSON blob), despawn removed-or-disabled ones.
+//     (compared by credentialsFingerprint of the DECRYPTED credential bag —
+//     never of the stored blob, whose AES-GCM IV changes on every write and
+//     would read as a rotation on every single refresh), despawn
+//     removed-or-disabled ones.
 //   - On stop: destroy every gateway client and await their shutdown.
 
-import { createHash } from 'node:crypto';
 import { eq, and } from '@nodal-agents/db';
-import { agents, channelBindings, getBindingCredentials } from '@nodal-agents/db';
+import {
+  agents,
+  channelBindings,
+  getBindingCredentials,
+  credentialsFingerprint,
+} from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import {
@@ -47,10 +53,6 @@ interface ActiveGateway {
 }
 
 const DEFAULT_REFRESH_MS = 30_000;
-
-function hashCredentials(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex');
-}
 
 export function startDiscordManager(
   deps: RunnerDeps,
@@ -111,11 +113,27 @@ export function startDiscordManager(
 
     for (const row of rows) {
       if (!row.entityId) continue;
-      seen.add(row.agentId);
       // One failing agent (bad credential, a spawnOne throw, …) must not
       // reject the whole refresh — every other binding still needs its scan.
+      // NOTE: `seen.add` happens only AFTER the credential reads back. A
+      // binding we can no longer decrypt is deliberately left out, so the
+      // despawn pass below tears down any gateway still holding the old
+      // token: we cannot verify it is current, and running on a credential
+      // the operator can no longer read is worse than being offline and loud.
       try {
-        const hash = hashCredentials(row.credentials);
+        // Decrypt ONCE per row: the credential feeds both the rotation
+        // fingerprint and the gateway itself. Fingerprinting the stored blob
+        // would see a rotation on every refresh (fresh AES-GCM IV per write)
+        // and respawn healthy gateways in a loop.
+        const creds = await getBindingCredentials(deps.db, row.agentId, 'discord');
+        if (!creds) {
+          console.warn(
+            `[discord-manager agent=${row.agentId}] binding has no readable credentials; skipping`,
+          );
+          continue;
+        }
+        seen.add(row.agentId);
+        const hash = credentialsFingerprint(creds);
 
         const existing = active.get(row.agentId);
         if (existing) {
@@ -123,12 +141,12 @@ export function startDiscordManager(
           if (existing.credentialsHash !== hash) {
             await existing.handle.stop();
             active.delete(row.agentId);
-            await spawnOne(row.agentId, row.entityId, hash);
+            spawnOne(row.agentId, row.entityId, hash, creds);
           }
           continue;
         }
 
-        await spawnOne(row.agentId, row.entityId, hash);
+        spawnOne(row.agentId, row.entityId, hash, creds);
       } catch (err) {
         console.error(
           `[discord-manager agent=${row.agentId}] refresh failed for this binding: ${
@@ -147,13 +165,13 @@ export function startDiscordManager(
     }
   }
 
-  async function spawnOne(
+  function spawnOne(
     agentId: string,
     entityId: string,
     credentialsHash: string,
-  ): Promise<void> {
-    const creds = await getBindingCredentials(deps.db, agentId, 'discord');
-    const botToken = creds?.['botToken'];
+    creds: Record<string, string>,
+  ): void {
+    const botToken = creds['botToken'];
     if (!botToken) {
       console.warn(
         `[discord-manager agent=${agentId}] binding has no usable botToken credential; skipping ` +

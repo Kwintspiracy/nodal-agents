@@ -26,6 +26,10 @@ export {
   getChannelBinding,
   listChannelBindings,
   getBindingCredentials,
+  credentialsFingerprint,
+  encryptChannelCredentials,
+  encryptChannelSecret,
+  decryptChannelSecret,
   countActiveConversations,
   listAllowedConversations,
 } from './queries/channel-identity.ts';

@@ -15,7 +15,9 @@
 // reads go straight to telegram_allowed_chats — every OTHER channel reads the
 // neutral table, which is its only source of truth for that channel.
 
+import { createHash } from 'node:crypto';
 import { eq, and, or } from 'drizzle-orm';
+import { decrypt, encrypt, isEncrypted } from '@nodal-agents/secrets';
 import { telegramAllowedChats } from '../schema/telegram-allowed-chats.ts';
 import { channelBindings, type ChannelBindingRow } from '../schema/channel-bindings.ts';
 import { channelAllowedConversations } from '../schema/channel-allowed-conversations.ts';
@@ -133,6 +135,76 @@ export async function listChannelBindings(
 }
 
 /**
+ * Decrypt a secret column that may still hold a legacy PLAINTEXT value.
+ *
+ * Encrypted-at-rest for channel secrets landed on 2026-08-28, long after the
+ * columns shipped, so both shapes exist in the wild until every runner has
+ * booted once through migratePlaintextSecretsToEncrypted. `isEncrypted` tells
+ * them apart by the `enc:v1:` envelope — a bot token can never collide with
+ * it (Telegram's is `\d+:[A-Za-z0-9_-]+`, Slack's starts `xoxb-`/`xapp-`,
+ * Discord's is base64url with no colon-delimited prefix).
+ *
+ * A blob that IS encrypted but fails to decrypt throws — see the callers'
+ * contract in getBindingCredentials: "wrong master key" must never be
+ * flattened into the same `null` that means "no bot configured here".
+ */
+export function decryptChannelSecret(raw: string, what: string): string {
+  if (!isEncrypted(raw)) return raw;
+  try {
+    return decrypt(raw);
+  } catch (err) {
+    throw new Error(
+      `failed to decrypt ${what}: ${err instanceof Error ? err.message : String(err)}. ` +
+        'The master key at ~/.nodalai/secrets.key does not match the one this row ' +
+        'was written with (restored backup? copied database?). Re-enter the credential ' +
+        'from the dashboard to re-encrypt it under the current key.',
+    );
+  }
+}
+
+/**
+ * Serialize + encrypt a credential bag for `channel_bindings.credentials`.
+ *
+ * The ONE way to write that column. Every channel writer goes through it so a
+ * new channel cannot quietly ship a plaintext row the way Telegram, Discord
+ * and Slack each did — the previous code called `JSON.stringify` inline at
+ * five separate sites, and all five stored the token in the clear.
+ */
+export function encryptChannelCredentials(creds: Record<string, string>): string {
+  return encrypt(JSON.stringify(creds));
+}
+
+/**
+ * Encrypt a single secret STRING for a legacy scalar column
+ * (agents.telegram_bot_token). Idempotent: an already-encrypted value is
+ * returned untouched, so a caller that re-saves a row it just read cannot
+ * double-wrap the envelope.
+ */
+export function encryptChannelSecret(plaintext: string): string {
+  return isEncrypted(plaintext) ? plaintext : encrypt(plaintext);
+}
+
+/**
+ * A stable fingerprint of a credential bag, used by the channel managers to
+ * detect "the token was rotated → respawn the socket".
+ *
+ * MUST be computed on the PLAINTEXT, never on the stored blob: AES-GCM draws
+ * a fresh random IV per encryption, so re-encrypting the very same token
+ * yields different ciphertext every time. Hashing the ciphertext would make
+ * each 30s refresh look like a rotation and tear down every live socket in a
+ * loop. Keys are sorted so a writer that reorders the JSON bag doesn't read
+ * as a rotation either.
+ */
+export function credentialsFingerprint(creds: Record<string, string>): string {
+  const canonical = JSON.stringify(
+    Object.keys(creds)
+      .sort()
+      .map((k) => [k, creds[k]]),
+  );
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
  * The credential bag needed to actually SEND on a (agent, channel) pair (S3).
  *
  * channel='telegram' reads `agents.telegram_bot_token` directly — the SAME
@@ -141,14 +213,20 @@ export async function listChannelBindings(
  * nothing keeps live, so reading it here would silently drift stale the
  * moment a token is rotated via the dashboard (which still writes
  * agents.telegram_bot_token, not channel_bindings). Every OTHER channel reads
- * channel_bindings.credentials, JSON-parsed — @nodal-agents/db never imports
- * @nodal-agents/secrets to decrypt (architecture rule: only the writer layer
- * does), so this path is inert until a real non-Telegram channel ships its
- * first live writer with actual encryption-at-rest.
+ * channel_bindings.credentials.
+ *
+ * Both shapes are decrypted through decryptChannelSecret above. The old file
+ * header claimed this package must not import @nodal-agents/secrets; that was
+ * never true (queries/credentials.ts has imported it since the OAuth brique,
+ * and package.json declares the dependency) and it is the reason these tokens
+ * sat in the clear through a real leak.
  *
  * Returns null when there is no credential to send with (no token / no
  * binding / unparseable credentials) — callers treat that as "can't deliver",
- * never as a reason to guess or fall back to a different channel.
+ * never as a reason to guess or fall back to a different channel. It THROWS,
+ * by contrast, when a credential exists but cannot be decrypted: that is a
+ * broken install, not an unconfigured agent, and silently returning null
+ * would send the caller down the "no bot here" path (invariant #4).
  */
 export async function getBindingCredentials(
   db: AnyDrizzleDb,
@@ -161,13 +239,20 @@ export async function getBindingCredentials(
       .from(agents)
       .where(eq(agents.id, agentId))
       .limit(1);
-    return row?.botToken ? { botToken: row.botToken } : null;
+    if (!row?.botToken) return null;
+    return {
+      botToken: decryptChannelSecret(row.botToken, `telegram bot token (agent ${agentId})`),
+    };
   }
 
   const binding = await getChannelBinding(db, agentId, channel);
   if (!binding) return null;
+  const json = decryptChannelSecret(
+    binding.credentials,
+    `${channel} credentials (agent ${agentId})`,
+  );
   try {
-    const parsed: unknown = JSON.parse(binding.credentials);
+    const parsed: unknown = JSON.parse(json);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     return parsed as Record<string, string>;
   } catch {

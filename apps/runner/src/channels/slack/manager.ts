@@ -13,9 +13,13 @@
 // removed-or-disabled ones; on stop, disconnect every socket and await
 // shutdown.
 
-import { createHash } from 'node:crypto';
 import { eq, and } from '@nodal-agents/db';
-import { agents, channelBindings, getBindingCredentials } from '@nodal-agents/db';
+import {
+  agents,
+  channelBindings,
+  getBindingCredentials,
+  credentialsFingerprint,
+} from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { startSlackSocket, type SlackSocketHandle, type SlackSocketOpts } from './socket.ts';
@@ -44,10 +48,6 @@ interface ActiveSocket {
 }
 
 const DEFAULT_REFRESH_MS = 30_000;
-
-function hashCredentials(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex');
-}
 
 export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): SlackManagerHandle {
   const refreshMs = opts.refreshIntervalMs ?? DEFAULT_REFRESH_MS;
@@ -101,21 +101,46 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
 
     for (const row of rows) {
       if (!row.entityId) continue;
-      seen.add(row.agentId);
-      const hash = hashCredentials(row.credentials);
-
-      const existing = active.get(row.agentId);
-      if (existing) {
-        // Credentials rotated (either token changed inside the binding) → restart.
-        if (existing.credentialsHash !== hash) {
-          await existing.handle.stop();
-          active.delete(row.agentId);
-          await spawnOne(row.agentId, row.entityId, hash);
+      // One failing binding (undecryptable credential, a spawnOne throw, …)
+      // must not reject the whole refresh — every other agent still needs its
+      // scan, and an escaping rejection here surfaced as a process-level
+      // `unhandledRejection` rather than a handled failure. discord/manager.ts
+      // has had this guard since its ingress brique; slack never got it.
+      try {
+        // Decrypt ONCE per row: the credential feeds both the rotation
+        // fingerprint and the socket itself. Fingerprinting the stored blob
+        // would see a rotation on every refresh (fresh AES-GCM IV per write)
+        // and respawn healthy sockets in a loop.
+        const creds = await getBindingCredentials(deps.db, row.agentId, 'slack');
+        if (!creds) {
+          console.warn(
+            `[slack-manager agent=${row.agentId}] binding has no readable credentials; skipping`,
+          );
+          continue;
         }
+        seen.add(row.agentId);
+        const hash = credentialsFingerprint(creds);
+
+        const existing = active.get(row.agentId);
+        if (existing) {
+          // Credentials rotated (either token changed inside the binding) → restart.
+          if (existing.credentialsHash !== hash) {
+            await existing.handle.stop();
+            active.delete(row.agentId);
+            spawnOne(row.agentId, row.entityId, hash, creds);
+          }
+          continue;
+        }
+
+        spawnOne(row.agentId, row.entityId, hash, creds);
+      } catch (err) {
+        console.error(
+          `[slack-manager agent=${row.agentId}] refresh failed for this binding: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
         continue;
       }
-
-      await spawnOne(row.agentId, row.entityId, hash);
     }
 
     // Despawn sockets whose binding disappeared, got disabled, or whose agent went inactive.
@@ -126,14 +151,14 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
     }
   }
 
-  async function spawnOne(
+  function spawnOne(
     agentId: string,
     entityId: string,
     credentialsHash: string,
-  ): Promise<void> {
-    const creds = await getBindingCredentials(deps.db, agentId, 'slack');
-    const botToken = creds?.['botToken'];
-    const appToken = creds?.['appToken'];
+    creds: Record<string, string>,
+  ): void {
+    const botToken = creds['botToken'];
+    const appToken = creds['appToken'];
     if (!botToken || !appToken) {
       console.warn(
         `[slack-manager agent=${agentId}] binding has no usable botToken/appToken credential ` +

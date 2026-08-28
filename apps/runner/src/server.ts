@@ -34,6 +34,7 @@ import { startWhatsAppManager } from './channels/whatsapp/manager.ts';
 import type { WhatsAppManagerHandle } from './channels/whatsapp/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
+import { migratePlaintextSecretsToEncrypted } from './bootstrap/migrate-plaintext-secrets.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
@@ -292,6 +293,13 @@ async function main(): Promise<void> {
   // (Brique 26). Idempotent — already-encrypted rows are skipped. Must run
   // BEFORE seedDefaultLlmKey so the seed inserts already-encrypted ciphertext.
   await migrateLlmKeysToEncrypted(deps.db);
+
+  // One-shot: same treatment for the credential columns that stayed in
+  // plaintext until 2026-08-28 — channel_bindings.credentials,
+  // agents.telegram_bot_token and webhook_triggers.secret. Idempotent, and must
+  // run BEFORE the channel managers start below so no poller reads a row
+  // mid-rewrite.
+  await migratePlaintextSecretsToEncrypted(deps.db);
 
   // One-shot: if the local entity has no entity_llm_keys rows yet, seed one
   // from env so existing agents keep working post-Brique-24 (idempotent).
