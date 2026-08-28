@@ -1,0 +1,859 @@
+<!-- artifact: https://claude.ai/code/artifact/58ca4f80-b30d-46d8-b778-66a9ba7a57eb -->
+<title>Backlog vivant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --surface-2: #efede8;
+    --ink: #1f2328;
+    --ink-2: #4b5158;
+    --ink-3: #7a8087;
+    --rule: #e3e0d9;
+    --accent: #3d6b8e;
+    --accent-soft: #e7eef4;
+    --p0: #b3362c;
+    --p0-bg: #f9e9e7;
+    --amber: #9a6a12;
+    --amber-bg: #f7efdc;
+    --ok: #2e7d4f;
+    --ok-bg: #e5f2ea;
+    --wait: #6b5ca8;
+    --wait-bg: #edeaf7;
+    --shadow: 0 1px 3px rgba(31, 35, 40, 0.07);
+  }
+  :root:not([data-theme='light']) {
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --bg: #16181c;
+      --surface: #1f2228;
+      --surface-2: #262a31;
+      --ink: #e8e6e1;
+      --ink-2: #b3b0aa;
+      --ink-3: #82807b;
+      --rule: #33373f;
+      --accent: #7ba7c9;
+      --accent-soft: #24323d;
+      --p0: #e0796f;
+      --p0-bg: #3a2523;
+      --amber: #d9a94f;
+      --amber-bg: #3a3120;
+      --ok: #6fbf8f;
+      --ok-bg: #22342a;
+      --wait: #a99bd9;
+      --wait-bg: #2c2839;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme='dark'] {
+    --bg: #16181c;
+    --surface: #1f2228;
+    --surface-2: #262a31;
+    --ink: #e8e6e1;
+    --ink-2: #b3b0aa;
+    --ink-3: #82807b;
+    --rule: #33373f;
+    --accent: #7ba7c9;
+    --accent-soft: #24323d;
+    --p0: #e0796f;
+    --p0-bg: #3a2523;
+    --amber: #d9a94f;
+    --amber-bg: #3a3120;
+    --ok: #6fbf8f;
+    --ok-bg: #22342a;
+    --wait: #a99bd9;
+    --wait-bg: #2c2839;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    margin: 0;
+    padding: 40px 20px 80px;
+  }
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+  }
+  h1,
+  h2 {
+    font-family: 'Sora', 'Segoe UI', system-ui, sans-serif;
+    text-wrap: balance;
+  }
+  h1 {
+    font-size: 30px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--ink-3);
+    margin: 44px 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  h2::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+  .stamp {
+    color: var(--ink-3);
+    font-size: 13.5px;
+    margin-bottom: 34px;
+  }
+  code,
+  .mono {
+    font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+    font-size: 0.92em;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    vertical-align: 2px;
+  }
+  .pill.ok {
+    background: var(--ok-bg);
+    color: var(--ok);
+  }
+  .pill.amber {
+    background: var(--amber-bg);
+    color: var(--amber);
+  }
+  .pill.p0 {
+    background: var(--p0-bg);
+    color: var(--p0);
+  }
+  .pill.wait {
+    background: var(--wait-bg);
+    color: var(--wait);
+  }
+  .pill.plain {
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  /* Bandeau P0 */
+  .alert {
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+    background: var(--p0-bg);
+    border: 1px solid var(--p0);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin: 0 0 8px;
+  }
+  .alert b {
+    color: var(--p0);
+  }
+  .alert .who {
+    margin-left: auto;
+    font-size: 12.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  /* Pipeline de séquence */
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 6px 0 2px;
+  }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    box-shadow: var(--shadow);
+    border-radius: 10px;
+    padding: 7px 13px;
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  .step.next {
+    border-color: var(--amber);
+    background: var(--amber-bg);
+    color: var(--amber);
+    font-weight: 600;
+  }
+  .step.p0f {
+    border-color: var(--p0);
+    background: var(--p0-bg);
+    color: var(--p0);
+    font-weight: 600;
+  }
+  .arrow {
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+  .pipenote {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    margin-top: 10px;
+  }
+
+  /* Cartes de la file */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 16px 20px;
+    margin-bottom: 12px;
+  }
+  .card.next {
+    border-left: 4px solid var(--amber);
+  }
+  .card h3 {
+    font-size: 15.5px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    flex: none;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: 'Sora', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .card p {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 14px;
+  }
+  .size {
+    margin-left: auto;
+  }
+
+  /* Journal du fait */
+  .done {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .done li {
+    position: relative;
+    padding: 3px 0 3px 26px;
+    color: var(--ink-2);
+    font-size: 14px;
+  }
+  .done li::before {
+    content: '✓';
+    position: absolute;
+    left: 2px;
+    color: var(--ok);
+    font-weight: 700;
+  }
+  .done b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .daylabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 14px 0 6px;
+  }
+  .daylabel:first-child {
+    margin-top: 0;
+  }
+
+  /* Tables */
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13.5px;
+  }
+  th {
+    text-align: left;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+  th,
+  td {
+    padding: 9px 16px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  td:first-child {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td {
+    color: var(--ink-2);
+  }
+
+  .foot {
+    margin-top: 48px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+    border-top: 1px solid var(--rule);
+    padding-top: 14px;
+  }
+  @media (max-width: 560px) {
+    body {
+      padding: 24px 12px 60px;
+    }
+    h1 {
+      font-size: 24px;
+    }
+  }
+</style>
+
+<div class="wrap">
+  <h1>Backlog vivant</h1>
+  <p class="stamp">
+    Nodal-Agents · mis à jour le 28/08/2026 (soir) · une PR par chantier, remis à jour à chaque
+    session · cap : <b>profils d'agents (Dev team V1)</b>
+  </p>
+
+  <h2>Plus aucun P0</h2>
+  <div class="alert" style="background: var(--ok-bg); border-color: var(--ok)">
+    <span
+      ><b style="color: var(--ok)">Tokens Discord + Slack révoqués et remplacés</b> — le 25/08 à
+      07:48 et 07:53, 17 jours après la fuite. Les deux bots sont reconnectés, sans redémarrage. Le
+      log en porte la preuve : Slack a d'abord échoué en <code>invalid_auth</code> — c'est la
+      révocation qui mordait — puis s'est reconnecté avec le nouveau couple de jetons.</span
+    >
+    <span class="who" style="color: var(--ok)">fermé</span>
+  </div>
+
+  <h2>Où on en est</h2>
+  <div class="pipeline">
+    <span class="step">Tokens révoqués</span><span class="arrow">→</span>
+    <span class="step">Dette de revue soldée · #38</span><span class="arrow">→</span>
+    <span class="step">#39 Code + Codex · mergée</span><span class="arrow">→</span>
+    <span class="step">0.8.7 publiée + taguée</span><span class="arrow">→</span>
+    <span class="step">#40 secrets au repos · mergée</span><span class="arrow">→</span>
+    <span class="step next">Profils d'agents · prochain</span>
+  </div>
+  <p class="pipenote">
+    <b>Rien n'est ouvert.</b> <code>main</code> est propre sur <code>ac014bd7</code>, zéro PR
+    ouverte, zéro issue, <code>0.8.7</code> est <code>latest</code> sur npm (les
+    <code>0.8.0</code> / <code>0.8.1</code> cassées sont dépréciées), tag
+    <code>v0.8.7</code> poussé. La stack tourne en local, tous services sains.
+  </p>
+  <p class="pipenote">
+    La
+    <a href="https://claude.ai/code/artifact/2762275e-589e-46bf-8416-4194eee6b067"
+      >dette de revue</a
+    >
+    est <b>soldée</b> : 22 PR jamais relues (#16→#37, dernier verdict du dépôt le 20/08), fermées
+    par la <a href="https://github.com/Kwintspiracy/nodal-agents/pull/38">PR #38</a> après
+    <b>quatre tours</b> de revue → correction → revue. Chaque constat a d'abord été reproduit par un
+    test qui échoue ; les correctifs sensibles sont vérifiés <b>par mutation</b> — on désactive le
+    fix, le test doit tomber.
+  </p>
+
+  <h2>La file · organisée en PR</h2>
+
+  <div class="card">
+    <h3>
+      <span class="num">①</span> PR #39 — l'onglet Code, la confabulation, et le runtime Codex
+      <span class="pill ok">MERGÉE</span> <span class="pill plain size">très grosse</span>
+    </h3>
+    <p>
+      Trois jours de travail dans une seule branche, tous gauntlets verts. Le
+      <a href="https://claude.ai/code/artifact/6d2d8b02-dd70-42b0-93e5-83ab8ea17702"
+        >plan détaillé</a
+      >
+      raconte le tout ; en une ligne chacun :
+    </p>
+    <p>
+      <b>L'onglet Code cesse de deviner</b> — sept définitions du « vrai code » essayées et tombées
+      ; ce qui les remplace est un geste, <i>renommer</i> et <i>masquer</i>, et masquer porte
+      jusqu'au contexte des agents.
+    </p>
+    <p>
+      <b>Un agent écrit dans le dossier qu'on lui a donné</b> — le prompt disait
+      <code>## Workspace</code> au singulier pendant que les outils en voyaient deux, alors tout
+      partait dans le partagé. Vérifié en live.
+    </p>
+    <p>
+      <b>La confabulation a une cause, et elle est fermée</b> — la délégation en ligne
+      n'apparaissait dans aucun registre, donc un compte rendu inventé était indiscernable d'un
+      vrai. Chaque tour porte désormais la trace de ce qui a réellement eu lieu.
+    </p>
+    <p>
+      <b>Codex se choisit comme harnais</b>, au même titre que Claude Code — et le mode écriture,
+      qui n'écrivait rien sur Windows, fonctionne.
+    </p>
+    <p
+      class="look"
+      style="
+        background: var(--accent-soft);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 13.5px;
+      "
+    >
+      <b>Le skill « dev » a survécu, dépouillé de son rôle d'interrupteur</b> : il guide, il ne
+      désigne plus. L'idée « un agent est développeur parce qu'il porte le skill » a été essayée
+      puis écartée — elle ne marche qu'avec NOS skills, et un skill maison rendait ses agents
+      invisibles.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>
+      <span class="num">①</span> PR #40 — les jetons de canaux quittent le clair
+      <span class="pill ok">MERGÉE</span> <span class="pill plain size">moyenne</span>
+    </h3>
+    <p>
+      <b>La cause n'était pas celle attendue.</b> L'en-tête du schéma justifiait le stockage en
+      clair par une règle d'architecture — « <code>@nodal-agents/db</code> n'importe jamais
+      <code>@nodal-agents/secrets</code> » — <b>qui n'existe pas</b> :
+      <code>queries/credentials.ts</code> l'importe depuis la brique OAuth, le
+      <code>package.json</code> déclare la dépendance, dependency-cruiser ne l'a jamais interdite.
+      Un commentaire faux est la seule raison pour laquelle ces jetons ont traversé la fuite d'août
+      en clair.
+    </p>
+    <p>
+      <b>Trois colonnes fermées</b> — <code>channel_bindings.credentials</code>,
+      <code>agents.telegram_bot_token</code>, et <code>webhook_triggers.secret</code> (un vrai
+      porteur : qui le détient déclenche un job). Lecture tolérante aux lignes legacy, écriture par
+      un seul chemin, migration de boot idempotente. Un blob indéchiffrable <b>lève</b> au lieu de
+      se confondre avec « aucun bot configuré ».
+    </p>
+    <p>
+      <b>Le piège du fingerprint</b> — les managers détectaient la rotation en hachant la valeur
+      stockée. AES-GCM tire un IV neuf à chaque écriture : chaque refresh de 30 s aurait vu une
+      rotation et détruit les websockets sains en boucle. Pour WhatsApp, cela veut dire assommer
+      l'appareil lié à répétition.
+    </p>
+    <p>
+      <b>L'auth de canal</b> — le manager Slack n'avait aucun try/catch par binding, contrairement à
+      Discord : le test de régression fait apparaître l'<code>unhandledRejection</code> avant le
+      correctif. <b>GLM 5.3 Flash</b> est au catalogue (contexte 1,31 M, vision, ~19× moins cher que
+      le 5.3).
+    </p>
+    <p
+      class="look"
+      style="
+        background: var(--accent-soft);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 13.5px;
+      "
+    >
+      <b>Codex a trouvé un P1 réel</b> : la garde qui refuse de re-générer une clé maître quand des
+      données chiffrées en dépendent ignorait les trois nouvelles colonnes. Une install dont les
+      seuls secrets sont des jetons de bots aurait perdu tous ses canaux en silence. Fermé, vérifié
+      par mutation. Deuxième passe : aucun constat. Les cinq checks CI verts,
+      <code>ci-windows</code> compris ; mergée le 28/08 (<code>68104eeb</code>).
+    </p>
+  </div>
+
+  <div class="card next">
+    <h3>
+      <span class="num">②</span> Profils d'agents + onboarding guidé
+      <span class="pill amber">PROCHAIN</span> <span class="pill wait">maquettes d'abord</span>
+      <span class="pill plain size">la plus grosse</span>
+    </h3>
+    <p>
+      V1 = UN profil poli de bout en bout : <b>Dev team</b> (lead + développeur + reviewer, bons
+      tools/skills — dont le skill dev de la ①) créé en un geste après 3-5 questions (MCP ? codeur
+      CLI-abonnement ou clé API ? modèle ?). Respecte « le produit ne shippe jamais d'agents » : on
+      shippe des RECETTES (blueprints déclaratifs, <code>packages/catalog/src/profiles/</code>),
+      rien n'existe avant le clic, tout passe par les actions serveur existantes. Maquettes, puis
+      build, puis E2E install vide → premier message au lead → délégation → review.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>
+      <span class="num">③</span> Release 0.8.7 <span class="pill ok">PUBLIÉE 27/08</span>
+      <span class="pill plain size">rituel connu</span>
+    </h3>
+    <p>
+      Sortie en <code>0.8.7</code> et non <code>0.8.65</code> — en semver, <code>0.8.65</code> est
+      <i>inférieure</i> à <code>0.8.7</code>. Publiée, taguée <code>v0.8.7</code>,
+      <code>latest</code> sur npm. Le rituel est devenu <b>une commande</b>,
+      <code>pnpm release:check</code> : 12 contrôles, ~20 min, échoue fort. <b>Attention</b> : elle
+      VIDE <code>pack/</code> — jamais après un « publie ».
+    </p>
+  </div>
+
+  <h2>Fait récemment</h2>
+  <p class="daylabel">Mardi 26/08 → mercredi 27/08 · la branche #39</p>
+  <ul class="done">
+    <li>
+      <b>Codex se choisit comme harnais d'un agent</b> — il était un <i>siège réservé</i> depuis le
+      19/08 : la base l'acceptait, la validation le refusait, le runner échouait dessus. La
+      mécanique de processus est sortie de <code>claude-turn</code> au lieu d'être recopiée, et
+      l'argv comme la lecture des événements sont empruntés à l'outil <code>code_task</code>, qui
+      pilote déjà ce binaire. Trois différences avec Claude, mesurées sur le binaire installé : pas
+      de drapeau de persona, format d'événements propre, <b>aucun coût rapporté</b> — donc le
+      plafond en dollars ne s'affiche plus là où il ne borne rien.
+    </li>
+    <li>
+      <b>Pourquoi Codex n'écrivait RIEN sur Windows</b> — le tour se terminait normalement et le
+      modèle répondait « l'environnement interdit toute écriture », sans qu'aucune erreur
+      n'apparaisse. Cause isolée en quatre runs :
+      <b>Codex n'a aucun mécanisme de confinement par défaut sur Windows</b>, il faut le nommer — et
+      le drapeau qui protège tes serveurs MCP personnels le jetait avec le reste. Vérifié avant de
+      livrer : lecture seule refuse d'écrire, écriture refuse le dossier parent et tout autre
+      dossier de Documents. Deux choses cassées en amont réparées au passage : un commentaire du
+      dépôt <i>accusait</i> ce réglage à tort (ce qui a coûté une journée), et la sonde censée
+      garder tout ça tentait son évasion dans le seul endroit autorisé par conception.
+    </li>
+    <li>
+      <b>L'onglet Code cesse de deviner — et masquer porte jusqu'aux agents</b> — migration 0086,
+      deux gestes (renommer, masquer), et un projet rangé quitte le prompt de tout le monde. Sept
+      définitions du « vrai code » essayées avant d'en arriver là ; chacune se cassait sur un cas
+      réel.
+    </li>
+    <li>
+      <b>Un agent travaille dans le dossier qu'on lui a donné</b> — quatre runs de suite livraient
+      dans le partagé alors qu'un dossier était attaché. La base l'a dit : 349 des 381 écritures
+      récentes étaient relatives, et le prompt annonçait <code>## Workspace</code> au singulier
+      pendant que les outils en voyaient deux. Corrigé au bon endroit, sur ton insistance : la
+      rustine posée dans le runtime a été <b>retirée</b>.
+    </li>
+    <li>
+      <b>La confabulation, cause trouvée et fermée</b> — un orchestrateur a annoncé quatre fois «
+      app livrée et validée par Reviewer C (2 passes) » sans aucune délégation. Les deux registres
+      existants ne pouvaient pas la voir : l'un ne se déclenche que sur des outils nommés (or les
+      outils de délégation s'appellent <code>assign_&lt;slug&gt;</code>, interdits en dur), l'autre
+      ne lit que la table du tableau de tâches. Un compte rendu vrai et un inventé arrivaient nus
+      tous les deux.
+    </li>
+    <li>
+      <b>Vingt-huit passes de <code>codex review</code>, jusqu'au retour vide</b> — vingt-quatre
+      constats, chacun fermé par un test qui rougit sans le correctif. Les plus sérieux ne
+      concernaient pas Codex : la <b>sortie des outils partait en clair dans l'audit</b> (Claude
+      compris, depuis toujours), une restriction d'outils <b>ignorée</b> permettait de récupérer des
+      outils retirés en changeant de harnais, et les verrous d'écriture ne portaient que sur un
+      dossier sur plusieurs.
+    </li>
+  </ul>
+  <p class="daylabel">Dimanche 24/08 → lundi 25/08</p>
+  <ul class="done">
+    <li>
+      <b>Tokens Discord + Slack révoqués — le dernier P0 de sécurité</b> — 17 jours après la fuite
+      du 08/08. Discord régénéré depuis le portail développeur (un <i>Reset Token</i> tue l'ancien à
+      l'instant), Slack révoqué pour de bon sur ses deux jetons (le <code>xoxb-</code> par
+      <i>Revoke All OAuth Tokens</i> puis réinstallation, le <code>xapp-</code> par révocation +
+      regénération avec le scope <code>connections:write</code>). Vérifié en base et dans le log :
+      rotation à chaud, aucun redémarrage, les deux bots reconnectés.
+    </li>
+    <li>
+      <b>#38 · La dette de revue soldée — trois P0 fermés</b> — 22 PR avaient été mergées sans
+      relecture. Ce qui en sort : <b>l'autonomie totale valait blanc-seing</b> (un agent en Yolo
+      lançait shell et <code>code_task</code> sans jamais franchir la barrière, même quand la
+      politique l'exigeait) ; <b>des espaces mis en pause à tort</b> par la migration 0082, agents à
+      l'arrêt sans que personne l'ait demandé ;
+      <b>la limitation de débit de la connexion était morte</b> — better-auth ne lit que
+      <code>x-forwarded-for</code>, absent en local, et une IP nulle court-circuite TOUT le limiteur
+      : le formulaire était sans plafond depuis l'ouverture LAN. Puis la relecture a trouvé
+      <b>deux portes dérobées vers le même trou</b> : une règle wildcard <code>*</code> auto-approve
+      rendait la garde inopérante, et la liste des six outils d'exécution existait en double sans
+      rien qui verrouille l'égalité. Enfin, un droit permanent pouvait survivre en silence à une
+      panne au milieu d'un « Toujours autoriser ». Deux défauts ont été trouvés par mes propres
+      tests pendant la correction, et un de mes tests s'est révélé ne rien prouver sur une CI Linux
+      — remplacé.
+    </li>
+    <li>
+      <b>#37 · Les projets de code injectés dans le contexte des agents</b> — chaque agent voit
+      désormais, dans son bloc Runtime, les projets de l'espace avec leur chemin et leurs
+      DÉTENTEURS, plus la consigne « tu sais où ça vit, ne cherche pas ; si tu n'as pas le
+      workspace, DÉLÈGUE à un agent listé ». Réponse aux trois sessions où Alfred a cherché à
+      l'aveugle l'app calorie-counter. Dérivation runner sur vrai disque, entity-scopée, plafonnée à
+      12.
+    </li>
+    <li>
+      <b>#35 + #36 · Suite de la refonte Code + cartes honnêtes</b> — #35 : un workspace-conteneur
+      (Dev\) ne fusionne plus ses apps (marqueurs de projet package.json/index.html/…, repli =
+      sous-dossier de 1er niveau). #36 : les outils de LECTURE gatés par règle utilisateur disent «
+      Lecture · read-only, changes nothing » (file_search annonçait « Écriture · irreversible »),
+      sélecteur de session = select natif sobre (décision a), squelette de chargement, revert du
+      .json neutre (décision : mock-data = vrai code — le bruit Comfy attendra le modèle par
+      IDENTITÉ), flake CI Windows durci. Incidents du soir : cache Turbopack à 25 GB (gel client →
+      purge + restart ×2) ; Alfred sans workspace Dev n'écrit PLUS (prouvé) mais raconte un faux
+      progrès au lieu de déléguer — la PR contexte-projets est la réponse.
+    </li>
+    <li>
+      <b>#34 · L'onglet Code refondu par PROJET (7 itérations avec Quentin dans la journée)</b> — un
+      projet = un repo ayant eu au moins une activité (racine git dérivée, repli workspace-agent,
+      rétroactif, jamais stocké) ; définition v5 (le notes-only ne qualifie plus, CLI compris — le
+      vault restant qualifie par de VRAIS .py/.bat/.json écrits dedans en juillet, prouvé en base :
+      à archiver) ; poste de travail = dropdown de sessions (Coding / Review / PR review) → review
+      condensée → fichiers repliables avec VRAI split diff côte à côte (clip par demi-colonne,
+      grille unique par fichier, « N unmodified lines ») → activité chronologique ; archivage UI
+      persisté (0083, dossier réel jamais touché). ⚠️ Le bouton Archive exige le restart
+      (migration).
+    </li>
+    <li>
+      <b>#33 · Lot approbations</b> — « 🔁 Always allow » sur la carte Telegram (1er tap = question
+      de confirmation par édition du message, Back restaure la carte, la règle auto_approve s'écrit
+      AVANT d'approuver, jamais de grant fantôme ; toutes les gardes DM/chat s'appliquent) +
+      <code>code_task</code> ne s'annonce plus « irreversible or destructive » (fichiers
+      checkpointés = réversibles, commandes non). Preuve live à faire après restart stack.
+    </li>
+    <li>
+      <b>#32 · Changement de mot de passe depuis Settings — VALIDÉ LIVE par Quentin</b> — section
+      Password (local-auth seulement), revokeOtherSessions (les autres appareils sont déconnectés),
+      test de chaîne réelle better-auth : l'ancien ne signe plus, le nouveau signe. Précision
+      acquise pour le lot approbations : Telegram accepte 3 boutons (2 lignes : ✅❌ puis 🔁 pleine
+      largeur) ; notre ApprovalCard devra gagner une 3e action optionnelle + les 3 handlers de
+      callback ; WhatsApp reste sans boutons (Baileys).
+    </li>
+    <li>
+      <b>#31 · L'overview compte aussi les MCP comme connecteurs</b> — la carte « Connectors used »
+      ignorait les serveurs MCP assignés (Alfred, les Reviewers) et sa note renvoyait vers un
+      emplacement disparu. Élucidé au passage sur ComfyArtist : il n'a en réalité AUCUN connecteur
+      ni MCP assigné (prouvé en base) — ce qui « a disparu » avec la #29 est la liste des
+      disponibles, déménagée derrière « + Attach connectors » ; et comfy-mcp n'est pas installé (au
+      catalogue seulement, exige uv + comfy-cli).
+    </li>
+    <li>
+      <b>#30 · Punch list V1.1 de l'onglet Code</b> — approbation inline dans /code/[id] (carte
+      ambre + échelle d'approbation complète ; bug corrigé : la sonde figeait l'écran d'un process
+      bloqué) et transitions ✔/✖/🔎 notifiées au canal d'origine (messagerie seulement, une ligne,
+      jamais les sorties). « Duration 0.0s » s'est révélée déjà fixée depuis le 21/08. ⚠️ Le runner
+      qui tourne date d'avant : les transitions s'activent au prochain restart de la stack.
+    </li>
+    <li>
+      <b>#28 + #29 · Onglets Skills et Connectors recentrés sur l'agent</b> — les longues listes «
+      Available on this workspace » déroulées en pleine page sont remplacées par un bouton « +
+      Attach » ouvrant une modale cherchable. L'onglet ne montre plus que ce que CET agent sait
+      faire. Élucidé au passage : un skill installé = un texte UNIQUE par workspace (le modifier le
+      modifie pour tous les agents attachés) ; `use_custom_instructions` est une colonne morte
+      depuis la migration 0000.
+    </li>
+    <li>
+      <b>#27 · Surveillance de la santé après le boot</b> — l'incident du 23/08 avait trois causes :
+      le health du web mentait (<code>ok:true</code> en dur → maintenant SELECT 1, 503 si base
+      morte), le runner était honnête mais jamais relu, le lanceur n'attendait que la mort des
+      processus. Watchdog : sonde du health runner toutes les 30 s, 2 échecs consécutifs → bannière
+      rouge nommant la panne + tail du log ; retour → bannière verte. Prouvé live.
+    </li>
+    <li>
+      <b>#25 + #26 · Sélecteur de dossier</b> — bouton Browse… : explorateur de dossiers côté
+      serveur (le navigateur web ne livre jamais un chemin absolu — pattern Jellyfin). Owner-only,
+      dossiers seulement. Validé live par Quentin, puis le picker est devenu le mode canonique :
+      champ copier-coller retiré.
+    </li>
+    <li>
+      <b>Fantôme dissipé · cache-aware</b> — « ressusciter le budget cache-aware » : rien à faire,
+      le fix (f36db87) est déjà dans main ; la garde budget compare l'effectif hors cache. Restes
+      mineurs (gestes Quentin) : valider live le cache_control Anthropic (clé créditée), re-run
+      JobHunter (coût Apify).
+    </li>
+    <li>
+      <b>#24 · Inversion du modèle à deux clés</b> — <code>auto_run_paused</code> : le toggle Yolo
+      par agent est la seule clé ; Settings porte un frein d'urgence « Pause all auto-run », tous
+      modes d'auth. Prouvé live.
+    </li>
+    <li>
+      <b>#23 · Logs de service dans le dashboard</b> — onglet Service logs : tail live, archive de
+      rotation, Clear owner-only.
+    </li>
+    <li>
+      <b>#21 · Rotation des logs</b> — 20 Mo/service, archive .1. Prouvée live (web.log 59 Mo → .1).
+    </li>
+    <li>
+      <b>#20 · PrimaryButton disabled</b> — l'atome DS n'avait aucun style disabled (le « Add worker
+      cassé », dont le câblage était sain). Fixé pour toute l'app. <b>#22</b> (copy interrupteur
+      maître) dépassée le jour même par la #24.
+    </li>
+    <li>
+      <b>Élucidé sans coder</b> — l'approbation <code>code_task</code> existe dans Autonomy (« Call
+      a coding CLI (tool) ») ; le chemin codeur GLM (<code>file_edit</code>/<code>file_write</code>)
+      est fluide par défaut.
+    </li>
+  </ul>
+  <p class="daylabel">Samedi 23/08</p>
+  <ul class="done">
+    <li>
+      <b>0.8.6 publiée, taguée, validée depuis le registre</b> + <code>npm deprecate</code> des
+      0.8.0/0.8.1 cassées.
+    </li>
+    <li>
+      <b>#19 · Onglet Code v4</b> — un codeur pur LLM (sans CLI) qualifie par la nature des fichiers
+      édités ; empty-state honnête.
+    </li>
+    <li>
+      <b>#15 #16 #17 · Lot LAN</b> — compte propriétaire réclamé depuis le téléphone,
+      <code>nodal-agents mcp serve</code> en 1 ligne, tests du switch MCP.
+    </li>
+  </ul>
+
+  <h2>P4 · En attente d'arbitrage Quentin</h2>
+  <div class="tablewrap">
+    <table>
+      <tr>
+        <th>Décision</th>
+        <th>En clair</th>
+      </tr>
+      <tr>
+        <td>Reproductibilité lot B</td>
+        <td>
+          Snapshot du corps de requête LLM par appel → rejouer/déboguer un run raté, snapshot tests
+          sans clé
+        </td>
+      </tr>
+      <tr>
+        <td>Runtime Codex (E-bis)</td>
+        <td>
+          Un agent qui tourne sous l'abonnement Codex — infra prête, manque le tour d'exécution
+        </td>
+      </tr>
+      <tr>
+        <td>Portable export/import</td>
+        <td>Exporter/réimporter une install complète (étude faite)</td>
+      </tr>
+      <tr>
+        <td>Leçons DeepSeek Harness</td>
+        <td>16 leçons classées, à découper</td>
+      </tr>
+      <tr>
+        <td>Retour loopback</td>
+        <td>Repasser en « Local only » doit-il proposer de couper le mot de passe ?</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>P5 · La réserve, par valeur décroissante</h2>
+  <div class="tablewrap">
+    <table>
+      <tr>
+        <th>Chantier</th>
+        <th>Pour l'utilisateur</th>
+        <th>Taille</th>
+      </tr>
+      <tr>
+        <td>Génération média</td>
+        <td>« Génère-moi une image/vidéo », galerie, envoi sur les canaux</td>
+        <td><span class="pill plain">grosse</span></td>
+      </tr>
+      <tr>
+        <td>Fiabilité agent</td>
+        <td>Moins de jobs en boucle ; travail délégué jamais perdu</td>
+        <td><span class="pill plain">moyenne</span></td>
+      </tr>
+      <tr>
+        <td>Doc auto-générée</td>
+        <td>Doc toujours juste ; « génère la doc de MON projet » vendable</td>
+        <td><span class="pill plain">moyenne</span></td>
+      </tr>
+      <tr>
+        <td>Pairing connector↔skill</td>
+        <td>Installer Airtable et savoir s'en servir</td>
+        <td><span class="pill plain">petite</span></td>
+      </tr>
+      <tr>
+        <td>Dérivation de projet partagée</td>
+        <td>
+          L'onglet Code et le contexte des agents dérivent les projets <b>deux fois</b>, avec deux
+          règles d'existence sur disque : un projet peut s'afficher ici et manquer là. ⚠️ À
+          l'extraction, la différence « un projet vs une liste » est intentionnelle
+        </td>
+        <td><span class="pill plain">petite</span></td>
+      </tr>
+      <tr>
+        <td>Dédup <code>triggerWorker</code></td>
+        <td>Hygiène (6 copies du même contrat de réveil)</td>
+        <td><span class="pill plain">petite</span></td>
+      </tr>
+      <tr>
+        <td>Providers natifs</td>
+        <td>DeepSeek/MiniMax en direct : plus robuste, moins cher</td>
+        <td><span class="pill plain">petite-moyenne</span></td>
+      </tr>
+      <tr>
+        <td>Bearer-token bout-en-bout</td>
+        <td>Accès API headless (3e mode d'auth)</td>
+        <td><span class="pill plain">moyenne</span></td>
+      </tr>
+      <tr>
+        <td>M365 : E2E Azure</td>
+        <td>Prouver calendar/OneDrive/Excel en vrai</td>
+        <td><span class="pill plain">moyenne</span></td>
+      </tr>
+      <tr>
+        <td>Blender MCP</td>
+        <td>Piloter Blender (entrée catalogue <code>uvx blender-mcp</code>)</td>
+        <td><span class="pill plain">~1 h</span></td>
+      </tr>
+      <tr>
+        <td>« Dupliquer cette automation »</td>
+        <td>Un cron recréé sur un autre agent en 1 clic</td>
+        <td><span class="pill plain">micro</span></td>
+      </tr>
+      <tr>
+        <td>Multi-canal phase 2</td>
+        <td>Rituels proactifs par canal : agents qui initient</td>
+        <td><span class="pill plain">moyenne</span></td>
+      </tr>
+      <tr>
+        <td>C2 serveur MCP</td>
+        <td>
+          Le terminal orchestre de vrais pipelines (<code>assign_*</code> via reprise de session)
+        </td>
+        <td><span class="pill plain">moyenne</span></td>
+      </tr>
+      <tr>
+        <td>Divers dormants</td>
+        <td>
+          Lib Figma à publier, <code>feat/voice-mode</code>, Krea2_Turbo.json, 2 designs deep audit,
+          app Windows (étude prête)
+        </td>
+        <td><span class="pill plain">variées</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <p class="foot">
+    Discipline /suivi : cet artifact est LA vue d'ensemble, remis à jour en fin de chaque session de
+    code. URL stable.
+  </p>
+</div>
