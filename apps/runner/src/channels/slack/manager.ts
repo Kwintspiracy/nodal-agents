@@ -101,11 +101,32 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
   // promise instead of starting an independent scan (which would double-spawn
   // a socket before either finishes).
   let inFlightRefresh: Promise<void> | null = null;
+  /**
+   * A refresh was asked for while one was already running.
+   *
+   * The single-flight guard alone loses a request: an established socket that
+   * dies AFTER its own row was processed by the in-flight scan collapses its
+   * immediate-respawn call into that scan, which will never look at it again —
+   * the dead socket then waits out the full 30s timer, missing messages,
+   * despite the immediate respawn this manager promises (found by codex
+   * review, PR #42). Remembering the request and running one more scan
+   * afterwards closes that window without giving up single-flight.
+   */
+  let refreshQueued = false;
 
   function refresh(): Promise<void> {
-    if (inFlightRefresh) return inFlightRefresh;
+    if (inFlightRefresh) {
+      refreshQueued = true;
+      return inFlightRefresh;
+    }
     const p = refreshInternal().finally(() => {
       inFlightRefresh = null;
+      // Bounded: only a socket death sets this flag, and a death consumes the
+      // socket that produced it — this cannot spin.
+      if (refreshQueued && !stopped) {
+        refreshQueued = false;
+        void refresh();
+      }
     });
     inFlightRefresh = p;
     return p;
@@ -326,6 +347,13 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       active.clear();
     },
     async refreshNow(): Promise<void> {
+      // Guarantee a scan that STARTED after this call. Plain `refresh()` would
+      // hand back a scan already in flight — one that may have read the
+      // bindings before the caller's change, so a caller that just disabled a
+      // binding could observe it still running. Not hypothetical: adding the
+      // queued-refresh path above made such a scan much more likely to be in
+      // flight, and it broke an existing despawn test.
+      if (inFlightRefresh) await inFlightRefresh;
       await refresh();
     },
     activeCount(): number {

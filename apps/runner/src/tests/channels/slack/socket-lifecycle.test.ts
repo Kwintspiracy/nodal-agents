@@ -335,7 +335,7 @@ describe('an ESTABLISHED socket comes back at once, not on the next scan', () =>
     await manager.stop();
   });
 
-  it('does NOT immediately respawn a socket that never connected', async () => {
+  it('does NOT trigger its own immediate respawn when the socket never connected', async () => {
     await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
     const { spy, killLast } = makeFakeSockets();
 
@@ -344,14 +344,21 @@ describe('an ESTABLISHED socket comes back at once, not on the next scan', () =>
       refreshIntervalMs: 999_999,
       startSocket: spy,
     });
+    // Drain the constructor's own tick first: with a scan still in flight, the
+    // queued-refresh path would run another scan and pick the dead socket up
+    // legitimately, which is not what this test is about.
     await manager.refreshNow();
+    await settle();
+    const spawnsBefore = spy.mock.calls.length;
 
-    // A failed start must stay on the backoff path — retrying instantly is
-    // how an invalid token becomes an unbounded call rate against Slack.
+    // A failed start must not, by itself, kick off a new scan — retrying an
+    // invalid token the instant it fails is how this becomes an unbounded call
+    // rate against Slack. It is still retried later, on the backoff schedule
+    // (see the backoff cases above).
     killLast('start failed: invalid_auth');
     await settle();
 
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls.length).toBe(spawnsBefore);
     await manager.stop();
   });
 
@@ -447,6 +454,50 @@ describe('retry state does not outlive its binding', () => {
 
     expect(spy.mock.calls.length).toBe(spawnsBefore + 1);
     expect(spy.mock.calls[spy.mock.calls.length - 1]?.[0]?.botToken).toBe('xoxb-fresh');
+    await manager.stop();
+  });
+});
+
+describe('a death DURING an in-flight scan is not lost', () => {
+  // Found by codex review on PR #42, 5th pass. `refresh()` is single-flight:
+  // called while a scan is already running it just returns that scan's
+  // promise. If an established socket dies AFTER its own row has been
+  // processed by that in-flight scan, the immediate-respawn call collapses
+  // into it and nothing else is queued — the dead socket then sits registered
+  // until the 30s timer, missing messages, despite the promise of an immediate
+  // respawn. The manager must remember that a refresh was asked for and run
+  // one more after the current scan settles.
+  it('runs another scan after the current one when a socket dies mid-scan', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+
+    const spawned: SlackSocketOpts[] = [];
+    let killDuringSpawn = false;
+    const spy = vi.fn<(opts: SlackSocketOpts) => SlackSocketHandle>((opts) => {
+      spawned.push(opts);
+      opts.onConnected?.();
+      if (killDuringSpawn) {
+        killDuringSpawn = false;
+        // Dies while refreshInternal is still running, one await after its own
+        // row was handled — exactly the window the single-flight guard hides.
+        opts.onClosed?.('disconnected');
+      }
+      return { async stop() {} };
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    killDuringSpawn = true;
+    await manager.refreshNow();
+    // Let any queued follow-up scan run.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+
+    // Two spawns: the original, and the replacement for the one that died
+    // inside the scan. With the race, this stays at 1 until the 30s timer.
+    expect(spy).toHaveBeenCalledTimes(2);
     await manager.stop();
   });
 });
