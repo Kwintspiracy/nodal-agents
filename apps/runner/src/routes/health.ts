@@ -5,8 +5,8 @@ import type { Context } from 'hono';
 import type { RunnerDeps } from '../deps.ts';
 import { sql } from '@nodal-agents/db';
 import {
-  describeError,
   errorIdentity,
+  renderError,
   logRepeatingFailure,
   reportRepeatingRecovery,
 } from '../lib/repeat-log.ts';
@@ -44,7 +44,7 @@ export async function healthRoute(c: Context, deps: RunnerDeps): Promise<Respons
     logRepeatingFailure(
       'health:db-ping',
       errorIdentity(err),
-      () => `[health] DB ping failed: ${describeError(err)}`,
+      () => `[health] DB ping failed: ${renderError(err)}`,
       'error',
     );
     result.dbError = 'unavailable';

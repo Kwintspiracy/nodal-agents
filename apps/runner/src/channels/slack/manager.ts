@@ -25,6 +25,7 @@ import type { RunnerEnv } from '../../env.ts';
 import {
   describeError,
   errorIdentity,
+  renderError,
   logRepeatingFailure,
   reportRepeatingRecovery,
   clearRepeatingFailure,
@@ -185,7 +186,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       logRepeatingFailure(
         'slack-manager:db-scan',
         errorIdentity(err),
-        () => `[slack-manager] DB scan failed: ${describeError(err)}`,
+        () => `[slack-manager] DB scan failed: ${renderError(err)}`,
       );
       return;
     }

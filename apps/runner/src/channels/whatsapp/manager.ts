@@ -47,6 +47,7 @@ import type { RunnerEnv } from '../../env.ts';
 import {
   describeError,
   errorIdentity,
+  renderError,
   logRepeatingFailure,
   reportRepeatingRecovery,
 } from '../../lib/repeat-log.ts';
@@ -152,7 +153,7 @@ export function startWhatsAppManager(
       logRepeatingFailure(
         'whatsapp-manager:db-scan',
         errorIdentity(err),
-        () => `[whatsapp-manager] DB scan failed: ${describeError(err)}`,
+        () => `[whatsapp-manager] DB scan failed: ${renderError(err)}`,
       );
       return;
     }
@@ -246,7 +247,7 @@ export function startWhatsAppManager(
     handle.events.on('message', (message) => {
       void onMessage(agentId, message).catch((err) => {
         console.error(
-          `[whatsapp-manager agent=${agentId}] unhandled error in onMessage: ${describeError(err)}`,
+          `[whatsapp-manager agent=${agentId}] unhandled error in onMessage: ${renderError(err)}`,
         );
       });
     });
@@ -293,7 +294,7 @@ export function startWhatsAppManager(
       await sendAuthNotice(agentId, pending).catch(async (err) => {
         console.warn(
           `[whatsapp-manager agent=${agentId}] auth-notice send failed for conversation ` +
-            `${pending.requesterConversationId}: ${describeError(err)}; ` +
+            `${pending.requesterConversationId}: ${renderError(err)}; ` +
             'clearing pending row',
         );
         await deps.db

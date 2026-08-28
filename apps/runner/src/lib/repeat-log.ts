@@ -46,6 +46,26 @@ export function describeError(err: unknown, maxDepth = 4): string {
 }
 
 /**
+ * Render an error for HUMAN reading: the stack of the outermost error, then
+ * the message of each `cause` beneath it.
+ *
+ * Distinct from {@link describeError}, which stays message-only because it
+ * feeds the suppression IDENTITY. Rendering without the stack lost the one
+ * thing that locates a novel application error — the throwing function and
+ * line — even on its first occurrence, which the previous
+ * `console.warn(..., err)` did print (found by codex review, PR #42).
+ */
+export function renderError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const head = err.stack ?? err.message;
+  const cause = (err as { cause?: unknown }).cause;
+  return cause === undefined || cause === null
+    ? head
+    : `${head}
+  ← caused by: ${describeError(cause)}`;
+}
+
+/**
  * A STABLE identity for an error — what makes two failures "the same one".
  *
  * Drizzle's `DrizzleQueryError` builds its message as

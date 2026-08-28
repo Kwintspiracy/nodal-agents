@@ -34,8 +34,8 @@ import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 import {
-  describeError,
   errorIdentity,
+  renderError,
   logRepeatingFailure,
   reportRepeatingRecovery,
 } from '../lib/repeat-log.ts';
@@ -118,7 +118,7 @@ async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): 
     logRepeatingFailure(
       `cron:${label}`,
       errorIdentity(err),
-      () => `[cron] ${label} failed (tick continues): ${describeError(err)}`,
+      () => `[cron] ${label} failed (tick continues): ${renderError(err)}`,
     );
     return fallback;
   }
@@ -212,7 +212,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     logRepeatingFailure(
       'cron:findPendingJobsToRecover',
       errorIdentity(err),
-      () => `[cron] findPendingJobsToRecover failed (tick continues): ${describeError(err)}`,
+      () => `[cron] findPendingJobsToRecover failed (tick continues): ${renderError(err)}`,
     );
   }
   const stalePendingFailed = await guardPhase(
@@ -297,7 +297,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
       logRepeatingFailure(
         'cron:runScheduleTick',
         errorIdentity(err),
-        () => `[cron] runScheduleTick failed (tick continues): ${describeError(err)}`,
+        () => `[cron] runScheduleTick failed (tick continues): ${renderError(err)}`,
       );
     });
 
@@ -324,7 +324,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     logRepeatingFailure(
       'cron:deliverCompletedRoots',
       errorIdentity(err),
-      () => `[cron] deliverCompletedRoots failed (tick continues): ${describeError(err)}`,
+      () => `[cron] deliverCompletedRoots failed (tick continues): ${renderError(err)}`,
     );
   }
 
@@ -360,7 +360,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     logRepeatingFailure(
       'cron:runCuratorTick',
       errorIdentity(err),
-      () => `[cron] runCuratorTick failed (tick continues): ${describeError(err)}`,
+      () => `[cron] runCuratorTick failed (tick continues): ${renderError(err)}`,
     );
   }
 

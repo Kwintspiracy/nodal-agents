@@ -18,6 +18,7 @@ import {
   _repeatFailureCountForTests,
   describeError,
   errorIdentity,
+  renderError,
 } from '../../lib/repeat-log.ts';
 
 let warns: string[];
@@ -352,5 +353,40 @@ describe('errorIdentity — volatile query params must not defeat suppression', 
 
   it('falls back to the full description for a plain error', () => {
     expect(errorIdentity(new Error('boom'))).toBe('boom');
+  });
+});
+
+describe('renderError — a first failure still locates itself', () => {
+  // Found by codex review on PR #42. Rendering with describeError (message
+  // only) replaced `console.warn(..., err)`, which printed the stack. For a
+  // novel APPLICATION error — as opposed to a database outage, where the
+  // message is the whole story — the stack is what says which function threw.
+  // Losing it on the very first occurrence contradicts the promise that a
+  // first failure is logged in full.
+  it('includes the stack of the outermost error', () => {
+    const err = new Error('something broke');
+    const rendered = renderError(err);
+
+    expect(rendered).toContain('something broke');
+    expect(rendered).toContain('repeat-log.test.ts'); // i.e. a real stack frame
+  });
+
+  it('appends the cause chain after the stack', () => {
+    const err = new Error('outer', { cause: new Error('ECONNREFUSED') });
+    const rendered = renderError(err);
+
+    expect(rendered).toContain('outer');
+    expect(rendered).toContain('ECONNREFUSED');
+  });
+
+  it('keeps the IDENTITY free of the stack, so suppression still works', () => {
+    // Two throws of the same kind from different lines must still collapse.
+    const a = new Error('same failure');
+    const b = new Error('same failure');
+    expect(describeError(a)).toBe(describeError(b));
+  });
+
+  it('handles a non-Error', () => {
+    expect(renderError('boom')).toBe('boom');
   });
 });

@@ -26,6 +26,7 @@ import type { RunnerEnv } from '../../env.ts';
 import {
   describeError,
   errorIdentity,
+  renderError,
   logRepeatingFailure,
   reportRepeatingRecovery,
 } from '../../lib/repeat-log.ts';
@@ -116,7 +117,7 @@ export function startDiscordManager(
       logRepeatingFailure(
         'discord-manager:db-scan',
         errorIdentity(err),
-        () => `[discord-manager] DB scan failed: ${describeError(err)}`,
+        () => `[discord-manager] DB scan failed: ${renderError(err)}`,
       );
       return;
     }
