@@ -573,3 +573,44 @@ describe('collapsed-failure state does not outlive its binding', () => {
     await manager.stop();
   });
 });
+
+describe('a socket factory that throws does not wedge the binding', () => {
+  // Found by codex review on PR #42, 7th pass — a consequence of registering
+  // the entry BEFORE calling the factory (itself a fix from the pass before).
+  // If construction throws synchronously, the placeholder stays in `active`
+  // with a null handle and dead:false: every later refresh reads it as a
+  // healthy socket, so the agent is offline until its credentials change or
+  // the process restarts, with a single log line to show for it.
+  it('retries after the factory throws instead of holding a dead placeholder', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+
+    let throwOnce = true;
+    const spy = vi.fn<(opts: SlackSocketOpts) => SlackSocketHandle>(() => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error('construction blew up');
+      }
+      return { async stop() {} };
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    await manager.refreshNow();
+
+    // The discriminator is the SECOND attempt. A surviving placeholder reads
+    // as a healthy socket, so the manager never calls the factory again: the
+    // count stays at 1 and the agent is offline for good. (activeCount alone
+    // cannot tell the two apart — a placeholder counts as one entry, exactly
+    // like a real socket.)
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(manager.activeCount()).toBe(1);
+    // …and what is registered is a REAL socket: stopping the manager reaches
+    // it, which a null-handle placeholder would not prove.
+    await manager.stop();
+    expect(manager.activeCount()).toBe(0);
+  });
+});

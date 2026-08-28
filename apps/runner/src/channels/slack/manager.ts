@@ -318,50 +318,62 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
     };
     active.set(agentId, entry);
 
-    const handle = spawnSocket({
-      agentId,
-      agentEntityId: entityId,
-      botToken,
-      appToken,
-      deps,
-      env: opts.env,
-      onClosed: (reason) => {
-        // Only mark THIS socket dead: by the time the callback fires the map
-        // may already hold a newer socket for the same agent (a rotation
-        // respawned it), and flagging that one would tear down a healthy
-        // connection on the next tick. Compared by ENTRY, not by handle, so
-        // this is correct even when called synchronously from the factory.
-        const current = active.get(agentId);
-        if (current !== entry) return;
-        current.dead = true;
-        const wasEstablished = current.connected;
-        // One message per death, collapsed: a permanently invalid token dies
-        // on every retry, and a line per attempt is the storm this whole
-        // change exists to prevent. The identity is the reason, so a DIFFERENT
-        // failure (auth error becoming a network error) still surfaces at once.
-        logRepeatingFailure(
-          `slack-manager:socket:${agentId}`,
-          reason,
-          (count) =>
-            `[slack-manager agent=${agentId}] socket closed (${reason}); respawning ${
-              wasEstablished ? 'now' : 'on a later refresh'
-            } with freshly-read credentials (attempt ${count})`,
-        );
-        // A connection that WAS live is replaced at once; refresh() is
-        // single-flight, so this coalesces with any scan already running.
-        if (wasEstablished && !stopped) void refresh();
-      },
-      onConnected: () => {
-        const current = active.get(agentId);
-        if (current !== entry) return;
-        current.connected = true;
-        reportRepeatingRecovery(
-          `slack-manager:socket:${agentId}`,
-          (failures) =>
-            `[slack-manager agent=${agentId}] socket connected after ${failures} failed attempt(s)`,
-        );
-      },
-    });
+    let handle: SlackSocketHandle;
+    try {
+      handle = spawnSocket({
+        agentId,
+        agentEntityId: entityId,
+        botToken,
+        appToken,
+        deps,
+        env: opts.env,
+        onClosed: (reason) => {
+          // Only mark THIS socket dead: by the time the callback fires the map
+          // may already hold a newer socket for the same agent (a rotation
+          // respawned it), and flagging that one would tear down a healthy
+          // connection on the next tick. Compared by ENTRY, not by handle, so
+          // this is correct even when called synchronously from the factory.
+          const current = active.get(agentId);
+          if (current !== entry) return;
+          current.dead = true;
+          const wasEstablished = current.connected;
+          // One message per death, collapsed: a permanently invalid token dies
+          // on every retry, and a line per attempt is the storm this whole
+          // change exists to prevent. The identity is the reason, so a DIFFERENT
+          // failure (auth error becoming a network error) still surfaces at once.
+          logRepeatingFailure(
+            `slack-manager:socket:${agentId}`,
+            reason,
+            (count) =>
+              `[slack-manager agent=${agentId}] socket closed (${reason}); respawning ${
+                wasEstablished ? 'now' : 'on a later refresh'
+              } with freshly-read credentials (attempt ${count})`,
+          );
+          // A connection that WAS live is replaced at once; refresh() is
+          // single-flight, so this coalesces with any scan already running.
+          if (wasEstablished && !stopped) void refresh();
+        },
+        onConnected: () => {
+          const current = active.get(agentId);
+          if (current !== entry) return;
+          current.connected = true;
+          reportRepeatingRecovery(
+            `slack-manager:socket:${agentId}`,
+            (failures) =>
+              `[slack-manager agent=${agentId}] socket connected after ${failures} failed attempt(s)`,
+          );
+        },
+      });
+    } catch (err) {
+      // The entry is registered before the factory runs (so synchronous
+      // lifecycle callbacks find their state). If construction throws, that
+      // placeholder must not survive: with a null handle and dead:false every
+      // later refresh would read it as a healthy socket and the agent would
+      // stay offline until its credentials changed or the process restarted.
+      // Removing it lets the very next refresh try again.
+      active.delete(agentId);
+      throw err;
+    }
     entry.handle = handle;
   }
 
