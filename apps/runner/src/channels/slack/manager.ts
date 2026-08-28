@@ -54,6 +54,16 @@ interface ActiveSocket {
    * the map underneath it raced. The next refresh reads the flag and respawns.
    */
   dead: boolean;
+  /**
+   * This socket reached a live connection at least once. Slack rotates
+   * connections on its own (`refresh_requested`), which with Bolt's reconnect
+   * disabled arrives here as a death — waiting up to 30s for the next scan to
+   * replace an otherwise healthy ingress is a self-inflicted outage, so an
+   * ESTABLISHED socket is replaced immediately. One that never connected stays
+   * on the backoff path: retrying an invalid token instantly is how this
+   * becomes an unbounded call rate against Slack.
+   */
+  connected: boolean;
 }
 
 const DEFAULT_REFRESH_MS = 30_000;
@@ -190,8 +200,21 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
             state.consecutiveFailures++;
             state.refreshesToWait = backoffFor(state.consecutiveFailures);
             retry.set(row.agentId, state);
+            // Shut the dead one down BEFORE replacing it. A transport error
+            // reports closure while the old client's close handshake and
+            // timers may still be running: dropping the handle unstopped
+            // leaves that client alive and unreachable — manager shutdown can
+            // never reach it, and two clients can briefly coexist on one
+            // binding (duplicate inbound events).
+            await existing.handle.stop();
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
+          } else {
+            // Alive across a full refresh cycle — that, not merely having
+            // connected once, is what clears the backoff. A socket that
+            // connects and dies immediately, over and over, therefore still
+            // backs off instead of spinning in a hot respawn loop.
+            retry.delete(row.agentId);
           }
           continue;
         }
@@ -245,6 +268,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         const current = active.get(agentId);
         if (current?.handle !== handle) return;
         current.dead = true;
+        const wasEstablished = current.connected;
         // One message per death, collapsed: a permanently invalid token dies
         // on every retry, and a line per attempt is the storm this whole
         // change exists to prevent. The identity is the reason, so a DIFFERENT
@@ -253,14 +277,18 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
           `slack-manager:socket:${agentId}`,
           reason,
           (count) =>
-            `[slack-manager agent=${agentId}] socket closed (${reason}); respawning on a later ` +
-            `refresh with freshly-read credentials (attempt ${count})`,
+            `[slack-manager agent=${agentId}] socket closed (${reason}); respawning ${
+              wasEstablished ? 'now' : 'on a later refresh'
+            } with freshly-read credentials (attempt ${count})`,
         );
+        // A connection that WAS live is replaced at once; refresh() is
+        // single-flight, so this coalesces with any scan already running.
+        if (wasEstablished && !stopped) void refresh();
       },
       onConnected: () => {
         const current = active.get(agentId);
         if (current?.handle !== handle) return;
-        retry.delete(agentId);
+        current.connected = true;
         reportRepeatingRecovery(
           `slack-manager:socket:${agentId}`,
           (failures) =>
@@ -268,7 +296,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         );
       },
     });
-    active.set(agentId, { agentId, credentialsHash, handle, dead: false });
+    active.set(agentId, { agentId, credentialsHash, handle, dead: false, connected: false });
   }
 
   async function tick(): Promise<void> {

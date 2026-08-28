@@ -233,7 +233,7 @@ describe('a permanently invalid credential must not become a new log storm', () 
     await manager.stop();
   });
 
-  it('resets the backoff once a socket actually connects', async () => {
+  it('clears the backoff once a socket SURVIVES a full refresh cycle', async () => {
     await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
     const { spy, killLast, connectLast } = makeFakeSockets();
 
@@ -243,23 +243,29 @@ describe('a permanently invalid credential must not become a new log storm', () 
       startSocket: spy,
     });
 
-    // Three failures in a row build up a wait…
+    // Three failed starts in a row build up a wait.
     for (let i = 0; i < 3; i++) {
       await manager.refreshNow();
-      killLast('start failed');
+      killLast('start failed: invalid_auth');
     }
-    // …then Slack comes back: this attempt connects.
+
+    // Slack comes back. Surviving a whole refresh — not merely having
+    // connected once — is what clears the penalty: a socket that connects and
+    // dies immediately, repeatedly, must keep backing off (see the flapping
+    // case below), so `onConnected` alone deliberately does NOT reset it.
     let spawnsBefore = spy.mock.calls.length;
-    for (let i = 0; i < 10 && spy.mock.calls.length === spawnsBefore; i++) {
+    for (let i = 0; i < 40 && spy.mock.calls.length === spawnsBefore; i++) {
       await manager.refreshNow();
     }
     connectLast();
-
-    // A later, unrelated drop must be retried IMMEDIATELY — the earlier
-    // failures are history, not a permanent penalty on this binding.
-    killLast('disconnected');
-    spawnsBefore = spy.mock.calls.length;
     await manager.refreshNow();
+
+    // A later, unrelated drop is now retried at once — the earlier failures
+    // are history, not a permanent penalty on this binding.
+    spawnsBefore = spy.mock.calls.length;
+    killLast('disconnected');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
 
     expect(spy.mock.calls.length).toBe(spawnsBefore + 1);
     await manager.stop();
@@ -289,6 +295,113 @@ describe('a permanently invalid credential must not become a new log storm', () 
     expect(deathLines.length).toBeLessThanOrEqual(3);
     // The first one is always there: a broken binding is never silent.
     expect(deathLines.length).toBeGreaterThan(0);
+    await manager.stop();
+  });
+});
+
+describe('an ESTABLISHED socket comes back at once, not on the next scan', () => {
+  // Found by codex review on PR #42, 3rd pass. Slack rotates connections on
+  // its own (`refresh_requested`) — routine, frequent, and harmless while Bolt
+  // reconnected itself. With Bolt's auto-reconnect off, every one of those
+  // became terminal, and the replacement waited for the next 30s scan: a
+  // recurring ingress gap where messages are missed, caused by the fix rather
+  // than by any fault. A socket that HAD connected therefore triggers an
+  // immediate managed refresh; the backoff still governs sockets that never
+  // connected at all.
+  const settle = async (): Promise<void> => {
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  };
+
+  it('respawns without waiting for a refresh call', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    connectLast();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Slack rotates the connection. NOTE: no refreshNow() below — that is the
+    // whole point.
+    killLast('disconnected');
+    await settle();
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    await manager.stop();
+  });
+
+  it('does NOT immediately respawn a socket that never connected', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+
+    // A failed start must stay on the backoff path — retrying instantly is
+    // how an invalid token becomes an unbounded call rate against Slack.
+    killLast('start failed: invalid_auth');
+    await settle();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    await manager.stop();
+  });
+
+  it('stops the dead socket before replacing it', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, live, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    connectLast();
+
+    // A transport error reports closure while the old client's close
+    // handshake and timers may still be running. Dropping the handle without
+    // stopping it leaves that client alive AND unreachable — the manager's own
+    // shutdown can never stop it, and two clients can briefly coexist on one
+    // binding (duplicate inbound events).
+    killLast('transport error: socket hang up');
+    await settle();
+
+    expect(live).toHaveLength(2);
+    expect(live[0]?.stopped).toBe(true);
+    expect(live[1]?.stopped).toBe(false);
+    await manager.stop();
+  });
+
+  it('a socket that dies right after connecting, over and over, still backs off', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-flappy', appToken: 'xapp-1' });
+    const { spy, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+
+    // 15 connect-then-die cycles. Immediate respawn must not turn a flapping
+    // connection into a hot loop: only a socket that SURVIVES a full refresh
+    // cycle counts as healthy enough to clear the backoff.
+    for (let i = 0; i < 15; i++) {
+      connectLast();
+      killLast('disconnected');
+      await settle();
+    }
+
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(8);
     await manager.stop();
   });
 });
