@@ -651,3 +651,49 @@ describe('rotating a credential opens a fresh incident', () => {
     await manager.stop();
   });
 });
+
+describe('a start still in flight does not clear the backoff', () => {
+  // Found by codex review on PR #42. A socket whose start() is STILL PENDING
+  // across a 30s refresh has dead:false and connected:false — and the "alive
+  // across a refresh" branch cleared its retry state on that basis alone.
+  // Slack's client retries connection setup internally during a network
+  // outage, so a pending start spanning a refresh is the normal shape of an
+  // outage, not an edge case: the backoff reset every cycle and the throttling
+  // never took effect.
+  it('keeps the accumulated backoff while the socket has not connected', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-slow', appToken: 'xapp-slow' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // Build up a real penalty: three failed starts.
+    for (let i = 0; i < 3; i++) {
+      await manager.refreshNow();
+      killLast('start failed: timeout');
+    }
+    const spawnsAfterFailures = spy.mock.calls.length;
+
+    // The next attempt hangs — start() never settles, so the socket is neither
+    // dead nor connected. Several refreshes pass in that state.
+    const spawns = spy.mock.calls.length;
+    for (let i = 0; i < 30 && spy.mock.calls.length === spawns; i++) {
+      await manager.refreshNow();
+    }
+    expect(spy.mock.calls.length).toBeGreaterThan(spawnsAfterFailures);
+    for (let i = 0; i < 5; i++) await manager.refreshNow();
+
+    // It finally fails. The backoff must resume from the accumulated count,
+    // not restart from zero — otherwise the next attempt is immediate and the
+    // throttle is defeated exactly when it is needed.
+    const spawnsBeforeFailure = spy.mock.calls.length;
+    killLast('start failed: timeout');
+    await manager.refreshNow();
+
+    expect(spy.mock.calls.length).toBe(spawnsBeforeFailure);
+    await manager.stop();
+  });
+});

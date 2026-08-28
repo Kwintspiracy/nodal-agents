@@ -155,7 +155,14 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   // posture (see slackReceiverOptions). `socketMode` is NOT passed alongside —
   // supplying a receiver already selects the transport.
   const receiver = new SocketModeReceiver(slackReceiverOptions(appToken));
-  const app = new App({ token: botToken, receiver });
+  // `deferInitialization` puts US in charge of App.init(), which verifies the
+  // BOT token with an `auth.test` call. Left to Bolt, that verification runs on
+  // its own and its rejection belongs to nobody: a revoked bot token surfaces
+  // as a process-level `unhandledRejection` with the socket reporting itself
+  // "connected". Found by running the real thing against a deliberately
+  // invalidated token — eleven review passes and 1 137 tests had not caught it,
+  // because every one of them used a fake.
+  const app = new App({ token: botToken, receiver, deferInitialization: true });
 
   // `stop()` is a deliberate shutdown, not a death: it must not trigger the
   // manager's respawn path, and onClosed fires at most once either way.
@@ -390,7 +397,8 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   });
 
   void app
-    .start()
+    .init()
+    .then(() => app.start())
     .then(async () => {
       // Same observability discipline as discord/gateway.ts's ClientReady log
       // ("logged in as ...") — without it, confirming a socket actually

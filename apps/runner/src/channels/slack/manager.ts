@@ -259,11 +259,17 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
             await existing.handle?.stop();
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
-          } else {
-            // Alive across a full refresh cycle — that, not merely having
-            // connected once, is what clears the backoff. A socket that
-            // connects and dies immediately, over and over, therefore still
-            // backs off instead of spinning in a hot respawn loop.
+          } else if (existing.connected) {
+            // CONNECTED and alive across a full refresh cycle — both halves
+            // matter. Merely having connected once is not enough: a socket
+            // that connects and dies immediately, over and over, would reset
+            // the counter each round and spin in a hot respawn loop. And
+            // surviving a refresh is not enough either: a start() still
+            // PENDING across a refresh is neither dead nor connected, which is
+            // the normal shape of a network outage (Slack's client retries
+            // connection setup internally), and clearing the backoff there
+            // restarted the throttle from zero every cycle — defeating it
+            // exactly when it is needed (found by codex review, PR #42).
             retry.delete(row.agentId);
           }
           continue;
