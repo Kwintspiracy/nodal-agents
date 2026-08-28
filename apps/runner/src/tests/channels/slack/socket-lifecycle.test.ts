@@ -614,3 +614,40 @@ describe('a socket factory that throws does not wedge the binding', () => {
     expect(manager.activeCount()).toBe(0);
   });
 });
+
+describe('rotating a credential opens a fresh incident', () => {
+  // Found by codex review on PR #42, 8th pass — the same defect as the despawn
+  // path (6th pass) on the other branch: rotation cleared the retry backoff
+  // but not the collapsed-failure state. An operator who rotates a token after
+  // a run of failures, and whose NEW token fails the same way, would have that
+  // first failure counted as a repeat of the old credential's and stay silent
+  // until the 20th. Each credential has to start its own visible incident.
+  it('logs the first failure of a ROTATED credential in full', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-old', appToken: 'xapp-1' });
+    const { spy, killLast } = makeFakeSockets();
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warns.push(a.map(String).join(' '));
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    killLast('start failed: invalid_auth');
+    await manager.refreshNow();
+
+    // The operator rotates the token — and the new one is wrong too.
+    await db.update(channelBindings).set({
+      credentials: encryptChannelCredentials({ botToken: 'xoxb-new', appToken: 'xapp-1' }),
+    });
+    await manager.refreshNow();
+    warns.length = 0;
+    killLast('start failed: invalid_auth');
+
+    expect(warns.filter((w) => w.includes('socket closed'))).toHaveLength(1);
+    await manager.stop();
+  });
+});

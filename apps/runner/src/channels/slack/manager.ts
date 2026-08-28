@@ -229,6 +229,12 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
             // A new credential is a fresh start: clear any backoff earned by
             // the old one, which is exactly the operator fixing the problem.
             retry.delete(row.agentId);
+            // …and its collapsed-failure tally too. Otherwise an operator who
+            // rotates a token after a run of failures, onto one that fails the
+            // SAME way, has that first failure counted as a repeat of the old
+            // credential's — silent until the 20th. Each credential opens its
+            // own visible incident.
+            clearRepeatingFailure(`slack-manager:socket:${row.agentId}`);
             await existing.handle?.stop();
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
