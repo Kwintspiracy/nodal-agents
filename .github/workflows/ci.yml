@@ -36,6 +36,24 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
+      # Turborepo's own cache, persisted between runs.
+      #
+      # Without it, every push re-ran every task for all ~26 packages — even
+      # the 25 nobody had touched. Measured on the run for PR #42, where only
+      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
+      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
+      #
+      # The key carries the SHA so each run writes its own entry; restore-keys
+      # falls back to the most recent one for this OS, which is what makes an
+      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
+      # artefacts are not interchangeable.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -132,6 +150,24 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
+      # Turborepo's own cache, persisted between runs.
+      #
+      # Without it, every push re-ran every task for all ~26 packages — even
+      # the 25 nobody had touched. Measured on the run for PR #42, where only
+      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
+      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
+      #
+      # The key carries the SHA so each run writes its own entry; restore-keys
+      # falls back to the most recent one for this OS, which is what makes an
+      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
+      # artefacts are not interchangeable.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -159,6 +195,24 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
+
+      # Turborepo's own cache, persisted between runs.
+      #
+      # Without it, every push re-ran every task for all ~26 packages — even
+      # the 25 nobody had touched. Measured on the run for PR #42, where only
+      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
+      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
+      #
+      # The key carries the SHA so each run writes its own entry; restore-keys
+      # falls back to the most recent one for this OS, which is what makes an
+      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
+      # artefacts are not interchangeable.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -197,6 +251,24 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
+
+      # Turborepo's own cache, persisted between runs.
+      #
+      # Without it, every push re-ran every task for all ~26 packages — even
+      # the 25 nobody had touched. Measured on the run for PR #42, where only
+      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
+      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
+      #
+      # The key carries the SHA so each run writes its own entry; restore-keys
+      # falls back to the most recent one for this OS, which is what makes an
+      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
+      # artefacts are not interchangeable.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
