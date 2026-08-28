@@ -27,7 +27,7 @@
 // dropped before anything else runs — the hard rule, mirrored from
 // discord/gateway.ts's `message.author.bot` check.
 
-import { App } from '@slack/bolt';
+import { App, SocketModeReceiver } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { eq } from '@nodal-agents/db';
 import { channelAllowedConversations } from '@nodal-agents/db';
@@ -45,10 +45,45 @@ export interface SlackSocketOpts {
   appToken: string;
   deps: RunnerDeps;
   env: RunnerEnv;
+  /**
+   * Called ONCE when this socket is finished — `start()` rejected, or the
+   * websocket closed and will not come back on its own. The manager uses it to
+   * drop the socket from its active set so the next refresh respawns it with
+   * freshly-read credentials.
+   *
+   * Never called on a `stop()` we initiated: a deliberate shutdown is not a
+   * death to recover from.
+   */
+  onClosed?: (reason: string) => void;
 }
 
 export interface SlackSocketHandle {
   stop(): Promise<void>;
+}
+
+/**
+ * Options for the Socket Mode receiver — exported so the reconnect posture is
+ * assertable without standing up a real websocket.
+ *
+ * `autoReconnectEnabled: false` is the whole point. @slack/socket-mode 2.0.7
+ * reconnects via `delayReconnectAttempt(this.start)`, whose body is
+ * `cb.apply(this).then(res)` — with no `.catch`. When that retry hits an
+ * UNRECOVERABLE error (`invalid_auth` after the token was revoked),
+ * `retrieveWSSURL` rethrows into a promise nobody owns, and it surfaces as a
+ * process-level `unhandledRejection`. Observed on a real install during the
+ * 25/08 token rotation; only the runner's global handler kept the process up.
+ *
+ * Turning Bolt's reconnect off makes the failure land in the `start()` promise
+ * WE await, and hands the retry to the manager — which already owns spawn /
+ * despawn, rescans every 30s, and (unlike Bolt, which re-dials with the
+ * credentials it captured at construction) re-reads the binding, so a rotated
+ * token is actually picked up.
+ */
+export function slackReceiverOptions(appToken: string): {
+  appToken: string;
+  autoReconnectEnabled: boolean;
+} {
+  return { appToken, autoReconnectEnabled: false };
 }
 
 /**
@@ -103,7 +138,35 @@ async function resolveSenderName(client: WebClient, userId: string): Promise<str
 export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   const { agentId, agentEntityId, botToken, appToken, deps, env } = opts;
 
-  const app = new App({ token: botToken, appToken, socketMode: true });
+  // Own the receiver rather than letting App build one: it is the only way to
+  // reach the SocketModeClient (a public field) and to set the reconnect
+  // posture (see slackReceiverOptions). `socketMode` is NOT passed alongside —
+  // supplying a receiver already selects the transport.
+  const receiver = new SocketModeReceiver(slackReceiverOptions(appToken));
+  const app = new App({ token: botToken, receiver });
+
+  // `stop()` is a deliberate shutdown, not a death: it must not trigger the
+  // manager's respawn path, and onClosed fires at most once either way.
+  let shuttingDown = false;
+  let closedReported = false;
+  const reportClosed = (reason: string): void => {
+    if (shuttingDown || closedReported) return;
+    closedReported = true;
+    console.warn(
+      `[slack-socket agent=${agentId}] socket closed (${reason}); the manager will respawn it ` +
+        'on its next refresh with freshly-read credentials',
+    );
+    opts.onClosed?.(reason);
+  };
+
+  // With Bolt's own reconnect disabled, a close is terminal for THIS socket.
+  // Both events are wired: 'disconnected' is what SocketModeClient emits on a
+  // close when autoReconnect is off, and 'error' covers a transport failure
+  // that never reaches a clean close.
+  receiver.client.on('disconnected', () => reportClosed('disconnected'));
+  receiver.client.on('error', (err: unknown) => {
+    reportClosed(`transport error: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   app.error(async (err) => {
     console.error(`[slack-socket agent=${agentId}] app error: ${err.message}`);
@@ -344,12 +407,20 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       console.warn(
         `[slack-socket agent=${agentId}] start failed (invalid token(s)?): ${
           err instanceof Error ? err.message : String(err)
-        }; will retry on the manager's next refresh`,
+        }`,
       );
+      // The old comment here promised "will retry on the manager's next
+      // refresh". It did not: spawnOne registered this socket in the active
+      // set whether or not start() succeeded, and the manager only respawns on
+      // a credential CHANGE — so a socket that never connected stayed
+      // registered forever and the agent was silently offline. Reporting the
+      // failure is what makes that promise true.
+      reportClosed('start failed');
     });
 
   return {
     async stop(): Promise<void> {
+      shuttingDown = true;
       await app.stop();
     },
   };

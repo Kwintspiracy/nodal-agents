@@ -23,6 +23,7 @@ import {
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
+import { logRepeatingFailure, reportRepeatingRecovery } from '../../lib/repeat-log.ts';
 import {
   startDiscordGateway,
   type DiscordGatewayHandle,
@@ -103,11 +104,21 @@ export function startDiscordManager(
           ),
         );
     } catch (err) {
-      console.warn(
-        `[discord-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      // The scan runs every 30s. With the database gone it fails forever, and
+      // five managers each logging it per tick is what buried a real
+      // runner.log (see lib/repeat-log.ts). First failure in full, then a
+      // count.
+      logRepeatingFailure(
+        'discord-manager:db-scan',
+        () =>
+          `[discord-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return;
     }
+    reportRepeatingRecovery(
+      'discord-manager:db-scan',
+      (failures) => `[discord-manager] DB scan recovered after ${failures} failed attempt(s)`,
+    );
 
     const seen = new Set<string>();
 

@@ -22,6 +22,7 @@ import {
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
+import { logRepeatingFailure, reportRepeatingRecovery } from '../../lib/repeat-log.ts';
 import { startSlackSocket, type SlackSocketHandle, type SlackSocketOpts } from './socket.ts';
 
 export interface SlackManagerOpts {
@@ -45,6 +46,14 @@ interface ActiveSocket {
   agentId: string;
   credentialsHash: string;
   handle: SlackSocketHandle;
+  /**
+   * The socket told us it is finished (start() rejected, or the websocket
+   * closed for good — Bolt's own reconnect is off, see socket.ts's
+   * slackReceiverOptions). A flag rather than deleting the map entry from the
+   * callback: the callback can fire in the middle of a refresh, and mutating
+   * the map underneath it raced. The next refresh reads the flag and respawns.
+   */
+  dead: boolean;
 }
 
 const DEFAULT_REFRESH_MS = 30_000;
@@ -91,11 +100,20 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
           ),
         );
     } catch (err) {
-      console.warn(
-        `[slack-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      // The scan runs every 30s. With the database gone it fails forever, and
+      // five managers each logging it per tick is what buried a real
+      // runner.log (see lib/repeat-log.ts). First failure in full, then a
+      // count.
+      logRepeatingFailure(
+        'slack-manager:db-scan',
+        () => `[slack-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return;
     }
+    reportRepeatingRecovery(
+      'slack-manager:db-scan',
+      (failures) => `[slack-manager] DB scan recovered after ${failures} failed attempt(s)`,
+    );
 
     const seen = new Set<string>();
 
@@ -123,9 +141,14 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
 
         const existing = active.get(row.agentId);
         if (existing) {
-          // Credentials rotated (either token changed inside the binding) → restart.
-          if (existing.credentialsHash !== hash) {
-            await existing.handle.stop();
+          // Respawn on either of two conditions:
+          //   - the credentials rotated (a genuinely different token), or
+          //   - the socket reported itself dead. Before this, a socket whose
+          //     start() failed or whose websocket closed stayed registered
+          //     forever and the agent was silently offline — the manager only
+          //     ever looked at the credential.
+          if (existing.credentialsHash !== hash || existing.dead) {
+            if (!existing.dead) await existing.handle.stop();
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
           }
@@ -173,8 +196,16 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       appToken,
       deps,
       env: opts.env,
+      onClosed: () => {
+        // Only mark THIS socket dead: by the time the callback fires the map
+        // may already hold a newer socket for the same agent (a rotation
+        // respawned it), and flagging that one would tear down a healthy
+        // connection on the next tick.
+        const current = active.get(agentId);
+        if (current?.handle === handle) current.dead = true;
+      },
     });
-    active.set(agentId, { agentId, credentialsHash, handle });
+    active.set(agentId, { agentId, credentialsHash, handle, dead: false });
   }
 
   async function tick(): Promise<void> {

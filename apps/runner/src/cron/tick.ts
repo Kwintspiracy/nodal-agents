@@ -33,6 +33,7 @@ import { env } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
+import { logRepeatingFailure, reportRepeatingRecovery } from '../lib/repeat-log.ts';
 
 // ─── CronTickResult ───────────────────────────────────────────────────────────
 
@@ -82,9 +83,25 @@ export interface CronTickResult {
  */
 async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> {
   try {
-    return await fn();
+    const result = await fn();
+    // A phase that was failing and now works says so once, with the count —
+    // silent for a phase that was already healthy.
+    reportRepeatingRecovery(
+      `cron:${label}`,
+      (failures) => `[cron] ${label} recovered after ${failures} failed tick(s)`,
+    );
+    return result;
   } catch (err) {
-    console.warn(`[cron] ${label} failed (tick continues):`, err);
+    // Eleven phases run behind this helper, every 30s. When the database goes
+    // away they all fail at once, forever, and used to write eleven identical
+    // lines per tick — 12% of a real runner.log, evicting via rotation the
+    // earlier lines that explained the outage. The first failure of each phase
+    // is still logged in full; the repeats are counted.
+    logRepeatingFailure(
+      `cron:${label}`,
+      () =>
+        `[cron] ${label} failed (tick continues): ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
     return fallback;
   }
 }
@@ -166,7 +183,13 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     }
     pendingRecovered = pendingIds.length;
   } catch (err) {
-    console.warn('[cron] findPendingJobsToRecover failed (tick continues):', err);
+    logRepeatingFailure(
+      'cron:findPendingJobsToRecover',
+      () =>
+        `[cron] findPendingJobsToRecover failed (tick continues): ${
+          err instanceof Error ? (err.stack ?? err.message) : String(err)
+        }`,
+    );
   }
   const stalePendingFailed = await guardPhase(
     'failStalePendingJobs',

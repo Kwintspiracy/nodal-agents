@@ -15,6 +15,7 @@ import { isNotNull, eq, and } from '@nodal-agents/db';
 import { agents, decryptChannelSecret } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
+import { logRepeatingFailure, reportRepeatingRecovery } from '../lib/repeat-log.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';
 
 export interface TelegramManagerOpts {
@@ -74,11 +75,21 @@ export function startTelegramManager(
         .from(agents)
         .where(and(isNotNull(agents.telegramBotToken), eq(agents.active, true)));
     } catch (err) {
-      console.warn(
-        `[telegram-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      // The scan runs every 30s. With the database gone it fails forever, and
+      // five managers each logging it per tick is what buried a real
+      // runner.log (see lib/repeat-log.ts). First failure in full, then a
+      // count.
+      logRepeatingFailure(
+        'telegram-manager:db-scan',
+        () =>
+          `[telegram-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return;
     }
+    reportRepeatingRecovery(
+      'telegram-manager:db-scan',
+      (failures) => `[telegram-manager] DB scan recovered after ${failures} failed attempt(s)`,
+    );
 
     const seen = new Set<string>();
 
