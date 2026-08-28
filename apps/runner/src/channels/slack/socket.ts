@@ -417,9 +417,18 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   // removed (found by codex review, PR #42).
   const startup = app
     .init()
-    .then(() => {
+    .then(async () => {
       if (shuttingDown) return;
-      return app.start();
+      await app.start();
+      // Check AGAIN, and act rather than just return. stop() may have run
+      // while start() was awaiting `apps.connections.open`: its own app.stop()
+      // found nothing to disconnect, and Slack's SocketModeClient then opened
+      // the websocket unconditionally. Returning here would leave that socket
+      // connected, on credentials the operator has removed, with no handle the
+      // manager can reach (found by codex review, PR #42 — the fourth shape of
+      // this same orphan-socket race, which is why the guard now closes the
+      // connection instead of merely declining to use it).
+      if (shuttingDown) await app.stop().catch(() => {});
     })
     .then(async () => {
       if (shuttingDown) return;
