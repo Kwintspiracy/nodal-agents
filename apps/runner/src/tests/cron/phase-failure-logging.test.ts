@@ -10,8 +10,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const { findPendingJobsToRecoverMock } = vi.hoisted(() => ({
+const { findPendingJobsToRecoverMock, runScheduleTickMock } = vi.hoisted(() => ({
   findPendingJobsToRecoverMock: vi.fn(),
+  runScheduleTickMock: vi.fn(),
 }));
 
 // Every other phase is stubbed to a no-op success: this suite is about the
@@ -26,7 +27,7 @@ vi.mock('../../cron/reset-orphans.ts', () => ({
 }));
 vi.mock('../../cron/unblock-ready.ts', () => ({ unblockReadyTasks: vi.fn(async () => 0) }));
 vi.mock('../../cron/execute-ready.ts', () => ({ executeReadyTasks: vi.fn(async () => 0) }));
-vi.mock('../../cron/run-schedules.ts', () => ({ runScheduleTick: vi.fn(async () => 0) }));
+vi.mock('../../cron/run-schedules.ts', () => ({ runScheduleTick: runScheduleTickMock }));
 vi.mock('../../cron/deliver-results.ts', () => ({ deliverCompletedRoots: vi.fn(async () => 0) }));
 vi.mock('../../cron/run-curator.ts', () => ({
   runCuratorTick: vi.fn(async () => ({
@@ -58,6 +59,7 @@ let warns: string[];
 beforeEach(() => {
   _resetRepeatLogForTests();
   vi.clearAllMocks();
+  runScheduleTickMock.mockResolvedValue(0);
   warns = [];
   vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
     warns.push(a.map(String).join(' '));
@@ -119,5 +121,39 @@ describe('pending-recovery phase — failure logging is wired both ways', () => 
     for (let i = 0; i < 10; i++) await runCronTick(deps);
 
     expect(warns.filter((w) => w.includes('findPendingJobsToRecover'))).toEqual([]);
+  });
+});
+
+describe('runScheduleTick — out-of-order completions do not fake a recovery', () => {
+  // Found by codex review on PR #42, 9th pass. runScheduleTick is deliberately
+  // fire-and-forget (a slow schedule must not stall delivery), so invocations
+  // from overlapping ticks can settle out of order. An OLD, slow success
+  // landing after a NEWER failure would clear that failure and announce a
+  // recovery that never happened — and the next real failure would then be
+  // logged as a fresh incident. Only the most recent invocation may touch the
+  // repeating-failure state.
+  it('ignores a stale success that lands after a newer failure', async () => {
+    findPendingJobsToRecoverMock.mockResolvedValue([]);
+
+    let releaseSlowSuccess: () => void = () => {};
+    const slowSuccess = new Promise<number>((resolve) => {
+      releaseSlowSuccess = () => resolve(0);
+    });
+    runScheduleTickMock.mockReturnValueOnce(slowSuccess);
+    runScheduleTickMock.mockRejectedValueOnce(new Error('connection refused'));
+
+    // Tick 1 starts the slow call; tick 2's call fails immediately.
+    await runCronTick(deps);
+    await runCronTick(deps);
+    await new Promise((r) => setImmediate(r));
+    warns.length = 0;
+
+    // The stale success finally lands.
+    releaseSlowSuccess();
+    await slowSuccess;
+    await new Promise((r) => setImmediate(r));
+
+    // It must NOT claim the site recovered — the latest word is a failure.
+    expect(warns.filter((w) => w.includes('runScheduleTick recovered'))).toEqual([]);
   });
 });

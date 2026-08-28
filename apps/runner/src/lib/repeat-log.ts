@@ -57,7 +57,21 @@ let overflowCount = 0;
 let capacityWarned = false;
 
 interface FailureState {
+  /**
+   * Consecutive failures for the CURRENT identity. Drives suppression: a new
+   * reason restarts it so the new error's own repeats collapse from its first
+   * occurrence rather than inheriting the old one's tally.
+   */
   count: number;
+  /**
+   * Consecutive failures at this site regardless of reason, since the last
+   * recovery. This is what the recovery line reports: resetting on a change of
+   * identity made "five connection failures, then one auth failure, then
+   * success" read as "recovered after 1 failed tick", understating the outage
+   * in the very line an operator uses to size it (found by codex review,
+   * PR #42).
+   */
+  total: number;
   /**
    * What is failing, not just where. Suppression keyed on the site alone hid a
    * CHANGED error behind an old one: "connection refused" becoming "password
@@ -122,7 +136,8 @@ export function logRepeatingFailure(
   // once and restart the count, so its own repeats still collapse.
   const changed = previous !== undefined && previous.identity !== identity;
   const count = previous && !changed ? previous.count + 1 : 1;
-  failureCounts.set(key, { count, identity });
+  const total = (previous?.total ?? 0) + 1;
+  failureCounts.set(key, { count, total, identity });
 
   const shouldLog = count === 1 || count % REPEAT_EVERY === 0;
   if (!shouldLog) return;
@@ -146,7 +161,7 @@ export function reportRepeatingRecovery(key: string, render: (failures: number) 
   const state = failureCounts.get(key);
   if (!state) return;
   failureCounts.delete(key);
-  console.warn(render(state.count));
+  console.warn(render(state.total));
 }
 
 /**
@@ -172,4 +187,9 @@ export function _resetRepeatLogForTests(): void {
 /** Test-only: how many failures are currently recorded for a key. */
 export function _repeatFailureCountForTests(key: string): number {
   return failureCounts.get(key)?.count ?? 0;
+}
+
+/** Test-only: consecutive failures at a key across every reason. */
+export function _repeatTotalForTests(key: string): number {
+  return failureCounts.get(key)?.total ?? 0;
 }

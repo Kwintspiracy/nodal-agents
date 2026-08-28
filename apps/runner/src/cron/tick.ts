@@ -66,6 +66,19 @@ export interface CronTickResult {
   retentionToolCallsDeleted: number;
 }
 
+/**
+ * Monotonic sequence for the fire-and-forget schedule phase.
+ *
+ * runScheduleTick is deliberately not awaited (a slow schedule must not stall
+ * delivery or the curator — audit finding #20), so invocations from
+ * overlapping ticks can settle OUT OF ORDER. An old, slow success landing
+ * after a newer failure would clear that failure and announce a recovery that
+ * never happened, and the next real failure would then read as a fresh
+ * incident. Only the latest invocation may touch the repeating-failure state
+ * (found by codex review, PR #42).
+ */
+let scheduleTickSeq = 0;
+
 // ─── guardPhase ───────────────────────────────────────────────────────────────
 
 /**
@@ -255,15 +268,18 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   // the time it hands its result back), not a fallback value pretending
   // certainty.
   let schedulesFired = 0;
+  const scheduleSeq = ++scheduleTickSeq;
   void runScheduleTick(deps.db, deps, maxTasksPerTick)
     .then((count) => {
       schedulesFired = count;
+      if (scheduleSeq !== scheduleTickSeq) return; // a newer invocation has the floor
       reportRepeatingRecovery(
         'cron:runScheduleTick',
         (failures) => `[cron] runScheduleTick recovered after ${failures} failed tick(s)`,
       );
     })
     .catch((err) => {
+      if (scheduleSeq !== scheduleTickSeq) return; // a newer invocation has the floor
       // Same collapsing as guardPhase — these three phases keep their own
       // try/catch for the reasons documented above, but a database outage
       // makes them fail every tick just the same. Missing them would leave

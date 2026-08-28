@@ -215,3 +215,40 @@ describe('a CHANGED failure is never hidden behind an old one', () => {
     expect(warns).toHaveLength(1);
   });
 });
+
+describe('the recovery line counts the WHOLE outage', () => {
+  // Found by codex review on PR #42, 9th pass. Resetting the counter when the
+  // error identity changes (added on the 4th pass so a changed error surfaces
+  // at once) also reset what the recovery line reports: five connection
+  // failures then one auth failure then success was announced as "recovered
+  // after 1 failed tick". That understates an outage in the one line an
+  // operator reads to size it. Two counters: a total that spans identities,
+  // and a per-identity one that drives suppression.
+  it('reports every consecutive failure, across a change of reason', () => {
+    for (let i = 0; i < 5; i++) {
+      logRepeatingFailure('site-a', 'connection refused', () => 'conn');
+    }
+    logRepeatingFailure('site-a', 'auth failed', () => 'auth');
+    warns.length = 0;
+
+    reportRepeatingRecovery('site-a', (n) => `recovered after ${n} failed tick(s)`);
+
+    expect(warns).toEqual(['recovered after 6 failed tick(s)']);
+  });
+
+  it('still suppresses per identity, so the changed error is what re-surfaces', () => {
+    for (let i = 0; i < 25; i++) logRepeatingFailure('site-a', 'conn', () => 'conn');
+    warns.length = 0;
+
+    // A new reason logs at once…
+    logRepeatingFailure('site-a', 'auth', () => 'auth');
+    expect(warns).toEqual(['auth']);
+
+    // …and its own repeats collapse from ITS first occurrence, not from the
+    // running total (which is now 27).
+    for (let i = 0; i < 18; i++) logRepeatingFailure('site-a', 'auth', () => 'auth');
+    expect(warns).toHaveLength(1);
+    logRepeatingFailure('site-a', 'auth', () => 'auth');
+    expect(warns).toHaveLength(2);
+  });
+});
