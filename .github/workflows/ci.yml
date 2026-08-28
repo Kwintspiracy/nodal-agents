@@ -43,10 +43,19 @@ jobs:
       # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
       # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
       #
+      # ONLY on the jobs that actually invoke turbo (this one and ci-windows).
+      # GitHub caches are immutable: the first job to finish claims the key.
+      # pack-smoke and e2e-smoke run in parallel, finish in 4 and 2 minutes
+      # against this job's 18, and go through `pnpm --filter … build` / `tsx`
+      # rather than turbo — so caching there let a job with nothing new to
+      # contribute re-save the PREVIOUS commit's cache under this commit's key,
+      # locking `ci` out of persisting the entries it had just produced. Found
+      # by codex review.
+      #
       # The key carries the SHA so each run writes its own entry; restore-keys
       # falls back to the most recent one for this OS, which is what makes an
       # unchanged package a cache hit. Keyed per-OS because Linux and Windows
-      # artefacts are not interchangeable.
+      # artefacts are not interchangeable, and those two never collide.
       - uses: actions/cache@v4
         with:
           path: .turbo/cache
@@ -157,10 +166,19 @@ jobs:
       # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
       # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
       #
+      # ONLY on the jobs that actually invoke turbo (this one and ci-windows).
+      # GitHub caches are immutable: the first job to finish claims the key.
+      # pack-smoke and e2e-smoke run in parallel, finish in 4 and 2 minutes
+      # against this job's 18, and go through `pnpm --filter … build` / `tsx`
+      # rather than turbo — so caching there let a job with nothing new to
+      # contribute re-save the PREVIOUS commit's cache under this commit's key,
+      # locking `ci` out of persisting the entries it had just produced. Found
+      # by codex review.
+      #
       # The key carries the SHA so each run writes its own entry; restore-keys
       # falls back to the most recent one for this OS, which is what makes an
       # unchanged package a cache hit. Keyed per-OS because Linux and Windows
-      # artefacts are not interchangeable.
+      # artefacts are not interchangeable, and those two never collide.
       - uses: actions/cache@v4
         with:
           path: .turbo/cache
@@ -195,24 +213,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-
-      # Turborepo's own cache, persisted between runs.
-      #
-      # Without it, every push re-ran every task for all ~26 packages — even
-      # the 25 nobody had touched. Measured on the run for PR #42, where only
-      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
-      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
-      #
-      # The key carries the SHA so each run writes its own entry; restore-keys
-      # falls back to the most recent one for this OS, which is what makes an
-      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
-      # artefacts are not interchangeable.
-      - uses: actions/cache@v4
-        with:
-          path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -251,24 +251,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-
-      # Turborepo's own cache, persisted between runs.
-      #
-      # Without it, every push re-ran every task for all ~26 packages — even
-      # the 25 nobody had touched. Measured on the run for PR #42, where only
-      # apps/runner changed: unit tests 595s, typecheck 222s, build 165s, out
-      # of an 18-minute job. `pnpm install` was 6s, because THAT cache exists.
-      #
-      # The key carries the SHA so each run writes its own entry; restore-keys
-      # falls back to the most recent one for this OS, which is what makes an
-      # unchanged package a cache hit. Keyed per-OS because Linux and Windows
-      # artefacts are not interchangeable.
-      - uses: actions/cache@v4
-        with:
-          path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
