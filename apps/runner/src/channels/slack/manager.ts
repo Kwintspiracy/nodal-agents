@@ -22,7 +22,11 @@ import {
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { logRepeatingFailure, reportRepeatingRecovery } from '../../lib/repeat-log.ts';
+import {
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+  clearRepeatingFailure,
+} from '../../lib/repeat-log.ts';
 import { startSlackSocket, type SlackSocketHandle, type SlackSocketOpts } from './socket.ts';
 
 export interface SlackManagerOpts {
@@ -40,12 +44,29 @@ export interface SlackManagerHandle {
   refreshNow(): Promise<void>;
   /** Number of sockets currently running (used by tests). */
   activeCount(): number;
+  /**
+   * How many DB scans have completed. Test-only: it is the one observable
+   * proof that a socket dying mid-scan gets a follow-up scan rather than
+   * having its request swallowed by the single-flight guard — the follow-up
+   * does not necessarily spawn anything (the backoff may hold it), so a spawn
+   * count cannot tell the two apart.
+   */
+  _scanCountForTests(): number;
 }
 
 interface ActiveSocket {
   agentId: string;
   credentialsHash: string;
-  handle: SlackSocketHandle;
+  /**
+   * Null only for the instant between registering this entry and the socket
+   * factory returning. The entry is registered FIRST so that a factory which
+   * fires onConnected/onClosed synchronously (a fake in tests, and nothing
+   * stops a real transport from doing it either) finds the state it needs — a
+   * callback closing over the `const handle` would hit the temporal dead zone
+   * and throw a ReferenceError, which the per-binding catch would swallow into
+   * a plausible-looking recovery (found by codex review, PR #42).
+   */
+  handle: SlackSocketHandle | null;
   /**
    * The socket told us it is finished (start() rejected, or the websocket
    * closed for good — Bolt's own reconnect is off, see socket.ts's
@@ -113,6 +134,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
    * afterwards closes that window without giving up single-flight.
    */
   let refreshQueued = false;
+  let scanCount = 0;
 
   function refresh(): Promise<void> {
     if (inFlightRefresh) {
@@ -134,6 +156,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
 
   async function refreshInternal(): Promise<void> {
     if (stopped) return;
+    scanCount++;
 
     let rows: Array<{ agentId: string; entityId: string | null; credentials: string }>;
     try {
@@ -206,7 +229,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
             // A new credential is a fresh start: clear any backoff earned by
             // the old one, which is exactly the operator fixing the problem.
             retry.delete(row.agentId);
-            await existing.handle.stop();
+            await existing.handle?.stop();
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
             continue;
@@ -227,7 +250,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
             // leaves that client alive and unreachable — manager shutdown can
             // never reach it, and two clients can briefly coexist on one
             // binding (duplicate inbound events).
-            await existing.handle.stop();
+            await existing.handle?.stop();
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
           } else {
@@ -254,7 +277,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
     // Despawn sockets whose binding disappeared, got disabled, or whose agent went inactive.
     for (const [agentId, sock] of active) {
       if (seen.has(agentId)) continue;
-      await sock.handle.stop();
+      await sock.handle?.stop();
       active.delete(agentId);
       // The retry penalty belongs to the binding, not to the agent id. Left
       // behind, it would be inherited by a binding reconfigured later — with a
@@ -262,6 +285,11 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       // backoff, and it would grow this map without bound as agents come and
       // go (found by codex review, PR #42).
       retry.delete(agentId);
+      // Same reasoning for the collapsed-failure state: left behind, a binding
+      // recreated later and failing for the SAME reason would have its first
+      // failure counted as a repeat and stay silent until the 20th — a new
+      // incident opening in silence, which is what this must never do.
+      clearRepeatingFailure(`slack-manager:socket:${agentId}`);
     }
   }
 
@@ -280,6 +308,16 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       );
       return;
     }
+    // Registered BEFORE the factory runs — see ActiveSocket.handle.
+    const entry: ActiveSocket = {
+      agentId,
+      credentialsHash,
+      handle: null,
+      dead: false,
+      connected: false,
+    };
+    active.set(agentId, entry);
+
     const handle = spawnSocket({
       agentId,
       agentEntityId: entityId,
@@ -291,9 +329,10 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         // Only mark THIS socket dead: by the time the callback fires the map
         // may already hold a newer socket for the same agent (a rotation
         // respawned it), and flagging that one would tear down a healthy
-        // connection on the next tick.
+        // connection on the next tick. Compared by ENTRY, not by handle, so
+        // this is correct even when called synchronously from the factory.
         const current = active.get(agentId);
-        if (current?.handle !== handle) return;
+        if (current !== entry) return;
         current.dead = true;
         const wasEstablished = current.connected;
         // One message per death, collapsed: a permanently invalid token dies
@@ -314,7 +353,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       },
       onConnected: () => {
         const current = active.get(agentId);
-        if (current?.handle !== handle) return;
+        if (current !== entry) return;
         current.connected = true;
         reportRepeatingRecovery(
           `slack-manager:socket:${agentId}`,
@@ -323,7 +362,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         );
       },
     });
-    active.set(agentId, { agentId, credentialsHash, handle, dead: false, connected: false });
+    entry.handle = handle;
   }
 
   async function tick(): Promise<void> {
@@ -343,7 +382,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         clearTimeout(timer);
         timer = null;
       }
-      await Promise.allSettled([...active.values()].map((sock) => sock.handle.stop()));
+      await Promise.allSettled([...active.values()].map((sock) => sock.handle?.stop()));
       active.clear();
     },
     async refreshNow(): Promise<void> {
@@ -358,6 +397,9 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
     },
     activeCount(): number {
       return active.size;
+    },
+    _scanCountForTests(): number {
+      return scanCount;
     },
   };
 }

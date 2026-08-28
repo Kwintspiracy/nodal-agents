@@ -149,6 +149,19 @@ export function reportRepeatingRecovery(key: string, render: (failures: number) 
   console.warn(render(state.count));
 }
 
+/**
+ * Forget everything tracked for `key`, WITHOUT logging a recovery line.
+ *
+ * For a site that has ceased to exist rather than recovered — a channel
+ * binding the operator deleted, say. Left behind, its counter would be
+ * inherited by a site recreated later under the same key, whose first failure
+ * would then be counted as a repeat and stay silent until the 20th: a new
+ * incident opening in silence.
+ */
+export function clearRepeatingFailure(key: string): void {
+  failureCounts.delete(key);
+}
+
 /** Test-only: clear all tracked state between cases. */
 export function _resetRepeatLogForTests(): void {
   failureCounts.clear();

@@ -461,27 +461,36 @@ describe('retry state does not outlive its binding', () => {
 describe('a death DURING an in-flight scan is not lost', () => {
   // Found by codex review on PR #42, 5th pass. `refresh()` is single-flight:
   // called while a scan is already running it just returns that scan's
-  // promise. If an established socket dies AFTER its own row has been
-  // processed by that in-flight scan, the immediate-respawn call collapses
-  // into it and nothing else is queued — the dead socket then sits registered
-  // until the 30s timer, missing messages, despite the promise of an immediate
-  // respawn. The manager must remember that a refresh was asked for and run
-  // one more after the current scan settles.
+  // promise. An established socket that dies while that scan is still in
+  // flight therefore has its immediate-respawn call swallowed — it sits
+  // registered until the 30s timer, missing messages, despite the immediate
+  // respawn this manager promises.
+  //
+  // Determinism note: the death is fired from inside the socket FACTORY, i.e.
+  // while the scan is provably still running and while this very binding is
+  // being processed. A two-agent version (kill A during B's spawn) reads more
+  // like the production race but is NOT deterministic — the scan has no ORDER
+  // BY, so B may be handled first and the same scan would then pick A up on
+  // its own, passing with or without the fix.
   it('runs another scan after the current one when a socket dies mid-scan', async () => {
     await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
 
-    const spawned: SlackSocketOpts[] = [];
     let killDuringSpawn = false;
     const spy = vi.fn<(opts: SlackSocketOpts) => SlackSocketHandle>((opts) => {
-      spawned.push(opts);
       opts.onConnected?.();
       if (killDuringSpawn) {
         killDuringSpawn = false;
-        // Dies while refreshInternal is still running, one await after its own
-        // row was handled — exactly the window the single-flight guard hides.
         opts.onClosed?.('disconnected');
       }
       return { async stop() {} };
+    });
+    const killLastOf = (f: typeof spy): void => {
+      f.mock.calls[f.mock.calls.length - 1]?.[0]?.onClosed?.('disconnected');
+    };
+
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
     });
 
     const manager = startSlackManager(makeDeps(db), {
@@ -490,14 +499,77 @@ describe('a death DURING an in-flight scan is not lost', () => {
       startSocket: spy,
     });
 
-    killDuringSpawn = true;
+    // 1st spawn, healthy.
     await manager.refreshNow();
-    // Let any queued follow-up scan run.
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    expect(spy).toHaveBeenCalledTimes(1);
+    const scansBefore = manager._scanCountForTests();
 
-    // Two spawns: the original, and the replacement for the one that died
-    // inside the scan. With the race, this stays at 1 until the 30s timer.
+    // Arm, then kill it OUTSIDE any scan. The death triggers the immediate
+    // respawn, which starts a scan of its own; the 2nd spawn happens inside
+    // THAT scan and dies there. No refreshNow is made afterwards, so the scan
+    // is genuinely the last one running — only a queued follow-up can bring
+    // the socket back. (Doing this through refreshNow instead would prove
+    // nothing: refreshNow always starts a fresh scan after the in-flight one,
+    // which would recover the socket with or without the queue.)
+    killDuringSpawn = true;
+    killLastOf(spy);
+    for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+    const scansAfter = manager._scanCountForTests();
+
+    // A callback throwing (e.g. reading a `const` still in its temporal dead
+    // zone) is swallowed by the per-binding catch and would let a later scan
+    // satisfy the count for the wrong reason — this test tripped exactly that
+    // before the entry was registered ahead of the factory call.
+    expect(errors.join(' | ')).not.toMatch(/ReferenceError|not defined/i);
+    // TWO scans ran after the death outside the scan: the one the immediate
+    // respawn started, and the queued follow-up for the socket that died
+    // inside it. Without the queue the second request is swallowed by the
+    // single-flight guard and only ONE runs — the assertion is on scans, not
+    // spawns, because the follow-up scan may legitimately decline to spawn
+    // (the backoff holds a socket that has now failed twice in a row).
+    expect(scansAfter - scansBefore).toBe(2);
     expect(spy).toHaveBeenCalledTimes(2);
+    await manager.stop();
+  });
+});
+
+describe('collapsed-failure state does not outlive its binding', () => {
+  // Found by codex review on PR #42, 6th pass. Clearing only the retry map on
+  // despawn left `slack-manager:socket:<agentId>` in the repeat-log: recreate
+  // that binding later, have it fail for the SAME reason, and its first
+  // failure is counted as a repeat — silent until the 20th. A new incident
+  // opening in silence is exactly what this must never do.
+  it('logs the first failure of a RECREATED binding in full', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warns.push(a.map(String).join(' '));
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    killLast('start failed: invalid_auth');
+    await manager.refreshNow();
+
+    // The operator deletes the binding…
+    await db.delete(channelBindings);
+    await manager.refreshNow();
+    expect(manager.activeCount()).toBe(0);
+
+    // …and recreates it later. It fails the SAME way.
+    await seedSlackBinding({ botToken: 'xoxb-bad2', appToken: 'xapp-bad2' });
+    await manager.refreshNow();
+    warns.length = 0;
+    killLast('start failed: invalid_auth');
+
+    // That failure must be visible immediately, not folded into the dead
+    // binding's tally.
+    expect(warns.filter((w) => w.includes('socket closed'))).toHaveLength(1);
     await manager.stop();
   });
 });
