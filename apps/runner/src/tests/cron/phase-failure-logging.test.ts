@@ -157,3 +157,38 @@ describe('runScheduleTick — out-of-order completions do not fake a recovery', 
     expect(warns.filter((w) => w.includes('runScheduleTick recovered'))).toEqual([]);
   });
 });
+
+describe('runScheduleTick — a superseded invocation still reports its failure', () => {
+  // Found by codex review on PR #42, 10th pass, as a P1 against the sequence
+  // guard added on the 9th. Applying that guard to the FAILURE path too meant
+  // that when schedule ticks overlap continuously — the documented case, a
+  // single schedule can legitimately run for minutes while the cron interval
+  // is 30s — every invocation is already stale by the time it rejects, so
+  // every failure was dropped and no incident was ever recorded.
+  //
+  // The asymmetry is the point: a stale SUCCESS must not clear newer failure
+  // state, but a stale FAILURE is still a real failure and must be logged.
+  it('logs a failure that lands after a newer invocation has started', async () => {
+    findPendingJobsToRecoverMock.mockResolvedValue([]);
+
+    let failSlow: (() => void) | null = null;
+    const slowFailure = new Promise<number>((_resolve, reject) => {
+      failSlow = () => reject(new Error('connection refused'));
+    });
+    // Keep the rejection owned so the test runner does not see it early.
+    slowFailure.catch(() => {});
+    runScheduleTickMock.mockReturnValueOnce(slowFailure);
+
+    // Tick 1 starts the slow, doomed call; tick 2 starts (and finishes) after.
+    await runCronTick(deps);
+    await runCronTick(deps);
+    warns.length = 0;
+
+    // The superseded invocation finally fails.
+    failSlow?.();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    expect(warns.filter((w) => w.includes('runScheduleTick failed'))).toHaveLength(1);
+  });
+});

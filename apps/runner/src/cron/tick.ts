@@ -272,14 +272,22 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   void runScheduleTick(deps.db, deps, maxTasksPerTick)
     .then((count) => {
       schedulesFired = count;
-      if (scheduleSeq !== scheduleTickSeq) return; // a newer invocation has the floor
+      // Only the latest invocation may CLEAR the failure state (see the
+      // catch below for why the failure path is deliberately not guarded).
+      if (scheduleSeq !== scheduleTickSeq) return;
       reportRepeatingRecovery(
         'cron:runScheduleTick',
         (failures) => `[cron] runScheduleTick recovered after ${failures} failed tick(s)`,
       );
     })
     .catch((err) => {
-      if (scheduleSeq !== scheduleTickSeq) return; // a newer invocation has the floor
+      // NO sequence guard here, deliberately. A stale SUCCESS must not clear
+      // newer failure state, but a stale FAILURE is still a real failure. A
+      // single schedule can legitimately run for minutes against a 30s
+      // interval, so invocations overlap continuously and every one of them is
+      // already superseded by the time it rejects — guarding this path made
+      // EVERY schedule failure silent (found by codex review, PR #42, as a P1
+      // against the guard added one pass earlier).
       // Same collapsing as guardPhase — these three phases keep their own
       // try/catch for the reasons documented above, but a database outage
       // makes them fail every tick just the same. Missing them would leave
