@@ -58,10 +58,32 @@ interface ActiveSocket {
 
 const DEFAULT_REFRESH_MS = 30_000;
 
+/**
+ * How many refreshes to skip before retrying a binding that keeps failing,
+ * indexed by consecutive failure count (capped at the last entry).
+ *
+ * Respawning a dead socket fixed an agent that stayed silently offline — but a
+ * credential that is invalid FOREVER would then be retried on every 30s
+ * refresh, each attempt writing a line and calling Slack again: one log storm
+ * traded for another, plus an unbounded API call rate against a bot that will
+ * never authenticate (found by codex review, PR #42). At a 30s refresh this
+ * walks out to ~16 minutes between attempts, so a token fixed later is still
+ * picked up on its own, just not hammered in the meantime.
+ */
+const RETRY_BACKOFF_REFRESHES = [0, 1, 3, 7, 15, 31];
+
+function backoffFor(consecutiveFailures: number): number {
+  const idx = Math.min(consecutiveFailures, RETRY_BACKOFF_REFRESHES.length - 1);
+  return RETRY_BACKOFF_REFRESHES[idx] ?? 31;
+}
+
 export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): SlackManagerHandle {
   const refreshMs = opts.refreshIntervalMs ?? DEFAULT_REFRESH_MS;
   const spawnSocket = opts.startSocket ?? startSlackSocket;
   const active = new Map<string, ActiveSocket>();
+  // Consecutive spawn failures per agent, and how many refreshes still to skip
+  // before the next attempt. Cleared the moment a socket actually connects.
+  const retry = new Map<string, { consecutiveFailures: number; refreshesToWait: number }>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   // Single-flight lock — same race-fix as discord/manager.ts: a second caller
@@ -148,8 +170,26 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
           //     start() failed or whose websocket closed stayed registered
           //     forever and the agent was silently offline — the manager only
           //     ever looked at the credential.
-          if (existing.credentialsHash !== hash || existing.dead) {
-            if (!existing.dead) await existing.handle.stop();
+          const rotated = existing.credentialsHash !== hash;
+          if (rotated) {
+            // A new credential is a fresh start: clear any backoff earned by
+            // the old one, which is exactly the operator fixing the problem.
+            retry.delete(row.agentId);
+            await existing.handle.stop();
+            active.delete(row.agentId);
+            spawnOne(row.agentId, row.entityId, hash, creds);
+            continue;
+          }
+          if (existing.dead) {
+            const state = retry.get(row.agentId) ?? { consecutiveFailures: 0, refreshesToWait: 0 };
+            if (state.refreshesToWait > 0) {
+              state.refreshesToWait--;
+              retry.set(row.agentId, state);
+              continue;
+            }
+            state.consecutiveFailures++;
+            state.refreshesToWait = backoffFor(state.consecutiveFailures);
+            retry.set(row.agentId, state);
             active.delete(row.agentId);
             spawnOne(row.agentId, row.entityId, hash, creds);
           }
@@ -197,13 +237,35 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       appToken,
       deps,
       env: opts.env,
-      onClosed: () => {
+      onClosed: (reason) => {
         // Only mark THIS socket dead: by the time the callback fires the map
         // may already hold a newer socket for the same agent (a rotation
         // respawned it), and flagging that one would tear down a healthy
         // connection on the next tick.
         const current = active.get(agentId);
-        if (current?.handle === handle) current.dead = true;
+        if (current?.handle !== handle) return;
+        current.dead = true;
+        // One message per death, collapsed: a permanently invalid token dies
+        // on every retry, and a line per attempt is the storm this whole
+        // change exists to prevent. The identity is the reason, so a DIFFERENT
+        // failure (auth error becoming a network error) still surfaces at once.
+        logRepeatingFailure(
+          `slack-manager:socket:${agentId}`,
+          reason,
+          (count) =>
+            `[slack-manager agent=${agentId}] socket closed (${reason}); respawning on a later ` +
+            `refresh with freshly-read credentials (attempt ${count})`,
+        );
+      },
+      onConnected: () => {
+        const current = active.get(agentId);
+        if (current?.handle !== handle) return;
+        retry.delete(agentId);
+        reportRepeatingRecovery(
+          `slack-manager:socket:${agentId}`,
+          (failures) =>
+            `[slack-manager agent=${agentId}] socket connected after ${failures} failed attempt(s)`,
+        );
       },
     });
     active.set(agentId, { agentId, credentialsHash, handle, dead: false });

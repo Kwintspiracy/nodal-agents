@@ -258,9 +258,25 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   void runScheduleTick(deps.db, deps, maxTasksPerTick)
     .then((count) => {
       schedulesFired = count;
+      reportRepeatingRecovery(
+        'cron:runScheduleTick',
+        (failures) => `[cron] runScheduleTick recovered after ${failures} failed tick(s)`,
+      );
     })
     .catch((err) => {
-      console.warn('[cron] runScheduleTick failed (tick continues):', err);
+      // Same collapsing as guardPhase — these three phases keep their own
+      // try/catch for the reasons documented above, but a database outage
+      // makes them fail every tick just the same. Missing them would leave
+      // three lines per tick growing the log linearly, which is the very
+      // thing this change exists to stop (found by codex review, PR #42).
+      logRepeatingFailure(
+        'cron:runScheduleTick',
+        err instanceof Error ? err.message : String(err),
+        () =>
+          `[cron] runScheduleTick failed (tick continues): ${
+            err instanceof Error ? (err.stack ?? err.message) : String(err)
+          }`,
+      );
     });
 
   // deliverCompletedRoots already fail-isolates PER ROOT internally (a bad
@@ -273,8 +289,24 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   let rootsDelivered = 0;
   try {
     rootsDelivered = await deliverCompletedRoots(deps.db);
+    reportRepeatingRecovery(
+      'cron:deliverCompletedRoots',
+      (failures) => `[cron] deliverCompletedRoots recovered after ${failures} failed tick(s)`,
+    );
   } catch (err) {
-    console.warn('[cron] deliverCompletedRoots failed (tick continues):', err);
+    // Same collapsing as guardPhase — these three phases keep their own
+    // try/catch for the reasons documented above, but a database outage
+    // makes them fail every tick just the same. Missing them would leave
+    // three lines per tick growing the log linearly, which is the very
+    // thing this change exists to stop (found by codex review, PR #42).
+    logRepeatingFailure(
+      'cron:deliverCompletedRoots',
+      err instanceof Error ? err.message : String(err),
+      () =>
+        `[cron] deliverCompletedRoots failed (tick continues): ${
+          err instanceof Error ? (err.stack ?? err.message) : String(err)
+        }`,
+    );
   }
 
   // The curator (Phase 1 lifecycle SQL + Phase 2 LLM passes) must never be
@@ -296,8 +328,24 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   };
   try {
     curatorResult = await runCuratorTick(deps.db, deps);
+    reportRepeatingRecovery(
+      'cron:runCuratorTick',
+      (failures) => `[cron] runCuratorTick recovered after ${failures} failed tick(s)`,
+    );
   } catch (err) {
-    console.warn('[cron] runCuratorTick failed (tick continues):', err);
+    // Same collapsing as guardPhase — these three phases keep their own
+    // try/catch for the reasons documented above, but a database outage
+    // makes them fail every tick just the same. Missing them would leave
+    // three lines per tick growing the log linearly, which is the very
+    // thing this change exists to stop (found by codex review, PR #42).
+    logRepeatingFailure(
+      'cron:runCuratorTick',
+      err instanceof Error ? err.message : String(err),
+      () =>
+        `[cron] runCuratorTick failed (tick continues): ${
+          err instanceof Error ? (err.stack ?? err.message) : String(err)
+        }`,
+    );
   }
 
   // Community skill update-check — throttled per-skill (last_update_check_at),

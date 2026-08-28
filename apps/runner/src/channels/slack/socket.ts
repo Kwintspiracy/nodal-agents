@@ -53,8 +53,20 @@ export interface SlackSocketOpts {
    *
    * Never called on a `stop()` we initiated: a deliberate shutdown is not a
    * death to recover from.
+   *
+   * The socket does NOT log the death itself: a permanently invalid token dies
+   * on every retry, and a line per attempt from here plus one from the manager
+   * was two log storms where the point was to have none. The manager owns the
+   * message, with repeat-collapsing and backoff.
    */
   onClosed?: (reason: string) => void;
+  /**
+   * Called once the socket is really connected. Clears the manager's retry
+   * backoff for this binding, so a binding that failed ten times and then
+   * works is retried immediately the next time it drops — the earlier failures
+   * are history, not a permanent penalty.
+   */
+  onConnected?: () => void;
 }
 
 export interface SlackSocketHandle {
@@ -152,10 +164,6 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   const reportClosed = (reason: string): void => {
     if (shuttingDown || closedReported) return;
     closedReported = true;
-    console.warn(
-      `[slack-socket agent=${agentId}] socket closed (${reason}); the manager will respawn it ` +
-        'on its next refresh with freshly-read credentials',
-    );
     opts.onClosed?.(reason);
   };
 
@@ -389,6 +397,7 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       // connected (and as which bot identity) requires a DB round-trip
       // instead of a grep. auth.test() is a single, cheap identity call made
       // once per successful connect, not per event.
+      opts.onConnected?.();
       try {
         const identity = await app.client.auth.test();
         console.warn(
@@ -396,6 +405,8 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
             `(team=${identity.team ?? 'unknown'})`,
         );
       } catch (err) {
+        // Already reported connected above — auth.test is an identity nicety,
+        // not the liveness signal.
         console.warn(
           `[slack-socket agent=${agentId}] connected (socket mode), but auth.test failed: ${
             err instanceof Error ? err.message : String(err)
@@ -404,18 +415,14 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       }
     })
     .catch((err) => {
-      console.warn(
-        `[slack-socket agent=${agentId}] start failed (invalid token(s)?): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
       // The old comment here promised "will retry on the manager's next
       // refresh". It did not: spawnOne registered this socket in the active
       // set whether or not start() succeeded, and the manager only respawns on
       // a credential CHANGE — so a socket that never connected stayed
       // registered forever and the agent was silently offline. Reporting the
-      // failure is what makes that promise true.
-      reportClosed('start failed');
+      // failure is what makes that promise true. The MESSAGE is the manager's
+      // to write (once, with backoff), not ours per attempt.
+      reportClosed(`start failed: ${err instanceof Error ? err.message : String(err)}`);
     });
 
   return {
