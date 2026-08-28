@@ -396,10 +396,22 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     });
   });
 
-  void app
+  // The whole startup chain, retained so stop() can await it. init() awaits an
+  // `auth.test` round-trip, so there is a real window in which the manager may
+  // despawn or rotate this binding: without the guards below, stop() would
+  // disconnect the receiver and this continuation would then call start()
+  // anyway — and the Slack SDK clears its own shutdown flag inside start(), so
+  // the discarded app reconnects as an ORPHAN, with no handle the manager can
+  // reach, happily processing messages on credentials the operator has just
+  // removed (found by codex review, PR #42).
+  const startup = app
     .init()
-    .then(() => app.start())
+    .then(() => {
+      if (shuttingDown) return;
+      return app.start();
+    })
     .then(async () => {
+      if (shuttingDown) return;
       // Same observability discipline as discord/gateway.ts's ClientReady log
       // ("logged in as ...") — without it, confirming a socket actually
       // connected (and as which bot identity) requires a DB round-trip
@@ -423,6 +435,7 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       }
     })
     .catch((err) => {
+      if (shuttingDown) return;
       // The old comment here promised "will retry on the manager's next
       // refresh". It did not: spawnOne registered this socket in the active
       // set whether or not start() succeeded, and the manager only respawns on
@@ -433,9 +446,16 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       reportClosed(`start failed: ${err instanceof Error ? err.message : String(err)}`);
     });
 
+  void startup;
+
   return {
     async stop(): Promise<void> {
       shuttingDown = true;
+      // Await the startup chain before tearing down: if init() is still in
+      // flight, letting stop() return first is exactly how an orphan socket
+      // gets created. The chain never rejects (it ends in a catch), so this
+      // cannot throw here.
+      await startup;
       await app.stop();
     },
   };
