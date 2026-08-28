@@ -46,7 +46,7 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 ### 🏠 Own your whole stack
 
 - **Local-first** — single command, embedded Postgres, zero cloud dependency.
-- **Your data & keys** — conversations, memory, and credentials never leave your machine; API keys are AES-256-GCM encrypted at rest.
+- **Your data & keys** — conversations, memory, and credentials never leave your machine, and every credential is AES-256-GCM encrypted at rest: API keys, OAuth tokens, MCP server secrets, the bot tokens of every messaging channel, and your webhook secrets.
 - **Workspaces** — multiple isolated workspaces on one install (personal vs work), each with its own agents, skills, connectors, jobs, and memory.
 - **No markup** — bring your own API keys; you pay the provider directly, nothing on top.
 
