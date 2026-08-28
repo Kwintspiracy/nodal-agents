@@ -1,0 +1,699 @@
+// socket-lifecycle.test.ts — a Slack socket that DIES must come back.
+//
+// Three defects this pins, all observed on a real install (the 25/08 token
+// rotation, runner.log lines 482-490):
+//
+//  1. UNHANDLED REJECTION. @slack/socket-mode 2.0.7 reconnects by calling
+//     `delayReconnectAttempt(this.start)`, whose body is
+//     `cb.apply(this).then(res)` — no `.catch`. When the retry hits an
+//     UNRECOVERABLE error (`invalid_auth` after a token revocation),
+//     `retrieveWSSURL` rethrows, and nothing owns that rejection: it escapes
+//     as a process-level `unhandledRejection`. Our own `app.start().catch()`
+//     never sees it — that promise already resolved on the first connect.
+//     Fix: own the reconnect ourselves (autoReconnectEnabled: false), which
+//     routes the failure back into the promise WE await.
+//
+//  2. A DEAD SOCKET IS NEVER RESPAWNED. spawnOne registered the socket in
+//     `active` unconditionally, including when `start()` failed. The manager
+//     only respawns on a CREDENTIAL CHANGE, so a socket that never connected
+//     (or that disconnected for good) stayed in `active` forever and the agent
+//     was silently offline. The code even carried a comment promising "will
+//     retry on the manager's next refresh" — it never did.
+//
+//  3. A RECONNECT REUSED A STALE TOKEN. Bolt's internal reconnect re-dials
+//     with the credentials captured at construction, so rotating the token
+//     while the socket lived meant reconnecting with the OLD one forever.
+//     Respawning through the manager re-reads the binding instead. NOTE: this
+//     one gets no test of its own on purpose — a rotation ALREADY triggers a
+//     respawn through the fingerprint path, so any test written for it would
+//     pass with or without this change and prove nothing. What is asserted
+//     below is the part that is genuinely new: the respawn after a death
+//     carries the credential as currently stored.
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { channelBindings, encryptChannelCredentials } from '@nodal-agents/db';
+import { _setMasterKeyForTests } from '@nodal-agents/secrets';
+import { startSlackManager } from '../../../channels/slack/manager.ts';
+import { slackReceiverOptions } from '../../../channels/slack/socket.ts';
+import type { SlackSocketHandle, SlackSocketOpts } from '../../../channels/slack/socket.ts';
+import type { RunnerDeps } from '../../../deps.ts';
+import type { RunnerEnv } from '../../../env.ts';
+
+const testEnv = { WORKER_SECRET: 's', APP_URL: 'http://localhost:3099' } as unknown as RunnerEnv;
+
+function makeDeps(db: TestDb): RunnerDeps {
+  return {
+    db: db as unknown as RunnerDeps['db'],
+    llmClient: {} as RunnerDeps['llmClient'],
+    embeddingClient: {} as RunnerDeps['embeddingClient'],
+    registry: {} as RunnerDeps['registry'],
+    authProvider: {} as RunnerDeps['authProvider'],
+    close: async () => {},
+  };
+}
+
+let db: TestDb;
+let seed: { entityId: string; agentId: string };
+
+beforeEach(async () => {
+  _setMasterKeyForTests(Buffer.alloc(32, 5));
+  const result = await spinUpTestDb();
+  db = result.db;
+  seed = await seedMinimal(db);
+});
+
+async function seedSlackBinding(creds: { botToken: string; appToken: string }): Promise<void> {
+  await db.insert(channelBindings).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    channel: 'slack',
+    credentials: encryptChannelCredentials(creds),
+    enabled: true,
+  });
+}
+
+/**
+ * A fake socket factory that hands each spawned socket a way to report its own
+ * death, exactly as the real one does once `start()` rejects or the websocket
+ * closes for good.
+ */
+function makeFakeSockets() {
+  const spawned: SlackSocketOpts[] = [];
+  // Each fake carries its own liveness so tests can assert the STATE of the
+  // connection rather than how many times the factory was called (invariant
+  // #5 — a call count would pass even if the live socket had been torn down).
+  const live: Array<{ agentId: string; stopped: boolean }> = [];
+  const spy = vi.fn<(opts: SlackSocketOpts) => SlackSocketHandle>((opts) => {
+    spawned.push(opts);
+    const state = { agentId: opts.agentId, stopped: false };
+    live.push(state);
+    return {
+      async stop() {
+        state.stopped = true;
+      },
+    };
+  });
+  const killLast = (reason: string): void => {
+    const last = spawned[spawned.length - 1];
+    last?.onClosed?.(reason);
+  };
+  const connectLast = (): void => {
+    const last = spawned[spawned.length - 1];
+    last?.onConnected?.();
+  };
+  return { spy, spawned, live, killLast, connectLast };
+}
+
+describe('slack manager — a dead socket is respawned', () => {
+  it('respawns a socket that reported it closed for good', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // The websocket died (revoked token, Slack closed the session, …).
+    killLast('invalid_auth');
+
+    await manager.refreshNow();
+
+    // Without the fix the manager sees an unchanged credential and does
+    // nothing — the agent stays offline forever.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(manager.activeCount()).toBe(1);
+    // The respawn went through the normal read path, so it carries the
+    // credential as stored NOW — Bolt's own reconnect re-dials with whatever
+    // it captured at construction and would never pick up a rotation.
+    expect(spy.mock.calls[1]?.[0]?.botToken).toBe('xoxb-1');
+    await manager.stop();
+  });
+
+  it('leaves a HEALTHY socket connected across refreshes', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, live, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    connectLast();
+    await manager.refreshNow();
+    await manager.refreshNow();
+
+    // The assertion is on the socket's STATE, not the factory's call count:
+    // the connection opened first is still the live one, and was never torn
+    // down and rebuilt behind the scenes.
+    expect(live).toHaveLength(1);
+    expect(live[0]?.stopped).toBe(false);
+    expect(manager.activeCount()).toBe(1);
+    await manager.stop();
+    // …and a deliberate shutdown DOES stop it, so `stopped` is a real signal
+    // rather than a field nothing ever writes.
+    expect(live[0]?.stopped).toBe(true);
+  });
+
+  it('stops tracking a dead socket whose binding was removed in the meantime', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+
+    killLast('invalid_auth');
+    await db.delete(channelBindings);
+    await manager.refreshNow();
+
+    // No resurrection of a binding the operator deleted.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(manager.activeCount()).toBe(0);
+    await manager.stop();
+  });
+});
+
+describe('slackReceiverOptions — we own the reconnect, not Bolt', () => {
+  it('disables Bolt auto-reconnect', () => {
+    // This single flag is what stops the unhandled rejection at its source:
+    // with autoReconnectEnabled false, SocketModeClient neither calls
+    // `delayReconnectAttempt(this.start)` on close (the un-caught promise) nor
+    // swallows an unrecoverable error inside retrieveWSSURL — the failure
+    // surfaces through the `start()` promise we already await and .catch().
+    expect(slackReceiverOptions('xapp-token').autoReconnectEnabled).toBe(false);
+  });
+
+  it('passes the app token through', () => {
+    expect(slackReceiverOptions('xapp-token').appToken).toBe('xapp-token');
+  });
+});
+
+describe('a permanently invalid credential must not become a new log storm', () => {
+  // Found by codex review on PR #42, against the fix in that same PR: making a
+  // dead socket respawn means a token that is invalid FOREVER gets retried on
+  // every 30s refresh, each attempt writing "start failed" + "socket closed"
+  // and calling Slack again. That trades one log storm for another — and adds
+  // an unbounded API call rate against a bot that will never authenticate.
+  //
+  // The retry therefore backs off: after each consecutive failure the manager
+  // waits an increasing number of refreshes before trying again, and the
+  // counter resets the moment a socket actually connects (or the credential
+  // changes, which respawns through the fingerprint path regardless).
+  it('backs off instead of retrying every refresh', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // 20 refreshes, the socket dying immediately every time.
+    for (let i = 0; i < 20; i++) {
+      await manager.refreshNow();
+      killLast('start failed');
+    }
+
+    // Without backoff this is 20 spawns (and 20 calls to Slack). With it, a
+    // handful — but never zero after the first, or a token fixed later would
+    // never be picked up.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(6);
+    expect(spy.mock.calls.length).toBeGreaterThan(1);
+    await manager.stop();
+  });
+
+  it('clears the backoff once a socket SURVIVES a full refresh cycle', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // Three failed starts in a row build up a wait.
+    for (let i = 0; i < 3; i++) {
+      await manager.refreshNow();
+      killLast('start failed: invalid_auth');
+    }
+
+    // Slack comes back. Surviving a whole refresh — not merely having
+    // connected once — is what clears the penalty: a socket that connects and
+    // dies immediately, repeatedly, must keep backing off (see the flapping
+    // case below), so `onConnected` alone deliberately does NOT reset it.
+    let spawnsBefore = spy.mock.calls.length;
+    for (let i = 0; i < 40 && spy.mock.calls.length === spawnsBefore; i++) {
+      await manager.refreshNow();
+    }
+    connectLast();
+    await manager.refreshNow();
+
+    // A later, unrelated drop is now retried at once — the earlier failures
+    // are history, not a permanent penalty on this binding.
+    spawnsBefore = spy.mock.calls.length;
+    killLast('disconnected');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    expect(spy.mock.calls.length).toBe(spawnsBefore + 1);
+    await manager.stop();
+  });
+
+  it('collapses the repeated failure logs instead of one pair per attempt', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warns.push(a.map(String).join(' '));
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    for (let i = 0; i < 40; i++) {
+      await manager.refreshNow();
+      killLast('start failed');
+    }
+
+    const deathLines = warns.filter(
+      (w) => w.includes('slack-manager') && w.includes('start failed'),
+    );
+    expect(deathLines.length).toBeLessThanOrEqual(3);
+    // The first one is always there: a broken binding is never silent.
+    expect(deathLines.length).toBeGreaterThan(0);
+    await manager.stop();
+  });
+});
+
+describe('an ESTABLISHED socket comes back at once, not on the next scan', () => {
+  // Found by codex review on PR #42, 3rd pass. Slack rotates connections on
+  // its own (`refresh_requested`) — routine, frequent, and harmless while Bolt
+  // reconnected itself. With Bolt's auto-reconnect off, every one of those
+  // became terminal, and the replacement waited for the next 30s scan: a
+  // recurring ingress gap where messages are missed, caused by the fix rather
+  // than by any fault. A socket that HAD connected therefore triggers an
+  // immediate managed refresh; the backoff still governs sockets that never
+  // connected at all.
+  const settle = async (): Promise<void> => {
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  };
+
+  it('respawns without waiting for a refresh call', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    connectLast();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Slack rotates the connection. NOTE: no refreshNow() below — that is the
+    // whole point.
+    killLast('disconnected');
+    await settle();
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    await manager.stop();
+  });
+
+  it('does NOT trigger its own immediate respawn when the socket never connected', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    // Drain the constructor's own tick first: with a scan still in flight, the
+    // queued-refresh path would run another scan and pick the dead socket up
+    // legitimately, which is not what this test is about.
+    await manager.refreshNow();
+    await settle();
+    const spawnsBefore = spy.mock.calls.length;
+
+    // A failed start must not, by itself, kick off a new scan — retrying an
+    // invalid token the instant it fails is how this becomes an unbounded call
+    // rate against Slack. It is still retried later, on the backoff schedule
+    // (see the backoff cases above).
+    killLast('start failed: invalid_auth');
+    await settle();
+
+    expect(spy.mock.calls.length).toBe(spawnsBefore);
+    await manager.stop();
+  });
+
+  it('stops the dead socket before replacing it', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+    const { spy, live, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    connectLast();
+
+    // A transport error reports closure while the old client's close
+    // handshake and timers may still be running. Dropping the handle without
+    // stopping it leaves that client alive AND unreachable — the manager's own
+    // shutdown can never stop it, and two clients can briefly coexist on one
+    // binding (duplicate inbound events).
+    killLast('transport error: socket hang up');
+    await settle();
+
+    expect(live).toHaveLength(2);
+    expect(live[0]?.stopped).toBe(true);
+    expect(live[1]?.stopped).toBe(false);
+    await manager.stop();
+  });
+
+  it('a socket that dies right after connecting, over and over, still backs off', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-flappy', appToken: 'xapp-1' });
+    const { spy, killLast, connectLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+
+    // 15 connect-then-die cycles. Immediate respawn must not turn a flapping
+    // connection into a hot loop: only a socket that SURVIVES a full refresh
+    // cycle counts as healthy enough to clear the backoff.
+    for (let i = 0; i < 15; i++) {
+      connectLast();
+      killLast('disconnected');
+      await settle();
+    }
+
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(8);
+    await manager.stop();
+  });
+});
+
+describe('retry state does not outlive its binding', () => {
+  // Found by codex review on PR #42, 4th pass. A despawned binding left its
+  // entry in the retry map: reconfigure that agent later — with a brand new
+  // token — and its first failure inherits the old penalty, waiting up to 31
+  // refreshes (~16 minutes) before a second attempt. Deleted agents also left
+  // the map growing without bound.
+  it('a reconfigured binding starts from a clean backoff', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // Fail enough times to earn the longest wait (31 refreshes).
+    for (let i = 0; i < 40; i++) {
+      await manager.refreshNow();
+      killLast('start failed: invalid_auth');
+    }
+
+    // The operator removes the binding entirely…
+    await db.delete(channelBindings);
+    await manager.refreshNow();
+    expect(manager.activeCount()).toBe(0);
+
+    // …then configures it again with a working token. The first spawn happens
+    // regardless (nothing is in `active`), so the inherited penalty only shows
+    // on the NEXT failure — which is exactly where a stale entry would hurt:
+    // the fresh binding would sit out the dead one's 31-refresh wait.
+    await seedSlackBinding({ botToken: 'xoxb-fresh', appToken: 'xapp-fresh' });
+    await manager.refreshNow();
+    killLast('start failed: transient');
+
+    const spawnsBefore = spy.mock.calls.length;
+    // A clean binding retries on its very next refresh (backoff[1] === 0).
+    await manager.refreshNow();
+
+    expect(spy.mock.calls.length).toBe(spawnsBefore + 1);
+    expect(spy.mock.calls[spy.mock.calls.length - 1]?.[0]?.botToken).toBe('xoxb-fresh');
+    await manager.stop();
+  });
+});
+
+describe('a death DURING an in-flight scan is not lost', () => {
+  // Found by codex review on PR #42, 5th pass. `refresh()` is single-flight:
+  // called while a scan is already running it just returns that scan's
+  // promise. An established socket that dies while that scan is still in
+  // flight therefore has its immediate-respawn call swallowed — it sits
+  // registered until the 30s timer, missing messages, despite the immediate
+  // respawn this manager promises.
+  //
+  // Determinism note: the death is fired from inside the socket FACTORY, i.e.
+  // while the scan is provably still running and while this very binding is
+  // being processed. A two-agent version (kill A during B's spawn) reads more
+  // like the production race but is NOT deterministic — the scan has no ORDER
+  // BY, so B may be handled first and the same scan would then pick A up on
+  // its own, passing with or without the fix.
+  it('runs another scan after the current one when a socket dies mid-scan', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+
+    let killDuringSpawn = false;
+    const spy = vi.fn<(opts: SlackSocketOpts) => SlackSocketHandle>((opts) => {
+      opts.onConnected?.();
+      if (killDuringSpawn) {
+        killDuringSpawn = false;
+        opts.onClosed?.('disconnected');
+      }
+      return { async stop() {} };
+    });
+    const killLastOf = (f: typeof spy): void => {
+      f.mock.calls[f.mock.calls.length - 1]?.[0]?.onClosed?.('disconnected');
+    };
+
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // 1st spawn, healthy.
+    await manager.refreshNow();
+    expect(spy).toHaveBeenCalledTimes(1);
+    const scansBefore = manager._scanCountForTests();
+
+    // Arm, then kill it OUTSIDE any scan. The death triggers the immediate
+    // respawn, which starts a scan of its own; the 2nd spawn happens inside
+    // THAT scan and dies there. No refreshNow is made afterwards, so the scan
+    // is genuinely the last one running — only a queued follow-up can bring
+    // the socket back. (Doing this through refreshNow instead would prove
+    // nothing: refreshNow always starts a fresh scan after the in-flight one,
+    // which would recover the socket with or without the queue.)
+    killDuringSpawn = true;
+    killLastOf(spy);
+    for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+    const scansAfter = manager._scanCountForTests();
+
+    // A callback throwing (e.g. reading a `const` still in its temporal dead
+    // zone) is swallowed by the per-binding catch and would let a later scan
+    // satisfy the count for the wrong reason — this test tripped exactly that
+    // before the entry was registered ahead of the factory call.
+    expect(errors.join(' | ')).not.toMatch(/ReferenceError|not defined/i);
+    // TWO scans ran after the death outside the scan: the one the immediate
+    // respawn started, and the queued follow-up for the socket that died
+    // inside it. Without the queue the second request is swallowed by the
+    // single-flight guard and only ONE runs — the assertion is on scans, not
+    // spawns, because the follow-up scan may legitimately decline to spawn
+    // (the backoff holds a socket that has now failed twice in a row).
+    expect(scansAfter - scansBefore).toBe(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+    await manager.stop();
+  });
+});
+
+describe('collapsed-failure state does not outlive its binding', () => {
+  // Found by codex review on PR #42, 6th pass. Clearing only the retry map on
+  // despawn left `slack-manager:socket:<agentId>` in the repeat-log: recreate
+  // that binding later, have it fail for the SAME reason, and its first
+  // failure is counted as a repeat — silent until the 20th. A new incident
+  // opening in silence is exactly what this must never do.
+  it('logs the first failure of a RECREATED binding in full', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warns.push(a.map(String).join(' '));
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    killLast('start failed: invalid_auth');
+    await manager.refreshNow();
+
+    // The operator deletes the binding…
+    await db.delete(channelBindings);
+    await manager.refreshNow();
+    expect(manager.activeCount()).toBe(0);
+
+    // …and recreates it later. It fails the SAME way.
+    await seedSlackBinding({ botToken: 'xoxb-bad2', appToken: 'xapp-bad2' });
+    await manager.refreshNow();
+    warns.length = 0;
+    killLast('start failed: invalid_auth');
+
+    // That failure must be visible immediately, not folded into the dead
+    // binding's tally.
+    expect(warns.filter((w) => w.includes('socket closed'))).toHaveLength(1);
+    await manager.stop();
+  });
+});
+
+describe('a socket factory that throws does not wedge the binding', () => {
+  // Found by codex review on PR #42, 7th pass — a consequence of registering
+  // the entry BEFORE calling the factory (itself a fix from the pass before).
+  // If construction throws synchronously, the placeholder stays in `active`
+  // with a null handle and dead:false: every later refresh reads it as a
+  // healthy socket, so the agent is offline until its credentials change or
+  // the process restarts, with a single log line to show for it.
+  it('retries after the factory throws instead of holding a dead placeholder', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-1', appToken: 'xapp-1' });
+
+    let throwOnce = true;
+    const spy = vi.fn<(opts: SlackSocketOpts) => SlackSocketHandle>(() => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error('construction blew up');
+      }
+      return { async stop() {} };
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    await manager.refreshNow();
+
+    // The discriminator is the SECOND attempt. A surviving placeholder reads
+    // as a healthy socket, so the manager never calls the factory again: the
+    // count stays at 1 and the agent is offline for good. (activeCount alone
+    // cannot tell the two apart — a placeholder counts as one entry, exactly
+    // like a real socket.)
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(manager.activeCount()).toBe(1);
+    // …and what is registered is a REAL socket: stopping the manager reaches
+    // it, which a null-handle placeholder would not prove.
+    await manager.stop();
+    expect(manager.activeCount()).toBe(0);
+  });
+});
+
+describe('rotating a credential opens a fresh incident', () => {
+  // Found by codex review on PR #42, 8th pass — the same defect as the despawn
+  // path (6th pass) on the other branch: rotation cleared the retry backoff
+  // but not the collapsed-failure state. An operator who rotates a token after
+  // a run of failures, and whose NEW token fails the same way, would have that
+  // first failure counted as a repeat of the old credential's and stay silent
+  // until the 20th. Each credential has to start its own visible incident.
+  it('logs the first failure of a ROTATED credential in full', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-old', appToken: 'xapp-1' });
+    const { spy, killLast } = makeFakeSockets();
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warns.push(a.map(String).join(' '));
+    });
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+    await manager.refreshNow();
+    killLast('start failed: invalid_auth');
+    await manager.refreshNow();
+
+    // The operator rotates the token — and the new one is wrong too.
+    await db.update(channelBindings).set({
+      credentials: encryptChannelCredentials({ botToken: 'xoxb-new', appToken: 'xapp-1' }),
+    });
+    await manager.refreshNow();
+    warns.length = 0;
+    killLast('start failed: invalid_auth');
+
+    expect(warns.filter((w) => w.includes('socket closed'))).toHaveLength(1);
+    await manager.stop();
+  });
+});
+
+describe('a start still in flight does not clear the backoff', () => {
+  // Found by codex review on PR #42. A socket whose start() is STILL PENDING
+  // across a 30s refresh has dead:false and connected:false — and the "alive
+  // across a refresh" branch cleared its retry state on that basis alone.
+  // Slack's client retries connection setup internally during a network
+  // outage, so a pending start spanning a refresh is the normal shape of an
+  // outage, not an edge case: the backoff reset every cycle and the throttling
+  // never took effect.
+  it('keeps the accumulated backoff while the socket has not connected', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-slow', appToken: 'xapp-slow' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // Build up a real penalty: three failed starts.
+    for (let i = 0; i < 3; i++) {
+      await manager.refreshNow();
+      killLast('start failed: timeout');
+    }
+    const spawnsAfterFailures = spy.mock.calls.length;
+
+    // The next attempt hangs — start() never settles, so the socket is neither
+    // dead nor connected. Several refreshes pass in that state.
+    const spawns = spy.mock.calls.length;
+    for (let i = 0; i < 30 && spy.mock.calls.length === spawns; i++) {
+      await manager.refreshNow();
+    }
+    expect(spy.mock.calls.length).toBeGreaterThan(spawnsAfterFailures);
+    for (let i = 0; i < 5; i++) await manager.refreshNow();
+
+    // It finally fails. The backoff must resume from the accumulated count,
+    // not restart from zero — otherwise the next attempt is immediate and the
+    // throttle is defeated exactly when it is needed.
+    const spawnsBeforeFailure = spy.mock.calls.length;
+    killLast('start failed: timeout');
+    await manager.refreshNow();
+
+    expect(spy.mock.calls.length).toBe(spawnsBeforeFailure);
+    await manager.stop();
+  });
+});

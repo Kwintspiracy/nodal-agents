@@ -24,6 +24,13 @@ import {
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import {
+  describeError,
+  errorIdentity,
+  renderError,
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+} from '../../lib/repeat-log.ts';
+import {
   startDiscordGateway,
   type DiscordGatewayHandle,
   type DiscordGatewayOpts,
@@ -103,11 +110,21 @@ export function startDiscordManager(
           ),
         );
     } catch (err) {
-      console.warn(
-        `[discord-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      // The scan runs every 30s. With the database gone it fails forever, and
+      // five managers each logging it per tick is what buried a real
+      // runner.log (see lib/repeat-log.ts). First failure in full, then a
+      // count.
+      logRepeatingFailure(
+        'discord-manager:db-scan',
+        errorIdentity(err),
+        () => `[discord-manager] DB scan failed: ${renderError(err)}`,
       );
       return;
     }
+    reportRepeatingRecovery(
+      'discord-manager:db-scan',
+      (failures) => `[discord-manager] DB scan recovered after ${failures} failed attempt(s)`,
+    );
 
     const seen = new Set<string>();
 
@@ -149,9 +166,9 @@ export function startDiscordManager(
         spawnOne(row.agentId, row.entityId, hash, creds);
       } catch (err) {
         console.error(
-          `[discord-manager agent=${row.agentId}] refresh failed for this binding: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[discord-manager agent=${row.agentId}] refresh failed for this binding: ${describeError(
+            err,
+          )}`,
         );
         continue;
       }

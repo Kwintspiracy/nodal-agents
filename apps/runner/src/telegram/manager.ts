@@ -15,6 +15,12 @@ import { isNotNull, eq, and } from '@nodal-agents/db';
 import { agents, decryptChannelSecret } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
+import {
+  errorIdentity,
+  renderError,
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+} from '../lib/repeat-log.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';
 
 export interface TelegramManagerOpts {
@@ -74,11 +80,21 @@ export function startTelegramManager(
         .from(agents)
         .where(and(isNotNull(agents.telegramBotToken), eq(agents.active, true)));
     } catch (err) {
-      console.warn(
-        `[telegram-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+      // The scan runs every 30s. With the database gone it fails forever, and
+      // five managers each logging it per tick is what buried a real
+      // runner.log (see lib/repeat-log.ts). First failure in full, then a
+      // count.
+      logRepeatingFailure(
+        'telegram-manager:db-scan',
+        errorIdentity(err),
+        () => `[telegram-manager] DB scan failed: ${renderError(err)}`,
       );
       return;
     }
+    reportRepeatingRecovery(
+      'telegram-manager:db-scan',
+      (failures) => `[telegram-manager] DB scan recovered after ${failures} failed attempt(s)`,
+    );
 
     const seen = new Set<string>();
 
@@ -94,9 +110,7 @@ export function startTelegramManager(
       try {
         token = decryptChannelSecret(row.botToken, `telegram bot token (agent ${row.id})`);
       } catch (err) {
-        console.error(
-          `[telegram-manager agent=${row.id}] ${err instanceof Error ? err.message : String(err)}`,
-        );
+        console.error(`[telegram-manager agent=${row.id}] ${renderError(err)}`);
         continue;
       }
       seen.add(row.id);
@@ -143,11 +157,7 @@ export function startTelegramManager(
       env: opts.env,
     })
       .catch((err) => {
-        console.error(
-          `[telegram-manager agent=${agentId}] poller crashed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+        console.error(`[telegram-manager agent=${agentId}] poller crashed: ${renderError(err)}`);
         return { reason: 'aborted', finalOffset: startOffset } satisfies PollerExit;
       })
       .finally(() => {

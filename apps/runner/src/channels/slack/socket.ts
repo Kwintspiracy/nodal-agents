@@ -27,7 +27,7 @@
 // dropped before anything else runs — the hard rule, mirrored from
 // discord/gateway.ts's `message.author.bot` check.
 
-import { App } from '@slack/bolt';
+import { App, SocketModeReceiver } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { eq } from '@nodal-agents/db';
 import { channelAllowedConversations } from '@nodal-agents/db';
@@ -45,10 +45,57 @@ export interface SlackSocketOpts {
   appToken: string;
   deps: RunnerDeps;
   env: RunnerEnv;
+  /**
+   * Called ONCE when this socket is finished — `start()` rejected, or the
+   * websocket closed and will not come back on its own. The manager uses it to
+   * drop the socket from its active set so the next refresh respawns it with
+   * freshly-read credentials.
+   *
+   * Never called on a `stop()` we initiated: a deliberate shutdown is not a
+   * death to recover from.
+   *
+   * The socket does NOT log the death itself: a permanently invalid token dies
+   * on every retry, and a line per attempt from here plus one from the manager
+   * was two log storms where the point was to have none. The manager owns the
+   * message, with repeat-collapsing and backoff.
+   */
+  onClosed?: (reason: string) => void;
+  /**
+   * Called once the socket is really connected. Clears the manager's retry
+   * backoff for this binding, so a binding that failed ten times and then
+   * works is retried immediately the next time it drops — the earlier failures
+   * are history, not a permanent penalty.
+   */
+  onConnected?: () => void;
 }
 
 export interface SlackSocketHandle {
   stop(): Promise<void>;
+}
+
+/**
+ * Options for the Socket Mode receiver — exported so the reconnect posture is
+ * assertable without standing up a real websocket.
+ *
+ * `autoReconnectEnabled: false` is the whole point. @slack/socket-mode 2.0.7
+ * reconnects via `delayReconnectAttempt(this.start)`, whose body is
+ * `cb.apply(this).then(res)` — with no `.catch`. When that retry hits an
+ * UNRECOVERABLE error (`invalid_auth` after the token was revoked),
+ * `retrieveWSSURL` rethrows into a promise nobody owns, and it surfaces as a
+ * process-level `unhandledRejection`. Observed on a real install during the
+ * 25/08 token rotation; only the runner's global handler kept the process up.
+ *
+ * Turning Bolt's reconnect off makes the failure land in the `start()` promise
+ * WE await, and hands the retry to the manager — which already owns spawn /
+ * despawn, rescans every 30s, and (unlike Bolt, which re-dials with the
+ * credentials it captured at construction) re-reads the binding, so a rotated
+ * token is actually picked up.
+ */
+export function slackReceiverOptions(appToken: string): {
+  appToken: string;
+  autoReconnectEnabled: boolean;
+} {
+  return { appToken, autoReconnectEnabled: false };
 }
 
 /**
@@ -103,7 +150,49 @@ async function resolveSenderName(client: WebClient, userId: string): Promise<str
 export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   const { agentId, agentEntityId, botToken, appToken, deps, env } = opts;
 
-  const app = new App({ token: botToken, appToken, socketMode: true });
+  // Own the receiver rather than letting App build one: it is the only way to
+  // reach the SocketModeClient (a public field) and to set the reconnect
+  // posture (see slackReceiverOptions). `socketMode` is NOT passed alongside —
+  // supplying a receiver already selects the transport.
+  const receiver = new SocketModeReceiver(slackReceiverOptions(appToken));
+  // `deferInitialization` puts US in charge of App.init(), which verifies the
+  // BOT token with an `auth.test` call. Left to Bolt, that verification runs on
+  // its own and its rejection belongs to nobody: a revoked bot token surfaces
+  // as a process-level `unhandledRejection` with the socket reporting itself
+  // "connected". Found by running the real thing against a deliberately
+  // invalidated token — eleven review passes and 1 137 tests had not caught it,
+  // because every one of them used a fake.
+  const app = new App({
+    token: botToken,
+    receiver,
+    deferInitialization: true,
+    // The Web API client defaults to NO request timeout and a retry policy
+    // that runs for roughly half an hour. init()'s `auth.test` therefore has
+    // no bound of its own: with Slack unreachable it can sit there for the
+    // whole window, and anything waiting on startup waits with it (found by
+    // codex review, PR #42). A bounded request fails fast, the manager's
+    // backoff takes over, and a retry costs one refresh instead of 30 minutes.
+    clientOptions: { timeout: 15_000 },
+  });
+
+  // `stop()` is a deliberate shutdown, not a death: it must not trigger the
+  // manager's respawn path, and onClosed fires at most once either way.
+  let shuttingDown = false;
+  let closedReported = false;
+  const reportClosed = (reason: string): void => {
+    if (shuttingDown || closedReported) return;
+    closedReported = true;
+    opts.onClosed?.(reason);
+  };
+
+  // With Bolt's own reconnect disabled, a close is terminal for THIS socket.
+  // Both events are wired: 'disconnected' is what SocketModeClient emits on a
+  // close when autoReconnect is off, and 'error' covers a transport failure
+  // that never reaches a clean close.
+  receiver.client.on('disconnected', () => reportClosed('disconnected'));
+  receiver.client.on('error', (err: unknown) => {
+    reportClosed(`transport error: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   app.error(async (err) => {
     console.error(`[slack-socket agent=${agentId}] app error: ${err.message}`);
@@ -318,14 +407,37 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     });
   });
 
-  void app
-    .start()
+  // The whole startup chain, retained so stop() can await it. init() awaits an
+  // `auth.test` round-trip, so there is a real window in which the manager may
+  // despawn or rotate this binding: without the guards below, stop() would
+  // disconnect the receiver and this continuation would then call start()
+  // anyway — and the Slack SDK clears its own shutdown flag inside start(), so
+  // the discarded app reconnects as an ORPHAN, with no handle the manager can
+  // reach, happily processing messages on credentials the operator has just
+  // removed (found by codex review, PR #42).
+  const startup = app
+    .init()
     .then(async () => {
+      if (shuttingDown) return;
+      await app.start();
+      // Check AGAIN, and act rather than just return. stop() may have run
+      // while start() was awaiting `apps.connections.open`: its own app.stop()
+      // found nothing to disconnect, and Slack's SocketModeClient then opened
+      // the websocket unconditionally. Returning here would leave that socket
+      // connected, on credentials the operator has removed, with no handle the
+      // manager can reach (found by codex review, PR #42 — the fourth shape of
+      // this same orphan-socket race, which is why the guard now closes the
+      // connection instead of merely declining to use it).
+      if (shuttingDown) await app.stop().catch(() => {});
+    })
+    .then(async () => {
+      if (shuttingDown) return;
       // Same observability discipline as discord/gateway.ts's ClientReady log
       // ("logged in as ...") — without it, confirming a socket actually
       // connected (and as which bot identity) requires a DB round-trip
       // instead of a grep. auth.test() is a single, cheap identity call made
       // once per successful connect, not per event.
+      opts.onConnected?.();
       try {
         const identity = await app.client.auth.test();
         console.warn(
@@ -333,6 +445,8 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
             `(team=${identity.team ?? 'unknown'})`,
         );
       } catch (err) {
+        // Already reported connected above — auth.test is an identity nicety,
+        // not the liveness signal.
         console.warn(
           `[slack-socket agent=${agentId}] connected (socket mode), but auth.test failed: ${
             err instanceof Error ? err.message : String(err)
@@ -341,16 +455,36 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
       }
     })
     .catch((err) => {
-      console.warn(
-        `[slack-socket agent=${agentId}] start failed (invalid token(s)?): ${
-          err instanceof Error ? err.message : String(err)
-        }; will retry on the manager's next refresh`,
-      );
+      if (shuttingDown) return;
+      // The old comment here promised "will retry on the manager's next
+      // refresh". It did not: spawnOne registered this socket in the active
+      // set whether or not start() succeeded, and the manager only respawns on
+      // a credential CHANGE — so a socket that never connected stayed
+      // registered forever and the agent was silently offline. Reporting the
+      // failure is what makes that promise true. The MESSAGE is the manager's
+      // to write (once, with backoff), not ours per attempt.
+      reportClosed(`start failed: ${err instanceof Error ? err.message : String(err)}`);
     });
+
+  void startup;
 
   return {
     async stop(): Promise<void> {
-      await app.stop();
+      shuttingDown = true;
+      // Deliberately NOT awaiting the startup chain. Two review passes landed
+      // here: awaiting it before app.stop() deadlocks (a pending Socket Mode
+      // start() only settles on a connect/disconnect event, which app.stop()
+      // is what triggers), and awaiting it at all can block for the Web API's
+      // ~30-minute retry window when Slack is unreachable — wedging the
+      // manager refresh and the runner's own shutdown.
+      //
+      // It is also unnecessary: `shuttingDown` is checked before every step of
+      // that chain, so a late init() can no longer reach start() and cannot
+      // produce an orphan socket. The chain is left to settle on its own; it
+      // ends in a catch, so it never surfaces as an unhandled rejection.
+      await app.stop().catch(() => {
+        // start() may never have run (init still in flight) — nothing to stop.
+      });
     },
   };
 }
