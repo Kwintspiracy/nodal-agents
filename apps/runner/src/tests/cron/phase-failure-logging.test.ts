@@ -171,7 +171,7 @@ describe('runScheduleTick — a superseded invocation still reports its failure'
   it('logs a failure that lands after a newer invocation has started', async () => {
     findPendingJobsToRecoverMock.mockResolvedValue([]);
 
-    let failSlow: (() => void) | null = null;
+    let failSlow: () => void = () => {};
     const slowFailure = new Promise<number>((_resolve, reject) => {
       failSlow = () => reject(new Error('connection refused'));
     });
@@ -185,7 +185,7 @@ describe('runScheduleTick — a superseded invocation still reports its failure'
     warns.length = 0;
 
     // The superseded invocation finally fails.
-    failSlow?.();
+    failSlow();
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
