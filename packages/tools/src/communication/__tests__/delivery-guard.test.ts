@@ -79,14 +79,48 @@ vi.mock('@nodal-agents/db', () => {
   };
 });
 
+// resolveBotToken routes the TELEGRAM path through getBindingCredentials now
+// (it owns the per-channel split AND the at-rest decryption) where it used to
+// read agents.telegram_bot_token inline. This reinstalls a stand-in for that
+// branch: read the agent row off the fake db, return the token under
+// `botToken`. Called from every beforeEach that resets the mock, so a
+// cross-channel test's mockResolvedValueOnce still takes precedence.
+function installTelegramBindingCredentialsDefault(): void {
+  getBindingCredentialsMock.mockImplementation(
+    async (db: {
+      select: () => { from: () => { where: () => { limit: () => Promise<unknown[]> } } };
+    }) => {
+      const rows = await db.select().from().where().limit();
+      const row = rows[0] as { telegramBotToken?: string | null } | undefined;
+      return row?.telegramBotToken ? { botToken: row.telegramBotToken } : null;
+    },
+  );
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function makeFakeDb(rows: unknown[]) {
+  // This fake ignores the SELECT projection and returns `rows` verbatim, so a
+  // row fixture must carry every key its reader asks for. resolveBotToken now
+  // reads the telegram token through getBindingCredentials, which projects it
+  // as `botToken`; the legacy inline query projected `telegramBotToken`. Rows
+  // are normalised to carry both rather than pinning the fixture to whichever
+  // query shape is current — the real projection, and the decryption the real
+  // reader performs, are covered on pglite in
+  // packages/db/src/tests/channel-secrets-at-rest.test.ts.
+  const normalised = rows.map((r) => {
+    if (r === null || typeof r !== 'object') return r;
+    const row = r as Record<string, unknown>;
+    if ('telegramBotToken' in row && !('botToken' in row)) {
+      return { ...row, botToken: row['telegramBotToken'] };
+    }
+    return row;
+  });
   return {
     select: vi.fn(() => ({
       from: () => ({
         where: () => ({
-          limit: () => Promise.resolve(rows),
+          limit: () => Promise.resolve(normalised),
         }),
       }),
     })),
@@ -107,6 +141,10 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 // ─── resolveBotToken ────────────────────────────────────────────────────────
 
 describe('resolveBotToken', () => {
+  beforeEach(() => {
+    installTelegramBindingCredentialsDefault();
+  });
+
   it("resolves the agent's OWN DB row token — no inheritance from any other agent", async () => {
     const ctx = makeCtx({
       db: makeFakeDb([{ telegramBotToken: 'agent-token' }]) as unknown as ToolContext['db'],
@@ -126,6 +164,7 @@ describe('resolveBotToken', () => {
   describe('discord (channel-parametric, D2)', () => {
     beforeEach(() => {
       getBindingCredentialsMock.mockReset();
+      installTelegramBindingCredentialsDefault();
     });
 
     it("resolves the discord binding's botToken via getBindingCredentials", async () => {
@@ -152,6 +191,7 @@ describe('resolveBotToken', () => {
     beforeEach(() => {
       getChannelBindingMock.mockReset();
       getBindingCredentialsMock.mockReset();
+      installTelegramBindingCredentialsDefault();
     });
 
     it('resolves credentials for the TARGET channel when it has an enabled binding', async () => {
@@ -193,6 +233,7 @@ describe('resolveBotToken', () => {
     beforeEach(() => {
       getChannelBindingMock.mockReset();
       getBindingCredentialsMock.mockReset();
+      installTelegramBindingCredentialsDefault();
     });
 
     it('wins over the resolveTransportChannel default when no explicit channel arg is given', async () => {
@@ -223,7 +264,15 @@ describe('resolveBotToken', () => {
       });
 
       await expect(resolveBotToken(ctx)).resolves.toBe('agent-token');
-      expect(getBindingCredentialsMock).not.toHaveBeenCalled();
+      // The property under test is WHICH channel was resolved, not which
+      // function fetched the credential. This used to assert
+      // `getBindingCredentials` was never called, which only held while the
+      // telegram branch read agents.telegram_bot_token inline; that branch now
+      // goes through getBindingCredentials too (it owns the at-rest
+      // decryption). Asserting the channel keeps the regression this test
+      // exists for — an absent override must NOT silently pick another channel.
+      expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'telegram');
+      expect(getChannelBindingMock).not.toHaveBeenCalled();
     });
   });
 });

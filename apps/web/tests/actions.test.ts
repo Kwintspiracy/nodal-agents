@@ -38,6 +38,22 @@ afterAll(() => {
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
+/**
+ * Read back what a channel writer actually persisted into
+ * `channel_bindings.credentials`.
+ *
+ * The column is ENCRYPTED AT REST since 2026-08-28, so a test can no longer
+ * `JSON.parse` it directly. Asserting the DECRYPTED bag keeps every existing
+ * assertion about WHICH credentials were written, while the `isEncrypted`
+ * check below is what actually pins the at-rest property — without it a
+ * regression back to plaintext would sail straight through, since a plaintext
+ * blob parses too.
+ */
+function parseStoredCredentials(stored: string): unknown {
+  expect(isEncrypted(stored)).toBe(true);
+  return JSON.parse(decrypt(stored));
+}
+
 // ─── Minimal Drizzle chain mock ───────────────────────────────────────────────
 // Drizzle builders are awaitable — they resolve on `.then()`.
 // We create a factory that returns a chainable object where the final
@@ -637,7 +653,13 @@ describe('configureAgentChannelAction — dual-write (S4)', () => {
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const updateSetSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
     const updateArg = updateSetSpy.set.mock.calls[0]![0] as Record<string, unknown>;
-    expect(updateArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    // Stored ENCRYPTED at rest (2026-08-28) — assert both halves: the
+    // column does not hold the clear token, and it decrypts back to it.
+    expect(updateArg['telegramBotToken']).not.toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    expect(isEncrypted(updateArg['telegramBotToken'] as string)).toBe(true);
+    expect(decrypt(updateArg['telegramBotToken'] as string)).toBe(
+      '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    );
     expect(updateArg['telegramBotUsername']).toBe('dw_bot');
 
     // Dual-write: channel_bindings mirror, plaintext JSON credentials (S2
@@ -649,7 +671,7 @@ describe('configureAgentChannelAction — dual-write (S4)', () => {
     const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
     expect(insertArg['channel']).toBe('telegram');
     expect(insertArg['agentId']).toBe('aaaaaaaa-0000-0000-0000-000000000061');
-    expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
+    expect(parseStoredCredentials(insertArg['credentials'] as string)).toEqual({
       botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
     });
 
@@ -723,7 +745,7 @@ describe('Discord channel actions (D3)', () => {
     const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
     expect(insertArg['channel']).toBe('discord');
     expect(insertArg['agentId']).toBe(AGENT_ID);
-    expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
+    expect(parseStoredCredentials(insertArg['credentials'] as string)).toEqual({
       botToken: 'a-fake-discord-token-long-enough',
     });
     expect(insertArg['botIdentity']).toEqual({
@@ -889,7 +911,7 @@ describe('Slack channel actions (K3)', () => {
     const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
     expect(insertArg['channel']).toBe('slack');
     expect(insertArg['agentId']).toBe(AGENT_ID);
-    expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
+    expect(parseStoredCredentials(insertArg['credentials'] as string)).toEqual({
       botToken: 'xoxb-a-fake-slack-bot-token', // secrets:allow — fixture factice
       appToken: 'xapp-a-fake-slack-app-token',
     });
@@ -1027,7 +1049,9 @@ describe('WhatsApp channel actions (W3)', () => {
     expect(insertArg['channel']).toBe('whatsapp');
     expect(insertArg['agentId']).toBe(AGENT_ID);
     expect(insertArg['enabled']).toBe(true);
-    const creds = JSON.parse(insertArg['credentials'] as string) as { sessionDir: string };
+    const creds = parseStoredCredentials(insertArg['credentials'] as string) as {
+      sessionDir: string;
+    };
     expect(creds.sessionDir).toContain('.nodalai');
     expect(creds.sessionDir).toContain('whatsapp');
     expect(creds.sessionDir).toContain(insertArg['id'] as string);
@@ -2052,7 +2076,10 @@ describe('configureAgentChannelAction — telegram behavior', () => {
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
     const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
-    expect(setArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    expect(setArg['telegramBotToken']).not.toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    expect(decrypt(setArg['telegramBotToken'] as string)).toBe(
+      '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    );
     expect(setArg['telegramBotUsername']).toBe('my_bot');
     expect(setArg['telegramOffset']).toBe(0);
 
@@ -2153,7 +2180,10 @@ describe('configureAgentChannelAction — telegram behavior', () => {
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
     const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
-    expect(setArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    expect(setArg['telegramBotToken']).not.toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    expect(decrypt(setArg['telegramBotToken'] as string)).toBe(
+      '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    );
     // Fallback to 0 when drain failed
     expect(setArg['telegramOffset']).toBe(0);
 

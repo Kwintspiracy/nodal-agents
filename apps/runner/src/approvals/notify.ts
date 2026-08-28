@@ -22,6 +22,7 @@ import {
   telegramAllowedChats,
   getChannelBinding,
   getBindingCredentials,
+  decryptChannelSecret,
   resolveOwnerConversation,
 } from '@nodal-agents/db';
 import { redactSecretsForAudit, renderExplanationText } from '@nodal-agents/shared';
@@ -137,7 +138,21 @@ export async function resolveTelegramDeliveryTarget(
       );
       return null;
     }
-    const bt: string | null = row.botToken;
+    // Encrypted at rest since 2026-08-28 — the walk hands the token straight
+    // to the Telegram API, so it must be the plaintext. A row that cannot be
+    // decrypted aborts THIS walk (no delivery target) rather than shipping
+    // ciphertext to api.telegram.org, which would fail as an opaque 401.
+    let bt: string | null = null;
+    if (row.botToken !== null) {
+      try {
+        bt = decryptChannelSecret(row.botToken, `telegram bot token (agent ${row.agentId})`);
+      } catch (err) {
+        console.error(
+          `[approval-notify agent=${row.agentId}] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      }
+    }
     const rc: string | null = row.chatId ?? chatId;
     if (bt !== null && rc !== null) {
       return { agentId: row.agentId, botToken: bt, chatId: rc };

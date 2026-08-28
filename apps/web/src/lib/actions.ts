@@ -85,6 +85,8 @@ import {
   channelAllowedConversations,
   listChannelBindings,
   getChannelBinding,
+  encryptChannelCredentials,
+  encryptChannelSecret,
   getMcpApprovalContext,
   cliRuns,
 } from '@nodal-agents/db';
@@ -2552,7 +2554,7 @@ export async function configureAgentChannelAction(
     await db
       .update(agents)
       .set({
-        telegramBotToken: botToken,
+        telegramBotToken: encryptChannelSecret(botToken),
         telegramBotUsername: botInfo.username,
         telegramOffset: initialOffset,
         updatedAt: new Date(),
@@ -2568,7 +2570,7 @@ export async function configureAgentChannelAction(
         entityId: session.entityId,
         agentId,
         channel: 'telegram',
-        credentials: JSON.stringify({ botToken }),
+        credentials: encryptChannelCredentials({ botToken }),
         botIdentity: { username: botInfo.username ?? undefined },
         cursor: String(initialOffset),
         enabled: true,
@@ -2576,7 +2578,7 @@ export async function configureAgentChannelAction(
       .onConflictDoUpdate({
         target: [channelBindings.agentId, channelBindings.channel],
         set: {
-          credentials: JSON.stringify({ botToken }),
+          credentials: encryptChannelCredentials({ botToken }),
           botIdentity: { username: botInfo.username ?? undefined },
           cursor: String(initialOffset),
           enabled: true,
@@ -2647,14 +2649,14 @@ async function configureDiscordChannel(
       entityId: session.entityId,
       agentId,
       channel: 'discord',
-      credentials: JSON.stringify({ botToken }),
+      credentials: encryptChannelCredentials({ botToken }),
       botIdentity,
       enabled: true,
     })
     .onConflictDoUpdate({
       target: [channelBindings.agentId, channelBindings.channel],
       set: {
-        credentials: JSON.stringify({ botToken }),
+        credentials: encryptChannelCredentials({ botToken }),
         botIdentity,
         enabled: true,
         updatedAt: new Date(),
@@ -2725,14 +2727,14 @@ async function configureSlackChannel(
       entityId: session.entityId,
       agentId,
       channel: 'slack',
-      credentials: JSON.stringify({ botToken, appToken }),
+      credentials: encryptChannelCredentials({ botToken, appToken }),
       botIdentity,
       enabled: true,
     })
     .onConflictDoUpdate({
       target: [channelBindings.agentId, channelBindings.channel],
       set: {
-        credentials: JSON.stringify({ botToken, appToken }),
+        credentials: encryptChannelCredentials({ botToken, appToken }),
         botIdentity,
         enabled: true,
         updatedAt: new Date(),
@@ -2950,7 +2952,7 @@ export async function startWhatsAppPairingAction(agentId: string): Promise<Actio
         entityId: session.entityId,
         agentId,
         channel: 'whatsapp',
-        credentials: JSON.stringify({ sessionDir: whatsAppSessionDir(bindingId) }),
+        credentials: encryptChannelCredentials({ sessionDir: whatsAppSessionDir(bindingId) }),
         enabled: true,
       });
     }
@@ -9013,7 +9015,9 @@ export async function createWebhookTriggerAction(
         slug,
         taskTemplate: parsed.data.taskTemplate,
         active: true,
-        secret,
+        // Stored encrypted at rest; the PLAINTEXT is returned to the caller
+        // below because this is the one moment the user must copy the URL.
+        secret: encryptChannelSecret(secret),
         notifyOnSuccess: parsed.data.notifyOnSuccess,
         notifyChannel: parsed.data.notifyChannel,
       })
@@ -9046,7 +9050,7 @@ export async function rotateWebhookSecretAction(
     const secret = randomBytes(16).toString('hex');
     await db
       .update(webhookTriggers)
-      .set({ secret, updatedAt: new Date() })
+      .set({ secret: encryptChannelSecret(secret), updatedAt: new Date() })
       .where(eq(webhookTriggers.id, id));
 
     revalidatePath('/automations');

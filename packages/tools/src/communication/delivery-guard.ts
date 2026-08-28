@@ -15,9 +15,7 @@
 // `telegram_send_rate_limited`, and `source_path_not_allowed` are new,
 // shared names.
 
-import { eq } from '@nodal-agents/db';
 import {
-  agents,
   resolveOwnerConversation,
   isConversationAllowed,
   getBindingCredentials,
@@ -111,17 +109,14 @@ export async function resolveBotToken(
   explicitChannel?: ChannelKind,
 ): Promise<string | undefined> {
   const channel = await resolveChannelForJob(ctx, explicitChannel);
-  if (channel !== 'telegram') {
-    const creds = await getBindingCredentials(ctx.db, ctx.agentId, channel);
-    return creds?.['botToken'] ?? undefined;
-  }
-
-  const agentRows = await ctx.db
-    .select({ telegramBotToken: agents.telegramBotToken })
-    .from(agents)
-    .where(eq(agents.id, ctx.agentId))
-    .limit(1);
-  return agentRows[0]?.telegramBotToken ?? undefined;
+  // Every channel — telegram included — now goes through getBindingCredentials,
+  // which owns the transitional split (telegram reads agents.telegram_bot_token,
+  // the rest read channel_bindings) AND the decryption of the encrypted-at-rest
+  // value. The telegram branch used to read the column inline here, which was
+  // fine while the token was plaintext and would hand the caller ciphertext
+  // now.
+  const creds = await getBindingCredentials(ctx.db, ctx.agentId, channel);
+  return creds?.['botToken'] ?? undefined;
 }
 
 // ─── Per-job delivery ceiling (L4) ─────────────────────────────────────────

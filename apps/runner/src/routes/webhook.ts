@@ -15,7 +15,7 @@
 
 import type { Context } from 'hono';
 import { eq, sql, resolveOwnerConversation } from '@nodal-agents/db';
-import { webhookTriggers, agentJobs } from '@nodal-agents/db';
+import { webhookTriggers, agentJobs, decryptChannelSecret } from '@nodal-agents/db';
 import { resolveTransportChannel, listActiveChannelsForAgent } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
@@ -219,11 +219,28 @@ export async function webhookRoute(
     .where(eq(webhookTriggers.slug, slug))
     .limit(1);
 
+  // The stored secret is encrypted at rest (2026-08-28); rows written before
+  // that migration are still plaintext and pass through untouched. Decrypting
+  // here — and never comparing against the stored blob — means DB read access
+  // alone does not let anyone fire a webhook: they would also need the master
+  // key at ~/.nodalai/secrets.key.
+  let expectedSecret: string | null = null;
+  if (trigger?.secret) {
+    try {
+      expectedSecret = decryptChannelSecret(trigger.secret, `webhook secret (${slug})`);
+    } catch (err) {
+      // Undecryptable → this trigger cannot authenticate anyone. Log it (the
+      // operator has to rotate the secret) and fall through to the SAME 404 as
+      // every other rejection, preserving the route's 404-uniformity property.
+      console.error(`[webhook ${slug}] ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   if (
     !trigger ||
     !trigger.active ||
-    !trigger.secret ||
-    !isValidWorkerSecret(providedSecret, trigger.secret)
+    !expectedSecret ||
+    !isValidWorkerSecret(providedSecret, expectedSecret)
   ) {
     return c.json({ error: 'not_found' }, 404);
   }

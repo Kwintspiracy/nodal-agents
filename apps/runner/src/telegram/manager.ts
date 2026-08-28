@@ -12,7 +12,7 @@
 // We can swap in pg_notify later if it matters.
 
 import { isNotNull, eq, and } from '@nodal-agents/db';
-import { agents } from '@nodal-agents/db';
+import { agents, decryptChannelSecret } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';
@@ -83,8 +83,22 @@ export function startTelegramManager(
     const seen = new Set<string>();
 
     for (const row of rows) {
-      const token = row.botToken;
-      if (!token || !row.entityId) continue;
+      if (!row.botToken || !row.entityId) continue;
+      // The column is encrypted at rest; a row written before that migration
+      // is still plaintext and passes through untouched. A row we CANNOT
+      // decrypt (master key replaced / DB restored from another install) is
+      // skipped with a named error instead of taking the whole manager down —
+      // the other agents' pollers must keep running. Not adding it to `seen`
+      // also despawns any poller still holding the stale token.
+      let token: string;
+      try {
+        token = decryptChannelSecret(row.botToken, `telegram bot token (agent ${row.id})`);
+      } catch (err) {
+        console.error(
+          `[telegram-manager agent=${row.id}] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        continue;
+      }
       seen.add(row.id);
 
       const existing = active.get(row.id);

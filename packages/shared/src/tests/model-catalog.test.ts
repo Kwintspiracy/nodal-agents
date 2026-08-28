@@ -9,6 +9,7 @@ import {
   findModelCatalogEntry,
   modelToolsSupport,
   modelOptionLabel,
+  modelCanSeeImages,
 } from '../model-catalog';
 
 describe('modelContextWindow', () => {
@@ -253,5 +254,43 @@ describe('modelOptionLabel', () => {
       capabilities: { tools: false, forcedToolChoice: false },
     };
     expect(modelOptionLabel(fixture)).toBe('Fixture Model (no tools)');
+  });
+});
+
+describe('GLM 5.3 Flash', () => {
+  // Every value below was read off OpenRouter's /api/v1/models on 2026-08-28
+  // (z-ai/glm-5.3-flash). They are asserted rather than eyeballed because a
+  // wrong context window silently mis-sizes runtime compaction and wrong
+  // pricing mis-reports every job's cost.
+  const flash = findModelCatalogEntry('openrouter', 'z-ai/glm-5.3-flash');
+
+  it('is catalogued under the openrouter provider', () => {
+    expect(flash).toBeDefined();
+    expect(flash?.label).toBe('GLM 5.3 Flash');
+  });
+
+  it('carries the upstream context window (1.31M — LARGER than full 5.3)', () => {
+    expect(modelContextWindow('openrouter', 'z-ai/glm-5.3-flash')).toBe(1_310_720);
+    // Guards the copy-paste failure mode: reusing 5.3's window for its sibling.
+    expect(modelContextWindow('openrouter', 'z-ai/glm-5.3')).toBe(1_048_576);
+  });
+
+  it('carries the upstream pricing', () => {
+    expect(flash?.pricing).toEqual({ inputPerMillionUsd: 0.075, outputPerMillionUsd: 0.25 });
+  });
+
+  it('supports tools, and reasoning WITHOUT the family mandatory flag', () => {
+    expect(flash?.capabilities.tools).toBe(true);
+    expect(flash?.capabilities.forcedToolChoice).toBe(false);
+    expect(flash?.capabilities.reasoning).toBe(true);
+    // 5.2/5.3 are mandatory:true (they always think). Nothing upstream says
+    // Flash does, so 'off' must remain offered — no guessed mandatory flag.
+    expect(flash?.capabilities.reasoningControl?.mandatory).toBeUndefined();
+    expect(flash?.capabilities.reasoningControl?.levels).toEqual(['low', 'medium', 'high', 'max']);
+  });
+
+  it('is vision-capable, while the full 5.3 is text-only', () => {
+    expect(modelCanSeeImages('z-ai/glm-5.3-flash')).toBe(true);
+    expect(modelCanSeeImages('z-ai/glm-5.3')).toBe(false);
   });
 });

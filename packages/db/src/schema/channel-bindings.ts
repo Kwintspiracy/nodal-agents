@@ -3,13 +3,23 @@
 // Generalizes agents.telegram_bot_token / telegram_bot_username / telegram_offset
 // to any channel, so future channels (Discord, Slack, WhatsApp) don't grow
 // their own set of hardcoded columns on `agents`. One row per (agent, channel):
-//   - credentials: opaque ciphertext. @nodal-agents/db never imports
-//     @nodal-agents/secrets (architecture rule — only the writer layer does),
-//     so this column is untyped `text` here; callers encrypt/decrypt using the
-//     same `enc:v1:{iv}:{tag}:{ct}` convention as entity_llm_keys.apiKey.
-//     Migration 0064's Telegram back-fill stores the token AS-IS (plaintext
-//     JSON, matching agents.telegram_bot_token's current at-rest state) —
-//     encryption-at-rest for it arrives when the writer layer migrates (S3+).
+//   - credentials: a JSON credential bag, ENCRYPTED AT REST since 2026-08-28
+//     using the same `enc:v1:{iv}:{tag}:{ct}` convention as
+//     entity_llm_keys.apiKey. Untyped `text` because the envelope is opaque to
+//     Drizzle. Read it through getBindingCredentials (queries/
+//     channel-identity.ts), which decrypts and still accepts a legacy
+//     plaintext row; write it through encryptChannelCredentials so nothing
+//     lands here in the clear.
+//
+//     An earlier version of this header claimed "@nodal-agents/db never
+//     imports @nodal-agents/secrets (architecture rule — only the writer layer
+//     does)" and deferred encryption to "S3+". That claim was FALSE:
+//     queries/credentials.ts has imported `decrypt` since the OAuth credential
+//     brique and packages/db/package.json declares the dependency; no
+//     dependency-cruiser rule ever forbade it. The invented rule is the only
+//     reason every bot token in this table — and in
+//     agents.telegram_bot_token — sat in plaintext through the August 2026
+//     Discord/Slack token leak. Do not reintroduce it.
 //   - bot_identity: denormalized display info ({id, username, displayName}) so
 //     UI reads don't need a channel-specific join.
 //   - cursor: the channel's resume token (Telegram's getUpdates offset, a

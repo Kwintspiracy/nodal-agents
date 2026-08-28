@@ -102,6 +102,23 @@ function makeCtx(
   };
 }
 
+// resolveBotToken routes the TELEGRAM path through getBindingCredentials now
+// (it owns the per-channel split AND the at-rest decryption) where it used to
+// read agents.telegram_bot_token inline. This stand-in reproduces that branch
+// against the fake db. Reinstalled after every mockReset so a cross-channel
+// test's mockResolvedValueOnce still takes precedence.
+function installTelegramBindingCredentialsDefault(): void {
+  getBindingCredentialsMock.mockImplementation(
+    async (db: {
+      select: () => { from: () => { where: () => { limit: () => Promise<unknown[]> } } };
+    }) => {
+      const rows = await db.select().from().where().limit();
+      const row = rows[0] as { telegramBotToken?: string | null } | undefined;
+      return row?.telegramBotToken ? { botToken: row.telegramBotToken } : null;
+    },
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('createTelegramSendMessageTool', () => {
@@ -110,6 +127,7 @@ describe('createTelegramSendMessageTool', () => {
     sendTextMock.mockResolvedValue({ messageId: '42' });
     isChatAllowedMock.mockResolvedValue(true);
     resolveOwnerChatIdMock.mockResolvedValue(null);
+    installTelegramBindingCredentialsDefault();
   });
 
   it('sends message using ctx.jobChatId when no chatId arg provided', async () => {
@@ -267,6 +285,7 @@ describe('createTelegramSendMessageTool', () => {
     beforeEach(() => {
       getChannelBindingMock.mockReset();
       getBindingCredentialsMock.mockReset();
+      installTelegramBindingCredentialsDefault();
       getAdapterMock.mockClear();
     });
 

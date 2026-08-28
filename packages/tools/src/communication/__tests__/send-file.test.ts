@@ -71,9 +71,24 @@ function makeDb(telegramBotToken: string | null | undefined) {
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
+  // resolveBotToken reads the telegram token through getBindingCredentials
+  // now (it owns the per-channel split AND the at-rest decryption), so the
+  // module fake has to provide it. This stand-in reproduces the real
+  // function's telegram branch against the fake db: read the agent row, hand
+  // back the token under the `botToken` key, null when there is none. The
+  // genuine implementation — including decryption — is exercised on pglite in
+  // packages/db/src/tests/channel-secrets-at-rest.test.ts.
+  const getBindingCredentials = async (db: {
+    select: () => { from: () => { where: () => { limit: () => Promise<unknown[]> } } };
+  }): Promise<Record<string, string> | null> => {
+    const rows = await db.select().from().where().limit();
+    const row = rows[0] as { telegramBotToken?: string | null } | undefined;
+    return row?.telegramBotToken ? { botToken: row.telegramBotToken } : null;
+  };
   return {
     agents,
     eq,
+    getBindingCredentials,
     isConversationAllowed: isChatAllowedMock,
     resolveOwnerConversation: resolveOwnerChatIdMock,
   };

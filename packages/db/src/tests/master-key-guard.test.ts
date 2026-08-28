@@ -14,7 +14,15 @@ import {
 } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
-import { credentials, entityLlmKeys, connectors, mcpServers } from '../schema/index.ts';
+import {
+  credentials,
+  entityLlmKeys,
+  connectors,
+  mcpServers,
+  channelBindings,
+  agents,
+  webhookTriggers,
+} from '../schema/index.ts';
 import { assertMasterKeyRestorable } from '../queries/master-key-guard.ts';
 
 let db: TestDb;
@@ -144,5 +152,78 @@ describe('assertMasterKeyRestorable', () => {
     );
 
     await db.delete(mcpServers).where(eq(mcpServers.entityId, entityId));
+  });
+  // ── Channel + webhook secrets (encrypted at rest 2026-08-28) ──────────────
+  //
+  // Same SEC-4 reasoning as the connector/MCP cases above: an install whose
+  // ONLY secrets are a Discord bot token, a Telegram token or a webhook secret
+  // would otherwise get a SILENT key re-mint on boot, leaving every bot and
+  // webhook permanently undecryptable with no warning. Found by codex review
+  // on PR #40 — the columns were encrypted without being added to this guard.
+
+  it('throws when the key is missing and an encrypted channel binding exists', async () => {
+    const seed = await seedMinimal(db);
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: encrypt(JSON.stringify({ botToken: 'discord-secret' })),
+    });
+
+    await expect(assertMasterKeyRestorable(db, { keyPath: missingKeyPath() })).rejects.toThrow(
+      /channel credential/,
+    );
+
+    await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
+  });
+
+  it('does not flag a legacy PLAINTEXT channel binding as encrypted', async () => {
+    // A pre-migration row does not depend on the key at all, so it must not
+    // block a boot that would otherwise legitimately mint a fresh one.
+    const seed = await seedMinimal(db);
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'plaintext-legacy' }),
+    });
+
+    await expect(
+      assertMasterKeyRestorable(db, { keyPath: missingKeyPath() }),
+    ).resolves.toBeUndefined();
+
+    await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
+  });
+
+  it('throws when the key is missing and an encrypted telegram bot token exists', async () => {
+    const seed = await seedMinimal(db);
+    await db
+      .update(agents)
+      .set({ telegramBotToken: encrypt('123456:TELEGRAM') })
+      .where(eq(agents.id, seed.agentId));
+
+    await expect(assertMasterKeyRestorable(db, { keyPath: missingKeyPath() })).rejects.toThrow(
+      /channel credential/,
+    );
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('throws when the key is missing and an encrypted webhook secret exists', async () => {
+    const seed = await seedMinimal(db);
+    await db.insert(webhookTriggers).values({
+      entityId,
+      agentId: seed.agentId,
+      name: 'guard-hook',
+      slug: `guard-hook-${Date.now()}`,
+      taskTemplate: 'x',
+      secret: encrypt('a'.repeat(32)),
+    });
+
+    await expect(assertMasterKeyRestorable(db, { keyPath: missingKeyPath() })).rejects.toThrow(
+      /webhook secret/,
+    );
+
+    await db.delete(webhookTriggers).where(eq(webhookTriggers.agentId, seed.agentId));
   });
 });
