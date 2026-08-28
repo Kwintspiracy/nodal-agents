@@ -451,12 +451,17 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   return {
     async stop(): Promise<void> {
       shuttingDown = true;
-      // Await the startup chain before tearing down: if init() is still in
-      // flight, letting stop() return first is exactly how an orphan socket
-      // gets created. The chain never rejects (it ends in a catch), so this
-      // cannot throw here.
-      await startup;
-      await app.stop();
+      // ORDER MATTERS, and it is not the obvious one. Awaiting the startup
+      // chain first deadlocks: a pending Socket Mode `start()` only settles on
+      // a connected-or-disconnected event, and `app.stop()` is precisely what
+      // forces that disconnection — so a stalled connection would wedge the
+      // manager refresh AND runner shutdown indefinitely (found by codex
+      // review, PR #42). Both are therefore started together: `app.stop()`
+      // unblocks the pending start, and awaiting the chain afterwards still
+      // guarantees no continuation is left running to create an orphan socket.
+      // allSettled: `app.stop()` can legitimately reject when start() never
+      // ran (init still in flight), and that must not mask the shutdown.
+      await Promise.allSettled([app.stop(), startup]);
     },
   };
 }
