@@ -81,6 +81,7 @@ export function startTelegramManager(
       // count.
       logRepeatingFailure(
         'telegram-manager:db-scan',
+        err instanceof Error ? err.message : String(err),
         () =>
           `[telegram-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );

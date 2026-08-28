@@ -106,6 +106,7 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       // count.
       logRepeatingFailure(
         'slack-manager:db-scan',
+        err instanceof Error ? err.message : String(err),
         () => `[slack-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return;

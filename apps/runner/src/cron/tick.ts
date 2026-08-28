@@ -99,6 +99,7 @@ async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): 
     // is still logged in full; the repeats are counted.
     logRepeatingFailure(
       `cron:${label}`,
+      err instanceof Error ? err.message : String(err),
       () =>
         `[cron] ${label} failed (tick continues): ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
     );
@@ -182,9 +183,18 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
       });
     }
     pendingRecovered = pendingIds.length;
+    // Mirrors guardPhase's recovery call. Without it the counter for this key
+    // never resets, so a LATER outage would have its first 19 failures
+    // suppressed with no recovery marker in between — the suppression would
+    // outlive the incident it was created for. Found by codex review on PR #42.
+    reportRepeatingRecovery(
+      'cron:findPendingJobsToRecover',
+      (failures) => `[cron] findPendingJobsToRecover recovered after ${failures} failed tick(s)`,
+    );
   } catch (err) {
     logRepeatingFailure(
       'cron:findPendingJobsToRecover',
+      err instanceof Error ? err.message : String(err),
       () =>
         `[cron] findPendingJobsToRecover failed (tick continues): ${
           err instanceof Error ? (err.stack ?? err.message) : String(err)

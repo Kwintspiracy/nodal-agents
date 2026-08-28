@@ -38,6 +38,7 @@ export async function healthRoute(c: Context, deps: RunnerDeps): Promise<Respons
     // journalisée en entier, les répétitions sont comptées (lib/repeat-log.ts).
     logRepeatingFailure(
       'health:db-ping',
+      err instanceof Error ? err.message : String(err),
       () => `[health] DB ping failed: ${err instanceof Error ? err.message : String(err)}`,
       'error',
     );

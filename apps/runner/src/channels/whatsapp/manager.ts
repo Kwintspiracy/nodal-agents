@@ -146,6 +146,7 @@ export function startWhatsAppManager(
       // count.
       logRepeatingFailure(
         'whatsapp-manager:db-scan',
+        err instanceof Error ? err.message : String(err),
         () =>
           `[whatsapp-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );

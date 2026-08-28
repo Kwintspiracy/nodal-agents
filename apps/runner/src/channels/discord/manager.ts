@@ -110,6 +110,7 @@ export function startDiscordManager(
       // count.
       logRepeatingFailure(
         'discord-manager:db-scan',
+        err instanceof Error ? err.message : String(err),
         () =>
           `[discord-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
       );
