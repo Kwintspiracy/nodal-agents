@@ -18,6 +18,9 @@ import { credentials } from '../schema/credentials.ts';
 import { entityLlmKeys } from '../schema/llm_keys.ts';
 import { connectors } from '../schema/connectors.ts';
 import { mcpServers } from '../schema/mcp.ts';
+import { channelBindings } from '../schema/channel-bindings.ts';
+import { agents } from '../schema/agents.ts';
+import { webhookTriggers } from '../schema/webhooks.ts';
 import { isEncrypted, masterKeyFileMissing } from '@nodal-agents/secrets';
 import type { AnyDrizzleDb } from '../client.ts';
 
@@ -70,6 +73,31 @@ export async function assertMasterKeyRestorable(
     return Object.values(env).some((v) => typeof v === 'string' && isEncrypted(v));
   });
   if (hasEncryptedMcp) throw missingKeyError('a stored MCP server secret');
+
+  // Channel credentials + the transitional Telegram column, encrypted at rest
+  // since 2026-08-28. Same SEC-4 reasoning as connectors/MCP above: an install
+  // whose ONLY secrets are bot tokens — very common, a Telegram-only setup has
+  // no OAuth credential and may run on an env-provided LLM key — would
+  // otherwise sail past this guard and get a silent re-mint, killing every bot
+  // at once. Legacy PLAINTEXT rows are skipped: they do not depend on the key,
+  // so they must not block a boot that would legitimately mint a fresh one.
+  const bindingRows = await db
+    .select({ credentials: channelBindings.credentials })
+    .from(channelBindings);
+  const hasEncryptedBinding = bindingRows.some(
+    (r) => !!r.credentials && isEncrypted(r.credentials),
+  );
+  if (hasEncryptedBinding) throw missingKeyError('a stored channel credential');
+
+  const agentRows = await db.select({ botToken: agents.telegramBotToken }).from(agents);
+  const hasEncryptedBotToken = agentRows.some((r) => !!r.botToken && isEncrypted(r.botToken));
+  if (hasEncryptedBotToken) throw missingKeyError('a stored channel credential (bot token)');
+
+  // webhook_triggers.secret is the inbound bearer credential; losing the key
+  // makes every configured webhook un-authenticatable (a permanent 404).
+  const webhookRows = await db.select({ secret: webhookTriggers.secret }).from(webhookTriggers);
+  const hasEncryptedWebhookSecret = webhookRows.some((r) => !!r.secret && isEncrypted(r.secret));
+  if (hasEncryptedWebhookSecret) throw missingKeyError('a stored webhook secret');
 }
 
 function missingKeyError(what: string): Error {
