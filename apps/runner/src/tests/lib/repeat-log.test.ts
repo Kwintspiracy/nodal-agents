@@ -121,13 +121,53 @@ describe('reportRepeatingRecovery', () => {
   });
 });
 
-describe('bounded memory', () => {
-  it('evicts oldest keys past the cap instead of growing without limit', () => {
-    for (let i = 0; i < 250; i++) logRepeatingFailure(`key-${i}`, 'x', () => 'x');
+describe('bounded memory — the storm must not come back at the cap', () => {
+  // Found by codex review on PR #42, 4th pass, and the first fix for it was
+  // WRONG: with more failing sites than the cap, evicting oldest-first logs
+  // every site on every pass (suppression fully defeated). Switching to LRU
+  // order, or evicting in batches, measured IDENTICALLY — when every tracked
+  // site is active, whatever you evict is what you are about to touch again.
+  // What works is refusing new keys past the cap and aggregating them.
+  it('does not grow without limit', () => {
+    for (let i = 0; i < 6000; i++) logRepeatingFailure(`key-${i}`, 'x', () => 'x');
 
-    // The earliest keys were evicted; the most recent are still tracked.
-    expect(_repeatFailureCountForTests('key-0')).toBe(0);
-    expect(_repeatFailureCountForTests('key-249')).toBe(1);
+    // Early sites are tracked, late ones fell into the aggregate — either way
+    // the map is bounded.
+    expect(_repeatFailureCountForTests('key-0')).toBe(1);
+    expect(_repeatFailureCountForTests('key-5999')).toBe(0);
+  });
+
+  it('stays quiet across repeated passes over MORE sites than the cap', () => {
+    const SITES = 6000;
+    const passes = 3;
+    let logged = 0;
+    vi.mocked(console.warn).mockImplementation(() => {
+      logged++;
+    });
+
+    for (let pass = 0; pass < passes; pass++) {
+      for (let i = 0; i < SITES; i++) logRepeatingFailure(`site-${i}`, 'down', () => 'down');
+    }
+
+    // Measured: 18 000 with oldest-first eviction (and with LRU, and with
+    // batched eviction), 4 382 with the aggregate. The bound that matters is
+    // that it does NOT keep growing with each pass.
+    expect(logged).toBeLessThan(SITES + 500);
+  });
+
+  it('never goes silent about the sites it cannot track', () => {
+    let logged = 0;
+    vi.mocked(console.warn).mockImplementation(() => {
+      logged++;
+    });
+    for (let i = 0; i < 6000; i++) logRepeatingFailure(`site-${i}`, 'down', () => 'down');
+    const afterFirstPass = logged;
+
+    // A second pass over the untracked tail still produces aggregate lines —
+    // suppressed, but never zero.
+    for (let i = 5000; i < 6000; i++) logRepeatingFailure(`site-${i}`, 'down', () => 'down');
+
+    expect(logged).toBeGreaterThan(afterFirstPass);
   });
 });
 

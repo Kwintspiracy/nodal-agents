@@ -235,6 +235,12 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       if (seen.has(agentId)) continue;
       await sock.handle.stop();
       active.delete(agentId);
+      // The retry penalty belongs to the binding, not to the agent id. Left
+      // behind, it would be inherited by a binding reconfigured later — with a
+      // brand new token — making its first failure wait out the DEAD one's
+      // backoff, and it would grow this map without bound as agents come and
+      // go (found by codex review, PR #42).
+      retry.delete(agentId);
     }
   }
 

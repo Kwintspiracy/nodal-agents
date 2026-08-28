@@ -405,3 +405,48 @@ describe('an ESTABLISHED socket comes back at once, not on the next scan', () =>
     await manager.stop();
   });
 });
+
+describe('retry state does not outlive its binding', () => {
+  // Found by codex review on PR #42, 4th pass. A despawned binding left its
+  // entry in the retry map: reconfigure that agent later — with a brand new
+  // token — and its first failure inherits the old penalty, waiting up to 31
+  // refreshes (~16 minutes) before a second attempt. Deleted agents also left
+  // the map growing without bound.
+  it('a reconfigured binding starts from a clean backoff', async () => {
+    await seedSlackBinding({ botToken: 'xoxb-bad', appToken: 'xapp-bad' });
+    const { spy, killLast } = makeFakeSockets();
+
+    const manager = startSlackManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startSocket: spy,
+    });
+
+    // Fail enough times to earn the longest wait (31 refreshes).
+    for (let i = 0; i < 40; i++) {
+      await manager.refreshNow();
+      killLast('start failed: invalid_auth');
+    }
+
+    // The operator removes the binding entirely…
+    await db.delete(channelBindings);
+    await manager.refreshNow();
+    expect(manager.activeCount()).toBe(0);
+
+    // …then configures it again with a working token. The first spawn happens
+    // regardless (nothing is in `active`), so the inherited penalty only shows
+    // on the NEXT failure — which is exactly where a stale entry would hurt:
+    // the fresh binding would sit out the dead one's 31-refresh wait.
+    await seedSlackBinding({ botToken: 'xoxb-fresh', appToken: 'xapp-fresh' });
+    await manager.refreshNow();
+    killLast('start failed: transient');
+
+    const spawnsBefore = spy.mock.calls.length;
+    // A clean binding retries on its very next refresh (backoff[1] === 0).
+    await manager.refreshNow();
+
+    expect(spy.mock.calls.length).toBe(spawnsBefore + 1);
+    expect(spy.mock.calls[spy.mock.calls.length - 1]?.[0]?.botToken).toBe('xoxb-fresh');
+    await manager.stop();
+  });
+});

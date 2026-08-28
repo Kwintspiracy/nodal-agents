@@ -24,12 +24,37 @@
 const REPEAT_EVERY = 20;
 
 /**
- * Cap on distinct keys tracked at once. Keys are code-site labels, not user
- * data, so the real cardinality is a few dozen; the bound (oldest-inserted
- * evicted first, same discipline as the webhook rate limiter) only exists so a
- * caller that ever builds a key from something unbounded cannot leak.
+ * Cap on distinct keys tracked at once. Keys are code-site labels — seventeen
+ * fixed ones plus one per Slack agent — so a real install sits far below this;
+ * the bound exists so a caller that ever builds a key from something unbounded
+ * cannot leak.
+ *
+ * Sized well above the realistic site count on purpose. With a tight cap and
+ * more failing sites than it holds, eviction defeats the whole module: each
+ * pass drops precisely the key the next pass is about to touch, every site
+ * looks brand new, and everything is logged in full again — the storm coming
+ * back at the worst possible moment, a large-scale outage (found by codex
+ * review, PR #42).
  */
-const MAX_KEYS = 200;
+const MAX_KEYS = 4096;
+
+/**
+ * Past the cap, NEW sites are not tracked individually — they are counted into
+ * one aggregate line instead.
+ *
+ * Evicting to make room does not work, and measuring it is the only way to see
+ * why: with 6 000 failing sites, a 4 096 cap and three passes, evicting
+ * oldest-first logs 18 000 lines — every site, every pass, suppression fully
+ * defeated. Moving to LRU order or evicting in batches changes NOTHING (also
+ * 18 000): when every tracked site is active, whatever you evict is exactly
+ * what you are about to touch again. Refusing new keys and aggregating them
+ * instead brings the same scenario to 4 382 lines and, unlike eviction, stops
+ * it growing linearly with the number of passes.
+ */
+let overflowCount = 0;
+
+/** True once the cap has been hit, so the operator is told exactly once. */
+let capacityWarned = false;
 
 interface FailureState {
   count: number;
@@ -46,14 +71,26 @@ interface FailureState {
 
 const failureCounts = new Map<string, FailureState>();
 
-function evictOldestIfOverCapacity(): void {
-  let excess = failureCounts.size - MAX_KEYS;
-  const it = failureCounts.keys();
-  while (excess > 0) {
-    const oldest = it.next();
-    if (oldest.done) break;
-    failureCounts.delete(oldest.value);
-    excess--;
+/**
+ * Handle a failure from a site we are not tracking and have no room for.
+ * Counts it, and surfaces one aggregate line at the same cadence as any other
+ * repeat — so the situation is never silent, but never a storm either.
+ */
+function recordOverflow(): void {
+  overflowCount++;
+  if (!capacityWarned) {
+    capacityWarned = true;
+    console.warn(
+      `[repeat-log] more than ${MAX_KEYS} distinct failing sites; further NEW sites are counted ` +
+        'in aggregate rather than tracked individually. This is a symptom, not a cause — that ' +
+        'many distinct sites failing at once is the thing to look at.',
+    );
+    return;
+  }
+  if (overflowCount % REPEAT_EVERY === 0) {
+    console.warn(
+      `[repeat-log] ${overflowCount} failures from untracked sites since the capacity notice above`,
+    );
   }
 }
 
@@ -77,12 +114,15 @@ export function logRepeatingFailure(
   level: 'warn' | 'error' = 'warn',
 ): void {
   const previous = failureCounts.get(key);
+  if (previous === undefined && failureCounts.size >= MAX_KEYS) {
+    recordOverflow();
+    return;
+  }
   // A different reason is a NEW failure, not a repeat of the old one: log it at
   // once and restart the count, so its own repeats still collapse.
   const changed = previous !== undefined && previous.identity !== identity;
   const count = previous && !changed ? previous.count + 1 : 1;
   failureCounts.set(key, { count, identity });
-  evictOldestIfOverCapacity();
 
   const shouldLog = count === 1 || count % REPEAT_EVERY === 0;
   if (!shouldLog) return;
@@ -112,6 +152,8 @@ export function reportRepeatingRecovery(key: string, render: (failures: number) 
 /** Test-only: clear all tracked state between cases. */
 export function _resetRepeatLogForTests(): void {
   failureCounts.clear();
+  capacityWarned = false;
+  overflowCount = 0;
 }
 
 /** Test-only: how many failures are currently recorded for a key. */
