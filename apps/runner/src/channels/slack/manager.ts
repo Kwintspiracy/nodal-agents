@@ -23,6 +23,7 @@ import {
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import {
+  describeError,
   logRepeatingFailure,
   reportRepeatingRecovery,
   clearRepeatingFailure,
@@ -182,8 +183,8 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
       // count.
       logRepeatingFailure(
         'slack-manager:db-scan',
-        err instanceof Error ? err.message : String(err),
-        () => `[slack-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+        describeError(err),
+        () => `[slack-manager] DB scan failed: ${describeError(err)}`,
       );
       return;
     }
@@ -278,9 +279,9 @@ export function startSlackManager(deps: RunnerDeps, opts: SlackManagerOpts): Sla
         spawnOne(row.agentId, row.entityId, hash, creds);
       } catch (err) {
         console.error(
-          `[slack-manager agent=${row.agentId}] refresh failed for this binding: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[slack-manager agent=${row.agentId}] refresh failed for this binding: ${describeError(
+            err,
+          )}`,
         );
         continue;
       }

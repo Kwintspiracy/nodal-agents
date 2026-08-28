@@ -23,7 +23,11 @@ import {
 } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { logRepeatingFailure, reportRepeatingRecovery } from '../../lib/repeat-log.ts';
+import {
+  describeError,
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+} from '../../lib/repeat-log.ts';
 import {
   startDiscordGateway,
   type DiscordGatewayHandle,
@@ -110,9 +114,8 @@ export function startDiscordManager(
       // count.
       logRepeatingFailure(
         'discord-manager:db-scan',
-        err instanceof Error ? err.message : String(err),
-        () =>
-          `[discord-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+        describeError(err),
+        () => `[discord-manager] DB scan failed: ${describeError(err)}`,
       );
       return;
     }
@@ -161,9 +164,9 @@ export function startDiscordManager(
         spawnOne(row.agentId, row.entityId, hash, creds);
       } catch (err) {
         console.error(
-          `[discord-manager agent=${row.agentId}] refresh failed for this binding: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[discord-manager agent=${row.agentId}] refresh failed for this binding: ${describeError(
+            err,
+          )}`,
         );
         continue;
       }

@@ -16,6 +16,7 @@ import {
   reportRepeatingRecovery,
   _resetRepeatLogForTests,
   _repeatFailureCountForTests,
+  describeError,
 } from '../../lib/repeat-log.ts';
 
 let warns: string[];
@@ -250,5 +251,45 @@ describe('the recovery line counts the WHOLE outage', () => {
     expect(warns).toHaveLength(1);
     logRepeatingFailure('site-a', 'auth', () => 'auth');
     expect(warns).toHaveLength(2);
+  });
+});
+
+describe('describeError — the actionable cause is never dropped', () => {
+  // Found by codex review on PR #42. Drizzle wraps every query failure in a
+  // DrizzleQueryError whose `message` is just the SQL; the reason lives in
+  // `cause`. Reading only `message` produced the log lines actually seen on a
+  // real install — "Failed query: select …" with no hint of why — and made two
+  // DIFFERENT outages look identical to the collapser, so a changed database
+  // failure was suppressed as a repeat.
+  it('includes the nested cause', () => {
+    const inner = new Error('connect ECONNREFUSED 127.0.0.1:25443');
+    const outer = new Error('Failed query: select "channel_bindings"…', { cause: inner });
+
+    const described = describeError(outer);
+
+    expect(described).toContain('Failed query');
+    expect(described).toContain('ECONNREFUSED');
+  });
+
+  it('makes two different causes distinguishable behind the SAME query', () => {
+    const query = 'Failed query: select "channel_bindings"…';
+    const refused = describeError(new Error(query, { cause: new Error('ECONNREFUSED') }));
+    const auth = describeError(
+      new Error(query, { cause: new Error('password authentication failed') }),
+    );
+
+    // Identical outer message, different identity — which is what lets the
+    // collapser surface the second failure instead of counting it as a repeat.
+    expect(refused).not.toBe(auth);
+  });
+
+  it('walks a chain and stops at a sane depth', () => {
+    const deep = new Error('a', { cause: new Error('b', { cause: new Error('c') }) });
+    expect(describeError(deep)).toBe('a ← caused by: b ← caused by: c');
+  });
+
+  it('handles a non-Error and a bare error', () => {
+    expect(describeError('boom')).toBe('boom');
+    expect(describeError(new Error('plain'))).toBe('plain');
   });
 });

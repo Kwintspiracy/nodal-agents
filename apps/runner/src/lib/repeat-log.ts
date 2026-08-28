@@ -20,6 +20,31 @@
 // naming how many there were, which is what turns "it is broken" into "it was
 // broken for 43 ticks and came back".
 
+/**
+ * Flatten an error and its `cause` chain into one line.
+ *
+ * Drizzle wraps every query failure in a `DrizzleQueryError` whose `message` is
+ * just the SQL that failed; the ACTIONABLE part — `ECONNREFUSED`, `password
+ * authentication failed`, a missing relation — lives in `cause`. Reading only
+ * `message` produced log lines that said "Failed query: select …" and never
+ * why, and made two different database outages look identical to the collapser
+ * (found by codex review, PR #42; the symptom is visible in a real runner.log).
+ */
+export function describeError(err: unknown, maxDepth = 4): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  for (let depth = 0; current !== undefined && current !== null && depth < maxDepth; depth++) {
+    if (current instanceof Error) {
+      parts.push(current.message);
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.length > 0 ? parts.join(' ← caused by: ') : String(err);
+}
+
 /** Log the 1st failure, then one line per this many repeats. At a 30s tick, 20 ≈ every 10 minutes. */
 const REPEAT_EVERY = 20;
 

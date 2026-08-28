@@ -15,7 +15,7 @@ import { isNotNull, eq, and } from '@nodal-agents/db';
 import { agents, decryptChannelSecret } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { logRepeatingFailure, reportRepeatingRecovery } from '../lib/repeat-log.ts';
+import { describeError, logRepeatingFailure, reportRepeatingRecovery } from '../lib/repeat-log.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';
 
 export interface TelegramManagerOpts {
@@ -81,9 +81,8 @@ export function startTelegramManager(
       // count.
       logRepeatingFailure(
         'telegram-manager:db-scan',
-        err instanceof Error ? err.message : String(err),
-        () =>
-          `[telegram-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+        describeError(err),
+        () => `[telegram-manager] DB scan failed: ${describeError(err)}`,
       );
       return;
     }
@@ -106,9 +105,7 @@ export function startTelegramManager(
       try {
         token = decryptChannelSecret(row.botToken, `telegram bot token (agent ${row.id})`);
       } catch (err) {
-        console.error(
-          `[telegram-manager agent=${row.id}] ${err instanceof Error ? err.message : String(err)}`,
-        );
+        console.error(`[telegram-manager agent=${row.id}] ${describeError(err)}`);
         continue;
       }
       seen.add(row.id);
@@ -155,11 +152,7 @@ export function startTelegramManager(
       env: opts.env,
     })
       .catch((err) => {
-        console.error(
-          `[telegram-manager agent=${agentId}] poller crashed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+        console.error(`[telegram-manager agent=${agentId}] poller crashed: ${describeError(err)}`);
         return { reason: 'aborted', finalOffset: startOffset } satisfies PollerExit;
       })
       .finally(() => {

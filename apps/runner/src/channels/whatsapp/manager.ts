@@ -44,7 +44,11 @@ import {
 } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { logRepeatingFailure, reportRepeatingRecovery } from '../../lib/repeat-log.ts';
+import {
+  describeError,
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+} from '../../lib/repeat-log.ts';
 import { handleWhatsAppMessage, triggerJobWorker, type WhatsAppHandleResult } from './handler.ts';
 
 export interface WhatsAppManagerOpts {
@@ -146,9 +150,8 @@ export function startWhatsAppManager(
       // count.
       logRepeatingFailure(
         'whatsapp-manager:db-scan',
-        err instanceof Error ? err.message : String(err),
-        () =>
-          `[whatsapp-manager] DB scan failed: ${err instanceof Error ? err.message : String(err)}`,
+        describeError(err),
+        () => `[whatsapp-manager] DB scan failed: ${describeError(err)}`,
       );
       return;
     }
@@ -197,9 +200,9 @@ export function startWhatsAppManager(
         spawnOne(row.agentId, row.entityId, creds, hash);
       } catch (err) {
         console.error(
-          `[whatsapp-manager agent=${row.agentId}] refresh failed for this binding: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[whatsapp-manager agent=${row.agentId}] refresh failed for this binding: ${describeError(
+            err,
+          )}`,
         );
         continue;
       }
@@ -242,9 +245,7 @@ export function startWhatsAppManager(
     handle.events.on('message', (message) => {
       void onMessage(agentId, message).catch((err) => {
         console.error(
-          `[whatsapp-manager agent=${agentId}] unhandled error in onMessage: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[whatsapp-manager agent=${agentId}] unhandled error in onMessage: ${describeError(err)}`,
         );
       });
     });
@@ -268,9 +269,9 @@ export function startWhatsAppManager(
       );
     } catch (err) {
       console.error(
-        `[whatsapp-manager agent=${agentId}] message handling failed (conversation=${message.conversationId}): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[whatsapp-manager agent=${agentId}] message handling failed (conversation=${message.conversationId}): ${describeError(
+          err,
+        )}`,
       );
       return;
     }
@@ -291,7 +292,7 @@ export function startWhatsAppManager(
       await sendAuthNotice(agentId, pending).catch(async (err) => {
         console.warn(
           `[whatsapp-manager agent=${agentId}] auth-notice send failed for conversation ` +
-            `${pending.requesterConversationId}: ${err instanceof Error ? err.message : String(err)}; ` +
+            `${pending.requesterConversationId}: ${describeError(err)}; ` +
             'clearing pending row',
         );
         await deps.db
