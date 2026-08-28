@@ -33,7 +33,12 @@ import { env } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
-import { describeError, logRepeatingFailure, reportRepeatingRecovery } from '../lib/repeat-log.ts';
+import {
+  describeError,
+  errorIdentity,
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+} from '../lib/repeat-log.ts';
 
 // ─── CronTickResult ───────────────────────────────────────────────────────────
 
@@ -112,7 +117,7 @@ async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): 
     // is still logged in full; the repeats are counted.
     logRepeatingFailure(
       `cron:${label}`,
-      describeError(err),
+      errorIdentity(err),
       () => `[cron] ${label} failed (tick continues): ${describeError(err)}`,
     );
     return fallback;
@@ -206,7 +211,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   } catch (err) {
     logRepeatingFailure(
       'cron:findPendingJobsToRecover',
-      describeError(err),
+      errorIdentity(err),
       () => `[cron] findPendingJobsToRecover failed (tick continues): ${describeError(err)}`,
     );
   }
@@ -291,7 +296,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
       // thing this change exists to stop (found by codex review, PR #42).
       logRepeatingFailure(
         'cron:runScheduleTick',
-        describeError(err),
+        errorIdentity(err),
         () => `[cron] runScheduleTick failed (tick continues): ${describeError(err)}`,
       );
     });
@@ -318,7 +323,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     // thing this change exists to stop (found by codex review, PR #42).
     logRepeatingFailure(
       'cron:deliverCompletedRoots',
-      describeError(err),
+      errorIdentity(err),
       () => `[cron] deliverCompletedRoots failed (tick continues): ${describeError(err)}`,
     );
   }
@@ -354,7 +359,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     // thing this change exists to stop (found by codex review, PR #42).
     logRepeatingFailure(
       'cron:runCuratorTick',
-      describeError(err),
+      errorIdentity(err),
       () => `[cron] runCuratorTick failed (tick continues): ${describeError(err)}`,
     );
   }

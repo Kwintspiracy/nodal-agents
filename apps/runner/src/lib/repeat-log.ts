@@ -45,6 +45,34 @@ export function describeError(err: unknown, maxDepth = 4): string {
   return parts.length > 0 ? parts.join(' ← caused by: ') : String(err);
 }
 
+/**
+ * A STABLE identity for an error — what makes two failures "the same one".
+ *
+ * Drizzle's `DrizzleQueryError` builds its message as
+ * `Failed query: <sql>
+params: <values>`, and several cron phases compute a
+ * fresh timestamp cutoff every tick. Using the whole message as the identity
+ * therefore made it change on EVERY tick, so each occurrence looked like a new
+ * failure and was logged in full — the cron half of the log storm survived the
+ * fix meant to stop it (found by codex review, PR #42; verified against
+ * drizzle-orm 0.45.2's errors.cjs).
+ *
+ * The identity is built from the query SHAPE plus the underlying cause, both
+ * of which are stable across ticks. The rendered message still carries
+ * everything, params included.
+ */
+export function errorIdentity(err: unknown): string {
+  if (
+    err instanceof Error &&
+    'query' in err &&
+    typeof (err as { query?: unknown }).query === 'string'
+  ) {
+    const { query, cause } = err as { query: string; cause?: unknown };
+    return `${query} ← ${cause === undefined ? '' : describeError(cause)}`;
+  }
+  return describeError(err);
+}
+
 /** Log the 1st failure, then one line per this many repeats. At a 30s tick, 20 ≈ every 10 minutes. */
 const REPEAT_EVERY = 20;
 

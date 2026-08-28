@@ -17,6 +17,7 @@ import {
   _resetRepeatLogForTests,
   _repeatFailureCountForTests,
   describeError,
+  errorIdentity,
 } from '../../lib/repeat-log.ts';
 
 let warns: string[];
@@ -291,5 +292,65 @@ describe('describeError — the actionable cause is never dropped', () => {
   it('handles a non-Error and a bare error', () => {
     expect(describeError('boom')).toBe('boom');
     expect(describeError(new Error('plain'))).toBe('plain');
+  });
+});
+
+describe('errorIdentity — volatile query params must not defeat suppression', () => {
+  // Found by codex review on PR #42, verified against drizzle-orm 0.45.2:
+  // `new DrizzleQueryError(query, params, cause)` builds its message as
+  // `Failed query: <sql>\nparams: <values>`. Several cron phases compute a
+  // fresh timestamp cutoff every tick, so the params — and therefore the whole
+  // message — change every 30s. Using that as the identity made every
+  // occurrence look new and logged it in full: the cron half of the log storm
+  // survived the fix meant to stop it.
+  class FakeDrizzleError extends Error {
+    query: string;
+    params: unknown[];
+    constructor(query: string, params: unknown[], cause: Error) {
+      super(`Failed query: ${query}\nparams: ${String(params)}`, { cause });
+      this.query = query;
+      this.params = params;
+    }
+  }
+
+  const makeErr = (cutoffMs: number) =>
+    new FakeDrizzleError(
+      'update "agent_jobs" set "status" = $1 where "started_at" < $2',
+      ['failed', new Date(cutoffMs).toISOString()],
+      new Error('connect ECONNREFUSED 127.0.0.1:25443'),
+    );
+
+  it('is STABLE across ticks that only differ by a timestamp parameter', () => {
+    expect(errorIdentity(makeErr(1_000))).toBe(errorIdentity(makeErr(999_000)));
+  });
+
+  it('still separates a DIFFERENT cause behind the same query', () => {
+    const a = makeErr(1_000);
+    const b = new FakeDrizzleError(a.query, a.params, new Error('password authentication failed'));
+    expect(errorIdentity(a)).not.toBe(errorIdentity(b));
+  });
+
+  it('still separates a different QUERY behind the same cause', () => {
+    const a = makeErr(1_000);
+    const b = new FakeDrizzleError(
+      'select 1',
+      a.params,
+      new Error('connect ECONNREFUSED 127.0.0.1:25443'),
+    );
+    expect(errorIdentity(a)).not.toBe(errorIdentity(b));
+  });
+
+  it('collapses repeats whose params change every time', () => {
+    for (let tick = 0; tick < 25; tick++) {
+      const err = makeErr(tick * 30_000);
+      logRepeatingFailure('cron:phase', errorIdentity(err), () => describeError(err));
+    }
+
+    // 25 ticks, 2 lines (#1 and #20) — not 25.
+    expect(warns).toHaveLength(2);
+  });
+
+  it('falls back to the full description for a plain error', () => {
+    expect(errorIdentity(new Error('boom'))).toBe('boom');
   });
 });

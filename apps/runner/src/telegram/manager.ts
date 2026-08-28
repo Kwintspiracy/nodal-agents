@@ -15,7 +15,12 @@ import { isNotNull, eq, and } from '@nodal-agents/db';
 import { agents, decryptChannelSecret } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { describeError, logRepeatingFailure, reportRepeatingRecovery } from '../lib/repeat-log.ts';
+import {
+  describeError,
+  errorIdentity,
+  logRepeatingFailure,
+  reportRepeatingRecovery,
+} from '../lib/repeat-log.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';
 
 export interface TelegramManagerOpts {
@@ -81,7 +86,7 @@ export function startTelegramManager(
       // count.
       logRepeatingFailure(
         'telegram-manager:db-scan',
-        describeError(err),
+        errorIdentity(err),
         () => `[telegram-manager] DB scan failed: ${describeError(err)}`,
       );
       return;
