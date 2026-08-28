@@ -162,7 +162,18 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   // "connected". Found by running the real thing against a deliberately
   // invalidated token — eleven review passes and 1 137 tests had not caught it,
   // because every one of them used a fake.
-  const app = new App({ token: botToken, receiver, deferInitialization: true });
+  const app = new App({
+    token: botToken,
+    receiver,
+    deferInitialization: true,
+    // The Web API client defaults to NO request timeout and a retry policy
+    // that runs for roughly half an hour. init()'s `auth.test` therefore has
+    // no bound of its own: with Slack unreachable it can sit there for the
+    // whole window, and anything waiting on startup waits with it (found by
+    // codex review, PR #42). A bounded request fails fast, the manager's
+    // backoff takes over, and a retry costs one refresh instead of 30 minutes.
+    clientOptions: { timeout: 15_000 },
+  });
 
   // `stop()` is a deliberate shutdown, not a death: it must not trigger the
   // manager's respawn path, and onClosed fires at most once either way.
@@ -451,17 +462,20 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
   return {
     async stop(): Promise<void> {
       shuttingDown = true;
-      // ORDER MATTERS, and it is not the obvious one. Awaiting the startup
-      // chain first deadlocks: a pending Socket Mode `start()` only settles on
-      // a connected-or-disconnected event, and `app.stop()` is precisely what
-      // forces that disconnection — so a stalled connection would wedge the
-      // manager refresh AND runner shutdown indefinitely (found by codex
-      // review, PR #42). Both are therefore started together: `app.stop()`
-      // unblocks the pending start, and awaiting the chain afterwards still
-      // guarantees no continuation is left running to create an orphan socket.
-      // allSettled: `app.stop()` can legitimately reject when start() never
-      // ran (init still in flight), and that must not mask the shutdown.
-      await Promise.allSettled([app.stop(), startup]);
+      // Deliberately NOT awaiting the startup chain. Two review passes landed
+      // here: awaiting it before app.stop() deadlocks (a pending Socket Mode
+      // start() only settles on a connect/disconnect event, which app.stop()
+      // is what triggers), and awaiting it at all can block for the Web API's
+      // ~30-minute retry window when Slack is unreachable — wedging the
+      // manager refresh and the runner's own shutdown.
+      //
+      // It is also unnecessary: `shuttingDown` is checked before every step of
+      // that chain, so a late init() can no longer reach start() and cannot
+      // produce an orphan socket. The chain is left to settle on its own; it
+      // ends in a catch, so it never surfaces as an unhandled rejection.
+      await app.stop().catch(() => {
+        // start() may never have run (init still in flight) — nothing to stop.
+      });
     },
   };
 }
