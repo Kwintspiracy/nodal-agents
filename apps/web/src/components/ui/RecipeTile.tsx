@@ -54,7 +54,7 @@ export default function RecipeTile({
           {tags.map((t) => (
             <span
               key={t}
-              className="font-mono text-[10px] rounded px-1.5 py-px bg-paper border border-rule-2 text-ink-2"
+              className="text-micro-10 rounded px-1.5 py-px bg-paper border border-rule-2 text-ink-2"
             >
               {t}
             </span>

@@ -65,9 +65,7 @@ export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger
     </PrimaryButton>
   );
 
-  const alreadyBadge = (
-    <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-3">already here</span>
-  );
+  const alreadyBadge = <span className="text-mono-11-caps text-ink-3">already here</span>;
 
   return (
     <>
@@ -125,7 +123,7 @@ export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger
                 <div key={team.slug} className="mt-1.5">
                   <p className="text-body-13 text-ink-2">
                     <span className="text-medium-13 text-ink">{team.name}</span>
-                    <span className="font-mono text-[11px] text-ink-3 ml-2">{team.shape}</span>
+                    <span className="text-mono-11 text-ink-3 ml-2">{team.shape}</span>
                   </p>
                   <p className="text-body-13 text-ink-3 mt-0.5 max-w-prose">{team.rationale}</p>
                   <p className="text-body-12 text-ink-3 mt-0.5">
