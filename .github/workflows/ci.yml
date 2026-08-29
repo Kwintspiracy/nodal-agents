@@ -56,6 +56,19 @@ jobs:
       # falls back to the most recent one for this OS, which is what makes an
       # unchanged package a cache hit. Keyed per-OS because Linux and Windows
       # artefacts are not interchangeable, and those two never collide.
+      #
+      # Measured on PR #44, warm cache: `ci` 18min → 56s, `ci-windows`
+      # 19min → 1m26. That is the BEST case (same commit, exact key hit); a
+      # commit that touches a package replays that package and its dependants,
+      # so expect minutes, not seconds. The floor for a whole run is now
+      # pack-smoke at ~3min30, which genuinely builds the tarball.
+      #
+      # Cache sizes: ~176 MB on Linux (the `build` task declares outputs),
+      # ~100 KB on Windows (typecheck/test declare none, so only logs and the
+      # up-to-date markers are stored — which is all that is needed to SKIP
+      # them). GitHub caps a repository at 10 GB and evicts least-recently-used
+      # entries on its own; if busy branches ever start missing, narrow the key
+      # to main rather than growing the budget.
       - uses: actions/cache@v4
         with:
           path: .turbo/cache
@@ -179,6 +192,19 @@ jobs:
       # falls back to the most recent one for this OS, which is what makes an
       # unchanged package a cache hit. Keyed per-OS because Linux and Windows
       # artefacts are not interchangeable, and those two never collide.
+      #
+      # Measured on PR #44, warm cache: `ci` 18min → 56s, `ci-windows`
+      # 19min → 1m26. That is the BEST case (same commit, exact key hit); a
+      # commit that touches a package replays that package and its dependants,
+      # so expect minutes, not seconds. The floor for a whole run is now
+      # pack-smoke at ~3min30, which genuinely builds the tarball.
+      #
+      # Cache sizes: ~176 MB on Linux (the `build` task declares outputs),
+      # ~100 KB on Windows (typecheck/test declare none, so only logs and the
+      # up-to-date markers are stored — which is all that is needed to SKIP
+      # them). GitHub caps a repository at 10 GB and evicts least-recently-used
+      # entries on its own; if busy branches ever start missing, narrow the key
+      # to main rather than growing the budget.
       - uses: actions/cache@v4
         with:
           path: .turbo/cache
