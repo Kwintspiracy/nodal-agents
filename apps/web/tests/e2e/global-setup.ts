@@ -33,8 +33,16 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Sentinel credentials — local-only, never used in prod.
-const E2E_EMAIL = 'e2e-playwright@nodalai.local';
-const E2E_PASSWORD = 'E2ETest_pw_2026!';
+//
+// Overridable through E2E_EMAIL / E2E_PASSWORD for a stack that is NOT a
+// fresh install: once an owner account has been claimed (any LAN install in
+// real use), better-auth closes sign-up (`FAILED_TO_CREATE_USER`, 422) by
+// design, and the sentinel account can neither be created nor signed in. CI
+// always runs against a fresh stack, so it never needs these; a developer
+// proving a change on their own install does. The values are read, never
+// logged.
+const E2E_EMAIL = process.env['E2E_EMAIL'] ?? 'e2e-playwright@nodalai.local';
+const E2E_PASSWORD = process.env['E2E_PASSWORD'] ?? 'E2ETest_pw_2026!';
 const E2E_NAME = 'E2E Playwright';
 export const AUTH_STATE_PATH = path.join(__dirname, '.auth', 'user.json');
 
@@ -154,11 +162,18 @@ async function globalSetup(config: FullConfig): Promise<void> {
   };
 
   // ── 2. Which mode is this stack actually in? ────────────────────────────────
-  // `/api/auth/session` is the cheapest honest answer: better-auth serves it in
-  // local-auth, and the catch-all route throws (500) in every other mode.
+  // `/api/auth/get-session` is the cheapest honest answer: better-auth serves
+  // it in local-auth (200, `null` body when nobody is signed in), and the
+  // catch-all route throws (500) in every other mode.
+  //
+  // It used to probe `/api/auth/session`, which better-auth does NOT route
+  // (404 in every mode). The probe therefore always read "not local-auth" and
+  // fell through to the no-auth path, which then died on the /login redirect
+  // with a message blaming AUTH_MODE. Found 29/08 while chasing a real 500 on
+  // this route — the wrong probe had been masking every LAN install.
   let betterAuthAvailable = false;
   try {
-    const probe = await fetch(`${baseURL}/api/auth/session`, {
+    const probe = await fetch(`${baseURL}/api/auth/get-session`, {
       headers: { Origin: baseURL },
       signal: AbortSignal.timeout(10_000),
     });
@@ -201,7 +216,13 @@ async function globalSetup(config: FullConfig): Promise<void> {
   });
   if (!signinRes.ok) {
     const body = await signinRes.text();
-    throw new Error(`Sign-in failed (${signinRes.status}): ${body}`);
+    throw new Error(
+      `Sign-in failed (${signinRes.status}): ${body}
+` +
+        `If this stack already has an owner account, sign-up is closed by design and the ` +
+        `sentinel e2e account cannot exist — set E2E_EMAIL and E2E_PASSWORD to an existing ` +
+        `account on this install.`,
+    );
   }
 
   // Extract the session cookie from the Set-Cookie header.
