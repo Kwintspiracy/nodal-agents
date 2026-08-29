@@ -90,7 +90,7 @@ import {
   getMcpApprovalContext,
   cliRuns,
 } from '@nodal-agents/db';
-import type { JobTriggerContext } from '@nodal-agents/db';
+import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
@@ -841,6 +841,13 @@ async function orchestratorModelToolsError(
   return null;
 }
 
+/** Thrown inside the creation transaction to roll it back — see createAgentAction. */
+class RecipeSkillsMissing extends Error {
+  constructor(readonly missing: string[]) {
+    super(`recipe skills missing: ${missing.join(', ')}`);
+  }
+}
+
 export async function createAgentAction(
   raw: unknown,
 ): Promise<ActionResult<{ id: string; recipe?: ApplyAgentRecipeResult }>> {
@@ -884,52 +891,49 @@ export async function createAgentAction(
       if (toolsError) return fail('validation_failed', toolsError);
     }
 
-    const result = await createAgentRepo(db, session.entityId, {
-      slug: parsed.data.slug,
-      name: parsed.data.name,
-      personality: parsed.data.personality,
-      model: parsed.data.model,
-      llmKeyId: parsed.data.llmKeyId ?? null,
-      role: dbRole,
-      orchestratorMode,
-      avatarUrl: parsed.data.avatarUrl,
-      subAgentIds: parsed.data.subAgentIds,
+    // Creation and profile are ONE transaction. createAgentRepo does more than
+    // insert a row: the first orchestrator of a workspace becomes its root
+    // (entities.rootAgentId, no FK cascade) and every later one is assigned
+    // under it. A profile that fails after that must undo the root too, or
+    // the workspace points at a deleted agent and no orchestrator can be
+    // created again (codex, #45 fifth pass). A transaction undoes all of it.
+    let applied: ApplyAgentRecipeResult | undefined;
+    const result = await db.transaction(async (tx) => {
+      const created = await createAgentRepo(tx, session.entityId, {
+        slug: parsed.data.slug,
+        name: parsed.data.name,
+        personality: parsed.data.personality,
+        model: parsed.data.model,
+        llmKeyId: parsed.data.llmKeyId ?? null,
+        role: dbRole,
+        orchestratorMode,
+        avatarUrl: parsed.data.avatarUrl,
+        subAgentIds: parsed.data.subAgentIds,
+      });
+      if ('error' in created || !recipe) return created;
+      const outcome = await applyRecipeToAgent(tx, session, created.id, recipe);
+      // A skill the profile promised but could not attach is the same failure
+      // as any other (invariant #4 — no silent smart fallback): throwing
+      // rolls the whole gesture back and the user is told which skill.
+      if (outcome.skillsMissing.length > 0) throw new RecipeSkillsMissing(outcome.skillsMissing);
+      applied = outcome;
+      return created;
     });
 
     if ('error' in result) {
       return fail('conflict', 'An agent with this slug already exists');
     }
 
-    if (recipe) {
-      // Creation and profile are one gesture: if the profile cannot be
-      // applied, the agent is removed rather than left half-configured.
-      let applied: ApplyAgentRecipeResult;
-      try {
-        applied = await applyRecipeToAgent(db, session, result.id, recipe);
-      } catch (err) {
-        console.error('[createAgentAction] recipe failed, agent rolled back', err);
-        await db.delete(agents).where(eq(agents.id, result.id));
-        return fail('db_error', 'The profile could not be applied — no agent was created.');
-      }
-      // A skill the profile promised but could not attach is the same failure
-      // as any other: the agent goes, the user is told which one (invariant
-      // #4 — no silent smart fallback). Deleting the agent cascades its
-      // assignments and rules.
-      if (applied.skillsMissing.length > 0) {
-        await db.delete(agents).where(eq(agents.id, result.id));
-        return fail(
-          'not_found',
-          `The profile needs a skill this install does not have (${applied.skillsMissing.join(', ')}) — no agent was created.`,
-        );
-      }
-      revalidatePath('/agents');
-      revalidatePath('/skills');
-      return ok({ id: result.id, recipe: applied });
-    }
-
     revalidatePath('/agents');
-    return ok({ id: result.id });
+    if (applied) revalidatePath('/skills');
+    return ok(applied ? { id: result.id, recipe: applied } : { id: result.id });
   } catch (err: unknown) {
+    if (err instanceof RecipeSkillsMissing) {
+      return fail(
+        'not_found',
+        `The profile needs a skill this install does not have (${err.missing.join(', ')}) — no agent was created.`,
+      );
+    }
     console.error('[createAgentAction]', err);
     const msg = err instanceof Error ? err.message : '';
     if (msg === 'sub_agents_not_found') {
@@ -6489,7 +6493,7 @@ async function recipeRefusalError(
 
 /** Writes what the recipe declares onto an EXISTING, already-authorised agent. */
 async function applyRecipeToAgent(
-  db: ReturnType<typeof getDb>,
+  db: AnyDrizzleDb,
   session: { userId: string; entityId: string },
   agentId: string,
   recipe: AgentRecipe,

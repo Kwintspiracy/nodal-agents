@@ -281,6 +281,48 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
     }
   });
 
+  it('a failed Team lead — the FIRST orchestrator — leaves the workspace root untouched (id AND grants)', async () => {
+    // createAgentRepo makes the workspace's first orchestrator its root: it
+    // writes entities.rootAgentId AND rootGrants. Codex read the Drizzle
+    // schema (no FK declared) and concluded a delete-only rollback left a
+    // dangling root id — the ACTUAL column is `REFERENCES agents(id) ON DELETE
+    // SET NULL` (migration 0021), so the id was never the problem. rootGrants
+    // was: a delete-only rollback leaves the workspace's grants rewritten by
+    // an agent that no longer exists. One transaction undoes both.
+    const [u] = await testDb
+      .insert(users)
+      .values({ email: `lead-${Date.now()}@example.com` })
+      .returning();
+    const [ws] = await testDb
+      .insert(entities)
+      .values({ userId: u!.id, name: 'Lead', slug: `lead-${Date.now()}` })
+      .returning();
+    // task-planning is NOT among the system rows this file seeds → missing.
+    session = { userId: u!.id, entityId: ws!.id };
+    const { createAgentAction } = await import('../actions.ts');
+    const slug = `lead-${Date.now()}`;
+
+    const res = await createAgentAction({ ...payload(slug, 'team-lead'), role: 'router' });
+
+    expect(res.ok).toBe(false);
+    const [ent] = await testDb
+      .select({ rootAgentId: entities.rootAgentId, rootGrants: entities.rootGrants })
+      .from(entities)
+      .where(eq(entities.id, ws!.id));
+    expect(ent?.rootAgentId).toBeNull();
+    expect(ent?.rootGrants).toEqual({});
+    const rows = await testDb.select({ id: agents.id }).from(agents).where(eq(agents.slug, slug));
+    expect(rows).toHaveLength(0);
+
+    // And the workspace is still usable: a plain orchestrator can be created.
+    const again = await createAgentAction({
+      ...payload(`${slug}-b`, ''),
+      recipeSlug: undefined,
+      role: 'router',
+    });
+    expect(again.ok).toBe(true);
+  });
+
   it('rejects an unknown profile without creating anything', async () => {
     session = { userId: other.userId, entityId: other.entityId };
     const { createAgentAction } = await import('../actions.ts');
