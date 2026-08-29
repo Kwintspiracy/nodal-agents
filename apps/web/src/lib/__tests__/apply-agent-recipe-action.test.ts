@@ -195,3 +195,67 @@ describe('applyAgentRecipeAction', () => {
     expect(res.ok).toBe(true);
   });
 });
+
+describe('createAgentAction with a profile — one gesture, nothing half-done', () => {
+  // Codex, PR #45 second pass: with the profile applied in a SECOND action, a
+  // non-owner picking Code reviewer got a created agent, then a refused
+  // preset — and kept an ordinary write-capable agent named after one that
+  // had promised never to write. Assertions on the agents table itself.
+  const payload = (slug: string, recipeSlug: string) => ({
+    slug,
+    name: slug,
+    personality: 'x',
+    model: 'm',
+    role: 'worker',
+    subAgentIds: [],
+    recipeSlug,
+  });
+
+  it('refuses a NON-owner the read-only profile BEFORE any agent exists', async () => {
+    const [member] = await testDb
+      .insert(users)
+      .values({ email: `member3-${Date.now()}@example.com` })
+      .returning();
+    session = { userId: member!.id, entityId: other.entityId };
+    const { createAgentAction } = await import('../actions.ts');
+    const slug = `rev3-${Date.now()}`;
+
+    const res = await createAgentAction(payload(slug, 'code-reviewer'));
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe('forbidden');
+    const rows = await testDb.select({ id: agents.id }).from(agents).where(eq(agents.slug, slug));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('creates the agent AND applies the profile for the owner, in one call', async () => {
+    session = { userId: other.userId, entityId: other.entityId };
+    const { createAgentAction } = await import('../actions.ts');
+    const slug = `rev4-${Date.now()}`;
+
+    const res = await createAgentAction(payload(slug, 'code-reviewer'));
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.recipe?.readOnlyApplied).toBe(true);
+    expect(res.data.recipe?.skillsAttached).toEqual(['code-review']);
+    const rules = await testDb
+      .select({ toolName: approvalRules.toolName })
+      .from(approvalRules)
+      .where(eq(approvalRules.agentId, res.data.id));
+    expect(rules).toHaveLength(5);
+  });
+
+  it('rejects an unknown profile without creating anything', async () => {
+    session = { userId: other.userId, entityId: other.entityId };
+    const { createAgentAction } = await import('../actions.ts');
+    const slug = `nope-${Date.now()}`;
+
+    const res = await createAgentAction(payload(slug, 'no-such-profile'));
+
+    expect(res.ok).toBe(false);
+    const rows = await testDb.select({ id: agents.id }).from(agents).where(eq(agents.slug, slug));
+    expect(rows).toHaveLength(0);
+  });
+});

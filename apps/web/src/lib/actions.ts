@@ -149,7 +149,12 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
-import { systemSkillSlugs, skillKindOfSlug, findAgentRecipe } from '@nodal-agents/catalog';
+import {
+  systemSkillSlugs,
+  skillKindOfSlug,
+  findAgentRecipe,
+  type AgentRecipe,
+} from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -479,6 +484,10 @@ const CreateAgentSchema = z
       .optional()
       .nullable()
       .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
+    // Profile to apply in the SAME action as the creation. Resolved and
+    // authorised BEFORE the agent row exists, so a refused profile leaves
+    // nothing behind (see createAgentAction).
+    recipeSlug: z.string().min(1).optional(),
   })
   .refine((d) => d.role !== 'worker' || d.subAgentIds.length === 0, {
     message: 'Sub-agents only apply when role is router or planner',
@@ -832,12 +841,25 @@ async function orchestratorModelToolsError(
   return null;
 }
 
-export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
+export async function createAgentAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string; recipe?: ApplyAgentRecipeResult }>> {
   try {
     const session = await getSession();
     const parsed = CreateAgentSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    // A profile is authorised BEFORE the agent exists. The first cut applied
+    // it in a second action after creation: a member of a LAN workspace who
+    // picked "Code reviewer" got a created agent, then a refused read-only
+    // preset — and was left with an ordinary, write-capable agent wearing the
+    // name of one that had promised never to write.
+    const recipe = parsed.data.recipeSlug ? findAgentRecipe(parsed.data.recipeSlug) : undefined;
+    if (parsed.data.recipeSlug && !recipe) return fail('not_found', 'Unknown profile');
+    if (recipe) {
+      const refused = await recipeRefusalError(session, recipe);
+      if (refused) return fail('forbidden', refused);
     }
     // Avatar must come from the bundled catalog — refuse external URLs,
     // path traversal, and anything else that didn't ship with the app.
@@ -876,6 +898,22 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
 
     if ('error' in result) {
       return fail('conflict', 'An agent with this slug already exists');
+    }
+
+    if (recipe) {
+      // Creation and profile are one gesture: if the profile cannot be
+      // applied, the agent is removed rather than left half-configured.
+      let applied: ApplyAgentRecipeResult;
+      try {
+        applied = await applyRecipeToAgent(db, session, result.id, recipe);
+      } catch (err) {
+        console.error('[createAgentAction] recipe failed, agent rolled back', err);
+        await db.delete(agents).where(eq(agents.id, result.id));
+        return fail('db_error', 'The profile could not be applied — no agent was created.');
+      }
+      revalidatePath('/agents');
+      revalidatePath('/skills');
+      return ok({ id: result.id, recipe: applied });
     }
 
     revalidatePath('/agents');
@@ -6406,15 +6444,48 @@ export async function applyAgentRecipeAction(
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // The read-only posture is owner-only outside local-trust — the SAME
-    // boundary the editor's setReviewerReadOnlyPresetAction enforces. Checked
-    // up front so a refused recipe writes NOTHING: an agent with its skills
-    // but without the lock it was chosen for would be worse than none.
-    const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
-    if (wantsReadOnly && !(await isWorkspaceOwner(session))) {
-      return fail('forbidden', 'Only the workspace owner can apply a read-only profile.');
-    }
+    const refused = await recipeRefusalError(session, recipe);
+    if (refused) return fail('forbidden', refused);
 
+    const applied = await applyRecipeToAgent(db, session, agent.id, recipe);
+    revalidatePath('/agents');
+    revalidatePath('/skills');
+    revalidatePath(`/agents/${agent.id}/edit`);
+    return ok(applied);
+  } catch (err) {
+    console.error('[applyAgentRecipeAction]', err);
+    return fail('db_error', 'Failed to apply the recipe');
+  }
+}
+
+/**
+ * Why a recipe may NOT be applied by this session, or null. The read-only
+ * posture is owner-only outside local-trust — the SAME boundary the editor's
+ * setReviewerReadOnlyPresetAction enforces. Checked BEFORE anything is
+ * written, so a refused recipe leaves nothing behind: an agent with its
+ * skills but without the lock it was chosen for would be worse than none.
+ */
+async function recipeRefusalError(
+  session: { userId: string; entityId: string },
+  recipe: AgentRecipe,
+): Promise<string | null> {
+  const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
+  if (wantsReadOnly && !(await isWorkspaceOwner(session))) {
+    return 'Only the workspace owner can apply a read-only profile.';
+  }
+  return null;
+}
+
+/** Writes what the recipe declares onto an EXISTING, already-authorised agent. */
+async function applyRecipeToAgent(
+  db: ReturnType<typeof getDb>,
+  session: { userId: string; entityId: string },
+  agentId: string,
+  recipe: AgentRecipe,
+): Promise<ApplyAgentRecipeResult> {
+  const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
+  const agent = { id: agentId };
+  {
     // Skills: resolve slug → id. System skills are seeded ONCE, on the first
     // workspace of the install (createdBy='system'); an agent in any other
     // workspace — every LAN sign-up, every second workspace — must still find
@@ -6479,13 +6550,7 @@ export async function applyAgentRecipeAction(
       readOnlyApplied = true;
     }
 
-    revalidatePath('/agents');
-    revalidatePath('/skills');
-    revalidatePath(`/agents/${agent.id}/edit`);
-    return ok({ skillsAttached, skillsMissing, readOnlyApplied });
-  } catch (err) {
-    console.error('[applyAgentRecipeAction]', err);
-    return fail('db_error', 'Failed to apply the recipe');
+    return { skillsAttached, skillsMissing, readOnlyApplied };
   }
 }
 

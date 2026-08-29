@@ -7,7 +7,6 @@ import {
   createAgentAction,
   updateAgentAction,
   listKeyModelsAction,
-  applyAgentRecipeAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
@@ -201,6 +200,10 @@ export default function AgentForm(props: Props) {
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
         avatarUrl,
+        // The profile travels WITH the creation: one action, authorised before
+        // the row exists, rolled back if it cannot be applied. A refused
+        // profile therefore leaves no agent behind.
+        recipeSlug: recipe?.slug,
       };
       startTransition(async () => {
         const result = await createAgentAction(payload);
@@ -208,24 +211,17 @@ export default function AgentForm(props: Props) {
           toast.error(result.message);
           return;
         }
-        if (recipe) {
-          // One server action applies everything the profile declared — skills
-          // and the read-only posture — through the same repos and rules the
-          // manual screens use. Fail loud, not silent: an agent missing what
-          // its profile promised is quietly worse than the one asked for.
-          const applied = await applyAgentRecipeAction({
-            agentId: result.data.id,
-            recipeSlug: recipe.slug,
-          });
-          if (!applied.ok) {
-            toast.error(`Agent created, but the profile could not be applied: ${applied.message}`);
-          } else if (applied.data.skillsMissing.length > 0) {
+        const applied = result.data.recipe;
+        if (applied) {
+          // Fail loud, not silent: an agent missing what its profile promised
+          // is quietly worse than the one asked for.
+          if (applied.skillsMissing.length > 0) {
             toast.error(
-              `Agent created, but ${applied.data.skillsMissing.length} skill(s) could not be attached: ${applied.data.skillsMissing.join(', ')}`,
+              `Agent created, but ${applied.skillsMissing.length} skill(s) could not be attached: ${applied.skillsMissing.join(', ')}`,
             );
           } else {
-            const parts = [`${applied.data.skillsAttached.length} skill(s) attached`];
-            if (applied.data.readOnlyApplied) parts.push('read-only');
+            const parts = [`${applied.skillsAttached.length} skill(s) attached`];
+            if (applied.readOnlyApplied) parts.push('read-only');
             toast.success(`Agent created — ${parts.join(', ')}`);
           }
         } else {
