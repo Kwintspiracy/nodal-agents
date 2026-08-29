@@ -248,6 +248,39 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
     expect(rules).toHaveLength(5);
   });
 
+  it('rolls the agent back when a promised skill is missing from the install', async () => {
+    // A THIRD workspace where the system skills were never seeded — and whose
+    // owner is not the seed entity's, so the cross-entity lookup finds nothing.
+    const [u] = await testDb
+      .insert(users)
+      .values({ email: `bare-${Date.now()}@example.com` })
+      .returning();
+    const [bare] = await testDb
+      .insert(entities)
+      .values({ userId: u!.id, name: 'Bare', slug: `bare-${Date.now()}` })
+      .returning();
+    // Remove the system rows for this test only, then put them back.
+    const sys = await testDb
+      .delete(agentSkills)
+      .where(eq(agentSkills.createdBy, 'system'))
+      .returning();
+    try {
+      session = { userId: u!.id, entityId: bare!.id };
+      const { createAgentAction } = await import('../actions.ts');
+      const slug = `dev5-${Date.now()}`;
+
+      const res = await createAgentAction(payload(slug, 'developer'));
+
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.message).toContain('dev');
+      const rows = await testDb.select({ id: agents.id }).from(agents).where(eq(agents.slug, slug));
+      expect(rows).toHaveLength(0);
+    } finally {
+      await testDb.insert(agentSkills).values(sys.map((r) => ({ ...r, id: undefined })));
+    }
+  });
+
   it('rejects an unknown profile without creating anything', async () => {
     session = { userId: other.userId, entityId: other.entityId };
     const { createAgentAction } = await import('../actions.ts');

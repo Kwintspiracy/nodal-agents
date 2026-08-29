@@ -911,6 +911,17 @@ export async function createAgentAction(
         await db.delete(agents).where(eq(agents.id, result.id));
         return fail('db_error', 'The profile could not be applied — no agent was created.');
       }
+      // A skill the profile promised but could not attach is the same failure
+      // as any other: the agent goes, the user is told which one (invariant
+      // #4 — no silent smart fallback). Deleting the agent cascades its
+      // assignments and rules.
+      if (applied.skillsMissing.length > 0) {
+        await db.delete(agents).where(eq(agents.id, result.id));
+        return fail(
+          'not_found',
+          `The profile needs a skill this install does not have (${applied.skillsMissing.join(', ')}) — no agent was created.`,
+        );
+      }
       revalidatePath('/agents');
       revalidatePath('/skills');
       return ok({ id: result.id, recipe: applied });

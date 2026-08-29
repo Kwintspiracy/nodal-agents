@@ -75,8 +75,13 @@ test.describe('agent → task → job flow', () => {
     const agentName = `E2E Agent ${slug}`;
 
     // ── Create agent ──────────────────────────────────────────────────────
-    // AgentForm is hidden behind "+ New agent" button — click to open modal.
+    // "New agent" opens the profile picker first (PR #45); "Start from
+    // scratch" is the plain form this smoke has always exercised.
     await page.getByRole('button', { name: /new agent/i }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: /Start from scratch/ })
+      .click();
     // Modal is rendered via createPortal — wait for it to appear in the DOM.
     const slugInput = page.locator('#agent-slug');
     await slugInput.waitFor({ state: 'visible', timeout: 5_000 });
