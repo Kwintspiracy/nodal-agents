@@ -13,7 +13,14 @@
 import type { AgentRecipe, AgentTeam } from './types';
 import { devTeam, devTeamRecipes } from './dev-team';
 
-export type { AgentRecipe, AgentTeam, RecipeRole, RecipeNeed, ModelRequirement } from './types';
+export type {
+  AgentRecipe,
+  AgentTeam,
+  RecipeRole,
+  RecipeNeed,
+  RecipePreset,
+  ModelRequirement,
+} from './types';
 export {
   devTeam,
   devTeamRecipes,

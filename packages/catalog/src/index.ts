@@ -172,6 +172,7 @@ export type {
   AgentTeam,
   RecipeRole,
   RecipeNeed,
+  RecipePreset,
   ModelRequirement,
 } from './recipes/index';
 

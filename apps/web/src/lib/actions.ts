@@ -149,7 +149,7 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
-import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
+import { systemSkillSlugs, skillKindOfSlug, findAgentRecipe } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -6360,6 +6360,107 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
   } catch (err) {
     console.error('[setReviewerReadOnlyPresetAction]', err);
     return fail('db_error', 'Failed to save the read-only preset');
+  }
+}
+
+// ─── Agent recipes ────────────────────────────────────────────────────────────
+//
+// A recipe (packages/catalog/src/recipes) describes ONE agent equipped for
+// something. This action applies what the recipe DECLARES to an agent that
+// already exists — skills by slug, the read-only preset — through the same
+// repos and rules the manual screens use, so the result is an ordinary agent
+// with no trace of the recipe. It runs right after createAgentAction; the
+// creation itself stays the user's own submit of the pre-filled form.
+//
+// Every step reports back instead of failing silently: an agent missing one
+// of the skills its recipe promised is quietly worse than what the user asked
+// for, and the toast must be able to say which one.
+
+const ApplyAgentRecipeSchema = z.object({
+  agentId: z.string().guid(),
+  recipeSlug: z.string().min(1),
+});
+
+export type ApplyAgentRecipeResult = {
+  skillsAttached: string[];
+  skillsMissing: string[];
+  readOnlyApplied: boolean;
+};
+
+export async function applyAgentRecipeAction(
+  raw: unknown,
+): Promise<ActionResult<ApplyAgentRecipeResult>> {
+  try {
+    const session = await getSession();
+    const parsed = ApplyAgentRecipeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const recipe = findAgentRecipe(parsed.data.recipeSlug);
+    if (!recipe) return fail('not_found', 'Unknown recipe');
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Skills: resolve slug → id inside THIS workspace (ids differ per install),
+    // then go through the same repo as the Skills screen.
+    const skillRows = await db
+      .select({ id: agentSkills.id, slug: agentSkills.slug })
+      .from(agentSkills)
+      .where(
+        and(eq(agentSkills.entityId, session.entityId), inArray(agentSkills.slug, recipe.skills)),
+      );
+    const idBySlug = new Map(skillRows.map((r) => [r.slug, r.id]));
+    const skillsAttached: string[] = [];
+    const skillsMissing: string[] = [];
+    for (const slug of recipe.skills) {
+      const skillId = idBySlug.get(slug);
+      if (!skillId) {
+        skillsMissing.push(slug);
+        continue;
+      }
+      const res = await assignSkillRepo(
+        db,
+        session.entityId,
+        { skillId, agentId: agent.id },
+        systemSkillSlugs,
+      );
+      // already_assigned is a success for a recipe — the skill IS there.
+      if ('error' in res && res.error !== 'already_assigned') skillsMissing.push(slug);
+      else skillsAttached.push(slug);
+    }
+
+    // Read-only posture: the SAME rows the editor's reviewer preset writes.
+    let readOnlyApplied = false;
+    if (recipe.presets?.includes('read-only')) {
+      await db
+        .insert(approvalRules)
+        .values(
+          READONLY_PRESET_TOOLS.map((toolName) => ({
+            entityId: session.entityId,
+            agentId: agent.id,
+            toolName,
+            action: 'block' as const,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+          set: { action: 'block', updatedAt: new Date() },
+        });
+      readOnlyApplied = true;
+    }
+
+    revalidatePath('/agents');
+    revalidatePath('/skills');
+    revalidatePath(`/agents/${agent.id}/edit`);
+    return ok({ skillsAttached, skillsMissing, readOnlyApplied });
+  } catch (err) {
+    console.error('[applyAgentRecipeAction]', err);
+    return fail('db_error', 'Failed to apply the recipe');
   }
 }
 

@@ -21,46 +21,53 @@ import type { AgentRecipe, AgentTeam } from './types';
  */
 export const codeReviewerRecipe: AgentRecipe = {
   slug: 'code-reviewer',
-  name: 'Relecteur',
-  summary: 'Lit du code et rend un verdict. N’écrit jamais.',
+  name: 'Code reviewer',
+  summary: 'Reads code and returns a verdict. Never writes.',
+  purpose:
+    'Give it finished work and it reviews it against what was asked, then answers approve or request changes with concrete findings. It is locked to reading: every tool that could change a file or run a command is blocked, so a review can never turn into an edit. Run it on a different model from the developer — two instances of the same model share the same blind spots.',
   role: 'worker',
   skills: ['code-review'],
+  presets: ['read-only'],
   needs: ['workspace'],
-  kit: ['lecture seule', 'rend un verdict'],
+  kit: ['read-only', 'returns a verdict'],
 };
 
 export const developerRecipe: AgentRecipe = {
   slug: 'developer',
-  name: 'Développeur',
-  summary: 'Écrit et modifie du code dans un dossier qu’on lui confie.',
+  name: 'Developer',
+  summary: 'Writes and changes code in a folder you hand it.',
+  purpose:
+    'Give it a task and a folder and it works there: reads before writing, makes targeted edits rather than rewrites, follows the conventions already in the project, and verifies before claiming done. When the work is finished it hands it to a reviewer in a way that makes the review useful — what changed, what it should do, what was already checked.',
   role: 'worker',
   skills: ['dev', 'request-review'],
   // A developer without a folder of its own writes into the shared hand-off
   // area — four runs in a row did exactly that on 27/08 before the cause was
-  // found. Declaring the need is what lets the form ask for it up front.
+  // found. Declaring the need is what lets the flow ask for it up front.
   needs: ['workspace', 'code-runtime'],
-  kit: ['dossier requis', 'sait développer', 'écrit du code'],
+  kit: ['needs a folder', 'writes code', 'hands off for review'],
 };
 
 export const teamLeadRecipe: AgentRecipe = {
   slug: 'team-lead',
-  name: 'Chef d’équipe',
-  summary: 'Reçoit une demande, la découpe, la confie à d’autres agents.',
+  name: 'Team lead',
+  summary: 'Takes a request, breaks it down, hands the pieces to other agents.',
+  purpose:
+    'It receives what you ask for, states a plan before acting, and delegates each piece to the agents attached to it — a developer, a reviewer. It does not write code itself. It needs a model that can call tools, because delegating IS a tool call: on a model without that, it would simply look unhelpful.',
   role: 'router',
   skills: ['task-planning'],
   // An orchestrator on a model that cannot call tools cannot delegate at all,
   // and fails in a way that looks like the agent being unhelpful rather than
   // misconfigured.
   modelRequirements: ['tools'],
-  kit: ['modèle avec outils', 'délègue'],
+  kit: ['delegates', 'model with tools'],
 };
 
 export const devTeam: AgentTeam = {
   slug: 'dev-team',
   name: 'Dev team',
-  shape: 'Chef d’équipe → Développeur + Relecteur',
+  shape: 'Team lead → Developer + Code reviewer',
   rationale:
-    'Le chef reçoit la demande et la confie. Le développeur écrit. Le relecteur vérifie, avec un modèle différent — deux instances du même modèle partagent les mêmes angles morts.',
+    'The lead takes the request and hands it out. The developer writes. The reviewer checks, on a different model — two instances of the same model share the same blind spots.',
   recipes: [teamLeadRecipe.slug, developerRecipe.slug, codeReviewerRecipe.slug],
 };
 

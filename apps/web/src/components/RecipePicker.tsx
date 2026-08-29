@@ -1,56 +1,64 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { agentTeams, recipesOfTeam, type AgentRecipe } from '@nodal-agents/catalog';
+import { agentRecipes, agentTeams, recipesOfTeam, type AgentRecipe } from '@nodal-agents/catalog';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import PrimaryButton from './ui/PrimaryButton.tsx';
 import RecipeTile from './ui/RecipeTile.tsx';
+import RecipeDetail from './RecipeDetail.tsx';
 import AgentForm from './AgentForm.tsx';
 import type { AgentRow, LlmKeyUiRow } from '@/lib/actions.ts';
 
 /**
  * RecipePicker — "What should this agent do?"
  *
- * The first screen of agent creation. It shows the teams that ship with the
- * product as SUGGESTIONS: a name and a shape that teach what tends to work.
- * Nothing here creates anything, and there is no "build the team" button —
- * the first draft of this feature had one, and it handed people a structure
- * they had not chosen. Each recipe opens the ordinary create form (AgentForm),
- * pre-filled, one agent at a time; "Start from scratch" opens it empty.
+ * The first screen of agent creation. Three steps, each one modal:
  *
- * The word "recipe" never appears on screen on purpose: the user sees a
- * question and choices. The term lives in code and in the catalog only.
+ *   1. pick   — "Start from scratch" FIRST (the default, as before), then the
+ *               profiles that ship with the product. Teams are a discreet
+ *               footnote: a name and a shape that teach what tends to work,
+ *               never the main option and never a button that builds them.
+ *   2. detail — what THIS profile sets on the agent: skills, blocked tools,
+ *               autonomy, what the user still has to provide. Without it the
+ *               user lands on the ordinary form and never learns what makes
+ *               the agent special.
+ *   3. form   — the ordinary create form, pre-filled. One agent.
+ *
+ * The word "recipe" never appears on screen: the user sees a question and
+ * choices. The term lives in code and in the catalog only.
  */
 
 interface Props {
   llmKeys: LlmKeyUiRow[];
   agents: AgentRow[];
-  /** Custom trigger; defaults to the "+ New agent" button AgentForm renders. */
+  /** Custom trigger; defaults to the "+ New agent" button. */
   renderTrigger?: (open: () => void) => ReactNode;
 }
 
+type Step =
+  | { kind: 'closed' }
+  | { kind: 'pick' }
+  | { kind: 'detail'; recipe: AgentRecipe }
+  | { kind: 'form'; recipe: AgentRecipe | undefined };
+
 export default function RecipePicker({ llmKeys, agents, renderTrigger }: Props) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  // `null` = picker not resolved yet; `undefined` = "from scratch" (no recipe).
-  const [choice, setChoice] = useState<AgentRecipe | undefined | null>(null);
+  const [step, setStep] = useState<Step>({ kind: 'closed' });
 
-  // Names already in the workspace, so a recipe whose agent exists is marked as
-  // such — to INFORM ("you have one"), never to ask for completion. Matched on
-  // the display name, which is what the recipe pre-fills and what the user
-  // sees; a renamed agent simply stops matching, which is fine.
+  // Names already in the workspace, so a profile whose agent exists is marked
+  // as such — to INFORM ("you have one"), never to ask for completion.
   const existingNames = new Set(agents.map((a) => a.name.trim().toLowerCase()));
-
-  function pick(recipe: AgentRecipe | undefined) {
-    setPickerOpen(false);
-    setChoice(recipe);
-  }
+  const exists = (r: AgentRecipe) => existingNames.has(r.name.trim().toLowerCase());
 
   const trigger = renderTrigger ? (
-    renderTrigger(() => setPickerOpen(true))
+    renderTrigger(() => setStep({ kind: 'pick' }))
   ) : (
-    <PrimaryButton variant="agent" onClick={() => setPickerOpen(true)}>
+    <PrimaryButton variant="agent" onClick={() => setStep({ kind: 'pick' })}>
       New agent
     </PrimaryButton>
+  );
+
+  const alreadyBadge = (
+    <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-3">already here</span>
   );
 
   return (
@@ -58,76 +66,91 @@ export default function RecipePicker({ llmKeys, agents, renderTrigger }: Props) 
       {trigger}
 
       <Modal
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
+        open={step.kind === 'pick'}
+        onClose={() => setStep({ kind: 'closed' })}
         title="What should this agent do?"
         className="max-w-2xl"
         footer={
           <ModalFooter>
-            <PrimaryButton variant="neutral" type="button" onClick={() => setPickerOpen(false)}>
+            <PrimaryButton
+              variant="neutral"
+              type="button"
+              onClick={() => setStep({ kind: 'closed' })}
+            >
               Cancel
             </PrimaryButton>
           </ModalFooter>
         }
       >
-        <p className="text-body-13 text-ink-3 mb-4">
-          The teams below are suggestions. Nothing requires creating all of them, or in this order —
-          each choice creates one agent.
-        </p>
-
         <div className="space-y-5">
-          {agentTeams.map((team) => (
-            <section key={team.slug} aria-label={team.name}>
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1">
-                <h3 className="text-medium-13 uppercase tracking-wider text-ink-3">{team.name}</h3>
-                <span className="font-mono text-[11px] text-ink-3">{team.shape}</span>
-              </div>
-              <p className="text-body-13 text-ink-3 mb-2.5 max-w-prose">{team.rationale}</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {recipesOfTeam(team).map((recipe) => {
-                  const exists = existingNames.has(recipe.name.trim().toLowerCase());
-                  return (
-                    <RecipeTile
-                      key={recipe.slug}
-                      onClick={() => pick(recipe)}
-                      title={recipe.name}
-                      description={recipe.summary}
-                      tags={recipe.kit}
-                      muted={exists}
-                      badge={
-                        exists ? (
-                          <span className="font-mono text-[9.5px] uppercase tracking-wider text-ink-3">
-                            already here
-                          </span>
-                        ) : undefined
-                      }
-                    />
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+          <RecipeTile
+            onClick={() => setStep({ kind: 'form', recipe: undefined })}
+            title="Start from scratch"
+            description="The empty form. Pick a model, write its instructions, attach skills later."
+          />
 
-          <section aria-label="Custom">
-            <h3 className="text-medium-13 uppercase tracking-wider text-ink-3 mb-2.5">Custom</h3>
-            <RecipeTile
-              onClick={() => pick(undefined)}
-              title="Start from scratch"
-              description="The empty form, as before."
-              className="sm:w-auto"
-            />
+          <section aria-label="Profiles">
+            <h3 className="text-mono-11-caps text-ink-3 mb-1">Or start from a profile</h3>
+            <p className="text-body-13 text-ink-3 mb-2.5">
+              A profile pre-fills the form and attaches what that kind of agent needs. You see
+              exactly what it sets before creating anything.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {agentRecipes.map((recipe) => (
+                <RecipeTile
+                  key={recipe.slug}
+                  onClick={() => setStep({ kind: 'detail', recipe })}
+                  title={recipe.name}
+                  description={recipe.summary}
+                  tags={recipe.kit}
+                  muted={exists(recipe)}
+                  badge={exists(recipe) ? alreadyBadge : undefined}
+                />
+              ))}
+            </div>
           </section>
+
+          {agentTeams.length > 0 && (
+            <section aria-label="Teams" className="border-t border-rule-2 pt-4">
+              <h3 className="text-mono-11-caps text-ink-3 mb-1">How these fit together</h3>
+              {agentTeams.map((team) => (
+                <div key={team.slug} className="mt-1.5">
+                  <p className="text-body-13 text-ink-2">
+                    <span className="text-medium-13 text-ink">{team.name}</span>
+                    <span className="font-mono text-[11px] text-ink-3 ml-2">{team.shape}</span>
+                  </p>
+                  <p className="text-body-13 text-ink-3 mt-0.5 max-w-prose">{team.rationale}</p>
+                  <p className="text-body-12 text-ink-3 mt-0.5">
+                    A suggestion, not a package: each role is created on its own, in any order —{' '}
+                    {recipesOfTeam(team)
+                      .map((r) => r.name)
+                      .join(', ')}
+                    .
+                  </p>
+                </div>
+              ))}
+            </section>
+          )}
         </div>
       </Modal>
 
-      {choice !== null && (
+      {step.kind === 'detail' && (
+        <RecipeDetail
+          recipe={step.recipe}
+          open
+          onBack={() => setStep({ kind: 'pick' })}
+          onContinue={() => setStep({ kind: 'form', recipe: step.recipe })}
+        />
+      )}
+
+      {step.kind === 'form' && (
         <AgentForm
-          key={choice?.slug ?? 'scratch'}
+          key={step.recipe?.slug ?? 'scratch'}
           llmKeys={llmKeys}
           agents={agents}
-          recipe={choice}
+          recipe={step.recipe}
           openInitially
-          onClosed={() => setChoice(null)}
+          onClosed={() => setStep({ kind: 'closed' })}
           renderTrigger={() => null}
         />
       )}

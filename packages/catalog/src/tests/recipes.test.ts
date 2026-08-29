@@ -45,11 +45,35 @@ describe('recipe identity', () => {
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 
-  it('carries a name, a summary and a kit — what the card shows', () => {
+  it('carries a name, a summary, a purpose and a kit — what the card and the panel show', () => {
     for (const r of agentRecipes) {
       expect(r.name.length).toBeGreaterThan(0);
       expect(r.summary.length).toBeGreaterThan(0);
+      // The detail panel is where the user learns what makes this agent
+      // special; a recipe without that text would present as a bare form.
+      expect(r.purpose.length).toBeGreaterThan(80);
       expect(r.kit.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('is written in the language of the UI — English, no French copy', () => {
+    // The whole dashboard is in English. The first version of these recipes
+    // shipped French names and summaries copied from the design document,
+    // which put "Développeur" next to "New agent" on screen.
+    // Word-bounded: "le" must not match inside "lead", "des" inside "describe".
+    const french = new RegExp(
+      String.raw`\b(le|la|les|un|une|des|et|dans|relecteur|développeur|écrit|lit|rend)\b`,
+      'i',
+    );
+    for (const r of agentRecipes) {
+      for (const text of [r.name, r.summary, r.purpose, ...r.kit]) {
+        expect(text, `${r.slug}: "${text}"`).not.toMatch(french);
+      }
+    }
+    for (const t of agentTeams) {
+      for (const text of [t.name, t.shape, t.rationale]) {
+        expect(text, `${t.slug}: "${text}"`).not.toMatch(french);
+      }
     }
   });
 
@@ -93,10 +117,15 @@ describe('the Dev team roles', () => {
     expect(developerRecipe.needs).toContain('code-runtime');
   });
 
-  it('the reviewer does NOT ask for a way to write', () => {
+  it('the reviewer does NOT ask for a way to write — and is locked read-only', () => {
     expect(developerRecipe.skills).toContain('dev');
     expect(codeReviewerRecipe.skills).not.toContain('dev');
     expect(codeReviewerRecipe.skills).toContain('code-review');
+    // The posture is applied through the existing reviewer preset, which
+    // blocks the five writing tools. Declared on the recipe so the detail
+    // panel can SHOW it before the agent exists.
+    expect(codeReviewerRecipe.presets).toContain('read-only');
+    expect(developerRecipe.presets ?? []).not.toContain('read-only');
   });
 
   it('the lead orchestrates and needs a model that can call tools', () => {

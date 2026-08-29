@@ -7,8 +7,7 @@ import {
   createAgentAction,
   updateAgentAction,
   listKeyModelsAction,
-  listSkillsAction,
-  assignSkillAction,
+  applyAgentRecipeAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
@@ -77,37 +76,6 @@ type Props = CreateProps | EditProps;
 // `/agents/[id]/edit` page). This file now only powers the "+ New agent"
 // create modal on /agents — agent → connector / MCP wiring happens after
 // creation, in the Composer's Connectors and Knowledge tabs.
-
-/**
- * Attach a recipe's skills to a freshly created agent, by slug.
- *
- * Resolves slug → id through the workspace's own skill list (assignSkillAction
- * takes ids), so a recipe never depends on ids that differ per install. Every
- * skill is attempted; the ones that could not be attached are RETURNED, not
- * swallowed — a recipe that silently drops a skill hands the user an agent
- * quietly worse than the one they asked for.
- */
-async function attachRecipeSkills(
-  agentId: string,
-  slugs: string[],
-): Promise<{ done: number; missing: string[] }> {
-  const skills = await listSkillsAction();
-  if (!skills.ok) return { done: 0, missing: [...slugs] };
-  const idBySlug = new Map(skills.data.map((sk) => [sk.slug, sk.id]));
-  const missing: string[] = [];
-  let done = 0;
-  for (const slug of slugs) {
-    const skillId = idBySlug.get(slug);
-    if (!skillId) {
-      missing.push(slug);
-      continue;
-    }
-    const res = await assignSkillAction({ skillId, agentId });
-    if (res.ok) done++;
-    else missing.push(slug);
-  }
-  return { done, missing };
-}
 
 // Map DB role columns back to the UX-level enum for pre-filling edit form.
 function dbRoleToUiRole(
@@ -240,16 +208,25 @@ export default function AgentForm(props: Props) {
           toast.error(result.message);
           return;
         }
-        if (recipe && recipe.skills.length > 0) {
-          const attached = await attachRecipeSkills(result.data.id, recipe.skills);
-          if (attached.missing.length > 0) {
-            // Fail loud, not silent: the agent exists but is not the one the
-            // recipe promised. Say so rather than let it be discovered later.
+        if (recipe) {
+          // One server action applies everything the profile declared — skills
+          // and the read-only posture — through the same repos and rules the
+          // manual screens use. Fail loud, not silent: an agent missing what
+          // its profile promised is quietly worse than the one asked for.
+          const applied = await applyAgentRecipeAction({
+            agentId: result.data.id,
+            recipeSlug: recipe.slug,
+          });
+          if (!applied.ok) {
+            toast.error(`Agent created, but the profile could not be applied: ${applied.message}`);
+          } else if (applied.data.skillsMissing.length > 0) {
             toast.error(
-              `Agent created, but ${attached.missing.length} skill(s) could not be attached: ${attached.missing.join(', ')}`,
+              `Agent created, but ${applied.data.skillsMissing.length} skill(s) could not be attached: ${applied.data.skillsMissing.join(', ')}`,
             );
           } else {
-            toast.success(`Agent created with ${attached.done} skill(s) attached`);
+            const parts = [`${applied.data.skillsAttached.length} skill(s) attached`];
+            if (applied.data.readOnlyApplied) parts.push('read-only');
+            toast.success(`Agent created — ${parts.join(', ')}`);
           }
         } else {
           toast.success('Agent created');
