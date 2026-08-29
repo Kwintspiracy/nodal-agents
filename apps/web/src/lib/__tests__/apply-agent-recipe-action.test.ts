@@ -19,10 +19,11 @@
 // Assertions are on agent_skill_assignments and approval_rules rows.
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { eq, and } from 'drizzle-orm';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
+  eq,
+  and,
   agents,
   agentSkills,
   agentSkillAssignments,
