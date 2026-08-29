@@ -6419,59 +6419,21 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
 // ─── Agent recipes ────────────────────────────────────────────────────────────
 //
 // A recipe (packages/catalog/src/recipes) describes ONE agent equipped for
-// something. This action applies what the recipe DECLARES to an agent that
-// already exists — skills by slug, the read-only preset — through the same
-// repos and rules the manual screens use, so the result is an ordinary agent
-// with no trace of the recipe. It runs right after createAgentAction; the
-// creation itself stays the user's own submit of the pre-filled form.
+// something. What it DECLARES — skills by slug, the read-only preset — is
+// applied through the same repos and rules the manual screens use, so the
+// result is an ordinary agent with no trace of the recipe.
 //
-// Every step reports back instead of failing silently: an agent missing one
-// of the skills its recipe promised is quietly worse than what the user asked
-// for, and the toast must be able to say which one.
-
-const ApplyAgentRecipeSchema = z.object({
-  agentId: z.string().guid(),
-  recipeSlug: z.string().min(1),
-});
+// There is ONE entry point: createAgentAction with `recipeSlug`, which runs
+// creation and profile in a single transaction. A standalone "apply to an
+// existing agent" action existed in the first cut and was removed (codex,
+// #45): it could return ok with part of the profile attached, and had no
+// caller once creation became atomic.
 
 export type ApplyAgentRecipeResult = {
   skillsAttached: string[];
   skillsMissing: string[];
   readOnlyApplied: boolean;
 };
-
-export async function applyAgentRecipeAction(
-  raw: unknown,
-): Promise<ActionResult<ApplyAgentRecipeResult>> {
-  try {
-    const session = await getSession();
-    const parsed = ApplyAgentRecipeSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const recipe = findAgentRecipe(parsed.data.recipeSlug);
-    if (!recipe) return fail('not_found', 'Unknown recipe');
-
-    const db = getDb();
-    const [agent] = await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
-    if (!agent) return fail('not_found', 'Agent not found');
-
-    const refused = await recipeRefusalError(session, recipe);
-    if (refused) return fail('forbidden', refused);
-
-    const applied = await applyRecipeToAgent(db, session, agent.id, recipe);
-    revalidatePath('/agents');
-    revalidatePath('/skills');
-    revalidatePath(`/agents/${agent.id}/edit`);
-    return ok(applied);
-  } catch (err) {
-    console.error('[applyAgentRecipeAction]', err);
-    return fail('db_error', 'Failed to apply the recipe');
-  }
-}
 
 /**
  * Why a recipe may NOT be applied by this session, or null. The read-only

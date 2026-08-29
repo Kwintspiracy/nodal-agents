@@ -1,5 +1,5 @@
-// apply-agent-recipe-action.test.ts — applying a profile to a freshly created
-// agent, against real rows.
+// apply-agent-recipe-action.test.ts — creating an agent from a profile,
+// against real rows. One entry point: createAgentAction with `recipeSlug`.
 //
 // Two defects codex found on PR #45, both of the kind that only shows on an
 // install with more than one workspace — which every LAN install is:
@@ -23,7 +23,6 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   eq,
-  and,
   agents,
   agentSkills,
   agentSkillAssignments,
@@ -72,14 +71,6 @@ vi.mock('@/lib/env.ts', async (importOriginal) => {
   };
 });
 
-async function makeAgent(entityId: string, slug: string): Promise<string> {
-  const [row] = await testDb
-    .insert(agents)
-    .values({ entityId, slug, name: slug, personality: 'x', model: 'm', role: 'agent' })
-    .returning({ id: agents.id });
-  return row!.id;
-}
-
 beforeAll(async () => {
   testDb = (await spinUpTestDb()).db;
   const s = await seedMinimal(testDb);
@@ -113,41 +104,49 @@ beforeEach(() => {
   authMode = 'local-auth';
 });
 
-describe('applyAgentRecipeAction', () => {
+const payload = (slug: string, recipeSlug: string) => ({
+  slug,
+  name: slug,
+  personality: 'x',
+  model: 'm',
+  role: 'worker',
+  subAgentIds: [],
+  recipeSlug,
+});
+
+describe('the profile is applied through createAgentAction', () => {
   it('attaches the system skills to an agent in a workspace that does NOT own their rows', async () => {
     session = { userId: other.userId, entityId: other.entityId };
-    const agentId = await makeAgent(other.entityId, `dev-${Date.now()}`);
-    const { applyAgentRecipeAction } = await import('../actions.ts');
+    const { createAgentAction } = await import('../actions.ts');
 
-    const res = await applyAgentRecipeAction({ agentId, recipeSlug: 'developer' });
+    const res = await createAgentAction(payload(`dev-${Date.now()}`, 'developer'));
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.data.skillsMissing).toEqual([]);
-    expect(res.data.skillsAttached.sort()).toEqual(['dev', 'request-review']);
+    expect(res.data.recipe?.skillsMissing).toEqual([]);
+    expect([...(res.data.recipe?.skillsAttached ?? [])].sort()).toEqual(['dev', 'request-review']);
 
     const rows = await testDb
       .select({ slug: agentSkills.slug })
       .from(agentSkillAssignments)
       .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
-      .where(eq(agentSkillAssignments.agentId, agentId));
+      .where(eq(agentSkillAssignments.agentId, res.data.id));
     expect(rows.map((r) => r.slug).sort()).toEqual(['dev', 'request-review']);
   });
 
   it('applies the read-only preset for the workspace OWNER', async () => {
     session = { userId: other.userId, entityId: other.entityId };
-    const agentId = await makeAgent(other.entityId, `rev-${Date.now()}`);
-    const { applyAgentRecipeAction } = await import('../actions.ts');
+    const { createAgentAction } = await import('../actions.ts');
 
-    const res = await applyAgentRecipeAction({ agentId, recipeSlug: 'code-reviewer' });
+    const res = await createAgentAction(payload(`rev-${Date.now()}`, 'code-reviewer'));
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.data.readOnlyApplied).toBe(true);
+    expect(res.data.recipe?.readOnlyApplied).toBe(true);
     const rules = await testDb
       .select({ toolName: approvalRules.toolName, action: approvalRules.action })
       .from(approvalRules)
-      .where(eq(approvalRules.agentId, agentId));
+      .where(eq(approvalRules.agentId, res.data.id));
     expect(rules.map((r) => r.toolName).sort()).toEqual([
       'file_edit',
       'file_write',
@@ -158,40 +157,15 @@ describe('applyAgentRecipeAction', () => {
     expect(rules.every((r) => r.action === 'block')).toBe(true);
   });
 
-  it('refuses the read-only preset to a NON-owner member outside local-trust', async () => {
-    // A member of `other` who is not its owner.
-    const [member] = await testDb
-      .insert(users)
-      .values({ email: `member-${Date.now()}@example.com` })
-      .returning();
-    session = { userId: member!.id, entityId: other.entityId };
-    const agentId = await makeAgent(other.entityId, `rev2-${Date.now()}`);
-    const { applyAgentRecipeAction } = await import('../actions.ts');
-
-    const res = await applyAgentRecipeAction({ agentId, recipeSlug: 'code-reviewer' });
-
-    // Same boundary as setReviewerReadOnlyPresetAction: forbidden, and NO rule
-    // written — an agent half-locked by a member would be worse than none.
-    expect(res.ok).toBe(false);
-    if (res.ok) return;
-    expect(res.code).toBe('forbidden');
-    const rules = await testDb
-      .select({ id: approvalRules.id })
-      .from(approvalRules)
-      .where(and(eq(approvalRules.agentId, agentId), eq(approvalRules.action, 'block')));
-    expect(rules).toHaveLength(0);
-  });
-
-  it('lets a non-owner apply a recipe with NO preset — skills are not owner-gated', async () => {
+  it('lets a non-owner create from a profile with NO preset — skills are not owner-gated', async () => {
     const [member] = await testDb
       .insert(users)
       .values({ email: `member2-${Date.now()}@example.com` })
       .returning();
     session = { userId: member!.id, entityId: other.entityId };
-    const agentId = await makeAgent(other.entityId, `dev2-${Date.now()}`);
-    const { applyAgentRecipeAction } = await import('../actions.ts');
+    const { createAgentAction } = await import('../actions.ts');
 
-    const res = await applyAgentRecipeAction({ agentId, recipeSlug: 'developer' });
+    const res = await createAgentAction(payload(`dev2-${Date.now()}`, 'developer'));
 
     expect(res.ok).toBe(true);
   });
@@ -202,16 +176,6 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
   // non-owner picking Code reviewer got a created agent, then a refused
   // preset — and kept an ordinary write-capable agent named after one that
   // had promised never to write. Assertions on the agents table itself.
-  const payload = (slug: string, recipeSlug: string) => ({
-    slug,
-    name: slug,
-    personality: 'x',
-    model: 'm',
-    role: 'worker',
-    subAgentIds: [],
-    recipeSlug,
-  });
-
   it('refuses a NON-owner the read-only profile BEFORE any agent exists', async () => {
     const [member] = await testDb
       .insert(users)

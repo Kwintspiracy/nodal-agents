@@ -17,7 +17,7 @@ import { MonoMicroTag } from './ui/MonoMicroTag.tsx';
  * made from scratch.
  *
  * Everything shown here is READ from the recipe and the catalog — nothing is
- * described that is not actually applied by applyAgentRecipeAction.
+ * described that is not actually applied by createAgentAction's recipe path.
  */
 
 /** Mirrors the five tools the reviewer preset blocks (actions.ts, READONLY_PRESET_TOOLS). */
