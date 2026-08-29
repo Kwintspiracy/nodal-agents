@@ -16,6 +16,7 @@ import {
   agentTeams,
   findAgentRecipe,
   recipesOfTeam,
+  recipeSkillMeta,
   developerRecipe,
   codeReviewerRecipe,
   teamLeadRecipe,
@@ -144,5 +145,28 @@ describe('the Dev team roles', () => {
       'developer',
       'code-reviewer',
     ]);
+  });
+});
+
+describe('recipeSkillMeta — what the profile panel gets, and nothing more', () => {
+  // The panel is a Client Component. Importing systemSkills there shipped
+  // every skill's Markdown body to the browser on each /agents load (codex,
+  // #45). The projection carries names and descriptions only.
+  const meta = recipeSkillMeta(systemSkills);
+
+  it('covers every skill a recipe attaches', () => {
+    for (const r of agentRecipes) {
+      for (const slug of r.skills) expect(meta[slug]?.name, slug).toBeTruthy();
+    }
+  });
+
+  it('carries no skill body', () => {
+    for (const m of Object.values(meta)) {
+      expect(Object.keys(m).sort()).toEqual(['description', 'name', 'requiredBuiltins', 'slug']);
+    }
+  });
+
+  it('is limited to the skills the recipes use — not the whole catalogue', () => {
+    expect(Object.keys(meta).length).toBeLessThan(systemSkills.length);
   });
 });

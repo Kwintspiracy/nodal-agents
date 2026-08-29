@@ -1,7 +1,13 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { agentRecipes, agentTeams, recipesOfTeam, type AgentRecipe } from '@nodal-agents/catalog';
+import {
+  agentRecipes,
+  agentTeams,
+  recipesOfTeam,
+  type AgentRecipe,
+  type RecipeSkillMeta,
+} from '@nodal-agents/catalog';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import PrimaryButton from './ui/PrimaryButton.tsx';
 import RecipeTile from './ui/RecipeTile.tsx';
@@ -31,6 +37,8 @@ import type { AgentRow, LlmKeyUiRow } from '@/lib/actions.ts';
 interface Props {
   llmKeys: LlmKeyUiRow[];
   agents: AgentRow[];
+  /** From the server (recipeSkillMeta) — keeps the skill bodies out of the bundle. */
+  skillMeta: Record<string, RecipeSkillMeta>;
   /** Custom trigger; defaults to the "+ New agent" button. */
   renderTrigger?: (open: () => void) => ReactNode;
 }
@@ -41,7 +49,7 @@ type Step =
   | { kind: 'detail'; recipe: AgentRecipe }
   | { kind: 'form'; recipe: AgentRecipe | undefined };
 
-export default function RecipePicker({ llmKeys, agents, renderTrigger }: Props) {
+export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger }: Props) {
   const [step, setStep] = useState<Step>({ kind: 'closed' });
 
   // Names already in the workspace, so a profile whose agent exists is marked
@@ -137,6 +145,7 @@ export default function RecipePicker({ llmKeys, agents, renderTrigger }: Props) 
       {step.kind === 'detail' && (
         <RecipeDetail
           recipe={step.recipe}
+          skillMeta={skillMeta}
           open
           onBack={() => setStep({ kind: 'pick' })}
           onContinue={() => setStep({ kind: 'form', recipe: step.recipe })}

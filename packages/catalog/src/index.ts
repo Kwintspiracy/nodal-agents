@@ -161,6 +161,7 @@ export {
   agentTeams,
   findAgentRecipe,
   recipesOfTeam,
+  recipeSkillMeta,
   devTeam,
   devTeamRecipes,
   developerRecipe,
@@ -174,6 +175,7 @@ export type {
   RecipeNeed,
   RecipePreset,
   ModelRequirement,
+  RecipeSkillMeta,
 } from './recipes/index';
 
 export type { SystemSkill, SkillKind };

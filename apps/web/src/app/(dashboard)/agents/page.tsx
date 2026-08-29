@@ -5,6 +5,7 @@ import {
   getActiveJobsByAgentAction,
 } from '@/lib/actions.ts';
 import RecipePicker from '@/components/RecipePicker.tsx';
+import { recipeSkillMeta, systemSkills } from '@nodal-agents/catalog';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import AgentsErrorRetry from './AgentsErrorRetry.tsx';
@@ -32,12 +33,18 @@ export default async function AgentsPage() {
   // Count distinct agents across all groups (a worker assigned to multiple
   // orchestrators appears in each group, but we want the unique total).
   const totalAgents = flatAgents.length;
+  // Server-side: the profile panel needs skill names, not skill bodies.
+  const skillMeta = recipeSkillMeta(systemSkills);
 
   return (
     <PageShell
       title="Agents"
       subtitle={groupsResult.ok ? `${totalAgents} agent${totalAgents !== 1 ? 's' : ''}` : undefined}
-      toolbar={<PageTopBar cta={<RecipePicker llmKeys={llmKeys} agents={flatAgents} />} />}
+      toolbar={
+        <PageTopBar
+          cta={<RecipePicker llmKeys={llmKeys} agents={flatAgents} skillMeta={skillMeta} />}
+        />
+      }
     >
       {!groupsResult.ok ? (
         <AgentsErrorRetry message={groupsResult.message} />

@@ -1,6 +1,6 @@
 'use client';
 
-import { systemSkills, type AgentRecipe, type RecipeNeed } from '@nodal-agents/catalog';
+import type { AgentRecipe, RecipeNeed, RecipeSkillMeta } from '@nodal-agents/catalog';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import PrimaryButton from './ui/PrimaryButton.tsx';
 import { MonoMicroTag } from './ui/MonoMicroTag.tsx';
@@ -50,15 +50,17 @@ const ROLE_COPY: Record<AgentRecipe['role'], string> = {
 
 interface Props {
   recipe: AgentRecipe;
+  /** Name/description/builtins of the catalog skills, computed on the server. */
+  skillMeta: Record<string, RecipeSkillMeta>;
   open: boolean;
   onBack: () => void;
   onContinue: () => void;
 }
 
-export default function RecipeDetail({ recipe, open, onBack, onContinue }: Props) {
+export default function RecipeDetail({ recipe, skillMeta, open, onBack, onContinue }: Props) {
   const skills = recipe.skills
-    .map((slug) => systemSkills.find((s) => s.slug === slug))
-    .filter((s): s is NonNullable<typeof s> => s !== undefined);
+    .map((slug) => skillMeta[slug])
+    .filter((s): s is RecipeSkillMeta => s !== undefined);
   const readOnly = recipe.presets?.includes('read-only') ?? false;
   const needs = recipe.needs ?? [];
 
@@ -103,7 +105,7 @@ export default function RecipeDetail({ recipe, open, onBack, onContinue }: Props
                     <MonoMicroTag tone="skill">{s.slug}</MonoMicroTag>
                   </div>
                   <p className="text-body-13 text-ink-3 mt-1 leading-snug">{s.description}</p>
-                  {s.requiredBuiltins && s.requiredBuiltins.length > 0 && (
+                  {s.requiredBuiltins.length > 0 && (
                     <p className="text-mono-11 text-ink-3 mt-1.5">
                       unlocks {s.requiredBuiltins.join(', ')}
                     </p>

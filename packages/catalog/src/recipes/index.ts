@@ -11,6 +11,7 @@
 // for.
 
 import type { AgentRecipe, AgentTeam } from './types';
+import type { SystemSkill } from '../types';
 import { devTeam, devTeamRecipes } from './dev-team';
 
 export type {
@@ -51,6 +52,34 @@ export function findAgentRecipe(slug: string): AgentRecipe | undefined {
  * not resolve. Tolerant on purpose: a typo in a team must not blank the whole
  * catalogue screen, and the tests catch it before it ships.
  */
+/**
+ * What a screen needs to SAY about a skill a recipe attaches — without the
+ * skill's Markdown body. `systemSkills` carries every skill's full `content`;
+ * importing it from a Client Component ships the whole catalog to the browser
+ * on every /agents load (codex, #45). Computed on the server, passed as props.
+ */
+export interface RecipeSkillMeta {
+  slug: string;
+  name: string;
+  description: string;
+  requiredBuiltins: string[];
+}
+
+export function recipeSkillMeta(skills: SystemSkill[]): Record<string, RecipeSkillMeta> {
+  const wanted = new Set(agentRecipes.flatMap((r) => r.skills));
+  const out: Record<string, RecipeSkillMeta> = {};
+  for (const s of skills) {
+    if (!wanted.has(s.slug)) continue;
+    out[s.slug] = {
+      slug: s.slug,
+      name: s.name,
+      description: s.description,
+      requiredBuiltins: s.requiredBuiltins ?? [],
+    };
+  }
+  return out;
+}
+
 export function recipesOfTeam(team: AgentTeam): AgentRecipe[] {
   return team.recipes
     .map((slug) => findAgentRecipe(slug))
