@@ -24,9 +24,10 @@ import {
   readdirSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve, join } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
 import { pinToInstalledVersions, formatUnresolved } from './lib/pin-runtime-deps.mjs';
+import { shouldPackMigrationFile } from './lib/migration-pack-filter.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -223,11 +224,26 @@ console.log(
 
 // ─── 6. Stage Drizzle migrations ────────────────────────────────────────────
 // The runner calls `runMigrations(databaseUrl)` on boot via the CLI; that
-// helper reads .sql files from packages/db/migrations/. Without these the
-// migration step fails on first boot.
+// helper reads .sql files from packages/db/migrations/ plus meta/_journal.json.
+// Without these the migration step fails on first boot.
+//
+// drizzle-kit's meta/NNNN_snapshot.json files are filtered OUT: 12 files,
+// 1.3 MB, five times the weight of all 87 migrations combined (274 kB), and
+// the migrator never opens them — it reads exactly one file out of meta/ (see
+// lib/migration-pack-filter.mjs for the reference into drizzle-orm's source).
+// They exist so `drizzle-kit generate` can diff schemas at development time.
 const migrationsSrc = resolve(repoRoot, 'packages/db/migrations');
 if (existsSync(migrationsSrc)) {
-  cpSync(migrationsSrc, resolve(packDir, 'migrations'), { recursive: true });
+  cpSync(migrationsSrc, resolve(packDir, 'migrations'), {
+    recursive: true,
+    filter: (src) => {
+      const rel = src.slice(migrationsSrc.length).replace(/^[/\\]/, '');
+      // The root call passes the folder itself (rel === ''); keep it, and keep
+      // every directory so the walk can reach the files inside.
+      if (rel === '') return true;
+      return shouldPackMigrationFile(rel);
+    },
+  });
 }
 
 // ─── 7. Pack package.json ───────────────────────────────────────────────────
