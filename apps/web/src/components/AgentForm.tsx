@@ -7,10 +7,13 @@ import {
   createAgentAction,
   updateAgentAction,
   listKeyModelsAction,
+  listSkillsAction,
+  assignSkillAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
 } from '@/lib/actions.ts';
+import type { AgentRecipe } from '@nodal-agents/catalog';
 import {
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -44,6 +47,21 @@ interface CreateProps {
    *  "New orchestrator" button here so one create flow powers both entry
    *  points instead of duplicating the form. */
   renderTrigger?: (open: () => void) => ReactNode;
+  /**
+   * A recipe pre-fills the form — name, slug, role, the model list narrowed to
+   * what the role needs — and attaches the recipe's skills once the agent
+   * exists. Everything stays editable before submit, and the agent created is
+   * ordinary: the recipe leaves no trace on it. Ignored in edit mode.
+   */
+  recipe?: AgentRecipe;
+  /**
+   * Open the modal on mount. The recipe picker (RecipePicker.tsx) chooses the
+   * recipe FIRST and only then mounts this form, so the trigger button that
+   * AgentForm normally renders would be a second, pointless click.
+   */
+  openInitially?: boolean;
+  /** Called when the create modal closes, so a parent that mounted it on demand can unmount it. */
+  onClosed?: () => void;
 }
 
 interface EditProps {
@@ -60,6 +78,37 @@ type Props = CreateProps | EditProps;
 // create modal on /agents — agent → connector / MCP wiring happens after
 // creation, in the Composer's Connectors and Knowledge tabs.
 
+/**
+ * Attach a recipe's skills to a freshly created agent, by slug.
+ *
+ * Resolves slug → id through the workspace's own skill list (assignSkillAction
+ * takes ids), so a recipe never depends on ids that differ per install. Every
+ * skill is attempted; the ones that could not be attached are RETURNED, not
+ * swallowed — a recipe that silently drops a skill hands the user an agent
+ * quietly worse than the one they asked for.
+ */
+async function attachRecipeSkills(
+  agentId: string,
+  slugs: string[],
+): Promise<{ done: number; missing: string[] }> {
+  const skills = await listSkillsAction();
+  if (!skills.ok) return { done: 0, missing: [...slugs] };
+  const idBySlug = new Map(skills.data.map((sk) => [sk.slug, sk.id]));
+  const missing: string[] = [];
+  let done = 0;
+  for (const slug of slugs) {
+    const skillId = idBySlug.get(slug);
+    if (!skillId) {
+      missing.push(slug);
+      continue;
+    }
+    const res = await assignSkillAction({ skillId, agentId });
+    if (res.ok) done++;
+    else missing.push(slug);
+  }
+  return { done, missing };
+}
+
 // Map DB role columns back to the UX-level enum for pre-filling edit form.
 function dbRoleToUiRole(
   role: string | null,
@@ -75,13 +124,20 @@ export default function AgentForm(props: Props) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
+  const recipe = isEdit ? undefined : props.recipe;
   // In edit mode, the form is always open (it IS the page content).
-  const [open, setOpen] = useState(isEdit);
+  const [open, setOpenState] = useState(isEdit || (!isEdit && props.openInitially === true));
+  const onClosed = isEdit ? undefined : props.onClosed;
+  function setOpen(next: boolean) {
+    setOpenState(next);
+    if (!next) onClosed?.();
+  }
 
   // Derive initial role state from initial prop (edit) or default (create).
+  // A recipe's role wins over `initialRole` — it is the more specific ask.
   const initialRole: AgentRole = isEdit
     ? dbRoleToUiRole(props.initial.role ?? null, props.initial.orchestratorMode ?? null)
-    : (props.initialRole ?? 'worker');
+    : (recipe?.role ?? props.initialRole ?? 'worker');
 
   const [role, setRole] = useState<AgentRole>(initialRole);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(isEdit ? props.initial.subAgentIds : []);
@@ -184,7 +240,20 @@ export default function AgentForm(props: Props) {
           toast.error(result.message);
           return;
         }
-        toast.success('Agent created');
+        if (recipe && recipe.skills.length > 0) {
+          const attached = await attachRecipeSkills(result.data.id, recipe.skills);
+          if (attached.missing.length > 0) {
+            // Fail loud, not silent: the agent exists but is not the one the
+            // recipe promised. Say so rather than let it be discovered later.
+            toast.error(
+              `Agent created, but ${attached.missing.length} skill(s) could not be attached: ${attached.missing.join(', ')}`,
+            );
+          } else {
+            toast.success(`Agent created with ${attached.done} skill(s) attached`);
+          }
+        } else {
+          toast.success('Agent created');
+        }
         formRef.current?.reset();
         setRole(initialRole);
         setSubAgentIds([]);
@@ -223,7 +292,10 @@ export default function AgentForm(props: Props) {
   // can't function as an orchestrator. Workers aren't gated here (a worker's
   // own tool needs are whatever its assigned skills require, judged at run
   // time, not at creation time).
-  const requireTools = role !== 'worker';
+  // An orchestrator needs tool calling to delegate at all; a recipe can ask
+  // for it too (a lead recipe does), so a worker-shaped recipe that will
+  // orchestrate later is not offered a model that cannot do the job.
+  const requireTools = role !== 'worker' || (recipe?.modelRequirements ?? []).includes('tools');
 
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
@@ -490,7 +562,7 @@ export default function AgentForm(props: Props) {
     <Modal
       open={open}
       onClose={() => setOpen(false)}
-      title="New agent"
+      title={recipe ? `New agent — ${recipe.name}` : 'New agent'}
       dismissable={false}
       footer={
         <ModalFooter>
@@ -520,6 +592,7 @@ export default function AgentForm(props: Props) {
               required
               pattern="[a-z0-9\-]+"
               placeholder="my-agent"
+              defaultValue={recipe?.slug}
               className="rounded-lg"
             />
           </div>
@@ -532,6 +605,7 @@ export default function AgentForm(props: Props) {
               name="name"
               required
               placeholder="My Agent"
+              defaultValue={recipe?.name}
               className="rounded-lg"
             />
           </div>

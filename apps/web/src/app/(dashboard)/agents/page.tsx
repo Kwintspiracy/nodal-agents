@@ -4,7 +4,7 @@ import {
   listLlmKeysAction,
   getActiveJobsByAgentAction,
 } from '@/lib/actions.ts';
-import AgentForm from '@/components/AgentForm.tsx';
+import RecipePicker from '@/components/RecipePicker.tsx';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import AgentsErrorRetry from './AgentsErrorRetry.tsx';
@@ -37,7 +37,7 @@ export default async function AgentsPage() {
     <PageShell
       title="Agents"
       subtitle={groupsResult.ok ? `${totalAgents} agent${totalAgents !== 1 ? 's' : ''}` : undefined}
-      toolbar={<PageTopBar cta={<AgentForm llmKeys={llmKeys} agents={flatAgents} />} />}
+      toolbar={<PageTopBar cta={<RecipePicker llmKeys={llmKeys} agents={flatAgents} />} />}
     >
       {!groupsResult.ok ? (
         <AgentsErrorRetry message={groupsResult.message} />
