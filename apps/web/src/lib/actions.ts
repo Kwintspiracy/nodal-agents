@@ -6406,15 +6406,40 @@ export async function applyAgentRecipeAction(
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Skills: resolve slug → id inside THIS workspace (ids differ per install),
-    // then go through the same repo as the Skills screen.
+    // The read-only posture is owner-only outside local-trust — the SAME
+    // boundary the editor's setReviewerReadOnlyPresetAction enforces. Checked
+    // up front so a refused recipe writes NOTHING: an agent with its skills
+    // but without the lock it was chosen for would be worse than none.
+    const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
+    if (wantsReadOnly && !(await isWorkspaceOwner(session))) {
+      return fail('forbidden', 'Only the workspace owner can apply a read-only profile.');
+    }
+
+    // Skills: resolve slug → id. System skills are seeded ONCE, on the first
+    // workspace of the install (createdBy='system'); an agent in any other
+    // workspace — every LAN sign-up, every second workspace — must still find
+    // them. Same two-branch lookup as assignSkillRepo: this workspace's own
+    // rows, OR a catalog slug whose row is genuinely system-authored (the
+    // createdBy check is what stops another workspace's same-slug skill from
+    // passing as the real one).
     const skillRows = await db
-      .select({ id: agentSkills.id, slug: agentSkills.slug })
+      .select({ id: agentSkills.id, slug: agentSkills.slug, entityId: agentSkills.entityId })
       .from(agentSkills)
       .where(
-        and(eq(agentSkills.entityId, session.entityId), inArray(agentSkills.slug, recipe.skills)),
+        and(
+          inArray(agentSkills.slug, recipe.skills),
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system')),
+          ),
+        ),
       );
-    const idBySlug = new Map(skillRows.map((r) => [r.slug, r.id]));
+    // A workspace's own row wins over the install-wide one (a per-install
+    // override is exactly what listSkillsAction surfaces).
+    const idBySlug = new Map<string, string>();
+    for (const r of skillRows) {
+      if (!idBySlug.has(r.slug) || r.entityId === session.entityId) idBySlug.set(r.slug, r.id);
+    }
     const skillsAttached: string[] = [];
     const skillsMissing: string[] = [];
     for (const slug of recipe.skills) {
@@ -6436,7 +6461,7 @@ export async function applyAgentRecipeAction(
 
     // Read-only posture: the SAME rows the editor's reviewer preset writes.
     let readOnlyApplied = false;
-    if (recipe.presets?.includes('read-only')) {
+    if (wantsReadOnly) {
       await db
         .insert(approvalRules)
         .values(
