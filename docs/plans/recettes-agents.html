@@ -1,0 +1,1059 @@
+<!-- artifact: https://claude.ai/code/artifact/6bd5e3c9-4fdd-4704-b34a-ec600a9f3d15 -->
+<title>Recettes d'agents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap"
+/>
+
+<style>
+  :root {
+    --paper: #fafbfb;
+    --surface: #ffffff;
+    --sunk: #f1f3f3;
+    --ink: #16181d;
+    --ink-2: #454b52;
+    --ink-3: #767d84;
+    --rule: #e0e4e4;
+    --accent: #2c6b57;
+    --accent-soft: #e6efeb;
+    --accent-ink: #1e4c3e;
+    --warn: #8a5a12;
+    --warn-soft: #f6efdf;
+    --stop: #96382f;
+    --stop-soft: #f7e9e7;
+    --shadow: 0 1px 2px rgba(22, 24, 29, 0.05), 0 4px 12px rgba(22, 24, 29, 0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --paper: #121417;
+      --surface: #1a1d21;
+      --sunk: #22262b;
+      --ink: #e9eaea;
+      --ink-2: #b0b6ba;
+      --ink-3: #7e868c;
+      --rule: #2f343a;
+      --accent: #6cbfa1;
+      --accent-soft: #1c3831;
+      --accent-ink: #a9dcc9;
+      --warn: #d8a74f;
+      --warn-soft: #33291624;
+      --stop: #e08d82;
+      --stop-soft: #38221f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+    }
+  }
+  :root[data-theme='dark'] {
+    --paper: #121417;
+    --surface: #1a1d21;
+    --sunk: #22262b;
+    --ink: #e9eaea;
+    --ink-2: #b0b6ba;
+    --ink-3: #7e868c;
+    --rule: #2f343a;
+    --accent: #6cbfa1;
+    --accent-soft: #1c3831;
+    --accent-ink: #a9dcc9;
+    --warn: #d8a74f;
+    --warn-soft: #332916;
+    --stop: #e08d82;
+    --stop-soft: #38221f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+  .col {
+    max-width: 62ch;
+  }
+
+  h1,
+  h2,
+  h3,
+  .ui {
+    font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+  }
+
+  h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    font-weight: 700;
+    letter-spacing: -0.022em;
+    line-height: 1.1;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 19px;
+    color: var(--ink-2);
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-3);
+    letter-spacing: 0.02em;
+    margin: 20px 0 0;
+  }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.11em;
+    color: var(--accent);
+    margin: 64px 0 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h2::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  h3 {
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    margin: 32px 0 8px;
+    text-wrap: balance;
+  }
+
+  p {
+    margin: 0 0 16px;
+  }
+  b,
+  strong {
+    font-weight: 600;
+  }
+  a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  a:focus-visible,
+  button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.86em;
+    background: var(--sunk);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .lede {
+    border-left: 2px solid var(--accent);
+    padding-left: 18px;
+    font-size: 18px;
+    color: var(--ink-2);
+  }
+
+  /* ── Maquette d'écran ─────────────────────────────────────── */
+  .mock {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin: 22px 0 10px;
+  }
+  .mock-bar {
+    background: var(--sunk);
+    border-bottom: 1px solid var(--rule);
+    padding: 9px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--rule);
+    flex: none;
+  }
+  .mock-body {
+    padding: 26px 28px;
+  }
+  .caption {
+    font-family: 'Archivo', sans-serif;
+    font-size: 13px;
+    color: var(--ink-3);
+    margin: 0 0 34px;
+  }
+
+  .q-step {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .q-title {
+    font-family: 'Archivo', sans-serif;
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    color: var(--ink);
+  }
+  .q-help {
+    font-size: 15px;
+    color: var(--ink-3);
+    margin: 0 0 18px;
+  }
+
+  .tiles {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  }
+  .tile {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 13px 15px;
+    background: var(--paper);
+  }
+  .tile.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .tile-t {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tile.on .tile-t {
+    color: var(--accent-ink);
+  }
+  .tile-d {
+    font-size: 13.5px;
+    color: var(--ink-3);
+    margin-top: 3px;
+    line-height: 1.45;
+  }
+  .radio {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ink-3);
+    flex: none;
+  }
+  .tile.on .radio {
+    border-color: var(--accent);
+    border-width: 4px;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 22px;
+  }
+  .btn {
+    font-family: 'Archivo', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 18px;
+    border-radius: 7px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+  }
+  :root[data-theme='dark'] .btn {
+    color: #10231d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .btn {
+      color: #10231d;
+    }
+  }
+  .btn.ghost {
+    background: transparent;
+    color: var(--ink-3);
+  }
+  .progress {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+
+  /* ── L'équipe produite ────────────────────────────────────── */
+  .team {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  }
+  .member {
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    padding: 15px 16px;
+    background: var(--paper);
+  }
+  .member-role {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 5px;
+  }
+  .member-name {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .member-list {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+  .member-list li {
+    padding: 2px 0 2px 13px;
+    position: relative;
+    line-height: 1.45;
+  }
+  .member-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 5px;
+    height: 1px;
+    background: var(--ink-3);
+  }
+
+  /* ── Tables ───────────────────────────────────────────────── */
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14.5px;
+    font-family: 'Archivo', sans-serif;
+  }
+  th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    font-weight: 600;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  td:first-child {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .chip {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .chip.yes {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+  .chip.no {
+    background: var(--stop-soft);
+    color: var(--stop);
+  }
+  .chip.later {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
+  .note {
+    background: var(--sunk);
+    border-radius: 9px;
+    padding: 16px 20px;
+    font-size: 15.5px;
+    color: var(--ink-2);
+  }
+  .note strong {
+    color: var(--ink);
+  }
+
+  .decide {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--warn);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    background: var(--surface);
+  }
+  .decide h3 {
+    margin: 0 0 6px;
+    font-size: 17px;
+  }
+  .decide p {
+    margin: 0 0 8px;
+    font-size: 15.5px;
+    color: var(--ink-2);
+  }
+  .decide p:last-child {
+    margin-bottom: 0;
+  }
+  .reco {
+    font-size: 14.5px;
+    color: var(--accent-ink);
+  }
+  :root[data-theme='dark'] .reco {
+    color: var(--accent);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .reco {
+      color: var(--accent);
+    }
+  }
+
+  .foot {
+    margin-top: 72px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-family: 'Archivo', sans-serif;
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+
+  @media (max-width: 620px) {
+    .page {
+      padding: 36px 16px 64px;
+    }
+    body {
+      font-size: 16px;
+    }
+  }
+</style>
+
+<style>
+  /* Catalogue par équipe suggérée */
+  .activity {
+    margin-bottom: 26px;
+  }
+  .activity-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .recipes {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+  .recipe {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: var(--paper);
+  }
+  .recipe-n {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 600;
+    font-size: 15.5px;
+  }
+  .recipe-d {
+    font-size: 13.5px;
+    color: var(--ink-3);
+    margin-top: 4px;
+    line-height: 1.45;
+  }
+  .recipe-k {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .kit {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    background: var(--sunk);
+    color: var(--ink-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .field {
+    margin-bottom: 14px;
+  }
+  .field-l {
+    font-family: 'Archivo', sans-serif;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+    margin-bottom: 4px;
+    display: block;
+  }
+  .field-v {
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 8px 11px;
+    background: var(--paper);
+    font-size: 14.5px;
+    color: var(--ink);
+    font-family: 'Archivo', sans-serif;
+  }
+  .field-v.pre {
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .field-v.todo {
+    color: var(--stop);
+    border-color: var(--stop);
+    background: var(--stop-soft);
+  }
+  .field-h {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    margin-top: 4px;
+    line-height: 1.45;
+  }
+
+  /* Une equipe suggeree : le nom et la forme, pas un bouton qui cree tout */
+  .team-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .team-shape {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+  }
+  .node {
+    border: 1px dashed var(--rule);
+    border-radius: 4px;
+    padding: 1px 7px;
+    color: var(--ink-3);
+  }
+  .arrow,
+  .plus {
+    color: var(--ink-3);
+  }
+  .team-why {
+    font-size: 13.5px;
+    color: var(--ink-3);
+    margin: 0 0 12px;
+    line-height: 1.5;
+    max-width: 68ch;
+  }
+  .recipe.done {
+    border-style: dashed;
+    opacity: 0.72;
+  }
+  .already {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+</style>
+
+<div class="page">
+  <header class="col">
+    <h1>Recettes d'agents</h1>
+    <p class="standfirst">
+      Un agent déjà équipé pour ce qu'on veut en faire — un à la fois, jamais une équipe livrée clés
+      en main.
+    </p>
+    <p class="meta">PROPOSITION v2 · 29/08/2026 · à valider avant d'écrire une ligne</p>
+  </header>
+
+  <h2>Ce que la v1 se trompait à proposer</h2>
+  <div class="col">
+    <p class="lede">
+      La première version créait trois agents d'un coup — un lead, un développeur, un relecteur.
+      Elle livrait une structure d'équipe que personne n'avait demandée, et trois objets à
+      comprendre avant d'en avoir utilisé un seul.
+    </p>
+    <p>
+      Une recette décrit <strong>un agent</strong>. Si quelqu'un veut une équipe, il ajoute un
+      second agent quand le premier lui a montré ce qui lui manquait — pas avant.
+    </p>
+  </div>
+
+  <h2>Le problème</h2>
+  <div class="col">
+    <p>
+      Créer un agent aujourd'hui, c'est remplir un formulaire : un nom, un modèle, un rôle. Puis
+      aller chercher les skills dans un écran, les connecteurs dans un autre, le dossier de travail
+      dans un troisième. Chaque champ se comprend ; l'assemblage, non.
+    </p>
+    <p>
+      Personne ne sait, en arrivant, qu'un agent qui code a besoin d'un dossier attaché, ou qu'un
+      agent qui coordonne a besoin d'un modèle capable d'appeler des outils. Ce sont des règles
+      qu'on apprend en se trompant.
+    </p>
+  </div>
+
+  <h2>Ce que je propose</h2>
+  <div class="col">
+    <p>
+      Une <strong>recette</strong> : la description déclarative d'<em>un</em> agent équipé pour une
+      activité — son rôle, ses skills, ses outils, le type de modèle qui convient, et ce qu'il lui
+      faut d'autre pour ne pas être cassé.
+    </p>
+    <p class="note">
+      <strong>Nodal-Agents ne shippe pas d'agents.</strong> Ce qui est livré est un fichier dans
+      <code>packages/catalog</code>. Rien n'existe en base avant le clic&nbsp;: une recette
+      <em>pré-remplit</em> l'écran de création qui existe déjà. Tout reste modifiable avant de
+      valider, et l'agent obtenu est un agent ordinaire.
+    </p>
+  </div>
+
+  <h2>Le catalogue</h2>
+  <div class="col">
+    <p>
+      Rangé par équipe — pas comme un classement, comme une suggestion. Voir « Dev team » apprend
+      qu'il existe une forme qui marche&nbsp;; rien n'oblige à la reproduire, ni à la compléter.
+    </p>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <span class="dot"></span><span class="dot"></span
+      ><span class="dot"></span>&nbsp;&nbsp;nodal-agents · Nouvel agent
+    </div>
+    <div class="mock-body">
+      <p class="q-title" style="margin-bottom: 6px">Que doit faire cet agent&nbsp;?</p>
+      <p class="q-help" style="margin-bottom: 22px">
+        Les équipes ci-dessous sont des suggestions. Rien n'oblige à les créer en entier — ni dans
+        l'ordre.
+      </p>
+
+      <div class="activity">
+        <div class="team-head">
+          <span class="activity-name" style="margin: 0">Dev team</span>
+          <span class="team-shape">
+            <span class="node">Chef d'équipe</span>
+            <span class="arrow">→</span>
+            <span class="node">Développeur</span>
+            <span class="plus">+</span>
+            <span class="node">Relecteur</span>
+          </span>
+        </div>
+        <p class="team-why">
+          Le chef reçoit la demande et la confie. Le développeur écrit. Le relecteur vérifie, avec
+          un modèle différent — deux instances du même modèle partagent les mêmes angles morts.
+        </p>
+        <div class="recipes">
+          <div class="recipe">
+            <div class="recipe-n">Chef d'équipe</div>
+            <div class="recipe-d">Reçoit une demande, la découpe, la confie à d'autres agents.</div>
+            <div class="recipe-k">
+              <span class="kit">modèle avec outils</span><span class="kit">délègue</span>
+            </div>
+          </div>
+          <div class="recipe">
+            <div class="recipe-n">Développeur</div>
+            <div class="recipe-d">Écrit et modifie du code dans un dossier qu'on lui confie.</div>
+            <div class="recipe-k">
+              <span class="kit">dossier requis</span><span class="kit">skill dev</span
+              ><span class="kit">outil de code</span>
+            </div>
+          </div>
+          <div class="recipe done">
+            <div class="recipe-n">Relecteur <span class="already">déjà dans l'espace</span></div>
+            <div class="recipe-d">Lit du code et rend un verdict. N'écrit jamais.</div>
+            <div class="recipe-k">
+              <span class="kit">lecture seule</span><span class="kit">skill revue</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="activity">
+        <div class="team-head">
+          <span class="activity-name" style="margin: 0">Veille</span>
+          <span class="team-shape">
+            <span class="node">Chercheur</span>
+            <span class="arrow">→</span>
+            <span class="node">Rédacteur</span>
+          </span>
+        </div>
+        <p class="team-why">
+          Le chercheur collecte et vérifie. Le rédacteur met en forme pour un lecteur pressé.
+        </p>
+        <div class="recipes">
+          <div class="recipe">
+            <div class="recipe-n">Chercheur</div>
+            <div class="recipe-d">Cherche, recoupe, cite ses sources.</div>
+            <div class="recipe-k">
+              <span class="kit">accès web</span><span class="kit">mémoire</span>
+            </div>
+          </div>
+          <div class="recipe">
+            <div class="recipe-n">Rédacteur</div>
+            <div class="recipe-d">Écrit court, à partir de ce qu'on lui donne.</div>
+            <div class="recipe-k"><span class="kit">skill rédaction</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="activity">
+        <div class="team-head">
+          <span class="activity-name" style="margin: 0">Sur mesure</span>
+        </div>
+        <div class="recipes">
+          <div class="recipe">
+            <div class="recipe-n">Partir de zéro</div>
+            <div class="recipe-d">Le formulaire vide, comme aujourd'hui.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    Les équipes s'ajoutent avec le catalogue. « Partir de zéro » reste le dernier choix&nbsp;: une
+    recette ne remplace pas le formulaire, elle le remplit.
+  </p>
+
+  <div class="col">
+    <div class="note">
+      <strong>Le groupe suggère, il n'agit pas.</strong> « Dev team » a un nom d'équipe et montre sa
+      forme — qui reçoit, qui écrit, qui vérifie — parce que c'est une connaissance utile que
+      personne n'a en arrivant. Mais il n'y a pas de bouton qui crée les trois. Chaque rôle se crée
+      seul, dans n'importe quel ordre, et une équipe à un seul membre est un usage parfaitement
+      normal. Ce qui est déjà dans l'espace est signalé, pour informer&nbsp;: pas pour réclamer
+      d'être complété.
+    </div>
+  </div>
+
+  <h2>Ce que fait le clic</h2>
+  <div class="col">
+    <p>
+      Il ouvre l'écran de création, déjà rempli. Ce que la recette a posé est signalé comme tel, et
+      se modifie avant de valider.
+    </p>
+  </div>
+
+  <div class="mock">
+    <div class="mock-bar">
+      <span class="dot"></span><span class="dot"></span
+      ><span class="dot"></span>&nbsp;&nbsp;nodal-agents · Nouvel agent — Développeur
+    </div>
+    <div class="mock-body">
+      <div class="field">
+        <span class="field-l">Nom</span>
+        <div class="field-v">Développeur</div>
+      </div>
+      <div class="field">
+        <span class="field-l">Ce qu'il sait faire</span>
+        <div class="field-v pre">Skill « dev » — posé par la recette</div>
+        <div class="field-h">
+          Les conventions de code, comment livrer, quand demander avant d'agir.
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-l">Comment il écrit du code</span>
+        <div class="field-v pre">Claude Code — installé sur cette machine</div>
+        <div class="field-h">
+          Ou Codex, ou un modèle appelé par clé API. Aucun identifiant n'est demandé&nbsp;: l'outil
+          est lancé sous la session déjà ouverte sur la machine, comme le ferait un terminal.
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-l">Sur quel dossier</span>
+        <div class="field-v todo">À choisir — cette recette l'exige</div>
+        <div class="field-h">
+          Sans dossier attaché, un agent qui code écrit dans l'espace partagé. C'est la panne du
+          27/08.
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost">Annuler</button>
+        <button class="btn">Créer l'agent</button>
+      </div>
+    </div>
+  </div>
+  <p class="caption">
+    Une recette peut rendre un champ <em>obligatoire</em>. C'est là sa vraie valeur&nbsp;: elle sait
+    ce qui casse quand on l'oublie.
+  </p>
+
+  <h2>Et si quelqu'un veut une équipe&nbsp;?</h2>
+  <div class="col">
+    <p>
+      Il crée un développeur. Il s'en sert. Le jour où il veut que le travail soit relu, il crée un
+      relecteur, puis un chef d'équipe à qui il rattache les deux — avec les écrans qui existent
+      déjà.
+    </p>
+    <p>
+      Une recette peut le <strong>dire</strong> sans le faire&nbsp;: la fiche « Chef d'équipe »
+      indique qu'il lui faut des agents à qui déléguer, et propose ceux qui existent déjà dans
+      l'espace. Le produit suggère&nbsp;; il n'assemble pas à la place de la personne.
+    </p>
+  </div>
+
+  <h2>Ce qui existe déjà</h2>
+  <div class="tablewrap">
+    <table>
+      <tr>
+        <th>Brique</th>
+        <th>État</th>
+        <th></th>
+      </tr>
+      <tr>
+        <td>L'écran de création d'agent</td>
+        <td>Existe — à pré-remplir, pas à réécrire</td>
+        <td><span class="chip yes">réutilisé</span></td>
+      </tr>
+      <tr>
+        <td>Attacher un skill</td>
+        <td>Existe — <code>assignSkillAction</code></td>
+        <td><span class="chip yes">réutilisé</span></td>
+      </tr>
+      <tr>
+        <td>Rattacher un agent à un coordinateur</td>
+        <td>Existe — <code>attachAgentToOrchestrator</code></td>
+        <td><span class="chip yes">réutilisé</span></td>
+      </tr>
+      <tr>
+        <td>Détecter les outils de code installés</td>
+        <td>Existe — <code>codeTaskDoctorAction</code></td>
+        <td><span class="chip yes">réutilisé</span></td>
+      </tr>
+      <tr>
+        <td>Le format de recette</td>
+        <td><code>packages/catalog/src/recipes/</code> — à écrire</td>
+        <td><span class="chip later">à faire</span></td>
+      </tr>
+      <tr>
+        <td>Le catalogue d'équipes, en tête de création</td>
+        <td>À écrire — un écran, pas un tunnel</td>
+        <td><span class="chip later">à faire</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>Ce que je ne fais pas</h2>
+  <div class="tablewrap">
+    <table>
+      <tr>
+        <th>Écarté</th>
+        <th>Pourquoi</th>
+      </tr>
+      <tr>
+        <td>Créer plusieurs agents d'un clic</td>
+        <td>
+          <span class="chip no">non</span> C'était la v1. Ça impose une structure que personne n'a
+          choisie, et livre des objets à comprendre avant d'en avoir utilisé un seul.
+        </td>
+      </tr>
+      <tr>
+        <td>Un tunnel de questions</td>
+        <td>
+          <span class="chip no">non</span> Une recette pré-remplit un écran existant. Ajouter des
+          étapes pour créer un agent serait un recul.
+        </td>
+      </tr>
+      <tr>
+        <td>Une recette qui se met à jour</td>
+        <td>
+          <span class="chip no">non</span> Ce serait un lien vivant entre le produit et les agents
+          d'un utilisateur — ce que l'invariant interdit.
+        </td>
+      </tr>
+      <tr>
+        <td>Dix recettes d'un coup</td>
+        <td>
+          <span class="chip later">plus tard</span> Deux ou trois, polies, valent mieux qu'un
+          catalogue à moitié juste.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>Ce que je vérifie avant de dire que c'est fini</h2>
+  <div class="col">
+    <div class="note">
+      installation neuve → « nouvel agent » → équipe <em>Dev team</em> → <em>Développeur</em> →
+      l'écran s'ouvre pré-rempli, <strong>le dossier reste à choisir</strong> → création → un
+      message à cet agent → <strong>il écrit dans le dossier choisi</strong>, et nulle part
+      ailleurs.
+    </div>
+    <p>
+      Et le contrôle qui compte le plus&nbsp;: l'agent obtenu doit être
+      <strong>indiscernable</strong> d'un agent monté à la main. Même écran d'édition, même
+      suppression, aucune trace de la recette en base. Si une recette laisse quoi que ce soit
+      derrière elle, elle a franchi la ligne.
+    </p>
+  </div>
+
+  <h2>Trois décisions qui t'appartiennent</h2>
+
+  <div class="decide">
+    <h3>1. Le mot « recette »</h3>
+    <p>
+      Il dit bien qu'on décrit sans exécuter, mais il évoque la cuisine. « Modèle » est déjà pris
+      par les LLM. « Profil » était le mot du backlog.
+    </p>
+    <p class="reco">
+      Je penche pour aucun nom à l'écran&nbsp;: une question, « Que doit faire cet agent ? », et des
+      choix. Le mot ne servirait qu'entre nous et dans le code.
+    </p>
+  </div>
+
+  <div class="decide">
+    <h3>2. Quelles recettes en premier</h3>
+    <p>
+      Je propose Développeur, Relecteur, Chef d'équipe — le trio dont le produit sait déjà tout
+      faire, et celui dont les pannes de l'été sont les plus fraîches.
+    </p>
+    <p class="reco">
+      Si une autre équipe est plus demandée que la Dev team, elle passe devant&nbsp;: la première
+      donnera sa forme aux suivantes.
+    </p>
+  </div>
+
+  <div class="decide">
+    <h3>3. Un champ obligatoire, jusqu'où&nbsp;?</h3>
+    <p>
+      La recette « Développeur » exige un dossier. C'est ce qui évite la panne du 27/08 — mais c'est
+      aussi le produit qui refuse de créer un agent tant qu'une case n'est pas remplie.
+    </p>
+    <p class="reco">
+      Je recommande de l'exiger, en expliquant pourquoi à l'écran plutôt qu'en bloquant en silence.
+      Un agent qui code sans dossier n'est pas à moitié configuré&nbsp;: il est cassé.
+    </p>
+  </div>
+
+  <h2>État au 30/08 · PR #45, huit passes Codex</h2>
+  <div class="col">
+    <div class="note">
+      <strong>Construit</strong> — « Nouvel agent » ouvre la question,
+      <em>Start from scratch</em> en premier, les trois profils ensuite, la Dev team en note de bas
+      de page. Choisir un profil ouvre un <strong>panneau de détail</strong> (rôle, skills avec leur
+      description, outils bloqués, autonomie, ce qui reste à fournir) avant le formulaire
+      pré-rempli. Décisions 1 et 2 prises comme recommandé ; la 3 (dossier obligatoire) est reportée
+      à une PR de suite.
+    </div>
+    <p>
+      <strong>Ce que les revues ont corrigé dans le plan lui-même.</strong> Le plan disait «
+      appliquer le profil juste après la création » : faux. Un membre non propriétaire choisissant
+      <em>Code reviewer</em> obtenait un agent créé puis un verrou refusé — un agent capable
+      d'écrire, portant le nom d'un qui promettait de ne jamais écrire. Création et profil sont
+      maintenant <strong>une seule transaction</strong>, autorisée avant que la ligne existe,
+      annulée si un skill promis manque. Corollaire découvert en chemin : le premier orchestrateur
+      d'un workspace en devient la racine (<code>rootAgentId</code> + <code>rootGrants</code>), et
+      un rollback par simple suppression laissait les grants réécrits.
+    </p>
+    <p>
+      Aussi corrigés : les skills système introuvables hors du premier workspace (chaque install
+      LAN), le slug d'un second agent du même profil (<code>developer-2</code>), le catalogue entier
+      — corps Markdown compris — expédié au navigateur par le panneau, un
+      <code>next-env.d.ts</code> muté par <code>next dev</code>, et la garde de conformité design
+      (<code>text-[Npx]</code>) rouge sur trois composants neufs.
+    </p>
+    <p>
+      <strong>Refusé, huit fois de suite</strong> : Codex veut les recettes en base au nom de
+      l'invariant #1. Le catalogue est défini comme <em>data-as-code</em> pour le bootstrap
+      (<code>packages/catalog/src/types.ts</code>) ; le runtime ne lit jamais une recette ; l'agent
+      créé n'en porte aucune trace. Ce point reste ouvert à ton arbitrage.
+    </p>
+    <p>
+      Ce que la PR a trouvé en passant, hors périmètre mais bloquant :
+      <strong>la connexion LAN renvoyait 500 depuis #38</strong> (une <code>Request</code> recopiée
+      d'un autre realm sous Turbopack). Corrigé dans #45, vérifié en direct. Toute install 0.8.7 /
+      0.8.8 en mode LAN est touchée → une <strong>0.8.9</strong> s'impose dès le merge.
+    </p>
+  </div>
+
+  <h2>Suite</h2>
+  <div class="col">
+    <table>
+      <tr>
+        <th>Quoi</th>
+        <th>Qui</th>
+        <th>Quoi de bloquant</th>
+      </tr>
+      <tr>
+        <td>Merger #45 une fois la CI verte</td>
+        <td>Quentin</td>
+        <td>CI sur <code>cd744453</code></td>
+      </tr>
+      <tr>
+        <td>Publier 0.8.9 (fix connexion LAN)</td>
+        <td>Quentin</td>
+        <td>merge de #45 ; <code>pnpm release:check</code> avant</td>
+      </tr>
+      <tr>
+        <td>PR de suite : champ « dossier » à la création, obligatoire pour <em>Developer</em></td>
+        <td>moi</td>
+        <td>ton go</td>
+      </tr>
+      <tr>
+        <td>Recettes en base ou pas — le P1 de Codex</td>
+        <td>décision</td>
+        <td>rien ; je recommande non</td>
+      </tr>
+    </table>
+  </div>
+</div>
