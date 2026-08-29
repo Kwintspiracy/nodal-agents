@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { availableSlug, nameForSlug } from '@/lib/available-slug.ts';
 import {
   createAgentAction,
   updateAgentAction,
@@ -247,6 +248,16 @@ export default function AgentForm(props: Props) {
   }
 
   const agents = props.agents ?? [];
+  // A second agent from the same profile is legitimate; its default identity
+  // must therefore be one the workspace does not already hold.
+  const recipeSlug = recipe
+    ? availableSlug(
+        recipe.slug,
+        agents.map((a) => a.slug),
+      )
+    : undefined;
+  const recipeName =
+    recipe && recipeSlug ? nameForSlug(recipe.name, recipe.slug, recipeSlug) : undefined;
   const noLlmKeys = activeKeys.length === 0;
   const showSubAgents = role !== 'worker';
   const noAgentsForPicker = agents.length === 0;
@@ -565,7 +576,7 @@ export default function AgentForm(props: Props) {
               required
               pattern="[a-z0-9\-]+"
               placeholder="my-agent"
-              defaultValue={recipe?.slug}
+              defaultValue={recipeSlug}
               className="rounded-lg"
             />
           </div>
@@ -578,7 +589,7 @@ export default function AgentForm(props: Props) {
               name="name"
               required
               placeholder="My Agent"
-              defaultValue={recipe?.name}
+              defaultValue={recipeName}
               className="rounded-lg"
             />
           </div>
