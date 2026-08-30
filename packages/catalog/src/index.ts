@@ -5,8 +5,10 @@
 // and upserts each entry into the local DB at boot, respecting per-install
 // user overrides.
 //
-// Scope: skills only. Agents are NOT shipped — every agent is created by the
-// user. Connectors ship via their own catalog (apps/web connector-catalog).
+// Scope: skills, and RECIPES for creating agents. Agents themselves are NOT
+// shipped — every agent is created by the user, and a recipe only pre-fills the
+// form they submit (see recipes/types.ts). Connectors ship via their own
+// catalog (apps/web connector-catalog).
 //
 // Adding a new system skill = a new file in skills/ + an entry below.
 // No SQL on live DBs.
@@ -146,5 +148,35 @@ export const toolGroupSkillSlugs: string[] = systemSkills
 // Ce qui est du développement se coche désormais sur le DOSSIER
 // (`agent_workspaces.is_dev_folder`, migration 0085), et les deux skills
 // redeviennent ce qu'ils auraient dû rester : de la guidance.
+
+// ─── Recipes ──────────────────────────────────────────────────────────────
+//
+// A recipe describes ONE agent, equipped for something; a team is a name and a
+// shape grouping several of them. Neither ships an agent: they pre-fill the
+// creation form, and what the user submits produces an ordinary agent with no
+// trace of the recipe in the database. The scope note at the top of this file
+// still holds — agents are never shipped.
+export {
+  agentRecipes,
+  agentTeams,
+  findAgentRecipe,
+  recipesOfTeam,
+  recipeSkillMeta,
+  devTeam,
+  devTeamRecipes,
+  developerRecipe,
+  codeReviewerRecipe,
+  teamLeadRecipe,
+} from './recipes/index';
+export type {
+  AgentRecipe,
+  AgentTeam,
+  RecipeConnector,
+  RecipeRole,
+  RecipeNeed,
+  RecipePreset,
+  ModelRequirement,
+  RecipeSkillMeta,
+} from './recipes/index';
 
 export type { SystemSkill, SkillKind };

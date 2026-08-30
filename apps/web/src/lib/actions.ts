@@ -90,7 +90,7 @@ import {
   getMcpApprovalContext,
   cliRuns,
 } from '@nodal-agents/db';
-import type { JobTriggerContext } from '@nodal-agents/db';
+import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
@@ -149,7 +149,12 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
-import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
+import {
+  systemSkillSlugs,
+  skillKindOfSlug,
+  findAgentRecipe,
+  type AgentRecipe,
+} from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -479,6 +484,10 @@ const CreateAgentSchema = z
       .optional()
       .nullable()
       .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
+    // Profile to apply in the SAME action as the creation. Resolved and
+    // authorised BEFORE the agent row exists, so a refused profile leaves
+    // nothing behind (see createAgentAction).
+    recipeSlug: z.string().min(1).optional(),
   })
   .refine((d) => d.role !== 'worker' || d.subAgentIds.length === 0, {
     message: 'Sub-agents only apply when role is router or planner',
@@ -832,12 +841,45 @@ async function orchestratorModelToolsError(
   return null;
 }
 
-export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
+/**
+ * Thrown inside the creation transaction to roll it back cleanly — see
+ * createAgentAction. A failed INSERT leaves a PostgreSQL transaction aborted;
+ * returning normally after it would hand COMMIT an aborted transaction, and
+ * what the driver does with that is its business, not ours. Throwing makes
+ * the rollback explicit on every driver (codex, #45 tenth pass).
+ */
+class SlugTaken extends Error {
+  constructor() {
+    super('slug_taken');
+  }
+}
+
+/** Thrown inside the creation transaction to roll it back — see createAgentAction. */
+class RecipeSkillsMissing extends Error {
+  constructor(readonly missing: string[]) {
+    super(`recipe skills missing: ${missing.join(', ')}`);
+  }
+}
+
+export async function createAgentAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string; recipe?: ApplyAgentRecipeResult }>> {
   try {
     const session = await getSession();
     const parsed = CreateAgentSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    // A profile is authorised BEFORE the agent exists. The first cut applied
+    // it in a second action after creation: a member of a LAN workspace who
+    // picked "Code reviewer" got a created agent, then a refused read-only
+    // preset — and was left with an ordinary, write-capable agent wearing the
+    // name of one that had promised never to write.
+    const recipe = parsed.data.recipeSlug ? findAgentRecipe(parsed.data.recipeSlug) : undefined;
+    if (parsed.data.recipeSlug && !recipe) return fail('not_found', 'Unknown profile');
+    if (recipe) {
+      const refused = await recipeRefusalError(session, recipe);
+      if (refused) return fail('forbidden', refused);
     }
     // Avatar must come from the bundled catalog — refuse external URLs,
     // path traversal, and anything else that didn't ship with the app.
@@ -862,25 +904,49 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
       if (toolsError) return fail('validation_failed', toolsError);
     }
 
-    const result = await createAgentRepo(db, session.entityId, {
-      slug: parsed.data.slug,
-      name: parsed.data.name,
-      personality: parsed.data.personality,
-      model: parsed.data.model,
-      llmKeyId: parsed.data.llmKeyId ?? null,
-      role: dbRole,
-      orchestratorMode,
-      avatarUrl: parsed.data.avatarUrl,
-      subAgentIds: parsed.data.subAgentIds,
+    // Creation and profile are ONE transaction. createAgentRepo does more than
+    // insert a row: the first orchestrator of a workspace becomes its root
+    // (entities.rootAgentId, no FK cascade) and every later one is assigned
+    // under it. A profile that fails after that must undo the root too, or
+    // the workspace points at a deleted agent and no orchestrator can be
+    // created again (codex, #45 fifth pass). A transaction undoes all of it.
+    let applied: ApplyAgentRecipeResult | undefined;
+    const result = await db.transaction(async (tx) => {
+      const created = await createAgentRepo(tx, session.entityId, {
+        slug: parsed.data.slug,
+        name: parsed.data.name,
+        personality: parsed.data.personality,
+        model: parsed.data.model,
+        llmKeyId: parsed.data.llmKeyId ?? null,
+        role: dbRole,
+        orchestratorMode,
+        avatarUrl: parsed.data.avatarUrl,
+        subAgentIds: parsed.data.subAgentIds,
+      });
+      if ('error' in created) throw new SlugTaken();
+      if (!recipe) return created;
+      const outcome = await applyRecipeToAgent(tx, session, created.id, recipe);
+      // A skill the profile promised but could not attach is the same failure
+      // as any other (invariant #4 — no silent smart fallback): throwing
+      // rolls the whole gesture back and the user is told which skill.
+      if (outcome.skillsMissing.length > 0) throw new RecipeSkillsMissing(outcome.skillsMissing);
+      applied = outcome;
+      return created;
     });
 
-    if ('error' in result) {
+    revalidatePath('/agents');
+    if (applied) revalidatePath('/skills');
+    return ok(applied ? { id: result.id, recipe: applied } : { id: result.id });
+  } catch (err: unknown) {
+    if (err instanceof SlugTaken) {
       return fail('conflict', 'An agent with this slug already exists');
     }
-
-    revalidatePath('/agents');
-    return ok({ id: result.id });
-  } catch (err: unknown) {
+    if (err instanceof RecipeSkillsMissing) {
+      return fail(
+        'not_found',
+        `The profile needs a skill this install does not have (${err.missing.join(', ')}) — no agent was created.`,
+      );
+    }
     console.error('[createAgentAction]', err);
     const msg = err instanceof Error ? err.message : '';
     if (msg === 'sub_agents_not_found') {
@@ -6360,6 +6426,171 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
   } catch (err) {
     console.error('[setReviewerReadOnlyPresetAction]', err);
     return fail('db_error', 'Failed to save the read-only preset');
+  }
+}
+
+// ─── Agent recipes ────────────────────────────────────────────────────────────
+//
+// A recipe (packages/catalog/src/recipes) describes ONE agent equipped for
+// something. What it DECLARES — skills by slug, the read-only preset — is
+// applied through the same repos and rules the manual screens use, so the
+// result is an ordinary agent with no trace of the recipe.
+//
+// There is ONE entry point: createAgentAction with `recipeSlug`, which runs
+// creation and profile in a single transaction. A standalone "apply to an
+// existing agent" action existed in the first cut and was removed (codex,
+// #45): it could return ok with part of the profile attached, and had no
+// caller once creation became atomic.
+
+export type ApplyAgentRecipeResult = {
+  skillsAttached: string[];
+  skillsMissing: string[];
+  readOnlyApplied: boolean;
+  /** Recommended connectors the workspace already had — attached. */
+  connectorsAttached: string[];
+  /** Recommended connectors the workspace does not have — the user's move. */
+  connectorsToSetUp: string[];
+};
+
+/**
+ * Why a recipe may NOT be applied by this session, or null. The read-only
+ * posture is owner-only outside local-trust — the SAME boundary the editor's
+ * setReviewerReadOnlyPresetAction enforces. Checked BEFORE anything is
+ * written, so a refused recipe leaves nothing behind: an agent with its
+ * skills but without the lock it was chosen for would be worse than none.
+ */
+async function recipeRefusalError(
+  session: { userId: string; entityId: string },
+  recipe: AgentRecipe,
+): Promise<string | null> {
+  const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
+  if (wantsReadOnly && !(await isWorkspaceOwner(session))) {
+    return 'Only the workspace owner can apply a read-only profile.';
+  }
+  return null;
+}
+
+/** Writes what the recipe declares onto an EXISTING, already-authorised agent. */
+async function applyRecipeToAgent(
+  db: AnyDrizzleDb,
+  session: { userId: string; entityId: string },
+  agentId: string,
+  recipe: AgentRecipe,
+): Promise<ApplyAgentRecipeResult> {
+  const wantsReadOnly = recipe.presets?.includes('read-only') ?? false;
+  const agent = { id: agentId };
+  {
+    // Skills: resolve slug → id. System skills are seeded ONCE, on the first
+    // workspace of the install (createdBy='system'); an agent in any other
+    // workspace — every LAN sign-up, every second workspace — must still find
+    // them. Same two-branch lookup as assignSkillRepo: this workspace's own
+    // rows, OR a catalog slug whose row is genuinely system-authored (the
+    // createdBy check is what stops another workspace's same-slug skill from
+    // passing as the real one).
+    const skillRows = await db
+      .select({ id: agentSkills.id, slug: agentSkills.slug, entityId: agentSkills.entityId })
+      .from(agentSkills)
+      .where(
+        and(
+          inArray(agentSkills.slug, recipe.skills),
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system')),
+          ),
+        ),
+      );
+    // A workspace's own row wins over the install-wide one (a per-install
+    // override is exactly what listSkillsAction surfaces).
+    const idBySlug = new Map<string, string>();
+    for (const r of skillRows) {
+      if (!idBySlug.has(r.slug) || r.entityId === session.entityId) idBySlug.set(r.slug, r.id);
+    }
+    const skillsAttached: string[] = [];
+    const skillsMissing: string[] = [];
+    for (const slug of recipe.skills) {
+      const skillId = idBySlug.get(slug);
+      if (!skillId) {
+        skillsMissing.push(slug);
+        continue;
+      }
+      const res = await assignSkillRepo(
+        db,
+        session.entityId,
+        { skillId, agentId: agent.id },
+        systemSkillSlugs,
+      );
+      // already_assigned is a success for a recipe — the skill IS there.
+      if ('error' in res && res.error !== 'already_assigned') skillsMissing.push(slug);
+      else skillsAttached.push(slug);
+    }
+
+    // Read-only posture: the SAME rows the editor's reviewer preset writes.
+    let readOnlyApplied = false;
+    if (wantsReadOnly) {
+      await db
+        .insert(approvalRules)
+        .values(
+          READONLY_PRESET_TOOLS.map((toolName) => ({
+            entityId: session.entityId,
+            agentId: agent.id,
+            toolName,
+            action: 'block' as const,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+          set: { action: 'block', updatedAt: new Date() },
+        });
+      readOnlyApplied = true;
+    }
+
+    // Connectors: RECOMMENDED by the recipe, attached only when this workspace
+    // already holds an instance. Creating one here would mean spawning an MCP
+    // subprocess or asking for an API key inside agent creation; instead the
+    // detail panel said beforehand which ones are ready and which are the
+    // user's move, and the result repeats it.
+    const connectorsAttached: string[] = [];
+    const connectorsToSetUp: string[] = [];
+    const wantedMcp = (recipe.connectors ?? []).filter((c) => c.kind === 'mcp').map((c) => c.slug);
+    if (wantedMcp.length > 0) {
+      const rows = await db
+        .select({ id: mcpServers.id, slug: mcpServers.slug })
+        .from(mcpServers)
+        .where(
+          and(
+            eq(mcpServers.entityId, session.entityId),
+            inArray(mcpServers.slug, wantedMcp),
+            eq(mcpServers.active, true),
+          ),
+        );
+      const bySlug = new Map<string, string>();
+      for (const r of rows) if (!bySlug.has(r.slug)) bySlug.set(r.slug, r.id);
+      for (const slug of wantedMcp) {
+        const mcpServerId = bySlug.get(slug);
+        if (!mcpServerId) {
+          connectorsToSetUp.push(slug);
+          continue;
+        }
+        await db
+          .insert(agentMcpServers)
+          .values({
+            entityId: session.entityId,
+            agentId: agent.id,
+            mcpServerId,
+            enabledTools: null,
+          })
+          .onConflictDoNothing();
+        connectorsAttached.push(slug);
+      }
+    }
+
+    return {
+      skillsAttached,
+      skillsMissing,
+      readOnlyApplied,
+      connectorsAttached,
+      connectorsToSetUp,
+    };
   }
 }
 

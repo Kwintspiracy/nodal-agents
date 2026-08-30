@@ -11,11 +11,14 @@ export function OptionRadio({
   onClick,
   name,
   description,
+  children,
 }: {
   active: boolean;
   onClick: () => void;
   name: string;
   description: string;
+  /** Rendered under the description — the mock puts a row of pills there. */
+  children?: React.ReactNode;
 }) {
   return (
     <div
@@ -50,6 +53,7 @@ export function OptionRadio({
       <span className="flex-1 min-w-0">
         <span className="block text-medium-14 leading-[1.3]! text-ink">{name}</span>
         <span className="block text-body-13 leading-[1.4]! text-ink-3 mt-0.5">{description}</span>
+        {children}
       </span>
     </div>
   );
