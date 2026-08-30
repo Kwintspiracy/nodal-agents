@@ -118,6 +118,12 @@ describe('the Dev team roles', () => {
     expect(developerRecipe.needs).toContain('code-runtime');
   });
 
+  it('the reviewer recommends a browser — Playwright, no API key', () => {
+    // The slug's existence in the MCP catalog is asserted in apps/web
+    // (recipe-connectors.test.ts): this package does not depend on shared.
+    expect(codeReviewerRecipe.connectors).toEqual([{ kind: 'mcp', slug: 'mcp-playwright' }]);
+  });
+
   it('the reviewer does NOT ask for a way to write — and is locked read-only', () => {
     expect(developerRecipe.skills).toContain('dev');
     expect(codeReviewerRecipe.skills).not.toContain('dev');

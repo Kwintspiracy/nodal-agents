@@ -222,8 +222,18 @@ export default function AgentForm(props: Props) {
             );
           } else {
             const parts = [`${applied.skillsAttached.length} skill(s) attached`];
+            if (applied.connectorsAttached.length > 0) {
+              parts.push(`${applied.connectorsAttached.length} connector(s) attached`);
+            }
             if (applied.readOnlyApplied) parts.push('read-only');
             toast.success(`Agent created — ${parts.join(', ')}`);
+            if (applied.connectorsToSetUp.length > 0) {
+              // A recommendation, not a failure: the panel said this was the
+              // user's move. Repeated here so it is not forgotten.
+              toast.info(
+                `Still to set up from Connectors: ${applied.connectorsToSetUp.join(', ')} — then attach it to this agent.`,
+              );
+            }
           }
         } else {
           toast.success('Agent created');
@@ -546,7 +556,7 @@ export default function AgentForm(props: Props) {
     <Modal
       open={open}
       onClose={() => setOpen(false)}
-      title={recipe ? `New agent — ${recipe.name}` : 'New agent'}
+      title={recipe ? `Create New Agent — ${recipe.name}` : 'Create New Agent'}
       dismissable={false}
       footer={
         <ModalFooter>

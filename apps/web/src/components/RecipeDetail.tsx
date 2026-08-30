@@ -1,6 +1,7 @@
 'use client';
 
 import type { AgentRecipe, RecipeNeed, RecipeSkillMeta } from '@nodal-agents/catalog';
+import type { RecipeConnectorMeta } from '@/lib/recipe-connectors.ts';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import PrimaryButton from './ui/PrimaryButton.tsx';
 import { MonoMicroTag } from './ui/MonoMicroTag.tsx';
@@ -52,17 +53,29 @@ interface Props {
   recipe: AgentRecipe;
   /** Name/description/builtins of the catalog skills, computed on the server. */
   skillMeta: Record<string, RecipeSkillMeta>;
+  /** Recommended connectors, with whether this workspace already has them. */
+  connectorMeta: Record<string, RecipeConnectorMeta>;
   open: boolean;
   onBack: () => void;
   onContinue: () => void;
 }
 
-export default function RecipeDetail({ recipe, skillMeta, open, onBack, onContinue }: Props) {
+export default function RecipeDetail({
+  recipe,
+  skillMeta,
+  connectorMeta,
+  open,
+  onBack,
+  onContinue,
+}: Props) {
   const skills = recipe.skills
     .map((slug) => skillMeta[slug])
     .filter((s): s is RecipeSkillMeta => s !== undefined);
   const readOnly = recipe.presets?.includes('read-only') ?? false;
   const needs = recipe.needs ?? [];
+  const connectors = (recipe.connectors ?? [])
+    .map((c) => connectorMeta[c.slug])
+    .filter((c): c is RecipeConnectorMeta => c !== undefined);
 
   return (
     <Modal
@@ -135,6 +148,46 @@ export default function RecipeDetail({ recipe, skillMeta, open, onBack, onContin
             </p>
           )}
         </Section>
+
+        {connectors.length > 0 && (
+          <Section label={`Connectors recommended (${connectors.length})`}>
+            <ul className="space-y-2">
+              {connectors.map((c) => (
+                <li
+                  key={c.slug}
+                  className={`rounded-lg border px-3 py-2.5 ${
+                    c.installed ? 'border-rule-2 bg-paper' : 'border-warn/40 bg-warn/5'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-medium-13 text-ink">{c.label}</span>
+                    <MonoMicroTag tone="ink">{c.slug}</MonoMicroTag>
+                  </div>
+                  <p className="text-body-13 text-ink-3 mt-1 leading-snug">{c.description}</p>
+                  <p className="text-body-13 text-ink-2 mt-1.5">
+                    {c.installed ? (
+                      <>
+                        <span className="text-medium-13 text-ink">Ready.</span> Already in this
+                        workspace — attached to the agent on creation.
+                      </>
+                    ) : c.needsApiKey ? (
+                      <>
+                        <span className="text-medium-13 text-ink">Needs an API key.</span> Add it
+                        from Connectors with your key, then attach it to this agent.
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-medium-13 text-ink">Not installed yet.</span> No API
+                        key — add it from Connectors, then attach it to this agent.
+                      </>
+                    )}
+                  </p>
+                  {!c.installed && <p className="text-mono-11 text-ink-3 mt-1.5">{c.setupHint}</p>}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
 
         <Section label="Autonomy">
           <p className="text-body-13 text-ink-2">

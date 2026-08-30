@@ -28,6 +28,10 @@ export const codeReviewerRecipe: AgentRecipe = {
   role: 'worker',
   skills: ['code-review'],
   presets: ['read-only'],
+  // A reviewer that can drive a browser can check the result, not just the
+  // diff. Playwright needs no API key; the workspace still has to install it
+  // once (first run downloads the package), which the detail panel says.
+  connectors: [{ kind: 'mcp', slug: 'mcp-playwright' }],
   needs: ['workspace'],
   kit: ['read-only', 'returns a verdict'],
 };
@@ -64,7 +68,7 @@ export const teamLeadRecipe: AgentRecipe = {
 
 export const devTeam: AgentTeam = {
   slug: 'dev-team',
-  name: 'Dev team',
+  name: 'Development',
   shape: 'Team lead → Developer + Code reviewer',
   rationale:
     'The lead takes the request and hands it out. The developer writes. The reviewer checks, on a different model — two instances of the same model share the same blind spots.',

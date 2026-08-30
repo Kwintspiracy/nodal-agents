@@ -52,6 +52,20 @@ export type RecipeNeed = 'workspace' | 'code-runtime';
  */
 export type RecipePreset = 'read-only';
 
+/**
+ * A connector the recipe RECOMMENDS. `mcp` = an entry of the MCP catalog
+ * (packages/shared/src/mcp-catalog.ts), by slug. Recommending is not
+ * installing: a connector is attached to the new agent only when the
+ * workspace already holds an instance of it; otherwise the flow says so and
+ * points at what the user must provide (an API key, a first-run download).
+ * Starting an MCP subprocess or asking for a key inside agent creation would
+ * make the click slow and the failure unclear.
+ */
+export interface RecipeConnector {
+  kind: 'mcp';
+  slug: string;
+}
+
 export interface AgentRecipe {
   /** Stable identifier. Never stored on the agent — used by the UI only. */
   slug: string;
@@ -70,6 +84,8 @@ export interface AgentRecipe {
   skills: string[];
   /** Postures applied after creation, through existing per-agent controls. */
   presets?: RecipePreset[];
+  /** Connectors recommended for this agent — attached when the workspace has them. */
+  connectors?: RecipeConnector[];
   /** What the model must be able to do for this agent to work at all. */
   modelRequirements?: ModelRequirement[];
   /** What the agent still needs, that the recipe cannot supply itself. */

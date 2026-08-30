@@ -6433,6 +6433,10 @@ export type ApplyAgentRecipeResult = {
   skillsAttached: string[];
   skillsMissing: string[];
   readOnlyApplied: boolean;
+  /** Recommended connectors the workspace already had — attached. */
+  connectorsAttached: string[];
+  /** Recommended connectors the workspace does not have — the user's move. */
+  connectorsToSetUp: string[];
 };
 
 /**
@@ -6527,7 +6531,53 @@ async function applyRecipeToAgent(
       readOnlyApplied = true;
     }
 
-    return { skillsAttached, skillsMissing, readOnlyApplied };
+    // Connectors: RECOMMENDED by the recipe, attached only when this workspace
+    // already holds an instance. Creating one here would mean spawning an MCP
+    // subprocess or asking for an API key inside agent creation; instead the
+    // detail panel said beforehand which ones are ready and which are the
+    // user's move, and the result repeats it.
+    const connectorsAttached: string[] = [];
+    const connectorsToSetUp: string[] = [];
+    const wantedMcp = (recipe.connectors ?? []).filter((c) => c.kind === 'mcp').map((c) => c.slug);
+    if (wantedMcp.length > 0) {
+      const rows = await db
+        .select({ id: mcpServers.id, slug: mcpServers.slug })
+        .from(mcpServers)
+        .where(
+          and(
+            eq(mcpServers.entityId, session.entityId),
+            inArray(mcpServers.slug, wantedMcp),
+            eq(mcpServers.active, true),
+          ),
+        );
+      const bySlug = new Map<string, string>();
+      for (const r of rows) if (!bySlug.has(r.slug)) bySlug.set(r.slug, r.id);
+      for (const slug of wantedMcp) {
+        const mcpServerId = bySlug.get(slug);
+        if (!mcpServerId) {
+          connectorsToSetUp.push(slug);
+          continue;
+        }
+        await db
+          .insert(agentMcpServers)
+          .values({
+            entityId: session.entityId,
+            agentId: agent.id,
+            mcpServerId,
+            enabledTools: null,
+          })
+          .onConflictDoNothing();
+        connectorsAttached.push(slug);
+      }
+    }
+
+    return {
+      skillsAttached,
+      skillsMissing,
+      readOnlyApplied,
+      connectorsAttached,
+      connectorsToSetUp,
+    };
   }
 }
 

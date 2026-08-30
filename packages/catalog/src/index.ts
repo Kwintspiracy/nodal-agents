@@ -171,6 +171,7 @@ export {
 export type {
   AgentRecipe,
   AgentTeam,
+  RecipeConnector,
   RecipeRole,
   RecipeNeed,
   RecipePreset,

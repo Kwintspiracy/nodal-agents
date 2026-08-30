@@ -4,7 +4,7 @@
  * What is proven, on the REAL stack and against REAL rows:
  *
  *  1. "Start from scratch" comes FIRST and still opens the empty form; the
- *     Dev team is a footnote — a name and a shape — with NO button that
+ *     "Development" is a family select — a name and a shape — with NO button that
  *     creates the whole team.
  *  2. Choosing "Code reviewer" opens a DETAIL panel first, naming what the
  *     profile sets: the skill it attaches, the tools it blocks (read-only),
@@ -41,25 +41,35 @@ test.describe('agent recipes', () => {
       await page.getByRole('button', { name: 'New agent' }).click();
 
       const picker = page.getByRole('dialog');
-      await expect(
-        picker.getByRole('heading', { name: 'What should this agent do?' }),
-      ).toBeVisible();
+      await expect(picker.getByRole('heading', { name: 'Create New Agent' })).toBeVisible();
 
-      // 1. Scratch first; the team is a footnote with no build button.
-      const tiles = picker
-        .getByRole('button')
-        .filter({ hasText: /Start from scratch|Developer|Code reviewer|Team lead/ });
-      await expect(tiles.first()).toContainText('Start from scratch');
-      await expect(picker.getByText('Dev team')).toBeVisible();
+      // 1. Scratch first, as a radio card; the family is a select whose shape
+      // is explained, with no build button. Counts on the card are real.
+      const radios = picker.getByRole('radio');
+      await expect(radios.first()).toContainText('Customize a new agent');
+      await expect(radios.first()).toHaveAttribute('aria-checked', 'true');
+      await expect(picker.getByLabel('Profile family')).toHaveValue('dev-team');
       await expect(picker.getByText('Team lead → Developer + Code reviewer')).toBeVisible();
       await expect(picker.getByRole('button', { name: /create (the )?team/i })).toHaveCount(0);
+      const reviewer = picker.getByRole('radio', { name: /^Code reviewer/ });
+      await expect(reviewer).toContainText('1 Skills');
+      await expect(reviewer).toContainText('1 Connectors');
+      await expect(reviewer).toContainText('5 tools blocked');
 
-      // 2. The detail panel names what the profile sets, BEFORE any form.
-      await picker.getByRole('button', { name: /^Code reviewer/ }).click();
+      // 2. Select → Next → the detail panel names what the profile sets,
+      // BEFORE any form — including the connector and what it takes.
+      await reviewer.click();
+      await expect(reviewer).toHaveAttribute('aria-checked', 'true');
+      await picker.getByRole('button', { name: 'Next' }).click();
       const detail = page.getByRole('dialog');
       await expect(detail.getByRole('heading', { name: 'Code reviewer' })).toBeVisible();
       await expect(detail.getByText('Skills attached (1)')).toBeVisible();
       await expect(detail.getByText('Code review', { exact: true })).toBeVisible();
+      await expect(detail.getByText('Connectors recommended (1)')).toBeVisible();
+      await expect(detail.getByText('Playwright', { exact: true })).toBeVisible();
+      // A fresh install has no Playwright instance: the panel says it is the
+      // user's move, and that no API key is involved.
+      await expect(detail.getByText(/Not installed yet\.|Ready\./)).toBeVisible();
       await expect(detail.getByText('Read-only.')).toBeVisible();
       await expect(
         detail.getByText(
@@ -74,7 +84,9 @@ test.describe('agent recipes', () => {
 
       // …then the ordinary form, pre-filled and editable.
       const form = page.getByRole('dialog');
-      await expect(form.getByRole('heading', { name: 'New agent — Code reviewer' })).toBeVisible();
+      await expect(
+        form.getByRole('heading', { name: 'Create New Agent — Code reviewer' }),
+      ).toBeVisible();
       await expect(form.getByLabel('Name')).toHaveValue('Code reviewer');
       await expect(form.getByLabel('Slug')).toHaveValue('code-reviewer');
       await form.getByLabel('Slug').fill(slug);
@@ -128,16 +140,22 @@ test.describe('agent recipes', () => {
     }
   });
 
-  test('"Start from scratch" still opens the empty form', async ({ page }) => {
+  test('"Customize a new agent" is selected by default and Next opens the empty form', async ({
+    page,
+  }) => {
     await page.goto('/agents');
     await page.getByRole('button', { name: 'New agent' }).click();
-    await page
-      .getByRole('dialog')
-      .getByRole('button', { name: /Start from scratch/ })
-      .click();
+    const picker = page.getByRole('dialog');
+    await expect(picker.getByRole('radio', { name: /Customize a new agent/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await picker.getByRole('button', { name: 'Next' }).click();
 
     const form = page.getByRole('dialog');
-    await expect(form.getByRole('heading', { name: 'New agent', exact: true })).toBeVisible();
+    await expect(
+      form.getByRole('heading', { name: 'Create New Agent', exact: true }),
+    ).toBeVisible();
     await expect(form.getByLabel('Name')).toHaveValue('');
     await expect(form.getByLabel('Slug')).toHaveValue('');
     await form.getByRole('button', { name: 'Cancel' }).click();

@@ -10,28 +10,33 @@ import {
 } from '@nodal-agents/catalog';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import PrimaryButton from './ui/PrimaryButton.tsx';
-import RecipeTile from './ui/RecipeTile.tsx';
+import Select from './ui/Select.tsx';
+import StatusPill from './ui/StatusPill.tsx';
+import { OptionRadio } from './ui/OptionRadio.tsx';
+import { SetBlock } from './ui/SetBlock.tsx';
 import RecipeDetail from './RecipeDetail.tsx';
 import AgentForm from './AgentForm.tsx';
 import type { AgentRow, LlmKeyUiRow } from '@/lib/actions.ts';
+import type { RecipeConnectorMeta } from '@/lib/recipe-connectors.ts';
 
 /**
- * RecipePicker — "What should this agent do?"
+ * RecipePicker — "Create New Agent", the first screen of agent creation.
  *
- * The first screen of agent creation. Three steps, each one modal:
+ * One column, as in the Figma mock (Modal 51:739): two labelled sections,
+ * radio cards, a family select, Cancel / Next.
  *
- *   1. pick   — "Start from scratch" FIRST (the default, as before), then the
- *               profiles that ship with the product. Teams are a discreet
- *               footnote: a name and a shape that teach what tends to work,
- *               never the main option and never a button that builds them.
- *   2. detail — what THIS profile sets on the agent: skills, blocked tools,
- *               autonomy, what the user still has to provide. Without it the
- *               user lands on the ordinary form and never learns what makes
- *               the agent special.
- *   3. form   — the ordinary create form, pre-filled. One agent.
+ *   1. pick   — "Customize a new agent" (the empty form) first, then the
+ *               pre-filled profiles of the selected FAMILY. The family select
+ *               suggests a structure ("Development": lead, developer,
+ *               reviewer) without building it — one agent per click. Each
+ *               profile card carries real counts: skills attached, connectors
+ *               recommended, tools blocked.
+ *   2. detail — what THIS profile sets on the agent, item by item (RecipeDetail).
+ *   3. form   — the ordinary create form, pre-filled.
  *
- * The word "recipe" never appears on screen: the user sees a question and
- * choices. The term lives in code and in the catalog only.
+ * The word "recipe" never appears on screen. The counts are derived from the
+ * recipe, never typed by hand, so the card cannot promise something the
+ * creation does not apply.
  */
 
 interface Props {
@@ -39,6 +44,8 @@ interface Props {
   agents: AgentRow[];
   /** From the server (recipeSkillMeta) — keeps the skill bodies out of the bundle. */
   skillMeta: Record<string, RecipeSkillMeta>;
+  /** From the server (recipeConnectorMeta) — which recommended connectors this workspace has. */
+  connectorMeta: Record<string, RecipeConnectorMeta>;
   /** Custom trigger; defaults to the "+ New agent" button. */
   renderTrigger?: (open: () => void) => ReactNode;
 }
@@ -49,23 +56,48 @@ type Step =
   | { kind: 'detail'; recipe: AgentRecipe }
   | { kind: 'form'; recipe: AgentRecipe | undefined };
 
-export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger }: Props) {
-  const [step, setStep] = useState<Step>({ kind: 'closed' });
+/** Mirrors READONLY_PRESET_TOOLS (actions.ts) — the five tools the reviewer preset blocks. */
+const READ_ONLY_BLOCKED_COUNT = 5;
 
-  // Names already in the workspace, so a profile whose agent exists is marked
-  // as such — to INFORM ("you have one"), never to ask for completion.
+export default function RecipePicker({
+  llmKeys,
+  agents,
+  skillMeta,
+  connectorMeta,
+  renderTrigger,
+}: Props) {
+  const [step, setStep] = useState<Step>({ kind: 'closed' });
+  // 'scratch' or a recipe slug. Scratch is the default, as it always was.
+  const [selected, setSelected] = useState<string>('scratch');
+  const [teamSlug, setTeamSlug] = useState<string>(agentTeams[0]?.slug ?? '');
+
+  const team = agentTeams.find((t) => t.slug === teamSlug);
+  const shown = team ? recipesOfTeam(team) : agentRecipes;
+
+  // Names already in the workspace — to INFORM, never to ask for completion.
   const existingNames = new Set(agents.map((a) => a.name.trim().toLowerCase()));
   const exists = (r: AgentRecipe) => existingNames.has(r.name.trim().toLowerCase());
 
+  function open() {
+    setSelected('scratch');
+    setStep({ kind: 'pick' });
+  }
+  function next() {
+    if (selected === 'scratch') {
+      setStep({ kind: 'form', recipe: undefined });
+      return;
+    }
+    const recipe = agentRecipes.find((r) => r.slug === selected);
+    setStep(recipe ? { kind: 'detail', recipe } : { kind: 'pick' });
+  }
+
   const trigger = renderTrigger ? (
-    renderTrigger(() => setStep({ kind: 'pick' }))
+    renderTrigger(open)
   ) : (
-    <PrimaryButton variant="agent" onClick={() => setStep({ kind: 'pick' })}>
+    <PrimaryButton variant="agent" onClick={open}>
       New agent
     </PrimaryButton>
   );
-
-  const alreadyBadge = <span className="text-mono-11-caps text-ink-3">already here</span>;
 
   return (
     <>
@@ -74,8 +106,8 @@ export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger
       <Modal
         open={step.kind === 'pick'}
         onClose={() => setStep({ kind: 'closed' })}
-        title="What should this agent do?"
-        className="max-w-2xl"
+        title="Create New Agent"
+        className="max-w-[480px]"
         footer={
           <ModalFooter>
             <PrimaryButton
@@ -85,58 +117,81 @@ export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger
             >
               Cancel
             </PrimaryButton>
+            <PrimaryButton variant="ink" type="button" onClick={next}>
+              Next
+            </PrimaryButton>
           </ModalFooter>
         }
       >
-        <div className="space-y-5">
-          <RecipeTile
-            onClick={() => setStep({ kind: 'form', recipe: undefined })}
-            title="Start from scratch"
-            description="The empty form. Pick a model, write its instructions, attach skills later."
-          />
-
-          <section aria-label="Profiles">
-            <h3 className="text-mono-11-caps text-ink-3 mb-1">Or start from a profile</h3>
-            <p className="text-body-13 text-ink-3 mb-2.5">
-              A profile pre-fills the form and attaches what that kind of agent needs. You see
-              exactly what it sets before creating anything.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {agentRecipes.map((recipe) => (
-                <RecipeTile
-                  key={recipe.slug}
-                  onClick={() => setStep({ kind: 'detail', recipe })}
-                  title={recipe.name}
-                  description={recipe.summary}
-                  tags={recipe.kit}
-                  muted={exists(recipe)}
-                  badge={exists(recipe) ? alreadyBadge : undefined}
-                />
-              ))}
+        <div role="radiogroup" aria-label="How to start" className="-mt-7">
+          <SetBlock
+            label="Default custom"
+            lede="The empty agent configuration. You pick the tools, skills and autonomy yourself."
+          >
+            <div className="mt-3">
+              <OptionRadio
+                active={selected === 'scratch'}
+                onClick={() => setSelected('scratch')}
+                name="Customize a new agent"
+                description="An empty form, pick everything as needed."
+              />
             </div>
-          </section>
+          </SetBlock>
 
-          {agentTeams.length > 0 && (
-            <section aria-label="Teams" className="border-t border-rule-2 pt-4">
-              <h3 className="text-mono-11-caps text-ink-3 mb-1">How these fit together</h3>
-              {agentTeams.map((team) => (
-                <div key={team.slug} className="mt-1.5">
-                  <p className="text-body-13 text-ink-2">
-                    <span className="text-medium-13 text-ink">{team.name}</span>
-                    <span className="text-mono-11 text-ink-3 ml-2">{team.shape}</span>
-                  </p>
-                  <p className="text-body-13 text-ink-3 mt-0.5 max-w-prose">{team.rationale}</p>
-                  <p className="text-body-12 text-ink-3 mt-0.5">
-                    A suggestion, not a package: each role is created on its own, in any order —{' '}
-                    {recipesOfTeam(team)
-                      .map((r) => r.name)
-                      .join(', ')}
-                    .
-                  </p>
-                </div>
-              ))}
-            </section>
-          )}
+          <SetBlock
+            label="Pre-filled agent profiles"
+            lede="A ready-to-use agent comes with a basic role-ready configuration you can customize further."
+          >
+            {agentTeams.length > 0 && (
+              <Select
+                aria-label="Profile family"
+                value={teamSlug}
+                onChange={(e) => setTeamSlug(e.target.value)}
+                containerClassName="mt-3 mb-4"
+              >
+                {agentTeams.map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {team && (
+              <p className="text-body-13 text-ink-3 mb-3">
+                {team.shape} — a suggestion, not a package: each role is created on its own.
+              </p>
+            )}
+            {shown.map((recipe) => {
+              const skills = recipe.skills.filter((s) => skillMeta[s]).length;
+              const connectors = (recipe.connectors ?? []).filter(
+                (c) => connectorMeta[c.slug],
+              ).length;
+              const readOnly = recipe.presets?.includes('read-only') ?? false;
+              return (
+                <OptionRadio
+                  key={recipe.slug}
+                  active={selected === recipe.slug}
+                  onClick={() => setSelected(recipe.slug)}
+                  name={exists(recipe) ? `${recipe.name} · already here` : recipe.name}
+                  description={recipe.summary}
+                >
+                  <span className="flex flex-wrap gap-1.5 mt-2">
+                    <StatusPill variant="lvl-err" icon={null} label={`${skills} Skills`} />
+                    {connectors > 0 && (
+                      <StatusPill variant="run" icon={null} label={`${connectors} Connectors`} />
+                    )}
+                    {readOnly && (
+                      <StatusPill
+                        variant="done"
+                        icon={null}
+                        label={`${READ_ONLY_BLOCKED_COUNT} tools blocked`}
+                      />
+                    )}
+                  </span>
+                </OptionRadio>
+              );
+            })}
+          </SetBlock>
         </div>
       </Modal>
 
@@ -144,6 +199,7 @@ export default function RecipePicker({ llmKeys, agents, skillMeta, renderTrigger
         <RecipeDetail
           recipe={step.recipe}
           skillMeta={skillMeta}
+          connectorMeta={connectorMeta}
           open
           onBack={() => setStep({ kind: 'pick' })}
           onContinue={() => setStep({ kind: 'form', recipe: step.recipe })}

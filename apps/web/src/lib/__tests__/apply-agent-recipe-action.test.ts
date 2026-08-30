@@ -23,7 +23,10 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   eq,
+  and,
   agents,
+  mcpServers,
+  agentMcpServers,
   agentSkills,
   agentSkillAssignments,
   approvalRules,
@@ -168,6 +171,69 @@ describe('the profile is applied through createAgentAction', () => {
     const res = await createAgentAction(payload(`dev2-${Date.now()}`, 'developer'));
 
     expect(res.ok).toBe(true);
+  });
+});
+
+describe('recommended connectors', () => {
+  it('are reported as "to set up" when the workspace has no instance — the agent is still created', async () => {
+    session = { userId: other.userId, entityId: other.entityId };
+    const { createAgentAction } = await import('../actions.ts');
+
+    const res = await createAgentAction(payload(`rev-nc-${Date.now()}`, 'code-reviewer'));
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.recipe?.connectorsToSetUp).toEqual(['mcp-playwright']);
+    expect(res.data.recipe?.connectorsAttached).toEqual([]);
+    const links = await testDb
+      .select({ id: agentMcpServers.id })
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.agentId, res.data.id));
+    expect(links).toHaveLength(0);
+  });
+
+  it('are attached when the workspace already has the instance', async () => {
+    session = { userId: other.userId, entityId: other.entityId };
+    const [server] = await testDb
+      .insert(mcpServers)
+      .values({
+        entityId: other.entityId,
+        name: 'Playwright',
+        slug: 'mcp-playwright',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@playwright/mcp'],
+        active: true,
+      })
+      .returning({ id: mcpServers.id });
+    // A same-slug instance in ANOTHER workspace must not be the one attached.
+    await testDb.insert(mcpServers).values({
+      entityId: seedEntity.entityId,
+      name: 'Playwright (seed)',
+      slug: 'mcp-playwright',
+      transport: 'stdio',
+      command: 'npx',
+      args: [],
+      active: true,
+    });
+    try {
+      const { createAgentAction } = await import('../actions.ts');
+      const res = await createAgentAction(payload(`rev-wc-${Date.now()}`, 'code-reviewer'));
+
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.data.recipe?.connectorsAttached).toEqual(['mcp-playwright']);
+      expect(res.data.recipe?.connectorsToSetUp).toEqual([]);
+      const links = await testDb
+        .select({ mcpServerId: agentMcpServers.mcpServerId, entityId: agentMcpServers.entityId })
+        .from(agentMcpServers)
+        .where(eq(agentMcpServers.agentId, res.data.id));
+      expect(links).toEqual([{ mcpServerId: server!.id, entityId: other.entityId }]);
+    } finally {
+      await testDb
+        .delete(mcpServers)
+        .where(and(eq(mcpServers.slug, 'mcp-playwright'), eq(mcpServers.transport, 'stdio')));
+    }
   });
 });
 

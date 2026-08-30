@@ -17,6 +17,7 @@ import { devTeam, devTeamRecipes } from './dev-team';
 export type {
   AgentRecipe,
   AgentTeam,
+  RecipeConnector,
   RecipeRole,
   RecipeNeed,
   RecipePreset,
