@@ -30,7 +30,7 @@ import type { RecipeConnectorMeta } from '@/lib/recipe-connectors.ts';
  *               suggests a structure ("Development": lead, developer,
  *               reviewer) without building it — one agent per click. Each
  *               profile card carries real counts: skills attached, connectors
- *               recommended, tools blocked.
+ *               recommended, read-only posture.
  *   2. detail — what THIS profile sets on the agent, item by item (RecipeDetail).
  *   3. form   — the ordinary create form, pre-filled.
  *
@@ -55,9 +55,6 @@ type Step =
   | { kind: 'pick' }
   | { kind: 'detail'; recipe: AgentRecipe }
   | { kind: 'form'; recipe: AgentRecipe | undefined };
-
-/** Mirrors READONLY_PRESET_TOOLS (actions.ts) — the five tools the reviewer preset blocks. */
-const READ_ONLY_BLOCKED_COUNT = 5;
 
 export default function RecipePicker({
   llmKeys,
@@ -180,13 +177,7 @@ export default function RecipePicker({
                     {connectors > 0 && (
                       <StatusPill variant="run" icon={null} label={`${connectors} Connectors`} />
                     )}
-                    {readOnly && (
-                      <StatusPill
-                        variant="done"
-                        icon={null}
-                        label={`${READ_ONLY_BLOCKED_COUNT} tools blocked`}
-                      />
-                    )}
+                    {readOnly && <StatusPill variant="done" icon={null} label="Read-only" />}
                   </span>
                 </OptionRadio>
               );

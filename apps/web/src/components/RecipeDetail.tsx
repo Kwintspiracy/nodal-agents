@@ -130,23 +130,13 @@ export default function RecipeDetail({
         </Section>
 
         <Section label="Tools">
-          {readOnly ? (
-            <>
-              <p className="text-body-13 text-ink-2">
-                <span className="text-medium-13 text-ink">Read-only.</span> Every tool that could
-                change a file or run a command is blocked — the same switch as the Read-only agent
-                setting in the editor, so it can be turned off there later.
-              </p>
-              <p className="text-mono-11 text-ink-3 mt-1.5">
-                blocked: {READ_ONLY_BLOCKED_TOOLS.join(', ')}
-              </p>
-            </>
-          ) : (
-            <p className="text-body-13 text-ink-2">
-              No tool is blocked. What it may do without asking is set by your workspace autonomy
-              level, as for any agent.
-            </p>
-          )}
+          {/* Read-only is NOT a tool change: the write tools stay in the list,
+              the harness refuses the call. That is an approval rule — see
+              Autonomy below, which is also where the editor shows it. */}
+          <p className="text-body-13 text-ink-2">
+            Nothing added or removed — tools come from the attached skills and the built-ins every
+            agent has.
+          </p>
         </Section>
 
         {connectors.length > 0 && (
@@ -190,10 +180,27 @@ export default function RecipeDetail({
         )}
 
         <Section label="Autonomy">
-          <p className="text-body-13 text-ink-2">
-            Uses the workspace default, as every new agent does. You can change it per agent after
-            creation, in the editor’s Autonomy section.
-          </p>
+          {readOnly ? (
+            <>
+              <p className="text-body-13 text-ink-2">
+                <span className="text-medium-13 text-ink">Read-only agent: on.</span> The five write
+                tools are blocked — the agent still sees them, the call is refused. This is the
+                “Read-only agent” switch of the editor’s Autonomy tab, where each block also shows
+                per tool and can be turned off any time.
+              </p>
+              <p className="text-mono-11 text-ink-3 mt-1.5">
+                blocked: {READ_ONLY_BLOCKED_TOOLS.join(', ')}
+              </p>
+              <p className="text-body-13 text-ink-3 mt-1.5">
+                Everything else uses the workspace default, as for any new agent.
+              </p>
+            </>
+          ) : (
+            <p className="text-body-13 text-ink-2">
+              Uses the workspace default, as every new agent does. You can change it per agent after
+              creation, in the editor’s Autonomy tab.
+            </p>
+          )}
         </Section>
 
         {needs.length > 0 && (

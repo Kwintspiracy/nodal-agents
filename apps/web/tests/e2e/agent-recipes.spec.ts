@@ -54,7 +54,7 @@ test.describe('agent recipes', () => {
       const reviewer = picker.getByRole('radio', { name: /^Code reviewer/ });
       await expect(reviewer).toContainText('1 Skills');
       await expect(reviewer).toContainText('1 Connectors');
-      await expect(reviewer).toContainText('5 tools blocked');
+      await expect(reviewer).toContainText('Read-only');
 
       // 2. Select → Next → the detail panel names what the profile sets,
       // BEFORE any form — including the connector and what it takes.
@@ -70,7 +70,8 @@ test.describe('agent recipes', () => {
       // A fresh install has no Playwright instance: the panel says it is the
       // user's move, and that no API key is involved.
       await expect(detail.getByText(/Not installed yet\.|Ready\./)).toBeVisible();
-      await expect(detail.getByText('Read-only.')).toBeVisible();
+      // Read-only is an autonomy rule, not a tool: shown under Autonomy.
+      await expect(detail.getByText('Read-only agent: on.')).toBeVisible();
       await expect(
         detail.getByText(
           /blocked: file_write, file_edit, skill_file_write, run_command, run_skill_script/,
