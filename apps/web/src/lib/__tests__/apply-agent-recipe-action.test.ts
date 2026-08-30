@@ -353,6 +353,30 @@ describe('createAgentAction with a profile — one gesture, nothing half-done', 
     expect(again.ok).toBe(true);
   });
 
+  it('a duplicate slug is a "conflict", with or without a profile — the transaction must not swallow it', async () => {
+    // Codex, tenth pass: a failed INSERT aborts a PostgreSQL transaction.
+    // createAgentRepo catches the unique violation and returns slug_taken,
+    // but if the transaction then tries to COMMIT, the outcome is the
+    // driver's, not ours. The conflict must be surfaced by rolling back.
+    session = { userId: other.userId, entityId: other.entityId };
+    const { createAgentAction } = await import('../actions.ts');
+    const slug = `dup-${Date.now()}`;
+
+    const first = await createAgentAction({ ...payload(slug, ''), recipeSlug: undefined });
+    expect(first.ok).toBe(true);
+
+    const scratchAgain = await createAgentAction({ ...payload(slug, ''), recipeSlug: undefined });
+    expect(scratchAgain.ok).toBe(false);
+    if (!scratchAgain.ok) expect(scratchAgain.code).toBe('conflict');
+
+    const withProfile = await createAgentAction(payload(slug, 'developer'));
+    expect(withProfile.ok).toBe(false);
+    if (!withProfile.ok) expect(withProfile.code).toBe('conflict');
+
+    const rows = await testDb.select({ id: agents.id }).from(agents).where(eq(agents.slug, slug));
+    expect(rows).toHaveLength(1);
+  });
+
   it('rejects an unknown profile without creating anything', async () => {
     session = { userId: other.userId, entityId: other.entityId };
     const { createAgentAction } = await import('../actions.ts');

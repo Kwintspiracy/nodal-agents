@@ -841,6 +841,19 @@ async function orchestratorModelToolsError(
   return null;
 }
 
+/**
+ * Thrown inside the creation transaction to roll it back cleanly — see
+ * createAgentAction. A failed INSERT leaves a PostgreSQL transaction aborted;
+ * returning normally after it would hand COMMIT an aborted transaction, and
+ * what the driver does with that is its business, not ours. Throwing makes
+ * the rollback explicit on every driver (codex, #45 tenth pass).
+ */
+class SlugTaken extends Error {
+  constructor() {
+    super('slug_taken');
+  }
+}
+
 /** Thrown inside the creation transaction to roll it back — see createAgentAction. */
 class RecipeSkillsMissing extends Error {
   constructor(readonly missing: string[]) {
@@ -910,7 +923,8 @@ export async function createAgentAction(
         avatarUrl: parsed.data.avatarUrl,
         subAgentIds: parsed.data.subAgentIds,
       });
-      if ('error' in created || !recipe) return created;
+      if ('error' in created) throw new SlugTaken();
+      if (!recipe) return created;
       const outcome = await applyRecipeToAgent(tx, session, created.id, recipe);
       // A skill the profile promised but could not attach is the same failure
       // as any other (invariant #4 — no silent smart fallback): throwing
@@ -920,14 +934,13 @@ export async function createAgentAction(
       return created;
     });
 
-    if ('error' in result) {
-      return fail('conflict', 'An agent with this slug already exists');
-    }
-
     revalidatePath('/agents');
     if (applied) revalidatePath('/skills');
     return ok(applied ? { id: result.id, recipe: applied } : { id: result.id });
   } catch (err: unknown) {
+    if (err instanceof SlugTaken) {
+      return fail('conflict', 'An agent with this slug already exists');
+    }
     if (err instanceof RecipeSkillsMissing) {
       return fail(
         'not_found',
