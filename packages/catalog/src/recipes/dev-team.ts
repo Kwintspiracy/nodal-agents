@@ -22,7 +22,8 @@ import type { AgentRecipe, AgentTeam } from './types';
 export const codeReviewerRecipe: AgentRecipe = {
   slug: 'code-reviewer',
   name: 'Code reviewer',
-  summary: 'Reads code and returns a verdict. Never writes.',
+  summary:
+    'Reads code and returns a verdict. Never writes. We suggest using multiple reviewers with different LLMs.',
   purpose:
     'Give it finished work and it reviews it against what was asked, then answers approve or request changes with concrete findings. It is locked to reading: every tool that could change a file or run a command is blocked, so a review can never turn into an edit. Run it on a different model from the developer — two instances of the same model share the same blind spots.',
   role: 'worker',
