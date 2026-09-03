@@ -1,0 +1,11 @@
+## Section 1 — Bloquants de la passe 10
+
+1. **Claim atomique : NON FERMÉ.** Sous PostgreSQL `READ COMMITTED`, le `WHERE` est correct : deux `UPDATE … RETURNING` concurrents sur la même ligne se sérialisent ; après l’attente du verrou, le second réévalue le prédicat et ne retourne aucune ligne (`docs/plans/verifier-corriger.md:502-511`). En revanche, le lease de 60 s n’est pas cohérent avec les adaptateurs existants : Telegram autorise déjà 60 s pour un document (`packages/delivery/src/channels/telegram.ts:365-394`), donc le lease n’est pas strictement supérieur au timeout comme l’exige le plan (`docs/plans/verifier-corriger.md:507-509`). Surtout, WhatsApp attend directement `handle.send` sans timeout local (`packages/delivery/src/channels/whatsapp-adapter.ts:242-246`) et Discord peut attendre les retries/rate limits internes du SDK (`packages/delivery/src/channels/discord-adapter.ts:221-245`). Un tick peut donc reprendre une ligne pendant que le premier envoi est encore actif.
+
+2. **Drain immédiat : FERMÉ.** Tous les chemins terminaux doivent appeler `drainDeliveries(jobId)` juste après le commit, tandis que le tick reste la reprise durable (`docs/plans/verifier-corriger.md:513-526`), avec un test imposant une livraison interactive en moins de deux secondes (`docs/plans/verifier-corriger.md:528-532`). Oui, ce drain peut être en course avec un tick ; le plan dit que le drain effectue lui-même le claim (`docs/plans/verifier-corriger.md:517-520`) et que toute livraison exige ce claim atomique (`docs/plans/verifier-corriger.md:502-511`) : c’est donc bien lui qui arbitre.
+
+## Section 2 — Constats neufs bloquants pour PR①
+
+1. **La borne de trois tentatives n’est pas atomiquement appliquée.** Le plan promet trois tentatives au maximum (`docs/plans/verifier-corriger.md:493-496`), mais le `WHERE` du claim ne contient aucun prédicat `attempts < 3` : une ligne `attempted` dont le lease expire reste réclamable indéfiniment, et `attempts=attempts+1` peut produire 4, 5, etc. (`docs/plans/verifier-corriger.md:503-509`). PR① doit inclure la borne dans le claim atomique et faire passer à `rejected` avec alerte une ligne ayant épuisé ses trois claims, avec un test d’interleaving à la frontière 3/4.
+
+Passe 11 : 1 constats neufs bloquants

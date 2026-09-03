@@ -1,0 +1,1251 @@
+<!-- artifact: https://claude.ai/code/artifact/8744ad8c-e7ec-455a-8ae7-4ca25d826ede -->
+<title>Vérifier & Corriger</title>
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&family=JetBrains+Mono:wght@400;600&display=swap"
+/>
+<style>
+  :root {
+    --paper: #f7f6f4;
+    --surface: #fdfcfb;
+    --ink: #23201b;
+    --ink-soft: #5a544b;
+    --ink-faint: #8a8378;
+    --line: #e2ded7;
+    --green: #2e7d5b;
+    --green-soft: #e2efe8;
+    --red: #a6432a;
+    --red-soft: #f4e4de;
+    --steel: #3d638f;
+    --steel-soft: #e4eaf1;
+    --mono-bg: #efede9;
+    --warn-bg: #f5eedf;
+    --warn-edge: #b98f3e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --paper: #191713;
+      --surface: #211e19;
+      --ink: #e9e5de;
+      --ink-soft: #b0a99e;
+      --ink-faint: #7e776c;
+      --line: #363129;
+      --green: #5cb48d;
+      --green-soft: #1e2e26;
+      --red: #d97e5f;
+      --red-soft: #33231d;
+      --steel: #7fa5cf;
+      --steel-soft: #222d3b;
+      --mono-bg: #16140f;
+      --warn-bg: #2c2517;
+      --warn-edge: #b08a45;
+    }
+  }
+  :root[data-theme='dark'] {
+    --paper: #191713;
+    --surface: #211e19;
+    --ink: #e9e5de;
+    --ink-soft: #b0a99e;
+    --ink-faint: #7e776c;
+    --line: #363129;
+    --green: #5cb48d;
+    --green-soft: #1e2e26;
+    --red: #d97e5f;
+    --red-soft: #33231d;
+    --steel: #7fa5cf;
+    --steel-soft: #222d3b;
+    --mono-bg: #16140f;
+    --warn-bg: #2c2517;
+    --warn-edge: #b08a45;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 17.5px;
+    line-height: 1.7;
+  }
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+  header.masthead {
+    padding: 52px 0 28px;
+    border-bottom: 3px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: Archivo, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: Archivo, sans-serif;
+    font-stretch: 80%;
+    font-size: clamp(36px, 6vw, 54px);
+    font-weight: 800;
+    line-height: 1.04;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 20px;
+    color: var(--ink-soft);
+    max-width: 58ch;
+    margin: 0;
+  }
+  h2 {
+    font-family: Archivo, sans-serif;
+    font-stretch: 82%;
+    font-size: 28px;
+    font-weight: 750;
+    margin: 54px 0 14px;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: Archivo, sans-serif;
+    font-size: 19px;
+    font-weight: 750;
+    margin: 24px 0 8px;
+  }
+  p {
+    max-width: 62ch;
+  }
+  .muted {
+    color: var(--ink-soft);
+  }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85em;
+    background: var(--mono-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .story {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 24px 0;
+  }
+  .story .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 20px 24px;
+  }
+  .story .card.avant {
+    border-top: 3px solid var(--red);
+  }
+  .story .card.apres {
+    border-top: 3px solid var(--green);
+  }
+  .story h3 {
+    margin-top: 0;
+  }
+  .story p {
+    font-size: 16px;
+    margin: 8px 0 0;
+  }
+  .bubble {
+    font-style: italic;
+    background: var(--mono-bg);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 12px 0 0;
+    font-size: 15.5px;
+  }
+
+  .fonction {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin: 22px 0;
+    padding: 24px 28px;
+  }
+  .fonction.verifier {
+    border-left: 5px solid var(--green);
+  }
+  .fonction.corriger {
+    border-left: 5px solid var(--steel);
+  }
+  .fonction.relire {
+    border-left: 5px solid var(--warn-edge);
+  }
+  .fonction h2 {
+    margin: 0 0 4px;
+  }
+  .fonction .promesse {
+    font-size: 17px;
+    color: var(--ink-soft);
+    font-style: italic;
+    margin: 0 0 14px;
+  }
+  .fonction ol {
+    margin: 0;
+    padding-left: 22px;
+  }
+  .fonction li {
+    margin: 10px 0;
+  }
+
+  /* Trois familles */
+  .familles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin: 22px 0;
+  }
+  .famille {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  .famille .tag {
+    font-family: Archivo, sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 999px;
+    display: inline-block;
+    margin-bottom: 8px;
+  }
+  .famille.p .tag {
+    background: var(--green-soft);
+    color: var(--green);
+  }
+  .famille.r .tag {
+    background: var(--steel-soft);
+    color: var(--steel);
+  }
+  .famille.j .tag {
+    background: var(--warn-bg);
+    color: var(--warn-edge);
+  }
+  .famille h3 {
+    margin: 0 0 6px;
+    font-size: 17px;
+  }
+  .famille p {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  /* Excel example */
+  .excel {
+    background: var(--mono-bg);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 18px 0;
+    font-size: 15.5px;
+  }
+  .excel .l {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .excel .l:last-child {
+    border-bottom: none;
+  }
+  .excel .who {
+    font-family: Archivo, sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .excel .who.m {
+    color: var(--green);
+  }
+  .excel .who.j {
+    color: var(--warn-edge);
+  }
+
+  .verras {
+    display: grid;
+    gap: 14px;
+    margin: 22px 0;
+  }
+  .verra {
+    display: flex;
+    gap: 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 20px;
+    align-items: baseline;
+  }
+  .verra .n {
+    font-family: Archivo, sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+    color: var(--ink-faint);
+  }
+  .verra p {
+    margin: 0;
+    font-size: 16px;
+  }
+  .etats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .etat {
+    font-family: Archivo, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 999px;
+  }
+  .etat.ok {
+    background: var(--green-soft);
+    color: var(--green);
+  }
+  .etat.warn {
+    background: var(--warn-bg);
+    color: var(--warn-edge);
+  }
+  .etat.ko {
+    background: var(--red-soft);
+    color: var(--red);
+  }
+
+  .regles {
+    background: var(--warn-bg);
+    border-left: 4px solid var(--warn-edge);
+    border-radius: 6px;
+    padding: 20px 26px;
+    margin: 26px 0;
+  }
+  .regles h2 {
+    margin: 0 0 10px;
+    font-size: 21px;
+  }
+  .regles ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .regles li {
+    margin: 8px 0;
+    font-size: 16px;
+  }
+
+  .decisions {
+    background: var(--red-soft);
+    border-left: 4px solid var(--red);
+    border-radius: 6px;
+    padding: 20px 26px;
+    margin: 26px 0;
+  }
+  .decisions h2 {
+    margin: 0 0 10px;
+    font-size: 21px;
+  }
+  .decisions ol {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .decisions li {
+    margin: 10px 0;
+    font-size: 16px;
+  }
+
+  .v5 {
+    background: var(--steel-soft);
+    border-left: 4px solid var(--steel);
+    border-radius: 6px;
+    padding: 20px 26px;
+    margin: 26px 0;
+  }
+  .v5 h2 {
+    margin: 0 0 6px;
+    font-size: 22px;
+  }
+  .v5 .lead {
+    margin: 0 0 14px;
+    font-size: 16px;
+    color: var(--ink-soft);
+  }
+  .ajout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .ajout h3 {
+    margin: 0 0 6px;
+    font-size: 17px;
+  }
+  .ajout p {
+    margin: 6px 0 0;
+    font-size: 15.5px;
+  }
+  .ajout .src {
+    font-family: Archivo, sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--steel);
+  }
+
+  .suivi {
+    margin: 18px 0 0;
+  }
+  .suivi .row {
+    display: grid;
+    grid-template-columns: 52px 1fr auto;
+    gap: 14px;
+    align-items: baseline;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .suivi .row:last-child {
+    border-bottom: none;
+  }
+  .suivi .k {
+    font-family: Archivo, sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    color: var(--ink-faint);
+  }
+  .suivi .t {
+    font-size: 15.5px;
+  }
+  .suivi .t b {
+    display: block;
+  }
+  .suivi .s {
+    font-family: Archivo, sans-serif;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .s.next {
+    background: var(--warn-bg);
+    color: var(--warn-edge);
+  }
+  .s.todo {
+    background: var(--mono-bg);
+    color: var(--ink-faint);
+  }
+
+  .tech-divider {
+    margin: 64px 0 0;
+    border-top: 3px solid var(--ink);
+    padding-top: 8px;
+  }
+  .tech-divider .eyebrow {
+    color: var(--steel);
+  }
+  details.tech {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin: 18px 0;
+  }
+  details.tech summary {
+    cursor: pointer;
+    list-style: none;
+    font-family: Archivo, sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 16px 22px;
+    user-select: none;
+  }
+  details.tech summary::-webkit-details-marker {
+    display: none;
+  }
+  details.tech summary::before {
+    content: '▸ ';
+    color: var(--ink-faint);
+  }
+  details.tech[open] summary::before {
+    content: '▾ ';
+  }
+  details.tech .body {
+    padding: 0 22px 20px;
+    font-size: 15.5px;
+  }
+  details.tech .body ul {
+    padding-left: 20px;
+    margin: 0;
+  }
+  details.tech .body li {
+    margin: 7px 0;
+  }
+  .tablewrap {
+    overflow-x: auto;
+  }
+  table.track {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 14.5px;
+  }
+  table.track th {
+    font-family: Archivo, sans-serif;
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 2px solid var(--ink);
+  }
+  table.track td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  .review-note {
+    font-family: Archivo, sans-serif;
+    font-size: 13.5px;
+    background: var(--green-soft);
+    color: var(--green);
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: inline-block;
+    margin: 8px 0 0;
+    font-weight: 700;
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">
+      Plan v6.5 · 03/09/2026 · en tête de file — D1-D7 tranchées · 11 passes Codex, 14 bloquants
+      fermés dont un bug existant · boucle sur plan close · prochaine action : découper PR①
+    </p>
+    <h1>Vérifier &amp; Corriger</h1>
+    <p class="standfirst">
+      Aujourd'hui, quand un agent finit une tâche, c'est <em>lui</em> qui déclare « c'est fait » —
+      et personne ne vérifie. Demain, <b>Nodal vérifie lui-même tout ce qui peut l'être</b>, fait
+      relire le reste par les relecteurs que <b>tu</b> as choisis, et ne laisse plus un agent dire «
+      fini » si ce n'est pas vrai.
+    </p>
+  </header>
+
+  <h2>Le problème vécu</h2>
+  <div class="story">
+    <div class="card avant">
+      <h3>Aujourd'hui</h3>
+      <p>L'agent finit son travail et écrit :</p>
+      <p class="bubble">
+        « C'est fait ! J'ai lancé les tests, tout passe. Le fichier est envoyé. ✓ »
+      </p>
+      <p>
+        Rien ne prouve qu'il les a lancés, ni que le fichier est parti. Parfois c'est vrai. Parfois
+        tu découvres le lendemain que l'app ne démarre plus, ou que le message n'est jamais arrivé.
+      </p>
+    </div>
+    <div class="card apres">
+      <h3>Demain</h3>
+      <p>Nodal vérifie lui-même, après le travail :</p>
+      <p class="bubble">
+        Preuve : <code>pnpm typecheck</code> vert (8 s) → <code>pnpm test</code> → 214 tests verts.
+        Message relu dans le canal : présent. Relu par 2 relecteurs : aucun bloquant. Succès
+        <b>vérifié</b>.
+      </p>
+      <p>
+        Le mot « vérifié » veut enfin dire quelque chose : la machine l'a constaté, pas l'agent.
+      </p>
+    </div>
+  </div>
+
+  <h2>Toutes les tâches ne sont pas du code</h2>
+  <p>
+    <b>Une tâche, c'est un job qui produit quelque chose</b> — du code, un fichier, un message
+    envoyé, un document livré. Un tour de chat n'en est pas une : une réponse conversationnelle
+    n'est ni prouvée ni relue, et l'UI ne lui affiche aucun état de vérification.
+  </p>
+  <p>
+    Trois familles de livrables, trois façons de prouver — et chaque run te dit laquelle s'applique.
+  </p>
+  <div class="familles">
+    <div class="famille p">
+      <span class="tag">Prouvable</span>
+      <h3>La machine tranche</h3>
+      <p>
+        Le livrable a des règles qu'on peut énoncer : les tests passent, le tableur s'ouvre et
+        recalcule, le total est bien la somme des lignes, les chiffres d'entrée sont ceux de la
+        source. Pas de juge, pas de doute.
+      </p>
+    </div>
+    <div class="famille r">
+      <span class="tag">Constaté</span>
+      <h3>Nodal regarde le monde</h3>
+      <p>
+        Envoyer un message, créer un événement, écrire une ligne dans une table : Nodal
+        <em>relit</em> ensuite, par le même connecteur, que la chose existe bien — ou garde l'accusé
+        de l'API quand relire n'est pas possible (un bot Telegram ne relit pas son propre message).
+        Et si ni l'un ni l'autre n'existe, il le dit : « issue inconnue », jamais « envoyé ».
+      </p>
+    </div>
+    <div class="famille j">
+      <span class="tag">Jugé</span>
+      <h3>Tes relecteurs</h3>
+      <p>
+        Rédiger, rechercher, recommander, choisir la bonne méthode : pas de vérité machine. Ce sont
+        des relecteurs —
+        <b>que tu choisis, sur les modèles que tu veux, 0 à 3 par type de tâche</b> — qui jugent, en
+        voyant les faits de la machine.
+      </p>
+    </div>
+  </div>
+
+  <h3>Ton exemple : « le fichier Excel est créé, mais les calculs sont-ils bons ? »</h3>
+  <p>
+    La frontière ne passe pas entre « fait » et « bien fait ». Elle passe <em>à l'intérieur</em> de
+    « bien fait » :
+  </p>
+  <div class="excel">
+    <div class="l">
+      <span class="who m">machine</span
+      ><span
+        >le fichier s'ouvre et recalcule, aucune formule en <code>#REF!</code> ou
+        <code>#DIV/0!</code></span
+      >
+    </div>
+    <div class="l">
+      <span class="who m">machine</span
+      ><span
+        >la colonne Total est bien la somme des lignes ; la marge est bien (prix − coût) / prix sur
+        chaque ligne</span
+      >
+    </div>
+    <div class="l">
+      <span class="who m">machine</span
+      ><span
+        >les chiffres d'entrée sont ceux du CSV que l'agent a réellement ouvert (Nodal sait ce qu'il
+        a lu)</span
+      >
+    </div>
+    <div class="l">
+      <span class="who m">machine</span
+      ><span>un second calcul indépendant, par un autre chemin, donne le même résultat</span>
+    </div>
+    <div class="l">
+      <span class="who j">relecteur</span
+      ><span
+        >« est-ce la bonne façon de calculer la marge <em>pour ce client</em> ? » — ça, c'est un
+        jugement</span
+      >
+    </div>
+  </div>
+  <p>
+    Et le relecteur a <b>deux moments</b>, pas un : <em>avant</em>, il peut proposer les règles que
+    la machine vérifiera (« Total = Σ lignes, entrées = source ») — c'est toi qui les approuves ;
+    <em>après</em>, il juge ce qui reste, en voyant ce que la machine a constaté. Un relecteur est
+    bon pour écrire cette liste ; il est médiocre pour relire 400 lignes de tableur à l'œil.
+  </p>
+
+  <div class="fonction verifier">
+    <h2>Vérifier</h2>
+    <p class="promesse">
+      La promesse : un agent ne peut plus déclarer un succès que rien ne prouve.
+    </p>
+    <ol>
+      <li>
+        <b>Tu configures une fois</b>, sur la fiche du projet ou du type de livrable, ce qui prouve
+        qu'il est bon — des commandes (<code>pnpm typecheck</code> puis <code>pnpm test</code>, du
+        plus rapide au plus long) ou des règles (« Total = Σ lignes »). Tu les valides d'un geste.
+        Personne d'autre que toi ne peut les changer — pas même un agent.
+      </li>
+      <li>
+        <b>Après chaque travail, Nodal vérifie tout seul</b>, dans l'ordre, et s'arrête à la
+        première chose qui casse. Vert = prouvé. Rouge = pas fini, quoi qu'en dise l'agent.
+      </li>
+      <li>
+        <b>Les relecteurs reçoivent les faits</b> : ce que la machine a constaté part avec la
+        demande de relecture. Ils jugent sur ce qui a tourné, pas sur ce que l'agent raconte.
+      </li>
+    </ol>
+  </div>
+
+  <div class="fonction relire">
+    <h2>Relire</h2>
+    <p class="promesse">
+      La promesse : tu décides qui relit quoi, et combien — et une relecture veut dire quelque
+      chose.
+    </p>
+    <ol>
+      <li>
+        <b>Tes relecteurs sont des agents</b> que tu crées comme les autres (la recette « Relecteur
+        » existe déjà), chacun sur le modèle de ton choix. Nodal exige des
+        <b>familles de modèles différentes</b> entre eux et avec l'agent relu : deux instances du
+        même modèle partagent les mêmes angles morts — c'est mesuré, pas une opinion.
+      </li>
+      <li>
+        <b>Par type de tâche, tu fixes 0, 1, 2 ou 3 relecteurs.</b> Zéro = la machine seule, dit tel
+        quel. La recherche donne la plage : le deuxième relecteur apporte beaucoup, le troisième
+        encore un peu, le quatrième presque rien.
+      </li>
+      <li>
+        <b>Ils relisent en parallèle, une seule fois chacun, sans parler à l'agent.</b> Une
+        correction déclenche une relecture fraîche — jamais une conversation qui s'éternise : les
+        études montrent qu'au-delà d'un passage, les relecteurs inventent des problèmes quand les
+        vrais sont épuisés.
+      </li>
+      <li>
+        <b>Un verdict est fondé ou il n'existe pas</b> : chaque constat bloquant cite sa preuve — la
+        ligne, la cellule, le message. Un doute sans preuve est remonté, il ne bloque pas.
+      </li>
+    </ol>
+  </div>
+
+  <div class="fonction corriger">
+    <h2>Corriger</h2>
+    <p class="promesse">
+      La promesse : une erreur déclenche une réparation courte et encadrée — jamais une boucle
+      infinie, jamais du cassé livré.
+    </p>
+    <ol>
+      <li>
+        <b>Preuve rouge → une chance de réparer.</b> Nodal remet l'erreur sous les yeux de l'agent,
+        une fois — pas 50 Ko de logs, mais l'extrait utile. Il répare, Nodal re-vérifie.
+      </li>
+      <li>
+        <b>Encore rouge → on s'arrête proprement.</b> Le job finit en « bloqué » avec l'erreur
+        exacte, au lieu de tourner en rond en brûlant ton abonnement.
+      </li>
+      <li>
+        <b>La relecture aussi est bornée</b> : deux cycles correction → relecture fraîche maximum,
+        comptés par la machine. Après, on te remonte le problème au lieu d'insister.
+      </li>
+    </ol>
+  </div>
+
+  <h2>Ce que tu verras dans Nodal</h2>
+  <div class="verras">
+    <div class="verra">
+      <span class="n">1</span>
+      <p>
+        <b>Sur la fiche projet</b> : les commandes de preuve et les règles, avec ton geste de
+        validation.
+      </p>
+    </div>
+    <div class="verra">
+      <span class="n">2</span>
+      <p>
+        <b>Dans les réglages de l'espace</b> : pour chaque type de tâche (code · fichier Office ·
+        action sortante · document · autre), le nombre de relecteurs requis et lesquels, avec un
+        avertissement si deux partagent la même famille de modèle.
+      </p>
+    </div>
+    <div class="verra">
+      <span class="n">3</span>
+      <p><b>Sur chaque run</b>, une fin honnête :</p>
+    </div>
+  </div>
+  <div class="etats">
+    <span class="etat ok">Succès vérifié — prouvé par la machine, relu par N</span>
+    <span class="etat warn">Succès non vérifié — rien de configuré, dit tel quel</span>
+    <span class="etat warn">Succès non relu — 0 relecteur pour ce type, dit tel quel</span>
+    <span class="etat ko"
+      >Bloqué — une preuve casse ou un relecteur a un bloquant fondé, voici lequel</span
+    >
+  </div>
+
+  <div class="regles">
+    <h2>Les règles du jeu (tes décisions du 30/08 et du 03/09)</h2>
+    <ul>
+      <li>
+        <b>Quand des relecteurs divergent</b> : un bloquant <em>fondé</em> de n'importe lequel
+        suffit à bloquer ; approuver exige que tous aient rendu et qu'aucun bloquant fondé ne reste.
+        Un doute sans preuve remonte, ne bloque pas. <span class="muted">(D5)</span>
+      </li>
+      <li>
+        <b>Le réglage des relecteurs suit ce que la tâche demande de produire</b> — code, fichier
+        Office, action sortante, document, autre — pas l'agent qui la fait.
+        <span class="muted">(D6)</span>
+      </li>
+      <li>
+        <b>Les règles de preuve</b> : un agent peut en proposer, seul toi approuves.
+        <span class="muted">(D7)</span>
+      </li>
+      <li>
+        <b>C'est toi qui approuves les commandes et les règles</b>, une fois, et à chaque
+        modification. Jamais de question à chaque exécution.
+      </li>
+      <li>
+        <b>Une seule réparation automatique</b> par preuve rouge — chaque tour coûte ton abonnement.
+      </li>
+      <li><b>Les preuves tournent en fin de travail</b>, pas après chaque petite écriture.</li>
+      <li>
+        <b>Un projet sans commande ne bloque rien</b> : le run réussit mais s'affiche « non vérifié
+        », sans ambiguïté.
+      </li>
+    </ul>
+  </div>
+
+  <div class="v5">
+    <h2>Ce que la lecture a ajouté — v5 (02/09) et v6 (03/09)</h2>
+    <p class="lead">
+      Le plan v4 tenait déjà l'essentiel : la preuve lancée par la machine, une condition d'arrêt
+      testable, des boucles bornées. Deux journées de lecture — Osmani, Datadog, Faros, Anthropic,
+      puis six papiers de recherche — ont ajouté ceci.
+    </p>
+    <div class="ajout">
+      <p class="src">v5 · fail fast — Osmani, Faros</p>
+      <h3>Plusieurs commandes, de la moins chère à la plus chère</h3>
+      <p>
+        Arrêt au premier rouge : l'agent reçoit l'erreur la plus précise en premier, et tu ne paies
+        la suite longue que quand les vérifications rapides sont passées.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">v5 · feedback lisible — DeepSeek Harness, Faros</p>
+      <h3>L'extrait d'erreur, pas le log brut</h3>
+      <p>
+        Commande, code de sortie, dernières lignes, lignes d'erreur, chemin du log complet. Un
+        module, testé sur les cas limites.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">v5 · mesurer avant d'imposer — Anthropic, Datadog</p>
+      <h3>Une semaine d'observation avant d'activer la garde</h3>
+      <p>
+        La preuve tourne sur tes vrais jobs sans changer leur issue ; les seuils de la garde se
+        calent sur les chiffres.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">v6 · livrables non-code — Relational Conformance (2607.14155)</p>
+      <h3>La machine vérifie des règles, pas seulement l'existence d'un fichier</h3>
+      <p>
+        Des livrables chacun valides et contradictoires ensemble : la réponse du papier est un
+        manifeste de règles vérifiées mécaniquement, recalculées par un chemin indépendant,
+        <em>sans LLM</em>. C'est le modèle des « règles » ci-dessus.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">v6 · tests qui ne testent rien — All Smoke, No Alarm (2606.18168)</p>
+      <h3>« Tests verts » écrits par l'agent ne suffit pas</h3>
+      <p>
+        80 % des tests écrits par des agents de code n'assertent rien de fort (33 596 PR étudiées).
+        Nodal contrôlera que les tests ajoutés vérifient quelque chose.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">
+        v6 · combien de relecteurs — Multi-Agent Verification (2511.16708), PoLL (2404.18796)
+      </p>
+      <h3>0 à 3, différents</h3>
+      <p>
+        Gains mesurés de +14,9 / +13,5 / +11,2 points pour les relecteurs 2, 3, 4 : rendements
+        décroissants. Un panel de trois familles de modèles bat un seul gros juge, sept fois moins
+        cher. D'où : 1 à 3, de familles distinctes.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">v6 · parallèle, pas en boucle — More Rounds, More Noise (2603.16244)</p>
+      <h3>Une relecture par passage, jamais une conversation</h3>
+      <p>
+        Les rounds de relecture successifs dégradent le résultat (+62 % de faux positifs) : les
+        relecteurs fabriquent quand les vraies erreurs sont épuisées. Donc en parallèle, une fois
+        chacun, contextes séparés.
+      </p>
+    </div>
+    <div class="ajout">
+      <p class="src">v6 · verdict fondé — Adversarial Review (2608.18167)</p>
+      <h3>Un bloquant cite sa preuve</h3>
+      <p>
+        +10 points quand le relecteur doit citer le code ; l'échec typique est le « faux consensus »
+        — céder sans preuve. Chaque constat bloquant cite ligne, cellule ou message ; un doute sans
+        preuve ne bloque pas.
+      </p>
+    </div>
+  </div>
+
+  <h2>Le chemin</h2>
+  <div class="suivi">
+    <div class="row">
+      <span class="k">0</span
+      ><span class="t"
+        ><b>Passes Codex sur le plan — close</b>Onze passes, quatorze bloquants fermés, un bug
+        existant trouvé. Les trois dernières passes ont trouvé chacune une finesse dans la
+        précédente, dans la même section : le texte a fixé ce qu'un texte peut fixer, le reste se
+        tranche avec du code.</span
+      ><span class="s todo">fait</span>
+    </div>
+    <div class="row">
+      <span class="k">①</span
+      ><span class="t"
+        ><b>Les fondations invisibles</b>La mémoire de « qui a écrit quoi, qu'est-ce qui est prouvé
+        » — par livrable, pas seulement par projet de code ; le moteur de preuve ; une seule porte
+        de sortie pour les jobs ; la livraison qui ne se perd plus. Rien de visible, rien de
+        bloquant.</span
+      ><span class="s next">prochaine action : découper</span>
+    </div>
+    <div class="row">
+      <span class="k">👁</span
+      ><span class="t"
+        ><b>Une semaine d'observation</b>Sur ta stack, tes vrais jobs. On mesure avant
+        d'imposer.</span
+      ><span class="s todo">après ①</span>
+    </div>
+    <div class="row">
+      <span class="k">②</span
+      ><span class="t"
+        ><b>La preuve sur les agents Nodal + le champ dans l'UI</b>La garde s'active ici, seuils
+        mesurés. Contrôle d'oracle sur les tests ajoutés.</span
+      ><span class="s todo">après observation</span>
+    </div>
+    <div class="row">
+      <span class="k">③</span
+      ><span class="t"
+        ><b>La preuve sur les agents Claude Code / Codex, avec la réparation</b>Une réparation, pas
+        plus.</span
+      ><span class="s todo"></span>
+    </div>
+    <div class="row">
+      <span class="k">④</span
+      ><span class="t"
+        ><b>La relecture à N relecteurs</b>Ton pool, ta politique par type de tâche, verdicts
+        fondés, en parallèle, deux cycles max.</span
+      ><span class="s todo"></span>
+    </div>
+    <div class="row">
+      <span class="k">⑤</span
+      ><span class="t"
+        ><b>Les vérificateurs non-code</b>Fichiers Office avec règles ; relecture après écriture sur
+        les connecteurs (à inventorier : chaque écriture a-t-elle une lecture symétrique ?) ;
+        ancrage des affirmations aux sources ouvertes.</span
+      ><span class="s todo">après ④</span>
+    </div>
+    <div class="row">
+      <span class="k">→</span
+      ><span class="t"
+        ><b>Ensuite, même famille : les écritures qui s'écrasent</b>Un « lire avant d'écrire » typé
+        sur les outils fichiers.</span
+      ><span class="s todo">backlog</span>
+    </div>
+  </div>
+  <p class="muted" style="margin-top: 16px">
+    Chaque PR marche seule, rien ne ment entre deux étapes.
+  </p>
+  <span class="review-note"
+    >v4 relue 6 fois par Codex — PRÊT · v5 + v6 = ajouts sourcés, à relire</span
+  >
+
+  <div class="tech-divider">
+    <p class="eyebrow">Pour les ingénieurs — la mécanique qui tient les promesses</p>
+    <p class="muted" style="font-size: 15px">
+      Tout ce qui suit est la tuyauterie. La source complète :
+      <code>docs/plans/verifier-corriger.md</code> (v6).
+    </p>
+  </div>
+
+  <details class="tech">
+    <summary>Pourquoi c'est plus dur qu'il n'y paraît (les 4 pièges trouvés par Codex)</summary>
+    <div class="body">
+      <ul>
+        <li>
+          <b>Savoir qu'un livrable a été modifié</b> : le checkpoint se déclenche AVANT l'outil,
+          même en lecture seule — il ne prouve rien. Remplacé par une « intention de mutation »
+          écrite en base AVANT chaque écriture.
+        </li>
+        <li>
+          <b>Deux agents en même temps</b> : générations sale/vérifiée par (job, livrable) + un
+          compteur global ; verrous en base dans un ordre fixe ; tests de course à deux connexions
+          réelles.
+        </li>
+        <li>
+          <b>Toutes les sorties passent par une porte</b> : 4 chemins marquent un job « réussi »
+          aujourd'hui (dont un cron qui écrit en direct — vérifié encore le 02/09). Une primitive
+          unique, résultat typé, livraison interdite hors succès.
+        </li>
+        <li>
+          <b>La commande de preuve est un pouvoir</b> : d'où l'approbation par empreinte — seule la
+          révision exacte validée s'exécute, liste, ordre et règles compris.
+        </li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>
+      v6-A (v6.1) · Livrable, pas projet — identité générique, deux modèles d'état, manifeste unique
+    </summary>
+    <div class="body">
+      <ul>
+        <li>
+          Identité <b>(job_id, deliverable_type, canonical_key)</b>, clé opaque produite par un
+          canonicaliseur par type ; verrous en ordre (type, clé). PR① ne définit que
+          <code>code_project</code> (= <code>projectKey</code>, déplacé dans
+          <code>packages/shared</code>) ; les autres types sont réservés sans clé provisoire — type
+          sans canonicaliseur ⇒ refus typé.
+        </li>
+        <li>
+          Livrables <b>mutables</b> (code, fichier, document) : générations sale/vérifiée (v4).
+          Livrables <b>atomiques</b> (action sortante) : machine d'état
+          <code>prepared → attempted → confirmed | rejected | outcome_unknown</code>, clé
+          d'idempotence posée AVANT l'appel ; <code>confirmed</code> = vérifié,
+          <code>rejected</code> = pas fini, <code>outcome_unknown</code> = « non vérifié », jamais
+          un succès.
+        </li>
+        <li>
+          Constat d'une action : relecture indépendante quand le connecteur a une lecture (Airtable,
+          Gmail, Calendar, Sheets, Notion, Drive — inventaire du 03/09), accusé structuré sinon
+          (Telegram : <code>message_id</code>), ni l'un ni l'autre ⇒ issue inconnue.
+        </li>
+        <li>
+          <b>Manifeste unique</b> par cible : commandes + invariants + contexte, un hash,
+          <b>une approbation atomique</b> (D1) ; un agent propose, l'owner approuve (D7). Recalcul
+          <b>sans les helpers du générateur</b>.
+        </li>
+        <li>
+          Pour <code>document</code> : un registre de lectures
+          <code>deliverable_reads</code> (ressource, digest, tool-call) — ni
+          <code>task-ledger</code> ni <code>STATE_CHANGING_TOOLS</code> ne tracent une lecture. Lot
+          ⑤.
+        </li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>v6-B · Contrôle d'oracle sur les tests écrits par l'agent</summary>
+    <div class="body">
+      <ul>
+        <li>
+          Preuve verte + diff ajoutant des fichiers de test ⇒ contrôle syntaxique des assertions
+          (taxonomie W1→S1 du papier 2606.18168) ; run marqué <code>green_weak_oracle</code> si les
+          tests ajoutés n'assertent rien. Sévérité décidée après observation. Mutation : option
+          ultérieure.
+        </li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>v6-C · Relecteurs configurables — pool, politique, exécution</summary>
+    <div class="body">
+      <ul>
+        <li>
+          Un relecteur = un agent (recette « Relecteur », lecture seule, porte
+          <code>review_verdict</code>), sur le modèle choisi. Pool = les agents relecteurs de
+          l'espace. Aucune nouvelle entité (invariant #1).
+        </li>
+        <li>
+          Politique d'espace, en base : par type de livrable, 0-3 relecteurs requis, lesquels (liste
+          ordonnée ou « n'importe lesquels du pool ») ; familles de modèle distinctes exigées entre
+          eux et avec le codeur — l'UI avertit, le harnais refuse
+          (<code>REVIEW_POOL_SAME_FAMILY</code>).
+        </li>
+        <li>
+          <b>Un seul flux</b> : la revue est une étape de la primitive terminale, après la preuve
+          machine — <code>review_pending</code> →
+          <code>requestReview(snapshot_id, policy)</code> crée exactement N jobs
+          <code>job_protocol='review'</code> → agrégation. Un agent ne peut plus initier un
+          relecteur isolé : <code>request-review</code> appelle la primitive, la délégation directe
+          est refusée.
+        </li>
+        <li>
+          <b>Snapshot gelé par type</b> : <code>deliverable_snapshots</code> (digest sha-256 ; blob
+          copié pour fichiers et documents, HEAD+diff pour le code, reçu normalisé pour les
+          actions). Les N jobs référencent le même <code>snapshot_id</code>.
+        </li>
+        <li>
+          <b>Cycles</b> : <code>review_cycles</code> — un cycle = N verdicts sur un snapshot, clos
+          une fois ; <code>review_rounds</code> += 1 par cycle exigeant correction, jamais par
+          verdict ; à 2 ⇒ escalade.
+        </li>
+        <li>
+          <b>Relecteur en échec</b> (budget, panne, timeout) : fail-closed — pas d'approbation ; une
+          relance du seul job manquant ; sinon <code>REVIEW_INCOMPLETE</code>, escalade humaine,
+          aucun cycle consommé.
+        </li>
+        <li>
+          <b>Familles</b> : le catalogue n'en a pas (vérifié) ; ajout de
+          <code>modelFamily</code> (<code>anthropic:claude</code>, <code>openai:gpt</code>…),
+          indépendant du transport, obligatoire pour être relecteur ; famille inconnue ou dupliquée
+          ⇒ refus typé.
+        </li>
+        <li>
+          Agrégation = D5. Calibration (taux d'accord avec l'owner sur la fiche du relecteur) en v2.
+        </li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>v6-D · Un verdict fondé</summary>
+    <div class="body">
+      <ul>
+        <li>
+          <code>review_verdict</code> aujourd'hui :
+          <code>{file, line?, issue, severity: blocker|major|minor}</code>. On garde
+          <code>blocker</code> et on ajoute par constat <code>kind</code> (evidence · concern) et
+          une citation générique (fichier:ligne, onglet!cellule, id de message, ressource+repère),
+          obligatoire pour <code>evidence</code>. <code>request_changes</code> sans
+          <code>blocker</code> fondé ⇒ <code>REVIEW_VERDICT_UNGROUNDED</code>.
+        </li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>Les trois ajouts v5, côté mécanique</summary>
+    <div class="body">
+      <ul>
+        <li>
+          <b>v5-A</b> : <code>verify_commands</code> (json, 1-5 entrées
+          <code>{command, timeoutSeconds}</code>), séquentiel, arrêt au premier rouge ; une ligne
+          <code>verification_runs</code> par commande avec rang ; manifeste hashé sur la liste
+          entière.
+        </li>
+        <li>
+          <b>v5-B</b> : module unique d'extrait — commande, exit code, durée, 80 dernières lignes +
+          lignes <code>error|fail|✗|Error:|FAIL</code> (cap 40), id du run. Cas nommés : vide, 10
+          Mo, sans ligne d'erreur.
+        </li>
+        <li>
+          <b>v5-C</b> : en PR① la primitive calcule et journalise sans que la finalisation le lise.
+          Test nommé : projet rouge finit <code>completed</code>, ligne
+          <code>red</code> journalisée.
+        </li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>Le modèle de données</summary>
+    <div class="body">
+      <ul>
+        <li>
+          Table d'état par (job, livrable canonique) : génération sale, génération vérifiée, statut,
+          compteurs de rouge consécutif et de réparation, empreinte prouvée.
+        </li>
+        <li>
+          <code>verification_runs</code> = journal (vérificateur, commande, rang, code de sortie,
+          sortie tronquée, durée) — audit et observation, jamais la décision.
+        </li>
+        <li>
+          Sur <code>code_projects</code> : commandes, invariants, empreinte approuvée, compteur
+          global de modifications. Clé canonique partagée runner/web, migration de fusion
+          déterministe.
+        </li>
+        <li>Politique de relecture : par espace et type de livrable ; pool = agents relecteurs.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="tech">
+    <summary>Historique des relectures</summary>
+    <div class="body">
+      <div class="tablewrap">
+        <table class="track">
+          <thead>
+            <tr>
+              <th>Passe</th>
+              <th>Résultat</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>
+                16 constats, 4 bloquants — sens du flux de délégation, checkpoint inutilisable,
+                sécurité de la commande, garde fail-open
+              </td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>
+                16 constats, 6 bloquants — schéma exact, transactions, écrivains, cron qui contourne
+              </td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>7 corrections, liste fermée</td>
+            </tr>
+            <tr>
+              <td>4-6</td>
+              <td>Confirmations → <b>PRÊT</b> (v4)</td>
+            </tr>
+            <tr>
+              <td>lectures 02/09</td>
+              <td>v4 → v5 : commandes graduées, extrait borné, observation</td>
+            </tr>
+            <tr>
+              <td>lectures 03/09</td>
+              <td>
+                v5 → v6 : livrable pas projet, oracle des tests, N relecteurs configurables,
+                parallèle single-pass, verdict fondé ; D5-D7 à trancher
+              </td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>
+                11 questions, 9 TROU/FAUX, <b>8 bloquants pour PR①</b> — identité des livrables
+                non-code, actions atomiques, deux déclencheurs de revue, snapshot hors git, cycles à
+                N relecteurs, échec d'un relecteur, manifeste ambigu, familles absentes du
+                catalogue, migration sur des colonnes périmées. Tous vérifiés à la source, tous
+                fermés → v6.1
+              </td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td>
+                6 fermés, 5 partiels (du texte v4 non réécrit dans la revue, la primitive et le
+                cron), <b>1 neuf bloquant</b> : deux contrats de hash côte à côte. Tous fermés →
+                v6.2 : un seul manifeste, la revue réécrite sur le flux unique,
+                <code>review_pending</code> dans les résultats, reprise idempotente du cron, qui
+                écrit quoi dans le modèle des actions
+              </td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td>
+                Tout fermé, <b>1 neuf bloquant</b> — et c'est un bug qui existe déjà : si Nodal
+                tombe entre « job terminé » et l'envoi du résultat au canal, le résultat est perdu
+                pour toujours. Vérifié dans le code. Fermé → v6.3 : la livraison devient une action
+                sortante suivie comme les autres (intention → tentée → confirmée par le reçu du
+                canal), relancée au tick suivant, jamais perdue
+              </td>
+            </tr>
+            <tr>
+              <td>10</td>
+              <td>
+                Passe 9 fermée ; <b>2 neufs bloquants, dans le correctif lui-même</b> : deux runners
+                pouvaient envoyer le même message, et faire passer les résultats par le tick aurait
+                ajouté jusqu'à 2 minutes d'attente à un message Telegram. Fermés → v6.4 : une seule
+                ligne réclamée à la fois, envoi immédiat après la décision, le tick ne fait que
+                rattraper
+              </td>
+            </tr>
+            <tr>
+              <td>11</td>
+              <td>
+                Dernière sur plan. Envoi immédiat : fermé. Réclamation : deux finesses dans la même
+                clause SQL — le bail de 60 s était plus court que le vrai temps d'envoi de certains
+                canaux (vérifié : WhatsApp n'a aucun timeout), et la limite de 3 tentatives n'était
+                pas dans la clause. Fermées → v6.5.
+                <b>Boucle close : 11 passes, 14 bloquants fermés, dont un bug existant.</b> La suite
+                se tranche dans PR① avec du code et des tests
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+</div>
