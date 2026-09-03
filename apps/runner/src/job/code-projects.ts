@@ -29,7 +29,13 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
+import { isAbsolutePath, isWindowsPath, normalizePath, projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
+
+// La clé d'identité d'un projet (`projectKey`) vient de `@nodal-agents/shared`
+// depuis le 03/09 — ce module en portait un jumeau, le web un autre, l'outil de
+// code un troisième. Réexportée ici pour les appelants historiques du runner.
+export { projectKey };
 
 // Depuis le 26/08, ce module ne juge plus rien : ni l'extension des fichiers,
 // ni les skills de l'agent, ni une case sur le dossier. Il liste les dossiers
@@ -71,18 +77,8 @@ const MAX_PROJECTS = 12;
 /** Fenêtre de scan des éditions récentes. */
 const SCAN_LIMIT = 1500;
 
-const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '');
-const isAbsolute = (p: string): boolean => /^[a-z]:\//i.test(p) || p.startsWith('/');
-
-/**
- * Chemin Windows — jumeau de `apps/web/src/lib/project-key.ts`.
- *
- * DEUX formes (revue Codex, 26/08) : la lettre de lecteur, et le partage réseau
- * UNC que la normalisation rend `//serveur/part`. Les workspaces acceptent les
- * deux ; ne reconnaître que la première rendait un partage Windows sensible à
- * la casse, et ses écritures pouvaient être écartées du contexte.
- */
-const isWindowsPath = (p: string): boolean => /^[a-z]:\//i.test(p) || p.startsWith('//');
+const norm = normalizePath;
+const isAbsolute = isAbsolutePath;
 
 function hasMarker(dir: string): boolean {
   try {
@@ -105,23 +101,6 @@ function hasMarker(dir: string): boolean {
 export function isDriveRoot(p: string): boolean {
   const s = p.replace(/\/+$/, '');
   return s === '' || s === '/' || /^[a-z]:$/i.test(s);
-}
-
-/**
- * LA clé d'identité d'un projet — jumeau de `apps/web/src/lib/project-key.ts`.
- *
- * La casse n'est repliée QUE pour les chemins Windows (revue Codex, 26/08) :
- * sur un système sensible à la casse, `/srv/App` et `/srv/app` sont deux
- * dossiers différents, et les confondre ferait qu'en masquer un masquerait
- * l'autre.
- *
- * Les deux copies doivent répondre pareil : l'une décide ce que l'interface
- * montre, l'autre ce que les agents entendent, et un désaccord entre elles ne
- * se voit depuis aucun écran.
- */
-export function projectKey(p: string): string {
-  const s = norm(p);
-  return isWindowsPath(s) ? s.toLowerCase() : s;
 }
 
 function within(dir: string, root: string): boolean {

@@ -4,7 +4,7 @@ import {
   getCodeTabStatusAction,
 } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
-import { projectKey } from '@/lib/project-key.ts';
+import { projectKey } from '@nodal-agents/shared';
 import CodeProcessesTable from './CodeProcessesTable.tsx';
 
 // Force dynamic — this page reads per-request DB state.

@@ -33,7 +33,7 @@ import {
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
 } from './code-projects.ts';
-import { projectKey } from './project-key.ts';
+import { isWindowsPath, normalizePath, projectKey } from '@nodal-agents/shared';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -11144,15 +11144,19 @@ function extractFilePath(input: Record<string, unknown> | null): string | null {
  * Backslashes are normalized to `/` and a known workspace-root prefix is
  * stripped (case-insensitively for Windows-style paths, whose filesystems
  * are case-insensitive). Falls back to the slash-normalized original.
+ *
+ * « Windows-style » vient de `@nodal-agents/shared` depuis le 03/09 : la copie
+ * locale ne connaissait que la lettre de lecteur, pas le partage UNC — un
+ * fichier sous `//serveur/part` était donc compté deux fois selon la casse.
+ * Trouvé par le scanner d'architecture, pas par un lecteur.
  */
 function canonicalChangePath(rawPath: string, workspaceRoots: string[]): string {
-  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
-  const p = norm(rawPath.trim());
-  const isWindowsPath = /^[a-z]:\//i.test(p);
+  const p = normalizePath(rawPath.trim());
+  const windows = isWindowsPath(p);
   for (const root of workspaceRoots) {
-    const r = norm(root);
+    const r = normalizePath(root);
     if (r === '') continue;
-    const matches = isWindowsPath
+    const matches = windows
       ? p.toLowerCase().startsWith(r.toLowerCase() + '/')
       : p.startsWith(r + '/');
     if (matches) return p.slice(r.length + 1);

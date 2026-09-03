@@ -43,7 +43,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
 import Select from '@/components/ui/Select';
 import TextInput from '@/components/ui/TextInput';
-import { projectKey } from '@/lib/project-key.ts';
+import { projectKey } from '@nodal-agents/shared';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
 

@@ -255,6 +255,31 @@ export function scanForPattern(
 }
 
 /**
+ * La règle d'identité d'un chemin (« lettre de lecteur ⇒ casse repliée ») ne
+ * vit qu'à UN endroit : `packages/shared/src/project-key.ts`.
+ *
+ * Elle a existé en trois copies jusqu'au 03/09 (runner, web, outil de code),
+ * et un désaccord entre elles ne se voyait depuis aucun écran : un projet
+ * masqué dans l'interface restait annoncé aux agents, un verrou d'écriture
+ * posé par l'un n'était pas vu par l'autre. Le plan « Vérifier & Corriger »
+ * fait de cette clé l'identité canonique d'un livrable — une quatrième copie
+ * serait une quatrième vérité.
+ *
+ * L'empreinte cherchée est l'expression de lettre de lecteur SUIVIE d'un
+ * slash (`[a-z]:\/`), avec ou sans majuscules dans la classe : c'est ce qui
+ * distingue une règle d'identité de chemin d'un test de racine de disque
+ * (`[a-z]:$`, légitime dans `isDriveRoot`). Le fichier source de la règle est
+ * passé en `skipFiles` par le package qui l'héberge ; ailleurs, rien n'est
+ * permis.
+ */
+export function scanForProjectKeyCopies(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: /\[(?:a-z|A-Z|a-zA-Z|A-Za-z)\]:\\\//,
+    rule: 'project-key-copy',
+  });
+}
+
+/**
  * Every source file of the package, concatenated.
  *
  * For the rare assertion that is POSITIVE — "this adapter must import the

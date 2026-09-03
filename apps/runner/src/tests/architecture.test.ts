@@ -17,6 +17,7 @@ import {
   scanForAgentSlugs,
   scanForUserFacingStrings,
   scanForDbDriverImports,
+  scanForProjectKeyCopies,
   formatViolations,
 } from '@nodal-agents/test-kit';
 
@@ -45,6 +46,15 @@ describe('architecture — le runner n’importe aucun driver de base', () => {
     const violations = scanForDbDriverImports({ srcDir: SRC_DIR });
     if (violations.length > 0) {
       expect.fail(formatViolations('Import de driver hors packages/db', violations));
+    }
+  });
+});
+
+describe('architecture — la clé d’identité d’un chemin n’a qu’une source', () => {
+  it('src/ ne recopie pas la règle « lettre de lecteur » de @nodal-agents/shared', () => {
+    const violations = scanForProjectKeyCopies({ srcDir: SRC_DIR });
+    if (violations.length > 0) {
+      expect.fail(formatViolations('Copie de projectKey hors packages/shared', violations));
     }
   });
 });

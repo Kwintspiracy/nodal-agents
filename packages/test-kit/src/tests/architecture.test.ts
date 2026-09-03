@@ -11,6 +11,7 @@ import {
   scanForUserFacingStrings,
   scanForDbDriverImports,
   formatViolations,
+  scanForProjectKeyCopies,
 } from '../index';
 
 let dir: string;
@@ -29,6 +30,18 @@ beforeAll(() => {
   writeFileSync(join(dir, 'driver.ts'), "import pg from 'pg';\n");
   // Un fixture de test cite légitimement un agent — ne doit PAS déclencher.
   writeFileSync(join(dir, 'tests', 'fixture.ts'), 'export const agent = "sherlock";\n');
+  // Une copie de la règle d'identité de chemin (lettre de lecteur + slash) —
+  // DOIT déclencher, quelle que soit la casse de la classe.
+  writeFileSync(
+    join(dir, 'nested', 'key-copy.ts'),
+    "const isWin = (p: string) => /^[A-Za-z]:\\//i.test(p) || p.startsWith('//');\n",
+  );
+  // Un test de racine de disque (`[a-z]:$`) n'est PAS une copie de la règle —
+  // ne doit pas déclencher.
+  writeFileSync(
+    join(dir, 'drive-root.ts'),
+    'export const root = (s: string) => /^[a-z]:$/i.test(s);\n',
+  );
 });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -71,5 +84,23 @@ describe('formatViolations', () => {
     expect(text).toContain('Invariant 1');
     expect(text).toMatch(/slug\.ts:\d+/);
     expect(text).toContain('slug:tatooine');
+  });
+});
+
+describe('scanForProjectKeyCopies', () => {
+  it('détecte une copie de la règle « lettre de lecteur ⇒ casse repliée »', () => {
+    const v = scanForProjectKeyCopies({ srcDir: dir });
+    expect(v.map((x) => x.rule)).toEqual(['project-key-copy']);
+    expect(v[0]?.file).toContain('key-copy.ts');
+  });
+
+  it('laisse passer un test de racine de disque, qui n’est pas une identité', () => {
+    const v = scanForProjectKeyCopies({ srcDir: dir });
+    expect(v.some((x) => x.file.includes('drive-root'))).toBe(false);
+  });
+
+  it('épargne le fichier qui héberge la règle quand il est passé en skipFiles', () => {
+    const v = scanForProjectKeyCopies({ srcDir: dir, skipFiles: ['nested/key-copy.ts'] });
+    expect(v).toEqual([]);
   });
 });

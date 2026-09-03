@@ -12,6 +12,7 @@ import {
   scanForAgentSlugs,
   scanForHardcodedUuids,
   scanForDbDriverImports,
+  scanForProjectKeyCopies,
   assertNoViolations,
 } from '@nodal-agents/test-kit';
 
@@ -28,6 +29,10 @@ describe('architecture invariants', () => {
 
   it('does not import a database driver (only packages/db may)', () => {
     assertNoViolations('driver DB', scanForDbDriverImports({ srcDir }));
+  });
+
+  it('does not re-implement projectKey — the path identity rule lives in @nodal-agents/shared', () => {
+    assertNoViolations('copie de projectKey', scanForProjectKeyCopies({ srcDir }));
   });
 
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —
