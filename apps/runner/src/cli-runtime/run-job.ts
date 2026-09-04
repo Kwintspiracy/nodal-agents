@@ -9,21 +9,7 @@
 // conversation, the audit (cli_runs + live tool_calls), and channel delivery
 // of the final text VERBATIM (invariant #2).
 
-import {
-  cliSessions,
-  toolCalls,
-  eq,
-  and,
-  sql,
-  isConversationAllowed,
-  getBindingCredentials,
-  type AnyDrizzleDb,
-} from '@nodal-agents/db';
-import {
-  getAdapter,
-  resolveTransportChannel,
-  listActiveChannelsForAgent,
-} from '@nodal-agents/delivery';
+import { cliSessions, toolCalls, eq, and, sql, type AnyDrizzleDb } from '@nodal-agents/db';
 import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
 import {
   assertCliBudget,
@@ -34,7 +20,10 @@ import {
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob, completeJob, touchJob } from '../job/state.ts';
+import { failJob, touchJob } from '../job/state.ts';
+import { finalizeJobSuccess } from '../job/finalize.ts';
+import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
+import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
@@ -71,6 +60,8 @@ export interface CliRuntimeJobRow {
   channel: string | null;
   conversationId: string | null;
   task: string | null;
+  /** `agent_jobs.trigger_context` — un déclencheur cron/webhook peut imposer le canal de notification. */
+  triggerContext: unknown;
 }
 
 /**
@@ -430,35 +421,61 @@ export async function runCliRuntimeJob(args: {
     return fail(code.slice(0, 400));
   }
 
-  await completeJob(db, jobId, turn.finalText, [binding.toolLabel]);
-
-  // Channel delivery — the CLI's text VERBATIM (invariant #2: the LLM speaks,
-  // Nodal relays; no synthesis). Same guardrails as deliverCompletedRoots.
+  // ── La porte terminale (V&C, T11) ─────────────────────────────────────────
+  //
+  // La cible de livraison est résolue AVANT la décision terminale et figée
+  // avec elle : la ligne `job_deliveries` en `prepared` est commise DANS la
+  // transaction qui pose le statut, puis le drain immédiat l'envoie — hors de
+  // toute transaction, après que les verrous sont rendus. Un crash entre le
+  // commit et l'envoi ne perd plus le message : le tick le reprend.
+  //
+  // Le texte du CLI part VERBATIM (invariant #2 : le LLM parle, Nodal relaie).
+  // L'allowlist et les credentials se revérifient AU DRAIN, jamais ici.
+  let delivery: { channel: string; chatId: string; payload: string } | undefined;
   if (job.chatId && turn.finalText.trim()) {
-    try {
-      const activeChannels = await listActiveChannelsForAgent(db, agentRow.id);
-      const channel = resolveTransportChannel(job.channel ?? undefined, activeChannels);
-      const allowed =
-        job.entityId !== null &&
-        (await isConversationAllowed(db, {
-          entityId: job.entityId,
-          agentId: agentRow.id,
-          channel,
-          conversationId: job.chatId,
-        }));
-      if (allowed) {
-        const creds = await getBindingCredentials(db, agentRow.id, channel);
-        if (creds) {
-          await getAdapter(channel).sendText(creds, job.chatId, turn.finalText);
-        }
-      } else {
-        console.error(
-          `[cli-runtime] refusing delivery for job ${jobId} — chatId not in the channel allowlist`,
-        );
-      }
-    } catch (err) {
-      console.error(`[cli-runtime] channel delivery failed for job ${jobId}:`, err);
+    const target = await resolveDeliveryTarget(db, {
+      chatId: job.chatId,
+      agentId: agentRow.id,
+      channel: job.channel,
+      triggerContext: job.triggerContext,
+    });
+    if (isDeliveryRefusal(target)) {
+      console.error(`[cli-runtime] DELIVERY_TARGET_REFUSED job=${jobId} reason=${target.refused}`);
+    } else {
+      delivery = { channel: target.channel, chatId: target.chatId, payload: turn.finalText };
     }
+  }
+
+  const outcome = await finalizeJobSuccess(
+    db,
+    { jobId, result: turn.finalText, toolsUsed: [binding.toolLabel], delivery },
+    {
+      prepareDelivery: async (tx, input) => {
+        await prepareDelivery(tx, {
+          jobId: input.jobId,
+          channel: input.channel as Parameters<typeof prepareDelivery>[1]['channel'],
+          chatId: input.chatId,
+          payload: input.payload,
+        });
+      },
+    },
+  );
+
+  if (outcome.kind === 'already_terminal') {
+    // Course perdue : un autre chemin a fini ce job pendant le tour. Rien n'a
+    // été écrit, rien ne part — l'ancien code envoyait quand même.
+    return { status: 'failed', error: 'already_handled' };
+  }
+
+  // Drain immédiat — la latence d'aujourd'hui (un envoi dans la seconde, pas
+  // au prochain tick). Une panne ICI ne défait pas un job déjà commis : elle
+  // est dite, et la ligne `prepared` sera reprise au tick.
+  try {
+    await drainDeliveries(db, { jobId });
+  } catch (err) {
+    console.error(
+      `[cli-runtime] DELIVERY_DRAIN_FAILED job=${jobId} error=${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return { status: 'completed', result: turn.finalText };

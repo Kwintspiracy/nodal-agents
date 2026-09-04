@@ -915,6 +915,7 @@ async function runJob(
         channel: job.channel ?? null,
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
+        triggerContext: job.triggerContext ?? null,
       },
       // Spread the `agent` already normalised above (line ~856) rather than
       // re-deriving fields here — a second conversion is a second thing to

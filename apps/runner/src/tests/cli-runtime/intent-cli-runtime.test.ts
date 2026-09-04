@@ -152,6 +152,7 @@ function runJob(jobId: string, mode: 'read' | 'write', workspaces: string[]) {
       channel: 'api',
       conversationId: null,
       task: 'go',
+      triggerContext: null,
     },
     agentRow: { ...baseAgent, cliPermissions: { mode } },
     workspaces: workspaces.map((path, i) => ({ label: `ws${i}`, path })),
