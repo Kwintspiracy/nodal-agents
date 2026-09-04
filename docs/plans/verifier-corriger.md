@@ -619,7 +619,9 @@ T18 → T08 → T09 → T10 → T11 → T12 → T13 → T14 → T21 → T22 → 
 | T18 tests d'archi de l'intention | ✅ | `19ec727e` | agent Opus (Agent tool), vérifié indépendamment ; par ÉNUMÉRATION du registre (checkpoint-wiring avait oublié runSkillScriptTool) ; 3 mutations rouges — deux tentatives de mutation « spawn » étaient FAUSSES (un import, puis `spawnMut(`), la troisième (`spawn(` littéral) rougit |
 | T22 panneau de configuration (fiche projet) | ✅ | `ef5dde37` | agent Opus, vérifié ; `verifyManifestHash` (hash COURANT) ajouté aux prefs comme jeton ; `isOwner` aligné sur le prédicat des ÉCRITURES (pas d'exemption local-trust : un panneau actif que le serveur refuse mentirait) ; e2e code-verification écrit, NON EXÉCUTÉ |
 | T13 tests d'archi (status hors primitive, send* hors outbox, primitive sans type) | ✅ | `b940db0d` | scanner multiligne + 4 règles prouvées sur arbre temporaire ; allowlist des envois non terminaux = exactement les 6 fichiers du grep ; 3 mutations rouges ; `completeJob` reste l'écriture interne, la règle compagne sur ses appelants tient « une seule porte » |
-| Reste | ⬜ | — | e2e code-verification et settings-verification-surfaces (exigent la stack redémarrée sur 0088-0091) ; copies runner de projectRootFor / TERMINAL_STATUSES à retirer ; PR GitHub puis `codex review` |
+| Stack redémarrée sur 0088-0091 | ✅ | — | migrations appliquées sur la base de dev sans erreur (fusion des doublons comprise), web 200, runner ok ; les 6 `io_worker` orphelins des suites Postgres réel ont dû être tués avant |
+| e2e code-verification + settings-verification-surfaces | ⬜ NON EXÉCUTÉS | — | la stack de dev est en local-auth (config Quentin) et le global-setup Playwright exige local-trust ou l'endpoint better-auth ; ils tourneront en CI (qui boote en local-trust) |
+| Reste | ⬜ | — | copies runner de projectRootFor / TERMINAL_STATUSES à retirer ; PR GitHub puis `codex review` en boucle |
 
 Constat neuf à fermer dans T09 (verdict « incomplet » de la critique finale) :
 la **sérialisation intra-job** de deux finalisations concurrentes du même
