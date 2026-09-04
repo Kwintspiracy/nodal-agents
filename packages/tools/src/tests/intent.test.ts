@@ -318,6 +318,34 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(normalizePath(rows[0]!.displayPathSnapshot ?? '')).toBe(normalizePath(link));
   });
 
+  it('deux racines qui se contiennent (un lien vers le conteneur, et un projet du conteneur attaché à part) ⇒ la plus SPÉCIFIQUE nomme le projet', async () => {
+    // Revue Codex PR #46, passe 3 : prendre la première racine dans l'ordre de
+    // configuration rattachait la cible au lien (`/liens/depot/app`) alors
+    // que l'outil et l'onglet Code la rattachent au projet attaché à part.
+    const app = join(ws, 'app');
+    await mkdir(app, { recursive: true });
+    await writeFile(join(app, 'package.json'), '{}');
+    const link = join(root, 'lien-conteneur');
+    await symlink(ws, link, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const res = await executeTool(
+      fileWriteTool as never,
+      // Le label `app` : l'outil résout la cible sous la racine la plus profonde.
+      { path: 'app/x.txt', content: 'x' },
+      ctx({
+        workspaces: [
+          { label: 'lien', path: link },
+          { label: 'app', path: app },
+        ],
+      }),
+      opts,
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(app)]);
+  });
+
   it('plafond de 12 projets par racine, dossiers cachés exclus', async () => {
     for (let i = 1; i <= 13; i++) {
       await mkdir(join(ws, `p${String(i).padStart(2, '0')}`), { recursive: true });

@@ -148,13 +148,24 @@ function rebaseOntoLexicalRoots(
   targets: readonly MutationTarget[],
   lexicalRoots: readonly string[],
 ): readonly MutationTarget[] {
-  const roots = lexicalRoots.map((lexical) => ({ lexical, real: realPathOf(lexical) }));
+  // La racine la plus SPÉCIFIQUE gagne — la plus longue en chemin réel. Deux
+  // racines peuvent se contenir (un lien vers un conteneur, et un projet du
+  // conteneur attaché à part) : l'outil a résolu la cible sous la plus
+  // profonde, et c'est sous celle-là que l'onglet Code la rattache. Prendre
+  // la première dans l'ordre de configuration nommerait le projet par
+  // l'autre racine (revue Codex PR #46, passe 3).
+  const roots = lexicalRoots
+    .map((lexical) => ({ lexical, real: realPathOf(lexical) }))
+    .sort((a, b) => b.real.length - a.real.length);
   return targets.map((t) => {
     const lexical = normalizePath(t.path);
     const real = realPathOf(t.path);
+    // Déjà sous une racine lexicale — la plus spécifique — : rien à faire.
+    const lexicalHit = [...roots]
+      .sort((a, b) => b.lexical.length - a.lexical.length)
+      .find((r) => lexical === r.lexical || lexical.startsWith(`${r.lexical}/`));
+    if (lexicalHit) return t;
     for (const root of roots) {
-      // Déjà sous la racine lexicale : rien à faire.
-      if (lexical === root.lexical || lexical.startsWith(`${root.lexical}/`)) return t;
       if (real === root.real) return { kind: t.kind, path: root.lexical };
       if (real.startsWith(`${root.real}/`)) {
         return { kind: t.kind, path: `${root.lexical}${real.slice(root.real.length)}` };
