@@ -154,17 +154,20 @@ function rebaseOntoLexicalRoots(
   // profonde, et c'est sous celle-là que l'onglet Code la rattache. Prendre
   // la première dans l'ordre de configuration nommerait le projet par
   // l'autre racine (revue Codex PR #46, passe 3).
+  //
+  // UNE seule règle, sur les chemins RÉELS uniquement (revue passe 4) : un
+  // raccourci « déjà sous une racine lexicale » laissait une racine réelle
+  // parente court-circuiter une racine LIÉE plus spécifique. Ce que cette
+  // règle ne peut pas décider : deux racines qui recouvrent le même dossier
+  // physique donnent deux identités selon le LABEL que l'agent a employé —
+  // et l'onglet Code fait de même. C'est un choix de produit (interdire les
+  // racines qui se recouvrent, ou accepter deux identités), pas une règle de
+  // plus ici.
   const roots = lexicalRoots
     .map((lexical) => ({ lexical, real: realPathOf(lexical) }))
     .sort((a, b) => b.real.length - a.real.length);
   return targets.map((t) => {
-    const lexical = normalizePath(t.path);
     const real = realPathOf(t.path);
-    // Déjà sous une racine lexicale — la plus spécifique — : rien à faire.
-    const lexicalHit = [...roots]
-      .sort((a, b) => b.lexical.length - a.lexical.length)
-      .find((r) => lexical === r.lexical || lexical.startsWith(`${r.lexical}/`));
-    if (lexicalHit) return t;
     for (const root of roots) {
       if (real === root.real) return { kind: t.kind, path: root.lexical };
       if (real.startsWith(`${root.real}/`)) {

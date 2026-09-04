@@ -346,6 +346,37 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(app)]);
   });
 
+  it('une racine réelle PARENTE et une racine LIÉE plus spécifique ⇒ la liée nomme le projet (aucun raccourci lexical)', async () => {
+    // Revue Codex PR #46, passe 4 : la cible réelle tombe sous la racine
+    // parente (attachée telle quelle) ET sous la racine liée (un lien vers
+    // un sous-dossier). Le raccourci « déjà sous une racine lexicale » la
+    // laissait au parent ; la règle unique par chemins réels choisit la plus
+    // spécifique — celle que l'onglet Code dérive pour le label employé.
+    const app = join(ws, 'app');
+    await mkdir(app, { recursive: true });
+    await writeFile(join(app, 'package.json'), '{}');
+    const linkToApp = join(root, 'lien-app');
+    await symlink(app, linkToApp, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const res = await executeTool(
+      fileWriteTool as never,
+      // Le label `app` : l'outil résout sous la racine liée, la cible réelle
+      // tombe aussi sous la racine parente.
+      { path: 'app/x.txt', content: 'x' },
+      ctx({
+        workspaces: [
+          { label: 'conteneur', path: ws },
+          { label: 'app', path: linkToApp },
+        ],
+      }),
+      opts,
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(linkToApp)]);
+  });
+
   it('plafond de 12 projets par racine, dossiers cachés exclus', async () => {
     for (let i = 1; i <= 13; i++) {
       await mkdir(join(ws, `p${String(i).padStart(2, '0')}`), { recursive: true });
