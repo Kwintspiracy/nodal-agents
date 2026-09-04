@@ -606,10 +606,20 @@ T18 → T08 → T09 → T10 → T11 → T12 → T13 → T14 → T21 → T22 → 
 | T20 manifeste survivant | ✅ | `7101d648` | la mutation « égalité brute » du ticket n'existe pas pour jsonb (ordre des clés normalisé) ; deux autres rouges |
 | T15 partie base | ✅ | `9491b837` | seed = un test, pas un beforeAll |
 | T21 écrivains web des colonnes verify_* | ✅ | (suivant) | une mutation n'avait touché que la moitié de la garde (ligne repliée par Prettier) et laissait le test vert — refaite |
-| T08 outbox | 🔄 | — | agent Opus (workflow) |
-| T19 registre + T09 primitive | 🔄 | — | agent Opus (workflow) |
-| T16 helper d'intention | 🔄 | — | agent Opus (workflow) |
-| T17-T18, T10-T13, T14 tests, T22-T24 | ⬜ | — | |
+| T23 réglage « Verification surfaces » | ✅ | `3f1c10c8` | ConfirmDialog sur le DÉCOCHAGE (inverse du frein) ; 3 mutations rouges |
+| T24 section « Verification » du détail de run | ✅ | `668ab271` | mention D8 depuis la TRACE, pas le réglage courant (mutation « relire entities » rouge) ; dernier tick du poller |
+| T08 outbox | ✅ | `f3828696` | 6 mutations rouges ; revue : `runnerInstanceId` dans un module FEUILLE (cycle d'import à un pas), alerte owner résolue sur le canal réel (resolveOwnerChatId était épinglé Telegram) ; `attempts < 3` dans le claim seul non isolable (le CHECK de la table est le filet) |
+| T16 helper d'intention (5 surfaces) | ✅ | `266d324a`, `73381cf0` | 4 mutations rouges ; revue : `already_terminal` REFUSE l'écriture (un cancelled qui écrit n'est pas annulé) ; file_edit et run_skill_script étaient sans test ; `.git` est un manifeste (le test du plafond en avait fait un projet) ; un tour de chat sans job ⇒ `skipped` nommé |
+| T19 registre + T09 primitive | ✅ | `1ca6e6dd`, `89ac12f0` | revue : signature en OBJET (T10-T12 l'écrivent littéralement), `VERIFY_TERMINAL_WRITE_LOST` levé (un return null committait) ; **le statut seul dit terminal** (un job réessayé garde son `completed_at`, trouvé par F1/Leg1) ; **réclamation `finalizing_at` en tx1** ⇒ une preuve par job (le point « incomplet » du découpage) ; **epoch bougé pendant la preuve ⇒ dirty** (VERIFY_STALE_EPOCH) |
+| T17 surface runtime CLI (run-job + run-chat) | ✅ | `dfd75c12` | 3 mutations rouges ; le scan statique du filet des verrous borne la distance try → prompt (commentaires sortis du try) |
+| T11 bascule runtime CLI | ✅ | `5c1ce997` | envoi direct retiré ; course perdue ⇒ already_handled (l'ancien code envoyait) ; crash entre commit et drain ⇒ prepared survit ; mutation « envoi direct » rouge (deux sendText) |
+| T10 bascule execute.ts | ✅ | `845c63ea` | asymétrie already_handled corrigée ; hook `beforeRespond` du client LLM simulé pour la course perdue |
+| T12 bascule cron | ✅ | `3d92d964` | payload figé (synthèse UNE fois), marqueur périmé relâché, M4 réécrit sur l'outbox ; mock delivery devenu PARTIEL (l'outbox veut le vrai DeliveryError) |
+| T14 tests d'interleaving (PG réel) | ✅ | `babb72db` | mutation « réclamation toujours accordée » rouge ; connexions à CHAUFFER sinon la course n'a pas lieu ; plan amendé (échoue si absent, jamais sauté) |
+| T18 tests d'archi de l'intention | ✅ | `19ec727e` | agent Opus (Agent tool), vérifié indépendamment ; par ÉNUMÉRATION du registre (checkpoint-wiring avait oublié runSkillScriptTool) ; 3 mutations rouges — deux tentatives de mutation « spawn » étaient FAUSSES (un import, puis `spawnMut(`), la troisième (`spawn(` littéral) rougit |
+| T22 panneau de configuration (fiche projet) | ✅ | `ef5dde37` | agent Opus, vérifié ; `verifyManifestHash` (hash COURANT) ajouté aux prefs comme jeton ; `isOwner` aligné sur le prédicat des ÉCRITURES (pas d'exemption local-trust : un panneau actif que le serveur refuse mentirait) ; e2e code-verification écrit, NON EXÉCUTÉ |
+| T13 tests d'archi (status hors primitive, send* hors outbox, primitive sans type) | ✅ | `b940db0d` | scanner multiligne + 4 règles prouvées sur arbre temporaire ; allowlist des envois non terminaux = exactement les 6 fichiers du grep ; 3 mutations rouges ; `completeJob` reste l'écriture interne, la règle compagne sur ses appelants tient « une seule porte » |
+| Reste | ⬜ | — | e2e code-verification et settings-verification-surfaces (exigent la stack redémarrée sur 0088-0091) ; copies runner de projectRootFor / TERMINAL_STATUSES à retirer ; PR GitHub puis `codex review` |
 
 Constat neuf à fermer dans T09 (verdict « incomplet » de la critique finale) :
 la **sérialisation intra-job** de deux finalisations concurrentes du même

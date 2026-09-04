@@ -351,8 +351,8 @@
 <div class="wrap">
   <h1>Backlog vivant</h1>
   <p class="stamp">
-    Nodal-Agents · mis à jour le 02/09/2026 · une PR par chantier, remis à jour à chaque session ·
-    cap : <b>merger la #45, publier la 0.8.9, puis Vérifier &amp; Corriger</b>
+    Nodal-Agents · mis à jour le 04/09/2026 · une PR par chantier, remis à jour à chaque session ·
+    cap : <b>merger la #45, publier la 0.8.9, relire PR① de Vérifier &amp; Corriger</b>
   </p>
 
   <h2>Plus aucun P0</h2>
@@ -539,14 +539,22 @@
   <div class="card next">
     <h3>
       <span class="num">③</span> Vérifier &amp; Corriger — la loop de vérification
-      <span class="pill amber">PLAN v6.5 · 11 PASSES CODEX CLOSES · DÉCOUPER PR①</span>
+      <span class="pill amber">PR① CODÉE 04/09 · 24 TICKETS SUR 24 · À RELIRE (CODEX)</span>
       <span class="pill plain size">la plus grosse</span>
     </h3>
     <p>
-      <b>Remis en tête de file le 02/09.</b> Rien n'en est codé (vérifié sur <code>main</code>). Le
-      code devient le premier <b>vérificateur</b> : Nodal lance lui-même les commandes de preuve du
-      projet après le travail d'un agent, et un agent ne peut plus dire « fini » si c'est rouge.
-      Test rouge → une réparation, pas plus ; encore rouge → « bloqué », avec l'extrait d'erreur. Le
+      <b>PR① est codée le 04/09</b> sur <code>feat/verifier-corriger-pr1</code> : 24 tickets, chacun
+      avec ses tests sur données réelles et ses mutations rouges ; suite complète du runner verte
+      (1235 tests, dont trois suites sur un vrai Postgres à deux connexions). Quatre bugs existants
+      fermés au passage (livraison perdue sur crash, course perdue qui envoyait quand même, alerte
+      owner épinglée Telegram, job relancé infinalisable). <b>Reste avant de merger</b> : redémarrer
+      la stack (migrations 0088-0091) et jouer deux specs e2e écrits mais non exécutés, ouvrir la PR
+      GitHub, puis <code>codex review</code> en boucle. Le détail produit-d'abord est dans le
+      <a href="https://claude.ai/code/artifact/8744ad8c-e7ec-455a-8ae7-4ca25d826ede">plan</a>
+      (section « PR① est codée »). Le code devient le premier <b>vérificateur</b> : Nodal lance
+      lui-même les commandes de preuve du projet après le travail d'un agent, et un agent ne peut
+      plus dire « fini » si c'est rouge. Test rouge → une réparation, pas plus ; encore rouge → «
+      bloqué », avec l'extrait d'erreur. Le
       <a href="https://claude.ai/code/artifact/8744ad8c-e7ec-455a-8ae7-4ca25d826ede">plan v6</a>
       = la v4 (six passes Codex, D1-D4 tranchées) + v5 (commandes graduées, extrait d'erreur
       lisible, semaine d'observation) + v6 du 03/09, six papiers lus :

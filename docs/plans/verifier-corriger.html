@@ -530,8 +530,9 @@
 <div class="wrap">
   <header class="masthead">
     <p class="eyebrow">
-      Plan v6.6 · 03/09/2026 · en tête de file — D1-D9 tranchées · 11 passes Codex, 14 bloquants
-      fermés dont un bug existant · PR① en découpage (branche feat/verifier-corriger-pr1)
+      Plan v6.6 · 04/09/2026 · D1-D9 tranchées · 11 passes Codex, 14 bloquants fermés dont un bug
+      existant · <b>PR① codée : 24 tickets sur 24</b> (branche feat/verifier-corriger-pr1) — reste
+      la relecture Codex et la PR GitHub
     </p>
     <h1>Vérifier &amp; Corriger</h1>
     <p class="standfirst">
@@ -892,6 +893,194 @@
     </div>
   </div>
 
+  <h2>PR① est codée — ce qui existe maintenant (04/09)</h2>
+  <p>
+    Les 24 tickets du découpage sont sur la branche <code>feat/verifier-corriger-pr1</code>, chacun
+    avec ses tests sur données réelles et ses mutations rouges. Rien n'est encore mergé ni relu par
+    Codex.
+  </p>
+  <p>
+    <b>Ce que tu pourras faire, une fois la stack redémarrée</b> (elle appliquera quatre migrations)
+    :
+  </p>
+  <ul>
+    <li>
+      Sur la fiche d'un projet dans l'onglet <b>Code</b> : déclarer de une à cinq commandes de
+      preuve (« pnpm typecheck », « pnpm test »…), dans l'ordre, puis les <b>approuver</b> — avec
+      l'avertissement en toutes lettres, parce que ces commandes exécutent du code du dépôt avec ton
+      compte. Un projet non approuvé n'exécute rien.
+    </li>
+    <li>
+      Dans <b>Settings</b> : choisir quelles façons de travailler sont vérifiées (outil de code,
+      agents Claude Code / Codex, outils fichiers, commandes). Décocher demande confirmation ;
+      recocher, non.
+    </li>
+    <li>
+      Dans le <b>détail d'un run</b> : lire ce que la preuve a fait, commande par commande (rang,
+      code de sortie, durée, verdict) — et, quand elle n'a pas tourné, pourquoi : surface décochée,
+      projet sans commandes, tour de chat.
+    </li>
+  </ul>
+  <p><b>Ce que Nodal fait tout seul, sans rien bloquer</b> (c'est la phase d'observation) :</p>
+  <ul>
+    <li>
+      Avant qu'un outil ou un agent CLI écrive dans un projet, il le note. Une écriture pendant la
+      preuve, ou par un autre job, est vue : le projet reste « à prouver ».
+    </li>
+    <li>
+      À la fin d'un job, il lance les commandes approuvées et garde chaque résultat. Un projet rouge
+      finit quand même « terminé » — pour l'instant on mesure, on n'impose pas.
+    </li>
+    <li>
+      Le message de fin part par une boîte d'envoi : commis avec le statut, envoyé juste après,
+      repris par le cron si le runner tombe entre les deux, trois essais au plus, et tu es alerté
+      quand un envoi est définitivement refusé.
+    </li>
+  </ul>
+  <p><b>Bugs existants corrigés au passage</b> (trouvés par les tests, pas par une revue) :</p>
+  <ul>
+    <li>Une livraison pouvait se perdre si le runner tombait entre « terminé » et l'envoi.</li>
+    <li>Une course perdue (job fini par un autre chemin) envoyait quand même le message.</li>
+    <li>L'alerte au propriétaire visait toujours Telegram, même sur un agent Discord seul.</li>
+    <li>
+      Un job relancé depuis le tableau de bord ne pouvait plus se terminer (trace d'un premier
+      passage).
+    </li>
+  </ul>
+  <p><b>Ce qui reste avant de merger</b> :</p>
+  <ul>
+    <li>
+      Redémarrer la stack (migrations 0088 à 0091 sur ta base) et jouer les deux specs e2e écrits
+      mais non exécutés.
+    </li>
+    <li>Ouvrir la PR GitHub, puis <code>codex review</code> en boucle jusqu'à zéro constat.</li>
+    <li>
+      Retirer deux copies restantes dans le runner (règle de racine de projet, liste des statuts
+      terminaux).
+    </li>
+  </ul>
+  <details>
+    <summary>Le détail ticket par ticket (jargon)</summary>
+    <table>
+      <thead>
+        <tr>
+          <th>Ticket</th>
+          <th>Commit</th>
+          <th>Ce que la vérification a montré</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>T01 projectKey unique</td>
+          <td><code>fc9f285b</code></td>
+          <td>deux copies de plus que prévu, dont une qui ignorait l'UNC</td>
+        </tr>
+        <tr>
+          <td>T02 types + hash du manifeste</td>
+          <td><code>d0103e33</code></td>
+          <td>sha-256 pur JS en parité avec node:crypto</td>
+        </tr>
+        <tr>
+          <td>T06+T07 moteur shell</td>
+          <td><code>8e6518cc</code></td>
+          <td>
+            tree-kill réparé ; la mutation StringDecoder ne rougit qu'avec un caractère de 3 octets
+          </td>
+        </tr>
+        <tr>
+          <td>T14 harnais Postgres réel</td>
+          <td><code>345009b4</code></td>
+          <td>démarrage = un test, pas un beforeAll</td>
+        </tr>
+        <tr>
+          <td>T15 surfaces (partagé + base)</td>
+          <td><code>4174aba5</code>, <code>9491b837</code></td>
+          <td>défaut « tout activé »</td>
+        </tr>
+        <tr>
+          <td>T03/T04/T05/T20 migrations</td>
+          <td><code>4ad07413</code>, <code>7101d648</code></td>
+          <td>appliquées sur PG 18 réel ; DROP de l'ancien UNIQUE par pg_constraint</td>
+        </tr>
+        <tr>
+          <td>T21 écrivains web verify_*</td>
+          <td>—</td>
+          <td>une mutation repliée par Prettier ne touchait que la moitié de la garde</td>
+        </tr>
+        <tr>
+          <td>T23 réglage des surfaces</td>
+          <td><code>3f1c10c8</code></td>
+          <td>ConfirmDialog sur le décochage, inverse du frein</td>
+        </tr>
+        <tr>
+          <td>T24 section Verification du run</td>
+          <td><code>668ab271</code></td>
+          <td>la mention D8 vient de la trace, jamais du réglage courant</td>
+        </tr>
+        <tr>
+          <td>T08 outbox</td>
+          <td><code>f3828696</code></td>
+          <td>identité du runner en module feuille ; alerte owner sur le canal réel</td>
+        </tr>
+        <tr>
+          <td>T16 intention (5 surfaces)</td>
+          <td><code>266d324a</code>, <code>73381cf0</code></td>
+          <td>un job terminal refuse l'écriture ; « .git » est un manifeste</td>
+        </tr>
+        <tr>
+          <td>T19+T09 registre + primitive</td>
+          <td><code>1ca6e6dd</code>, <code>89ac12f0</code></td>
+          <td>
+            signature en objet ; le statut seul dit terminal ; réclamation en tx1 ; epoch bougé ⇒
+            dirty
+          </td>
+        </tr>
+        <tr>
+          <td>T17 runtime CLI</td>
+          <td><code>dfd75c12</code></td>
+          <td>le jumeau chat appelle le helper, skipped nommé</td>
+        </tr>
+        <tr>
+          <td>T11 bascule runtime CLI</td>
+          <td><code>5c1ce997</code></td>
+          <td>course perdue ⇒ rien ne part</td>
+        </tr>
+        <tr>
+          <td>T10 bascule execute.ts</td>
+          <td><code>845c63ea</code></td>
+          <td>asymétrie already_handled corrigée</td>
+        </tr>
+        <tr>
+          <td>T12 bascule cron</td>
+          <td><code>3d92d964</code></td>
+          <td>payload figé : la synthèse tourne une fois</td>
+        </tr>
+        <tr>
+          <td>T14 tests d'interleaving</td>
+          <td><code>babb72db</code></td>
+          <td>connexions à chauffer, sinon la course n'a pas lieu</td>
+        </tr>
+        <tr>
+          <td>T18 archi de l'intention</td>
+          <td><code>19ec727e</code></td>
+          <td>
+            par énumération du registre ; deux mutations « spawn » étaient fausses avant la bonne
+          </td>
+        </tr>
+        <tr>
+          <td>T22 panneau fiche projet</td>
+          <td><code>ef5dde37</code></td>
+          <td>isOwner aligné sur le prédicat des écritures</td>
+        </tr>
+        <tr>
+          <td>T13 archi terminale</td>
+          <td><code>b940db0d</code></td>
+          <td>scanner multiligne ; allowlist = les six fichiers du grep</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+
   <h2>Le chemin</h2>
   <div class="suivi">
     <div class="row">
@@ -912,7 +1101,7 @@
         travailler qui déclarent ce qu'elles modifient, au choix de l'utilisateur ; l'écran pour
         configurer les preuves et celui pour les lire. Rien de bloquant : la garde ne décide pas
         encore.</span
-      ><span class="s next">en découpage</span>
+      ><span class="s next">codée · à relire</span>
     </div>
     <div class="row">
       <span class="k">👁</span
