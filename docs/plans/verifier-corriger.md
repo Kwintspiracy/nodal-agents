@@ -625,7 +625,8 @@ T18 → T08 → T09 → T10 → T11 → T12 → T13 → T14 → T21 → T22 → 
 | `codex review` passe 2 | ✅ | (ce lot) | rapport `docs/validation/rapport-review-pr46-passe2.md` : **un seul constat, P0, TENU** — le canon `realpath` de la passe 1 nommait le projet par son dossier RÉEL alors que l'onglet Code dérive ses projets des racines telles qu'écrites (lien, jonction, forme 8.3) ⇒ deux lignes `code_projects` pour un même dossier. Correctif : comparer sur les chemins réels, NOMMER par la racine lexicale (`rebaseOntoLexicalRoots`) ; le test par lien attend désormais la clé du lien. La CI Windows le confirmait : les lignes existaient sous `runneradmin` alors que les tests attendaient `RUNNER~1` |
 | `codex review` passe 3 | ✅ | (ce lot) | rapport `docs/validation/rapport-review-pr46-passe3.md` : un constat P0 (déduit), TENU — deux racines qui se contiennent (un lien vers le conteneur + un projet du conteneur attaché à part) : la première dans l'ordre de configuration nommait le projet par le lien ; désormais la plus SPÉCIFIQUE (plus long chemin réel) nomme, test à deux racines. ⚠️ Trois passes ont trouvé chacune une finesse dans le correctif de la précédente, dans la même fonction : si la passe 4 en trouve une quatrième, la spec d'identité d'un projet (racine lexicale vs réelle, racines imbriquées) est à trancher avec Quentin, pas à itérer |
 | `codex review` passe 4 | ✅ | (ce lot) | rapport `docs/validation/rapport-review-pr46-passe4.md` : encore une finesse dans la même fonction (une racine réelle PARENTE court-circuitait une racine LIÉE plus spécifique via le raccourci lexical) — tenue par UNE règle unique sur les chemins réels (racine au plus long chemin réel), test ajouté. **BOUCLE ARRÊTÉE ICI, par la règle du skill** : quatre passes ont affiné la même fonction ; ce qui reste n'est pas une règle de plus mais un choix de produit — **D10 à trancher par Quentin : deux racines attachées qui recouvrent le même dossier physique (via un lien) donnent deux identités de projet selon le label employé, des deux côtés (onglet Code compris). Interdire les racines qui se recouvrent à l'attachement, ou accepter deux identités ?** Ma reco : interdire à l'attachement (validation dans l'action web + `nodal-agents` CLI), avec un message qui nomme les deux racines |
-| Reste | ⬜ | — | D10 (racines qui se recouvrent) ; copies runner de projectRootFor / TERMINAL_STATUSES à retirer ; CI verte ; merge quand Quentin a mergé #45 ; **suivi remonté par l'agent T22** : aucun geste ne permet de revenir à ZÉRO commande de preuve (l'action exige 1 à 5, le bouton « retirer » disparaît à une entrée) — il faut une action « Remove proof commands » (verify_commands NULL + approbation effacée), petite |
+| CI verte | 🔄 | (ce lot) | Deux échecs RÉELS trouvés par la CI, invisibles en local. (a) `pnpm deps:check` refusait un **cycle d'import** `code-project.ts → registry.ts → code-project.ts` (le registre importe la valeur, le vérificateur importait les types) ⇒ le contrat sort dans `verification/types.ts`, plus de cycle, job Linux VERT. (b) Les trois suites `*.pg.test.ts` échouaient sur le runner Windows avec « START_FAILED: undefined » ⇒ harnais instrumenté (étape nommée, tous les logs, 3 essais sur ports neufs), ce qui a donné le diagnostic : `initdb` passe, `pg_ctl start` rejette 9 fois sur 9 ports — **PostgreSQL refuse de démarrer sous un compte administrateur**, celui des runners `windows-latest`. Exclues de ce seul job, avec message ; Linux les exécute à chaque run (amendement inscrit ci-dessus) |
+| Reste | ⬜ | — | D10 (racines qui se recouvrent) ; copies runner de projectRootFor / TERMINAL_STATUSES à retirer ; merge quand Quentin a mergé #45 ; **suivi remonté par l'agent T22** : aucun geste ne permet de revenir à ZÉRO commande de preuve (l'action exige 1 à 5, le bouton « retirer » disparaît à une entrée) — il faut une action « Remove proof commands » (verify_commands NULL + approbation effacée), petite |
 
 Constat neuf à fermer dans T09 (verdict « incomplet » de la critique finale) :
 la **sérialisation intra-job** de deux finalisations concurrentes du même
@@ -770,6 +771,15 @@ choix d'ingénierie, tranchés ici pour que PR① soit exécutable.
   le binaire `embedded-postgres` est atteint par jonction depuis `apps/cli`).
   Livrée : `real-postgres.pg.test.ts`, `finalize-interleaving.pg.test.ts`,
   `outbox-interleaving.pg.test.ts` (T14).
+  **Amendement du 04/09, mesuré en CI** : ces suites tournent sur le job
+  **Linux** à chaque run (10 tests) et sur une machine Windows ordinaire,
+  mais PAS sur le runner `windows-latest` de GitHub — PostgreSQL refuse de
+  démarrer sous un compte ADMINISTRATEUR, et c'est sous ce compte que GitHub
+  exécute ses jobs Windows (`initdb` passe, `pg_ctl start` rejette : neuf
+  essais, neuf ports, aucun log). Elles sont donc exclues de ce seul job, avec
+  un message dans son journal (`apps/runner/vitest.config.ts`). La règle
+  « jamais verte par absence » reste tenue : la garantie est portée par Linux,
+  à chaque push.
 
 ## PR② — garde active + `code_task`
 
