@@ -221,6 +221,20 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   // un instantane de trop coute une seconde, un instantane manquant coute le
   // travail.
   mutatesWorkspace: true,
+  // Le marqueur ci-dessus est INCONDITIONNEL — un instantané de trop coûte une
+  // seconde. L'argument NE SE TRANSPOSE PAS ici : une intention de trop coûte
+  // une preuve complète (typecheck + tests) sur un projet que personne n'a
+  // touché. Donc la cible suit le MODE : rien en lecture, le projet du cwd en
+  // écriture — le même prédicat que le verrou de workspace pris plus bas.
+  resolveMutationTargets: async (input, ctx) => {
+    if (input.mode !== 'write') return [];
+    try {
+      return [{ kind: 'dir' as const, path: await resolveAndCheckPath(ctx, input.cwd ?? '.') }];
+    } catch {
+      // cwd irrésolu : `execute` échouera dessus avant tout spawn.
+      return [];
+    }
+  },
   defaultApproval: 'require_approval',
   // Runs BEFORE the approval card is written. The refusal below exists because
   // the card would otherwise state a confinement promise this run cannot keep —

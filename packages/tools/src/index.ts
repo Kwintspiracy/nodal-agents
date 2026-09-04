@@ -14,7 +14,18 @@ export type {
   ApprovalGateRequest,
   ApprovalRule,
   ToolExecutionResult,
+  MutationTarget,
 } from './types';
+
+// Intention de mutation (plan « Vérifier & Corriger ») — posée au seam
+// d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI
+// écrit sans jamais traverser executeTool).
+export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
+export type {
+  MutationIntentOutcome,
+  WriteMutationIntentArgs,
+  DirtiedProject,
+} from './verification/intent';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';

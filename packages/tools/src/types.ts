@@ -4,11 +4,15 @@
 import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
-import type { OperationRiskLevel } from '@nodal-agents/shared';
+import type { MutationTarget, OperationRiskLevel } from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
+
+// Re-exported so a tool file declaring `resolveMutationTargets` imports its
+// argument type from the same place as the hook itself.
+export type { MutationTarget };
 
 // ─── ToolContext ───────────────────────────────────────────────────────────────
 
@@ -300,6 +304,36 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * makes every turn pay a snapshot it does not need.
    */
   mutatesWorkspace?: boolean;
+  /**
+   * Optional PER-CALL declaration of WHAT this call is about to write —
+   * the paths from which the verification layer derives the code projects it
+   * marks dirty BEFORE the write happens (plan « Vérifier & Corriger », D8).
+   *
+   * Same argument as `computeApproval` right below: the answer depends on the
+   * call's actual TARGET, not on the tool's identity. `file_write` writes one
+   * resolved path; `run_command` hands a shell to the agent and that shell
+   * writes wherever it likes. One flag cannot say both.
+   *
+   * The target must be DECLARED by the tool, never guessed at the seam. The
+   * checkpoint layer already learned this the hard way (see
+   * `takeCheckpointForTurn`: "executeTool cannot know the target without
+   * re-implementing each tool's path resolution, and a net that depends on
+   * guessing right is not a net"). A tool that declares nothing therefore
+   * falls back CONSERVATIVELY to every workspace in `ctx.workspaces` — the
+   * fallback the plan itself prescribes for the shell surfaces.
+   *
+   * Do NOT try to select tools by `riskLevel` instead: `file_write` and
+   * `file_edit` are 'write', `run_command` is 'destructive', and the level is
+   * a posture about human review, not a statement about the filesystem.
+   *
+   * Returning an EMPTY list is meaningful and different from declaring
+   * nothing: it says "this call writes nothing" (e.g. `code_task` in read
+   * mode) and no project is marked dirty.
+   */
+  resolveMutationTargets?: (
+    input: z.infer<TInput>,
+    ctx: ToolContext,
+  ) => Promise<readonly MutationTarget[]>;
   /**
    * Optional PER-CALL destructiveness check, complementing the static
    * `defaultApproval` above for tools where gating depends on the call's

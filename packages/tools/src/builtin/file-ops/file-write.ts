@@ -51,6 +51,22 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
   mutatesWorkspace: true,
+  // The ONE file this call is about to write — the same resolution execute()
+  // does below, run again here rather than guessed at the seam. Resolving
+  // twice is already the accepted pattern in this file (computeApproval does
+  // it too): the cost is a path join, and the alternative is a verification
+  // layer that has to re-implement every tool's addressing.
+  //
+  // A resolution failure yields NO target, exactly like computeApproval's
+  // catch: no write will leave this call anyway — execute() fails loud on the
+  // same error a few lines down, with the message the agent can act on.
+  resolveMutationTargets: async (input, ctx) => {
+    try {
+      return [{ kind: 'file', path: await resolveAndCheckPath(ctx, input.path) }];
+    } catch {
+      return [];
+    }
+  },
   // D1: gate ONLY the destructive case — overwriting a file that already
   // exists in the entity-wide SHARED workspace. A brand-new file, or a write
   // into an attached/private workspace, never gates (see computeSharedOverwriteApproval).

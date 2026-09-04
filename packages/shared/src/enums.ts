@@ -32,6 +32,26 @@ export const JOB_STATUSES = [
 export const JobStatusSchema = z.enum(JOB_STATUSES);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
+/**
+ * Les statuts dont un job ne ressort pas. Une ligne qui en porte un ne doit
+ * plus être écrite : ni finalisée une seconde fois, ni salie par une intention
+ * de mutation arrivée après coup.
+ *
+ * Vivait en TROIS copies identiques — `apps/runner/src/job/state.ts`,
+ * `TERMINAL_ROOT_STATUSES` (cron/deliver-results.ts) et
+ * `TERMINAL_JOB_STATUSES` (cron/reset-orphans.ts). `packages/tools` ne peut
+ * pas importer le runner : le helper d'intention en aurait fait une
+ * quatrième. La liste vit donc ici, avec l'enum dont elle est un
+ * sous-ensemble, et les trois copies du runner sont à retirer quand ce paquet
+ * pourra être touché.
+ */
+export const TERMINAL_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled'];
+
+/** Ce statut, lu en base (donc `string`), est-il terminal ? */
+export function isTerminalJobStatus(status: string): boolean {
+  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
 // agent_tasks.status CHECK constraint
 export const TASK_STATUSES = ['todo', 'in_progress', 'done', 'cancelled', 'blocked'] as const;
 export const TaskStatusSchema = z.enum(TASK_STATUSES);

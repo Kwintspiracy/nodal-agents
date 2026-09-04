@@ -62,6 +62,16 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
   mutatesWorkspace: true,
+  // The ONE file this edit is about to change — same contract, same reasons
+  // as file_write's hook (declared target, resolved twice, empty on a
+  // resolution failure that execute() will report properly).
+  resolveMutationTargets: async (input, ctx) => {
+    try {
+      return [{ kind: 'file', path: await resolveAndCheckPath(ctx, input.path) }];
+    } catch {
+      return [];
+    }
+  },
   // D1: an edit always targets an EXISTING file (file_edit fails loud on a
   // missing one — see execute() below), so the only thing left to check is
   // whether that file lives in the shared workspace. Same gate as file_write.

@@ -111,6 +111,23 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
   riskLevel: 'destructive',
   mutatesWorkspace: true,
   defaultApproval: 'require_approval',
+  // Le cwd résolu ET tous les dossiers attachés. Un shell n'est pas un
+  // écrivain adressé : `cd ..`, un chemin absolu, un script appelé par le
+  // script — la commande écrit où elle veut. Se limiter au cwd rendrait
+  // l'intention exacte dans le cas facile et FAUSSE dans celui qui compte.
+  // Le plan tranche pareil : « tous les projets du périmètre d'écriture
+  // (conservatif) ».
+  resolveMutationTargets: async (input, ctx) => {
+    const roots = (ctx.workspaces ?? []).map((w) => ({ kind: 'dir' as const, path: w.path }));
+    try {
+      const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
+      return [{ kind: 'dir' as const, path: cwd }, ...roots];
+    } catch {
+      // cwd irrésolu : la commande ne partira pas, mais les dossiers attachés
+      // restent le périmètre déclaré — rien n'est retiré par une panne.
+      return roots;
+    }
+  },
   execute: async (input, ctx) => {
     // Fail loud when the agent has no workspace — same contract as the file_* tools.
     assertWorkspacesConfigured(ctx);

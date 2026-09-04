@@ -6,6 +6,8 @@ import {
   redactSecretsForAudit,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
+  surfaceForTool,
+  type MutationTarget,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -18,6 +20,7 @@ import type {
 import { InvalidInputError } from './errors';
 import { snapshot } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
+import { writeMutationIntent } from './verification/intent';
 
 // ─── Outils d'exécution de code ───────────────────────────────────────────────
 
@@ -409,6 +412,27 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // contract: a net that silently is not there is worse than no net, because it
   // is the one the owner believed they had (invariant #4).
   if (tool.mutatesWorkspace) {
+    // ── 2.8 Intention de mutation — le projet est sale AVANT d'être écrit ────
+    //
+    // Même endroit, même raison que l'instantané ci-dessous : après
+    // l'approbation (salir un projet pour un appel qui reste
+    // `awaiting_approval` et sera peut-être refusé n'aurait aucun sens) et
+    // avant `tool.execute`. UN seul point de pose pour les cinq outils
+    // mutants, au lieu de cinq disciplines parallèles — « avant la mutation »
+    // devient vrai par construction.
+    const intentFailure = await takeMutationIntent(tool, validatedInput, ctx);
+    if (intentFailure) {
+      const result: ToolExecutionResult = { outcome: 'error', error: intentFailure };
+      await _writeToolCall(
+        ctx,
+        tool.name,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+
     const failure = await takeCheckpointForTurn(tool.name, ctx);
     if (failure) {
       const result: ToolExecutionResult = { outcome: 'error', error: failure };
@@ -565,6 +589,63 @@ export function matchApprovalRule(
  */
 const checkpointedTurns = new Set<string>();
 const MAX_REMEMBERED_TURNS = 500;
+
+/**
+ * Mark the projects this call is about to write as dirty, BEFORE it writes.
+ *
+ * Returns null when execution may proceed, or the error string that must
+ * REFUSE the write — the same contract as the checkpoint below, for the same
+ * reason: a guard that silently is not there is worse than no guard, because
+ * it is the one the owner believed they had (invariant #4).
+ *
+ * The target comes from the tool, never from a guess here (see
+ * `resolveMutationTargets` in types.ts). A mutating tool that declares no hook
+ * falls back to EVERY attached workspace — conservative, which is the side to
+ * err on: a project marked dirty for nothing costs a proof, a project missed
+ * costs an unverified delivery.
+ */
+async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
+  tool: ToolDefinition<TInput, TOutput>,
+  input: z.infer<TInput>,
+  ctx: ToolContext,
+): Promise<string | null> {
+  // A mutating tool absent from the surface table cannot be attributed to any
+  // owner setting — it would write outside verification without anyone having
+  // chosen that. Refused, not silently allowed (T18 turns this into an
+  // architecture test that enumerates the registry).
+  const surface = surfaceForTool(tool.name);
+  if (!surface) {
+    console.error(
+      `[verification] VERIFICATION_SURFACE_UNMAPPED tool=${tool.name} job=${ctx.jobId}`,
+    );
+    return 'verification_intent_failed: intent_surface_unmapped';
+  }
+
+  let targets: readonly MutationTarget[];
+  if (tool.resolveMutationTargets) {
+    try {
+      targets = await tool.resolveMutationTargets(input, ctx);
+    } catch (err) {
+      console.error(
+        `[verification] VERIFICATION_INTENT_TARGETS_FAILED tool=${tool.name} job=${ctx.jobId} ` +
+          `error=${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 'verification_intent_failed: intent_targets_failed';
+    }
+  } else {
+    targets = (ctx.workspaces ?? []).map((w) => ({ kind: 'dir' as const, path: w.path }));
+  }
+
+  const outcome = await writeMutationIntent(ctx, { surface, targets });
+  if (outcome.kind === 'failed') return `verification_intent_failed: ${outcome.code}`;
+  // Un job déjà terminal (annulé, échoué, terminé) ne doit plus RIEN écrire :
+  // aucune finalisation ne repassera prouver ce qu'il changerait, et un
+  // `cancelled` qui continue d'écrire n'est pas annulé. Refusé, pas laissé
+  // passer sans intention (revue de T16).
+  if (outcome.kind === 'already_terminal')
+    return 'verification_intent_failed: intent_already_terminal';
+  return null;
+}
 
 /**
  * Snapshot the workspace before a mutating tool runs.

@@ -199,6 +199,13 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
     riskLevel: 'destructive',
     mutatesWorkspace: true,
     defaultApproval: 'require_approval',
+    // TOUS les dossiers attachés, jamais le bundle de la skill. Le contrat du
+    // tool est que les artefacts vont dans NODAL_SHARED_WORKSPACE, et la
+    // veille `listBundleFiles` plus bas CONSTATE après coup qu'on ne contraint
+    // pas où un script écrit — le périmètre déclaré ici doit donc être celui
+    // qu'un script peut réellement atteindre.
+    resolveMutationTargets: async (_input: RunSkillScriptInput, ctx: ToolContext) =>
+      (ctx.workspaces ?? []).map((w) => ({ kind: 'dir' as const, path: w.path })),
     execute: async (
       input: RunSkillScriptInput,
       ctx: ToolContext,
