@@ -312,6 +312,119 @@ export function scanForMutatingSpawnOutsideIntent(opts: ScanOptions, pattern: Re
 }
 
 /**
+ * Le scanner MULTILIGNE — pour les motifs qu'un appel Drizzle étale sur
+ * plusieurs lignes (`.update(agentJobs)\n  .set({\n    status: …`). Le scanner
+ * ligne par ligne ci-dessus les rate par construction.
+ *
+ * La ligne rapportée est celle où le motif COMMENCE ; le texte, sa première
+ * ligne. Le motif est passé en paramètre comme pour les autres scanners : une
+ * règle = un motif nommé, jamais une constante enfouie ici.
+ */
+export function scanForMultilinePattern(
+  opts: ScanOptions,
+  spec: { pattern: RegExp; rule: string },
+): Violation[] {
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
+    (f) => !isSkipped(f, opts.skipFiles ?? []),
+  );
+  const flags = spec.pattern.flags.includes('g') ? spec.pattern.flags : `${spec.pattern.flags}g`;
+  const out: Violation[] = [];
+  for (const file of files) {
+    const src = readFileSync(file, 'utf-8');
+    for (const m of src.matchAll(new RegExp(spec.pattern.source, flags))) {
+      const line = src.slice(0, m.index ?? 0).split('\n').length;
+      out.push({
+        file,
+        line,
+        text: (m[0].split('\n')[0] ?? '').trim().slice(0, 120),
+        rule: spec.rule,
+      });
+    }
+  }
+  return out;
+}
+
+// ─── Plan « Vérifier & Corriger » : une seule porte terminale, une seule sortie ──
+
+/**
+ * Une écriture DIRECTE du statut terminal de succès sur `agent_jobs`.
+ *
+ * La primitive terminale (`apps/runner/src/job/finalize.ts`) est la seule
+ * porte par laquelle un job finit en succès : c'est elle qui calcule et
+ * journalise la décision de vérification et commet l'intention de livrer
+ * avec le statut. Un `.update(agentJobs)` qui pose `status: 'completed'` (ou
+ * un statut porté par une variable) ailleurs contourne tout cela sans faire
+ * rougir un seul test de comportement.
+ *
+ * Les seuls fichiers légitimes sont passés en `skipFiles` par l'appelant : la
+ * primitive, et l'écriture interne qu'elle appelle (`completeJob`, dans
+ * state.ts) — dont la règle compagne `scanForCompleteJobCallers` garantit
+ * qu'elle n'a AUCUN autre appelant.
+ */
+export const DIRECT_TERMINAL_COMPLETED_PATTERN =
+  /\.update\(agentJobs\)[\s\S]{0,400}?status:\s*(?:'completed'|rootStatus|[a-zA-Z]+Status)/;
+
+export function scanForDirectTerminalCompleted(opts: ScanOptions): Violation[] {
+  return scanForMultilinePattern(opts, {
+    pattern: DIRECT_TERMINAL_COMPLETED_PATTERN,
+    rule: 'no-direct-terminal-completed',
+  });
+}
+
+/** Un appel à `completeJob(` — l'écriture interne de la primitive, qui n'a pas d'autre appelant. */
+export function scanForCompleteJobCallers(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: /\bcompleteJob\(/,
+    rule: 'no-complete-job-caller-outside-primitive',
+  });
+}
+
+/**
+ * Un envoi de canal. Le résultat TERMINAL d'un job ne part que par l'outbox
+ * (`delivery/outbox.ts`) — réclamé, borné, repris. Les envois NON terminaux
+ * (une demande d'approbation, une transition de l'onglet Code, un
+ * rappel de cron, le poller) sont passés en `skipFiles` par l'appelant :
+ * une allowlist EXPLICITE et courte, dont la longueur est ce qu'on surveille.
+ */
+export const TERMINAL_SEND_PATTERN =
+  /\.sendText\(|\.sendMedia\(|getAdapter\(|sendTelegramMessage\(/;
+
+export function scanForTerminalSendOutsideOutbox(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: TERMINAL_SEND_PATTERN,
+    rule: 'no-terminal-send-outside-outbox',
+  });
+}
+
+/**
+ * Un littéral de type de livrable dans un fichier qui n'a pas le droit d'en
+ * connaître : la primitive terminale n'appelle que le registre des
+ * vérificateurs. Le seul fichier autorisé à porter `'code_project'` est le
+ * vérificateur qui le sert.
+ */
+export const DELIVERABLE_TYPE_LITERAL_PATTERN =
+  /'(?:code_project|office_file|document|outbound_action|other)'/;
+
+export function scanFilesForDeliverableTypeLiterals(files: readonly string[]): Violation[] {
+  const out: Violation[] = [];
+  for (const file of files) {
+    readFileSync(file, 'utf-8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (DELIVERABLE_TYPE_LITERAL_PATTERN.test(line)) {
+          out.push({
+            file,
+            line: i + 1,
+            text: line.trim().slice(0, 120),
+            rule: 'primitive-mentions-no-deliverable-type',
+          });
+        }
+      });
+  }
+  return out;
+}
+
+/**
  * Every source file of the package, concatenated.
  *
  * For the rare assertion that is POSITIVE — "this adapter must import the

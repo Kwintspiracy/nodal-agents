@@ -13,6 +13,10 @@ import {
   scanForDbDriverImports,
   scanForHardcodedUuids,
   scanForMutatingSpawnOutsideIntent,
+  scanForDirectTerminalCompleted,
+  scanForCompleteJobCallers,
+  scanForTerminalSendOutsideOutbox,
+  scanFilesForDeliverableTypeLiterals,
 } from '@nodal-agents/test-kit';
 import type { Metric, Section } from '../types';
 import { REPO_ROOT } from '../baseline';
@@ -111,6 +115,43 @@ export const architectureSection: Section = {
       for (const v of violations) launcherHits.push(`${surface.rel}:${v.line}`);
     }
 
+    // V&C T13 — une porte terminale, une sortie. Mêmes listes que le test
+    // d'archi du runner (apps/runner/src/tests/architecture.test.ts) : le
+    // banc ne relâche jamais une règle, il en suit la tendance.
+    const runnerSrc = join(REPO_ROOT, 'apps/runner', 'src');
+    const terminalWriteHits: string[] = [];
+    for (const v of scanForDirectTerminalCompleted({
+      srcDir: runnerSrc,
+      skipFiles: ['job/finalize.ts', 'job/state.ts'],
+    })) {
+      terminalWriteHits.push(`apps/runner:${v.line}`);
+    }
+    for (const v of scanForDirectTerminalCompleted({
+      srcDir: join(REPO_ROOT, 'apps/web', 'src'),
+    })) {
+      terminalWriteHits.push(`apps/web:${v.line}`);
+    }
+    for (const v of scanForCompleteJobCallers({
+      srcDir: runnerSrc,
+      skipFiles: ['job/finalize.ts', 'job/state.ts'],
+    })) {
+      terminalWriteHits.push(`apps/runner:${v.line} ${v.rule}`);
+    }
+    const terminalSendHits = scanForTerminalSendOutsideOutbox({
+      srcDir: runnerSrc,
+      skipFiles: [
+        'delivery/outbox.ts',
+        'approvals/notify.ts',
+        'notify/code-transitions.ts',
+        'cron/run-schedules.ts',
+        'cron/reset-orphans.ts',
+        'telegram/poller.ts',
+      ],
+    }).map((v) => `apps/runner:${v.line}`);
+    const deliverableLiteralHits = scanFilesForDeliverableTypeLiterals([
+      join(runnerSrc, 'job', 'finalize.ts'),
+    ]).map((v) => `apps/runner/src/job/finalize.ts:${v.line}`);
+
     return [
       {
         id: 'packages_scanned',
@@ -161,6 +202,30 @@ export const architectureSection: Section = {
         unit: 'violations',
         direction: 'lower-is-better',
         detail: launcherHits.slice(0, 20),
+      },
+      {
+        id: 'terminal_write_violations',
+        label: 'Écritures terminales hors de la primitive (V&C)',
+        value: terminalWriteHits.length,
+        unit: 'violations',
+        direction: 'lower-is-better',
+        detail: terminalWriteHits.slice(0, 20),
+      },
+      {
+        id: 'terminal_send_violations',
+        label: 'Envois de canal hors de l’outbox (V&C)',
+        value: terminalSendHits.length,
+        unit: 'violations',
+        direction: 'lower-is-better',
+        detail: terminalSendHits.slice(0, 20),
+      },
+      {
+        id: 'deliverable_literal_violations',
+        label: 'Types de livrable en dur dans la primitive (V&C)',
+        value: deliverableLiteralHits.length,
+        unit: 'violations',
+        direction: 'lower-is-better',
+        detail: deliverableLiteralHits.slice(0, 20),
       },
     ];
   },

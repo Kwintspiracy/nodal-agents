@@ -13,6 +13,10 @@ import {
   formatViolations,
   scanForProjectKeyCopies,
   scanForMutatingSpawnOutsideIntent,
+  scanForDirectTerminalCompleted,
+  scanForCompleteJobCallers,
+  scanForTerminalSendOutsideOutbox,
+  scanFilesForDeliverableTypeLiterals,
 } from '../index';
 
 let dir: string;
@@ -146,6 +150,108 @@ describe('scanForMutatingSpawnOutsideIntent', () => {
     const v = scanForMutatingSpawnOutsideIntent({ srcDir: tree }, /binding\.run\(/);
     expect(v).toHaveLength(1);
     expect(v[0]?.file).toContain('other.ts');
+  });
+});
+
+describe('règles « une porte terminale, une sortie » (V&C T13)', () => {
+  let tree: string;
+
+  beforeAll(() => {
+    tree = mkdtempSync(join(tmpdir(), 'archi-terminal-'));
+    mkdirSync(join(tree, 'job'), { recursive: true });
+    mkdirSync(join(tree, 'tests'), { recursive: true });
+    // La fautive : un `.set({ status: rootStatus })` ÉTALÉ sur plusieurs lignes.
+    writeFileSync(
+      join(tree, 'job', 'cron-direct.ts'),
+      [
+        'const claimed = await db',
+        '  .update(agentJobs)',
+        '  .set({',
+        '    status: rootStatus,',
+        '    completedAt: new Date(),',
+        '  })',
+        '  .where(eq(agentJobs.id, id));',
+        '',
+      ].join('\n'),
+    );
+    // Les faux positifs à laisser PASSER : touchJob, saveCheckpoint,
+    // setJobStatus (`status: to`), failJob (`status: \'failed\'`).
+    writeFileSync(
+      join(tree, 'job', 'benign.ts'),
+      [
+        'await db.update(agentJobs).set({ updatedAt: new Date() }).where(eq(agentJobs.id, id));',
+        'await db.update(agentJobs).set({ messages, turn }).where(eq(agentJobs.id, id));',
+        'await db.update(agentJobs).set({ status: to }).where(eq(agentJobs.id, id));',
+        "await db.update(agentJobs).set({ status: 'failed', error }).where(eq(agentJobs.id, id));",
+        '',
+      ].join('\n'),
+    );
+    // L'écriture légitime, à épargner par skipFiles.
+    writeFileSync(
+      join(tree, 'job', 'state.ts'),
+      "const rows = await db.update(agentJobs).set({ status: 'completed' }).returning();\n",
+    );
+    // Un appelant de completeJob hors primitive, et l'appel interne à épargner.
+    writeFileSync(join(tree, 'job', 'caller.ts'), 'await completeJob(db, jobId, text);\n');
+    writeFileSync(
+      join(tree, 'job', 'finalize.ts'),
+      'const landed = await completeJob(tx, jobId, t);\n',
+    );
+    // Des envois de canal : un hors allowlist, un sur allowlist.
+    writeFileSync(
+      join(tree, 'job', 'direct-send.ts'),
+      'await getAdapter(channel).sendText(c, id, t);\n',
+    );
+    writeFileSync(join(tree, 'job', 'notify.ts'), 'await adapter.sendText(creds, chatId, text);\n');
+    // Un fichier de tests, ignoré par défaut.
+    writeFileSync(
+      join(tree, 'tests', 'fixture.ts'),
+      "db.update(agentJobs).set({ status: 'completed' });\n",
+    );
+    // La primitive fautive : un littéral de type de livrable.
+    writeFileSync(
+      join(tree, 'job', 'primitive-bad.ts'),
+      "if (type === 'office_file') { return 1; }\n// code_projects sans guillemets : pas un littéral\n",
+    );
+    writeFileSync(join(tree, 'job', 'primitive-ok.ts'), 'const v = getVerifier(type);\n');
+  });
+
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
+
+  it('détecte une écriture terminale directe étalée sur plusieurs lignes, avec sa ligne de départ', () => {
+    const v = scanForDirectTerminalCompleted({ srcDir: tree, skipFiles: ['job/state.ts'] });
+    expect(v.map((x) => x.file.split(/[\\/]/).pop())).toEqual(['cron-direct.ts']);
+    expect(v[0]?.line).toBe(2);
+    expect(v[0]?.rule).toBe('no-direct-terminal-completed');
+  });
+
+  it('laisse passer touchJob / saveCheckpoint / setJobStatus / failJob, épargne le skipFile, ignore tests/', () => {
+    const v = scanForDirectTerminalCompleted({ srcDir: tree, skipFiles: ['job/state.ts'] });
+    expect(v.some((x) => x.file.endsWith('benign.ts'))).toBe(false);
+    expect(v.some((x) => x.file.endsWith('state.ts'))).toBe(false);
+    expect(v.some((x) => x.file.includes('fixture'))).toBe(false);
+    // Sans le skipFile, l'écriture légitime est vue : c'est bien lui qui l'épargne.
+    const all = scanForDirectTerminalCompleted({ srcDir: tree });
+    expect(all.some((x) => x.file.endsWith('state.ts'))).toBe(true);
+  });
+
+  it('détecte un appelant de completeJob hors des fichiers épargnés', () => {
+    const v = scanForCompleteJobCallers({ srcDir: tree, skipFiles: ['job/finalize.ts'] });
+    expect(v.map((x) => x.file.split(/[\\/]/).pop())).toEqual(['caller.ts']);
+  });
+
+  it('détecte un envoi de canal hors allowlist, et épargne l’allowlist', () => {
+    const v = scanForTerminalSendOutsideOutbox({ srcDir: tree, skipFiles: ['job/notify.ts'] });
+    expect(v.map((x) => x.file.split(/[\\/]/).pop())).toEqual(['direct-send.ts']);
+    expect(v[0]?.rule).toBe('no-terminal-send-outside-outbox');
+  });
+
+  it('détecte un littéral de type de livrable dans la primitive, pas un mot sans guillemets', () => {
+    const bad = scanFilesForDeliverableTypeLiterals([join(tree, 'job', 'primitive-bad.ts')]);
+    expect(bad).toHaveLength(1);
+    expect(bad[0]?.line).toBe(1);
+    const ok = scanFilesForDeliverableTypeLiterals([join(tree, 'job', 'primitive-ok.ts')]);
+    expect(ok).toEqual([]);
   });
 });
 
