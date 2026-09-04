@@ -114,24 +114,54 @@ export type MutationIntentContext = Pick<ToolContext, 'db' | 'entityId' | 'works
 };
 
 /**
- * Le chemin RÉEL d'un dossier ou d'un fichier, normalisé.
- *
- * Les cibles arrivent des outils par `resolveAndCheckPath`, qui passe par
- * `realpath` ; les racines attachées arrivent telles que l'owner les a
- * écrites. Sur un runner GitHub Windows, `os.tmpdir()` rend la forme courte
- * 8.3 (`C:\Users\RUNNER~1\…`) alors que `realpath` rend la longue — et une
- * jonction ou un lien symbolique fait pareil partout. Comparées telles
- * quelles, la cible ne serait « dans » aucune racine : aucun projet, aucune
- * intention, et l'écriture partait sans être vue (CI rouge de la PR #46,
- * verte en local). Tout passe donc par le même canon avant comparaison ; un
- * chemin qui n'existe pas encore garde sa forme normalisée.
+ * Le chemin RÉEL d'un dossier ou d'un fichier, normalisé — pour COMPARER,
+ * jamais pour nommer (voir `rebaseOntoLexicalRoots`).
  */
-function canonicalPath(p: string): string {
+function realPathOf(p: string): string {
   try {
     return normalizePath(realpathSync.native(p));
   } catch {
     return normalizePath(p);
   }
+}
+
+/**
+ * Ramène chaque cible sous la racine attachée TELLE QUE L'OWNER L'A ÉCRITE.
+ *
+ * Les cibles arrivent des outils par `resolveAndCheckPath`, qui passe par
+ * `realpath` ; les racines attachées arrivent lexicales. Sur un runner GitHub
+ * Windows, `os.tmpdir()` rend la forme courte 8.3 (`C:\Users\RUNNER~1\…`)
+ * alors que `realpath` rend la longue — une jonction ou un lien symbolique
+ * font pareil partout. Comparées telles quelles, la cible n'était « dans »
+ * aucune racine : aucun projet, aucune intention, et l'écriture partait sans
+ * être vue (CI rouge de la PR #46, verte en local).
+ *
+ * La comparaison se fait donc sur les chemins RÉELS, mais l'identité rendue
+ * est la LEXICALE : l'onglet Code dérive ses projets des racines telles
+ * qu'elles sont enregistrées (apps/web/src/lib/code-projects.ts) et ne résout
+ * ni lien ni jonction. Nommer le projet par sa forme réelle créerait deux
+ * lignes `code_projects` pour un même dossier — l'état sale d'un côté, les
+ * commandes approuvées de l'autre (revue Codex PR #46, passe 2). Une cible
+ * hors de toute racine reste telle quelle : le résolveur la rejettera.
+ */
+function rebaseOntoLexicalRoots(
+  targets: readonly MutationTarget[],
+  lexicalRoots: readonly string[],
+): readonly MutationTarget[] {
+  const roots = lexicalRoots.map((lexical) => ({ lexical, real: realPathOf(lexical) }));
+  return targets.map((t) => {
+    const lexical = normalizePath(t.path);
+    const real = realPathOf(t.path);
+    for (const root of roots) {
+      // Déjà sous la racine lexicale : rien à faire.
+      if (lexical === root.lexical || lexical.startsWith(`${root.lexical}/`)) return t;
+      if (real === root.real) return { kind: t.kind, path: root.lexical };
+      if (real.startsWith(`${root.real}/`)) {
+        return { kind: t.kind, path: `${root.lexical}${real.slice(root.real.length)}` };
+      }
+    }
+    return t;
+  });
 }
 
 /** Le manifeste d'un dossier, lu sur le disque (injecté dans le résolveur pur). */
@@ -302,11 +332,11 @@ export async function writeMutationIntent(
     return { kind: 'skipped', reason: 'surface_disabled', surface };
   }
 
-  const workspaceRoots = (ctx.workspaces ?? []).map((w) => canonicalPath(w.path));
+  const workspaceRoots = (ctx.workspaces ?? []).map((w) => normalizePath(w.path));
   let projects: readonly ProjectRoot[];
   try {
-    const canonicalTargets = targets.map((t) => ({ kind: t.kind, path: canonicalPath(t.path) }));
-    const expanded = await expandWorkspaceRoots(canonicalTargets, workspaceRoots);
+    const rebased = rebaseOntoLexicalRoots(targets, workspaceRoots);
+    const expanded = await expandWorkspaceRoots(rebased, workspaceRoots);
     projects = resolveProjectRoots({ targets: expanded, workspaceRoots, hasMarker });
   } catch (err) {
     console.error(

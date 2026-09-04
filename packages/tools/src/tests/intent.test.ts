@@ -290,12 +290,15 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(await projectRow(keyOf(ws))).toBeUndefined();
   });
 
-  it('racine attachée par un LIEN (jonction / symlink) ⇒ l’intention est posée quand même — même canon des deux côtés', async () => {
+  it('racine attachée par un LIEN (jonction / symlink) ⇒ l’intention est posée, sous l’identité LEXICALE de la racine', async () => {
     // Le symptôme de la CI Windows (PR #46) : `os.tmpdir()` y rend la forme
     // courte 8.3, `resolveAndCheckPath` rend la forme réelle, et la cible ne
     // tombait « dans » aucune racine. Un lien reproduit exactement cet écart
     // sur toutes les plateformes : la racine est le lien, la cible résolue
-    // est le vrai dossier.
+    // est le vrai dossier. L'identité rendue est celle de la racine TELLE
+    // QU'ÉCRITE (le lien) : c'est celle que l'onglet Code dérive — nommer le
+    // dossier réel ferait deux lignes code_projects pour un même projet
+    // (revue Codex PR #46, passe 2).
     await writeFile(join(ws, 'package.json'), '{}');
     const link = join(root, 'ws-link');
     await symlink(ws, link, process.platform === 'win32' ? 'junction' : 'dir');
@@ -310,8 +313,9 @@ describe('l’intention de mutation, posée par executeTool', () => {
 
     const rows = await statesOf(jobId);
     expect(rows).toHaveLength(1);
-    // La clé est celle du dossier RÉEL, pas du lien : une seule identité.
-    expect(rows[0]!.canonicalKey).toBe(keyOf(realpathSync.native(ws)));
+    expect(rows[0]!.canonicalKey).toBe(keyOf(link));
+    expect(rows[0]!.canonicalKey).not.toBe(keyOf(realpathSync.native(ws)));
+    expect(normalizePath(rows[0]!.displayPathSnapshot ?? '')).toBe(normalizePath(link));
   });
 
   it('plafond de 12 projets par racine, dossiers cachés exclus', async () => {
