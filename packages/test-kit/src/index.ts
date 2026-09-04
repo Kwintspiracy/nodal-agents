@@ -14,6 +14,8 @@
 //                     la question déjà posée.
 //   architecture    — les scanners d'invariants, une fois, au lieu de quinze
 //                     copies qui peuvent diverger.
+//   real-postgres   — un VRAI Postgres à deux connexions pour les tests de
+//                     course ; PGlite sérialise tout et ne prouve aucun verrou.
 //
 // Ce paquet est privé et ne part jamais dans le tarball : il n'est référencé que
 // par des devDependencies.
@@ -23,3 +25,4 @@ export * from './builders';
 export * from './gate';
 export * from './trust-boundary';
 export * from './architecture';
+export * from './real-postgres';
