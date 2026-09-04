@@ -589,6 +589,35 @@ chemin interactif ⇒ livré sans attendre le tick (mesuré < 2 s dans le test).
 
 ---
 
+## Progression de PR① — branche `feat/verifier-corriger-pr1`
+
+Découpage complet : `docs/validation/pr1-decoupage-tickets.md` (24 tickets,
+ordre T01 → T02 → T05 → T04 → T03 → T20 → T06 → T07 → T15 → T19 → T16 → T17 →
+T18 → T08 → T09 → T10 → T11 → T12 → T13 → T14 → T21 → T22 → T23 → T24).
+
+| Ticket | État | Commit | Ce que la vérification a montré |
+|---|---|---|---|
+| T01 projectKey unique | ✅ | `fc9f285b` | le scanner a trouvé **deux copies de plus** que le ticket (dont une qui ignorait l'UNC) |
+| T02 types + hash du manifeste | ✅ | `d0103e33` | sha-256 pure JS en parité avec node:crypto ; mutation « tri des clés » rouge |
+| T06+T07 moteur shell + séquence | ✅ | `8e6518cc` | tree-kill réparé (mutation rouge) ; la mutation StringDecoder ne rougissait qu'avec un caractère de **3 octets** — 65 536 est pair |
+| T14 harnais Postgres réel | ✅ (harnais) | `345009b4` | démarrage = un TEST, pas un beforeAll (un beforeAll qui lève « saute » les tests) ; sous vitest, l'anchor de résolution est sans effet — dit tel quel |
+| T15 partie partagée | ✅ | `4174aba5` | défaut « tout activé », divergence voulue avec parseRootGrants documentée |
+| T05, T04, T03 migrations | ✅ | `4ad07413` | agent Sonnet + vérificateur indépendant : 4 mutations rejouées rouges ; le DROP de l'ancien UNIQUE cherche son nom réel dans `pg_constraint` ; appliquées sur PG 18 réel par le harnais |
+| T20 manifeste survivant | ✅ | `7101d648` | la mutation « égalité brute » du ticket n'existe pas pour jsonb (ordre des clés normalisé) ; deux autres rouges |
+| T15 partie base | ✅ | `9491b837` | seed = un test, pas un beforeAll |
+| T21 écrivains web des colonnes verify_* | ✅ | (suivant) | une mutation n'avait touché que la moitié de la garde (ligne repliée par Prettier) et laissait le test vert — refaite |
+| T08 outbox | 🔄 | — | agent Opus (workflow) |
+| T19 registre + T09 primitive | 🔄 | — | agent Opus (workflow) |
+| T16 helper d'intention | 🔄 | — | agent Opus (workflow) |
+| T17-T18, T10-T13, T14 tests, T22-T24 | ⬜ | — | |
+
+Constat neuf à fermer dans T09 (verdict « incomplet » de la critique finale) :
+la **sérialisation intra-job** de deux finalisations concurrentes du même
+job après la décision n°5 (preuve hors transaction) — la transaction 2 doit
+reprendre `FOR UPDATE` sur `agent_jobs` et la garde `status NOT IN terminal`
++ `completedAt IS NULL` fait qu'une seule gagne ; test à deux connexions sur
+le harnais T14.
+
 ## Décisions de découpage — tranchées le 03/09 (ingénierie, pas produit)
 
 Le découpage (workflow Understand, 14 tickets + critique) a laissé 24
@@ -720,8 +749,11 @@ choix d'ingénierie, tranchés ici pour que PR① soit exécutable.
 - **Infra de tests de course** : le dépôt n'a aucun test sur vrai Postgres
   (tous sur PGlite mono-connexion, `packages/db/src/tests/helpers.ts:22`) ;
   ① crée une suite `*.pg.test.ts` sur le Postgres embarqué du dev
-  (`apps/cli/src/lib/postgres.ts`), sautée proprement si absent — jamais
-  verte par absence.
+  (`apps/cli/src/lib/postgres.ts`), qui **échoue si le harnais est absent**
+  — jamais sautée, jamais verte par absence (décision de découpage n°11 ;
+  le binaire `embedded-postgres` est atteint par jonction depuis `apps/cli`).
+  Livrée : `real-postgres.pg.test.ts`, `finalize-interleaving.pg.test.ts`,
+  `outbox-interleaving.pg.test.ts` (T14).
 
 ## PR② — garde active + `code_task`
 
