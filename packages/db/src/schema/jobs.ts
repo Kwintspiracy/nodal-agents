@@ -184,6 +184,16 @@ export const agentJobs = pgTable(
      */
     lastFailedDelegationSlug: text('last_failed_delegation_slug'),
     pendingDelegation: jsonb('pending_delegation'),
+    /**
+     * Marks a root job as being finalized RIGHT NOW by the delivery cron
+     * (migration 0090, plan « Vérifier & Corriger »). Set at claim time (the
+     * same instant the cron reserves the job for its finalization phase, in
+     * place of the earlier read-then-write race), cleared when finalization
+     * ends (success or failure). Lets a second concurrent tick recognize a
+     * job already being finalized and skip it, instead of racing the first
+     * tick to the terminal write. NULL outside a finalization window.
+     */
+    finalizingAt: timestamp('finalizing_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),

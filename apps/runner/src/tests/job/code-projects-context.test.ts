@@ -358,9 +358,12 @@ describe('listCodeProjectsForContext', () => {
     const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
     expect(avant.map((p) => p.name).sort()).toEqual(['calorie-counter', 'water-intake']);
 
-    await db
-      .insert(codeProjects)
-      .values({ entityId: seed.entityId, projectPath: projet, hidden: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: projet,
+      projectKey: projectKeyOf(projet),
+      hidden: true,
+    });
     _resetProjectsCacheForTests();
 
     try {
@@ -588,9 +591,12 @@ describe('listCodeProjectsForContext', () => {
     const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
     expect(avant.some((p) => p.path === projet)).toBe(true);
 
-    await db
-      .insert(codeProjects)
-      .values({ entityId: seed.entityId, projectPath: projet, hidden: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: projet,
+      projectKey: projectKeyOf(projet),
+      hidden: true,
+    });
 
     try {
       const apres = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
@@ -667,6 +673,7 @@ describe('listCodeProjectsForContext', () => {
     await db.insert(codeProjects).values({
       entityId: seed.entityId,
       projectPath: projet,
+      projectKey: projectKeyOf(projet),
       displayName: 'Compteur de calories',
     });
     _resetProjectsCacheForTests();

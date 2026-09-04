@@ -12597,8 +12597,17 @@ async function assertProjectOwner(
  * aucun moyen de le rétablir. Un geste réversible qui ne se défait pas est
  * pire qu'un geste absent.
  *
+ * Depuis la migration 0088, `project_key` porte la contrainte d'unicité
+ * (entity_id, project_key) EN BASE — il ne peut plus exister deux lignes pour
+ * la même identité, donc plus de filtre JS sur toutes les lignes de l'entité à
+ * chercher un match par égalité de `projectKey()` : `onConflictDoUpdate` sur
+ * la clé suffit, atomiquement.
+ *
  * Le chemin d'origine est conservé tel qu'il a été écrit la première fois —
- * c'est lui qu'on affiche ; seule la correspondance est normalisée.
+ * c'est lui qu'on affiche ; seule la correspondance (project_key) est
+ * normalisée. Un projet déjà en base sous une autre casse garde SON
+ * project_path d'origine : seuls les champs de `patch` (et project_key, sur un
+ * nouvel insert) sont écrits.
  */
 async function upsertCodeProject(
   db: ReturnType<typeof getDb>,
@@ -12606,43 +12615,12 @@ async function upsertCodeProject(
   projectPath: string,
   patch: { hidden?: boolean; displayName?: string | null },
 ): Promise<void> {
-  // TOUTES les lignes qui désignent ce projet, pas seulement la première
-  // (revue Codex, 26/08). La contrainte d'unicité porte sur le TEXTE exact,
-  // héritée de `code_project_archives` (0083) : une base mise à jour peut donc
-  // déjà contenir deux lignes ne différant que par la casse, et une écriture
-  // concurrente peut encore en créer. N'en corriger qu'une laisserait l'autre
-  // à `hidden=true`, et le projet resterait masqué pour toujours.
-  //
-  // Les mettre toutes à jour converge : la première écriture qui suit remet
-  // l'ensemble d'accord, quelle que soit la façon dont les doublons sont nés.
-  const matches = (
-    await db
-      .select({ id: codeProjects.id, projectPath: codeProjects.projectPath })
-      .from(codeProjects)
-      .where(eq(codeProjects.entityId, entityId))
-  ).filter((r) => projectKey(r.projectPath) === projectKey(projectPath));
-
-  if (matches.length > 0) {
-    await db
-      .update(codeProjects)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(
-        inArray(
-          codeProjects.id,
-          matches.map((r) => r.id),
-        ),
-      );
-    return;
-  }
-
-  // Pas de ligne pour ce projet : on la crée. `onConflictDoUpdate` couvre la
-  // course où deux écritures de MÊME casse arrivent en même temps — la
-  // contrainte d'unicité porte sur le texte exact.
+  const key = projectKey(projectPath);
   await db
     .insert(codeProjects)
-    .values({ entityId, projectPath, ...patch })
+    .values({ entityId, projectPath, projectKey: key, ...patch })
     .onConflictDoUpdate({
-      target: [codeProjects.entityId, codeProjects.projectPath],
+      target: [codeProjects.entityId, codeProjects.projectKey],
       set: { ...patch, updatedAt: new Date() },
     });
 }

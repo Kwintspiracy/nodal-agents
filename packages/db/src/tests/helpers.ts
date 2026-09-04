@@ -181,6 +181,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       delegation_depth integer DEFAULT 0,
       last_failed_delegation_slug text,
       pending_delegation jsonb,
+      finalizing_at timestamptz,
       completed_at timestamptz,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
@@ -476,17 +477,29 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       UNIQUE (entity_id, slug)
     );
 
-    -- 0086 — les deux gestes du propriétaire sur les projets de l'onglet Code
-    -- (renommer, masquer). Les projets eux-mêmes sont dérivés, jamais stockés.
+    -- code_projects — mirrors migration 0088 (post-migration shape: 0086's
+    -- two owner gestures, plus project_key identity + verify_* proof config).
+    -- Les deux gestes du propriétaire sur les projets de l'onglet Code
+    -- (renommer, masquer) ; les projets eux-mêmes sont dérivés, jamais
+    -- stockés. project_key porte l'identité (revue Codex 26/08 : l'ancienne
+    -- unicité sur project_path texte laissait deux casses Windows créer deux
+    -- lignes) ; verify_* est la configuration de preuve v5-A/D1.
     CREATE TABLE IF NOT EXISTS code_projects (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       project_path text NOT NULL,
+      project_key text NOT NULL,
       display_name text,
       hidden boolean NOT NULL DEFAULT false,
+      verify_commands jsonb
+        CHECK (verify_commands IS NULL OR (jsonb_typeof(verify_commands) = 'array' AND jsonb_array_length(verify_commands) BETWEEN 1 AND 5)),
+      verification_epoch integer NOT NULL DEFAULT 0,
+      verify_approved_manifest_hash text,
+      verify_approved_at timestamptz,
+      verify_approved_by uuid REFERENCES users(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (entity_id, project_path)
+      UNIQUE (entity_id, project_key)
     );
 
     CREATE TABLE IF NOT EXISTS agent_assignments (
@@ -739,6 +752,83 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       error text,
       created_at timestamptz DEFAULT now()
     );
+
+    -- job_deliverable_verification_state + verification_runs (migration 0089)
+    -- — mirrors migration 0089. Table d'état lisible d'un livrable de job, et
+    -- trace d'une commande de preuve. TOUS les CHECK recopiés.
+    CREATE TABLE IF NOT EXISTS job_deliverable_verification_state (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      deliverable_type text NOT NULL
+        CHECK (deliverable_type IN ('code_project','office_file','document','outbound_action','other')),
+      canonical_key text NOT NULL,
+      outcome text
+        CHECK (outcome IS NULL OR outcome IN ('prepared','attempted','confirmed','rejected','outcome_unknown')),
+      idempotency_key text,
+      display_path_snapshot text,
+      dirty_generation integer,
+      verified_generation integer,
+      decision_status text NOT NULL
+        CHECK (decision_status IN ('dirty','green','red','pending_approval','not_configured','infra_error')),
+      command_hash_snapshot text,
+      red_streak integer NOT NULL DEFAULT 0,
+      repair_attempts integer NOT NULL DEFAULT 0,
+      tested_epoch integer,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (job_id, deliverable_type, canonical_key),
+      CONSTRAINT job_deliverable_verification_state_generation_check
+        CHECK (verified_generation IS NULL OR verified_generation <= dirty_generation),
+      CONSTRAINT job_deliverable_verification_state_family_check
+        CHECK (
+          (deliverable_type = 'outbound_action' AND dirty_generation IS NULL AND verified_generation IS NULL AND outcome IS NOT NULL)
+          OR
+          (deliverable_type <> 'outbound_action' AND outcome IS NULL AND dirty_generation IS NOT NULL)
+        )
+    );
+
+    CREATE TABLE IF NOT EXISTS verification_runs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      deliverable_type text NOT NULL,
+      canonical_key text NOT NULL,
+      manifest_hash text,
+      sequence_id uuid NOT NULL,
+      command_rank integer NOT NULL,
+      command text NOT NULL,
+      exit_code integer,
+      outcome_kind text NOT NULL CHECK (outcome_kind IN ('exit','timeout','spawn_error')),
+      stdout_tail text,
+      stderr_tail text,
+      duration_ms integer,
+      verdict text NOT NULL CHECK (verdict IN ('green','red','infra_error')),
+      tested_generation integer,
+      tested_epoch integer,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_verification_runs_job_created
+      ON verification_runs (job_id, created_at);
+
+    -- job_deliveries (migration 0090) — mirrors migration 0090. L'outbox de la
+    -- livraison : la finalisation du job pose 'prepared' dans SA transaction,
+    -- drainDeliveries réclame et envoie hors transaction.
+    CREATE TABLE IF NOT EXISTS job_deliveries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      channel text NOT NULL CHECK (channel IN ('telegram','discord','slack','whatsapp')),
+      chat_id text NOT NULL,
+      payload text NOT NULL,
+      outcome text NOT NULL CHECK (outcome IN ('prepared','attempted','confirmed','rejected')),
+      idempotency_key text NOT NULL UNIQUE,
+      receipt jsonb,
+      attempts integer NOT NULL DEFAULT 0 CHECK (attempts <= 3),
+      claimed_by text,
+      claimed_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_deliveries_open
+      ON job_deliveries (outcome, claimed_at) WHERE outcome IN ('prepared','attempted');
   `);
 
   const db = drizzle(pg, { schema });
