@@ -15,7 +15,7 @@
 //  - la primitive ne connaît aucun type de livrable : un type sans
 //    vérificateur lève, rien n'est écrit.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +54,11 @@ import {
 import type { FinalizeDeps } from '../../job/finalize.ts';
 import type { DeliverableVerifier } from '../../verification/registry.ts';
 import { MAX_TAIL_CHARS, codeProjectVerifier } from '../../verification/code-project.ts';
+
+// Ces tests lancent de VRAIS processus (node) : sous la charge de la suite
+// complète (une centaine de fichiers en parallèle), une preuve de 1 s en
+// isolation en prend 8 — le défaut de 5 s rougissait un test correct.
+vi.setConfig({ testTimeout: 30_000 });
 
 let db: TestDb;
 /**
