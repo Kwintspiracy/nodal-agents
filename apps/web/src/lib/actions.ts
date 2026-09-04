@@ -33,7 +33,18 @@ import {
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
 } from './code-projects.ts';
-import { isWindowsPath, normalizePath, projectKey } from '@nodal-agents/shared';
+import {
+  isWindowsPath,
+  normalizePath,
+  projectKey,
+  VerifyCommandsSchema,
+  type VerifyCommand,
+} from '@nodal-agents/shared';
+import {
+  currentManifestHash,
+  deriveVerifyStatus,
+  type VerifyStatus,
+} from './verification-display.ts';
 import { randomBytes } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
@@ -12542,6 +12553,16 @@ export interface CodeProjectPrefs {
   projectPath: string;
   displayName: string | null;
   hidden: boolean;
+  /** La séquence de preuve déclarée (v5-A) — null = rien de configuré. */
+  verifyCommands: VerifyCommand[] | null;
+  verifyApprovedAt: Date | null;
+  /**
+   * Le hash approuvé — le JETON que le client renvoie pour approuver : le
+   * serveur recalcule et compare, jamais il n'écrit cette valeur telle quelle.
+   */
+  verifyApprovedManifestHash: string | null;
+  /** Calculé AU SERVEUR (D9) — le client ne recalcule jamais un hash. */
+  verifyStatus: VerifyStatus;
 }
 
 export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodeProjectPrefs[]>> {
@@ -12552,10 +12573,18 @@ export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodePro
         projectPath: codeProjects.projectPath,
         displayName: codeProjects.displayName,
         hidden: codeProjects.hidden,
+        verifyCommands: codeProjects.verifyCommands,
+        verifyApprovedAt: codeProjects.verifyApprovedAt,
+        verifyApprovedManifestHash: codeProjects.verifyApprovedManifestHash,
       })
       .from(codeProjects)
       .where(eq(codeProjects.entityId, session.entityId));
-    return ok(rows);
+    return ok(
+      rows.map((r) => ({
+        ...r,
+        verifyStatus: deriveVerifyStatus(r),
+      })),
+    );
   } catch (err) {
     console.error('[listCodeProjectPrefsAction]', err);
     return fail('db_error', 'Failed to load projects');
@@ -12613,7 +12642,14 @@ async function upsertCodeProject(
   db: ReturnType<typeof getDb>,
   entityId: string,
   projectPath: string,
-  patch: { hidden?: boolean; displayName?: string | null },
+  patch: {
+    hidden?: boolean;
+    displayName?: string | null;
+    verifyCommands?: VerifyCommand[] | null;
+    verifyApprovedManifestHash?: string | null;
+    verifyApprovedAt?: Date | null;
+    verifyApprovedBy?: string | null;
+  },
 ): Promise<void> {
   const key = projectKey(projectPath);
   await db
@@ -12682,6 +12718,106 @@ export async function renameCodeProjectAction(raw: unknown): Promise<ActionResul
   } catch (err) {
     console.error('[renameCodeProjectAction]', err);
     return fail('db_error', 'Failed to rename the project');
+  }
+}
+
+// ─── Commandes de preuve d'un projet (plan « Vérifier & Corriger », T21 / D9) ─
+//
+// Une commande de preuve est un POUVOIR : un agent qui modifie package.json
+// contrôle ce que `pnpm test` lance. D'où deux gestes séparés, owner-only par
+// la même garde EXACTE que renommer/masquer (assertProjectOwner : comparaison
+// directe avec entities.userId — jamais la garde entityMembers.role, qui vaut
+// 'owner' pour tout invité, voir plus haut) :
+//   1. écrire la liste ordonnée — et EFFACER l'approbation dans la même
+//      écriture, sinon une fenêtre existe où un manifeste modifié se lit
+//      approuvé ;
+//   2. approuver — le serveur relit, recalcule le hash avec l'implémentation
+//      partagée, compare au jeton du client (concurrence optimiste) et écrit
+//      SA valeur.
+
+const SetCodeProjectVerifyCommandsSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  commands: VerifyCommandsSchema,
+});
+
+export async function setCodeProjectVerifyCommandsAction(
+  raw: unknown,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCodeProjectVerifyCommandsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can set proof commands.');
+
+    await upsertCodeProject(db, session.entityId, parsed.data.projectPath, {
+      verifyCommands: parsed.data.commands,
+      verifyApprovedManifestHash: null,
+      verifyApprovedAt: null,
+      verifyApprovedBy: null,
+    });
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCodeProjectVerifyCommandsAction]', err);
+    return fail('db_error', 'Failed to save the proof commands');
+  }
+}
+
+const ApproveCodeProjectVerifyManifestSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+  /** Le hash que le client a LU — un jeton, jamais la valeur écrite. */
+  manifestHash: z.string().min(1).max(200),
+});
+
+export async function approveCodeProjectVerifyManifestAction(
+  raw: unknown,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = ApproveCodeProjectVerifyManifestSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can approve proof commands.');
+
+    const key = projectKey(parsed.data.projectPath);
+    const [row] = await db
+      .select({
+        projectPath: codeProjects.projectPath,
+        verifyCommands: codeProjects.verifyCommands,
+      })
+      .from(codeProjects)
+      .where(and(eq(codeProjects.entityId, session.entityId), eq(codeProjects.projectKey, key)));
+    if (!row) return fail('not_found', 'Project not found');
+
+    // Le manifeste courant, recalculé par le serveur — jamais celui du client.
+    const current = currentManifestHash(row);
+    if (current === null) return fail('not_configured', 'This project has no proof commands.');
+    if (current !== parsed.data.manifestHash) {
+      return fail(
+        'conflict',
+        'The proof commands changed since you loaded them. Reload and review.',
+      );
+    }
+
+    await upsertCodeProject(db, session.entityId, row.projectPath, {
+      verifyApprovedManifestHash: current,
+      verifyApprovedAt: new Date(),
+      verifyApprovedBy: session.userId,
+    });
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[approveCodeProjectVerifyManifestAction]', err);
+    return fail('db_error', 'Failed to approve the proof commands');
   }
 }
 

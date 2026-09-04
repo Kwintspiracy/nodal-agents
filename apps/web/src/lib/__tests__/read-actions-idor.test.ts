@@ -31,6 +31,7 @@ import {
   agentSkillAssignments,
   agentWorkspaces,
   approvalRules,
+  codeProjects,
   entities,
   entityMembers,
   mcpServers,
@@ -165,6 +166,16 @@ beforeAll(async () => {
     action: 'auto_approve',
   });
 
+  // Un projet de code du voisin, avec ses commandes de preuve (T21) : le
+  // chemin, le nom ET une commande portent le marqueur.
+  await testDb.insert(codeProjects).values({
+    entityId: voisin.entityId,
+    projectPath: `D:/${MARQUEUR}/app`,
+    projectKey: `d:/${MARQUEUR.toLowerCase()}/app`,
+    displayName: `${MARQUEUR}-projet`,
+    verifyCommands: [{ command: `echo ${MARQUEUR}`, timeoutSeconds: 5 }],
+  });
+
   const [autreMcp] = await testDb
     .insert(mcpServers)
     .values({
@@ -295,6 +306,13 @@ describe('lectures sans argument — la session borne ce qui sort', () => {
     // Celle-ci est la plus exposée : elle alimente le sélecteur d'espaces.
     const { listWorkspacesAction } = await actions();
     assertAucuneFuite('listWorkspacesAction', await listWorkspacesAction());
+  });
+
+  it('listCodeProjectPrefsAction ne montre ni les projets ni les commandes de preuve du voisin', async () => {
+    // Les commandes de preuve d'un projet disent ce qu'un dépôt exécute —
+    // et le statut de configuration est calculé au serveur, pour CET espace.
+    const { listCodeProjectPrefsAction } = await actions();
+    assertAucuneFuite('listCodeProjectPrefsAction', await listCodeProjectPrefsAction());
   });
 
   it('getActiveJobsByAgentAction n’agrège pas les jobs d’un autre espace', async () => {
