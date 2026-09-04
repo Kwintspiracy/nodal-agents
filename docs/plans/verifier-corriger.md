@@ -2,8 +2,10 @@
 
 # Vérifier & Corriger — la preuve entre dans la boucle
 
-Plan v6.5 du 03/09/2026 — **BOUCLE DE RELECTURE SUR PLAN CLOSE (11 passes
-Codex), prêt au découpage de PR①** — **REMIS EN TÊTE DE FILE par Quentin le
+Plan v6.6 du 03/09/2026 — **BOUCLE DE RELECTURE SUR PLAN CLOSE (11 passes
+Codex) ; découpage de PR① en cours — D8/D9 tranchées le 03/09 (écrivains sur
+les cinq surfaces au choix de l'utilisateur, UI de configuration et de lecture
+en ①)** — **REMIS EN TÊTE DE FILE par Quentin le
 02/09** («
 tout un aspect sur la loop de vérif n'est pas fait, pas codé, même pas
 démarré » — planifier, selon les best practices des harnais agentiques). La
@@ -36,9 +38,9 @@ jugement couvre l'intention, le design et la qualité des tests eux-mêmes.
 | # | PR | Contenu | État |
 |---|----|---------|----|
 | 0 | Passes Codex sur la v6 | Passe 7 (03/09) : 11 questions, 9 TROU/FAUX, 8 bloquants — fermés en v6.1. Passe 8 : 6 fermés, 5 partiels (résidus v4 dans PR④, la primitive et le cron), **1 neuf bloquant** (deux contrats de hash) — fermés en v6.2 : hash unique normatif, PR④ réécrite, `review_pending` dans l'union, prédicats par livrable, reprise idempotente du cron, écrivains du modèle atomique. Passe 9 : tout fermé, **1 neuf bloquant** (crash entre `completedAt` et la livraison canal = root jamais relivré — bug latent EXISTANT, vérifié) → v6.3 : outbox `job_deliveries` sur le modèle atomique, réclamation à deux populations, section v3 marquée historique. Passe 10 : tout fermé, **2 neufs bloquants dans le correctif de la passe 9** (pas de claim atomique ; latence de 120 s pour les jobs interactifs) → v6.4 : claim par `UPDATE … RETURNING` avec lease, drain immédiat post-commit, tick en reprise seule. Passe 11 (dernière sur plan) : drain FERMÉ ; claim NON FERMÉ (lease 60 s < timeouts réels des adaptateurs, vérifié) + 1 neuf (borne 3 hors du claim) → v6.5 : `attempts < 3` dans le WHERE, timeout d'envoi imposé par l'outbox (90 s), lease = 2× (180 s). **Boucle sur plan CLOSE — 11 passes, 14 bloquants fermés. Prochaine action : découpage de PR①.** | ✅ **close** |
-| ① | Fondations fermées | Schéma exact — état par **(job, livrable)** et non (job, projet) (v6-A) ; **vérificateurs pluggables**, le code (liste ordonnée de commandes, v5-A) en est le premier ; `projectKey` unique + migration ; primitive terminale typée (cron compris) ; **outbox de livraison `job_deliveries`** (v6.3 — ferme un bug existant, donc en ①) ; moteur pur testé ; tests de course DB. **Aucune UI active, aucune garde active** : la preuve tourne et se journalise — c'est la phase d'observation (v5-C). | ⬜ prête au découpage après la passe 0 |
-| ①→② | Observation | Une semaine de vrais jobs sur la stack de Quentin, preuve journalisée sans bloquer : taux de rouge, faux rouges (commande mal configurée), durée des preuves. Les seuils de ② se calent sur ces chiffres. | ⬜ |
-| ② | Surfaces Nodal + `code_task` | Écrivains dirty (5 surfaces), preuve code_task sous verrou, compteurs persistants, **extrait de feedback borné** (v5-B), **contrôle d'oracle sur les tests écrits par l'agent** (v6-B). **UI activée ici, garde activée ici.** | ⬜ |
+| ① | Fondations + observation outillée | Schéma exact — état par **(job, livrable)** (v6-A) ; **vérificateurs pluggables**, le code (liste ordonnée de commandes, v5-A) en est le premier ; `projectKey` partagé + migration ; primitive terminale typée (cron compris) ; **outbox de livraison `job_deliveries`** (v6.3 — ferme un bug existant) ; moteur pur testé ; **écrivains d'intention sur les cinq surfaces + réglage utilisateur des surfaces (D8)** ; **UI de configuration et de lecture (D9)** ; infra de tests de course sur vrai Postgres. **Garde NON branchée** : la preuve tourne, se journalise et se lit — c'est la phase d'observation (v5-C). | ⬜ en découpage (03/09) |
+| ①→② | Observation | Une semaine de vrais jobs sur la stack de Quentin, preuve journalisée et lisible sans bloquer : taux de rouge, faux rouges (commande mal configurée), durée des preuves. Les seuils de ② se calent sur ces chiffres. | ⬜ |
+| ② | Garde active + `code_task` | Garde branchée sur la primitive (états de décision, libellé « succès non vérifié »), preuve code_task sous verrou décisionnelle, compteurs persistants (`red_streak`), **extrait de feedback borné** (v5-B), **contrôle d'oracle sur les tests écrits par l'agent** (v6-B). | ⬜ |
 | ③ | Runtime CLI | Finally unique (heartbeat + verrous), multi-projets, réparation unique, livraison conditionnée au résultat typé. | ⬜ |
 | ④ | Protocole revue à N relecteurs | Snapshot `job_protocol='review'`, verdict immuable **et fondé** (chaque constat cite sa preuve, v6-D), `review_rounds`, preuves de lignée ; **pool de relecteurs et politique par type de tâche (0-3) en base, lancés par le harnais en parallèle, un seul passage chacun** (v6-C) ; textes de skills. | ⬜ |
 | ⑤ | Vérificateurs de livrables non-code | Fichiers Office (s'ouvre, recalcule, **invariants déclarés** tiennent) ; **relecture après écriture** sur les connecteurs (le message existe, l'événement est là) ; ancrage des affirmations aux sources ouvertes. Un vérificateur par lot, sur la tuyauterie de ①. (v6-A) | ⬜ après ④ |
@@ -335,6 +337,32 @@ par l'outil (`REVIEW_VERDICT_UNGROUNDED`). Textes des skills `code-review` /
 - **D7 — Invariants : un agent peut en proposer, seul l'owner approuve** (D1
   s'applique : manifeste hashé, approbation durable).
 
+### Décisions PR① — TRANCHÉES par Quentin le 03/09/2026 (découpage)
+
+Trouvées par la lecture d'exécutabilité du plan (workflow Understand, 03/09)
+: onze passes Codex avaient vérifié la cohérence du plan, pas ce qu'il
+faut pour que PR① **mesure** quelque chose.
+
+- **D8 — Écrivains d'intention en ① : les cinq surfaces, et l'utilisateur
+  décide lesquelles sont sous vérification.** Le helper partagé et la
+  matrice des écrivains (v4, prévus en ②) passent en ① ; un **réglage
+  d'espace** liste les surfaces (`code_task` write, runtime CLI write,
+  `file_write`/`file_edit`, `run_command`/`run_skill_script`) avec une case
+  chacune — cochée = les travaux venant de cette surface posent l'intention
+  et sont prouvés. **Défaut : toutes activées** (à confirmer par Quentin) ;
+  une surface décochée est dite telle quelle dans le détail de run (« non
+  vérifié : surface hors vérification »), jamais silencieuse (inv. #4).
+- **D9 — Il faut une UI en ①.** « Aucune UI active » est retiré. PR①
+  embarque l'UI de **configuration** — sur la fiche projet de l'onglet Code
+  : commandes de preuve (liste ordonnée), geste d'approbation owner avec
+  l'avertissement (« ces commandes exécutent du code du dépôt »), état
+  `pending_approval` / approuvé ; et dans les réglages d'espace : le réglage
+  D8 — et l'UI de **lecture** : dans le détail d'un run, les
+  `verification_runs` (commande, rang, code de sortie, durée, verdict). La
+  **garde reste non branchée** en ① (v5-C : observation) ; les états de
+  décision (« succès vérifié / non vérifié / bloqué ») et leur libellé
+  arrivent en ② avec la garde. Une sous-commande CLI n'est pas retenue.
+
 ### Ce que la v5 ne change PAS
 
 Les décisions D1-D4 ; le découpage en quatre PR ; le protocole
@@ -561,6 +589,75 @@ chemin interactif ⇒ livré sans attendre le tick (mesuré < 2 s dans le test).
 
 ---
 
+## Décisions de découpage — tranchées le 03/09 (ingénierie, pas produit)
+
+Le découpage (workflow Understand, 14 tickets + critique) a laissé 24
+questions ouvertes. D8/D9 sont de Quentin (ci-dessus) ; les autres sont des
+choix d'ingénierie, tranchés ici pour que PR① soit exécutable.
+
+1. **Trois migrations** `0088` (project_key + colonnes verify), `0089` (état
+   + verification_runs), `0090` (outbox + `finalizing_at`) — testables
+   séparément. ⚠️ `0086:46` a posé l'UNIQUE **sans nom** : le DROP doit viser
+   `code_projects_entity_id_project_path_key`, pas le nom Drizzle.
+2. **`verify_approved_by`** : `uuid` FK `users.id` `ON DELETE SET NULL`.
+3. **`job_deliveries.channel`** : CHECK sur les 4 canaux à adaptateur
+   (telegram, discord, slack, whatsapp) — un canal sans adaptateur ne peut
+   pas être livré, refus à la préparation.
+4. **`verification_runs` en ① : best-effort, jamais bloquant.** v5-C prime :
+   « sans jamais changer l'issue d'un job ». Une panne d'écriture est
+   journalisée fort (code + log), le job finit quand même. Le fail-closed
+   `VERIFY_PERSISTENCE_FAILED` n'entre en vigueur qu'en ②, avec la garde.
+   Ferme la contradiction T09 ↔ v5-C.
+5. **La preuve tourne HORS transaction.** Tenir `FOR UPDATE` sur
+   `agent_jobs` + `code_projects` pendant un spawn de plusieurs secondes
+   heurterait `lock_timeout` 30 s / `idle_in_transaction` 60 s
+   (`client.ts:54-57`) et bloquerait le heartbeat. Séquence : transaction 1
+   (verrous, lecture du manifeste, `dirty_generation = G`) → **commit** →
+   preuve → transaction 2 (`UPDATE … WHERE dirty_generation = G`, zéro ligne
+   ⇒ `VERIFY_STALE_GENERATION`). Le garde de génération existe précisément
+   pour ça. Aucun plafond artificiel de 25 s.
+6. **Timeout d'envoi = 240 s, lease = 2 × = 480 s, dérivé en code** (`const
+   LEASE_MS = 2 * DELIVERY_SEND_TIMEOUT_MS`) — l'invariant du plan devient
+   vrai par construction. 240 s couvre le pire cas Telegram réel (30 s +
+   3 × 60 s de `retry_after`, `telegram.ts:165-172`) ; à 90 s l'envoi serait
+   orphelin et relivré en doublon.
+7. **Reçu vide** (Telegram `'0'`, WhatsApp `''`) : `confirmed` avec
+   `receipt: {messageId: null, reason: 'no_id_returned'}`. L'appel a résolu
+   sans erreur — c'est l'accusé ; laisser `attempted` provoquerait un doublon
+   après le lease.
+8. **Alerte owner sur CHAQUE `rejected`**, pas seulement à l'épuisement des
+   3 essais (constat du critique). Mécanisme : `resolveOwnerChatId` +
+   transport résolu + message **codé** (inv. #2 : un code et des données,
+   jamais une phrase du runner) ; pas d'owner joignable ⇒ log
+   `DELIVERY_ALERT_NO_OWNER_CHAT`.
+9. **Registre de vérificateurs** (ce qui manquait au découpage) :
+   `VerifierRegistry` par `deliverable_type` — `canonicalize`, `loadConfig`,
+   `runProof`. `finalizeJobSuccess` n'appelle que le registre : le test
+   d'archi « aucun littéral de type de livrable dans la primitive » devient
+   vrai, et le vérificateur `code_project` porte seul ce qui est propre au
+   code. Ferme la contradiction T09 ↔ T13.
+10. **sha-256 du manifeste : implémentation pure en JS** dans
+    `packages/shared` (synchrone, aucun import `node:`, `shared` est bundlé
+    côté client), avec un test de parité contre `node:crypto`.
+    `SHELL_POLICY_VERSION` / `ENV_ALLOWLIST_VERSION` y vivent aussi (le web
+    ne dépend pas de `@nodal-agents/tools` — vérifié), avec un test-snapshot
+    dans `tools` qui rougit si l'allowlist change sans bump.
+11. **Harnais Postgres réel : échoue si absent, jamais `skip`** (inv. #4 — un
+    test vert par absence est un faux vert). Binaire embedded-postgres
+    atteint par jonction (`pnpm install` cassé sur Node 26.4.0).
+12. **Cron** : `failed` → `failJob` ; `cancelled` → helper `cancelRootJob` ;
+    seul le succès passe par la primitive. `finalizing_at` orphelin relâché
+    après 10 min par la phase cron. `synthesizeForChannel` : repli **explicite
+    et journalisé** (code), jamais silencieux.
+13. **Hors ①**, confirmé : l'extrait borné v5-B (②), le contrôle d'oracle
+    v6-B (②), l'envoi-outil `telegram_send_message` pendant un run (lot ⑤ —
+    `execute.ts` ne contient aucun `sendText` terminal, le plan le disait à
+    tort), les lignes `verification_runs` des commandes non exécutées après
+    un rouge (aucune ligne), la politique de capture de `run_command` pour
+    l'agent (reste `head` ; la preuve utilise `tail`).
+14. **Bench** : les trois nouveaux scanners d'architecture entrent dans
+    `packages/bench/src/sections/architecture.ts`.
+
 ## PR① — fondations fermées
 
 - **Schéma** : la table d'état, `verification_runs` (observabilité
@@ -610,21 +707,35 @@ chemin interactif ⇒ livré sans attendre le tick (mesuré < 2 s dans le test).
   interleaving intra-job et inter-jobs ; migration de fusion (doublons
   divergents ⇒ pending_approval) ; test d'archi « status='completed' hors
   primitive interdit » ; mutation de chaque garde ⇒ rouge.
-- **Aucune UI active.**
+- **Écrivains d'intention (D8, déplacés de ②)** : helper partagé + matrice
+  des écrivains sur les cinq surfaces ; réglage d'espace des surfaces sous
+  vérification (défaut : toutes) ; une surface décochée ⇒ pas d'intention,
+  dit tel quel dans le run. Test : chaque surface pose l'intention AVANT la
+  mutation (mutation du helper ⇒ rouge) ; surface décochée ⇒ aucune ligne
+  d'état, mention visible.
+- **UI (D9)** : fiche projet (onglet Code) — commandes de preuve, approbation
+  owner avec avertissement, état `pending_approval` ; réglages d'espace —
+  surfaces D8 ; détail de run — lecture des `verification_runs`. Aucun état
+  de décision affiché (ils n'existent qu'avec la garde, ②).
+- **Infra de tests de course** : le dépôt n'a aucun test sur vrai Postgres
+  (tous sur PGlite mono-connexion, `packages/db/src/tests/helpers.ts:22`) ;
+  ① crée une suite `*.pg.test.ts` sur le Postgres embarqué du dev
+  (`apps/cli/src/lib/postgres.ts`), sautée proprement si absent — jamais
+  verte par absence.
 
-## PR② — surfaces Nodal + `code_task` (+ UI)
+## PR② — garde active + `code_task`
 
-- Écrivains dirty branchés sur les cinq surfaces.
+- Garde branchée sur la primitive : les états de décision deviennent
+  l'issue du job ; libellé « succès non vérifié ».
 - Preuve `code_task` sous verrou tenu (fenêtre L442-460), décisionnelle
   (contrat par surface) ; champ `verification` sur `CodeTaskOutput` ⇒ verdict
   dans le tool_result du demandeur.
 - `red_streak` par (job, projet) : à 2, `VERIFY_ATTEMPTS_EXHAUSTED` ⇒
   `blocked`.
-- **UI activée** : champ commande + geste d'approbation owner (avertissement :
-  la commande exécute du code du dépôt) ; états `not_configured` /
-  `pending_approval` affichés ; **le libellé « succès non vérifié » de
-  `completed_unverified` est rendu ici** (détail de run existant), distinct du
-  succès vérifié.
+- **UI de décision** (la configuration est en ①, D9) : états
+  `not_configured` / `green` / `red` affichés comme issue ; **le libellé
+  « succès non vérifié » de `completed_unverified` est rendu ici** (détail de
+  run existant), distinct du succès vérifié.
 - **Tests nommés** : un test par écrivain (les cinq surfaces posent
   l'intention AVANT la mutation — prouvé par mutation du helper) ; preuve
   verte pose `verified_generation` ; preuve rouge ⇒ `verification_due` ;

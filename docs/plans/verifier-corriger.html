@@ -530,8 +530,8 @@
 <div class="wrap">
   <header class="masthead">
     <p class="eyebrow">
-      Plan v6.5 · 03/09/2026 · en tête de file — D1-D7 tranchées · 11 passes Codex, 14 bloquants
-      fermés dont un bug existant · boucle sur plan close · prochaine action : découper PR①
+      Plan v6.6 · 03/09/2026 · en tête de file — D1-D9 tranchées · 11 passes Codex, 14 bloquants
+      fermés dont un bug existant · PR① en découpage (branche feat/verifier-corriger-pr1)
     </p>
     <h1>Vérifier &amp; Corriger</h1>
     <p class="standfirst">
@@ -737,16 +737,26 @@
     <div class="verra">
       <span class="n">1</span>
       <p>
-        <b>Sur la fiche projet</b> : les commandes de preuve et les règles, avec ton geste de
-        validation.
+        <b>Sur la fiche projet</b> (dès ①) : les commandes de preuve et les règles, avec ton geste
+        de validation.
       </p>
     </div>
     <div class="verra">
       <span class="n">2</span>
       <p>
-        <b>Dans les réglages de l'espace</b> : pour chaque type de tâche (code · fichier Office ·
-        action sortante · document · autre), le nombre de relecteurs requis et lesquels, avec un
-        avertissement si deux partagent la même famille de modèle.
+        <b>Dans les réglages de l'espace</b> (dès ①) : quelles façons de travailler sont sous
+        vérification — l'outil de code, les agents Claude Code / Codex, les outils fichiers, les
+        commandes — une case chacune, à toi de choisir. Puis (④) : pour chaque type de tâche, le
+        nombre de relecteurs requis et lesquels, avec un avertissement si deux partagent la même
+        famille de modèle.
+      </p>
+    </div>
+    <div class="verra">
+      <span class="n">2b</span>
+      <p>
+        <b>Dans le détail d'un run</b> (dès ①) : les preuves qui ont tourné — commande, durée,
+        résultat — lisibles pendant la semaine d'observation, avant que la garde ne décide quoi que
+        ce soit.
       </p>
     </div>
     <div class="verra">
@@ -779,6 +789,14 @@
       <li>
         <b>Les règles de preuve</b> : un agent peut en proposer, seul toi approuves.
         <span class="muted">(D7)</span>
+      </li>
+      <li>
+        <b>C'est toi qui choisis quelles façons de travailler sont vérifiées</b> — par un réglage,
+        pas par un choix du produit. Toutes le sont par défaut. <span class="muted">(D8)</span>
+      </li>
+      <li>
+        <b>Il faut une interface dès la première PR</b> : configurer les preuves et les lire, sans
+        attendre la garde. <span class="muted">(D9)</span>
       </li>
       <li>
         <b>C'est toi qui approuves les commandes et les règles</b>, une fois, et à chaque
@@ -888,11 +906,13 @@
     <div class="row">
       <span class="k">①</span
       ><span class="t"
-        ><b>Les fondations invisibles</b>La mémoire de « qui a écrit quoi, qu'est-ce qui est prouvé
-        » — par livrable, pas seulement par projet de code ; le moteur de preuve ; une seule porte
-        de sortie pour les jobs ; la livraison qui ne se perd plus. Rien de visible, rien de
-        bloquant.</span
-      ><span class="s next">prochaine action : découper</span>
+        ><b>Les fondations, et de quoi observer</b>La mémoire de « qui a écrit quoi, qu'est-ce qui
+        est prouvé » — par livrable, pas seulement par projet de code ; le moteur de preuve ; une
+        seule porte de sortie pour les jobs ; la livraison qui ne se perd plus ; les cinq façons de
+        travailler qui déclarent ce qu'elles modifient, au choix de l'utilisateur ; l'écran pour
+        configurer les preuves et celui pour les lire. Rien de bloquant : la garde ne décide pas
+        encore.</span
+      ><span class="s next">en découpage</span>
     </div>
     <div class="row">
       <span class="k">👁</span
@@ -904,8 +924,9 @@
     <div class="row">
       <span class="k">②</span
       ><span class="t"
-        ><b>La preuve sur les agents Nodal + le champ dans l'UI</b>La garde s'active ici, seuils
-        mesurés. Contrôle d'oracle sur les tests ajoutés.</span
+        ><b>La garde s'active</b>Seuils mesurés pendant l'observation ; les fins de run honnêtes («
+        succès vérifié / non vérifié / bloqué ») ; l'extrait d'erreur pour réparer ; contrôle
+        d'oracle sur les tests ajoutés.</span
       ><span class="s todo">après observation</span>
     </div>
     <div class="row">
