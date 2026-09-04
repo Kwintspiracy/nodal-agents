@@ -280,6 +280,38 @@ export function scanForProjectKeyCopies(opts: ScanOptions): Violation[] {
 }
 
 /**
+ * Une surface qui MUTE le disque doit passer par le seam d'intention.
+ *
+ * Le plan « Vérifier & Corriger » tient sur une promesse : au moment où un
+ * livrable est prouvé, tout ce qui l'a changé est connu. Cette promesse ne
+ * tient pas par discipline. Elle tient parce qu'il n'existe qu'UN endroit où
+ * un enfant qui écrit est lancé — `executeTool` pour les outils, le helper
+ * d'intention pour le runtime CLI — et parce qu'un `spawn(` recopié ailleurs
+ * est refusé mécaniquement plutôt que remarqué en review.
+ *
+ * Ce que la règle attrape est précis : une NOUVELLE façon d'écrire sur le
+ * disque, ajoutée à côté de celles qui posent l'intention. Un tel ajout ne
+ * casse rien, ne fait rougir aucun test de comportement, et rend simplement
+ * une partie du travail invisible à la vérification — le pire mode de panne
+ * du plan, puisqu'il produit un verdict vert sur un livrable non prouvé.
+ *
+ * Le `pattern` est un paramètre, jamais une constante : les deux applications
+ * cherchent des empreintes différentes (`/\bspawn\(/` dans `packages/tools`,
+ * `/binding\.run\(/` dans `apps/runner`), et une règle par package aurait
+ * redonné deux copies à faire diverger. Les fichiers qui HÉBERGENT le lanceur
+ * légitime sont passés en `skipFiles` par le package qui les porte : la liste
+ * est courte, nommée, et sa longueur est ce qu'on surveille.
+ *
+ * Rappel utile au lecteur : `skipFiles` épargne un FICHIER, pas un
+ * comportement. Retirer l'appel au helper d'intention dans un fichier épargné
+ * ne fait pas rougir cette règle — c'est le test de câblage du package qui
+ * s'en charge, et les deux gardes sont complémentaires par construction.
+ */
+export function scanForMutatingSpawnOutsideIntent(opts: ScanOptions, pattern: RegExp): Violation[] {
+  return scanForPattern(opts, { pattern, rule: 'mutating-spawn-outside-intent' });
+}
+
+/**
  * Every source file of the package, concatenated.
  *
  * For the rare assertion that is POSITIVE — "this adapter must import the

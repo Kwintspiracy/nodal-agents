@@ -11,21 +11,19 @@
 // l'écriture au lieu de la laisser passer sans filet.
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
-import type { z } from 'zod';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
+import { agents, eq } from '@nodal-agents/db';
 import { executeTool } from '../execute';
 import { listCheckpoints } from '@nodal-agents/checkpoints';
+import { createToolRegistry } from '../registry';
+import { registerBuiltins } from '../builtin';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
-import { fileEditTool } from '../builtin/file-ops/file-edit';
-import { runCommandTool } from '../builtin/run-command';
-import { codeTaskTool } from '../builtin/code-task';
-import { attachConnectorTool } from '../builtin/meta-ops/attach-connector';
 import { fileReadTool } from '../builtin/file-ops/file-read';
-import type { ToolContext, ToolDefinition } from '../types';
+import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -33,10 +31,41 @@ let root: string;
 let store: string;
 let ws: string;
 
+/**
+ * LE registre des builtins, construit comme le runner le construit — la seule
+ * source de « quels outils écrivent ». Voir le describe plus bas : la liste
+ * était écrite à la main et avait déjà perdu un outil.
+ */
+const registry = createToolRegistry();
+registerBuiltins(registry);
+const mutatingTools = registry.list().filter((t) => t.mutatesWorkspace === true);
+const mutatingNames = mutatingTools.map((t) => t.name).sort();
+
+/**
+ * Un input minimal VALIDE par outil mutant, indexé par NOM — même contrat que
+ * dans `intent-wiring.test.ts` : un outil mutant sans entrée ici fait ÉCHOUER
+ * le test en se nommant, jamais un skip.
+ */
+const MINIMAL_INPUT: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  file_write: { path: 'nouveau.txt', content: 'x' },
+  file_edit: { path: 'a-editer.txt', old_string: 'avant', new_string: 'apres' },
+  run_command: { purpose: 'test', command: 'echo ok' },
+  run_skill_script: { purpose: 'test', skill: 'skill-inexistante', script: 'scripts/x.js' },
+  code_task: { purpose: 'test', provider: 'claude', task: 'ne rien faire', mode: 'write' },
+};
+
 beforeAll(async () => {
   const res = await spinUpTestDb();
   db = res.db;
   seed = await seedMinimal(db);
+
+  // Le fournisseur de CLI est coupé POUR CET AGENT : `code_task` échoue
+  // aussitôt après l'instantané, sans lancer de CLI. L'instantané, lui, est
+  // déjà pris — c'est précisément ce que le test constate.
+  await db
+    .update(agents)
+    .set({ cliDefaults: { claude: { enabled: false } } })
+    .where(eq(agents.id, seed.agentId));
 });
 
 beforeEach(async () => {
@@ -70,25 +99,81 @@ function ctx(over: Partial<ToolContext> = {}): ToolContext {
 const opts = { approvalRules: [], onApprovalRequired: async () => {} } as never;
 
 describe('quels outils sont marqués', () => {
-  it('marque ceux qui écrivent dans le workspace', () => {
-    for (const t of [fileWriteTool, fileEditTool, runCommandTool, codeTaskTool]) {
-      expect(
-        (t as ToolDefinition<z.ZodTypeAny, unknown>).mutatesWorkspace,
-        `${t.name} n'est pas marqué — ses écritures partiraient sans filet`,
-      ).toBe(true);
-    }
+  it('la liste des outils marqués vient du REGISTRE, jamais d’une liste à la main', () => {
+    // Ce test remplace une boucle sur `[file_write, file_edit, run_command,
+    // code_task]`, écrite à la main — et qui avait DÉJÀ oublié
+    // `run_skill_script`, marqué mutant depuis run-skill-script.ts:200. La
+    // suite restait verte : personne ne relit un test qui passe. Le registre
+    // n'oublie pas, lui.
+    expect(mutatingNames.length).toBeGreaterThan(0);
+    expect(
+      mutatingNames,
+      'run_skill_script écrit dans le workspace et doit être photographié',
+    ).toContain('run_skill_script');
   });
 
   it('ne marque PAS ceux qui n’écrivent pas', () => {
     // Le contrôle du correctif trop large. `attach_connector` exige une
     // approbation et ne touche aucun fichier : déduire le marqueur de la
     // configuration d'approbation aurait photographié celui-là et raté
-    // file_write — exactement à l'envers.
-    for (const t of [attachConnectorTool, fileReadTool]) {
+    // file_write — exactement à l'envers. Les deux outils sont repris DU
+    // registre, pas importés : ce qui est asserté est ce que le runner voit.
+    for (const name of ['attach_connector', 'file_read']) {
+      const tool = registry.get(name);
+      expect(tool, `${name} n'est pas dans le registre`).toBeDefined();
       expect(
-        (t as ToolDefinition<z.ZodTypeAny, unknown>).mutatesWorkspace ?? false,
-        `${t.name} est marqué alors qu'il n'écrit pas dans le workspace`,
+        tool?.mutatesWorkspace ?? false,
+        `${name} est marqué alors qu'il n'écrit pas dans le workspace`,
       ).toBe(false);
+    }
+  });
+
+  it('chaque outil marqué DU REGISTRE reçoit réellement un instantané', async () => {
+    // Le marqueur n'est pas le filet : c'est `executeTool` qui photographie.
+    // Chaque outil marqué passe donc par le VRAI seam et son workspace est
+    // relu sur le disque. Un outil mutant ajouté demain rougit ici sans
+    // qu'aucune liste ne soit à mettre à jour.
+    const sansInput = mutatingNames.filter((name) => !(name in MINIMAL_INPUT));
+    expect(
+      sansInput,
+      `outils mutants sans input minimal dans MINIMAL_INPUT : ${sansInput.join(', ')} — ` +
+        'ajoutez une entrée, ne les sautez pas',
+    ).toEqual([]);
+
+    const rules: ApprovalRule[] = mutatingNames.map((toolName) => ({
+      id: `rule-${toolName}`,
+      toolName,
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    })) as ApprovalRule[];
+    const approved: ExecuteOptions = { approvalRules: rules, onApprovalRequired: async () => {} };
+
+    for (const [i, tool] of mutatingTools.entries()) {
+      const input = MINIMAL_INPUT[tool.name];
+      if (!input) throw new Error(`input minimal manquant pour ${tool.name}`);
+
+      // Un workspace ET un tour distincts par outil : le mémo par tour
+      // (`checkpointedTurns`) rendrait sinon les quatre appels suivants
+      // gratuits, et le test vert sans rien photographier.
+      const cible = join(root, `mutant-${tool.name}`);
+      await mkdir(cible, { recursive: true });
+      await writeFile(join(cible, 'a-editer.txt'), 'avant');
+
+      const res = await executeTool(
+        tool,
+        input,
+        ctx({ workspaces: [{ label: 'shared', path: cible }] as never, turn: 10 + i }),
+        approved,
+      );
+      expect(res.outcome, `${tool.name} s’est arrêté à l’approbation, pas au seam`).not.toBe(
+        'awaiting_approval',
+      );
+
+      expect(
+        (await listCheckpoints(store, cible)).length,
+        `${tool.name} a écrit sans filet — aucun instantané pour son workspace`,
+      ).toBeGreaterThan(0);
     }
   });
 });

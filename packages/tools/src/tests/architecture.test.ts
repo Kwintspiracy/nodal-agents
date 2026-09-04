@@ -15,6 +15,7 @@ import {
   scanForAgentSlugs,
   scanForUserFacingStrings,
   scanForProjectKeyCopies,
+  scanForMutatingSpawnOutsideIntent,
   formatViolations,
 } from '@nodal-agents/test-kit';
 
@@ -38,6 +39,33 @@ describe('architecture — la clé d’identité d’un chemin n’a qu’une so
   it('src/ ne recopie pas la règle « lettre de lecteur » de @nodal-agents/shared', () => {
     const v = scanForProjectKeyCopies({ srcDir: SRC_DIR });
     if (v.length > 0) expect.fail(formatViolations('Copie de projectKey hors packages/shared', v));
+  });
+});
+
+/**
+ * Les deux SEULS fichiers du paquet qui lancent un processus enfant.
+ *
+ * `code-task/process.ts` porte le spawn du CLI de code ; `shell-engine.ts`
+ * porte le moteur de commandes (et, dans les deux, le `taskkill` Windows qui
+ * termine l'arbre). Tous les outils mutants passent par l'un ou l'autre, donc
+ * par `executeTool`, donc par le seam qui pose l'intention. Un `spawn(`
+ * recopié dans un troisième fichier écrirait sur le disque sans que la
+ * vérification en sache rien — et aucun test de comportement ne rougirait.
+ */
+const CHILD_PROCESS_LAUNCHERS = [
+  'builtin/code-task/process.ts',
+  'builtin/shell-engine.ts',
+] as const;
+
+describe('architecture — rien n’écrit sur le disque hors du seam d’intention', () => {
+  it('src/ ne lance un processus enfant que depuis les deux lanceurs connus', () => {
+    const v = scanForMutatingSpawnOutsideIntent(
+      { srcDir: SRC_DIR, skipFiles: CHILD_PROCESS_LAUNCHERS },
+      /\bspawn\(/,
+    );
+    if (v.length > 0) {
+      expect.fail(formatViolations('Lancement d’un enfant hors des deux lanceurs connus', v));
+    }
   });
 });
 

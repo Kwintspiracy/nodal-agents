@@ -18,6 +18,7 @@ import {
   scanForUserFacingStrings,
   scanForDbDriverImports,
   scanForProjectKeyCopies,
+  scanForMutatingSpawnOutsideIntent,
   formatViolations,
 } from '@nodal-agents/test-kit';
 
@@ -55,6 +56,30 @@ describe('architecture — la clé d’identité d’un chemin n’a qu’une so
     const violations = scanForProjectKeyCopies({ srcDir: SRC_DIR });
     if (violations.length > 0) {
       expect.fail(formatViolations('Copie de projectKey hors packages/shared', violations));
+    }
+  });
+});
+
+/**
+ * Les deux SEULS points d'où un runtime CLI part écrire dans un workspace.
+ * Ils posent l'intention de mutation avant de lancer le binding ; un troisième
+ * appel ailleurs écrirait hors vérification sans que rien ne rougisse.
+ */
+const CLI_RUNTIME_LAUNCHERS = ['cli-runtime/run-job.ts', 'cli-runtime/run-chat.ts'] as const;
+
+describe('architecture — le runtime CLI ne part écrire que du seam d’intention', () => {
+  it('src/ ne lance un binding CLI que depuis run-job.ts et run-chat.ts', () => {
+    const violations = scanForMutatingSpawnOutsideIntent(
+      { srcDir: SRC_DIR, skipFiles: CLI_RUNTIME_LAUNCHERS },
+      /binding\.run\(/,
+    );
+    if (violations.length > 0) {
+      expect.fail(
+        formatViolations(
+          'Lancement de binding CLI hors des deux points qui posent l’intention',
+          violations,
+        ),
+      );
     }
   });
 });

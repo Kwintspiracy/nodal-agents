@@ -12,6 +12,7 @@ import {
   scanForUserFacingStrings,
   scanForDbDriverImports,
   scanForHardcodedUuids,
+  scanForMutatingSpawnOutsideIntent,
 } from '@nodal-agents/test-kit';
 import type { Metric, Section } from '../types';
 import { REPO_ROOT } from '../baseline';
@@ -20,6 +21,36 @@ import { REPO_ROOT } from '../baseline';
 const USER_FACING_OK = new Set(['apps/web', 'apps/cli', 'apps/docs', 'packages/catalog']);
 /** The one package allowed to import a database driver. */
 const DB_DRIVER_OK = new Set(['packages/db']);
+
+/**
+ * Les deux surfaces d'où part une écriture sur le disque, avec les fichiers
+ * qui hébergent leur lanceur légitime.
+ *
+ * La règle est appliquée par package (pas sur tout le dépôt) parce que
+ * l'empreinte et la liste d'exceptions sont propres à chacun. Ce que le banc
+ * ajoute au test d'archi : la TENDANCE. Un `skipFiles` qui s'allonge est une
+ * promesse qui s'effrite, et personne ne la voit dans une suite verte.
+ *
+ * Aucun `existsSync` de garde ici, contrairement à `packageDirs()` : ces deux
+ * chemins sont nommés, pas découverts. S'ils disparaissent, le banc doit
+ * tomber fort plutôt que compter zéro violation (invariant #4).
+ */
+const INTENT_LAUNCHERS: ReadonlyArray<{
+  rel: string;
+  pattern: RegExp;
+  skipFiles: readonly string[];
+}> = [
+  {
+    rel: 'packages/tools',
+    pattern: /\bspawn\(/,
+    skipFiles: ['builtin/code-task/process.ts', 'builtin/shell-engine.ts'],
+  },
+  {
+    rel: 'apps/runner',
+    pattern: /binding\.run\(/,
+    skipFiles: ['cli-runtime/run-job.ts', 'cli-runtime/run-chat.ts'],
+  },
+];
 
 function packageDirs(): string[] {
   const out: string[] = [];
@@ -39,7 +70,14 @@ export const architectureSection: Section = {
   id: 'architecture',
   label: 'Invariants d’architecture',
   why: 'Un slug d’agent ou un texte utilisateur codé en dur part chez toutes les installations.',
-  tests: ['@nodal-agents/test-kit:src/tests/architecture.test.ts'],
+  tests: [
+    '@nodal-agents/test-kit:src/tests/architecture.test.ts',
+    // Les deux points d'application de la règle « rien n'écrit hors du seam
+    // d'intention » : la mécanique est prouvée sur fixtures ci-dessus, son
+    // APPLICATION à l'arbre réel l'est ici.
+    '@nodal-agents/tools:src/tests/architecture.test.ts',
+    '@nodal-agents/runner:src/tests/architecture.test.ts',
+  ],
 
   async run(): Promise<Metric[]> {
     const dirs = packageDirs();
@@ -62,6 +100,15 @@ export const architectureSection: Section = {
       if (!DB_DRIVER_OK.has(rel)) {
         for (const v of scanForDbDriverImports(opts)) driverHits.push(`${rel}:${v.line}`);
       }
+    }
+
+    const launcherHits: string[] = [];
+    for (const surface of INTENT_LAUNCHERS) {
+      const violations = scanForMutatingSpawnOutsideIntent(
+        { srcDir: join(REPO_ROOT, surface.rel, 'src'), skipFiles: surface.skipFiles },
+        surface.pattern,
+      );
+      for (const v of violations) launcherHits.push(`${surface.rel}:${v.line}`);
     }
 
     return [
@@ -106,6 +153,14 @@ export const architectureSection: Section = {
         unit: 'violations',
         direction: 'lower-is-better',
         detail: uuidHits.slice(0, 20),
+      },
+      {
+        id: 'mutating_launcher_violations',
+        label: 'Écritures disque hors seam d’intention',
+        value: launcherHits.length,
+        unit: 'violations',
+        direction: 'lower-is-better',
+        detail: launcherHits.slice(0, 20),
       },
     ];
   },
