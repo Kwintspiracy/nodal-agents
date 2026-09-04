@@ -38,7 +38,10 @@ import {
   normalizePath,
   projectKey,
   VerifyCommandsSchema,
+  VerificationSurfacesSchema,
+  parseVerificationSurfaces,
   type VerifyCommand,
+  type VerificationSurfaces,
 } from '@nodal-agents/shared';
 import {
   currentManifestHash,
@@ -6561,6 +6564,75 @@ export async function setAutoRunPauseAction(raw: unknown): Promise<ActionResult<
   } catch (err) {
     console.error('[setAutoRunPauseAction]', err);
     return fail('db_error', 'Failed to save the auto-run pause setting');
+  }
+}
+
+// ─── Surfaces sous vérification (D8, plan « Vérifier & Corriger », T23) ───────
+//
+// L'utilisateur décide quelles façons de travailler posent une intention de
+// mutation et sont prouvées : une case par surface. Même forme que le frein
+// ci-dessus, même garde owner (entities.userId === session.userId — jamais
+// entityMembers.role, qui vaut 'owner' pour tout invité). L'objet COMPLET est
+// écrit à chaque sauvegarde : « absent » ne doit avoir qu'un seul sens, celui
+// du parseur (toutes activées), jamais « pas encore touché par un merge ».
+
+export type VerificationSurfacesView = {
+  surfaces: VerificationSurfaces;
+  isOwner: boolean;
+};
+
+export async function getVerificationSurfacesAction(): Promise<
+  ActionResult<VerificationSurfacesView>
+> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId, verificationSurfaces: entities.verificationSurfaces })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    return ok({
+      surfaces: parseVerificationSurfaces(entityRow.verificationSurfaces),
+      isOwner: entityRow.userId === session.userId,
+    });
+  } catch (err) {
+    console.error('[getVerificationSurfacesAction]', err);
+    return fail('db_error', 'Failed to load the verification surfaces');
+  }
+}
+
+export async function setVerificationSurfacesAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = VerificationSurfacesSchema.strict().safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+
+    await db
+      .update(entities)
+      .set({ verificationSurfaces: parsed.data })
+      .where(eq(entities.id, session.entityId));
+
+    // L'onglet Code porte l'état de vérification : sans cette revalidation le
+    // réglage est enregistré et l'écran ment jusqu'au prochain rechargement.
+    revalidatePath('/settings');
+    revalidatePath('/code');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setVerificationSurfacesAction]', err);
+    return fail('db_error', 'Failed to save the verification surfaces');
   }
 }
 
