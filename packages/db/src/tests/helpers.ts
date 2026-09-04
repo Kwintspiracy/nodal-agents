@@ -68,7 +68,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       memory_curation_enabled boolean NOT NULL DEFAULT true,
       skill_assignment_mode text NOT NULL DEFAULT 'approval',
       auto_run_paused boolean NOT NULL DEFAULT false,
-      mcp_server_enabled boolean NOT NULL DEFAULT false
+      mcp_server_enabled boolean NOT NULL DEFAULT false,
+      -- mirrors migration 0091
+      verification_surfaces jsonb NOT NULL DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
@@ -182,6 +184,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       last_failed_delegation_slug text,
       pending_delegation jsonb,
       finalizing_at timestamptz,
+      -- mirrors migration 0091
+      verification_skipped_surfaces jsonb NOT NULL DEFAULT '[]',
       completed_at timestamptz,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()

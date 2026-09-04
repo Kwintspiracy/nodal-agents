@@ -194,6 +194,17 @@ export const agentJobs = pgTable(
      * tick to the terminal write. NULL outside a finalization window.
      */
     finalizingAt: timestamp('finalizing_at', { withTimezone: true }),
+    /**
+     * La trace FIGÉE des surfaces décochées au moment où ce run a tourné (D8,
+     * migration 0091) — un ensemble de clés VerificationSurfaceKey, chacune
+     * appendée une fois par le helper d'intention. Le détail d'un run dit
+     * « surface hors vérification » depuis CETTE colonne, jamais depuis le
+     * réglage courant de l'espace : si l'owner recoche demain, les runs d'hier
+     * doivent toujours raconter ce qui s'est passé hier.
+     */
+    verificationSkippedSurfaces: jsonb('verification_skipped_surfaces')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),

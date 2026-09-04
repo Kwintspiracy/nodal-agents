@@ -85,6 +85,16 @@ export const entities = pgTable(
      * l'interrupteur coupe les clients deja connectes.
      */
     mcpServerEnabled: boolean('mcp_server_enabled').notNull().default(false),
+    /**
+     * Les surfaces sous vérification (D8, plan « Vérifier & Corriger »,
+     * migration 0091) : jsonb lu par parseVerificationSurfaces() de
+     * @nodal-agents/shared. `'{}'` est VOULU — le défaut « toutes activées »
+     * vit dans le parseur, jamais deviné par un backfill (même leçon que
+     * 0084 : un réglage est un geste, pas un état inventé).
+     */
+    verificationSurfaces: jsonb('verification_surfaces')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),

@@ -175,4 +175,23 @@ describe('migrations: job_deliverable_verification_state + verification_runs col
       expect(result.rows.length).toBe(1);
     });
   }
+
+  // 0091 — les surfaces sous vérification (D8).
+  it('entities.verification_surfaces exists, jsonb, default {}', async () => {
+    const result = await db.execute(
+      sql`SELECT data_type, column_default FROM information_schema.columns WHERE table_name = 'entities' AND column_name = 'verification_surfaces'`,
+    );
+    expect(result.rows.length).toBe(1);
+    expect(result.rows[0]!['data_type']).toBe('jsonb');
+    expect(String(result.rows[0]!['column_default'])).toContain('{}');
+  });
+
+  it('agent_jobs.verification_skipped_surfaces exists, jsonb, default []', async () => {
+    const result = await db.execute(
+      sql`SELECT data_type, column_default FROM information_schema.columns WHERE table_name = 'agent_jobs' AND column_name = 'verification_skipped_surfaces'`,
+    );
+    expect(result.rows.length).toBe(1);
+    expect(result.rows[0]!['data_type']).toBe('jsonb');
+    expect(String(result.rows[0]!['column_default'])).toContain('[]');
+  });
 });
