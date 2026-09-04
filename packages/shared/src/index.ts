@@ -39,3 +39,4 @@ export * from './catastrophic-command';
 export * from './project-key';
 export * from './types/verification';
 export * from './verification-manifest';
+export * from './verification-surfaces';
