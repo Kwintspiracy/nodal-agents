@@ -22,6 +22,7 @@ import {
   recordCliRun,
   assertRuntimeSessionKey,
   SHARED_WORKSPACE_LABEL,
+  writeMutationIntent,
 } from '@nodal-agents/tools';
 import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
@@ -180,6 +181,26 @@ export async function runCliRuntimeChatTurn(args: {
   // laissait les dossiers verrouillés une demi-heure pour tout le monde.
   let systemPrompt: string;
   try {
+    // ── L'intention de mutation, LE JUMEAU du chemin job (T17) — nommé parce
+    // qu'il a déjà été oublié une revue entière (voir workspace-locks.ts).
+    // Un tour de chat n'a PAS de jobId, et la ligne d'état a une FK NOT NULL
+    // vers agent_jobs : le helper rend `skipped` (no_job_context) et le DIT
+    // par un code — le site d'appel existe, le silence est nommé, l'écran le
+    // dit dans sa branche chat (T24). Un `failed` (entité vide) interdit le
+    // spawn, comme sur le chemin job.
+    if (mode === 'write') {
+      const intent = await writeMutationIntent(
+        { db, entityId, jobId: null, workspaces: wsRows },
+        {
+          surface: 'cliRuntime',
+          targets: wsRows.map((w) => ({ kind: 'dir' as const, path: w.path })),
+        },
+      );
+      if (intent.kind === 'failed') {
+        throw new Error(`verification_intent_failed:${intent.code}`);
+      }
+    }
+
     const workspaceGit = await probeWorkspaceGit(cwd);
     systemPrompt = await buildSystemPrompt(
       agentRow,

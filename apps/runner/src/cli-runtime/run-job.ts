@@ -25,7 +25,12 @@ import {
   listActiveChannelsForAgent,
 } from '@nodal-agents/delivery';
 import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
-import { assertCliBudget, recordCliRun, assertRuntimeSessionKey } from '@nodal-agents/tools';
+import {
+  assertCliBudget,
+  recordCliRun,
+  assertRuntimeSessionKey,
+  writeMutationIntent,
+} from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
@@ -281,6 +286,34 @@ export async function runCliRuntimeJob(args: {
   // jusqu'à la reprise du verrou périmé.
   let systemPrompt: string;
   try {
+    // ── L'intention de mutation — la CINQUIÈME surface, hors registre d'outils
+    // (plan « Vérifier & Corriger », T17 / D8). Un runtime CLI écrit sans
+    // jamais traverser executeTool : le seam unique des outils ne le voit pas,
+    // donc l'intention se pose ICI, entre la prise des verrous et le spawn —
+    // le projet est sale AVANT que la CLI touche au disque. Même prédicat que
+    // les verrous (mode write), même périmètre (TOUS les dossiers attachés :
+    // `cwd` n'est que le premier, le reste part en extraWriteDirs).
+    //
+    // Sous le même filet que l'assemblage du prompt : un refus relâche les
+    // verrous. `failed` ET `already_terminal` interdisent le spawn — un job
+    // annulé qui laisse partir une CLI n'est pas annulé. Levé avec un CODE :
+    // run-job ne marque pas le job lui-même, l'appelant décide.
+    if (mode === 'write') {
+      const intent = await writeMutationIntent(
+        { db, entityId: job.entityId ?? '', jobId, workspaces: args.workspaces },
+        {
+          surface: 'cliRuntime',
+          targets: args.workspaces.map((w) => ({ kind: 'dir' as const, path: w.path })),
+        },
+      );
+      if (intent.kind === 'failed') {
+        throw new Error(`verification_intent_failed:${intent.code}`);
+      }
+      if (intent.kind === 'already_terminal') {
+        throw new Error('verification_intent_failed:intent_already_terminal');
+      }
+    }
+
     const workspaceGit = await probeWorkspaceGit(cwd);
     systemPrompt = await buildSystemPrompt(
       agentRow,
