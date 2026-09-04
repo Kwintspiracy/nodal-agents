@@ -108,16 +108,37 @@ describe('run_command builtin', () => {
   });
 
   it('times out and kills a long-running command (with its children)', async () => {
+    // Le processus écrit son pid AVANT de dormir : c'est lui, le petit-enfant
+    // de cmd.exe / sh, qu'on veut voir mort. Le test précédent n'assertait que
+    // `timedOut` et passait avec le tree-kill cassé (sonde du 03/09 : le
+    // petit-enfant survivait 3 fois sur 3).
     const out = await runCommandTool.execute(
       {
         purpose: 'run test command',
-        command: `node -e "setTimeout(()=>{}, 60000)"`,
+        command: `node -e "process.stdout.write(String(process.pid)); setTimeout(()=>{}, 60000)"`,
         timeout_seconds: 1,
       },
       ctx(),
     );
     expect(out.timedOut).toBe(true);
     expect(out.exitCode).not.toBe(0); // killed → no clean exit
+    const pid = Number(out.stdout.trim());
+    expect(Number.isInteger(pid) && pid > 0).toBe(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* déjà mort */
+      }
+    }
+    expect(alive).toBe(false);
   });
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {

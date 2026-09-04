@@ -3,7 +3,8 @@
 // OS/shell plumbing a command needs to actually run (PATH first of all).
 
 import { describe, it, expect } from 'vitest';
-import { buildChildEnv } from '../builtin/child-env';
+import { ENV_ALLOWLIST_VERSION, sha256Hex } from '@nodal-agents/shared';
+import { buildChildEnv, safeEnvAllowlistSnapshot } from '../builtin/child-env';
 
 describe('buildChildEnv', () => {
   it('keeps PATH but drops DATABASE_URL/WORKER_SECRET/OPENAI_API_KEY', () => {
@@ -93,5 +94,26 @@ describe('buildChildEnv', () => {
     const result = buildChildEnv(source);
     expect(result['PATH']).toBe('/usr/bin');
     expect('HOME' in result).toBe(false);
+  });
+});
+
+describe('ENV_ALLOWLIST_VERSION épingle l’allowlist (plan Vérifier & Corriger, D1)', () => {
+  // L'allowlist entre dans le hash du manifeste d'une commande de preuve via
+  // sa VERSION. Élargir la liste sans bumper la version laisserait une
+  // approbation ancienne couvrir un environnement plus exposé. Ce snapshot
+  // rougit dans ce cas : soit on bumpe ENV_ALLOWLIST_VERSION (et on ajoute la
+  // nouvelle empreinte ci-dessous), soit on n'élargit pas.
+  const SNAPSHOT_BY_VERSION: Record<number, string> = {
+    1: 'v1:1ddc24070cacc7639ac9a7ed09ea04599ebfc8af51a7d27ef31ff9eb39771fc0',
+  };
+
+  it('la version courante a une empreinte enregistrée, et elle correspond à la liste réelle', () => {
+    const expected = SNAPSHOT_BY_VERSION[ENV_ALLOWLIST_VERSION];
+    expect(
+      expected,
+      `aucune empreinte pour ENV_ALLOWLIST_VERSION=${ENV_ALLOWLIST_VERSION}`,
+    ).toBeDefined();
+    const actual = `v${ENV_ALLOWLIST_VERSION}:${sha256Hex(safeEnvAllowlistSnapshot().join('\n'))}`;
+    expect(actual).toBe(expected);
   });
 });

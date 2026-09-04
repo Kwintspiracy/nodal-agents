@@ -105,7 +105,24 @@ export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
-export { buildChildEnv } from './child-env';
+export { buildChildEnv, safeEnvAllowlistSnapshot } from './child-env';
+export {
+  runShellCommand,
+  runCommandSequence,
+  killProcessTree,
+  isGreen,
+  SHELL_POLICY_VERSION,
+  DEFAULT_MAX_OUTPUT_CHARS,
+} from './shell-engine';
+export type {
+  CommandOutcome,
+  CommandRunResult,
+  CommandSpec,
+  CommandTarget,
+  SequenceResult,
+  SequenceStepResult,
+  SequenceOptions,
+} from './shell-engine';
 
 /**
  * Register all built-in tools into the given registry.

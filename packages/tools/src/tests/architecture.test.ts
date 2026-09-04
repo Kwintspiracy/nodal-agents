@@ -8,6 +8,7 @@
 // où « cortex » échouait.
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -37,5 +38,16 @@ describe('architecture — la clé d’identité d’un chemin n’a qu’une so
   it('src/ ne recopie pas la règle « lettre de lecteur » de @nodal-agents/shared', () => {
     const v = scanForProjectKeyCopies({ srcDir: SRC_DIR });
     if (v.length > 0) expect.fail(formatViolations('Copie de projectKey hors packages/shared', v));
+  });
+});
+
+describe('architecture — le moteur shell est PUR', () => {
+  it('shell-engine.ts n’importe ni le contexte d’outil, ni la base, ni le workspace', () => {
+    // Le plan « Vérifier & Corriger » lance les commandes de preuve par ce
+    // moteur : il doit rester appelable sans job, sans agent, sans DB.
+    const src = readFileSync(resolve(SRC_DIR, 'builtin', 'shell-engine.ts'), 'utf-8');
+    for (const forbidden of ["from '../types'", '@nodal-agents/db', 'file-ops/workspace']) {
+      expect(src.includes(forbidden), `shell-engine.ts importe ${forbidden}`).toBe(false);
+    }
   });
 });
