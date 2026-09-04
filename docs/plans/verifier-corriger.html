@@ -947,13 +947,38 @@
       passage).
     </li>
   </ul>
-  <p><b>Ce qui reste avant de merger</b> :</p>
+  <p><b>Où en est la relecture (04/09, soir)</b> :</p>
   <ul>
     <li>
-      Redémarrer la stack (migrations 0088 à 0091 sur ta base) et jouer les deux specs e2e écrits
-      mais non exécutés.
+      La stack a été redémarrée sur les quatre migrations, sans erreur. Les deux specs e2e restent
+      <b>non exécutés</b> : ta stack est en mode mot de passe, le harnais Playwright attend le mode
+      sans authentification ; la CI les joue.
     </li>
-    <li>Ouvrir la PR GitHub, puis <code>codex review</code> en boucle jusqu'à zéro constat.</li>
+    <li>
+      <b>PR #46 ouverte</b>, quatre passes Codex. La première a trouvé deux vrais trous : les vingt
+      outils Office (Word, Excel, PowerPoint) écrivaient sans être vus par la vérification, et la
+      boîte d'envoi pouvait, dans un cas précis, laisser un autre runner écraser une tentative en
+      cours — les deux sont fermés. Elle a aussi mis au jour une CI rouge sur Windows (chemins
+      courts « RUNNER~1 »), fermée.
+    </li>
+    <li>
+      Les passes 2, 3 et 4 ont chacune affiné la même règle — « quel dossier attaché nomme le projet
+      quand un lien ou une jonction est en jeu ». La boucle est <b>arrêtée</b> là, comme le veut la
+      méthode : ce qui reste n'est plus une règle de plus, c'est une décision.
+    </li>
+  </ul>
+  <p>
+    <b>D10, à trancher</b> : quand deux dossiers attachés recouvrent le même dossier physique (l'un
+    est un lien vers l'autre, ou vers un sous-dossier), le même fichier a deux identités de projet
+    selon le dossier par lequel l'agent y accède — dans l'onglet Code comme dans la vérification. Ma
+    recommandation : <b>interdire d'attacher un dossier qui en recouvre un autre</b>, avec un
+    message qui nomme les deux. L'autre option, accepter deux identités, est cohérente mais
+    surprenante à l'écran.
+  </p>
+  <p><b>Ce qui reste avant de merger</b> :</p>
+  <ul>
+    <li>D10 tranchée, et la CI verte sur la branche.</li>
+    <li>Merger la #45 d'abord (la branche part de <code>main</code>), puis cette PR.</li>
     <li>
       Retirer deux copies restantes dans le runner (règle de racine de projet, liste des statuts
       terminaux).
