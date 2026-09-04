@@ -37,6 +37,8 @@ import {
 } from '@nodal-agents/shared';
 import type { RunVerdict } from '@nodal-agents/shared';
 import { buildChildEnv, isGreen, runCommandSequence } from '@nodal-agents/tools';
+// Le CONTRAT, jamais le registre : le registre importe CE fichier, l'importer
+// en retour ferait un cycle que `pnpm deps:check` refuse (CI de la PR #46).
 import type {
   DeliverableVerifier,
   LoadedConfig,
@@ -45,7 +47,7 @@ import type {
   ProofResult,
   ReadyConfig,
   VerifierTarget,
-} from './registry.ts';
+} from './types.ts';
 
 /**
  * Plafond de capture par flux, en caractères — 16 Ko de QUEUE par commande.

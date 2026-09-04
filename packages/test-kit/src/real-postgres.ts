@@ -65,7 +65,7 @@ function repoRoot(): string {
  * Résout `embedded-postgres` comme apps/cli le voit. Lève avec le chemin
  * cherché quand il manque — c'est l'information dont on a besoin pour réparer.
  */
-async function loadEmbeddedPostgres(): Promise<EmbeddedPostgresCtor> {
+async function loadEmbeddedPostgres(): Promise<{ ctor: EmbeddedPostgresCtor; resolved: string }> {
   const anchor = join(repoRoot(), 'apps', 'cli', 'package.json');
   let resolved: string;
   try {
@@ -80,7 +80,12 @@ async function loadEmbeddedPostgres(): Promise<EmbeddedPostgresCtor> {
   if (typeof mod.default !== 'function') {
     throw new Error(`REAL_POSTGRES_UNAVAILABLE: export par défaut inattendu dans ${resolved}`);
   }
-  return mod.default;
+  // Le paquet natif de la plateforme est un dépendant OPTIONNEL
+  // (`@embedded-postgres/<os>-<arch>`) : présent dans le lockfile mais absent
+  // de l'install, `initdb` n'existe pas et le démarrage rejette sans message.
+  // On le dit ICI, avec le chemin cherché, plutôt qu'au premier spawn muet.
+  const binDir = join(dirname(resolved), '..', '..', `@embedded-postgres`);
+  return { ctor: mod.default, resolved: `${resolved} (natifs attendus sous ${binDir})` };
 }
 
 /** Un port libre, choisi par le système (bind sur 0), puis relâché. */
@@ -104,33 +109,71 @@ export function pickFreePort(): Promise<number> {
  * dépend pas de db — db en dépend en dev, un cycle serait de trop).
  */
 export async function startRealPostgres(): Promise<RealPostgres> {
-  const EmbeddedPostgres = await loadEmbeddedPostgres();
-  const dataDir = await mkdtemp(join(tmpdir(), 'nodal-pg-'));
-  const port = await pickFreePort();
-  const logs: string[] = [];
-  const pg = new EmbeddedPostgres({
-    databaseDir: dataDir,
-    user: PG_USER,
-    password: PG_PASSWORD,
-    port,
-    persistent: false,
-    createPostgresUser: false,
-    initdbFlags: ['--encoding=UTF8', '--locale=C'],
-    onError: (e) => logs.push(`ERROR ${e instanceof Error ? e.message : String(e)}`),
-    onLog: (m) => logs.push(m),
-  });
-  try {
-    await pg.initialise();
-    await pg.start();
-    await pg.createDatabase(PG_DATABASE);
-  } catch (err) {
-    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
-    const fatal = logs.filter((l) => /\b(FATAL|PANIC|ERROR)\b/.test(l)).slice(-10);
-    throw new Error(
-      `REAL_POSTGRES_START_FAILED: ${err instanceof Error ? err.message : String(err)}` +
-        (fatal.length ? `\n  ${fatal.join('\n  ')}` : ''),
-    );
+  const { ctor: EmbeddedPostgres, resolved: binaryPath } = await loadEmbeddedPostgres();
+  const attempts: string[] = [];
+
+  // TROIS ESSAIS, chacun sur un port neuf.
+  //
+  // `pickFreePort` bind 0, lit le port attribué, PUIS le relâche : entre ce
+  // relâchement et le `listen` du postmaster, le système peut donner le même
+  // port à quelqu'un d'autre — et trois suites `.pg.test.ts` démarrent en
+  // parallèle dans ce paquet, ce qui rend la collision plausible plutôt que
+  // théorique. C'est l'hypothèse la plus probable pour l'échec observé sur le
+  // runner GitHub Windows (PR #46), où les trois suites ont lâché en même
+  // temps. Elle n'est pas PROUVÉE : c'est pourquoi l'erreur finale rapporte
+  // chaque essai, son étape et les logs du postmaster — un prochain rouge
+  // tranchera sans avoir à re-instrumenter.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const dataDir = await mkdtemp(join(tmpdir(), 'nodal-pg-'));
+    const port = await pickFreePort();
+    const logs: string[] = [];
+    const pg = new EmbeddedPostgres({
+      databaseDir: dataDir,
+      user: PG_USER,
+      password: PG_PASSWORD,
+      port,
+      persistent: false,
+      createPostgresUser: false,
+      initdbFlags: ['--encoding=UTF8', '--locale=C'],
+      onError: (e) => logs.push(`ERROR ${e instanceof Error ? e.message : String(e)}`),
+      onLog: (m) => logs.push(m),
+    });
+    // L'ÉTAPE est nommée : `embedded-postgres` rejette parfois avec
+    // `undefined`, et « START_FAILED: undefined » n'aide personne. On dit donc
+    // où ça a lâché, et ce que le postmaster a écrit — TOUS les logs, pas
+    // seulement ceux qui portent FATAL, puisque justement il n'y en avait
+    // aucun.
+    let step: 'initialise' | 'start' | 'createDatabase' = 'initialise';
+    try {
+      await pg.initialise();
+      step = 'start';
+      await pg.start();
+      step = 'createDatabase';
+      await pg.createDatabase(PG_DATABASE);
+      return makeHandle(pg, dataDir, port);
+    } catch (err) {
+      await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
+      const detail =
+        err instanceof Error
+          ? err.message
+          : err === undefined
+            ? '(rejet sans valeur)'
+            : String(err);
+      const tail = logs.slice(-25);
+      attempts.push(
+        `essai ${attempt} — étape ${step}, port ${port} : ${detail}` +
+          (tail.length ? `\n      ${tail.join('\n      ')}` : ' (aucun log du postmaster)'),
+      );
+    }
   }
+
+  throw new Error(
+    `REAL_POSTGRES_START_FAILED après 3 essais (binaire ${binaryPath}) :\n  ${attempts.join('\n  ')}`,
+  );
+}
+
+/** La poignée rendue à l'appelant : l'arrêt du postmaster et le ménage. */
+function makeHandle(pg: EmbeddedPostgresLike, dataDir: string, port: number): RealPostgres {
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;
