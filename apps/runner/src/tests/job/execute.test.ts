@@ -13,6 +13,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and } from '@nodal-agents/db';
 import {
   agentJobs,
+  jobDeliveries,
   agents,
   agentAssignments,
   approvalRequests,
@@ -142,6 +143,8 @@ function makeMockLlmClient(
   responses: Array<{
     text?: string;
     reasoning?: string;
+    /** Joué avant de rendre cette réponse — voir doGenerate. */
+    beforeRespond?: () => Promise<void>;
     promptTokens?: number;
     /** Cache-read subset of promptTokens — drives the public usage.cachedInputTokens. */
     cachedTokens?: number;
@@ -188,6 +191,10 @@ function makeMockLlmClient(
       if (capturedPrompts) capturedPrompts.push(options.prompt);
       const response = responses[callIndex] ?? responses[responses.length - 1]!;
       callIndex++;
+      // Un geste à jouer PENDANT le tour (avant que la réponse ne revienne) —
+      // sert à simuler un autre chemin qui termine le job pendant que le LLM
+      // « réfléchit » (course perdue, T10).
+      if (response.beforeRespond) await response.beforeRespond();
 
       const content: Array<
         | { type: 'text'; text: string }
@@ -610,6 +617,56 @@ describe('executeJob', () => {
     // fast runs Date.now() can resolve to the same ms, so assert non-null.
     expect(rows[0]?.totalDurationMs).not.toBeNull();
     expect(rows[0]?.totalDurationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('chemin texte : course perdue PENDANT le tour ⇒ already_handled, la ligne n’est pas réécrite (T10)', async () => {
+    // Le reaper (ou une annulation) termine le job pendant que le LLM répond.
+    // L'ancien code renvoyait 'completed' après la course perdue ; le chemin
+    // return_result, lui, rendait déjà already_handled — asymétrie corrigée.
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        text: 'Trop tard, je réponds quand même.',
+        beforeRespond: async () => {
+          await db
+            .update(agentJobs)
+            .set({ status: 'failed', error: 'reaper_timeout' })
+            .where(eq(agentJobs.id, job.id));
+        },
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('already_handled');
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('reaper_timeout');
+    expect(row?.result ?? '').toBe('');
+  });
+
+  it('chemin texte ⇒ completed via la primitive, ZÉRO ligne job_deliveries (le canal est servi par l’outil pendant le run)', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([{ text: 'Réponse en texte.' }]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const [row] = await db
+      .select({ status: agentJobs.status, completedAt: agentJobs.completedAt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+    expect(row?.completedAt).not.toBeNull();
+    expect(
+      await db
+        .select({ id: jobDeliveries.id })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, job.id)),
+    ).toEqual([]);
   });
 
   it('integration: agent with telegramBotToken sends via telegram_send_message tool (outbound tool path)', async () => {
@@ -2135,6 +2192,14 @@ describe('executeJob', () => {
     if (result.status === 'completed') {
       expect(result.result).toBe('Task is done!');
     }
+    // T10 : return_result passe par la primitive SANS livraison — le canal a
+    // été servi par l'outil pendant le run, l'outbox n'a rien à porter.
+    expect(
+      await db
+        .select({ id: jobDeliveries.id })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, job.id)),
+    ).toEqual([]);
   });
 
   it('fails with no_tool_calls_no_text after exhausting empty-turn retries', async () => {
