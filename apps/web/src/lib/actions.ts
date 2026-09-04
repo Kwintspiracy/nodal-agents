@@ -103,7 +103,15 @@ import {
   encryptChannelSecret,
   getMcpApprovalContext,
   cliRuns,
+  verificationRuns,
+  jobDeliverableVerificationState,
 } from '@nodal-agents/db';
+import {
+  groupVerificationRuns,
+  mergeSkippedSurfaces,
+  type VerificationSequenceView,
+  type VerificationUnconfiguredView,
+} from './verification-runs-view.ts';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import {
   DeliveryError,
@@ -12052,6 +12060,21 @@ export type CodingProcessDetail = {
    * V1.1). Vide pour une session de chat (pas de jobs).
    */
   pipelineJobIds: string[];
+  /**
+   * Les preuves qui ont tourné pour ce pipeline (racine + délégués), une
+   * séquence par exécution de commandes, lues dans `verification_runs` par
+   * `pipelineJobIds` — jamais par un id venu du client (T24). Vide pour une
+   * session de chat : un tour de chat n'a pas de job, donc pas de preuve.
+   */
+  verificationRuns: VerificationSequenceView[];
+  /**
+   * La TRACE D8 figée sur les jobs du pipeline au moment où ils ont tourné
+   * (`agent_jobs.verification_skipped_surfaces`) — jamais le réglage courant
+   * de l'espace, qui décrirait les runs d'hier avec le choix d'aujourd'hui.
+   */
+  verificationSkippedSurfaces: string[];
+  /** Les livrables sans commandes de preuve (ou en attente d'approbation) au moment de la preuve. */
+  verificationUnconfigured: VerificationUnconfiguredView[];
 };
 
 const CodingProcessDetailSchema = z.union([
@@ -12083,6 +12106,7 @@ export async function getCodingProcessDetailAction(
           task: agentJobs.task,
           createdAt: agentJobs.createdAt,
           totalDurationMs: agentJobs.totalDurationMs,
+          verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
         })
         .from(agentJobs)
         .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -12101,6 +12125,7 @@ export async function getCodingProcessDetailAction(
         agentName: string | null;
         totalDurationMs: number | null;
         parentJobId: string | null;
+        verificationSkippedSurfaces: unknown;
       }> = [];
       {
         let frontier = [jobId];
@@ -12116,6 +12141,7 @@ export async function getCodingProcessDetailAction(
               agentName: agents.name,
               totalDurationMs: agentJobs.totalDurationMs,
               parentJobId: agentJobs.parentJobId,
+              verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
             })
             .from(agentJobs)
             .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -12238,6 +12264,69 @@ export async function getCodingProcessDetailAction(
         arr.push(v.toolOutput);
         verdictOutputsByJob.set(v.jobId, arr);
       }
+      // Les preuves du pipeline — lues par `allRelevantIds`, déjà bornées à
+      // l'espace, et re-bornées par entity_id : la preuve d'un délégué remonte
+      // à l'écran de la racine, celle d'un voisin jamais (T24).
+      const verificationRunRows = await db
+        .select({
+          jobId: verificationRuns.jobId,
+          deliverableType: verificationRuns.deliverableType,
+          canonicalKey: verificationRuns.canonicalKey,
+          sequenceId: verificationRuns.sequenceId,
+          commandRank: verificationRuns.commandRank,
+          command: verificationRuns.command,
+          exitCode: verificationRuns.exitCode,
+          outcomeKind: verificationRuns.outcomeKind,
+          durationMs: verificationRuns.durationMs,
+          verdict: verificationRuns.verdict,
+          testedGeneration: verificationRuns.testedGeneration,
+          testedEpoch: verificationRuns.testedEpoch,
+          createdAt: verificationRuns.createdAt,
+        })
+        .from(verificationRuns)
+        .where(
+          and(
+            eq(verificationRuns.entityId, entityId),
+            inArray(verificationRuns.jobId, allRelevantIds),
+          ),
+        );
+      const verificationSequences = groupVerificationRuns(verificationRunRows);
+      // La mention D8 vient de la TRACE posée sur chaque job du pipeline au
+      // moment où il a tourné — jamais d'une relecture d'`entities` : un réglage
+      // recoché demain ne réécrit pas l'histoire d'hier.
+      const verificationSkippedSurfaces = mergeSkippedSurfaces([
+        job.verificationSkippedSurfaces,
+        ...descendants.map((d) => d.verificationSkippedSurfaces),
+      ]);
+      // Un livrable sans commandes (ou en attente d'approbation) au moment de
+      // la preuve : un fait de configuration, rendu comme tel — pas un état de
+      // décision, que ① ne montre pas.
+      const unconfiguredRows = await db
+        .select({
+          deliverableType: jobDeliverableVerificationState.deliverableType,
+          canonicalKey: jobDeliverableVerificationState.canonicalKey,
+          displayPath: jobDeliverableVerificationState.displayPathSnapshot,
+          decisionStatus: jobDeliverableVerificationState.decisionStatus,
+        })
+        .from(jobDeliverableVerificationState)
+        .where(
+          and(
+            inArray(jobDeliverableVerificationState.jobId, allRelevantIds),
+            inArray(jobDeliverableVerificationState.decisionStatus, [
+              'not_configured',
+              'pending_approval',
+            ]),
+          ),
+        );
+      const verificationUnconfigured: VerificationUnconfiguredView[] = unconfiguredRows.map(
+        (r) => ({
+          deliverableType: r.deliverableType,
+          canonicalKey: r.canonicalKey,
+          displayPath: r.displayPath,
+          reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
+        }),
+      );
+
       const stage = deriveJobStage(job.status, job.id, childIds, verdictOutputsByJob);
 
       const verdicts: CodingVerdictView[] = verdictRows
@@ -12530,6 +12619,9 @@ export async function getCodingProcessDetailAction(
         verdicts,
         changes,
         pipelineJobIds: allRelevantIds,
+        verificationRuns: verificationSequences,
+        verificationSkippedSurfaces,
+        verificationUnconfigured,
       });
     }
 
@@ -12602,6 +12694,11 @@ export async function getCodingProcessDetailAction(
       verdicts: [],
       changes: [],
       pipelineJobIds: [],
+      // Un tour de chat n'a pas de jobId (run-chat.ts) : aucune intention
+      // posée, aucune preuve — l'écran le dit tel quel (T17/T24).
+      verificationRuns: [],
+      verificationSkippedSurfaces: [],
+      verificationUnconfigured: [],
     });
   } catch (err) {
     console.error('[getCodingProcessDetailAction]', err);

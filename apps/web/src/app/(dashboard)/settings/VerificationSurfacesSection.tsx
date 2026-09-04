@@ -22,22 +22,21 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import type { VerificationSurfaceKey, VerificationSurfaces } from '@nodal-agents/shared';
+import {
+  VERIFICATION_SURFACE_KEYS,
+  type VerificationSurfaceKey,
+  type VerificationSurfaces,
+} from '@nodal-agents/shared';
 import { setVerificationSurfacesAction, type VerificationSurfacesView } from '@/lib/actions.ts';
+import { VERIFICATION_SURFACE_LABELS } from '@/lib/verification-runs-view.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Checkbox from '@/components/ui/Checkbox';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 
-const SURFACES: ReadonlyArray<{ key: VerificationSurfaceKey; label: string; hint: string }> = [
-  { key: 'codeTask', label: 'Coding tool', hint: 'code_task: a coding CLI called as a tool' },
-  {
-    key: 'cliRuntime',
-    label: 'Claude Code / Codex agents',
-    hint: 'agents that ARE a coding CLI session',
-  },
-  { key: 'fileOps', label: 'File tools', hint: 'file_write, file_edit' },
-  { key: 'shell', label: 'Commands and scripts', hint: 'run_command, run_skill_script' },
-];
+// Les libellés vivent avec la vue de lecture (verification-runs-view.ts) : le
+// détail de run nomme une surface décochée avec les MÊMES mots que ce réglage.
+const SURFACES: ReadonlyArray<{ key: VerificationSurfaceKey; label: string; hint: string }> =
+  VERIFICATION_SURFACE_KEYS.map((key) => ({ key, ...VERIFICATION_SURFACE_LABELS[key] }));
 
 interface Props {
   initial: VerificationSurfacesView;
