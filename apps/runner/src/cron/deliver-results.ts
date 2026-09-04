@@ -1,52 +1,68 @@
 // cron/deliver-results.ts — deliverCompletedRoots
 // For each root_job_id whose tasks are all terminal (done/failed/cancelled),
-// compile task results and mark the root job completed.
+// compile task results, decide the root's terminal status, and hand the
+// channel return to the delivery outbox.
 //
-// Idempotency: completedAt acts as the done flag — if it's already set,
-// the root is skipped. The conditional UPDATE prevents double-processing
-// under concurrent ticks.
+// ─── Plan « Vérifier & Corriger », T12 ────────────────────────────────────────
+//
+// Le bug fermé ici est EXISTANT : ce fichier écrivait `status` + `completed_at`
+// puis envoyait au canal APRÈS, sans qu'aucune colonne ne trace l'envoi. Un
+// crash entre les deux laissait un root terminal jamais relivré — la garde de
+// reprise (`completed_at IS NULL`) l'excluait à jamais.
+//
+// Le nouvel ordre, par root :
+//   1. RÉCLAMATION par le marqueur `finalizing_at` (UPDATE … RETURNING) — un
+//      seul tick travaille sur un root, sans écrire son statut ;
+//   2. HORS transaction : la cible de livraison (resolveDeliveryTarget) et la
+//      synthèse courte pour le canal (un appel LLM — jamais dans une
+//      transaction, jamais au drain) : le PAYLOAD EST FIGÉ ici, une fois ;
+//   3. la décision terminale : `completed` ⇒ la primitive `finalizeJobSuccess`
+//      (qui commet la ligne `job_deliveries` en `prepared` AVEC le statut) ;
+//      `failed` ⇒ `failJob` ; `cancelled` ⇒ `cancelRootJob`. Chacune lève le
+//      marqueur ;
+//   4. `maybeResumeParent`, puis `drainDeliveries` pour ce root — l'envoi,
+//      réclamable, borné, reprenable. Un crash après 3 ne perd plus rien : la
+//      seconde population du tick reprend la ligne `prepared`.
+//
+// Un marqueur `finalizing_at` plus vieux que FINALIZING_STALE_MS sans
+// `completed_at` est relâché en début de phase : le tick qui l'avait posé est
+// mort avant sa décision terminale.
+//
+// Idempotency: completedAt acts as the delivered flag for the SCAN; the claim
+// is the marker. A user-cancelled root (C-2, audit#2) never gets completedAt
+// set by cancelJobAction, so the terminal statuses are excluded everywhere
+// completedAt IS NULL is checked — never resurrect a terminal root.
 
-import {
-  and,
-  eq,
-  isNotNull,
-  isNull,
-  notInArray,
-  agents,
-  isConversationAllowed,
-  getBindingCredentials,
-} from '@nodal-agents/db';
+import { and, eq, isNotNull, isNull, lt, notInArray, agents } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
-import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
-import {
-  getAdapter,
-  resolveTransportChannel,
-  listActiveChannelsForAgent,
-} from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
+import { TERMINAL_STATUSES, cancelRootJob, failJob } from '../job/state.ts';
+import { finalizeJobSuccess, FINALIZING_STALE_MS } from '../job/finalize.ts';
+import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
+import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
 
-// Statuses a root job can be in that mean "this job is DONE, do not touch it
-// again" — regardless of completedAt. A user-cancelled root (C-2, audit#2)
-// never gets completedAt set by cancelJobAction (apps/web/src/lib/actions.ts),
-// so completedAt IS NULL alone is not a safe "still needs delivery" signal:
-// if even one of its tasks had already reached 'done' before the cancel, the
-// rootStatus derivation below would compute 'completed' and the claim UPDATE
-// would resurrect a cancelled job (overwrite status + set completedAt + fire
-// delivery). Excluding these statuses everywhere completedAt IS NULL is
-// checked closes that hole.
-const TERMINAL_ROOT_STATUSES: string[] = ['cancelled', 'completed', 'failed'];
+/** Le MÊME seuil que la primitive (elle reprend un marqueur périmé de la même façon). */
+export { FINALIZING_STALE_MS };
+
+/** Codes journalisés (inv. #2 : des codes et des données, jamais une phrase). */
+export const DELIVERY_SYNTHESIS_FAILED = 'DELIVERY_SYNTHESIS_FAILED';
+export const DELIVERY_TARGET_REFUSED = 'DELIVERY_TARGET_REFUSED';
+export const FINALIZING_MARKER_RELEASED = 'FINALIZING_MARKER_RELEASED';
+export const DELIVERY_DRAIN_FAILED = 'DELIVERY_DRAIN_FAILED';
 
 // ─── findUndeliveredRootJobIds ─────────────────────────────────────────────────
 
 /**
  * Distinct root_job_ids that still need delivery: at least one task, AND the
- * root job itself not yet delivered (completedAt IS NULL).
+ * root job itself not yet delivered (completedAt IS NULL), AND not currently
+ * claimed by a tick (finalizingAt IS NULL — T12).
  *
  * Bounding the scan here — instead of pulling every root_job_id agent_tasks
  * has ever seen and discarding the already-delivered ones one row at a time
@@ -59,20 +75,16 @@ const TERMINAL_ROOT_STATUSES: string[] = ['cancelled', 'completed', 'failed'];
  *
  * `idx_agent_tasks_root_job_id` (agent_tasks.root_job_id) and
  * `idx_agent_jobs_completed_at_null` (agent_jobs.completed_at WHERE NULL) —
- * added by migration 0054 (audit #2, DB-3) — back this exact query: the FROM
- * agent_tasks side now hits the root_job_id index instead of a full scan, and
- * the join's `completed_at IS NULL` filter hits the partial index (kept small
- * since completed roots vastly outnumber open ones).
+ * added by migration 0054 (audit #2, DB-3) — back this exact query.
  *
- * Also excludes roots already in a TERMINAL_ROOT_STATUS (C-2, audit#2): a
+ * Also excludes roots already in a TERMINAL status (C-2, audit#2): a
  * user-cancelled root has completedAt IS NULL forever (cancelJobAction never
  * sets it), so without this filter a cancelled root with a leftover 'done'
- * task keeps getting scanned back in on every tick — see deliverCompletedRoots
- * below for the resurrection this would otherwise cause.
+ * task keeps getting scanned back in on every tick.
  *
  * Exported (not just inlined in deliverCompletedRoots) so the bound-scan
  * behavior itself is directly testable, independent of the per-row loop's own
- * completedAt guard below.
+ * guards below.
  */
 export async function findUndeliveredRootJobIds(db: AnyDrizzleDb): Promise<string[]> {
   const rows = await db
@@ -83,10 +95,42 @@ export async function findUndeliveredRootJobIds(db: AnyDrizzleDb): Promise<strin
       and(
         isNotNull(agentTasks.rootJobId),
         isNull(agentJobs.completedAt),
-        notInArray(agentJobs.status, TERMINAL_ROOT_STATUSES),
+        isNull(agentJobs.finalizingAt),
+        notInArray(agentJobs.status, TERMINAL_STATUSES),
       ),
     );
   return rows.map((r) => r.rootJobId!);
+}
+
+// ─── releaseStaleFinalizingMarkers ────────────────────────────────────────────
+
+/**
+ * Relâche les marqueurs `finalizing_at` orphelins : posés il y a plus de
+ * FINALIZING_STALE_MS, sans décision terminale depuis. Le root redevient
+ * candidat au scan du même tick.
+ *
+ * @returns nombre de marqueurs relâchés
+ */
+export async function releaseStaleFinalizingMarkers(
+  db: AnyDrizzleDb,
+  now: Date = new Date(),
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - FINALIZING_STALE_MS);
+  const rows = await db
+    .update(agentJobs)
+    .set({ finalizingAt: null, updatedAt: now })
+    .where(
+      and(
+        isNotNull(agentJobs.finalizingAt),
+        lt(agentJobs.finalizingAt, cutoff),
+        isNull(agentJobs.completedAt),
+      ),
+    )
+    .returning({ id: agentJobs.id });
+  for (const row of rows) {
+    console.warn(`[deliverCompletedRoots] ${FINALIZING_MARKER_RELEASED} job=${row.id}`);
+  }
+  return rows.length;
 }
 
 // ─── deliverCompletedRoots ────────────────────────────────────────────────────
@@ -95,16 +139,14 @@ export async function findUndeliveredRootJobIds(db: AnyDrizzleDb): Promise<strin
  * Bug from legacy (inject_delegation.wrong_status): task results were silently
  * lost because delivery was only triggered on the parent job completing, but
  * planner tasks run async AFTER the parent job completes. This function finds
- * all root jobs whose tasks have all finished and compiles + marks the result.
+ * all root jobs whose tasks have all finished and compiles + finalizes the
+ * result.
  *
- * Idempotency: each root job is marked at most once. The root job's
- * `completedAt` column is used as the done flag — if it's already
- * set, we skip. The update is conditional (`WHERE completed_at IS NULL`) to
- * prevent double-processing under concurrent ticks.
- *
- * @returns count of root jobs completed
+ * @returns count of root jobs finalized by THIS call
  */
 export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
+  await releaseStaleFinalizingMarkers(db);
+
   const undeliveredRootJobIds = await findUndeliveredRootJobIds(db);
 
   if (undeliveredRootJobIds.length === 0) return 0;
@@ -112,9 +154,9 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
   let delivered = 0;
 
   for (const rootJobId of undeliveredRootJobIds) {
-    // Check if root job already delivered (completedAt is set) — a
-    // race-safety net for concurrent ticks; findUndeliveredRootJobIds already
-    // excluded delivered roots from the candidate set above.
+    // Re-load the root: a race-safety net for concurrent ticks —
+    // findUndeliveredRootJobIds already excluded delivered/claimed roots from
+    // the candidate set above.
     const rootJobRows = await db
       .select({
         id: agentJobs.id,
@@ -134,13 +176,8 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     const rootJob = rootJobRows[0];
     if (!rootJob) continue; // root job doesn't exist (orphaned tasks)
     if (rootJob.completedAt !== null) continue; // already delivered
-    // C-2 (audit#2): defense in depth — a cancelled/completed/failed root
-    // never gets completedAt set by cancelJobAction (web actions.ts), so the
-    // completedAt-only guard above lets it through. findUndeliveredRootJobIds
-    // already excludes these statuses at the scan level, but re-check here in
-    // case this row's status changed between the scan and this load (e.g. a
-    // user cancel racing the cron tick): never resurrect a terminal root.
-    if (TERMINAL_ROOT_STATUSES.includes(rootJob.status ?? '')) continue;
+    // C-2 (audit#2): defense in depth — never resurrect a terminal root.
+    if (TERMINAL_STATUSES.includes(rootJob.status as (typeof TERMINAL_STATUSES)[number])) continue;
 
     // Check if all tasks for this root are in terminal states
     const complete = await checkRootJobComplete(rootJobId as JobId, db);
@@ -160,59 +197,114 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     const compiledResult = compileTaskResults(taskRows);
 
     // Derive the root's status from what the tasks actually did — a root is
-    // only honestly 'completed' when at least one task succeeded. Before this
-    // fix the UPDATE below always forced 'completed', even when every task in
-    // the fan-out had failed (audit finding #8, 2026-07): the body correctly
-    // tagged `[blocked]`/`[cancelled]` sections, but the STATUS lied, and any
-    // logic/dashboard filtering on status='completed' was fooled.
-    //
-    // agent_tasks has no 'failed' status — the check constraint is
-    // todo/in_progress/done/cancelled/blocked (packages/db/src/schema/tasks.ts)
-    // — so 'blocked' is the failure-equivalent terminal state and 'cancelled'
-    // is the voluntary-abort one. agent_jobs.status (packages/db/src/schema/
-    // jobs.ts) has no "partial" value between 'completed' and 'failed', so a
-    // MIX of done + failed/cancelled tasks is still reported 'completed': the
-    // compiled result body already tags each non-done section, which is the
-    // honest signal for a partial run. Priority when nothing succeeded:
-    //   1. any 'done'                          → 'completed' (partial run)
-    //   2. no 'done', at least one 'blocked'    → 'failed'    (something broke)
-    //   3. no 'done', no 'blocked' (all 'cancelled') → 'cancelled' (nothing broke,
-    //      the fan-out was voluntarily aborted — reporting 'failed' here would
-    //      itself be dishonest, per invariant #4)
+    // only honestly 'completed' when at least one task succeeded (audit
+    // finding #8, 2026-07). agent_tasks has no 'failed' status — 'blocked' is
+    // the failure-equivalent terminal state and 'cancelled' the voluntary
+    // abort. A MIX of done + failed/cancelled tasks is still 'completed': the
+    // compiled body tags each non-done section. Priority when nothing
+    // succeeded: any 'blocked' → 'failed'; all 'cancelled' → 'cancelled'
+    // (reporting 'failed' there would itself be dishonest, invariant #4).
     const doneCount = taskRows.filter((t) => t.status === 'done').length;
     const blockedCount = taskRows.filter((t) => t.status === 'blocked').length;
     const rootStatus: 'completed' | 'failed' | 'cancelled' =
       doneCount > 0 ? 'completed' : blockedCount > 0 ? 'failed' : 'cancelled';
     const rootError = rootStatus === 'failed' ? `all_tasks_failed (${taskRows.length})` : null;
 
-    // Atomic claim: only deliver if root job completedAt is still NULL AND
-    // the root hasn't been raced into a terminal status (cancelled by the
-    // user, or completed/failed by another tick) since we loaded it above —
-    // C-2 (audit#2): without the status guard, a concurrent cancel landing
-    // between the load and this UPDATE would still get overwritten back to
-    // 'completed'. This prevents double-processing AND resurrection under
-    // concurrent ticks (invariant from spec).
+    // ── 1. Réclamation : le marqueur, PAS le statut ────────────────────────
+    // Only one tick wins; a concurrent cancel landing between the load and
+    // this UPDATE is refused by the status gate (C-2) — never resurrect.
+    const now = new Date();
     const claimed = await db
       .update(agentJobs)
-      .set({
-        status: rootStatus,
-        result: compiledResult,
-        error: rootError,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
+      .set({ finalizingAt: now, updatedAt: now })
       .where(
         and(
           eq(agentJobs.id, rootJobId),
-          isNull(agentJobs.completedAt), // gate: only one tick wins
-          notInArray(agentJobs.status, TERMINAL_ROOT_STATUSES), // gate: never resurrect a cancelled/terminal root
+          isNull(agentJobs.completedAt),
+          isNull(agentJobs.finalizingAt),
+          notInArray(agentJobs.status, TERMINAL_STATUSES),
         ),
       )
       .returning({ id: agentJobs.id });
 
     if (claimed.length === 0) {
-      // Another concurrent tick won the race, OR the root was cancelled
-      // between our load and this UPDATE (C-2 guard) — skip delivery either way
+      // Another concurrent tick won the claim, OR the root was cancelled
+      // between our load and this UPDATE (C-2 guard) — skip either way.
+      continue;
+    }
+
+    // ── 2. Hors transaction : la cible et le payload FIGÉ ─────────────────
+    // A root job carries a chatId ONLY when there was delivery intent (a
+    // Telegram-originated request, or a cron with notify_on_success).
+    // Invariant (Quentin): a request that started in a channel ALWAYS returns
+    // to it with a SHORT summary — owned by the root, never a dedicated task.
+    // The summary is synthesized ONCE, here, and frozen in the outbox row: a
+    // retried send never re-runs the LLM. The allowlist and the credentials
+    // are re-checked at the drain, never here.
+    let delivery: { channel: ChannelKind; chatId: string; payload: string } | undefined;
+    if (rootStatus === 'completed' && rootJob.chatId && compiledResult.trim()) {
+      const target = await resolveDeliveryTarget(db, {
+        chatId: rootJob.chatId,
+        agentId: rootJob.agentId,
+        channel: rootJob.channel,
+        triggerContext: rootJob.triggerContext,
+      });
+      if (isDeliveryRefusal(target)) {
+        console.error(
+          `[deliverCompletedRoots] ${DELIVERY_TARGET_REFUSED} job=${rootJobId} reason=${target.refused}`,
+        );
+      } else if (rootJob.agentId) {
+        const payload = await synthesizePayload(
+          db,
+          rootJob.agentId,
+          rootJob.task ?? '',
+          compiledResult,
+        );
+        delivery = { channel: target.channel, chatId: target.chatId, payload };
+      }
+    }
+
+    // ── 3. La décision terminale — lève le marqueur ───────────────────────
+    let landed: boolean;
+    if (rootStatus === 'completed') {
+      const outcome = await finalizeJobSuccess(
+        db,
+        {
+          jobId: rootJobId,
+          result: compiledResult,
+          toolsUsed: [],
+          delivery,
+          // Le marqueur posé à l'étape 1 est le NÔTRE : la primitive l'accepte.
+          claim: { finalizingAt: now },
+        },
+        {
+          prepareDelivery: async (tx, input) => {
+            await prepareDelivery(tx, {
+              jobId: input.jobId,
+              channel: input.channel as ChannelKind,
+              chatId: input.chatId,
+              payload: input.payload,
+            });
+          },
+        },
+      );
+      landed = outcome.kind !== 'already_terminal';
+    } else if (rootStatus === 'failed') {
+      landed = await failJob(
+        db,
+        rootJobId,
+        rootError ?? 'all_tasks_failed',
+        undefined,
+        undefined,
+        compiledResult,
+      );
+    } else {
+      landed = await cancelRootJob(db, rootJobId, compiledResult);
+    }
+    if (!landed) {
+      // The root became terminal under our marker (a user cancel racing the
+      // tick). Nothing to deliver, nothing to resume — and the marker is gone
+      // with the terminal write.
       continue;
     }
 
@@ -235,91 +327,21 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
             : { status: 'cancelled' };
       await maybeResumeParent(rootJobId as JobId, resumeOutcome, { db });
     } catch (err) {
-      // This root was already delivered above (claim succeeded) — only the
-      // parent resume failed (e.g. malformed pending_delegation). Don't let
-      // that abort the whole tick: the other roots still need delivering.
+      // This root was already finalized above — only the parent resume failed
+      // (e.g. malformed pending_delegation). Don't let that abort the whole
+      // tick: the other roots still need finalizing.
       console.warn(`[deliverCompletedRoots] maybeResumeParent failed for ${rootJobId}:`, err);
     }
 
-    // Actually DELIVER to the originating channel. A root job carries a chatId
-    // ONLY when there was delivery intent (a Telegram-originated request, or a
-    // cron with notify_on_success). Invariant (Quentin): a request that started
-    // in a channel ALWAYS returns to it with a SHORT summary — owned by the root,
-    // never a dedicated task. So we synthesize a concise summary of the run via
-    // the root agent's own model and send THAT (not the raw 15K concatenation,
-    // which Telegram rejects as "message too long"). No chatId = no send
-    // (preserves the anti-phantom-send guarantee).
-    //
-    // M4 (audit#2 defense-in-depth): every writer of rootJob.chatId today is
-    // owner-gated (cron → resolveOwnerChatId, dashboard → resolveOwnerChatId,
-    // inbound → authorized origin chat), so this isn't currently exploitable —
-    // but this is the send site, and any future chatId writer that isn't
-    // owner-gated would otherwise become an unsolicited-delivery hole right
-    // here. isConversationAllowed re-checks the chatId against the job's
-    // transport channel's allowlist (active, scoped to this agent or its
-    // entity) immediately before send.
-    //
-    // S3 (multichannel plan): dispatches via the ChannelAdapter for
-    // `rootJob.channel` when it's already a registered transport, else
-    // defaults to this agent's own active channel (resolveTransportChannel +
-    // listActiveChannelsForAgent — the same default rule delivery-guard.ts's
-    // resolveChannelForJob uses), falling back to 'telegram' only when the
-    // agent has no active channel at all.
-    if (rootJob.chatId && rootJob.agentId && compiledResult.trim()) {
-      try {
-        const activeChannels = await listActiveChannelsForAgent(db, rootJob.agentId);
-        // B1/B2 (notify-channel-choice): a cron or webhook root whose trigger
-        // chose an EXPLICIT notify channel carries it in triggerContext
-        // (run-schedules.ts / routes/webhook.ts) — it wins over
-        // resolveTransportChannel's priority-order default so this send goes
-        // to the SAME channel rootJob.chatId was resolved against, agreeing
-        // with execute.ts's own ToolContext override for the same job.
-        // Undefined for every other root, and for a cron/webhook root left on
-        // auto.
-        const triggerContext = rootJob.triggerContext as JobTriggerContext | null;
-        const notifyChannelOverride: ChannelKind | undefined =
-          triggerContext?.type === 'cron' || triggerContext?.type === 'webhook'
-            ? (triggerContext.notifyChannel ?? undefined)
-            : undefined;
-        const channel =
-          notifyChannelOverride ?? resolveTransportChannel(rootJob.channel, activeChannels);
-        const allowed =
-          rootJob.entityId !== null &&
-          (await isConversationAllowed(db, {
-            entityId: rootJob.entityId,
-            agentId: rootJob.agentId,
-            channel,
-            conversationId: rootJob.chatId,
-          }));
-        if (!allowed) {
-          console.error(
-            `[deliverCompletedRoots] SECURITY: refusing to deliver root job ${rootJobId} ` +
-              `(agent ${rootJob.agentId}, entity ${rootJob.entityId ?? 'none'}) — chatId ` +
-              `${rootJob.chatId} is not an active row in telegram_allowed_chats`,
-          );
-        } else {
-          const [ag] = await db
-            .select({
-              llmKeyId: agents.llmKeyId,
-              fallbackChain: agents.fallbackChain,
-              model: agents.model,
-              reasoningEffort: agents.reasoningEffort,
-            })
-            .from(agents)
-            .where(eq(agents.id, rootJob.agentId))
-            .limit(1);
-          const creds = await getBindingCredentials(db, rootJob.agentId, channel);
-          if (ag && creds) {
-            const summary = await synthesizeForChannel(db, ag, rootJob.task ?? '', compiledResult);
-            const adapter = getAdapter(channel);
-            await adapter.sendText(creds, rootJob.chatId, summary);
-          }
-        }
-      } catch (err) {
-        // Delivery failure must not break completion — the result is persisted on
-        // the root job either way; log and move on.
-        console.error(`[deliverCompletedRoots] telegram send failed for ${rootJobId}:`, err);
-      }
+    // ── 4. Le drain immédiat — l'envoi, hors de toute transaction ─────────
+    // A failure here does not undo a committed root: it is said, and the
+    // `prepared` row is picked up by the tick's second population.
+    try {
+      await drainDeliveries(db, { jobId: rootJobId });
+    } catch (err) {
+      console.error(
+        `[deliverCompletedRoots] ${DELIVERY_DRAIN_FAILED} job=${rootJobId} error=${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     delivered++;
@@ -328,15 +350,47 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
   return delivered;
 }
 
+// ─── synthesizePayload ────────────────────────────────────────────────────────
+
+/**
+ * Le texte qui part au canal : la synthèse courte quand le modèle du root la
+ * rend, sinon le résultat compilé — et dans ce cas le repli est DIT
+ * (`DELIVERY_SYNTHESIS_FAILED`), jamais silencieux.
+ */
+async function synthesizePayload(
+  db: AnyDrizzleDb,
+  agentId: string,
+  originalRequest: string,
+  compiledResult: string,
+): Promise<string> {
+  const [ag] = await db
+    .select({
+      llmKeyId: agents.llmKeyId,
+      fallbackChain: agents.fallbackChain,
+      model: agents.model,
+      reasoningEffort: agents.reasoningEffort,
+    })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!ag) {
+    console.error(
+      `[deliverCompletedRoots] ${DELIVERY_SYNTHESIS_FAILED} agent=${agentId} cause=no_agent`,
+    );
+    return compiledResult;
+  }
+  return synthesizeForChannel(db, ag, originalRequest, compiledResult);
+}
+
 // ─── synthesizeForChannel ─────────────────────────────────────────────────────
 
 /**
  * Produce the SHORT channel return for a finished run. Runs one LLM call with
  * the root agent's own model to summarize the compiled task results into a few
  * lines suitable for a chat message — never the raw multi-thousand-char dump.
- * Falls back to the compiled text if no LLM is available or the call fails
- * (sendTelegramMessage will chunk it so it still gets through). This is the
- * root's channel return — by design it is NOT a delegated task.
+ * Falls back to the compiled text if no LLM is available or the call fails,
+ * and SAYS so by code (the adapter will chunk it so it still gets through).
+ * This is the root's channel return — by design it is NOT a delegated task.
  */
 async function synthesizeForChannel(
   db: AnyDrizzleDb,
@@ -364,7 +418,10 @@ async function synthesizeForChannel(
       // étape D: the delivery-synthesis call was an invisible LLM consumer.
       makeLlmCallSink(db, { source: 'cron' }),
     );
-    if (!resolved.ok) return compiledResult;
+    if (!resolved.ok) {
+      console.error(`[deliverCompletedRoots] ${DELIVERY_SYNTHESIS_FAILED} cause=llm_unavailable`);
+      return compiledResult;
+    }
     const result = await resolved.client.generateText({
       system:
         'You write the SHORT chat reply that closes out a multi-agent run for the user. ' +
@@ -375,9 +432,15 @@ async function synthesizeForChannel(
       prompt: `The user asked:\n${originalRequest}\n\nCompiled results from the run:\n${compiledResult}`,
     });
     const text = (result.text ?? '').trim();
-    return text.length > 0 ? text : compiledResult;
+    if (text.length === 0) {
+      console.error(`[deliverCompletedRoots] ${DELIVERY_SYNTHESIS_FAILED} cause=empty_text`);
+      return compiledResult;
+    }
+    return text;
   } catch (err) {
-    console.error('[deliverCompletedRoots] synthesis failed, sending compiled result:', err);
+    console.error(
+      `[deliverCompletedRoots] ${DELIVERY_SYNTHESIS_FAILED} cause=${err instanceof Error ? err.message : String(err)}`,
+    );
     return compiledResult;
   }
 }

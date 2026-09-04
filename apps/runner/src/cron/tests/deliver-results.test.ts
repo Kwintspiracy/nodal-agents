@@ -7,7 +7,7 @@
 //   - compiled result includes all task titles + results
 //   - regression: inject_delegation.wrong_status — all tasks found, not just first
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
@@ -15,10 +15,14 @@ import {
   agentJobs,
   agentTasks,
   agents,
+  jobDeliveries,
   telegramAllowedChats,
   channelBindings,
   channelAllowedConversations,
 } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type * as DeliveryModule from '@nodal-agents/delivery';
+import type * as OutboxModule from '../../delivery/outbox.ts';
 
 // Mock the channel send + the LLM resolver so we can assert WHAT gets sent to
 // the channel (the short synthesis) without network/LLM. Hoisted by vitest.
@@ -27,37 +31,50 @@ import {
 // existing assertions (on chatId/text) keep working unchanged.
 type SendOpts = { chatId: string; text: string; botToken: string };
 const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
-const CHANNEL_PRIORITY = ['telegram', 'discord', 'slack', 'whatsapp'] as const;
-const TRANSPORT_CHANNELS = new Set(CHANNEL_PRIORITY);
-vi.mock('@nodal-agents/delivery', () => ({
-  sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
-  resolveTransportChannel: (channel: string | null | undefined, activeChannels?: string[]) => {
-    if (channel && TRANSPORT_CHANNELS.has(channel as (typeof CHANNEL_PRIORITY)[number])) {
-      return channel;
-    }
-    if (activeChannels && activeChannels.length > 0) {
-      const active = new Set(activeChannels);
-      const preferred = CHANNEL_PRIORITY.find((c) => active.has(c));
-      if (preferred) return preferred;
-    }
-    return 'telegram';
-  },
-  // No test here exercises a non-telegram-bound agent — the agent's own
-  // active channels are irrelevant to these assertions, so an empty list
-  // preserves the pre-existing 'telegram' default.
-  listActiveChannelsForAgent: async (..._args: unknown[]) => [] as string[],
-  getAdapter: (channel: string) => ({
-    channel,
-    sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
-      sendTelegramMessageMock({ chatId: conversationId, text, botToken: creds.botToken }),
-  }),
-}));
+// Mock PARTIEL (V&C T12) : l'outbox a besoin du vrai `DeliveryError` et du vrai
+// `listActiveChannelsForAgent` (lu en base : un agent avec un token Telegram a
+// Telegram actif) — la résolution de cible refuse `channel_inactive` sans
+// canal actif, là où l'ancien code retombait sur 'telegram' en silence.
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
+  const actual = await importOriginal<typeof DeliveryModule>();
+  return {
+    ...actual,
+    sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
+    getAdapter: (channel: string) => ({
+      channel,
+      // Le contrat d'un adaptateur rend un messageId STRING (Telegram : `String(message_id)`).
+      sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
+        sendTelegramMessageMock({ chatId: conversationId, text, botToken: creds.botToken }).then(
+          (r) => ({ messageId: String(r.messageId) }),
+        ),
+    }),
+  };
+});
 const resolveAgentLlmClientMock = vi.fn((..._args: unknown[]): unknown => undefined);
 vi.mock('../../job/resolve-llm.ts', () => ({
   resolveAgentLlmClient: (...args: unknown[]) => resolveAgentLlmClientMock(...args),
 }));
+// Le drain immédiat, remplaçable par test (par défaut le vrai) — pour simuler
+// un processus mort entre le commit terminal et l'envoi.
+type DrainFn = typeof OutboxModule.drainDeliveries;
+const drainImpl =
+  vi.fn<(db: AnyDrizzleDb, opts: Parameters<DrainFn>[1], real: DrainFn) => ReturnType<DrainFn>>();
+vi.mock('../../delivery/outbox.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof OutboxModule>();
+  return {
+    ...actual,
+    drainDeliveries: (db: AnyDrizzleDb, opts: Parameters<typeof actual.drainDeliveries>[1]) =>
+      drainImpl(db, opts, actual.drainDeliveries),
+  };
+});
 
-import { deliverCompletedRoots, findUndeliveredRootJobIds } from '../deliver-results.ts';
+import {
+  deliverCompletedRoots,
+  findUndeliveredRootJobIds,
+  releaseStaleFinalizingMarkers,
+  FINALIZING_STALE_MS,
+} from '../deliver-results.ts';
+import { drainDeliveries as realDrain } from '../../delivery/outbox.ts';
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +86,37 @@ beforeAll(async () => {
   db = result.db;
   seed = await seedMinimal(db);
 });
+
+beforeEach(() => {
+  drainImpl.mockReset();
+  drainImpl.mockImplementation((d, opts, real) => real(d, opts));
+});
+
+const deliveriesOf = (jobId: string) =>
+  db
+    .select({
+      outcome: jobDeliveries.outcome,
+      receipt: jobDeliveries.receipt,
+      payload: jobDeliveries.payload,
+      attempts: jobDeliveries.attempts,
+    })
+    .from(jobDeliveries)
+    .where(eq(jobDeliveries.jobId, jobId));
+
+const rootRow = async (jobId: string) => {
+  const [row] = await db
+    .select({
+      status: agentJobs.status,
+      completedAt: agentJobs.completedAt,
+      finalizingAt: agentJobs.finalizingAt,
+      result: agentJobs.result,
+      error: agentJobs.error,
+    })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId));
+  if (!row) throw new Error('root not found');
+  return row;
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -419,9 +467,16 @@ describe('deliverCompletedRoots', () => {
     expect(updated[0]?.status).toBe('completed');
     expect(updated[0]?.completedAt).not.toBeNull();
 
-    // A loud security log fires, naming the refused chatId and the job.
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('SECURITY'));
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('unapproved-chat-999'));
+    // V&C T12 : le refus vit au DRAIN, dans l'outbox — la ligne est `rejected`
+    // avec sa raison, et le rejet est dit par un code qui nomme le job (le
+    // propriétaire est alerté ; sans chat owner ici, le code le dit aussi).
+    const rows = await deliveriesOf(rootJob.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      outcome: 'rejected',
+      receipt: { messageId: null, reason: 'allowlist_refused' },
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('allowlist_refused'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(rootJob.id));
 
     consoleErrorSpy.mockRestore();
@@ -566,6 +621,169 @@ describe('deliverCompletedRoots', () => {
     await db
       .delete(channelAllowedConversations)
       .where(eq(channelAllowedConversations.agentId, seed.agentId));
+  });
+
+  // ─── V&C T12 : marqueur, payload figé, primitive, outbox ──────────────────
+
+  it('T12 root done ⇒ completed via la primitive, ligne job_deliveries confirmed avec reçu, sendText UNE fois, finalizing_at NULL', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'bot:TESTTOKEN', model: 'x/y' })
+      .where(eq(agents.id, seed.agentId));
+    resolveAgentLlmClientMock.mockResolvedValueOnce({
+      ok: true,
+      client: { generateText: vi.fn(async () => ({ text: 'Résumé court' })) },
+    });
+    sendTelegramMessageMock.mockClear();
+    await allowChat('t12-done');
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing', channel: 'telegram', chatId: 't12-done' })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'résultat A', 'A');
+
+    const count = await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    expect(count).toBe(1);
+    const root = await rootRow(rootJob.id);
+    expect(root.status).toBe('completed');
+    expect(root.completedAt).not.toBeNull();
+    expect(root.finalizingAt).toBeNull();
+    expect(root.result).toContain('résultat A');
+    const rows = await deliveriesOf(rootJob.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      outcome: 'confirmed',
+      receipt: { messageId: '1' },
+      payload: 'Résumé court',
+      attempts: 1,
+    });
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendTelegramMessageMock.mock.calls[0]![0]).toMatchObject({
+      chatId: 't12-done',
+      text: 'Résumé court',
+    });
+  });
+
+  it('T12 root blocked ⇒ failed via failJob, résultat compilé, zéro ligne job_deliveries, marqueur levé', async () => {
+    sendTelegramMessageMock.mockClear();
+    await allowChat('t12-blocked');
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing', channel: 'telegram', chatId: 't12-blocked' })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'blocked', 'ça a cassé', 'B');
+
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    const root = await rootRow(rootJob.id);
+    expect(root.status).toBe('failed');
+    expect(root.error).toBe('all_tasks_failed (1)');
+    expect(root.completedAt).not.toBeNull();
+    expect(root.finalizingAt).toBeNull();
+    expect(root.result).toContain('ça a cassé');
+    expect(await deliveriesOf(rootJob.id)).toEqual([]);
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('T12 root cancelled ⇒ cancelled + completedAt, marqueur levé', async () => {
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing' })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'cancelled', '', 'C');
+
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    const root = await rootRow(rootJob.id);
+    expect(root.status).toBe('cancelled');
+    expect(root.completedAt).not.toBeNull();
+    expect(root.finalizingAt).toBeNull();
+    expect(root.result).toContain('[cancelled]');
+  });
+
+  it('T12 marqueur périmé relâché : finalizing_at vieux de 11 min sans completedAt ⇒ retraité et finalisé', async () => {
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({
+        completedAt: null,
+        status: 'processing',
+        finalizingAt: new Date(Date.now() - FINALIZING_STALE_MS - 60_000),
+      })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'après crash', 'D');
+
+    // Marqué : hors du scan tant qu'il n'est pas relâché.
+    const released = await releaseStaleFinalizingMarkers(db as RunnerDeps['db']);
+    expect(released).toBeGreaterThanOrEqual(1);
+
+    const count = await deliverCompletedRoots(db as RunnerDeps['db']);
+    expect(count).toBeGreaterThanOrEqual(1);
+    const root = await rootRow(rootJob.id);
+    expect(root.status).toBe('completed');
+    expect(root.finalizingAt).toBeNull();
+  });
+
+  it('T12 marqueur FRAIS ⇒ le root est réclamé par un autre tick, pas retraité', async () => {
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing', finalizingAt: new Date() })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'en cours ailleurs', 'E');
+
+    expect(await findUndeliveredRootJobIds(db as RunnerDeps['db'])).not.toContain(rootJob.id);
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+    const root = await rootRow(rootJob.id);
+    expect(root.status).toBe('processing');
+    expect(root.completedAt).toBeNull();
+  });
+
+  it('T12 payload figé + crash après commit : la synthèse tourne UNE fois, le drain suivant livre UNE fois', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'bot:TESTTOKEN', model: 'x/y' })
+      .where(eq(agents.id, seed.agentId));
+    const generateText = vi.fn(async () => ({ text: 'Synthèse unique' }));
+    resolveAgentLlmClientMock.mockReset();
+    resolveAgentLlmClientMock.mockResolvedValue({ ok: true, client: { generateText } });
+    sendTelegramMessageMock.mockClear();
+    await allowChat('t12-crash');
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing', channel: 'telegram', chatId: 't12-crash' })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'résultat', 'F');
+    // Le processus meurt entre le commit terminal et le drain immédiat.
+    drainImpl.mockImplementationOnce(() => {
+      throw new Error('processus mort');
+    });
+
+    const count = await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    expect(count).toBe(1);
+    expect((await rootRow(rootJob.id)).status).toBe('completed');
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    const before = await deliveriesOf(rootJob.id);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ outcome: 'prepared', payload: 'Synthèse unique' });
+    expect(generateText).toHaveBeenCalledTimes(1);
+
+    // Le tick suivant (seconde population) : livre depuis la ligne, sans LLM.
+    const drained = await realDrain(db as unknown as AnyDrizzleDb, {});
+    expect(drained.sent).toBe(1);
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendTelegramMessageMock.mock.calls[0]![0]).toMatchObject({ text: 'Synthèse unique' });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    const after = await deliveriesOf(rootJob.id);
+    expect(after[0]).toMatchObject({ outcome: 'confirmed', attempts: 1 });
+    resolveAgentLlmClientMock.mockReset();
+    resolveAgentLlmClientMock.mockImplementation((..._args: unknown[]): unknown => undefined);
   });
 
   it('idempotency: two concurrent ticks deliver each root exactly once', async () => {
