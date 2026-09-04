@@ -43,9 +43,11 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
 import Select from '@/components/ui/Select';
 import TextInput from '@/components/ui/TextInput';
+import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { projectKey } from '@nodal-agents/shared';
 import { relativeTime } from '@/lib/format-time';
 import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
+import ProjectVerificationPanel, { type ProjectVerification } from './ProjectVerificationPanel.tsx';
 
 const POLL_INTERVAL = 5000;
 
@@ -86,6 +88,25 @@ type Project = {
   latestStage: string;
 };
 
+/**
+ * L'état de vérification par projet (T22), indexé comme `hidden` et `names` :
+ * par `projectKey`, jamais par égalité de chemin — sur Windows le même dossier
+ * remonte sous des casses différentes.
+ */
+function verificationByKey(prefs: CodeProjectPrefs[]): Map<string, ProjectVerification> {
+  return new Map(
+    prefs.map((p) => [
+      projectKey(p.projectPath),
+      {
+        verifyCommands: p.verifyCommands,
+        verifyApprovedAt: p.verifyApprovedAt,
+        verifyManifestHash: p.verifyManifestHash,
+        verifyStatus: p.verifyStatus,
+      },
+    ]),
+  );
+}
+
 function groupProjects(rows: CodingProcessRow[], names: Map<string, string>): Project[] {
   const byKey = new Map<string, Project>();
   // rows arrivent triées par activité décroissante — la première session d'un
@@ -119,6 +140,7 @@ function groupProjects(rows: CodingProcessRow[], names: Map<string, string>): Pr
 export default function CodeProcessesTable({
   initialRows,
   initialPrefs,
+  isOwner,
   workspaceCount,
   hiddenWorkspaceCount,
   error,
@@ -126,6 +148,13 @@ export default function CodeProcessesTable({
   initialRows: CodingProcessRow[];
   /** Les projets renommés et/ou masqués. Vide sur un espace qui n'a rien rangé. */
   initialPrefs: CodeProjectPrefs[];
+  /**
+   * Le propriétaire de l'espace, calculé AU SERVEUR (getCodeTabOwnerAction) —
+   * le panneau de preuve n'est éditable que pour lui. Jamais déduit ici : un
+   * client qui déciderait lui-même afficherait des champs actifs sur un espace
+   * qu'il ne peut pas écrire.
+   */
+  isOwner: boolean;
   /**
    * Combien de dossiers sont attaches aux agents de cet espace. A zero, la
    * liste est vide PAR CONSTRUCTION et non faute d'activite : les agents
@@ -149,6 +178,9 @@ export default function CodeProcessesTable({
           .filter((p) => p.displayName !== null && p.displayName.trim() !== '')
           .map((p) => [projectKey(p.projectPath), p.displayName!.trim()]),
       ),
+  );
+  const [verification, setVerification] = useState<Map<string, ProjectVerification>>(() =>
+    verificationByKey(initialPrefs),
   );
   const [selected, setSelected] = useState<string | null>(null);
   // Session ouverte dans le poste de travail projet ; null = la plus récente.
@@ -345,6 +377,19 @@ export default function CodeProcessesTable({
           </span>
         </div>
 
+        {/* Les commandes de preuve du projet (T22). AUCUN panneau pour le
+            tiroir « Other sessions » : il n'a pas de chemin, donc pas de ligne
+            code_projects à écrire — c'est la même garde que Renommer et
+            Masquer, posée ici plutôt que dans le panneau. */}
+        {openProject.path && (
+          <ProjectVerificationPanel
+            projectPath={openProject.path}
+            verification={verification.get(openProject.key) ?? null}
+            isOwner={isOwner}
+            onPrefsReloaded={(prefs) => setVerification(verificationByKey(prefs))}
+          />
+        )}
+
         {/* Sélecteur de session — le <select> natif DS, libellés COURTS et
             une seule ligne (décision Quentin 25/08, option a : le contenu
             riche appartient à l'écran en dessous, pas au sélecteur). */}
@@ -396,6 +441,7 @@ export default function CodeProcessesTable({
           <ProjectCard
             key={p.key}
             project={p}
+            needsApproval={verification.get(p.key)?.verifyStatus === 'pending_approval'}
             renamedValue={renaming?.key === p.key ? renaming.value : null}
             onRenameChange={(v) => setRenaming({ key: p.key, value: v })}
             onRenameStart={
@@ -430,6 +476,7 @@ export default function CodeProcessesTable({
                 key={p.key}
                 project={p}
                 dimmed
+                needsApproval={verification.get(p.key)?.verifyStatus === 'pending_approval'}
                 onOpen={() => openProjectView(p.key)}
                 onUnhide={() => toggleHidden(p, false)}
               />
@@ -443,6 +490,7 @@ export default function CodeProcessesTable({
 function ProjectCard({
   project,
   dimmed = false,
+  needsApproval = false,
   renamedValue = null,
   onOpen,
   onHide,
@@ -454,6 +502,12 @@ function ProjectCard({
 }: {
   project: Project;
   dimmed?: boolean;
+  /**
+   * Des commandes de preuve attendent l'approbation du propriétaire (T22).
+   * Seul CET état est marqué ici : badger « Not configured » sur tous les
+   * projets au jour 1 ferait du bruit sur toute la page.
+   */
+  needsApproval?: boolean;
   /** Non-null pendant le renommage : la saisie en cours. */
   renamedValue?: string | null;
   onOpen: () => void;
@@ -508,6 +562,7 @@ function ProjectCard({
                 variant={stageVariant(project.latestStage)}
                 label={stageLabel(project.latestStage)}
               />
+              {needsApproval && <MonoMicroTag tone="warn">Needs approval</MonoMicroTag>}
               {live && <span className="animate-pulse text-body-12 text-ink-4">Live…</span>}
             </span>
             {project.path && (

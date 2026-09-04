@@ -36,6 +36,25 @@ vi.mock('next/headers', () => ({
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 
+/**
+ * AUTH_MODE est figé au chargement d'`env.ts` (un `envSchema.parse` de
+ * `process.env`), donc inatteignable une fois `actions.ts` importé. Ce proxy
+ * rend la SEULE clé qui compte ici lisible à chaud : `isWorkspaceOwner`
+ * court-circuite en local-trust (tout le monde est propriétaire), et sans ce
+ * levier le cas « tiers ⇒ isOwner false » ne serait pas testable.
+ */
+const authState = vi.hoisted(() => ({ mode: 'local-trust' as 'local-trust' | 'local-auth' }));
+
+vi.mock('../env.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../env.ts')>();
+  return {
+    ...actual,
+    env: new Proxy(actual.env, {
+      get: (target, prop) => (prop === 'AUTH_MODE' ? authState.mode : Reflect.get(target, prop)),
+    }),
+  };
+});
+
 vi.mock('@nodal-agents/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/auth')>();
   return {
@@ -286,6 +305,76 @@ describe('listCodeProjectPrefsAction — statut dérivé au serveur', () => {
     }
   });
 
+  it('rend le hash COURANT comme jeton d’approbation, et null sans commandes', async () => {
+    await reset();
+    const { setCodeProjectVerifyCommandsAction, listCodeProjectPrefsAction } = await actions();
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: 'D:/Dev/Nothing',
+      projectKey: projectKey('D:/Dev/Nothing'),
+    });
+    await setCodeProjectVerifyCommandsAction({ projectPath: PATH, commands: CMDS });
+
+    const list = await listCodeProjectPrefsAction();
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+
+    // Recalculé ICI depuis les primitives partagées : le test ne recopie pas
+    // la valeur produite par l'action, il la reconstruit.
+    const expected = hashVerificationManifest(
+      codeProjectManifest({ projectPath: PATH, verifyCommands: CMDS }),
+    );
+    const configured = list.data.find((p) => p.projectPath === PATH);
+    expect(configured?.verifyManifestHash).toBe(expected);
+    // Pas encore approuvé : le hash courant existe, l'approuvé non.
+    expect(configured?.verifyApprovedManifestHash).toBeNull();
+
+    expect(
+      list.data.find((p) => p.projectPath === 'D:/Dev/Nothing')?.verifyManifestHash,
+    ).toBeNull();
+  });
+
+  it('le jeton rendu est celui qu’accepte l’approbation, et il suit une édition', async () => {
+    await reset();
+    const {
+      setCodeProjectVerifyCommandsAction,
+      approveCodeProjectVerifyManifestAction,
+      listCodeProjectPrefsAction,
+    } = await actions();
+    await setCodeProjectVerifyCommandsAction({ projectPath: PATH, commands: CMDS });
+
+    const first = await listCodeProjectPrefsAction();
+    const token1 = first.ok
+      ? (first.data.find((p) => p.projectPath === PATH)?.verifyManifestHash ?? null)
+      : null;
+    expect(token1).not.toBeNull();
+    const approved = await approveCodeProjectVerifyManifestAction({
+      projectPath: PATH,
+      manifestHash: token1!,
+    });
+    expect(approved.ok).toBe(true);
+    expect((await row())?.verifyApprovedManifestHash).toBe(token1);
+
+    // Éditer change le manifeste : le jeton rendu change AVEC lui, et l'ancien
+    // ne vaut plus rien (c'est ce qui rend l'approbation non rejouable).
+    await setCodeProjectVerifyCommandsAction({
+      projectPath: PATH,
+      commands: [{ command: 'pnpm typecheck', timeoutSeconds: 121 }],
+    });
+    const second = await listCodeProjectPrefsAction();
+    const token2 = second.ok
+      ? (second.data.find((p) => p.projectPath === PATH)?.verifyManifestHash ?? null)
+      : null;
+    expect(token2).not.toBe(token1);
+    const stale = await approveCodeProjectVerifyManifestAction({
+      projectPath: PATH,
+      manifestHash: token1!,
+    });
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.code).toBe('conflict');
+    expect((await row())?.verifyApprovedManifestHash).toBeNull();
+  });
+
   it('deriveVerifyStatus est pur et cohérent avec le hash partagé', () => {
     const hash = hashVerificationManifest(
       codeProjectManifest({ projectPath: PATH, verifyCommands: CMDS }),
@@ -318,5 +407,48 @@ describe('listCodeProjectPrefsAction — statut dérivé au serveur', () => {
         verifyApprovedManifestHash: hash,
       }),
     ).toBe('approved');
+  });
+});
+
+/**
+ * Le booléen qui décide si le panneau de preuve est éditable (T22). Il vient
+ * du serveur, et il n'a que deux régimes : hors local-trust, l'identité est
+ * comparée au propriétaire de l'espace ; en local-trust il n'y a pas
+ * d'identité à distinguer, tout le monde EST le propriétaire.
+ */
+describe('getCodeTabOwnerAction', () => {
+  it('propriétaire ⇒ true, tiers ⇒ false (hors local-trust)', async () => {
+    const { getCodeTabOwnerAction } = await actions();
+    authState.mode = 'local-auth';
+    try {
+      const mine = await getCodeTabOwnerAction();
+      expect(mine.ok).toBe(true);
+      if (mine.ok) expect(mine.data.isOwner).toBe(true);
+
+      await asNonOwner(async () => {
+        const theirs = await getCodeTabOwnerAction();
+        expect(theirs.ok).toBe(true);
+        if (theirs.ok) expect(theirs.data.isOwner).toBe(false);
+      });
+    } finally {
+      authState.mode = 'local-trust';
+    }
+  });
+
+  it('local-trust : le MÊME prédicat que les écritures — un tiers voit « owner only », comme le serveur le refuserait', async () => {
+    // Pas d'exemption local-trust ici : `assertProjectOwner`, qui garde les
+    // deux écritures, compare l'identité sans exemption. Un panneau qui
+    // montrerait des champs actifs à une session que le serveur refuse
+    // ensuite mentirait — le booléen suit donc exactement l'écriture.
+    const { getCodeTabOwnerAction } = await actions();
+    expect(authState.mode).toBe('local-trust');
+    const mine = await getCodeTabOwnerAction();
+    expect(mine.ok).toBe(true);
+    if (mine.ok) expect(mine.data.isOwner).toBe(true);
+    await asNonOwner(async () => {
+      const res = await getCodeTabOwnerAction();
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.data.isOwner).toBe(false);
+    });
   });
 });

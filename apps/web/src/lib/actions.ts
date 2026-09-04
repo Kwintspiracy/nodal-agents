@@ -12730,6 +12730,16 @@ export interface CodeProjectPrefs {
    * serveur recalcule et compare, jamais il n'écrit cette valeur telle quelle.
    */
   verifyApprovedManifestHash: string | null;
+  /**
+   * Le hash du manifeste COURANT, recalculé au serveur à chaque lecture —
+   * `null` quand le projet n'a pas de commandes. C'est ce que le panneau
+   * renvoie tel quel à `approveCodeProjectVerifyManifestAction` : le client
+   * ne calcule JAMAIS un hash (verification-display.ts en tête), il transporte
+   * celui qu'il a lu. Sans ce champ le panneau n'aurait aucun jeton à
+   * présenter, et l'approbation serait impossible sans dupliquer le calcul au
+   * navigateur.
+   */
+  verifyManifestHash: string | null;
   /** Calculé AU SERVEUR (D9) — le client ne recalcule jamais un hash. */
   verifyStatus: VerifyStatus;
 }
@@ -12751,6 +12761,7 @@ export async function listCodeProjectPrefsAction(): Promise<ActionResult<CodePro
     return ok(
       rows.map((r) => ({
         ...r,
+        verifyManifestHash: currentManifestHash(r),
         verifyStatus: deriveVerifyStatus(r),
       })),
     );
@@ -12987,6 +12998,37 @@ export async function approveCodeProjectVerifyManifestAction(
   } catch (err) {
     console.error('[approveCodeProjectVerifyManifestAction]', err);
     return fail('db_error', 'Failed to approve the proof commands');
+  }
+}
+
+/**
+ * Le booléen qui décide si le panneau de preuve de l'onglet Code est éditable
+ * (T22 / D9). Il vient du SERVEUR et jamais du navigateur : un client qui
+ * déduirait « je suis propriétaire » afficherait des champs actifs sur un
+ * espace qu'il ne peut pas écrire.
+ *
+ * Même fonction que les logs de service (`isWorkspaceOwner`, déclarée plus
+ * bas dans ce module — une déclaration de fonction est hoistée, donc l'appel
+ * précède le texte), ce qui EXEMPTE local-trust : en mode local-trust il n'y a
+ * pas d'identité à distinguer, tout le monde est le propriétaire. Attention,
+ * les deux écritures (`setCodeProjectVerifyCommandsAction`,
+ * `approveCodeProjectVerifyManifestAction`) passent, elles, par
+ * `assertProjectOwner`, qui compare SANS exemption : en local-trust une
+ * session non propriétaire verrait donc des champs actifs et un refus au
+ * moment d'écrire. Le panneau ne ment pas pour autant (il n'affiche rien
+ * avant la réponse du serveur), mais l'écart est voulu ici, pas un oubli.
+ */
+export async function getCodeTabOwnerAction(): Promise<ActionResult<{ isOwner: boolean }>> {
+  try {
+    const session = await getSession();
+    // LE MÊME prédicat que les deux écritures (`assertProjectOwner`) — pas
+    // `isWorkspaceOwner`, qui exempte local-trust : le panneau ne doit jamais
+    // montrer des champs actifs que le serveur refusera d'écrire.
+    const denied = await assertProjectOwner(getDb(), session);
+    return ok({ isOwner: denied === null });
+  } catch (err) {
+    console.error('[getCodeTabOwnerAction]', err);
+    return fail('db_error', 'Failed to read workspace ownership');
   }
 }
 

@@ -2,6 +2,7 @@ import {
   listCodingProcessesAction,
   listCodeProjectPrefsAction,
   getCodeTabStatusAction,
+  getCodeTabOwnerAction,
 } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import { projectKey } from '@nodal-agents/shared';
@@ -11,10 +12,11 @@ import CodeProcessesTable from './CodeProcessesTable.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function CodePage() {
-  const [result, prefsResult, statusResult] = await Promise.all([
+  const [result, prefsResult, statusResult, ownerResult] = await Promise.all([
     listCodingProcessesAction(),
     listCodeProjectPrefsAction(),
     getCodeTabStatusAction(),
+    getCodeTabOwnerAction(),
   ]);
   const rows = result.ok ? result.data : [];
   // Une lecture de préférences en ÉCHEC ne se traduit pas par « rien de rangé »
@@ -46,6 +48,11 @@ export default async function CodePage() {
       <CodeProcessesTable
         initialRows={rows}
         initialPrefs={prefs}
+        // La lecture en échec vaut NON-propriétaire : un panneau de preuve
+        // éditable par défaut sur une lecture ratée offrirait un geste que le
+        // serveur refuserait ensuite. Le refus est le repli sûr, et il est
+        // dit à l'écran (« owner only »).
+        isOwner={ownerResult.ok ? ownerResult.data.isOwner : false}
         // `null` quand la lecture a ÉCHOUÉ — pas 0. Retomber sur 0 ferait
         // affirmer « aucun dossier attaché » à un espace qui en a peut-être
         // plein : un repli silencieux vers un état plausible est exactement ce
