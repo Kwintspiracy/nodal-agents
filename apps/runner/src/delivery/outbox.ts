@@ -95,6 +95,13 @@ function leaseMsFor(sendTimeoutMs: number): number {
 /** Plafond de tentatives, aussi porté par la contrainte CHECK de la table. */
 const MAX_DELIVERY_ATTEMPTS = 3;
 
+/**
+ * Lignes reprises par UN drain de tick. Vingt envois de 240 s au pire font
+ * déjà 80 min ; au-delà, le backlog attend le tick suivant plutôt que de
+ * retenir toutes les autres phases (revue Codex, PR #46).
+ */
+export const DRAIN_BATCH_LIMIT = 20;
+
 // ─── Codes journalisés ────────────────────────────────────────────────────────
 //
 // Des CODES et des données : rien ici n'est destiné à être lu tel quel par un
@@ -102,6 +109,8 @@ const MAX_DELIVERY_ATTEMPTS = 3;
 
 const CODE_ORPHANED = 'DELIVERY_SEND_ORPHANED';
 const CODE_TRANSIENT = 'DELIVERY_SEND_TRANSIENT';
+/** La ligne n'est plus la nôtre au moment d'écrire son issue : un autre runner l'a reprise. */
+const CODE_CLAIM_LOST = 'DELIVERY_CLAIM_LOST';
 const CODE_REJECTED = 'DELIVERY_REJECTED';
 const CODE_NO_OWNER_CHAT = 'DELIVERY_ALERT_NO_OWNER_CHAT';
 const CODE_ALERT_FAILED = 'DELIVERY_ALERT_SEND_FAILED';
@@ -256,32 +265,55 @@ export async function drainDeliveries(
   db: AnyDrizzleDb,
   opts: DrainDeliveriesOptions = {},
 ): Promise<DrainResult> {
-  const now = opts.now ?? new Date();
   const sendTimeoutMs = opts.sendTimeoutMs ?? DELIVERY_SEND_TIMEOUT_MS;
-  const cutoff = new Date(now.getTime() - leaseMsFor(sendTimeoutMs));
   const claimedBy = opts.runnerInstanceId ?? runnerInstanceId;
   const resolveAdapter = opts.adapters ?? getAdapter;
+
+  // L'horloge est relue À CHAQUE LIGNE (revue Codex, PR #46) : les envois sont
+  // séquentiels et durent jusqu'à 240 s chacun — un `now` figé au début du
+  // drain daterait la k-ième réclamation de k × 240 s trop tôt, et un autre
+  // runner la croirait périmée pendant que l'envoi est en cours. L'horloge
+  // injectée des tests reste figée : c'est son rôle.
+  const clock = (): Date => opts.now ?? new Date();
 
   // Le prédicat d'ouverture, écrit UNE fois et réutilisé tel quel par le
   // claim : le SELECT ne fait que borner le balayage, c'est le claim qui
   // décide. Les deux DOIVENT porter la même condition — un claim plus laxiste
   // que le SELECT rendrait `attempts < 3` et le bail décoratifs.
-  const openForClaim = and(
-    lt(jobDeliveries.attempts, MAX_DELIVERY_ATTEMPTS),
-    or(
-      eq(jobDeliveries.outcome, 'prepared'),
-      and(eq(jobDeliveries.outcome, 'attempted'), lt(jobDeliveries.claimedAt, cutoff)),
-    ),
-  );
+  const openForClaim = (at: Date) =>
+    and(
+      lt(jobDeliveries.attempts, MAX_DELIVERY_ATTEMPTS),
+      or(
+        eq(jobDeliveries.outcome, 'prepared'),
+        and(
+          eq(jobDeliveries.outcome, 'attempted'),
+          lt(jobDeliveries.claimedAt, new Date(at.getTime() - leaseMsFor(sendTimeoutMs))),
+        ),
+      ),
+    );
 
-  const candidates = await db
+  // Le drain de reprise (sans jobId) est BORNÉ : un backlog d'adaptateurs
+  // muets ne doit pas retenir un tick 240 s × N ; le reste attend le tick
+  // suivant. Le drain immédiat d'un job n'a pas cette borne — il n'a que les
+  // lignes de ce job.
+  const scanAt = clock();
+  const candidateQuery = db
     .select({ id: jobDeliveries.id })
     .from(jobDeliveries)
-    .where(opts.jobId ? and(eq(jobDeliveries.jobId, opts.jobId), openForClaim) : openForClaim);
+    .where(
+      opts.jobId
+        ? and(eq(jobDeliveries.jobId, opts.jobId), openForClaim(scanAt))
+        : openForClaim(scanAt),
+    )
+    .orderBy(jobDeliveries.createdAt);
+  const candidates = opts.jobId
+    ? await candidateQuery
+    : await candidateQuery.limit(DRAIN_BATCH_LIMIT);
 
   const result: DrainResult = { sent: 0, rejected: 0, skipped: 0 };
 
   for (const candidate of candidates) {
+    const now = clock();
     const claimed = await db
       .update(jobDeliveries)
       .set({
@@ -291,7 +323,7 @@ export async function drainDeliveries(
         attempts: sql`${jobDeliveries.attempts} + 1`,
         updatedAt: now,
       })
-      .where(and(eq(jobDeliveries.id, candidate.id), openForClaim))
+      .where(and(eq(jobDeliveries.id, candidate.id), openForClaim(now)))
       .returning({
         id: jobDeliveries.id,
         jobId: jobDeliveries.jobId,
@@ -311,6 +343,7 @@ export async function drainDeliveries(
 
     const outcome = await attemptOneDelivery(db, row, {
       now,
+      claimedBy,
       sendTimeoutMs,
       resolveAdapter,
     });
@@ -325,10 +358,26 @@ export async function drainDeliveries(
 
 type AttemptOutcome = { kind: 'confirmed' } | { kind: 'rejected' } | { kind: 'retryable' };
 
+/**
+ * Le prédicat « cette ligne est ENCORE la nôtre » : même id, toujours
+ * `attempted`, réclamée par ce runner, au même numéro de tentative. Toute
+ * écriture d'issue (confirmed, rejected) le porte : une tentative ancienne —
+ * reprise par un autre runner après expiration du bail — ne doit jamais
+ * écrire par-dessus la tentative courante (revue Codex, PR #46).
+ */
+function stillOurs(row: ClaimedDelivery, claimedBy: string) {
+  return and(
+    eq(jobDeliveries.id, row.id),
+    eq(jobDeliveries.outcome, 'attempted'),
+    eq(jobDeliveries.claimedBy, claimedBy),
+    eq(jobDeliveries.attempts, row.attempts),
+  );
+}
+
 async function attemptOneDelivery(
   db: AnyDrizzleDb,
   row: ClaimedDelivery,
-  ctx: { now: Date; sendTimeoutMs: number; resolveAdapter: AdapterResolver },
+  ctx: { now: Date; claimedBy: string; sendTimeoutMs: number; resolveAdapter: AdapterResolver },
 ): Promise<AttemptOutcome> {
   // L'agent porte à la fois l'allowlist et les credentials — sans lui, rien
   // n'est vérifiable ni envoyable.
@@ -340,8 +389,7 @@ async function attemptOneDelivery(
   const job = jobRows[0];
 
   if (!job?.agentId) {
-    await rejectDelivery(db, row, 'job_unresolved', ctx.now, ctx.resolveAdapter);
-    return { kind: 'rejected' };
+    return rejectDelivery(db, row, 'job_unresolved', ctx);
   }
   const agentId = job.agentId;
 
@@ -357,8 +405,7 @@ async function attemptOneDelivery(
       conversationId: row.chatId,
     }));
   if (!allowed) {
-    await rejectDelivery(db, row, 'allowlist_refused', ctx.now, ctx.resolveAdapter);
-    return { kind: 'rejected' };
+    return rejectDelivery(db, row, 'allowlist_refused', ctx);
   }
 
   // Relues à chaque tentative et jamais écrites en base : aucune credential ne
@@ -367,8 +414,7 @@ async function attemptOneDelivery(
   if (!creds) {
     // Permanent tant que l'agent n'est pas reconnecté à ce canal : retenter
     // trois fois n'y changerait rien et retarderait l'alerte.
-    await rejectDelivery(db, row, 'no_credentials', ctx.now, ctx.resolveAdapter);
-    return { kind: 'rejected' };
+    return rejectDelivery(db, row, 'no_credentials', ctx);
   }
 
   const sent = await sendWithTimeout(
@@ -390,8 +436,7 @@ async function attemptOneDelivery(
   if (sent.kind === 'error') {
     const code = sent.error instanceof DeliveryError ? sent.error.code : 'unknown_error';
     if (DEFINITIVE_DELIVERY_ERROR_CODES.has(code)) {
-      await rejectDelivery(db, row, code, ctx.now, ctx.resolveAdapter);
-      return { kind: 'rejected' };
+      return rejectDelivery(db, row, code, ctx);
     }
     console.warn(
       `[outbox] ${CODE_TRANSIENT} delivery=${row.id} job=${row.jobId} channel=${row.channel} ` +
@@ -411,10 +456,20 @@ async function attemptOneDelivery(
       ? { messageId: null, reason: 'no_id_returned' }
       : { messageId };
 
-  await db
+  const landed = await db
     .update(jobDeliveries)
     .set({ outcome: 'confirmed', receipt, updatedAt: ctx.now })
-    .where(eq(jobDeliveries.id, row.id));
+    .where(stillOurs(row, ctx.claimedBy))
+    .returning({ id: jobDeliveries.id });
+  if (landed.length === 0) {
+    // Un autre runner a repris la ligne (bail expiré) pendant notre envoi :
+    // son issue est la sienne, pas la nôtre. Le message est peut-être parti
+    // deux fois — c'est le cas assumé par le plan, et il est DIT.
+    console.error(
+      `[outbox] ${CODE_CLAIM_LOST} delivery=${row.id} job=${row.jobId} attempts=${row.attempts} stage=confirm`,
+    );
+    return { kind: 'retryable' };
+  }
 
   return { kind: 'confirmed' };
 }
@@ -488,17 +543,23 @@ async function rejectDelivery(
   db: AnyDrizzleDb,
   row: ClaimedDelivery,
   reason: string,
-  now: Date,
-  adapters?: AdapterResolver,
-): Promise<void> {
-  await db
+  ctx: { now: Date; claimedBy: string; resolveAdapter: AdapterResolver },
+): Promise<AttemptOutcome> {
+  const landed = await db
     .update(jobDeliveries)
     .set({
       outcome: 'rejected',
       receipt: { messageId: null, reason } satisfies DeliveryReceipt,
-      updatedAt: now,
+      updatedAt: ctx.now,
     })
-    .where(eq(jobDeliveries.id, row.id));
+    .where(stillOurs(row, ctx.claimedBy))
+    .returning({ id: jobDeliveries.id });
+  if (landed.length === 0) {
+    console.error(
+      `[outbox] ${CODE_CLAIM_LOST} delivery=${row.id} job=${row.jobId} attempts=${row.attempts} stage=reject`,
+    );
+    return { kind: 'retryable' };
+  }
 
   await alertOwnerOfRejection(db, {
     deliveryId: row.id,
@@ -506,8 +567,9 @@ async function rejectDelivery(
     channel: row.channel,
     attempts: row.attempts,
     reason,
-    adapters,
+    adapters: ctx.resolveAdapter,
   });
+  return { kind: 'rejected' };
 }
 
 interface RejectionAlert {

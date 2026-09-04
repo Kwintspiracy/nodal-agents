@@ -29,6 +29,7 @@ import { DeliveryError } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
 import {
   DELIVERY_SEND_TIMEOUT_MS,
+  DRAIN_BATCH_LIMIT,
   deliveryIdempotencyKey,
   drainDeliveries,
   prepareDelivery,
@@ -505,6 +506,114 @@ describe('drainDeliveries — le tick de reprise (sans jobId)', () => {
     const rowC = await readDelivery(idC);
     expect(rowC.attempts).toBe(1);
     expect(rowC.claimedBy).not.toBe('runner-tick');
+  });
+});
+
+describe('drainDeliveries — revue Codex PR #46 : horloge par ligne, issue gardée, drain borné', () => {
+  it('l’horloge est relue à chaque ligne : la seconde réclamation est datée APRÈS le premier envoi', async () => {
+    // Sans cela, la k-ième ligne d'un drain porterait le `now` du début du
+    // drain, et un autre runner la croirait périmée pendant son envoi.
+    const a = await newDeliverableJob();
+    const b = await newDeliverableJob();
+    const idA = await prepare(a.jobId, a.chatId, 'A');
+    const idB = await prepare(b.jobId, b.chatId, 'B');
+    adapters.behave(async () => {
+      await new Promise((r) => setTimeout(r, 120));
+      return { messageId: '1' };
+    });
+
+    // Sans `now` injecté : c'est le vrai temps qui compte ici.
+    await drainDeliveries(db as unknown as AnyDrizzleDb, { adapters: adapters.resolve });
+
+    const first = await readDelivery(idA);
+    const second = await readDelivery(idB);
+    expect(first.outcome).toBe('confirmed');
+    expect(second.outcome).toBe('confirmed');
+    const gap = (second.claimedAt?.getTime() ?? 0) - (first.claimedAt?.getTime() ?? 0);
+    expect(gap).toBeGreaterThanOrEqual(100);
+  });
+
+  it('une tentative ANCIENNE ne confirme pas une ligne reprise par un autre runner : DELIVERY_CLAIM_LOST, la ligne reste à l’autre', async () => {
+    const { jobId, chatId } = await newDeliverableJob();
+    const id = await prepare(jobId, chatId, 'contesté');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Pendant l'envoi de runner-A, runner-B reprend la ligne (bail expiré de
+    // son point de vue) : au moment d'écrire son issue, A n'est plus le
+    // détenteur et ne doit rien écraser.
+    adapters.behave(async () => {
+      await db
+        .update(jobDeliveries)
+        .set({ claimedBy: 'runner-B', attempts: 2, claimedAt: new Date() })
+        .where(eq(jobDeliveries.id, id));
+      return { messageId: '9' };
+    });
+
+    const result = await drainDeliveries(db as unknown as AnyDrizzleDb, {
+      jobId,
+      runnerInstanceId: 'runner-A',
+      adapters: adapters.resolve,
+    });
+
+    expect(result.sent).toBe(0);
+    expect(result.skipped).toBe(1);
+    const row = await readDelivery(id);
+    expect(row.outcome).toBe('attempted');
+    expect(row.claimedBy).toBe('runner-B');
+    expect(row.attempts).toBe(2);
+    expect(row.receipt).toBeNull();
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('DELIVERY_CLAIM_LOST'))).toBe(
+      true,
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('un rejet définitif par une tentative ancienne n’écrase pas non plus la ligne reprise', async () => {
+    const { jobId, chatId } = await newDeliverableJob();
+    const id = await prepare(jobId, chatId, 'contesté-rejet');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    adapters.behave(async () => {
+      await db
+        .update(jobDeliveries)
+        .set({ claimedBy: 'runner-B', attempts: 2, claimedAt: new Date() })
+        .where(eq(jobDeliveries.id, id));
+      throw new DeliveryError('telegram_chat_not_found', 'chat introuvable');
+    });
+
+    const result = await drainDeliveries(db as unknown as AnyDrizzleDb, {
+      jobId,
+      runnerInstanceId: 'runner-A',
+      adapters: adapters.resolve,
+    });
+
+    expect(result.rejected).toBe(0);
+    const row = await readDelivery(id);
+    expect(row.outcome).toBe('attempted');
+    expect(row.claimedBy).toBe('runner-B');
+    errorSpy.mockRestore();
+  });
+
+  it('le drain de reprise (sans jobId) est borné à DRAIN_BATCH_LIMIT lignes ; le drain immédiat d’un job ne l’est pas', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < DRAIN_BATCH_LIMIT + 3; i++) {
+      const d = await newDeliverableJob();
+      ids.push(await prepare(d.jobId, d.chatId, `lot-${i}`));
+    }
+    adapters.behave(async () => ({ messageId: 'ok' }));
+
+    const tick = await drainDeliveries(db as unknown as AnyDrizzleDb, {
+      adapters: adapters.resolve,
+    });
+
+    expect(tick.sent).toBe(DRAIN_BATCH_LIMIT);
+    const outcomes = await Promise.all(ids.map((id) => readDelivery(id).then((r) => r.outcome)));
+    expect(outcomes.filter((o) => o === 'confirmed')).toHaveLength(DRAIN_BATCH_LIMIT);
+    expect(outcomes.filter((o) => o === 'prepared')).toHaveLength(3);
+
+    // Le tick suivant prend le reste.
+    const next = await drainDeliveries(db as unknown as AnyDrizzleDb, {
+      adapters: adapters.resolve,
+    });
+    expect(next.sent).toBe(3);
   });
 });
 

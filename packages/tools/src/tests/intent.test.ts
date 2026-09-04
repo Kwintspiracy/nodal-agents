@@ -8,7 +8,8 @@
 // lignes relues en base ou des fichiers constatés sur le disque.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, stat, symlink } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -287,6 +288,30 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
     expect(await statesOf(jobId)).toHaveLength(0);
     expect(await projectRow(keyOf(ws))).toBeUndefined();
+  });
+
+  it('racine attachée par un LIEN (jonction / symlink) ⇒ l’intention est posée quand même — même canon des deux côtés', async () => {
+    // Le symptôme de la CI Windows (PR #46) : `os.tmpdir()` y rend la forme
+    // courte 8.3, `resolveAndCheckPath` rend la forme réelle, et la cible ne
+    // tombait « dans » aucune racine. Un lien reproduit exactement cet écart
+    // sur toutes les plateformes : la racine est le lien, la cible résolue
+    // est le vrai dossier.
+    await writeFile(join(ws, 'package.json'), '{}');
+    const link = join(root, 'ws-link');
+    await symlink(ws, link, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'via-lien.txt', content: 'x' },
+      ctx({ workspaces: [{ label: 'shared', path: link }] }),
+      opts,
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    const rows = await statesOf(jobId);
+    expect(rows).toHaveLength(1);
+    // La clé est celle du dossier RÉEL, pas du lien : une seule identité.
+    expect(rows[0]!.canonicalKey).toBe(keyOf(realpathSync.native(ws)));
   });
 
   it('plafond de 12 projets par racine, dossiers cachés exclus', async () => {

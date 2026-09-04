@@ -168,7 +168,7 @@ export const VERIFICATION_SURFACE_LABELS: Record<
 > = {
   codeTask: { label: 'Coding tool', hint: 'code_task: a coding CLI called as a tool' },
   cliRuntime: { label: 'Claude Code / Codex agents', hint: 'agents that ARE a coding CLI session' },
-  fileOps: { label: 'File tools', hint: 'file_write, file_edit' },
+  fileOps: { label: 'File tools', hint: 'file_write, file_edit, Office files' },
   shell: { label: 'Commands and scripts', hint: 'run_command, run_skill_script' },
 };
 

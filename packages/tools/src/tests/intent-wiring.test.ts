@@ -25,6 +25,7 @@ import { agentJobs, agents, jobDeliverableVerificationState, eq } from '@nodal-a
 import { normalizePath, projectKey, surfaceForTool } from '@nodal-agents/shared';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
+import { officeMutationTargets } from '../builtin/office-ops';
 import { executeTool } from '../execute';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 
@@ -180,15 +181,46 @@ describe('l’intention, par énumération du registre', () => {
     ).toEqual([]);
   });
 
+  it('les outils Office écrivains portent TOUS le hook partagé, et docx_create passe le seam', async () => {
+    // Revue Codex PR #46 : les vingt outils Office écrivent un fichier du
+    // workspace sans porter le marqueur — un DOCX modifié dans un projet
+    // laissait un état vert intact. Ils partagent UN hook (office-ops/index.ts)
+    // ; ce test vérifie que chacun le porte (identité de fonction, pas un
+    // sosie) et fait passer un représentant par le vrai seam.
+    const officeMutating = mutatingTools.filter((t) => /^(docx|pptx|xlsx)_/.test(t.name));
+    expect(officeMutating.length).toBeGreaterThanOrEqual(20);
+    for (const t of officeMutating) {
+      expect(t.resolveMutationTargets, `${t.name} ne porte pas le hook Office`).toBe(
+        officeMutationTargets,
+      );
+      expect(surfaceForTool(t.name), `${t.name} sans surface`).toBe('fileOps');
+    }
+
+    const ws = await freshWorkspace('office');
+    const jobId = await freshJob();
+    const res = await executeTool(
+      registry.get('docx_create') as never,
+      { path: 'rapport.docx', paragraphs: [{ text: 'Bonjour' }] },
+      ctx([ws], jobId),
+      autoApproveMutating(),
+    );
+    expect(res.outcome, 'docx_create s’est arrêté avant le seam').not.toBe('awaiting_approval');
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(ws)]);
+  });
+
   it('chaque outil mutant du registre pose une ligne d’état sale sur le projet attendu', async () => {
-    const sansInput = mutatingNames.filter((name) => !(name in MINIMAL_INPUT));
+    // Les outils Office sont couverts par le test précédent (hook partagé +
+    // représentant) : ici, les outils à hook PROPRE, un input par outil.
+    const ownHook = mutatingTools.filter((t) => t.resolveMutationTargets !== officeMutationTargets);
+    const sansInput = ownHook.map((t) => t.name).filter((name) => !(name in MINIMAL_INPUT));
     expect(
       sansInput,
       `outils mutants sans input minimal dans MINIMAL_INPUT : ${sansInput.join(', ')} — ` +
         'ajoutez une entrée, ne les sautez pas',
     ).toEqual([]);
 
-    for (const tool of mutatingTools) {
+    for (const tool of ownHook) {
       const input = MINIMAL_INPUT[tool.name];
       if (!input) throw new Error(`input minimal manquant pour ${tool.name}`);
 

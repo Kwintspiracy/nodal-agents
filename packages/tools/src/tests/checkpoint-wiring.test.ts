@@ -21,6 +21,7 @@ import { executeTool } from '../execute';
 import { listCheckpoints } from '@nodal-agents/checkpoints';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
+import { officeMutationTargets } from '../builtin/office-ops';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileReadTool } from '../builtin/file-ops/file-read';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
@@ -47,6 +48,9 @@ const mutatingNames = mutatingTools.map((t) => t.name).sort();
  * le test en se nommant, jamais un skip.
  */
 const MINIMAL_INPUT: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  // Le représentant des vingt outils Office, qui partagent UN hook
+  // d'intention (office-ops/index.ts) et passent par le même seam.
+  docx_create: { path: 'rapport.docx', paragraphs: [{ text: 'Bonjour' }] },
   file_write: { path: 'nouveau.txt', content: 'x' },
   file_edit: { path: 'a-editer.txt', old_string: 'avant', new_string: 'apres' },
   run_command: { purpose: 'test', command: 'echo ok' },
@@ -133,7 +137,12 @@ describe('quels outils sont marqués', () => {
     // Chaque outil marqué passe donc par le VRAI seam et son workspace est
     // relu sur le disque. Un outil mutant ajouté demain rougit ici sans
     // qu'aucune liste ne soit à mettre à jour.
-    const sansInput = mutatingNames.filter((name) => !(name in MINIMAL_INPUT));
+    // Les outils Office partagent un hook et un seam : un représentant
+    // (docx_create) suffit, les autres ont leur propre hook et leur input.
+    const covered = mutatingTools.filter(
+      (t) => t.resolveMutationTargets !== officeMutationTargets || t.name === 'docx_create',
+    );
+    const sansInput = covered.map((t) => t.name).filter((name) => !(name in MINIMAL_INPUT));
     expect(
       sansInput,
       `outils mutants sans input minimal dans MINIMAL_INPUT : ${sansInput.join(', ')} — ` +
@@ -149,7 +158,7 @@ describe('quels outils sont marqués', () => {
     })) as ApprovalRule[];
     const approved: ExecuteOptions = { approvalRules: rules, onApprovalRequired: async () => {} };
 
-    for (const [i, tool] of mutatingTools.entries()) {
+    for (const [i, tool] of covered.entries()) {
       const input = MINIMAL_INPUT[tool.name];
       if (!input) throw new Error(`input minimal manquant pour ${tool.name}`);
 

@@ -55,7 +55,34 @@ export const VERIFICATION_SURFACE_TOOLS: Readonly<
 > = Object.freeze({
   codeTask: ['code_task'],
   cliRuntime: [],
-  fileOps: ['file_write', 'file_edit'],
+  // Les outils Office ÉCRIVENT des fichiers du workspace (revue Codex PR #46 :
+  // ils contournaient l'intention faute de marqueur) — ce sont des outils
+  // fichiers, sur la même surface. Les lecteurs (`*_read`, `xlsx_find_cells`)
+  // n'y sont pas : ils ne mutent rien.
+  fileOps: [
+    'file_write',
+    'file_edit',
+    'docx_create',
+    'docx_append_paragraphs',
+    'docx_replace_text',
+    'pptx_create',
+    'pptx_append_slides',
+    'pptx_replace_text',
+    'xlsx_set_cell',
+    'xlsx_set_range',
+    'xlsx_append_rows',
+    'xlsx_add_sheet',
+    'xlsx_create',
+    'xlsx_delete_rows',
+    'xlsx_format_range',
+    'xlsx_insert_rows',
+    'xlsx_insert_columns',
+    'xlsx_delete_columns',
+    'xlsx_merge_cells',
+    'xlsx_unmerge_cells',
+    'xlsx_set_column_widths',
+    'xlsx_freeze_panes',
+  ],
   shell: ['run_command', 'run_skill_script'],
 });
 

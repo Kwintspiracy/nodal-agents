@@ -22,7 +22,7 @@
 // INVARIANT #2. Tout ce que ce module journalise est un CODE et des données —
 // jamais une phrase. `scanForUserFacingStrings` tourne sur ce paquet.
 
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import {
   agentJobs,
@@ -112,6 +112,27 @@ export interface WriteMutationIntentArgs {
 export type MutationIntentContext = Pick<ToolContext, 'db' | 'entityId' | 'workspaces'> & {
   readonly jobId: string | null;
 };
+
+/**
+ * Le chemin RÉEL d'un dossier ou d'un fichier, normalisé.
+ *
+ * Les cibles arrivent des outils par `resolveAndCheckPath`, qui passe par
+ * `realpath` ; les racines attachées arrivent telles que l'owner les a
+ * écrites. Sur un runner GitHub Windows, `os.tmpdir()` rend la forme courte
+ * 8.3 (`C:\Users\RUNNER~1\…`) alors que `realpath` rend la longue — et une
+ * jonction ou un lien symbolique fait pareil partout. Comparées telles
+ * quelles, la cible ne serait « dans » aucune racine : aucun projet, aucune
+ * intention, et l'écriture partait sans être vue (CI rouge de la PR #46,
+ * verte en local). Tout passe donc par le même canon avant comparaison ; un
+ * chemin qui n'existe pas encore garde sa forme normalisée.
+ */
+function canonicalPath(p: string): string {
+  try {
+    return normalizePath(realpathSync.native(p));
+  } catch {
+    return normalizePath(p);
+  }
+}
 
 /** Le manifeste d'un dossier, lu sur le disque (injecté dans le résolveur pur). */
 function hasMarker(dir: string): boolean {
@@ -281,10 +302,11 @@ export async function writeMutationIntent(
     return { kind: 'skipped', reason: 'surface_disabled', surface };
   }
 
-  const workspaceRoots = (ctx.workspaces ?? []).map((w) => w.path);
+  const workspaceRoots = (ctx.workspaces ?? []).map((w) => canonicalPath(w.path));
   let projects: readonly ProjectRoot[];
   try {
-    const expanded = await expandWorkspaceRoots(targets, workspaceRoots);
+    const canonicalTargets = targets.map((t) => ({ kind: t.kind, path: canonicalPath(t.path) }));
+    const expanded = await expandWorkspaceRoots(canonicalTargets, workspaceRoots);
     projects = resolveProjectRoots({ targets: expanded, workspaceRoots, hasMarker });
   } catch (err) {
     console.error(
