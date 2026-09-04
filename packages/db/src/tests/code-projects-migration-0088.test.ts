@@ -30,15 +30,17 @@ const migrationSql = readFileSync(
   'utf8',
 );
 
-// Six segments: ① ADD COLUMN, ② backfill UPDATE, ③ merge DELETE,
-// ④ ALTER COLUMN SET NOT NULL, ⑤ ADD CONSTRAINT (new UNIQUE),
-// ⑥ DO $$ … $$ (drop the old UNIQUE by its real pg_constraint name).
+// Seven segments: ① ADD COLUMN, ② backfill UPDATE, ③ manifest-survival UPDATE
+// (T20), ④ merge DELETE, ⑤ ALTER COLUMN SET NOT NULL, ⑥ ADD CONSTRAINT (new
+// UNIQUE), ⑦ DO $$ … $$ (drop the old UNIQUE by its real pg_constraint name).
 const statements = migrationSql
   .split('--> statement-breakpoint')
   .map((s) => s.trim())
   .filter(Boolean);
+const addColumnsSql = statements[0]!;
 const backfillSql = statements[1]!;
-const mergeSql = statements[2]!;
+const manifestSql = statements[2]!;
+const mergeSql = statements[3]!;
 
 async function createPreMigrationDb(): Promise<{ pg: PGlite; entityId: string }> {
   const pg = new PGlite();
@@ -83,8 +85,8 @@ async function applyFullMigration(pg: PGlite): Promise<void> {
 }
 
 describe('migration 0088: code_projects project_key + verify_* + merge', () => {
-  it('the migration splits into the six expected statement-breakpoint segments', () => {
-    expect(statements).toHaveLength(6);
+  it('the migration splits into the seven expected statement-breakpoint segments', () => {
+    expect(statements).toHaveLength(7);
   });
 
   it('merges a Windows-casing duplicate: the most recently updated row wins', async () => {
@@ -241,6 +243,7 @@ describe('migration 0088: code_projects project_key + verify_* + merge', () => {
     expect(before).toHaveLength(2);
 
     await expect(pg.exec(backfillSql)).resolves.toBeDefined();
+    await expect(pg.exec(manifestSql)).resolves.toBeDefined();
     await expect(pg.exec(mergeSql)).resolves.toBeDefined();
 
     const { rows: after } = await pg.query<{ id: string; project_key: string }>(
@@ -249,6 +252,203 @@ describe('migration 0088: code_projects project_key + verify_* + merge', () => {
     );
     expect(after).toEqual(before);
 
+    await pg.close();
+  });
+});
+
+// ─── T20 — le manifeste survivant à la fusion ─────────────────────────────────
+//
+// Au premier passage la clause ne touche rien (les colonnes verify_* naissent
+// dans 0088 — les tests ci-dessus le couvrent). Ces cas jouent la
+// RÉ-EXÉCUTION : les colonnes existent déjà, des doublons portent des
+// manifestes, et la règle du plan doit s'appliquer telle quelle.
+
+interface VerifyRow {
+  id: string;
+  verify_commands: unknown;
+  verify_approved_manifest_hash: string | null;
+  verify_approved_at: string | null;
+  verify_approved_by: string | null;
+}
+
+async function createReplayDb(): Promise<{ pg: PGlite; entityId: string; userId: string }> {
+  const { pg, entityId } = await createPreMigrationDb();
+  // Les colonnes existent déjà : c'est l'état d'une base où 0088 a déjà tourné.
+  await pg.exec(addColumnsSql);
+  const { rows } = await pg.query<{ id: string }>(`SELECT id FROM users LIMIT 1`);
+  return { pg, entityId, userId: rows[0]!.id };
+}
+
+async function replayFromBackfill(pg: PGlite): Promise<void> {
+  for (const stmt of statements.slice(1)) await pg.exec(stmt);
+}
+
+const CMDS_AB = JSON.stringify([
+  { command: 'pnpm typecheck', timeoutSeconds: 120 },
+  { command: 'pnpm test', timeoutSeconds: 600 },
+]);
+// Même contenu, ordre des CLÉS d'objet différent : jsonb normalise, c'est identique.
+const CMDS_AB_KEYS_REORDERED = JSON.stringify([
+  { timeoutSeconds: 120, command: 'pnpm typecheck' },
+  { timeoutSeconds: 600, command: 'pnpm test' },
+]);
+// Même contenu, ordre des COMMANDES différent : l'ordre appartient au manifeste.
+const CMDS_BA = JSON.stringify([
+  { command: 'pnpm test', timeoutSeconds: 600 },
+  { command: 'pnpm typecheck', timeoutSeconds: 120 },
+]);
+
+async function insertDup(
+  pg: PGlite,
+  entityId: string,
+  userId: string,
+  path: string,
+  commands: string,
+  approvedAt: string | null,
+  updatedAt: string,
+  hash: string,
+): Promise<string> {
+  const { rows } = await pg.query<{ id: string }>(
+    `INSERT INTO code_projects (entity_id, project_path, verify_commands, verify_approved_manifest_hash, verify_approved_at, verify_approved_by, updated_at)
+     VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`,
+    [
+      entityId,
+      path,
+      commands,
+      approvedAt ? hash : null,
+      approvedAt,
+      approvedAt ? userId : null,
+      updatedAt,
+    ],
+  );
+  return rows[0]!.id;
+}
+
+const day = (n: number): string => new Date(Date.now() - n * 24 * 3600 * 1000).toISOString();
+
+describe('migration 0088 — T20 : le manifeste survivant à la fusion', () => {
+  it('doublons divergents ⇒ pending_approval : une ligne, commandes du gagnant, approbation effacée', async () => {
+    const { pg, entityId, userId } = await createReplayDb();
+    // Perdante (ancienne) approuvée sur [A,B] ; gagnante (récente) approuvée sur [B,A].
+    await insertDup(pg, entityId, userId, 'D:/Legacy/App', CMDS_AB, day(10), day(5), 'v1:old');
+    const winner = await insertDup(
+      pg,
+      entityId,
+      userId,
+      'd:/legacy/app',
+      CMDS_BA,
+      day(2),
+      day(1),
+      'v1:new',
+    );
+
+    await replayFromBackfill(pg);
+
+    const { rows } = await pg.query<VerifyRow>(
+      `SELECT id, verify_commands, verify_approved_manifest_hash, verify_approved_at, verify_approved_by FROM code_projects WHERE entity_id = $1`,
+      [entityId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.id).toBe(winner);
+    expect(rows[0]!.verify_commands).toEqual(JSON.parse(CMDS_BA));
+    expect(rows[0]!.verify_approved_manifest_hash).toBeNull();
+    expect(rows[0]!.verify_approved_at).toBeNull();
+    expect(rows[0]!.verify_approved_by).toBeNull();
+    await pg.close();
+  });
+
+  it('doublons identiques (clés JSON dans un autre ordre) ⇒ approbation reprise de la plus ANCIENNE', async () => {
+    const { pg, entityId, userId } = await createReplayDb();
+    const oldestApproval = day(30);
+    await insertDup(
+      pg,
+      entityId,
+      userId,
+      'D:/Legacy/App',
+      CMDS_AB,
+      oldestApproval,
+      day(20),
+      'v1:origin',
+    );
+    const winner = await insertDup(
+      pg,
+      entityId,
+      userId,
+      'd:/legacy/app',
+      CMDS_AB_KEYS_REORDERED,
+      day(3),
+      day(1),
+      'v1:later',
+    );
+
+    await replayFromBackfill(pg);
+
+    const { rows } = await pg.query<VerifyRow>(
+      `SELECT id, verify_commands, verify_approved_manifest_hash, verify_approved_at, verify_approved_by FROM code_projects WHERE entity_id = $1`,
+      [entityId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.id).toBe(winner);
+    expect(rows[0]!.verify_approved_manifest_hash).toBe('v1:origin');
+    expect(new Date(rows[0]!.verify_approved_at!).toISOString()).toBe(oldestApproval);
+    expect(rows[0]!.verify_approved_by).toBe(userId);
+    await pg.close();
+  });
+
+  it('ordre des commandes différent ⇒ divergent, approbation effacée', async () => {
+    const { pg, entityId, userId } = await createReplayDb();
+    await insertDup(pg, entityId, userId, 'D:/Legacy/App', CMDS_AB, day(10), day(5), 'v1:ab');
+    await insertDup(pg, entityId, userId, 'd:/legacy/app', CMDS_BA, day(9), day(1), 'v1:ba');
+
+    await replayFromBackfill(pg);
+
+    const { rows } = await pg.query<VerifyRow>(
+      `SELECT id, verify_commands, verify_approved_manifest_hash, verify_approved_at, verify_approved_by FROM code_projects WHERE entity_id = $1`,
+      [entityId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.verify_approved_manifest_hash).toBeNull();
+    await pg.close();
+  });
+
+  it('une ligne non approuvée dans le groupe ⇒ l’approbation ne survit pas (fail-closed)', async () => {
+    const { pg, entityId, userId } = await createReplayDb();
+    await insertDup(pg, entityId, userId, 'D:/Legacy/App', CMDS_AB, day(10), day(5), 'v1:ab');
+    await insertDup(pg, entityId, userId, 'd:/legacy/app', CMDS_AB, null, day(1), 'unused');
+
+    await replayFromBackfill(pg);
+
+    const { rows } = await pg.query<VerifyRow>(
+      `SELECT id, verify_commands, verify_approved_manifest_hash, verify_approved_at, verify_approved_by FROM code_projects WHERE entity_id = $1`,
+      [entityId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.verify_approved_manifest_hash).toBeNull();
+    await pg.close();
+  });
+
+  it('idempotence : rejouer backfill + manifeste + fusion ⇒ zéro changement', async () => {
+    const { pg, entityId, userId } = await createReplayDb();
+    await insertDup(pg, entityId, userId, 'D:/Legacy/App', CMDS_AB, day(30), day(20), 'v1:origin');
+    await insertDup(pg, entityId, userId, 'd:/legacy/app', CMDS_AB, day(3), day(1), 'v1:later');
+    await replayFromBackfill(pg);
+
+    const snapshot = async (): Promise<VerifyRow[]> =>
+      (
+        await pg.query<VerifyRow>(
+          `SELECT id, verify_commands, verify_approved_manifest_hash, verify_approved_at, verify_approved_by FROM code_projects WHERE entity_id = $1 ORDER BY id`,
+          [entityId],
+        )
+      ).rows;
+    const before = await snapshot();
+    expect(before).toHaveLength(1);
+    expect(before[0]!.verify_approved_manifest_hash).toBe('v1:origin');
+
+    await pg.exec(backfillSql);
+    await pg.exec(manifestSql);
+    await pg.exec(mergeSql);
+
+    expect(await snapshot()).toEqual(before);
     await pg.close();
   });
 });

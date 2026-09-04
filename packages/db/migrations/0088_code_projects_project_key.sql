@@ -56,6 +56,59 @@ WHERE cp.id = norm.id;
 --> statement-breakpoint
 -- ③ Fusion des doublons : par (entity_id, project_key), ne garder que la
 -- ligne la plus récemment mise à jour (id croissant en cas d'exact ex-æquo).
+-- Le manifeste survivant (T20, règle du plan). AVANT de supprimer les
+-- perdantes : pour chaque groupe de doublons (entity_id, project_key), la
+-- gagnante ne garde une approbation que si TOUTES les lignes du groupe portent
+-- la même liste verify_commands (égalité jsonb — l'ordre des clés d'objet est
+-- normalisé par le type, l'ordre des COMMANDES compte) ET sont toutes
+-- approuvées ; l'approbation reprise est celle de la ligne au
+-- verify_approved_at le plus ANCIEN (le consentement d'origine), départagée
+-- par id. Sinon l'approbation est effacée ⇒ pending_approval, fail-closed.
+--
+-- Au premier passage cette clause ne touche AUCUNE ligne : les colonnes
+-- verify_* naissent dans cette migration. Elle existe parce que la migration
+-- est ré-exécutable (backfill relancé, base restaurée) et que la règle est
+-- celle du plan — une clause absente n'est pas une clause vide.
+--
+-- Nuance dite tel quel : le hash repris a été calculé avec le project_path de
+-- la ligne d'origine comme cwd ; s'il diffère de celui de la gagnante, le
+-- vérificateur constatera un hash ≠ manifeste courant et rendra
+-- pending_approval — fail-closed, jamais un faux vert.
+WITH groups AS (
+  SELECT entity_id, project_key,
+         COUNT(*) AS n,
+         COUNT(DISTINCT verify_commands) AS distinct_cmds,
+         COUNT(*) FILTER (WHERE verify_commands IS NULL) AS null_cmds,
+         COUNT(*) FILTER (WHERE verify_approved_at IS NOT NULL) AS approved
+  FROM code_projects
+  GROUP BY entity_id, project_key
+  HAVING COUNT(*) > 1
+), winners AS (
+  SELECT DISTINCT ON (entity_id, project_key) id, entity_id, project_key
+  FROM code_projects
+  ORDER BY entity_id, project_key, updated_at DESC, id ASC
+), oldest AS (
+  SELECT DISTINCT ON (entity_id, project_key) entity_id, project_key,
+         verify_approved_manifest_hash, verify_approved_at, verify_approved_by
+  FROM code_projects
+  WHERE verify_approved_at IS NOT NULL
+  ORDER BY entity_id, project_key, verify_approved_at ASC, id ASC
+)
+UPDATE code_projects cp
+SET verify_approved_manifest_hash = CASE
+      WHEN g.distinct_cmds = 1 AND g.null_cmds = 0 AND g.approved = g.n THEN o.verify_approved_manifest_hash
+      ELSE NULL END,
+    verify_approved_at = CASE
+      WHEN g.distinct_cmds = 1 AND g.null_cmds = 0 AND g.approved = g.n THEN o.verify_approved_at
+      ELSE NULL END,
+    verify_approved_by = CASE
+      WHEN g.distinct_cmds = 1 AND g.null_cmds = 0 AND g.approved = g.n THEN o.verify_approved_by
+      ELSE NULL END
+FROM groups g
+JOIN winners w ON w.entity_id = g.entity_id AND w.project_key = g.project_key
+LEFT JOIN oldest o ON o.entity_id = g.entity_id AND o.project_key = g.project_key
+WHERE cp.id = w.id;
+--> statement-breakpoint
 DELETE FROM code_projects cp
 USING (
   SELECT id,
