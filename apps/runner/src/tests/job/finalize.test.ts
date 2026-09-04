@@ -25,6 +25,7 @@ import {
   and,
   asc,
   eq,
+  sql,
   agentJobs,
   codeProjects,
   jobDeliveries,
@@ -41,15 +42,18 @@ import {
 import type { VerifyCommand } from '@nodal-agents/shared';
 import {
   DELIVERY_PREPARE_UNAVAILABLE,
+  FINALIZE_CLAIMED_ELSEWHERE,
+  FINALIZING_STALE_MS,
   VERIFICATION_DUE_OBSERVED,
   VERIFY_PERSISTENCE_FAILED,
+  VERIFY_STALE_EPOCH,
   VERIFY_STALE_GENERATION,
   VERIFY_TERMINAL_WRITE_LOST,
   finalizeJobSuccess,
 } from '../../job/finalize.ts';
 import type { FinalizeDeps } from '../../job/finalize.ts';
 import type { DeliverableVerifier } from '../../verification/registry.ts';
-import { MAX_TAIL_CHARS } from '../../verification/code-project.ts';
+import { MAX_TAIL_CHARS, codeProjectVerifier } from '../../verification/code-project.ts';
 
 let db: TestDb;
 /**
@@ -463,21 +467,21 @@ describe('finalizeJobSuccess — déjà terminal', () => {
   });
 
   it(
-    'second finaliseur concurrent : celui qui commet le second n’écrase RIEN (garde de la transaction 2)',
+    'second finaliseur concurrent : il se retire AVANT toute preuve (réclamation en transaction 1), le premier finit seul',
     { timeout: 15_000 },
     async () => {
       // Interleaving à la frontière tx1 / tx2, joué en séquentiel : le
-      // finaliseur A passe sa transaction 1 (job non terminal), puis PENDANT sa
-      // preuve — hors transaction — le finaliseur B finalise le job de bout en
-      // bout. A reprend en transaction 2 et doit lire le job terminal.
+      // finaliseur A passe sa transaction 1 (job non terminal, marqueur posé),
+      // puis PENDANT sa preuve — hors transaction — le finaliseur B se présente.
+      // B lit le marqueur frais de A et se retire (FINALIZE_CLAIMED_ELSEWHERE)
+      // sans lancer de preuve : une seule séquence verification_runs par job.
       // Le vrai interleaving à deux connexions est T14.
       //
-      // Le TIMEOUT est une assertion : B finalise à travers `db` pendant que A
-      // est entre ses deux transactions. Si la preuve de A tournait SOUS une
-      // transaction (mutation T19), la connexion unique de PGlite serait tenue
-      // et B attendrait pour toujours — ce test rougit alors par timeout au
-      // lieu de pendre la suite (revue T09 : « la suite pend, aucun test nommé
-      // ne l'attrape »).
+      // Le TIMEOUT est une assertion : B passe sa transaction 1 à travers `db`
+      // pendant que A est entre ses deux transactions. Si la preuve de A
+      // tournait SOUS une transaction (mutation T19), la connexion unique de
+      // PGlite serait tenue et B attendrait pour toujours — ce test rougit
+      // alors par timeout au lieu de pendre la suite (revue T09).
       await setProject(null, null);
       const jobId = await insertJob('processing');
       const stateId = await insertState(jobId, 'code_project', key, 1);
@@ -505,7 +509,7 @@ describe('finalizeJobSuccess — déjà terminal', () => {
             verdict: 'green' as const,
           };
           await onCommandDone(record);
-          // B finalise entièrement pendant que A est hors transaction.
+          // B se présente pendant que A est hors transaction.
           bOutcome = (
             await finalizeJobSuccess(
               asDb(),
@@ -523,15 +527,15 @@ describe('finalizeJobSuccess — déjà terminal', () => {
         deps({ getVerifier: () => verifierA }),
       );
 
-      expect(bOutcome).toBe('completed_unverified');
-      expect(a.kind).toBe('already_terminal');
-      // C'est la garde de la transaction 2 qui a arrêté A, pas le filet de
-      // `completeJob` : ce code ne doit jamais apparaître.
+      expect(bOutcome).toBe('already_terminal');
+      expect(logged(FINALIZE_CLAIMED_ELSEWHERE)).toBe(true);
+      expect(a.kind).toBe('completed');
       expect(logged(VERIFY_TERMINAL_WRITE_LOST)).toBe(false);
-      // A n'a rien écrit : l'état porte la décision de B (not_configured), pas
-      // le `green` de la preuve de A.
-      expect((await stateRow(stateId)).decisionStatus).toBe('not_configured');
-      expect((await jobRow(jobId)).result).toBe('par B');
+      // A a fini seul : l'état porte SA décision (green), le résultat est le sien,
+      // et la preuve n'a tourné qu'une fois.
+      expect((await stateRow(stateId)).decisionStatus).toBe('green');
+      expect((await jobRow(jobId)).result).toBe('par A');
+      expect(await runsOf(jobId)).toHaveLength(1);
     },
   );
 });
@@ -746,6 +750,125 @@ describe('finalizeJobSuccess — résultat compilé et livraison', () => {
       .where(and(eq(jobDeliveries.jobId, jobId), eq(jobDeliveries.channel, 'telegram')));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.outcome).toBe('prepared');
+    expect((await jobRow(jobId)).status).toBe('completed');
+  });
+});
+
+// ─── La réclamation du marqueur finalizing_at — UNE preuve par job ──────────
+//
+// La preuve tourne hors transaction (décision n°5), donc le FOR UPDATE de la
+// transaction 1 ne sérialise plus deux finalisations du même job : sans
+// marqueur, chacune lancerait SA preuve et la seconde ne l'apprendrait qu'en
+// transaction 2 (le verdict « incomplet » du découpage). Le marqueur est posé
+// sous le verrou de la transaction 1 ; un marqueur frais posé par un autre
+// finaliseur retire le nôtre AVANT toute preuve.
+
+describe('la réclamation du marqueur finalizing_at', () => {
+  const stubVerifier = (onProof: () => void): DeliverableVerifier => ({
+    deliverableType: 'code_project',
+    canonicalize: projectKey,
+    loadConfig: async () => ({
+      kind: 'ready',
+      manifestHash: 'v1:stub',
+      cwd: projectPath,
+      commands: [{ command: 'stub', timeoutSeconds: 1 }],
+      epoch: 1,
+    }),
+    runProof: async () => {
+      onProof();
+      return { verdict: 'green', records: [] };
+    },
+  });
+
+  it('marqueur FRAIS posé par un autre finaliseur ⇒ already_terminal, FINALIZE_CLAIMED_ELSEWHERE, AUCUNE preuve, rien d’écrit', async () => {
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'code_project', key, 1);
+    await db.update(agentJobs).set({ finalizingAt: new Date() }).where(eq(agentJobs.id, jobId));
+    let proofs = 0;
+
+    const outcome = await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'par le second' },
+      deps({ getVerifier: () => stubVerifier(() => proofs++) }),
+    );
+
+    expect(outcome.kind).toBe('already_terminal');
+    expect(logged(FINALIZE_CLAIMED_ELSEWHERE)).toBe(true);
+    expect(proofs).toBe(0);
+    expect((await jobRow(jobId)).status).toBe('processing');
+    expect((await stateRow(stateId)).decisionStatus).toBe('dirty');
+    expect(await runsOf(jobId)).toEqual([]);
+  });
+
+  it('le marqueur de l’APPELANT (claim) est accepté ⇒ completed, marqueur levé', async () => {
+    const jobId = await insertJob('processing');
+    const mine = new Date();
+    await db.update(agentJobs).set({ finalizingAt: mine }).where(eq(agentJobs.id, jobId));
+
+    const outcome = await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'par le cron', claim: { finalizingAt: mine } },
+      deps(),
+    );
+
+    expect(outcome.kind).toBe('completed');
+    const [row] = await db
+      .select({ status: agentJobs.status, finalizingAt: agentJobs.finalizingAt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('completed');
+    expect(row?.finalizingAt).toBeNull();
+  });
+
+  it('marqueur PÉRIMÉ (finaliseur mort entre ses deux transactions) ⇒ repris et finalisé', async () => {
+    const jobId = await insertJob('processing');
+    await db
+      .update(agentJobs)
+      .set({ finalizingAt: new Date(Date.now() - FINALIZING_STALE_MS - 1_000) })
+      .where(eq(agentJobs.id, jobId));
+
+    const outcome = await finalizeJobSuccess(asDb(), { jobId, result: 'repris' }, deps());
+
+    expect(outcome.kind).toBe('completed');
+    expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
+  it('un autre JOB écrit dans le projet PENDANT la preuve (epoch bougé) ⇒ état dirty, VERIFY_STALE_EPOCH, run vert avec l’ancien epoch, job completed quand même (①)', async () => {
+    const cmds: VerifyCommand[] = [
+      { command: await script('ok-epoch.js', 'process.exit(0)'), timeoutSeconds: 5 },
+    ];
+    await setProject(cmds, 'current');
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'code_project', key, 1);
+    // Le vrai vérificateur, dont la preuve est précédée d'une écriture d'un
+    // AUTRE job dans le même projet : l'intention de T16 avance l'epoch.
+    const bumping: DeliverableVerifier = {
+      ...codeProjectVerifier,
+      runProof: async (config, onCommandDone) => {
+        await db
+          .update(codeProjects)
+          .set({ verificationEpoch: sql`${codeProjects.verificationEpoch} + 1` })
+          .where(eq(codeProjects.projectKey, key));
+        return codeProjectVerifier.runProof(config, onCommandDone);
+      },
+    };
+
+    const outcome = await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok' },
+      deps({ getVerifier: () => bumping }),
+    );
+
+    expect(logged(VERIFY_STALE_EPOCH)).toBe(true);
+    expect(outcome.kind).toBe('completed_unverified');
+    expect(outcome.observedDue).toBe(true);
+    const state = await stateRow(stateId);
+    expect(state.decisionStatus).toBe('dirty');
+    expect(state.verifiedGeneration).toBeNull();
+    const runs = await runsOf(jobId);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.verdict).toBe('green');
+    expect(runs[0]?.testedEpoch).toBe(7);
     expect((await jobRow(jobId)).status).toBe('completed');
   });
 });

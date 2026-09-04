@@ -288,6 +288,10 @@ export async function completeJob(
     .update(agentJobs)
     .set({
       status: 'completed',
+      // Le marqueur de réclamation du cron (V&C T12) est levé par TOUTE
+      // écriture terminale : un root finalisé n'est plus « en cours de
+      // finalisation ».
+      finalizingAt: null,
       // Brique 33: preserve existing result (e.g. set by dashboard_publish
       // earlier in this job) when no new text is provided.
       ...(result.length > 0 ? { result } : {}),
@@ -378,6 +382,7 @@ export async function failJob(
       status: 'failed',
       error: toDbSafeString(errorCode),
       completedAt: now,
+      finalizingAt: null,
       updatedAt: now,
       // Persist the transcript on failure (mirrors completeJob) so a failed job
       // is DIAGNOSABLE, not opaque. The resume/guard failure paths used to lose
@@ -417,6 +422,34 @@ export async function failJob(
   }
 
   return landed;
+}
+
+/**
+ * Écriture terminale d'un ROOT de task-board dont toutes les tâches ont été
+ * volontairement annulées (V&C T12) : le statut `cancelled` est POSÉ ici —
+ * contrairement à `cancelJob`, où il l'est déjà par le tableau de bord —, avec
+ * le résultat compilé, `completed_at`, et le marqueur `finalizing_at` levé.
+ * Gardé par « statut non terminal » : un root déjà fini n'est jamais réécrit.
+ * Rend true si CETTE écriture a atterri.
+ */
+export async function cancelRootJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  compiledResult: string,
+): Promise<boolean> {
+  const now = new Date();
+  const rows = await db
+    .update(agentJobs)
+    .set({
+      status: 'cancelled',
+      result: toDbSafeString(compiledResult),
+      completedAt: now,
+      finalizingAt: null,
+      updatedAt: now,
+    })
+    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .returning({ id: agentJobs.id });
+  return rows.length > 0 && rows[0]?.id === jobId;
 }
 
 /**

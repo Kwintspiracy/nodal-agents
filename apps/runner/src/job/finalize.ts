@@ -17,10 +17,11 @@
 //                   `FOR UPDATE` heurterait `lock_timeout` (30 s) et
 //                   bloquerait le heartbeat. C'est le garde de génération qui
 //                   rattrape ce que le verrou ne tient plus.
-//   transaction 2 : `FOR UPDATE` sur `agent_jobs` à nouveau + garde
-//                   « non terminal ET completed_at IS NULL » (c'est elle qui
-//                   sérialise DEUX finalisations concurrentes du MÊME job :
-//                   la seconde lit `already_terminal` et n'écrit rien), puis
+//   transaction 2 : `FOR UPDATE` sur `agent_jobs` à nouveau + garde « statut
+//                   non terminal » (c'est elle qui sérialise DEUX finalisations
+//                   concurrentes du MÊME job : la seconde lit `already_terminal`
+//                   et n'écrit rien ; `completed_at` n'entre pas dans la garde,
+//                   un job réessayé en garde une trace), puis
 //                   `UPDATE état … WHERE dirty_generation = G` — zéro ligne
 //                   signifie qu'une écriture est passée pendant la preuve
 //                   (`VERIFY_STALE_GENERATION`), puis l'écriture terminale.
@@ -49,7 +50,7 @@
 // des données.
 
 import { randomUUID } from 'node:crypto';
-import { and, eq } from '@nodal-agents/db';
+import { and, eq, isNull, lt, or, sql } from '@nodal-agents/db';
 import { agentJobs, jobDeliverableVerificationState, verificationRuns } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { DecisionStatus } from '@nodal-agents/shared';
@@ -79,6 +80,16 @@ export const VERIFY_TERMINAL_WRITE_LOST = 'VERIFY_TERMINAL_WRITE_LOST';
 export const DELIVERY_PREPARE_UNAVAILABLE = 'DELIVERY_PREPARE_UNAVAILABLE';
 /** Le job à finaliser n'existe pas. */
 export const FINALIZE_JOB_NOT_FOUND = 'FINALIZE_JOB_NOT_FOUND';
+/** Un autre finaliseur tient le marqueur `finalizing_at` de ce job : une seule preuve par job. */
+export const FINALIZE_CLAIMED_ELSEWHERE = 'FINALIZE_CLAIMED_ELSEWHERE';
+/** La configuration ou l'epoch du projet ont bougé PENDANT la preuve : ce qui a été prouvé n'est plus l'arbre courant. */
+export const VERIFY_STALE_EPOCH = 'VERIFY_STALE_EPOCH';
+/**
+ * Au-delà de ce délai, un marqueur `finalizing_at` sans décision terminale est
+ * réputé orphelin (le finaliseur qui l'a posé est mort entre ses deux
+ * transactions) et se reprend. Seuil JS — décision de découpage n°12.
+ */
+export const FINALIZING_STALE_MS = 10 * 60_000;
 /**
  * Un livrable à vérifier sur un job sans espace : `agent_jobs.entity_id` est
  * nullable, la configuration de preuve est portée PAR l'espace. Refusé fort
@@ -188,6 +199,15 @@ export interface FinalizeInput {
   /** Le texte final du job — `completeJob` préserve un `result` non vide déjà écrit. */
   readonly result: string;
   readonly toolsUsed?: readonly string[];
+  /**
+   * Le marqueur `finalizing_at` que l'APPELANT a déjà posé (le cron réclame un
+   * root avant sa synthèse, hors de cette primitive) : la réclamation de la
+   * transaction 1 l'accepte comme le sien. Sans ce champ, un marqueur frais
+   * posé par quelqu'un d'autre refuse la finalisation (`already_terminal`,
+   * code FINALIZE_CLAIMED_ELSEWHERE) — c'est ce qui garantit UNE preuve par
+   * job quand deux finaliseurs se présentent.
+   */
+  readonly claim?: { readonly finalizingAt: Date };
   readonly stats?: FinalizeStats;
   readonly messages?: unknown[];
   /** Livraison à préparer dans la même transaction (T08). */
@@ -289,15 +309,45 @@ export async function finalizeJobSuccess(
       .select({
         entityId: agentJobs.entityId,
         status: agentJobs.status,
-        completedAt: agentJobs.completedAt,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
       .for('update');
     const job = jobRows[0];
     if (!job) throw new Error(`${FINALIZE_JOB_NOT_FOUND}: ${jobId}`);
+    // Le STATUT seul dit qu'un job est terminal — pas `completed_at`. Un job
+    // remis à `pending` par le tableau de bord (nouvel essai, F1/Leg1) garde
+    // l'horodatage de son premier passage : le refuser sur cette seule trace
+    // rendrait un job réessayé infinalisable (trouvé par la suite d'execute).
     if (TERMINAL_STATUSES.includes(job.status as (typeof TERMINAL_STATUSES)[number])) return null;
-    if (job.completedAt !== null) return null;
+
+    // LA RÉCLAMATION (verdict d'incomplétude du découpage) : la preuve tourne
+    // hors transaction, donc le verrou ci-dessus ne sérialise plus deux
+    // finalisations du même job — sans marqueur, chacune lancerait SA preuve
+    // et la seconde ne l'apprendrait qu'en transaction 2. Le marqueur
+    // `finalizing_at` est posé ici, sous le verrou : libre, périmé, ou déjà
+    // le nôtre (le cron l'a posé avant sa synthèse) ⇒ à nous ; frais et posé
+    // par un autre ⇒ on se retire, dit par un code. `completeJob` le lève.
+    const claimNow = new Date();
+    const claimCutoff = new Date(claimNow.getTime() - FINALIZING_STALE_MS);
+    const claimed = await tx
+      .update(agentJobs)
+      .set({ finalizingAt: claimNow })
+      .where(
+        and(
+          eq(agentJobs.id, jobId),
+          or(
+            isNull(agentJobs.finalizingAt),
+            lt(agentJobs.finalizingAt, claimCutoff),
+            input.claim ? eq(agentJobs.finalizingAt, input.claim.finalizingAt) : sql`false`,
+          ),
+        ),
+      )
+      .returning({ id: agentJobs.id });
+    if (claimed.length === 0) {
+      log(FINALIZE_CLAIMED_ELSEWHERE, { jobId });
+      return null;
+    }
 
     const states = await tx
       .select({
@@ -399,21 +449,47 @@ export async function finalizeJobSuccess(
       // qui sérialise deux finalisations concurrentes du même job. Celle qui
       // arrive après le commit de l'autre lit un job terminal et n'écrit rien.
       const jobRows = await tx
-        .select({ status: agentJobs.status, completedAt: agentJobs.completedAt })
+        .select({ status: agentJobs.status })
         .from(agentJobs)
         .where(eq(agentJobs.id, jobId))
         .for('update');
       const job = jobRows[0];
       if (!job) throw new Error(`${FINALIZE_JOB_NOT_FOUND}: ${jobId}`);
       if (TERMINAL_STATUSES.includes(job.status as (typeof TERMINAL_STATUSES)[number])) return null;
-      if (job.completedAt !== null) return null;
 
       const decisions: DeliverableDecision[] = [];
 
       for (const plan of opened.plans) {
         const proof = proofs.get(plan.stateId) ?? null;
-        const status = decisionStatusFor(plan.config, proof);
+        let status = decisionStatusFor(plan.config, proof);
         const ready = plan.config.kind === 'ready' ? plan.config : null;
+
+        // L'ARBRE A-T-IL BOUGÉ PENDANT LA PREUVE ? Le garde de génération
+        // ci-dessous ne voit que les écritures de CE job ; un autre job qui
+        // écrit dans le même projet pendant la preuve avance l'epoch du projet
+        // (intention T16) sans toucher notre état. La configuration est relue
+        // sous verrou, dans le même ordre (type, clé) qu'en transaction 1 :
+        // epoch ou manifeste différents ⇒ ce qui a été prouvé n'est plus
+        // l'arbre courant, l'état reste sale, et c'est dit.
+        if (ready && opened.entityId !== null) {
+          const current = await plan.verifier.loadConfig(tx, {
+            entityId: opened.entityId,
+            canonicalKey: plan.canonicalKey,
+          });
+          const moved =
+            current.kind !== 'ready' ||
+            current.epoch !== ready.epoch ||
+            current.manifestHash !== ready.manifestHash;
+          if (moved) {
+            status = 'dirty';
+            log(VERIFY_STALE_EPOCH, {
+              jobId,
+              key: plan.canonicalKey,
+              testedEpoch: ready.epoch,
+              currentEpoch: current.kind === 'not_configured' ? null : current.epoch,
+            });
+          }
+        }
         let effective = status;
 
         try {

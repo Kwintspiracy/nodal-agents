@@ -275,20 +275,20 @@ export async function runCliRuntimeJob(args: {
   // s'y produisait après la prise des verrous et avant le `try` — les dossiers,
   // le PARTAGÉ compris, restaient bloqués une demi-heure pour tout le monde,
   // jusqu'à la reprise du verrou périmé.
+  //
+  // ── L'intention de mutation — la CINQUIÈME surface, hors registre d'outils
+  // (plan « Vérifier & Corriger », T17 / D8). Un runtime CLI écrit sans jamais
+  // traverser executeTool : le seam unique des outils ne le voit pas, donc
+  // l'intention se pose dans le try ci-dessous, entre la prise des verrous et
+  // le spawn — le projet est sale AVANT que la CLI touche au disque. Même
+  // prédicat que les verrous (mode write), même périmètre (TOUS les dossiers
+  // attachés : `cwd` n'est que le premier, le reste part en extraWriteDirs).
+  // Sous le même filet que l'assemblage du prompt : un refus relâche les
+  // verrous. `failed` ET `already_terminal` interdisent le spawn — un job
+  // annulé qui laisse partir une CLI n'est pas annulé. Levé avec un CODE :
+  // run-job ne marque pas le job lui-même, l'appelant décide.
   let systemPrompt: string;
   try {
-    // ── L'intention de mutation — la CINQUIÈME surface, hors registre d'outils
-    // (plan « Vérifier & Corriger », T17 / D8). Un runtime CLI écrit sans
-    // jamais traverser executeTool : le seam unique des outils ne le voit pas,
-    // donc l'intention se pose ICI, entre la prise des verrous et le spawn —
-    // le projet est sale AVANT que la CLI touche au disque. Même prédicat que
-    // les verrous (mode write), même périmètre (TOUS les dossiers attachés :
-    // `cwd` n'est que le premier, le reste part en extraWriteDirs).
-    //
-    // Sous le même filet que l'assemblage du prompt : un refus relâche les
-    // verrous. `failed` ET `already_terminal` interdisent le spawn — un job
-    // annulé qui laisse partir une CLI n'est pas annulé. Levé avec un CODE :
-    // run-job ne marque pas le job lui-même, l'appelant décide.
     if (mode === 'write') {
       const intent = await writeMutationIntent(
         { db, entityId: job.entityId ?? '', jobId, workspaces: args.workspaces },

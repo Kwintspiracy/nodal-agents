@@ -179,15 +179,16 @@ export async function runCliRuntimeChatTurn(args: {
   //
   // Sous le MÊME filet que le tour — voir run-job.ts : une panne passagère ici
   // laissait les dossiers verrouillés une demi-heure pour tout le monde.
+  //
+  // ── L'intention de mutation, LE JUMEAU du chemin job (T17) — nommé parce
+  // qu'il a déjà été oublié une revue entière (voir workspace-locks.ts). Un
+  // tour de chat n'a PAS de jobId, et la ligne d'état a une FK NOT NULL vers
+  // agent_jobs : le helper rend `skipped` (no_job_context) et le DIT par un
+  // code — le site d'appel existe (dans le try ci-dessous), le silence est
+  // nommé, l'écran le dit dans sa branche chat (T24). Un `failed` (entité
+  // vide) interdit le spawn, comme sur le chemin job.
   let systemPrompt: string;
   try {
-    // ── L'intention de mutation, LE JUMEAU du chemin job (T17) — nommé parce
-    // qu'il a déjà été oublié une revue entière (voir workspace-locks.ts).
-    // Un tour de chat n'a PAS de jobId, et la ligne d'état a une FK NOT NULL
-    // vers agent_jobs : le helper rend `skipped` (no_job_context) et le DIT
-    // par un code — le site d'appel existe, le silence est nommé, l'écran le
-    // dit dans sa branche chat (T24). Un `failed` (entité vide) interdit le
-    // spawn, comme sur le chemin job.
     if (mode === 'write') {
       const intent = await writeMutationIntent(
         { db, entityId, jobId: null, workspaces: wsRows },
