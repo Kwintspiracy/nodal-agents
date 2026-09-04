@@ -88,7 +88,8 @@ export type MutationIntentOutcome =
   /** L'owner a décoché cette surface (D8) — la trace est posée sur le job. */
   | {
       readonly kind: 'skipped';
-      readonly reason: 'surface_disabled';
+      /** `surface_disabled` : D8 ; `no_job_context` : un tour de chat, sans job (T17). */
+      readonly reason: 'surface_disabled' | 'no_job_context';
       readonly surface: VerificationSurfaceKey;
     }
   /** Le job est déjà terminal : plus rien ne doit être écrit sur sa décision. */
@@ -100,6 +101,17 @@ export interface WriteMutationIntentArgs {
   readonly surface: VerificationSurfaceKey;
   readonly targets: readonly MutationTarget[];
 }
+
+/**
+ * Ce que le helper lit du contexte — un `ToolContext` convient tel quel. Le
+ * runtime CLI (run-job.ts / run-chat.ts, T17) n'a pas de ToolContext et
+ * construit cet objet lui-même ; un tour de CHAT n'a pas de jobId (la colonne
+ * d'état est NOT NULL FK agent_jobs) : `''` ou `null` ⇒ `skipped`
+ * (`no_job_context`), dit par un code, jamais un `return` muet.
+ */
+export type MutationIntentContext = Pick<ToolContext, 'db' | 'entityId' | 'workspaces'> & {
+  readonly jobId: string | null;
+};
 
 /** Le manifeste d'un dossier, lu sur le disque (injecté dans le résolveur pur). */
 function hasMarker(dir: string): boolean {
@@ -178,18 +190,19 @@ async function expandWorkspaceRoots(
  * dans le même tour se marcheraient dessus et la trace perdrait une clé.
  */
 async function traceSkippedSurface(
-  ctx: ToolContext,
+  db: MutationIntentContext['db'],
+  jobId: string,
   surface: VerificationSurfaceKey,
 ): Promise<void> {
   const payload = JSON.stringify([surface]);
-  await ctx.db
+  await db
     .update(agentJobs)
     .set({
       verificationSkippedSurfaces: sql`CASE WHEN ${agentJobs.verificationSkippedSurfaces} @> ${payload}::jsonb
         THEN ${agentJobs.verificationSkippedSurfaces}
         ELSE ${agentJobs.verificationSkippedSurfaces} || ${payload}::jsonb END`,
     })
-    .where(eq(agentJobs.id, ctx.jobId));
+    .where(eq(agentJobs.id, jobId));
 }
 
 /**
@@ -215,20 +228,27 @@ async function traceSkippedSurface(
  * boucle du job — un échec pire, et moins lisible, que le refus typé.
  */
 export async function writeMutationIntent(
-  ctx: ToolContext,
+  ctx: MutationIntentContext,
   args: WriteMutationIntentArgs,
 ): Promise<MutationIntentOutcome> {
   const { surface, targets } = args;
+  const jobId = ctx.jobId;
 
   // L'entité d'abord : sans elle il n'y a ni réglage à lire ni `code_projects`
   // à écrire (`entity_id` est un uuid NOT NULL — un `''` lèverait au milieu de
   // la transaction). Le runner construit `entityId: job.entityId ?? ''` en
   // cinq points ; ce cas se refuse, il ne se contourne pas.
   if (!ctx.entityId) {
-    console.error(
-      `[verification] VERIFICATION_INTENT_NO_ENTITY surface=${surface} job=${ctx.jobId}`,
-    );
+    console.error(`[verification] VERIFICATION_INTENT_NO_ENTITY surface=${surface} job=${jobId}`);
     return { kind: 'failed', code: 'intent_no_entity' };
+  }
+
+  // Un tour de chat n'a pas de job : la ligne d'état a une FK NOT NULL vers
+  // agent_jobs, il n'y a donc rien à poser — et ce n'est pas une panne. Le
+  // silence est NOMMÉ (inv. #4) ; l'écran le dit dans sa branche chat (T24).
+  if (!jobId) {
+    console.warn(`[verification] VERIFICATION_NO_JOB_CONTEXT surface=${surface}`);
+    return { kind: 'skipped', reason: 'no_job_context', surface };
   }
 
   let surfacesEnabled: boolean;
@@ -249,17 +269,15 @@ export async function writeMutationIntent(
     // D8 : décochée ⇒ AUCUNE intention, et le run le dit. Jamais un `return`
     // muet — le détail de run lira cette trace figée, pas le réglage courant.
     try {
-      await traceSkippedSurface(ctx, surface);
+      await traceSkippedSurface(ctx.db, jobId, surface);
     } catch (err) {
       console.error(
         `[verification] VERIFICATION_SURFACE_SKIP_TRACE_FAILED surface=${surface} ` +
-          `job=${ctx.jobId} error=${err instanceof Error ? err.message : String(err)}`,
+          `job=${jobId} error=${err instanceof Error ? err.message : String(err)}`,
       );
       return { kind: 'failed', code: 'intent_skip_trace_failed' };
     }
-    console.warn(
-      `[verification] VERIFICATION_SURFACE_DISABLED surface=${surface} job=${ctx.jobId}`,
-    );
+    console.warn(`[verification] VERIFICATION_SURFACE_DISABLED surface=${surface} job=${jobId}`);
     return { kind: 'skipped', reason: 'surface_disabled', surface };
   }
 
@@ -270,7 +288,7 @@ export async function writeMutationIntent(
     projects = resolveProjectRoots({ targets: expanded, workspaceRoots, hasMarker });
   } catch (err) {
     console.error(
-      `[verification] VERIFICATION_INTENT_RESOLVE_FAILED surface=${surface} job=${ctx.jobId} ` +
+      `[verification] VERIFICATION_INTENT_RESOLVE_FAILED surface=${surface} job=${jobId} ` +
         `error=${err instanceof Error ? err.message : String(err)}`,
     );
     return { kind: 'failed', code: 'intent_resolve_failed' };
@@ -283,7 +301,7 @@ export async function writeMutationIntent(
       const [job] = await tx
         .select({ status: agentJobs.status })
         .from(agentJobs)
-        .where(eq(agentJobs.id, ctx.jobId))
+        .where(eq(agentJobs.id, jobId))
         .for('update')
         .limit(1);
 
@@ -291,7 +309,7 @@ export async function writeMutationIntent(
         // Pas de ligne à verrouiller : l'état de vérification a une FK NOT NULL
         // vers ce job, il n'y a rien à écrire et rien à supposer.
         console.error(
-          `[verification] VERIFICATION_INTENT_JOB_NOT_FOUND surface=${surface} job=${ctx.jobId}`,
+          `[verification] VERIFICATION_INTENT_JOB_NOT_FOUND surface=${surface} job=${jobId}`,
         );
         throw new IntentFailure('intent_job_not_found');
       }
@@ -301,7 +319,7 @@ export async function writeMutationIntent(
       if (job.status !== null && isTerminalJobStatus(job.status)) {
         console.warn(
           `[verification] VERIFICATION_INTENT_ALREADY_TERMINAL surface=${surface} ` +
-            `job=${ctx.jobId} status=${job.status}`,
+            `job=${jobId} status=${job.status}`,
         );
         return { kind: 'already_terminal', surface } as const;
       }
@@ -343,7 +361,7 @@ export async function writeMutationIntent(
         const [state] = await tx
           .insert(jobDeliverableVerificationState)
           .values({
-            jobId: ctx.jobId,
+            jobId,
             deliverableType: DELIVERABLE_TYPE_CODE_PROJECT,
             canonicalKey: project.key,
             displayPathSnapshot: project.path,
@@ -379,7 +397,7 @@ export async function writeMutationIntent(
   } catch (err) {
     const code = err instanceof IntentFailure ? err.code : 'intent_write_failed';
     console.error(
-      `[verification] VERIFICATION_INTENT_FAILED surface=${surface} job=${ctx.jobId} ` +
+      `[verification] VERIFICATION_INTENT_FAILED surface=${surface} job=${jobId} ` +
         `code=${code} error=${err instanceof Error ? err.message : String(err)}`,
     );
     return { kind: 'failed', code };

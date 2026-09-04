@@ -7,7 +7,7 @@
 // `executeTool`, avec les vrais outils, et TOUTES les assertions sont des
 // lignes relues en base ou des fichiers constatés sur le disque.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -421,6 +421,27 @@ describe('les refus et les silences interdits', () => {
     expect(res.error).toBe('verification_intent_failed: intent_already_terminal');
     expect(await exists(join(ws, 'a.txt')), 'un job terminal a écrit sur le disque').toBe(false);
     expect(await statesOf(jobId)).toHaveLength(0);
+    expect(await projectRow(keyOf(ws))).toBeUndefined();
+  });
+
+  it('tour de chat (pas de jobId) ⇒ skipped no_job_context, code journalisé, rien en base', async () => {
+    // Le runtime CLI chat n'a pas de job (T17) ; la ligne d'état a une FK NOT
+    // NULL vers agent_jobs. Le helper le DIT par un code — jamais un return
+    // muet — et ne pose rien : ni état, ni ligne code_projects.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const outcome = await writeMutationIntent(
+        { db, entityId: seed.entityId, jobId: null, workspaces: [{ label: 'shared', path: ws }] },
+        { surface: 'cliRuntime', targets: [{ kind: 'dir', path: ws }] },
+      );
+      expect(outcome).toEqual({ kind: 'skipped', reason: 'no_job_context', surface: 'cliRuntime' });
+      const logged = warn.mock.calls.map((c) => String(c[0]));
+      expect(logged.some((l) => l.includes('VERIFICATION_NO_JOB_CONTEXT surface=cliRuntime'))).toBe(
+        true,
+      );
+    } finally {
+      warn.mockRestore();
+    }
     expect(await projectRow(keyOf(ws))).toBeUndefined();
   });
 

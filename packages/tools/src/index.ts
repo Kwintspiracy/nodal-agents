@@ -23,6 +23,7 @@ export type {
 export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
 export type {
   MutationIntentOutcome,
+  MutationIntentContext,
   WriteMutationIntentArgs,
   DirtiedProject,
 } from './verification/intent';
