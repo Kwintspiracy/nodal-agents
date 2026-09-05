@@ -200,6 +200,7 @@ export const skillFileReadTool: ToolDefinition<
     "reads the skill's own files only, never the agent workspace (use file_read for that).",
   inputSchema: SkillFileReadInputSchema,
   riskLevel: 'read',
+  card: 'read',
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -306,6 +307,7 @@ export const skillFileListTool: ToolDefinition<
     "to the skill's root.",
   inputSchema: SkillFileListInputSchema,
   riskLevel: 'read',
+  card: 'files',
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -429,6 +431,7 @@ export const skillFileWriteTool: ToolDefinition<
     'write requires human approval; the user can enable auto-write ("Yolo") per agent × skill.',
   inputSchema: SkillFileWriteInputSchema,
   riskLevel: 'destructive',
+  card: 'files',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     try {

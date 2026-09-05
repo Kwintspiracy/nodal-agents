@@ -50,6 +50,7 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     'lines you do not touch. Max 1 MiB per write.',
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
+  card: 'files',
   mutatesWorkspace: true,
   // The ONE file this call is about to write — the same resolution execute()
   // does below, run again here rather than guessed at the seam. Resolving

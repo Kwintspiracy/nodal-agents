@@ -21,6 +21,9 @@ export type {
 // d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI
 // écrit sans jamais traverser executeTool).
 export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
+// La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
+// comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
+export { cardForTool, declaresCard, TOOL_CARD_GENERIC } from './cards';
 export type {
   MutationIntentOutcome,
   MutationIntentContext,

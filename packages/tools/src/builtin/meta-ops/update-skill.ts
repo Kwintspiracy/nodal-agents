@@ -33,6 +33,7 @@ export const updateSkillTool: ToolDefinition<typeof UpdateSkillInput, UpdateSkil
     SKILL_AUTHORING_GUIDE,
   inputSchema: UpdateSkillInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     if (

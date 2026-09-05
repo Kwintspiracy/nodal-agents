@@ -149,6 +149,7 @@ export const webSearchTool: ToolDefinition<typeof WebSearchInputSchema, WebSearc
     'best-effort search.',
   inputSchema: WebSearchInputSchema,
   riskLevel: 'read',
+  card: 'search',
   execute: async (input, ctx) => {
     // Premium backend injected by the runner (Tavily > Firecrawl) wins.
     if (ctx.searchBackend) {

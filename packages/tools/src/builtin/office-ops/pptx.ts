@@ -68,6 +68,7 @@ export const pptxReadTool: ToolDefinition<typeof PptxReadInput, PptxReadOutput> 
     'be included.',
   inputSchema: PptxReadInput,
   riskLevel: 'read',
+  card: 'read',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -382,6 +383,7 @@ export const pptxCreateTool: ToolDefinition<typeof PptxCreateInput, PptxCreateOu
     'pptx_append_slides, and to edit text in place use pptx_replace_text.',
   inputSchema: PptxCreateInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const built = await buildPptxGenJsBuffer(ctx, input.slides, input.theme);
     if (!built.ok) return built;
@@ -424,6 +426,7 @@ export const pptxAppendSlidesTool: ToolDefinition<
     'never modified.',
   inputSchema: PptxAppendSlidesInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -595,6 +598,7 @@ export const pptxReplaceTextTool: ToolDefinition<
     'anywhere in the presentation (or in the target slide, if slide_index is given).',
   inputSchema: PptxReplaceTextInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

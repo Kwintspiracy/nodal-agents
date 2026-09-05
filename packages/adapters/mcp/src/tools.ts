@@ -261,6 +261,10 @@ function buildMcpToolDefinition(
     description: frameMcpDescription(mcpTool.description, slug, originalName),
     inputSchema,
     riskLevel: riskFromAnnotations(mcpTool.annotations),
+    // Un outil tiers ne sait pas comment Nodal montre les résultats : `generic`
+    // affiche son entrée et sa sortie brutes, en le disant. C'est une carte
+    // honnête, pas une devinette (P1, `cardForTool`).
+    card: 'generic',
     // MCP-001 (audit 2026-08-07). Every privileged tool the PRODUCT ships
     // declares this — create_agent, create_mcp, create_skill, attach_mcp,
     // attach_connector, assign_skill, run_command. Tools from a third-party

@@ -134,6 +134,37 @@ export const OPERATION_RISK_LEVELS = ['read', 'write', 'destructive'] as const;
 export const OperationRiskLevelSchema = z.enum(OPERATION_RISK_LEVELS);
 export type OperationRiskLevel = z.infer<typeof OperationRiskLevelSchema>;
 
+// La CARTE d'un outil : comment son résultat se montre à l'écran (plan « De la
+// maquette au produit », P1). L'outil la déclare ; l'écran dispatche dessus,
+// jamais sur le nom de l'outil. Vocabulaire FERMÉ, emprunté à DeepSeek Harness
+// (generic/terminal/diff/read/search/web) et étendu à ce que Nodal produit :
+//   text       — une réponse à lire (mémoire, résultat final, réglage écrit)
+//   read       — le contenu d'un fichier, tel que lu
+//   search     — des résultats de recherche (web, fichiers, historique)
+//   files      — des fichiers écrits ou listés, avec leurs diffs
+//   table      — des lignes et colonnes (cellules, enregistrements)
+//   terminal   — la sortie d'une commande
+//   sent       — quelque chose qui est parti vers un canal ou un service
+//   checks     — une liste de contrôles avec verdict (preuve, relecture)
+//   question   — une question posée à l'utilisateur, avec ses options
+//   delegation — un travail confié à un autre agent
+//   generic    — rien de mieux connu : l'entrée et la sortie brutes, dites telles quelles
+export const TOOL_CARDS = [
+  'text',
+  'read',
+  'search',
+  'files',
+  'table',
+  'terminal',
+  'sent',
+  'checks',
+  'question',
+  'delegation',
+  'generic',
+] as const;
+export const ToolCardSchema = z.enum(TOOL_CARDS);
+export type ToolCard = z.infer<typeof ToolCardSchema>;
+
 // mcp_servers.transport CHECK constraint
 export const MCP_TRANSPORTS = ['http', 'stdio'] as const;
 export const McpTransportSchema = z.enum(MCP_TRANSPORTS);

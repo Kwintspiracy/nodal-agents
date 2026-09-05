@@ -78,6 +78,7 @@ export const skillViewTool: ToolDefinition<typeof SkillViewInputSchema, SkillVie
     'Follow what it returns instead of reimplementing the skill yourself.',
   inputSchema: SkillViewInputSchema,
   riskLevel: 'read',
+  card: 'text',
   execute: async (input, ctx) => {
     const [row] = await ctx.db
       .select({ name: agentSkills.name, content: agentSkills.content })

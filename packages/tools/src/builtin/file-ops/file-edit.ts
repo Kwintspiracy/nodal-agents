@@ -61,6 +61,7 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     'untouched lines.',
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
+  card: 'files',
   mutatesWorkspace: true,
   // The ONE file this edit is about to change — same contract, same reasons
   // as file_write's hook (declared target, resolved twice, empty on a

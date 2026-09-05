@@ -91,6 +91,7 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
     'omit to search all workspaces. Skips .git/node_modules/dist by default.',
   inputSchema: FileSearchInputSchema,
   riskLevel: 'read',
+  card: 'search',
   execute: async (input, ctx) => {
     try {
       const workspaces = assertWorkspacesConfigured(ctx);

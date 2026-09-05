@@ -51,6 +51,7 @@ export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, Memo
     'filter by skill_tags for narrower lookups.',
   inputSchema: QueryMemoryInputSchema,
   riskLevel: 'write', // write because it updates last_accessed_at on matched rows
+  card: 'text',
   execute: async (input, ctx) => {
     const sort = input.sort ?? 'importance';
     const limit = input.limit ?? 50;

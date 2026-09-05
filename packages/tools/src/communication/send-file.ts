@@ -120,6 +120,7 @@ Fail conditions:
     inputSchema: SendFileInput,
 
     riskLevel: 'write',
+    card: 'sent',
 
     async execute(input: SendFileInput, ctx: ToolContext): Promise<SendFileOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved

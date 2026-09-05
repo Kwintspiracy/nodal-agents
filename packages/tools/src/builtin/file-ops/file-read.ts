@@ -55,6 +55,7 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
     'even with offset/limit — use `file_search` to locate content, or split the file.',
   inputSchema: FileReadInputSchema,
   riskLevel: 'read',
+  card: 'read',
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);

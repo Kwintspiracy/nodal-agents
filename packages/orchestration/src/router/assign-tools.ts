@@ -249,6 +249,9 @@ export async function generateAssignTools(
       description,
       inputSchema: assignInputSchema,
       riskLevel: 'write',
+      // Un travail confié à un autre agent : la conversation le rend comme un
+      // groupe indenté portant les actes de l'enfant (P1, `ToolCard`).
+      card: 'delegation',
       // execute() throws DelegationPendingError — the runner must intercept this
       // and call handleDelegation() to suspend the parent and create the child job.
       // The tool never actually returns a value; the signal IS the error.

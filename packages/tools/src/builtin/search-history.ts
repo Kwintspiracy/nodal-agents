@@ -46,6 +46,7 @@ export const searchHistoryTool: ToolDefinition<typeof SearchHistoryInputSchema, 
     'limit — reach for it when the answer is likely in past work but not in your injected memory.',
   inputSchema: SearchHistoryInputSchema,
   riskLevel: 'read',
+  card: 'search',
   execute: async (input, ctx) => {
     const limit = input.limit ?? 6;
     // Parameterized — drizzle binds ${...}; no SQL injection surface.

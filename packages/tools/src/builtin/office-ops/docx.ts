@@ -251,6 +251,7 @@ export const docxReadTool: ToolDefinition<typeof DocxReadInput, DocxReadOutput> 
     'included (mammoth walks the whole document body). Images and headers/footers are not included.',
   inputSchema: DocxReadInput,
   riskLevel: 'read',
+  card: 'read',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -366,6 +367,7 @@ export const docxCreateTool: ToolDefinition<typeof DocxCreateInput, DocxCreateOu
     'and page breaks. Fails if the file already exists unless overwrite:true is passed.',
   inputSchema: DocxCreateInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     let usesNumberedList = false;
     const children: (Paragraph | Table)[] = [];
@@ -542,6 +544,7 @@ export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, Do
   // <w:p> nodes and never touches or removes anything else in the archive, so
   // it's a plain write, same posture as xlsx_append_rows.
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -715,6 +718,7 @@ export const docxReplaceTextTool: ToolDefinition<
     'Headers/footers are not covered. Fails loud if the text is not found at all.',
   inputSchema: DocxReplaceTextInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

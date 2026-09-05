@@ -28,6 +28,7 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
     'Use list_schedules to find the name. Fails if no schedule with that name exists or it has no task.',
   inputSchema: RunScheduleInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const [sched] = await ctx.db

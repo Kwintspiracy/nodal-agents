@@ -45,6 +45,7 @@ export const createSkillTool: ToolDefinition<typeof CreateSkillInput, CreateSkil
     SKILL_AUTHORING_GUIDE,
   inputSchema: CreateSkillInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     // Reject foreign/invented tool references before persisting (fail loud).

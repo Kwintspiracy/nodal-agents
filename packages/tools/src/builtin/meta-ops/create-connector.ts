@@ -58,6 +58,7 @@ export const createConnectorTool: ToolDefinition<
     'second account for the same provider).',
   inputSchema: CreateConnectorInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const provisioning = ctx.provisioning;

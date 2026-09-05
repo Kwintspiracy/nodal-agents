@@ -72,6 +72,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
     'Fails if the slug is already used by another MCP server in this workspace.',
   inputSchema: CreateMcpInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const provisioning = ctx.provisioning;

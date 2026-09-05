@@ -197,6 +197,7 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
+    card: 'terminal',
     mutatesWorkspace: true,
     defaultApproval: 'require_approval',
     // TOUS les dossiers attachés, jamais le bundle de la skill. Le contrat du

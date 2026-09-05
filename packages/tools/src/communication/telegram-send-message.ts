@@ -104,6 +104,7 @@ Fail conditions:
     inputSchema: TelegramSendMessageInput,
 
     riskLevel: 'write',
+    card: 'sent',
 
     async execute(
       input: TelegramSendMessageInput,

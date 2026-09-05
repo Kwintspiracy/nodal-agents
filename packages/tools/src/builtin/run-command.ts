@@ -109,6 +109,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval).',
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
+  card: 'terminal',
   mutatesWorkspace: true,
   defaultApproval: 'require_approval',
   // Le cwd résolu ET tous les dossiers attachés. Un shell n'est pas un

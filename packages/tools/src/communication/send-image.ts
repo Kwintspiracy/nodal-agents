@@ -111,6 +111,7 @@ Fail conditions:
     inputSchema: SendImageInput,
 
     riskLevel: 'write',
+    card: 'sent',
 
     async execute(input: SendImageInput, ctx: ToolContext): Promise<SendImageOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved

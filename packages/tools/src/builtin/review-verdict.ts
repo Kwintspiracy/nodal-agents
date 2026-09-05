@@ -112,6 +112,7 @@ export const reviewVerdictTool: ToolDefinition<typeof reviewVerdictSchema, Revie
     'return_result so the requesting agent receives it.',
   inputSchema: reviewVerdictSchema,
   riskLevel: 'read',
+  card: 'checks',
   execute: (input) => {
     const counts = { blocker: 0, major: 0, minor: 0 };
     for (const f of input.findings) counts[f.severity] += 1;

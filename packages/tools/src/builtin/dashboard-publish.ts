@@ -38,6 +38,7 @@ export const dashboardPublishTool: ToolDefinition<
     'Correct: response.content = [{tool-call: dashboard_publish, ...}, {tool-call: return_result, ...}].',
   inputSchema: DashboardPublishInputSchema,
   riskLevel: 'write',
+  card: 'sent',
   execute: async (input, ctx) => {
     await ctx.db
       .update(agentJobs)

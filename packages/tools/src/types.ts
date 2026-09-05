@@ -4,15 +4,15 @@
 import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
-import type { MutationTarget, OperationRiskLevel } from '@nodal-agents/shared';
+import type { MutationTarget, OperationRiskLevel, ToolCard } from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
 
-// Re-exported so a tool file declaring `resolveMutationTargets` imports its
-// argument type from the same place as the hook itself.
-export type { MutationTarget };
+// Re-exported so a tool file declaring `resolveMutationTargets` or `card`
+// imports its argument type from the same place as the field itself.
+export type { MutationTarget, ToolCard };
 
 // ─── ToolContext ───────────────────────────────────────────────────────────────
 
@@ -249,6 +249,22 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   description: string;
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
+  /**
+   * How this tool's RESULT is shown — the card the conversation view dispatches
+   * on (plan « De la maquette au produit », P1). Declared by the tool, never
+   * inferred from its name: the screen must not grow a `switch` over tool
+   * names that has to be edited every time a tool is added. Same principle as
+   * `resolveMutationTargets` for writes, and the same model as DeepSeek
+   * Harness's `presentResult` — the tool speaks a neutral vocabulary
+   * (`ToolCard`), the UI translates it.
+   *
+   * Optional in the TYPE so third-party tools (MCP servers, connector
+   * adapters) compile without it; `cardForTool()` then resolves them to
+   * `generic`, an HONEST card (raw input and output, said as such), not a
+   * guess. Every tool the product ships MUST declare one — enforced by the
+   * registry test (`cards.test.ts`), which names any builtin that falls back.
+   */
+  card?: ToolCard;
   /**
    * Approval posture when NO approval rule matches this tool. Absent (the norm)
    * means "execute" — the historical default. A tool sets this to

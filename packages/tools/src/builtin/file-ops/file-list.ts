@@ -82,6 +82,7 @@ export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOu
     'Pass `recursive:true` to walk subdirectories. Caps at 500 entries.',
   inputSchema: FileListInputSchema,
   riskLevel: 'read',
+  card: 'files',
   execute: async (input, ctx) => {
     try {
       // Guard first (throws if not configured at all)

@@ -37,6 +37,7 @@ export const markMemoryHelpfulTool: ToolDefinition<
     'Identify the memory by quoting a unique substring from the fact text.',
   inputSchema: MarkMemoryHelpfulInputSchema,
   riskLevel: 'write',
+  card: 'text',
   execute: async (input, ctx) => {
     try {
       const matches = await findMemoriesByFactSubstring(ctx.db, ctx.entityId, input.fact_substring);

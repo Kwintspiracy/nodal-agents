@@ -267,6 +267,7 @@ export const xlsxReadTool: ToolDefinition<typeof XlsxReadInput, XlsxReadOutput> 
     'Set max_rows to control how many rows are returned per sheet.',
   inputSchema: XlsxReadInput,
   riskLevel: 'read',
+  card: 'table',
   execute: async (input, ctx) => {
     const load = await loadWorkbook(ctx, input.path);
     if (!load.ok) return load;
@@ -344,6 +345,7 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
     'path atomically.',
   inputSchema: XlsxSetCellInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -399,6 +401,7 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
     'Other cells outside the range are preserved. Atomic save.',
   inputSchema: XlsxSetRangeInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -464,6 +467,7 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
       'Existing data is preserved.',
     inputSchema: XlsxAppendRowsInput,
     riskLevel: 'write',
+    card: 'files',
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -515,6 +519,7 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
   description: 'Add a new (empty) worksheet to an existing Excel workbook.',
   inputSchema: XlsxAddSheetInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -560,6 +565,7 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
     'Fails if the file already exists unless overwrite:true is passed.',
   inputSchema: XlsxCreateInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const workbook = new ExcelJS.Workbook();
     workbook.addWorksheet(input.sheet);
@@ -600,6 +606,7 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
       'with xlsx_read first. Requires an explicit approval rule or agent-level overwrite consent.',
     inputSchema: XlsxDeleteRowsInput,
     riskLevel: 'destructive',
+    card: 'files',
     defaultApproval: 'require_approval',
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
@@ -719,6 +726,7 @@ export const xlsxFormatRangeTool: ToolDefinition<
     'currency/percentage/date.',
   inputSchema: XlsxFormatRangeInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const { font, fill, border, alignment } = input;
     if (!font && !fill && !border && !alignment && input.num_fmt === undefined) {
@@ -838,6 +846,7 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
       'last row, this inserts in the middle of existing data.',
     inputSchema: XlsxInsertRowsInput,
     riskLevel: 'write',
+    card: 'files',
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -895,6 +904,7 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
     'xlsx_read first. Requires an explicit approval rule or agent-level overwrite consent.',
   inputSchema: XlsxDeleteColumnsInput,
   riskLevel: 'destructive',
+  card: 'files',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
@@ -956,6 +966,7 @@ export const xlsxInsertColumnsTool: ToolDefinition<
     'formulae that reference them) right.',
   inputSchema: XlsxInsertColumnsInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1011,6 +1022,7 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
       'become part of the merge.',
     inputSchema: XlsxMergeCellsInput,
     riskLevel: 'write',
+    card: 'files',
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -1068,6 +1080,7 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
   description: 'Undo a previous cell merge, restoring the range to independent cells.',
   inputSchema: XlsxUnmergeCellsInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1145,6 +1158,7 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
     'approximation, not a pixel-perfect Excel autofit.',
   inputSchema: XlsxSetColumnWidthsInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     if ((!input.widths || input.widths.length === 0) && !input.autofit) {
       return { ok: false, reason: 'Provide widths and/or set autofit:true.' };
@@ -1230,6 +1244,7 @@ export const xlsxFreezePanesTool: ToolDefinition<
     'existing freeze.',
   inputSchema: XlsxFreezePanesInput,
   riskLevel: 'write',
+  card: 'files',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1289,6 +1304,7 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
     'instead of guessing coordinates from xlsx_read.',
   inputSchema: XlsxFindCellsInput,
   riskLevel: 'read',
+  card: 'search',
   execute: async (input, ctx) => {
     const load = await loadWorkbook(ctx, input.path);
     if (!load.ok) return load;
