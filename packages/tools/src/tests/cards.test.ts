@@ -27,7 +27,7 @@
 // suites portent l'assertion (assign-tools.test.ts, task-tools.test.ts).
 
 import { describe, it, expect } from 'vitest';
-import { TOOL_CARDS, CARDS_NEEDING_PRESENTER } from '@nodal-agents/shared';
+import { TOOL_CARDS, CARDS_NEEDING_PRESENTER, CARD_CELL_MAX } from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
@@ -49,6 +49,7 @@ import {
   TOOL_CARD_GENERIC,
 } from '../cards';
 import type { ToolDefinition } from '../types';
+import { tableCard } from '../presenters';
 import type { z } from 'zod';
 
 type AnyTool = ToolDefinition<z.ZodTypeAny, unknown>;
@@ -358,5 +359,19 @@ describe('presentToolResult — la charge utile que la ligne tool_calls persiste
     expect(() => presentToolResult(paresseux, {}, { ok: true })).toThrow(
       /only a `text` payload marked `failure: true`/,
     );
+  });
+});
+
+describe('tableCard — `clipped` dit la vérité sur TOUT ce qui a été coupé', () => {
+  it('un intitulé de colonne plus long que CARD_CELL_MAX met clipped à true, même sans ligne', () => {
+    // Revue passe 15 : les colonnes étaient coupées sans que le drapeau le dise.
+    const long = 'x'.repeat(CARD_CELL_MAX + 1);
+    const p = tableCard([{ columns: [long], rows: [] }]);
+    expect(p.tables[0]?.clipped).toBe(true);
+    expect(p.tables[0]?.columns[0]?.length).toBe(CARD_CELL_MAX);
+    // Et rien de coupé → false, pas un true prudent.
+    expect(tableCard([{ columns: ['a'], rows: [['b']] }]).tables[0]?.clipped).toBe(false);
+    // Une cellule coupée le dit aussi.
+    expect(tableCard([{ columns: ['a'], rows: [[long]] }]).tables[0]?.clipped).toBe(true);
   });
 });

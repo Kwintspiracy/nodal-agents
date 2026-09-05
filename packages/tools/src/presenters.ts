@@ -167,7 +167,9 @@ export function tableCard(
   return {
     card: 'table',
     tables: tables.map((t) => {
-      let clipped = false;
+      // Coupé quelque part — une cellule OU un intitulé de colonne (revue passe
+      // 15 : les colonnes étaient coupées sans que `clipped` le dise).
+      let clipped = t.columns.some((c) => c.length > CARD_CELL_MAX);
       const shown = t.rows.slice(0, CARD_ROWS_MAX).map((r) =>
         r.map((v) => {
           const [c, wasClipped] = cell(v);
