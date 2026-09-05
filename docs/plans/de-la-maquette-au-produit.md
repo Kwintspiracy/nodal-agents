@@ -1,0 +1,227 @@
+<!-- artifact: https://claude.ai/code/artifact/1fd52dac-1542-4bfb-89c8-3d5aff9f248e -->
+
+# De la maquette au produit — le plan des pierres
+
+Objectif : l'espace de code tel que dessiné le 05/09 (artifact « L'espace de
+code », `docs/design/espace-code/`) — une conversation où l'agent parle, demande,
+travaille et montre ses résultats, avec une barre d'état permanente et une
+étagère fixe. Vision : « Le livrable est la page »
+(https://claude.ai/code/artifact/f2cd2ddd-639b-4a9b-9f85-4386cf45a574).
+
+## Suivi
+
+| # | Lot | Pierres | Ce que Quentin voit à la fin | État |
+|---|-----|---------|------------------------------|------|
+| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | La page d'un job devient la conversation dessinée, avec preuves, coûts, jetons. Aucune migration | ⬜ prochain |
+| 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
+| 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
+| 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
+
+## Verdict de faisabilité — vérifié dans le code le 05/09
+
+Chaque ligne du dessin, et d'où vient sa donnée. Rien n'est supposé.
+
+| Ce que le dessin montre | D'où ça vient | Vérifié |
+|---|---|---|
+| L'agent parle entre ses actions | `agent_jobs.messages` — chaque message assistant porte `reasoningParts`, une partie `text`, et les `toolCallParts` (`apps/runner/src/job/execute.ts:2857`) | oui |
+| Le raisonnement | mêmes parties, avec leur signature de provider (`execute.ts:2795`). **Tous les modèles n'en émettent pas** : l'écran doit le dire | oui, partiel |
+| Chaque outil : entrée, sortie, durée | `tool_calls` — écrit par `packages/tools/src/execute.ts:763` pour la boucle principale, et par `code-task/live-events.ts:142` pour les étapes du harnais de code | oui |
+| Jetons, cache lu, cache écrit, coût, modèle demandé vs effectif, bascule | `llm_calls` (`packages/db/src/schema/llm-calls.ts`) | oui |
+| Le harnais de code : session, version, coût, sortie | `cli_runs` | oui |
+| Un sous-agent et SES actions | job enfant : `parent_job_id`, `delegation_depth` ; ses `tool_calls` et `llm_calls` portent SON `job_id` | oui |
+| Une approbation avec boutons, depuis Telegram | `tool_approvals` + `apps/runner/src/approvals/notify.ts` (cartes neutres vis-à-vis du canal) | oui, déjà en prod |
+| Preuve rouge / verte, extrait, durées | `verification_runs` + `job_deliverable_verification_state` — PR① | oui, livré cette semaine |
+| Les commandes de preuve proposées | `discoverVerifyCommands` — v7-C, livré le 05/09 | oui |
+| Envois partis / en attente | `job_deliveries` — PR① | oui |
+| **Le diff des fichiers écrits par le harnais** | le sha de l'instantané est calculé (`checkpoints.ts:199`) mais **pas persisté** ; il vit dans le dépôt git des instantanés, étiqueté | **trou à combler** (P5) |
+| L'agent pose une question avec des options | aucun outil — `ask_user` n'existe pas | **à construire** (P7) |
+| Deux relecteurs cités | protocole non construit — PR④ du plan Vérifier & Corriger | **à construire** (P9) |
+| L'application qui tourne | rien | **à construire, en dernier** (P10) |
+
+**Conclusion.** Trois lots sur quatre sont une couche d'affichage sur des lignes
+qui existent. Le quatrième est cher et peut se faire attendre sans que le reste
+perde son sens.
+
+## Ce qu'on garde, ce qu'on remplace, ce qu'on jette
+
+| | Quoi | Pourquoi |
+|---|---|---|
+| **On garde** | Toute la PR① : intention de mutation, état par livrable, primitive terminale, outbox, `verification_runs`, écran de configuration | C'est le moteur. Sans elle, les cartes de preuve n'ont rien à afficher |
+| **On garde** | v7-A : chaque outil déclare ce qu'il produit | C'est la graine du contrat de rendu (P1). On l'étend, on ne le refait pas |
+| **On garde** | v7-C : la découverte des commandes | C'est le contenu du panneau « Vérifié » de l'étagère |
+| **On garde** | Les primitives du design system : `Table`, `MonoMicroTag`, `PrimaryButton`, `Banner`, `EdRow` | La maquette les reprend au pixel |
+| **On garde** | `JobMessages.blocksFromContent` (le lecteur des trois formats de messages) | Il sait déjà lire les parties ; on change ce qu'on en fait |
+| **On remplace** | Le rendu de `JobMessages` et le `<pre>` du résultat de job | Par la conversation (P2) |
+| **On remplace** | « Projet » = dossier attaché, dans l'onglet Code | Par l'espace (P6), qui sait s'il est du code ou des documents |
+| **On jette** | Rien | Aucun travail livré n'est contredit par le dessin |
+
+## Les pierres
+
+Chaque pierre suit la discipline du dépôt : tests sur lignes réelles, une
+mutation par garde, `codex review` en boucle jusqu'au retour vide. Tailles : S
+moins d'un jour, M deux à trois jours, L une semaine, XL indéterminée.
+
+### P1 · Le contrat de rendu — M
+
+**Ce que ça pose.** Chaque outil déclare comment son résultat s'affiche : une
+carte parmi `text · files · table · terminal · checks · sent · question ·
+generic`. L'écran dispatche sur la carte, jamais sur le nom de l'outil. C'est le
+modèle de DeepSeek Harness (`presentResult`, vocabulaire neutre, l'outil
+n'importe jamais un type d'interface), et c'est la condition posée le 05/09 :
+sans lui, l'écran doit être édité à chaque outil ajouté et il meurt.
+
+**Sur quoi ça s'appuie.** `MutationTarget.deliverableType` (v7-A) est déjà une
+déclaration par l'outil. Le contrat de rendu est son frère pour la lecture.
+
+**Garde.** Le test d'énumération du registre (`intent-wiring.test.ts`) gagne une
+assertion : tout outil déclare sa carte. Un outil sans carte rougit en le
+nommant.
+
+**Hors périmètre.** Aucun rendu ici — c'est le contrat, pas les composants.
+
+### P2 · La conversation — L
+
+**Ce que ça pose.** La page d'un job devient la conversation dessinée : les
+messages de l'utilisateur, la prose de l'agent, les groupes d'actions repliés
+(« Réflexion et recherche · 4 étapes · 9,4 s · 12 480 jetons »), les cartes
+dispatchées par P1, les sous-agents en groupes indentés avec leur pastille.
+
+**Sur quoi ça s'appuie.** `messages` pour la prose et le raisonnement ;
+`tool_calls` joint sur `tool_call_id` pour les durées et sorties ; `llm_calls`
+par tour pour les jetons de chaque groupe ; les jobs enfants par
+`parent_job_id`.
+
+**Règle de groupage.** Une suite d'appels d'outils entre deux parties `text` de
+l'agent forme un groupe. Le titre du groupe est déduit des cartes qu'il contient
+(« 3 fichiers écrits », « Réflexion et recherche »), jamais écrit en dur.
+
+**Garde.** Un transcript de test qui contient chaque sorte de partie rend chaque
+sorte de carte ; aucune partie connue ne retombe sur `generic`. Mutation :
+retirer une carte du dispatch fait rougir le test sur la partie correspondante.
+
+**Ce qui reste hors de P2.** Le diff cliquable (P5), le tableur rendu (P8), la
+question à boutons (P7) : leurs cartes affichent un état « pas encore rendu »
+honnête en attendant.
+
+### P3 · Les cartes de preuve et d'envoi — S
+
+**Ce que ça pose.** La carte de preuve (rouge : commandes, extrait, séquence
+arrêtée ; verte : commandes, durées, fraîcheur) depuis `verification_runs`. La
+carte d'envoi depuis `job_deliveries`. Le panneau « Vérifié » de l'étagère
+depuis `code_projects` et la découverte v7-C, avec les six dernières preuves.
+
+**Sur quoi ça s'appuie.** Cent pour cent PR① et v7-C.
+
+**Garde.** Les tests existants de `VerificationSection` migrent vers la carte ;
+un `verification_runs` rouge rend l'extrait, un vert ne le rend pas.
+
+### P4 · La barre d'état et le coût — M
+
+**Ce que ça pose.** La barre du bas, permanente : preuve, modèle actif, agents,
+jetons avec part de cache, coût, durée, envois en attente. Le panneau « Ce que
+ce travail coûte » avec des **phrases** avant les chiffres, puis le détail par
+agent, la répartition cache lu / cache écrit / effectif / sortie, le temps
+d'attente humaine, le temps de preuve.
+
+**Sur quoi ça s'appuie.** Agrégat sur `llm_calls` (`cost_usd`, `input_tokens`,
+`cached_tokens`, `cache_creation_tokens`, `output_tokens`) et `cli_runs`, par
+`job_id` puis par espace ; l'attente humaine = `tool_approvals.resolved_at −
+requested_at`.
+
+**Garde.** L'agrégat est comparé au centime à un jeu de lignes semé ; le cache
+lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rougit.
+
+### P5 · Fichiers et diff — M
+
+**Ce que ça pose.** La carte « 12 fichiers » : la liste cliquable, le diff de la
+sélection.
+
+**Sur quoi ça s'appuie.** Pour `file_write` / `file_edit`, `tool_input` porte
+déjà l'ancien et le nouveau texte. Pour le harnais de code, il faut le sha de
+l'instantané : **il n'est pas en base.** Deux pièces : (a) persister
+`(job_id, turn, sha, workspace)` au moment où `takeCheckpointForTurn` le calcule,
+(b) `git diff <sha> <sha suivant>` dans le dépôt des instantanés.
+
+**Limite, à écrire à l'écran.** Hors d'un dépôt git, il n'y a pas de diff pour ce
+que le harnais écrit. La carte dit alors « fichiers écrits, sans diff ».
+
+**Garde.** Un `file_edit` semé rend son diff exact ; un instantané semé puis un
+second rendent le diff git attendu ; un dossier sans git rend l'état « sans
+diff » et pas une erreur.
+
+### P6 · L'espace — M/L
+
+**Ce que ça pose.** L'objet durable de la vision : une table `espaces` (nom,
+dossier racine, sorte `code | documents`), `agent_jobs.espace_id`, la page de
+l'espace = l'étagère + la conversation concaténée de ses jobs, la proposition de
+créer un espace quand trois tâches atterrissent au même endroit. L'onglet Code
+devient la liste des espaces de sorte code.
+
+**Sur quoi ça s'appuie.** `agent_workspaces` et `code_projects` en sont
+l'ancêtre ; la sorte se déduit des marques de code déjà listées
+(`PROJECT_MARKERS`).
+
+**Ce qui change pour Vérifier & Corriger.** Les commandes de preuve deviennent
+un réglage de l'espace de sorte code. La table `code_projects` reste ; l'espace
+la référence.
+
+**Garde.** Une tâche lancée depuis un espace y reste (ne remonte pas dans le
+fil) ; trois tâches dans le même dossier déclenchent la proposition, deux non.
+
+### P7 · `ask_user` — M
+
+**Ce que ça pose.** Un outil qui pose une question avec des options. Dans la
+conversation : la carte à boutons. Dans le canal d'origine : la même carte,
+via l'infrastructure des approbations (`notify.ts`, préfixe de rappel propre).
+La réponse reprend le job exactement comme une approbation le fait.
+
+**Ce que ça absorbe.** La seconde moitié de v7-C (approbation des commandes de
+preuve dans le canal) est un cas de `ask_user`. Une plomberie, deux usages.
+
+**Garde.** Un `ask_user` suspend le job ; un clic dans le canal le reprend avec
+la réponse dans le transcript ; une réponse hors options est refusée.
+
+### P8 · Le tableur rendu — S
+
+**Ce que ça pose.** La carte `table` pour un `office_file` : les premières lignes
+de la feuille demandée, les contrôles v7-B en pied. Un tableau de valeurs, pas
+Excel : ni formules, ni fusion, ni mise en forme — dit tel quel.
+
+**Sur quoi ça s'appuie.** `xlsx_read` existe.
+
+### P9 · Les relecteurs — L
+
+C'est la PR④ de Vérifier & Corriger, inchangée. Ici seulement sa carte : deux
+relecteurs, leur verdict, leur citation. Rien à planifier de neuf, une
+dépendance à nommer.
+
+### P10 · L'aperçu vivant — XL
+
+Lancer et tenir un serveur de développement par espace, l'afficher, gérer ports
+et arrêts. C'est le produit entier de Lovable. **Dernier, et sans promesse.**
+Tant qu'il n'existe pas, le centre de l'espace montre le dernier diff, et le
+bouton « L'application » ouvre l'URL locale dans un onglet.
+
+## Ce que ça fait aux seize onglets
+
+Rien de brutal. À la fin du lot 1, Jobs montre la conversation. À la fin du lot
+2, Code est devenu Espaces. Le Chat reste. La fusion en une seule surface — le
+« D » de la vision — devient une conséquence à constater, pas une étape à
+décider maintenant.
+
+## Ce que ça fait au plan Vérifier & Corriger
+
+Il continue. Ce plan est la **surface** ; l'autre est le **moteur**. Les points
+de contact : v7-B nourrit la carte du tableur (P8) ; la seconde moitié de v7-C
+est absorbée par P7 ; v7-D nourrira une carte « critères » plus tard ; PR④ est
+P9. L'observation, la garde et le runtime CLI ne bougent pas.
+
+## Les limites, dites avant de commencer
+
+- Le raisonnement n'est visible que pour les modèles qui l'émettent ; l'écran
+  le dira au lieu de faire semblant.
+- Le diff du harnais de code n'existe que dans un dépôt git.
+- Le tableur rendu est un tableau de valeurs.
+- L'aperçu vivant peut ne jamais ressembler au dessin.
+- La maquette est une intention, pas une spécification au pixel : chaque pierre
+  sera validée à l'écran, par Playwright, avant d'être dite finie.

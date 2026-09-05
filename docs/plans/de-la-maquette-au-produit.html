@@ -1,0 +1,874 @@
+<!-- artifact: https://claude.ai/code/artifact/1fd52dac-1542-4bfb-89c8-3d5aff9f248e -->
+<title>De la maquette au produit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Geologica:wght@400..700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f0f1f0;
+    --surface: #ffffff;
+    --sunk: #e5e7e6;
+    --ink: #15181c;
+    --ink-2: #454c52;
+    --ink-3: #737b81;
+    --rule: #d5d9d8;
+    --navy: #1c2330;
+    --lime: #d4ff2e;
+    --lime-bg: #eef7c8;
+    --lime-ink: #3a6a18;
+    --coral: #b8452c;
+    --coral-bg: #f8e6e1;
+    --mono-bg: #e7eae9;
+    --sur-navy: #e6e9e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #131618;
+      --surface: #1b1f22;
+      --sunk: #23282b;
+      --ink: #e6e9e8;
+      --ink-2: #a9b2b7;
+      --ink-3: #78828a;
+      --rule: #2d3438;
+      --navy: #d4ff2e;
+      --lime: #1c2330;
+      --lime-bg: #22301a;
+      --lime-ink: #c5ec52;
+      --coral: #ee8b74;
+      --coral-bg: #33231e;
+      --mono-bg: #171b1d;
+      --sur-navy: #15181c;
+    }
+  }
+  :root[data-theme='dark'] {
+    --ground: #131618;
+    --surface: #1b1f22;
+    --sunk: #23282b;
+    --ink: #e6e9e8;
+    --ink-2: #a9b2b7;
+    --ink-3: #78828a;
+    --rule: #2d3438;
+    --navy: #d4ff2e;
+    --lime: #1c2330;
+    --lime-bg: #22301a;
+    --lime-ink: #c5ec52;
+    --coral: #ee8b74;
+    --coral-bg: #33231e;
+    --mono-bg: #171b1d;
+    --sur-navy: #15181c;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 0 22px 96px;
+  }
+  header {
+    padding: 56px 0 10px;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: Geologica, system-ui, sans-serif;
+    font-size: clamp(34px, 6.2vw, 50px);
+    font-weight: 650;
+    line-height: 1.04;
+    letter-spacing: -0.024em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 34em;
+  }
+  h2 {
+    font-family: Geologica, system-ui, sans-serif;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.014em;
+    margin: 50px 0 12px;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: Geologica, system-ui, sans-serif;
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+  }
+  p {
+    margin: 0 0 14px;
+    max-width: 36em;
+  }
+  b {
+    font-weight: 600;
+  }
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.84em;
+    background: var(--mono-bg);
+    padding: 1.5px 5px;
+    border-radius: 4px;
+  }
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    background: var(--surface);
+    margin: 18px 0;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14.5px;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  td {
+    color: var(--ink-2);
+  }
+  td.k {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .oui,
+  .trou,
+  .non {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .oui {
+    background: var(--lime-bg);
+    color: var(--lime-ink);
+  }
+  .trou {
+    background: var(--coral-bg);
+    color: var(--coral);
+  }
+  .non {
+    background: var(--sunk);
+    color: var(--ink-3);
+  }
+  .etat {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: var(--navy);
+    color: var(--lime);
+  }
+  .etat.attend {
+    background: var(--sunk);
+    color: var(--ink-3);
+  }
+
+  /* Les pierres */
+  .pierre {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin: 14px 0;
+  }
+  .pierre .tete {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .pierre .num {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--lime);
+    background: var(--navy);
+    border-radius: 6px;
+    padding: 3px 8px;
+  }
+  .pierre .taille {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--sunk);
+    border-radius: 999px;
+    padding: 2px 9px;
+    white-space: nowrap;
+  }
+  .pierre .taille.xl {
+    background: var(--coral-bg);
+    color: var(--coral);
+  }
+  .ligne {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 14px;
+    padding: 8px 0;
+    border-top: 1px solid var(--rule);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .ligne .l {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 4px;
+  }
+  .ligne .v {
+    color: var(--ink-2);
+  }
+  .ligne .v b {
+    color: var(--ink);
+  }
+  .lot {
+    margin: 44px 0 6px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .lot b {
+    color: var(--ink);
+  }
+  ul.limites {
+    margin: 0;
+    padding-left: 20px;
+    max-width: 36em;
+  }
+  ul.limites li {
+    margin: 8px 0;
+    color: var(--ink-2);
+  }
+  .verdict {
+    background: var(--navy);
+    color: var(--sur-navy);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 22px 0;
+  }
+  .verdict p {
+    margin: 0;
+    max-width: none;
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  .verdict p + p {
+    margin-top: 10px;
+  }
+  .verdict b {
+    color: var(--lime);
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Plan · 5 septembre 2026</p>
+    <h1>De la maquette au produit</h1>
+    <p class="lede">
+      Les pierres pour construire l'espace de code dessiné aujourd'hui, en gardant tout ce qui a
+      déjà été livré et qui tient.
+    </p>
+  </header>
+
+  <h2>Où on en est</h2>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Lot</th>
+          <th>Pierres</th>
+          <th>Ce que tu vois à la fin</th>
+          <th>État</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="k">1 · Rendre visible ce qui existe</td>
+          <td>
+            P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état
+            et coût
+          </td>
+          <td>
+            La page d'un job devient la conversation dessinée, avec preuves, coûts, jetons. Aucune
+            migration.
+          </td>
+          <td><span class="etat">prochain</span></td>
+        </tr>
+        <tr>
+          <td class="k">2 · L'espace où l'on reste</td>
+          <td>P5 fichiers et diff · P6 l'espace</td>
+          <td>Un chantier durable, sa conversation continue, ses diffs cliquables.</td>
+          <td><span class="etat attend">après 1</span></td>
+        </tr>
+        <tr>
+          <td class="k">3 · L'agent qui demande</td>
+          <td>P7 <code>ask_user</code> · P8 le tableur rendu</td>
+          <td>
+            Des questions avec boutons dans la conversation et dans Telegram ; un classeur qui
+            s'affiche.
+          </td>
+          <td><span class="etat attend">après 2</span></td>
+        </tr>
+        <tr>
+          <td class="k">4 · Ce qui reste cher</td>
+          <td>P9 relecteurs · P10 aperçu vivant</td>
+          <td>Deux relecteurs cités ; l'application qui tourne au centre.</td>
+          <td><span class="etat attend">dernier</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Est-ce que c'est atteignable</h2>
+  <p>
+    Chaque chose que montre le dessin, et d'où viendrait sa donnée. Vérifié dans le code
+    aujourd'hui, fichier et ligne. Rien n'est supposé.
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Le dessin montre</th>
+          <th>Ça vient de</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="k">L'agent parle entre ses actions</td>
+          <td>
+            Chaque message assistant persisté porte son raisonnement, son texte et ses appels
+            d'outils (<code>execute.ts:2857</code>)
+          </td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Le raisonnement</td>
+          <td>
+            Les mêmes messages, avec la signature du fournisseur. Tous les modèles n'en émettent pas
+            : l'écran le dira
+          </td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Chaque outil, avec entrée, sortie, durée</td>
+          <td>
+            <code>tool_calls</code>, écrit à chaque appel (<code>tools/execute.ts:763</code>) et
+            pour les étapes du harnais de code (<code>live-events.ts:142</code>)
+          </td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Jetons, cache, coût, modèle demandé contre effectif, bascule</td>
+          <td><code>llm_calls</code></td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Le harnais de code : session, version, sortie</td>
+          <td><code>cli_runs</code></td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Un sous-agent et ses propres actions</td>
+          <td>Job enfant : <code>parent_job_id</code>, ses lignes portent son identifiant</td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Une approbation avec boutons, depuis Telegram</td>
+          <td><code>tool_approvals</code> et les cartes de <code>approvals/notify.ts</code></td>
+          <td><span class="oui">en prod</span></td>
+        </tr>
+        <tr>
+          <td class="k">Preuve rouge ou verte, extrait, durées</td>
+          <td><code>verification_runs</code> — la PR① de cette semaine</td>
+          <td><span class="oui">livré</span></td>
+        </tr>
+        <tr>
+          <td class="k">Les commandes de preuve proposées</td>
+          <td>La découverte v7-C, livrée ce matin</td>
+          <td><span class="oui">livré</span></td>
+        </tr>
+        <tr>
+          <td class="k">Envois partis ou en attente</td>
+          <td><code>job_deliveries</code></td>
+          <td><span class="oui">livré</span></td>
+        </tr>
+        <tr>
+          <td class="k">Le diff des fichiers écrits par le harnais</td>
+          <td>
+            Le sha de l'instantané est calculé mais <b>jamais écrit en base</b> ; il vit dans le
+            dépôt git des instantanés
+          </td>
+          <td><span class="trou">trou · P5</span></td>
+        </tr>
+        <tr>
+          <td class="k">L'agent pose une question avec des options</td>
+          <td>Aucun outil aujourd'hui</td>
+          <td><span class="trou">à bâtir · P7</span></td>
+        </tr>
+        <tr>
+          <td class="k">Deux relecteurs cités</td>
+          <td>Le protocole n'est pas construit</td>
+          <td><span class="trou">à bâtir · P9</span></td>
+        </tr>
+        <tr>
+          <td class="k">L'application qui tourne</td>
+          <td>Rien</td>
+          <td><span class="non">dernier · P10</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="verdict">
+    <p>
+      <b>Trois lots sur quatre sont une couche d'affichage</b> sur des lignes qui existent déjà en
+      base. Le quatrième est cher, et il peut se faire attendre sans que le reste perde son sens.
+    </p>
+    <p>
+      Une correction à ce que j'avais dit ce soir : la boucle principale écrit bien chaque appel
+      d'outil en base. L'insertion vit dans le paquet des outils, pas dans le runner, et je l'avais
+      cherchée au mauvais endroit.
+    </p>
+  </div>
+
+  <h2>Ce qu'on garde, ce qu'on remplace, ce qu'on jette</h2>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Quoi</th>
+          <th>Pourquoi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="k">On garde</td>
+          <td>
+            Toute la PR① : intention de mutation, état par livrable, primitive terminale, file
+            d'envoi, <code>verification_runs</code>
+          </td>
+          <td>C'est le moteur. Sans elle, les cartes de preuve n'ont rien à afficher.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>v7-A : chaque outil déclare ce qu'il produit</td>
+          <td>C'est la graine du contrat de rendu. On l'étend, on ne le refait pas.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>v7-C : la découverte des commandes</td>
+          <td>C'est le contenu du panneau « Vérifié » de l'étagère.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>Les primitives du design system</td>
+          <td>La maquette les reprend au pixel.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>Le lecteur des messages de <code>JobMessages</code></td>
+          <td>
+            Il sait déjà lire les trois formats. On change ce qu'on en fait, pas comment on lit.
+          </td>
+        </tr>
+        <tr>
+          <td class="k">On remplace</td>
+          <td>Le rendu de <code>JobMessages</code> et le bloc de texte brut du résultat</td>
+          <td>Par la conversation.</td>
+        </tr>
+        <tr>
+          <td class="k">On remplace</td>
+          <td>« Projet » = dossier attaché, dans l'onglet Code</td>
+          <td>Par l'espace, qui sait s'il est du code ou des documents.</td>
+        </tr>
+        <tr>
+          <td class="k">On jette</td>
+          <td>Rien</td>
+          <td>Aucun travail livré n'est contredit par le dessin.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Les pierres</h2>
+  <p>
+    Dans l'ordre des dépendances. Chacune suit la discipline du dépôt : tests sur lignes réelles,
+    une mutation par garde, relecture Codex en boucle. Tailles : S moins d'un jour, M deux à trois
+    jours, L une semaine, XL indéterminée.
+  </p>
+
+  <p class="lot"><b>Lot 1</b> · rendre visible ce qui existe</p>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P1</span>
+      <h3>Le contrat de rendu</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Chaque outil déclare comment son résultat s'affiche : une carte parmi
+        <code>text · files · table · terminal · checks · sent · question · generic</code>. L'écran
+        dispatche sur la carte, jamais sur le nom de l'outil. C'est le modèle de DeepSeek Harness,
+        et la condition posée aujourd'hui : sans lui, l'écran doit être édité à chaque outil ajouté,
+        et il meurt.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        >v7-A. Le type de livrable est déjà une déclaration par l'outil ; le contrat de rendu est
+        son frère pour la lecture.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Le test d'énumération du registre gagne une assertion : tout outil déclare sa carte. Un
+        outil sans carte rougit en le nommant.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P2</span>
+      <h3>La conversation</h3>
+      <span class="taille">L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La page d'un job devient la conversation dessinée : tes messages, la prose de l'agent, les
+        groupes d'actions repliés, les cartes dispatchées par P1, les sous-agents en groupes
+        indentés avec leur pastille.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        ><code>messages</code> pour la prose et le raisonnement ; <code>tool_calls</code> pour les
+        durées et sorties ; <code>llm_calls</code> par tour pour les jetons de chaque groupe ; les
+        jobs enfants.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">règle</span
+      ><span class="v"
+        >Une suite d'appels d'outils entre deux prises de parole de l'agent forme un groupe. Son
+        titre est déduit des cartes qu'il contient, jamais écrit en dur.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un transcript de test contenant chaque sorte de partie rend chaque sorte de carte ; aucune
+        partie connue ne retombe sur la carte générique.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">hors périmètre</span
+      ><span class="v"
+        >Le diff cliquable, le tableur rendu, la question à boutons : leurs cartes affichent un état
+        « pas encore rendu » honnête en attendant leur pierre.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P3</span>
+      <h3>Les cartes de preuve et d'envoi</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La carte de preuve rouge ou verte depuis <code>verification_runs</code>, la carte d'envoi
+        depuis <code>job_deliveries</code>, le panneau « Vérifié » de l'étagère depuis les commandes
+        du projet et la découverte.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span><span class="v">Cent pour cent PR① et v7-C.</span>
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v">Une preuve rouge rend l'extrait, une verte ne le rend pas.</span>
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P4</span>
+      <h3>La barre d'état et le coût</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La barre du bas, permanente. Le panneau « Ce que ce travail coûte » avec des
+        <b>phrases</b> avant les chiffres, puis le détail par agent, la répartition du cache,
+        l'attente humaine, le temps de preuve.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        >Un agrégat sur <code>llm_calls</code> et <code>cli_runs</code> par job puis par espace ;
+        l'attente humaine vient des approbations.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >L'agrégat est comparé au centime à un jeu de lignes semé. Le cache lu facturé au dixième,
+        le cache écrit à 1,25×, sinon le test rougit.</span
+      >
+    </div>
+  </div>
+
+  <p class="lot"><b>Lot 2</b> · l'espace où l'on reste</p>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P5</span>
+      <h3>Fichiers et diff</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La carte « 12 fichiers » : la liste cliquable, le diff de la sélection.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        >Pour les outils fichiers, l'ancien et le nouveau texte sont déjà dans l'entrée de l'appel.
+        Pour le harnais de code, il faut le sha de l'instantané : <b>il n'est pas en base</b>. Deux
+        pièces : le persister quand il est calculé, puis demander le diff au dépôt des
+        instantanés.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">limite</span
+      ><span class="v"
+        >Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit. La carte dit alors
+        « fichiers écrits, sans diff ».</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un instantané semé puis un second rendent le diff attendu ; un dossier sans git rend l'état
+        « sans diff », pas une erreur.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P6</span>
+      <h3>L'espace</h3>
+      <span class="taille">M / L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >L'objet durable de la vision : une table des espaces (nom, dossier, sorte code ou
+        documents), la page de l'espace = l'étagère et la conversation concaténée de ses jobs, la
+        proposition de créer un espace quand trois tâches atterrissent au même endroit. L'onglet
+        Code devient la liste des espaces de sorte code.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        >Les dossiers attachés et la table des projets de code en sont l'ancêtre ; la sorte se
+        déduit des marques de code déjà listées.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Une tâche lancée depuis un espace y reste ; trois tâches dans le même dossier déclenchent
+        la proposition, deux non.</span
+      >
+    </div>
+  </div>
+
+  <p class="lot"><b>Lot 3</b> · l'agent qui demande</p>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P7</span>
+      <h3><code style="font-size: 0.95em">ask_user</code></h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Un outil qui pose une question avec des options. Dans la conversation : la carte à boutons.
+        Dans le canal d'origine : la même carte, par l'infrastructure des approbations. La réponse
+        reprend le job exactement comme une approbation le fait.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">absorbe</span
+      ><span class="v"
+        >La seconde moitié de v7-C — approuver les commandes de preuve depuis Telegram — devient un
+        cas de <code>ask_user</code>. Une plomberie, deux usages.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Une question suspend le job ; un clic dans le canal le reprend avec la réponse dans le
+        transcript ; une réponse hors options est refusée.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P8</span>
+      <h3>Le tableur rendu</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La carte tableau pour un classeur : les premières lignes de la feuille demandée, les
+        contrôles de v7-B en pied. Un tableau de valeurs, pas Excel : ni formules, ni cellules
+        fusionnées, ni mise en forme — dit tel quel.</span
+      >
+    </div>
+  </div>
+
+  <p class="lot"><b>Lot 4</b> · ce qui reste cher</p>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P9</span>
+      <h3>Les relecteurs</h3>
+      <span class="taille">L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >C'est la PR④ du plan Vérifier &amp; Corriger, inchangée. Ici seulement sa carte : deux
+        relecteurs, leur verdict, leur citation.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P10</span>
+      <h3>L'aperçu vivant</h3>
+      <span class="taille xl">XL · sans promesse</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Lancer et tenir un serveur de développement par espace, l'afficher, gérer ports et arrêts.
+        C'est le produit entier de Lovable.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">en attendant</span
+      ><span class="v"
+        >Le centre de l'espace montre le dernier diff, et « L'application » ouvre l'adresse locale
+        dans un onglet.</span
+      >
+    </div>
+  </div>
+
+  <h2>Ce que ça fait aux seize onglets</h2>
+  <p>
+    Rien de brutal. À la fin du lot 1, Jobs montre la conversation. À la fin du lot 2, Code est
+    devenu Espaces. Le Chat reste. La fusion en une seule surface devient une conséquence à
+    constater, pas une étape à décider maintenant.
+  </p>
+
+  <h2>Ce que ça fait au plan Vérifier &amp; Corriger</h2>
+  <p>
+    Il continue. Ce plan est la <b>surface</b>, l'autre est le <b>moteur</b>. Les points de contact
+    : v7-B nourrit la carte du tableur, la seconde moitié de v7-C est absorbée par
+    <code>ask_user</code>, PR④ est P9. L'observation, la garde et le runtime CLI ne bougent pas.
+  </p>
+
+  <h2>Les limites, dites avant de commencer</h2>
+  <ul class="limites">
+    <li>
+      Le raisonnement n'est visible que pour les modèles qui l'émettent. L'écran le dira au lieu de
+      faire semblant.
+    </li>
+    <li>Le diff du harnais de code n'existe que dans un dépôt git.</li>
+    <li>Le tableur rendu est un tableau de valeurs.</li>
+    <li>L'aperçu vivant peut ne jamais ressembler au dessin.</li>
+    <li>
+      La maquette est une intention, pas une spécification au pixel : chaque pierre sera validée à
+      l'écran avant d'être dite finie.
+    </li>
+  </ul>
+</div>

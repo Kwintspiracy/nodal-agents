@@ -1,0 +1,1122 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        />
+        <style>
+          .esp {
+            --c-canvas: #eaeaea;
+            --c-sidebar: #f2f2f2;
+            --c-paper: #ffffff;
+            --c-ink: #0a0a0a;
+            --c-ink-2: #26262a;
+            --c-ink-3: #696969;
+            --c-ink-4: #6e6e6e;
+            --c-rule: #d6d6d6;
+            --c-rule-2: #e2e2e2;
+            --c-hover: rgba(0, 0, 0, 0.045);
+            --c-agent: #1c2330;
+            --c-lime: #d4ff2e;
+            --c-skill: #ff5631;
+            --c-connector: #3565ff;
+            --c-ok: #1e7a44;
+            --c-ok-bg: rgba(212, 255, 46, 0.3);
+            --c-warn: #a25620;
+            --c-warn-bg: rgba(255, 86, 49, 0.13);
+            --c-run: #1d4ed8;
+            --c-run-bg: rgba(53, 101, 255, 0.12);
+            --c-err: #b54141;
+          }
+          .esp.sombre {
+            --c-canvas: #0e0e10;
+            --c-sidebar: #161618;
+            --c-paper: #1c1c20;
+            --c-ink: #f5f5f3;
+            --c-ink-2: #d8d8d4;
+            --c-ink-3: #9a9a96;
+            --c-ink-4: #848484;
+            --c-rule: #2a2a2e;
+            --c-rule-2: #242428;
+            --c-hover: rgba(255, 255, 255, 0.05);
+            --c-ok: #d4ff2e;
+            --c-ok-bg: rgba(212, 255, 46, 0.16);
+            --c-warn: #ff5631;
+            --c-warn-bg: rgba(255, 86, 49, 0.14);
+            --c-run: #8aa8ff;
+            --c-run-bg: rgba(53, 101, 255, 0.18);
+            --c-err: #ff5631;
+          }
+          body {
+            margin: 0;
+          }
+          .mono {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+          }
+          .nav-item,
+          .etagere,
+          .groupe-tete,
+          .seg,
+          .bouton,
+          .fermer {
+            cursor: pointer;
+          }
+          .nav-item:hover,
+          .etagere:hover,
+          .fermer:hover,
+          .seg:hover {
+            background: var(--c-hover);
+          }
+          .groupe-tete:hover {
+            background: var(--c-hover);
+          }
+          .bouton:hover {
+            filter: brightness(0.94);
+          }
+          .flux::-webkit-scrollbar,
+          .panneau::-webkit-scrollbar {
+            width: 10px;
+          }
+          .flux::-webkit-scrollbar-thumb,
+          .panneau::-webkit-scrollbar-thumb {
+            background: var(--c-rule);
+            border-radius: 999px;
+          }
+
+          /* — Le tour d'un agent — */
+          .tour {
+            display: grid;
+            grid-template-columns: 30px 1fr;
+            gap: 14px;
+            padding: 26px 0 0;
+          }
+          .av {
+            width: 30px;
+            height: 30px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            background: var(--c-agent);
+            color: var(--c-lime);
+          }
+          .av.toi {
+            background: var(--c-ink);
+            color: var(--c-canvas);
+          }
+          .qui {
+            display: flex;
+            align-items: baseline;
+            gap: 9px;
+            margin-bottom: 7px;
+          }
+          .qui .n {
+            font-size: 14px;
+            line-height: 20px;
+            font-weight: 600;
+          }
+          .qui .m {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 10.5px;
+            line-height: 15px;
+            color: var(--c-ink-4);
+          }
+          .prose {
+            font-size: 15px;
+            line-height: 25px;
+            color: var(--c-ink-2);
+            max-width: 68ch;
+            margin: 0 0 14px;
+            text-wrap: pretty;
+          }
+          .prose.toi {
+            color: var(--c-ink);
+            font-size: 15.5px;
+          }
+          .prose b {
+            color: var(--c-ink);
+            font-weight: 600;
+          }
+
+          /* — Un groupe d'étapes — */
+          .groupe {
+            border: 1px solid var(--c-rule-2);
+            border-radius: 10px;
+            background: var(--c-paper);
+            margin: 0 0 14px;
+            overflow: hidden;
+            max-width: 720px;
+          }
+          .groupe-tete {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            height: 38px;
+            padding: 0 14px;
+          }
+          .groupe-tete .t {
+            font-size: 13px;
+            line-height: 18px;
+            font-weight: 500;
+            color: var(--c-ink-2);
+          }
+          .groupe-tete .c {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11px;
+            color: var(--c-ink-4);
+          }
+          .etape {
+            display: flex;
+            gap: 12px;
+            padding: 6px 14px;
+            font-size: 12.5px;
+            line-height: 19px;
+            color: var(--c-ink-3);
+          }
+          .etape:first-of-type {
+            padding-top: 2px;
+          }
+          .etape:last-child {
+            padding-bottom: 12px;
+          }
+          .etape .f {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11.5px;
+            color: var(--c-ink-2);
+            flex: none;
+            width: 158px;
+          }
+          .etape .d {
+            margin-left: auto;
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11px;
+            color: var(--c-ink-4);
+            flex: none;
+          }
+
+          /* — Une carte de résultat — */
+          .carte {
+            border: 1px solid var(--c-rule-2);
+            border-radius: 12px;
+            background: var(--c-paper);
+            overflow: hidden;
+            margin: 0 0 16px;
+            max-width: 760px;
+          }
+          .carte-tete {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 11px 16px;
+            border-bottom: 1px solid var(--c-rule-2);
+            background: var(--c-sidebar);
+          }
+          .carte-tete .t {
+            font-size: 13.5px;
+            line-height: 19px;
+            font-weight: 600;
+          }
+          .carte-tete .s {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11px;
+            color: var(--c-ink-4);
+          }
+          .carte-tete .a {
+            margin-left: auto;
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11px;
+            color: var(--c-ink-4);
+          }
+
+          table.grille {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11.5px;
+          }
+          table.grille th,
+          table.grille td {
+            border-bottom: 1px solid var(--c-rule-2);
+            padding: 7px 16px;
+            text-align: left;
+            color: var(--c-ink-2);
+          }
+          table.grille th {
+            color: var(--c-ink-4);
+            font-weight: 400;
+          }
+          table.grille td.n {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+          }
+          table.grille tr:last-child td {
+            border-bottom: none;
+          }
+
+          .diff .l {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11.5px;
+            line-height: 19px;
+            padding: 1px 16px;
+            white-space: pre;
+          }
+          .diff .l.p {
+            background: var(--c-ok-bg);
+            color: var(--c-ok);
+          }
+          .diff .l.m {
+            background: var(--c-warn-bg);
+            color: var(--c-warn);
+          }
+
+          .verdict {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 13px 16px;
+            border-bottom: 1px solid var(--c-rule-2);
+          }
+          .verdict:last-child {
+            border-bottom: none;
+          }
+          .verdict .p {
+            width: 20px;
+            height: 20px;
+            flex: none;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 1px;
+          }
+          .verdict .c {
+            font-size: 13px;
+            line-height: 20px;
+            color: var(--c-ink-2);
+            min-width: 0;
+          }
+          .verdict .c b {
+            color: var(--c-ink);
+            font-weight: 600;
+          }
+          .verdict .c .cite {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11px;
+            color: var(--c-ink-4);
+            display: block;
+            margin-top: 3px;
+          }
+
+          .question {
+            border: 1.5px solid var(--c-ink);
+            border-radius: 12px;
+            background: var(--c-paper);
+            padding: 16px 18px;
+            margin: 0 0 16px;
+            max-width: 620px;
+          }
+          .question p {
+            margin: 0 0 14px;
+            font-size: 14.5px;
+            line-height: 23px;
+            color: var(--c-ink);
+          }
+          .boutons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+          }
+          .bouton {
+            display: inline-flex;
+            height: 32px;
+            align-items: center;
+            border-radius: 8px;
+            padding: 0 14px;
+            font-size: 13px;
+            line-height: 18px;
+            font-weight: 500;
+            border: 1px solid var(--c-rule-2);
+            background: var(--c-paper);
+            color: var(--c-ink-2);
+          }
+          .bouton.prim {
+            background: var(--c-ink);
+            border-color: var(--c-ink);
+            color: var(--c-canvas);
+          }
+          .bouton.fait {
+            background: var(--c-ok-bg);
+            border-color: transparent;
+            color: var(--c-ok);
+          }
+
+          .kv {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
+            padding: 5px 16px;
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11.5px;
+            line-height: 17px;
+          }
+          .kv:first-child {
+            padding-top: 12px;
+          }
+          .kv:last-child {
+            padding-bottom: 12px;
+          }
+          .kv .k {
+            color: var(--c-ink-4);
+          }
+          .kv .v {
+            color: var(--c-ink-2);
+            min-width: 0;
+            overflow-wrap: anywhere;
+          }
+          .code {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 11.5px;
+            line-height: 19px;
+            padding: 12px 16px;
+            white-space: pre;
+            overflow-x: auto;
+            color: var(--c-ink-2);
+          }
+        </style>
+      </helmet>
+
+      <div
+        class="esp {{themeClass}}"
+        style="
+          display: flex;
+          width: 1440px;
+          height: 900px;
+          background: var(--c-canvas);
+          font-family: Inter, 'Söhne', -apple-system, system-ui, sans-serif;
+          color: var(--c-ink);
+          overflow: hidden;
+        "
+      >
+        <!-- Navigation -->
+        <div
+          style="
+            display: flex;
+            width: 216px;
+            flex: none;
+            flex-direction: column;
+            padding: 16px 0 12px;
+            background: var(--c-sidebar);
+            border-right: 1px solid var(--c-rule-2);
+          "
+        >
+          <div style="display: flex; align-items: center; gap: 8px; padding: 0 16px 14px">
+            <span
+              style="
+                display: flex;
+                width: 22px;
+                height: 22px;
+                flex: none;
+                align-items: center;
+                justify-content: center;
+                border-radius: 8px;
+                background: var(--c-ink);
+                color: var(--c-canvas);
+                font-family: 'JetBrains Mono', ui-monospace, monospace;
+                font-size: 11px;
+                font-weight: 600;
+              "
+              >N</span
+            >
+            <span style="font-size: 15px; line-height: 21px; font-weight: 500">Nodal</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding: 0 12px">
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;font-size:13px;color:var(--c-ink-2)">Travaux</div>
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;background:var(--c-hover);font-size:13px;font-weight:500;color:var(--c-ink)">Espaces</div>
+            <div style="padding: 2px 0 2px 14px; display: flex; flex-direction: column; gap: 1px">
+              <div class="nav-item" style="display:flex;height:26px;align-items:center;padding:0 10px;border-radius:8px;background:var(--c-hover);font-size:12px;font-weight:500;color:var(--c-ink)">nodal-agents</div>
+              <div class="nav-item" style="display:flex;height:26px;align-items:center;padding:0 10px;border-radius:8px;font-size:12px;color:var(--c-ink-3)">Rapports mensuels</div>
+              <div class="nav-item" style="display:flex;height:26px;align-items:center;padding:0 10px;border-radius:8px;font-size:12px;color:var(--c-ink-3)">Site vitrine</div>
+            </div>
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;font-size:13px;color:var(--c-ink-2)">Agents</div>
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;font-size:13px;color:var(--c-ink-2)">Automatisations</div>
+            <div style="height: 1px; margin: 10px 4px; background: var(--c-rule-2)"></div>
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;font-size:13px;color:var(--c-ink-2)">Outils</div>
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;font-size:13px;color:var(--c-ink-2)">Connecteurs</div>
+            <div class="nav-item" style="display:flex;height:30px;align-items:center;padding:0 12px;border-radius:10px;font-size:13px;color:var(--c-ink-2)">Mémoire</div>
+          </div>
+        </div>
+
+        <!-- L'espace -->
+        <div style="position: relative; display: flex; min-width: 0; flex: 1; flex-direction: column">
+          <div
+            style="
+              display: flex;
+              flex: none;
+              align-items: center;
+              gap: 12px;
+              height: 52px;
+              padding: 0 20px 0 28px;
+              border-bottom: 1px solid var(--c-rule-2);
+            "
+          >
+            <span style="font-size: 15px; line-height: 21px; font-weight: 600">nodal-agents</span>
+            <span class="mono" style="font-size: 11px; color: var(--c-ink-4)">D:/APPS/nodal-agents</span>
+            <span style="margin-left: auto; display: flex; align-items: center; gap: 7px">
+              <span class="etagere" onClick="{{voirPreuve}}" style="{{stylePreuve}}">Vérifié</span>
+              <span class="etagere" onClick="{{voirApp}}" style="{{styleApp}}">L'application</span>
+              <span class="etagere" onClick="{{voirFichiers}}" style="{{styleFichiers}}">Les fichiers</span>
+            </span>
+          </div>
+
+          <div style="position: relative; min-height: 0; flex: 1">
+            <div class="flux" style="height: 100%; overflow-y: auto; padding: 0 28px">
+              <div style="max-width: 840px; margin: 0 auto; padding: 4px 0 8px">
+                <!-- ── TOI ─────────────────────────────────────────── -->
+                <div class="tour">
+                  <span class="av toi">Q</span>
+                  <div>
+                    <div class="qui">
+                      <span class="n">Quentin</span>
+                      <span class="m">via l'automatisation « 1er du mois, 9 h »</span>
+                    </div>
+                    <p class="prose toi">
+                      Prépare la revue mensuelle des dépenses, mets à jour le tableau de bord, et
+                      envoie-la à l'équipe.
+                    </p>
+                  </div>
+                </div>
+
+                <!-- ── ALFRED ──────────────────────────────────────── -->
+                <div class="tour">
+                  <span class="av">AL</span>
+                  <div>
+                    <div class="qui">
+                      <span class="n">Alfred</span>
+                      <span class="m">claude-opus-5 · effort high</span>
+                    </div>
+
+                    <p class="prose">
+                      Je reprends le format du mois dernier plutôt que d'en réinventer un. Les
+                      dépenses sont dans les factures reçues par courriel, pas dans un fichier :
+                      c'est là que je vais les chercher.
+                    </p>
+
+                    <div class="groupe">
+                      <div class="groupe-tete" onClick="{{g1.basculer}}">
+                        <span style="{{g1.chev}}">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--c-ink-4); display: block"><path d="m9 6 6 6-6 6" /></svg>
+                        </span>
+                        <span class="t">Réflexion et recherche</span>
+                        <span class="c" style="margin-left: auto">4 étapes · 9,4 s · 12 480 jetons</span>
+                      </div>
+                      <sc-if value="{{g1.ouvert}}" hint-placeholder-val="{{false}}">
+                        <div style="border-top: 1px solid var(--c-rule-2); padding-top: 8px">
+                          <div class="etape">
+                            <span class="f">raisonnement</span>
+                            <span>412 jetons — « la mémoire devrait avoir le format ; l'analyse des écarts demande un raisonnement long, je la délègue »</span>
+                            <span class="d">6,2 s</span>
+                          </div>
+                          <div class="etape">
+                            <span class="f">query_memory</span>
+                            <span>3 souvenirs — 3 feuilles, totaux en gras, l'équipe reçoit le fichier</span>
+                            <span class="d">118 ms</span>
+                          </div>
+                          <div class="etape">
+                            <span class="f">gmail_search</span>
+                            <span>41 factures d'août — 284 Ko réduits à 6 Ko avant d'entrer dans le contexte</span>
+                            <span class="d">890 ms</span>
+                          </div>
+                          <div class="etape">
+                            <span class="f">web_search</span>
+                            <span>9 sources sur les tarifs API de septembre — 2 lues en entier</span>
+                            <span class="d">2,1 s</span>
+                          </div>
+                        </div>
+                      </sc-if>
+                    </div>
+
+                    <p class="prose">
+                      J'ai les <b>41 factures d'août</b>. Le mois dernier tu avais aussi demandé le
+                      PDF en plus du classeur, et ça ne figure pas dans ta demande d'aujourd'hui.
+                    </p>
+
+                    <div class="question">
+                      <p>Je refais les deux, ou seulement le classeur ?</p>
+                      <div class="boutons">
+                        <span class="bouton fait">✓ Les deux — répondu par Quentin</span>
+                        <span class="bouton">Le classeur seulement</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- ── TOI ─────────────────────────────────────────── -->
+                <div class="tour">
+                  <span class="av toi">Q</span>
+                  <div>
+                    <div class="qui"><span class="n">Quentin</span><span class="m">depuis Telegram</span></div>
+                    <p class="prose toi">Les deux.</p>
+                  </div>
+                </div>
+
+                <!-- ── ALFRED : le classeur ────────────────────────── -->
+                <div class="tour">
+                  <span class="av">AL</span>
+                  <div>
+                    <div class="qui">
+                      <span class="n">Alfred</span>
+                      <span class="m">claude-opus-5</span>
+                    </div>
+
+                    <p class="prose">
+                      Je confie l'analyse des écarts à l'Analyste — c'est le genre de raisonnement
+                      long qui mérite son propre tour, sur un autre modèle.
+                    </p>
+
+                    <div class="groupe">
+                      <div class="groupe-tete" onClick="{{g2.basculer}}">
+                        <span style="{{g2.chev}}">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--c-ink-4); display: block"><path d="m9 6 6 6-6 6" /></svg>
+                        </span>
+                        <span class="av" style="width: 20px; height: 20px; border-radius: 6px; font-size: 8.5px">AN</span>
+                        <span class="t">L'Analyste a comparé juillet et août</span>
+                        <span class="c" style="margin-left: auto">4 min 51 · 96 400 jetons · 0,38 $</span>
+                      </div>
+                      <sc-if value="{{g2.ouvert}}" hint-placeholder-val="{{false}}">
+                        <div style="border-top: 1px solid var(--c-rule-2); padding-top: 8px">
+                          <div class="etape"><span class="f">tâche transmise</span><span>« Compare les dépenses d'août à juillet, explique chaque écart de plus de 8 % »</span></div>
+                          <div class="etape"><span class="f">contexte</span><span>le classeur et les 41 lignes — aucune conversation parente</span></div>
+                          <div class="etape"><span class="f">gpt-5.4 · tour 1</span><span>3 outils permis, calculés depuis sa fiche</span><span class="d">31,4 s</span></div>
+                          <div class="etape"><span class="f">xlsx_read</span><span>214 lignes — 60 rendues au modèle, 61 Ko déversés sur disque</span><span class="d">240 ms</span></div>
+                          <div class="etape"><span class="f">return_result</span><span>infrastructure +14 %, modèles +22 %, outils tiers −31 %</span></div>
+                        </div>
+                      </sc-if>
+                    </div>
+
+                    <p class="prose">Voilà la revue. Les totaux tombent juste, et rien n'est en erreur.</p>
+
+                    <div class="carte">
+                      <div class="carte-tete">
+                        <span class="t">Revue-2026-08.xlsx</span>
+                        <span class="s">3 feuilles · 214 lignes · 48 Ko</span>
+                        <span class="a">Synthèse</span>
+                      </div>
+                      <table class="grille">
+                        <tr><th>Poste</th><th style="text-align: right">Juillet</th><th style="text-align: right">Août</th><th style="text-align: right">Écart</th></tr>
+                        <tr><td>Infrastructure</td><td class="n">12 400</td><td class="n">14 100</td><td class="n" style="color: var(--c-warn)">+14 %</td></tr>
+                        <tr><td>Modèles</td><td class="n">8 200</td><td class="n">10 000</td><td class="n" style="color: var(--c-warn)">+22 %</td></tr>
+                        <tr><td>Outils tiers</td><td class="n">3 050</td><td class="n">2 100</td><td class="n" style="color: var(--c-ok)">−31 %</td></tr>
+                        <tr><td style="font-weight: 600; color: var(--c-ink)">Total</td><td class="n" style="font-weight: 600; color: var(--c-ink)">23 650</td><td class="n" style="font-weight: 600; color: var(--c-ink)">26 200</td><td class="n" style="font-weight: 600; color: var(--c-ink)">+7,6 %</td></tr>
+                      </table>
+                      <div style="display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 16px; background: var(--c-ok-bg)">
+                        <span class="mono" style="font-size: 11.5px; color: var(--c-ok)">✓ le fichier s'ouvre</span>
+                        <span class="mono" style="font-size: 11.5px; color: var(--c-ok)">✓ 3 feuilles demandées</span>
+                        <span class="mono" style="font-size: 11.5px; color: var(--c-ok)">✓ aucune cellule en erreur</span>
+                        <span class="mono" style="font-size: 11.5px; color: var(--c-ok)">✓ totaux = somme des lignes</span>
+                      </div>
+                    </div>
+
+                    <p class="prose">
+                      Pour le PDF il me faut lancer un outil de ta machine. Ça écrit un fichier, donc
+                      je te le demande.
+                    </p>
+
+                    <div class="question">
+                      <p>
+                        Convertir la revue en PDF avec LibreOffice ?
+                        <span class="mono" style="display: block; margin-top: 8px; font-size: 11.5px; color: var(--c-ink-3)"
+                          >libreoffice --headless --convert-to pdf Revue-2026-08.xlsx</span
+                        >
+                        <span style="display: block; margin-top: 8px; font-size: 13px; color: var(--c-warn)"
+                          >⚠ écrit un fichier dans ~/Documents/Finances</span
+                        >
+                      </p>
+                      <div class="boutons">
+                        <span class="bouton fait">✓ Approuvé par Quentin · Telegram · après 3 min 12</span>
+                        <span class="bouton">Toujours autoriser ici</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- ── ALFRED : le code ────────────────────────────── -->
+                <div class="tour">
+                  <span class="av">AL</span>
+                  <div>
+                    <div class="qui"><span class="n">Alfred</span><span class="m">claude-opus-5</span></div>
+                    <p class="prose">
+                      Le tableau de bord n'affiche pas encore la colonne d'écart. Je passe la main au
+                      Codeur, qui travaille dans le dépôt.
+                    </p>
+
+                    <div class="groupe">
+                      <div class="groupe-tete" onClick="{{g3.basculer}}">
+                        <span style="{{g3.chev}}">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--c-ink-4); display: block"><path d="m9 6 6 6-6 6" /></svg>
+                        </span>
+                        <span class="av" style="width: 20px; height: 20px; border-radius: 6px; font-size: 8.5px">CO</span>
+                        <span class="t">Le Codeur a écrit 12 fichiers</span>
+                        <span class="c" style="margin-left: auto">4 min 12 · 193 600 jetons · abonnement</span>
+                      </div>
+                      <sc-if value="{{g3.ouvert}}" hint-placeholder-val="{{false}}">
+                        <div style="border-top: 1px solid var(--c-rule-2); padding-top: 8px">
+                          <div class="etape"><span class="f">instantané</span><span>a41f0c9 — le tour entier peut être défait</span><span class="d">310 ms</span></div>
+                          <div class="etape"><span class="f">claude-code · write</span><span>opus-5 effort high · session reprise du 4 sept. · CLI 2.1.258</span><span class="d">4 min 12</span></div>
+                          <div class="etape"><span class="f">jetons</span><span>184 000 en entrée dont 171 400 relus en cache · 9 600 en sortie</span></div>
+                          <div class="etape"><span class="f">verrou d'espace</span><span>pris sur le dépôt, relâché à la fin</span></div>
+                          <div class="etape"><span class="f">exit</span><span>0</span></div>
+                        </div>
+                      </sc-if>
+                    </div>
+
+                    <div class="carte" style="max-width: 820px">
+                      <div class="carte-tete">
+                        <span class="t">12 fichiers</span>
+                        <span class="s">+248 −38</span>
+                        <span class="a">clique un fichier</span>
+                      </div>
+                      <div style="display: flex; align-items: stretch">
+                        <div style="width: 300px; flex: none; border-right: 1px solid var(--c-rule-2); padding: 8px">
+                          <sc-for list="{{fichiers}}" as="f" hint-placeholder-count="5">
+                            <div onClick="{{f.choisir}}" style="{{f.style}}">
+                              <span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{f.nom}}</span>
+                              <span style="flex: none; color: var(--c-ok)">{{f.plus}}</span>
+                              <span style="flex: none; color: var(--c-warn)">{{f.moins}}</span>
+                            </div>
+                          </sc-for>
+                        </div>
+                        <div style="min-width: 0; flex: 1; display: flex; flex-direction: column">
+                          <div class="mono" style="padding: 9px 16px 4px; font-size: 11px; color: var(--c-ink-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{cheminChoisi}}</div>
+                          <div style="padding: 2px 0 10px">
+                            <sc-for list="{{diff}}" as="l" hint-placeholder-count="5">
+                              <div style="{{l.style}}">{{l.texte}}</div>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p class="prose">La preuve du dépôt est rouge. Un seul test, sur l'arrondi.</p>
+
+                    <div class="carte" style="border-color: var(--c-warn)">
+                      <div class="carte-tete" style="background: var(--c-warn-bg); border-color: transparent">
+                        <span class="p" style="width: 20px; height: 20px; border-radius: 999px; display: flex; align-items: center; justify-content: center; color: var(--c-warn)">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 7v7" /><circle cx="12" cy="17.4" r="0.9" fill="currentColor" /></svg>
+                        </span>
+                        <span class="t" style="color: var(--c-warn)">1 test rouge sur 1 248</span>
+                        <span class="s" style="color: var(--c-warn)">séquence arrêtée · lint non lancée</span>
+                        <span class="a" style="color: var(--c-warn)">3 min 12</span>
+                      </div>
+                      <div class="code" style="background: var(--c-warn-bg); color: var(--c-warn)">× rows &gt; l'écart en % arrondit au dixième
+  attendu  "+14,3 %"
+  reçu     "+14.28571428571429 %"
+  src/billing/tests/rows.test.ts:41</div>
+                    </div>
+
+                    <p class="prose">
+                      C'est la virgule française. Je corrige, une seule fois : si la preuve rougit
+                      encore, je m'arrête et je te le dis.
+                    </p>
+
+                    <div class="carte">
+                      <div class="carte-tete" style="background: var(--c-ok-bg); border-color: transparent">
+                        <span class="p" style="color: var(--c-ok)">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+                        </span>
+                        <span class="t" style="color: var(--c-ok)">Preuve verte</span>
+                        <span class="a" style="color: var(--c-ok)">3 min 29</span>
+                      </div>
+                      <div class="kv"><span class="k">pnpm run typecheck</span><span class="v" style="color: var(--c-ok)">✓ 41 s</span></div>
+                      <div class="kv"><span class="k">pnpm run test</span><span class="v" style="color: var(--c-ok)">✓ 2 min 48 · 1 249 tests</span></div>
+                      <div class="kv"><span class="k">pnpm run lint</span><span class="v" style="color: var(--c-ok)">✓ 1 min 08</span></div>
+                      <div class="kv"><span class="k">fraîcheur</span><span class="v" style="color: var(--c-ok)">✓ rien écrit depuis le début de la preuve</span></div>
+                    </div>
+
+                    <p class="prose">Deux relecteurs ont lu le même instantané, sur deux familles de modèles.</p>
+
+                    <div class="carte">
+                      <div class="carte-tete">
+                        <span class="t">Relecture</span>
+                        <span class="s">1 min 03 · 62 400 jetons · 0,21 $</span>
+                      </div>
+                      <div class="verdict">
+                        <span class="p" style="background: var(--c-ok-bg); color: var(--c-ok)">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+                        </span>
+                        <span class="c">
+                          <b>Relecteur A · gpt-5.4</b> — conforme. Le total est recalculé à chaque
+                          rendu, non bloquant sur 214 lignes.
+                          <span class="cite">src/billing/rows.ts:38</span>
+                        </span>
+                      </div>
+                      <div class="verdict">
+                        <span class="p" style="background: var(--c-warn-bg); color: var(--c-warn)">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 7v7" /><circle cx="12" cy="17.4" r="0.9" fill="currentColor" /></svg>
+                        </span>
+                        <span class="c">
+                          <b>Relecteur B · gemini-3-pro</b> — bloquant. Le test couvre l'écart
+                          positif, pas le négatif : −8 % rendrait un format différent.
+                          <span class="cite">src/billing/tests/rows.test.ts:41</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- ── ALFRED : la réponse ─────────────────────────── -->
+                <div class="tour">
+                  <span class="av">AL</span>
+                  <div>
+                    <div class="qui"><span class="n">Alfred</span><span class="m">claude-opus-5</span></div>
+                    <p class="prose">
+                      La revue d'août est prête et envoyée. Les dépenses montent de <b>7,6 %</b> :
+                      l'infrastructure et les modèles expliquent la hausse, la résiliation d'un outil
+                      tiers l'amortit. Le tableau de bord affiche la colonne d'écart.
+                    </p>
+                    <p class="prose">
+                      Une chose à savoir : le relecteur B a laissé un bloquant sur le test de l'écart
+                      négatif. Je ne l'ai pas corrigé, c'est hors de ce que tu as demandé.
+                    </p>
+
+                    <div class="carte">
+                      <div class="carte-tete"><span class="t">Ce qui a été produit</span></div>
+                      <div class="kv"><span class="k">Revue-2026-08.xlsx</span><span class="v" style="color: var(--c-ok)">vérifié · 4 contrôles</span></div>
+                      <div class="kv"><span class="k">Revue-2026-08.pdf</span><span class="v">pas de contrôle pour ce format</span></div>
+                      <div class="kv"><span class="k">nodal-agents</span><span class="v" style="color: var(--c-ok)">preuve verte · relu</span></div>
+                      <div class="kv"><span class="k">envoi Telegram</span><span class="v" style="color: var(--c-ok)">✓ parti</span></div>
+                      <div class="kv"><span class="k">envoi Slack #finance</span><span class="v" style="color: var(--c-warn)">× tentative 2 / 5 · prochaine dans 4 min</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="height: 18px"></div>
+              </div>
+            </div>
+
+            <!-- Panneaux de l'étagère -->
+            <sc-if value="{{panneauOuvert}}" hint-placeholder-val="{{false}}">
+              <div style="position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--c-canvas)">
+                <div style="display: flex; flex: none; align-items: center; gap: 12px; padding: 16px 28px 12px">
+                  <span style="font-size: 15px; line-height: 21px; font-weight: 600">{{titrePanneau}}</span>
+                  <span class="mono" style="font-size: 11px; color: var(--c-ink-4)">{{sousTitrePanneau}}</span>
+                  <span class="fermer" onClick="{{fermer}}" style="margin-left:auto;display:inline-flex;height:28px;align-items:center;border-radius:8px;border:1px solid var(--c-rule-2);padding:0 11px;background:var(--c-paper);font-size:12px;font-weight:500;color:var(--c-ink-2)">Revenir à la conversation</span>
+                </div>
+                <div class="panneau" style="min-height: 0; flex: 1; overflow-y: auto; padding: 0 28px 20px">
+                  <div style="max-width: 760px">
+                    <sc-for list="{{blocsPanneau}}" as="b" hint-placeholder-count="2">
+                      <p style="font-size: 14.5px; line-height: 24px; color: var(--c-ink-2); margin: 0 0 14px; max-width: 66ch">{{b.texte}}</p>
+                    </sc-for>
+                    <div class="carte" style="max-width: none">
+                      <sc-for list="{{champsPanneau}}" as="c" hint-placeholder-count="6">
+                        <div class="kv"><span class="k">{{c.k}}</span><span style="{{c.style}}">{{c.v}}</span></div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+
+          <!-- Écrire -->
+          <div style="flex: none; padding: 8px 28px 10px">
+            <div style="max-width: 840px; margin: 0 auto">
+              <div style="display:flex;align-items:center;gap:12px;border:1px solid var(--c-rule);border-radius:12px;padding:11px 14px;background:var(--c-paper)">
+                <span style="flex: 1; font-size: 14px; line-height: 20px; color: var(--c-ink-4)">Répondre à Alfred…</span>
+                <span style="display:inline-flex;height:28px;align-items:center;border-radius:8px;padding:0 12px;background:var(--c-ink);color:var(--c-canvas);font-size:12.5px;font-weight:500">Envoyer</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Barre d'état -->
+          <div
+            class="mono"
+            style="
+              display: flex;
+              flex: none;
+              align-items: center;
+              height: 28px;
+              padding: 0 12px 0 20px;
+              border-top: 1px solid var(--c-rule-2);
+              background: var(--c-sidebar);
+              font-size: 11px;
+              color: var(--c-ink-3);
+            "
+          >
+            <span class="seg" onClick="{{voirPreuve}}" style="{{segPreuveStyle}}"><span style="color: var(--c-ok)">✓</span> preuve verte</span>
+            <span class="seg" style="padding:0 10px;border-radius:6px;height:20px;display:inline-flex;align-items:center">claude-opus-5 · effort high</span>
+            <span class="seg" style="padding:0 10px;border-radius:6px;height:20px;display:inline-flex;align-items:center">4 agents</span>
+            <span style="margin-left: auto; display: flex; align-items: center">
+              <span class="seg" onClick="{{voirCout}}" style="{{segJetonsStyle}}">412 880 jetons · 62 % en cache</span>
+              <span class="seg" onClick="{{voirCout}}" style="{{segCoutStyle}}">1,74 $</span>
+              <span class="seg" style="padding:0 10px;border-radius:6px;height:20px;display:inline-flex;align-items:center">18 min 04</span>
+              <span class="seg" onClick="{{voirLivraison}}" style="{{segLivraisonStyle}}"><span style="color: var(--c-warn)">●</span> 1 envoi en attente</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </x-dc>
+
+    <script
+      data-dc-script
+      data-props='{"theme":{"editor":"enum","options":["clair","sombre"],"default":"clair","section":"Th&#232;me"},"$preview":{"width":1440,"height":900}}'
+    >
+      class Component extends DCLogic {
+        constructor(props) {
+          super(props);
+          this.state = { groupes: {}, panneau: null, fichier: 'rows' };
+        }
+
+        groupe(id) {
+          const ouvert = !!this.state.groupes[id];
+          return {
+            ouvert: ouvert,
+            chev:
+              'display: flex; transition: transform 140ms ease;' +
+              (ouvert ? ' transform: rotate(90deg);' : ''),
+            basculer: () =>
+              this.setState({
+                groupes: Object.assign({}, this.state.groupes, { [id]: !ouvert }),
+              }),
+          };
+        }
+
+        styleEtagere(actif, ton) {
+          const base =
+            'display: inline-flex; height: 28px; align-items: center; border-radius: 8px;' +
+            ' padding: 0 11px; border: 1px solid var(--c-rule-2); font-size: 12.5px;' +
+            ' line-height: 17px; font-weight: 500;';
+          if (ton === 'ok') {
+            return actif
+              ? base + ' background: var(--c-ok); border-color: var(--c-ok); color: var(--c-paper);'
+              : base + ' background: var(--c-ok-bg); border-color: transparent; color: var(--c-ok);';
+          }
+          return actif
+            ? base + ' background: var(--c-ink); border-color: var(--c-ink); color: var(--c-canvas);'
+            : base + ' background: var(--c-paper); color: var(--c-ink-2);';
+        }
+
+        styleSeg(actif, fort) {
+          const base =
+            'display: inline-flex; height: 20px; align-items: center; gap: 6px; padding: 0 10px; border-radius: 6px;';
+          if (actif) return base + ' background: var(--c-ink); color: var(--c-canvas);';
+          if (fort) return base + ' color: var(--c-ink);';
+          return base;
+        }
+
+        renderVals() {
+          const pan = this.state.panneau;
+          const kv = (k, v, ton) => ({
+            k: k,
+            v: v,
+            style:
+              'color: ' +
+              (ton === 'vert' ? 'var(--c-ok)' : ton === 'rouge' ? 'var(--c-warn)' : 'var(--c-ink-2)') +
+              '; min-width: 0; overflow-wrap: anywhere;',
+          });
+
+          const fichiers = [
+            {
+              id: 'rows',
+              nom: 'src/billing/rows.ts',
+              chemin: 'apps/web/src/billing/rows.ts',
+              plus: '+38',
+              moins: '−12',
+              diff: [
+                { s: ' ', t: '  export function totauxParPoste(rows) {' },
+                { s: '-', t: '    const total = rows.length' },
+                { s: '+', t: '    const total = rows.reduce((s, r) => s + r.amount, 0)' },
+                { s: '+', t: '    const ecart = ((aout - juillet) / juillet) * 100' },
+                { s: '+', t: '    return ecart.toFixed(1).replace(".", ",") + " %"' },
+                { s: ' ', t: '  }' },
+              ],
+            },
+            {
+              id: 'screen',
+              nom: 'src/billing/Screen.tsx',
+              chemin: 'apps/web/src/billing/Screen.tsx',
+              plus: '+96',
+              moins: '−4',
+              diff: [
+                { s: ' ', t: '  <Th>Aout</Th>' },
+                { s: '+', t: '  <Th align="right">Ecart</Th>' },
+                { s: ' ', t: '  {lignes.map((l) => (' },
+                { s: '+', t: '    <Td align="right" tone={l.ecart > 0 ? "warn" : "ok"}>' },
+                { s: '+', t: '      {formatEcart(l.ecart)}' },
+                { s: '+', t: '    </Td>' },
+                { s: ' ', t: '  ))}' },
+              ],
+            },
+            {
+              id: 'test',
+              nom: 'src/billing/tests/rows.test.ts',
+              chemin: 'apps/web/src/billing/tests/rows.test.ts',
+              plus: '+14',
+              moins: '',
+              diff: [
+                { s: '+', t: 'it("l ecart en % arrondit au dixieme", () => {' },
+                { s: '+', t: '  expect(formatEcart(14.28571)).toBe("+14,3 %")' },
+                { s: '+', t: '})' },
+              ],
+            },
+            {
+              id: 'format',
+              nom: 'src/lib/format-nombre.ts',
+              chemin: 'apps/web/src/lib/format-nombre.ts',
+              plus: '+21',
+              moins: '−3',
+              diff: [
+                { s: '-', t: '  return n.toFixed(1)' },
+                { s: '+', t: '  // virgule francaise, espace insecable avant le %' },
+                { s: '+', t: '  return n.toFixed(1).replace(".", ",")' },
+              ],
+            },
+            {
+              id: 'autres',
+              nom: '+ 8 autres fichiers',
+              chemin: '8 fichiers de moins de 10 lignes',
+              plus: '+79',
+              moins: '−19',
+              diff: [{ s: ' ', t: '  imports, types et exports' }],
+            },
+          ];
+          const choisi = this.state.fichier;
+          const courant = fichiers.find((f) => f.id === choisi) || fichiers[0];
+          const ligneFic = (actif) =>
+            'display: flex; gap: 10px; padding: 6px 10px; border-radius: 6px; cursor: pointer;' +
+            " font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 17px;" +
+            (actif ? ' background: var(--c-hover); color: var(--c-ink);' : ' color: var(--c-ink-3);');
+          const ligneDiff = (signe) => {
+            const base =
+              "font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px;" +
+              ' line-height: 19px; padding: 1px 16px; white-space: pre;';
+            if (signe === '+') return base + ' background: var(--c-ok-bg); color: var(--c-ok);';
+            if (signe === '-') return base + ' background: var(--c-warn-bg); color: var(--c-warn);';
+            return base + ' color: var(--c-ink-3);';
+          };
+
+          const par = {
+            cout: {
+              titre: 'Ce que ce travail coûte',
+              sous: 'mis à jour à chaque tour · rien n’est figé',
+              blocs: [
+                "Sur les 412 880 jetons de ce travail, 62 % ont été RELUS depuis le cache et facturés au dixième du prix. C'est la seule raison pour laquelle dix-huit minutes de travail coûtent 1,74 $ et pas une douzaine de dollars.",
+                "Le Codeur, lui, ne coûte rien à l'API : il tourne sous ton abonnement Claude Code. Ses 193 600 jetons sont comptés ici pour que tu voies le volume, mais ils ne sont pas facturés.",
+                "Trois minutes sur dix-huit ont été passées à t'attendre, pas à travailler.",
+              ],
+              champs: [
+                kv('Alfred · claude-opus-5', '7 appels · 148 200 jetons · 0,71 $'),
+                kv('Analyste · gpt-5.4', '3 appels · 96 400 jetons · 0,38 $'),
+                kv('Relecteurs A et B', '2 appels · 62 400 jetons · 0,21 $'),
+                kv('Codeur · claude-code', '1 session · 193 600 jetons · abonnement'),
+                kv('Recherche web', '1 appel · 0,004 $'),
+                kv('lus en cache', '256 000 · 62 % · facturés au dixième', 'vert'),
+                kv('écrits en cache', '86 600 · 21 % · facturés 1,25×'),
+                kv('entrée effective', '49 400 · 12 %'),
+                kv('sortie', '20 880 · 5 %'),
+                kv('attente humaine', '3 min 12 sur 18 min 04'),
+                kv('temps de preuve', '6 min 41 — deux séquences'),
+                kv('reprises', '1 bascule de modèle · 1 réparation · 1 envoi en attente'),
+              ],
+            },
+            preuve: {
+              titre: 'Ce que Nodal vérifie ici',
+              sous: 'trois commandes, dans cet ordre',
+              blocs: [
+                "Ces commandes s'exécutent sur cette machine, avec ton compte. Une nouvelle séquence demande une nouvelle approbation.",
+              ],
+              champs: [
+                kv('1 · pnpm run typecheck', 'lance tsc --noEmit · 41 s', 'vert'),
+                kv('2 · pnpm run lint', 'lance eslint . · 1 min 08', 'vert'),
+                kv('3 · pnpm run test', 'lance vitest run · 2 min 49', 'vert'),
+                kv('approuvée', 'le 12 août par Quentin · manifeste sha256:1b7f…c4'),
+                kv('dernières preuves', '6 vertes, 1 rouge'),
+              ],
+            },
+            app: {
+              titre: "L'application",
+              sous: 'localhost:3000 · lancée par Nodal',
+              blocs: ["L'aperçu vivant n'est pas encore branché : c'est le morceau le plus cher du lot."],
+              champs: [
+                kv('serveur', 'pnpm dev · démarré il y a 3 min · port 3000'),
+                kv('dernier rechargement', 'après la preuve verte'),
+              ],
+            },
+            fichiers: {
+              titre: 'Les fichiers',
+              sous: 'D:/APPS/nodal-agents · 1 284 fichiers',
+              blocs: [],
+              champs: [
+                kv('apps/', 'runner 312 · web 408 · cli 46'),
+                kv('packages/', 'shared 74 · tools 156 · db 88 · + 15'),
+                kv('docs/', '61 fichiers'),
+                kv('modifiés aujourd’hui', '12 · tous dans src/billing'),
+              ],
+            },
+            livraison: {
+              titre: 'La file d’envoi',
+              sous: 'reprise tant que ce n’est pas parti',
+              blocs: [
+                "Un envoi qui échoue n'est pas perdu : il reste dans la file et Nodal réessaie, avec un délai qui double à chaque fois.",
+              ],
+              champs: [
+                kv('telegram', '✓ envoyé · tentative 1 · 1,1 s', 'vert'),
+                kv('slack #finance', '× tentative 2 / 5 · channel_not_found · dans 4 min', 'rouge'),
+                kv('claim', 'pris par ce runner · relâché si le processus tombe'),
+              ],
+            },
+          };
+          const p = par[pan] || { titre: '', sous: '', blocs: [], champs: [] };
+
+          return {
+            themeClass: this.props.theme === 'sombre' ? 'sombre' : '',
+            fichiers: fichiers.map((f) => ({
+              nom: f.nom,
+              plus: f.plus,
+              moins: f.moins,
+              style: ligneFic(f.id === courant.id),
+              choisir: () => this.setState({ fichier: f.id }),
+            })),
+            cheminChoisi: courant.chemin,
+            diff: courant.diff.map((l) => ({ texte: l.s + ' ' + l.t, style: ligneDiff(l.s) })),
+
+            g1: this.groupe('g1'),
+            g2: this.groupe('g2'),
+            g3: this.groupe('g3'),
+
+            stylePreuve: this.styleEtagere(pan === 'preuve', 'ok'),
+            styleApp: this.styleEtagere(pan === 'app', 'neutre'),
+            styleFichiers: this.styleEtagere(pan === 'fichiers', 'neutre'),
+            voirPreuve: () => this.setState({ panneau: pan === 'preuve' ? null : 'preuve' }),
+            voirApp: () => this.setState({ panneau: pan === 'app' ? null : 'app' }),
+            voirFichiers: () => this.setState({ panneau: pan === 'fichiers' ? null : 'fichiers' }),
+            voirCout: () => this.setState({ panneau: pan === 'cout' ? null : 'cout' }),
+            voirLivraison: () => this.setState({ panneau: pan === 'livraison' ? null : 'livraison' }),
+            fermer: () => this.setState({ panneau: null }),
+
+            segPreuveStyle: this.styleSeg(pan === 'preuve'),
+            segJetonsStyle: this.styleSeg(pan === 'cout'),
+            segCoutStyle: this.styleSeg(pan === 'cout', true),
+            segLivraisonStyle: this.styleSeg(pan === 'livraison'),
+
+            panneauOuvert: pan !== null,
+            titrePanneau: p.titre,
+            sousTitrePanneau: p.sous,
+            blocsPanneau: p.blocs.map((t) => ({ texte: t })),
+            champsPanneau: p.champs,
+          };
+        }
+      }
+    </script>
+  </body>
+</html>
