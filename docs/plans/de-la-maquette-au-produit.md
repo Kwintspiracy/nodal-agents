@@ -55,7 +55,7 @@ fichier joint, et une ligne ».
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
-| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1 CLOSE** (passe 16 : « aucun constat neuf ») · **P2 codée** (page /spaces, 06/09) en revue Codex (passe 17) · P3-P4 suivantes |
+| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1, P2, P3 CLOSES** le 06/09 (passes Codex 16, 19, 21 : « aucun constat neuf ») · **P4 suivante**, scindée : barre d'état depuis `llm_calls` / estimateur de coût cache-aware à créer · ⚠️ page /spaces à ouvrir par Quentin (base en local-auth) |
 | 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
 | 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
@@ -192,6 +192,8 @@ honnête en attendant.
 
 ### P3 · Les cartes de preuve et d'envoi — S
 
+> **État au 06/09 : close** — `VerificationSection` (le composant existant du détail Code) réutilisé tel quel sous le fil, alimenté par la même lecture (preuves du job et de TOUS ses descendants, trace D8, livrables non configurés) ; `DeliveriesCard` neuf depuis `job_deliveries`. Passes Codex 20-21.
+
 **Ce que ça pose.** La carte de preuve (rouge : commandes, extrait, séquence
 arrêtée ; verte : commandes, durées, fraîcheur) depuis `verification_runs`. La
 carte d'envoi depuis `job_deliveries`. Le panneau « Vérifié » de l'étagère
@@ -203,6 +205,8 @@ depuis `code_projects` et la découverte v7-C, avec les six dernières preuves.
 un `verification_runs` rouge rend l'extrait, un vert ne le rend pas.
 
 ### P4 · La barre d'état et le coût — M
+
+> **Dépendance découverte le 06/09** : la garde (« cache lu au dixième, cache écrit 1,25× ») suppose un estimateur cache-aware. Or `estimateModelCostUsd` (`packages/shared/src/model-catalog.ts`) calcule `input × prix + output × prix` et ignore `cachedTokens` / `cacheCreationTokens` ; seul OpenRouter rapporte un coût déjà cache-aware. P4 se scinde donc : (a) la barre d'état depuis `llm_calls` tel quel (jetons, part de cache, coût rapporté, durée, envois en attente) ; (b) l'estimateur cache-aware, travail moteur à part (backlog « cache-aware »), sans lequel le coût des fournisseurs natifs reste surestimé.
 
 **Ce que ça pose.** La barre du bas, permanente : preuve, modèle actif, agents,
 jetons avec part de cache, coût, durée, envois en attente. Le panneau « Ce que
