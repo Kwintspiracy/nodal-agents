@@ -637,6 +637,186 @@
     color: var(--ink-2);
   }
 
+  /* Espace de travail : conversation + surface */
+  .espace {
+    display: grid;
+    grid-template-columns: 210px 1fr;
+    gap: 0;
+    min-height: 320px;
+  }
+  .conv {
+    border-right: 1px solid var(--rule);
+    padding: 12px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    background: var(--sunk);
+    min-width: 0;
+  }
+  .conv .rt {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 10px;
+  }
+  .bulle {
+    font-size: 12.5px;
+    line-height: 1.4;
+    border-radius: 9px;
+    padding: 7px 10px;
+    margin-bottom: 7px;
+    background: var(--surface);
+    color: var(--ink-2);
+  }
+  .bulle.moi {
+    background: var(--accent-bg);
+    color: var(--accent);
+    margin-left: 18px;
+  }
+  .bulle .f {
+    display: block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--ok);
+    margin-top: 4px;
+  }
+  .champ {
+    margin-top: auto;
+    border: 1px solid var(--rule-2);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: var(--ink-3);
+    background: var(--surface);
+  }
+  .surface {
+    padding: 12px 14px;
+    min-width: 0;
+  }
+  .apercu-app {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 14px 16px;
+    min-height: 150px;
+  }
+  .app-tete {
+    height: 9px;
+    width: 40%;
+    background: var(--rule-2);
+    border-radius: 3px;
+    margin-bottom: 12px;
+  }
+  .app-l {
+    height: 7px;
+    background: var(--mono-bg);
+    border-radius: 3px;
+    margin-bottom: 7px;
+  }
+  .app-bt {
+    display: inline-block;
+    height: 20px;
+    width: 84px;
+    background: var(--accent);
+    border-radius: 6px;
+    margin-top: 10px;
+  }
+  .hist {
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .hist .h {
+    display: flex;
+    gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .hist .h:last-child {
+    border-bottom: none;
+  }
+  .hist .q {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  /* Les six formes */
+  .formes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+    margin: 22px 0;
+  }
+  .f-card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .f-card .n {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .f-card p {
+    margin: 0;
+    font-size: 14.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .deux-obj {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin: 24px 0;
+  }
+  .obj {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .obj .n {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: 19px;
+    font-weight: 650;
+    margin: 0 0 4px;
+  }
+  .obj .duree {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: block;
+    margin-bottom: 10px;
+  }
+  .obj p {
+    margin: 0 0 10px;
+    font-size: 15.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+  .obj p:last-child {
+    margin-bottom: 0;
+  }
+  .obj ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .obj li {
+    font-size: 14.5px;
+    color: var(--ink-2);
+    margin: 5px 0;
+  }
+
   @media (max-width: 720px) {
     .body {
       grid-template-columns: 1fr;
@@ -655,6 +835,13 @@
     }
     .work {
       grid-template-columns: 1fr;
+    }
+    .espace {
+      grid-template-columns: 1fr;
+    }
+    .conv {
+      border-right: none;
+      border-bottom: 1px solid var(--rule);
     }
   }
 </style>
@@ -692,7 +879,52 @@
     <p>
       Ce n'est pas une réorganisation de menus. C'est un renversement :
       <b>la page d'un travail n'est plus une fiche d'exécution, c'est le livrable lui-même</b>,
-      rendu selon sa forme. Trois écrans suffisent à le montrer.
+      rendu selon sa forme.
+    </p>
+  </div>
+
+  <h2 class="col">Deux objets, pas un</h2>
+  <div class="col">
+    <p>
+      Ma première version n'avait qu'un fil. Tu as raison, il s'écroule : cent demandes par semaine
+      et une application sur laquelle tu reviens depuis trois semaines n'ont rien à faire dans la
+      même liste. Il y a <b>deux objets de durées différentes</b>, et le produit doit les nommer
+      tous les deux.
+    </p>
+  </div>
+  <div class="deux-obj col">
+    <div class="obj">
+      <p class="n">Une tâche</p>
+      <span class="duree">minutes · se termine</span>
+      <p>
+        Tu demandes, Nodal produit, c'est fini. Le tableau des dépenses, la synthèse de dix
+        articles, la relance des clients en retard.
+      </p>
+      <ul>
+        <li>Elle a un livrable et un état</li>
+        <li>Elle vit dans le fil des travaux</li>
+        <li>On la relit, on ne la reprend pas</li>
+      </ul>
+    </div>
+    <div class="obj">
+      <p class="n">Un espace</p>
+      <span class="duree">jours, semaines · continue</span>
+      <p>
+        Un chantier auquel tu reviens. Une application, un dossier de rapports mensuels, un site. Il
+        accumule des tâches sans les éparpiller.
+      </p>
+      <ul>
+        <li>Il a une conversation continue</li>
+        <li>Il a un état courant, pas seulement un historique</li>
+        <li>On l'ouvre et on y travaille</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <p>
+      La règle qui les relie tient en une ligne : <b>une tâche lancée depuis un espace y reste</b>.
+      Elle ne remonte pas dans le fil général. Le fil ne garde que ce qui n'appartient à aucun
+      chantier.
     </p>
   </div>
 
@@ -708,6 +940,7 @@
       <div class="body">
         <div class="nav">
           <div class="item on">Travaux</div>
+          <div class="item">Espaces</div>
           <div class="item">Agents</div>
           <div class="item">Automatisations</div>
           <div class="sep"></div>
@@ -769,6 +1002,17 @@
           </div>
 
           <div class="work">
+            <span class="forme">Espace</span>
+            <div>
+              <p class="nom">nodal-agents</p>
+              <p class="quoi">
+                Chantier ouvert · 34 tâches depuis le 12 août · dernière activité hier
+              </p>
+            </div>
+            <span class="etat">à jour</span>
+          </div>
+
+          <div class="work">
             <span class="forme">Envoi</span>
             <div>
               <p class="nom">Relance aux 4 clients en retard</p>
@@ -790,9 +1034,10 @@
     </div>
   </div>
   <p class="note">
-    <b>Ce qu'il faut regarder :</b> les cinq lignes ne se ressemblent pas. La forme est écrite à
-    gauche, l'aperçu change avec elle, et l'état dit « vérifié » ou « pas vérifié » sans jamais
-    parler de commandes. Un seul endroit remplace Jobs, Code et une partie du Chat.
+    <b>Ce qu'il faut regarder :</b> les lignes ne se ressemblent pas. La forme est écrite à gauche,
+    l'aperçu change avec elle, et l'état dit « vérifié » ou « pas vérifié » sans jamais parler de
+    commandes. <b>La troisième ligne n'est pas une tâche, c'est un espace</b> : il remonte quand il
+    bouge, mais ses trente-quatre tâches restent chez lui.
   </p>
 
   <h2 class="col">2 · Ouvrir un travail, c'est ouvrir la chose</h2>
@@ -807,6 +1052,7 @@
       <div class="body">
         <div class="nav">
           <div class="item on">Travaux</div>
+          <div class="item">Espaces</div>
           <div class="item">Agents</div>
           <div class="item">Automatisations</div>
           <div class="sep"></div>
@@ -907,6 +1153,7 @@
       <div class="body">
         <div class="nav">
           <div class="item on">Travaux</div>
+          <div class="item">Espaces</div>
           <div class="item">Agents</div>
           <div class="item">Automatisations</div>
           <div class="sep"></div>
@@ -971,7 +1218,99 @@
     leur durée.
   </p>
 
-  <h2 class="col">3 · Et depuis Telegram, la même chose en petit</h2>
+  <h2 class="col">3 · Un espace de code, où l'on reste</h2>
+  <div class="col">
+    <p>
+      C'est ta deuxième question, et elle manquait à ma proposition. Un chantier de trois semaines
+      ne se lit pas dans un fil : il s'ouvre, on y entre, on y travaille. La conversation est
+      continue, l'état est courant, l'historique est <b>ici</b> et pas ailleurs.
+    </p>
+  </div>
+
+  <div class="band">
+    <p class="cap">Un espace ouvert — conversation à gauche, l'application à droite</p>
+    <div class="screen">
+      <div class="bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="titre">nodal — espace · nodal-agents</span>
+      </div>
+      <div class="body">
+        <div class="nav">
+          <div class="item">Travaux</div>
+          <div class="item on">Espaces</div>
+          <div class="item">Agents</div>
+          <div class="item">Automatisations</div>
+          <div class="sep"></div>
+          <div class="item">Outils</div>
+          <div class="item">Connecteurs</div>
+          <div class="item">Mémoire</div>
+        </div>
+        <div style="min-width: 0">
+          <div class="liv-tete" style="padding: 12px 16px 10px; margin: 0">
+            <span class="meta">ESPACE · CODE · D:/APPS/nodal-agents</span>
+            <p class="nom">nodal-agents</p>
+            <span class="meta"
+              >34 tâches depuis le 12 août ·
+              <span style="color: var(--ok)">typage et tests verts</span></span
+            >
+          </div>
+          <div class="espace">
+            <div class="conv">
+              <p class="rt">La conversation de cet espace</p>
+              <div class="bulle moi">ajoute un écran de facturation</div>
+              <div class="bulle">Fait. 12 fichiers.<span class="f">✓ vérifié · 3 min 40</span></div>
+              <div class="bulle moi">le total ne compte pas les remises</div>
+              <div class="bulle">
+                Corrigé, un test ajouté.<span class="f">✓ vérifié · 2 min 51</span>
+              </div>
+              <div class="champ">Écrire…</div>
+            </div>
+            <div class="surface">
+              <div class="onglets">
+                <span class="ong on">Aperçu</span><span class="ong">Fichiers</span
+                ><span class="ong">Historique</span>
+              </div>
+              <div class="apercu-app">
+                <div class="app-tete"></div>
+                <div class="app-l" style="width: 92%"></div>
+                <div class="app-l" style="width: 78%"></div>
+                <div class="app-l" style="width: 85%"></div>
+                <div class="app-bt"></div>
+              </div>
+              <div class="controles">
+                <p class="ct">État de l'espace</p>
+                <div class="ctrl">✓ le typage passe — 41 s</div>
+                <div class="ctrl">✓ 1 248 tests passent — 2 min 48</div>
+                <div class="ctrl">✓ rien n'a été écrit depuis la dernière preuve</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    <b>Ce qu'il faut regarder :</b> l'application tourne au centre, pas un arbre de fichiers. Tu ne
+    viens pas ici éditer du code à la main, tu viens dire ce que tu veux et voir le résultat. Les
+    fichiers et l'historique sont là, en second, sous leurs onglets.
+    <b>Aucune des trente-quatre tâches n'apparaît dans le fil général</b> : elles sont sous «
+    Historique », chez elles.
+  </p>
+  <div class="col">
+    <p>
+      « Comme VS Code mais simple », dans ces termes : la colonne de conversation et l'aperçu vivant
+      sont ce que font Lovable et Replit Agent, et c'est le bon modèle pour quelqu'un qui dirige un
+      agent plutôt que d'écrire les lignes. L'éditeur reste à un clic, sous « Fichiers », pour la
+      fois où tu veux corriger une virgule toi-même.
+    </p>
+    <p>
+      Un espace n'est pas réservé au code. Un dossier de rapports mensuels est un espace aussi : sa
+      conversation est continue, son centre montre les documents au lieu d'une application. Le
+      châssis ne change pas.
+    </p>
+  </div>
+
+  <h2 class="col">4 · Et depuis Telegram, la même chose en petit</h2>
 
   <div class="band">
     <p class="cap">Ce qui arrive dans la conversation</p>
@@ -990,6 +1329,79 @@
     l'écran, en trois lignes. C'est la même donnée rendue plus petit, pas un second système à
     entretenir.
   </p>
+
+  <h2 class="col">Cent demandes par semaine, et alors ?</h2>
+  <div class="col">
+    <p>
+      Ta première question. La réponse tient dans un renversement, le même que celui du début :
+      <b>on ne classe pas les demandes, on classe les résultats.</b> Les demandes sont infinies. Les
+      formes que peut prendre un résultat, non. Il y en a six.
+    </p>
+  </div>
+
+  <div class="formes">
+    <div class="f-card">
+      <span class="n">Un fichier</span>
+      <p>Qui s'ouvre. Tableur, document, présentation, image, PDF, archive.</p>
+    </div>
+    <div class="f-card">
+      <span class="n">Une page</span>
+      <p>Qui se regarde. Synthèse HTML, tableau de bord, rapport mis en forme.</p>
+    </div>
+    <div class="f-card">
+      <span class="n">Du code</span>
+      <p>Qui tourne. Un projet, ses fichiers, ses tests.</p>
+    </div>
+    <div class="f-card">
+      <span class="n">Un envoi</span>
+      <p>Qui est parti. Message, courriel, publication, appel à un service.</p>
+    </div>
+    <div class="f-card">
+      <span class="n">Une réponse</span>
+      <p>À lire. Analyse, comparaison, recherche. Rien n'a été écrit sur le disque.</p>
+    </div>
+    <div class="f-card">
+      <span class="n">Une donnée</span>
+      <p>Modifiée ailleurs. Une ligne Notion, un événement d'agenda, une fiche client.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <p>
+      « Compare-moi ces trois fournisseurs », « trouve pourquoi la CI est rouge », « résume-moi ce
+      contrat » : trois demandes qui n'ont rien à voir, une seule forme de résultat, une réponse à
+      lire. C'est ce qui empêche la liste de disparaître sous le nombre.
+    </p>
+    <p>
+      Et deux axes suffisent à tout ranger, parce qu'ils répondent à deux questions différentes :
+    </p>
+    <div class="avant-apres">
+      <div class="ap now">
+        <span class="t">La forme — comment ça se montre</span>
+        <p>
+          Vocabulaire fermé, six valeurs, il ne grandit presque jamais. C'est l'outil qui la
+          déclare, jamais l'écran qui la devine.
+        </p>
+      </div>
+      <div class="ap next">
+        <span class="t">Le lieu — où ça vit</span>
+        <p>
+          Ouvert, c'est toi qui le nommes. Un espace par chantier. Tout ce qui n'est rattaché à
+          aucun espace tombe dans le fil.
+        </p>
+      </div>
+    </div>
+    <p>
+      J'avais confondu les deux dans ma première proposition : je me servais de la forme pour
+      ranger, alors qu'elle ne sert qu'à afficher. C'est ce qui rendait le fil ingérable.
+    </p>
+    <p>
+      <b>Les espaces ne se configurent pas non plus.</b> Quand trois tâches atterrissent au même
+      endroit, Nodal propose d'en faire un espace, en une phrase et un bouton. Tu peux aussi en
+      créer un à la main. Tu n'es jamais obligé : sans espace, tout reste dans le fil, groupé par
+      jour, filtrable par forme.
+    </p>
+  </div>
 
   <h2 class="col">Ce que ça coûte, dit franchement</h2>
   <ul class="pts">
@@ -1022,14 +1434,17 @@
 
   <div class="demande">
     <h3>Ce qu'il me faut de toi</h3>
+    <p>Deux choses, pas les détails.</p>
+    <p><b>Un.</b> Est-ce que « le livrable est la page » est la bonne direction ?</p>
     <p>
-      Un mot sur le parti pris, pas sur les détails :
-      <b>est-ce que « le livrable est la page » est la bonne direction ?</b>
+      <b>Deux.</b> Est-ce que la paire <b>tâche / espace</b> est le bon découpage, ou est-ce que tu
+      vois un troisième objet que je rate ?
     </p>
     <p>
-      Si oui, je commence par l'écran 1 et deux formes — tableur et code — parce que ce sont celles
-      que tu produis le plus. Le reste suit sans nouvelle décision. Si non, dis-moi ce qui cloche
-      dans les images, c'est fait pour ça.
+      Si les deux tiennent, je commence par l'espace de code : c'est celui qui te sert tous les
+      jours, et c'est le plus exigeant, donc il valide le châssis pour les autres. Le fil et les
+      formes suivent sans nouvelle décision. Si quelque chose cloche, dis-moi où dans les images,
+      elles sont faites pour ça.
     </p>
   </div>
 
@@ -1058,6 +1473,16 @@
     <p>
       <b>La carte du canal</b> réutilise l'envoi de cartes à boutons qui existe pour les
       approbations, neutre vis-à-vis du canal.
+    </p>
+    <p>
+      <b>L'espace</b> est le seul objet à créer : une table, une conversation rattachée, une clé
+      d'appartenance sur les tâches. Les dossiers attachés et la table des projets de code en sont
+      l'ancêtre — c'est une généralisation de ce qui existe, pas une invention.
+    </p>
+    <p>
+      <b>L'aperçu vivant</b> est le seul morceau sans base actuelle : il demande de lancer et de
+      tenir un serveur de développement, avec sa politique de ports et d'arrêt. À mettre en dernier,
+      derrière un châssis qui marche déjà sans lui.
     </p>
   </details>
 </div>
