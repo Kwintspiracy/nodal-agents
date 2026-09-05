@@ -311,8 +311,7 @@
     <h1>Comment Nodal vérifie</h1>
     <p class="lede">
       Tout le chantier en une page, sans jargon. Tu as trouvé deux défauts en cinq minutes d'écran.
-      Le tableur qui relançait les tests du code est corrigé. L'écran qui ne te propose rien est le
-      prochain lot. Restent deux choses à trancher.
+      Les deux sont corrigés. Restent deux choses à trancher, et une question ouverte sur Telegram.
     </p>
   </header>
 
@@ -365,7 +364,10 @@
   <div class="ecrans">
     <div class="ecran">
       <span class="ou">Onglet Code, un projet ouvert</span>
-      <p>« Proof commands » : tu déclares les commandes, puis tu les approuves.</p>
+      <p>
+        « Proof commands » : Nodal lit le projet et te propose ce qu'il y trouve, avec ce que chaque
+        commande lance vraiment. Un bouton les ajoute, un second les approuve.
+      </p>
     </div>
     <div class="ecran">
       <span class="ou">Réglages</span>
@@ -432,18 +434,22 @@
     livraisons. Je l'ai remontée devant tous les autres lots.
   </p>
 
-  <h2>Les deux défauts que ta question a mis au jour</h2>
-  <div class="bloc casse">
-    <h3>1. L'écran ne te propose rien — prochain lot</h3>
+  <h2>Les deux défauts que ta question a mis au jour — corrigés</h2>
+  <div class="bloc regle">
+    <span class="etiquette">corrigé le 5 septembre</span>
+    <h3>1. L'écran ne te proposait rien</h3>
     <p>
-      Tu as cliqué « Add a command » et tu n'as pas su quoi mettre. Ce qu'il faut y taper
-      aujourd'hui, c'est ce que <b>tu</b> lancerais toi-même pour savoir si le projet marche encore
-      — ici <code>pnpm test</code>, puis <code>pnpm typecheck</code>.
+      Tu as cliqué « Add a command » et tu n'as pas su quoi mettre. Tu avais raison : rien ne te le
+      disait.
     </p>
     <p>
-      Mais tu ne devrais pas avoir à le savoir. Nodal sait lire le <code>package.json</code> du
-      projet, il y trouve les commandes qui existent vraiment. Il devrait les proposer, cochées par
-      défaut.
+      Maintenant Nodal lit le projet et te montre ce qu'il y trouve. Un seul bouton, « Add these ».
+      Et à côté de chaque commande, ce qu'elle lance vraiment — parce qu'un projet peut appeler
+      n'importe quoi depuis un script nommé « test », et que tu dois le voir avant d'approuver.
+    </p>
+    <p>
+      Un dossier sans manifeste connu ne propose rien, et le dit. Il n'invente pas une commande qui
+      n'existe pas.
     </p>
   </div>
   <div class="bloc regle">
@@ -473,14 +479,16 @@
   <h2>À toi de décider</h2>
 
   <div class="bloc decision">
+    <span class="etiquette">à moitié fait</span>
     <h3>1. Rien à configurer du tout</h3>
     <p>
-      Nodal lit le projet, trouve ses commandes, les propose <b>déjà cochées</b>. Tu ne fais rien.
-      Tu ne touches à cet écran que si tu veux changer quelque chose.
+      <b>Fait :</b> Nodal lit le projet, trouve ses commandes, te les montre. Un bouton les ajoute.
     </p>
-    <p class="reco">
-      <b>Ma recommandation : oui, avant de merger.</b> C'est un petit travail. Sans ça, personne ne
-      configurera jamais rien, et la semaine d'observation ne mesurera rien du tout.
+    <p>
+      <b>Reste :</b> quand tu lances une tâche depuis Telegram, tu n'as pas cet écran. Nodal doit te
+      poser la question <b>là où tu es</b> : « ce projet veut lancer ceci pour se prouver, tu es
+      d'accord ? », avec deux boutons dans la conversation. Telegram sait déjà afficher des boutons.
+      Ce qui manque est le fil entre « une preuve attend » et « cette tâche vient de ce canal ».
     </p>
   </div>
 
@@ -534,19 +542,21 @@
   <h2>Ce que j'ai fait</h2>
   <div class="fait">
     <span class="pastille">24 lots de travail</span>
-    <span class="pastille">6 relectures externes</span>
+    <span class="pastille">9 relectures externes</span>
     <span class="pastille">CI verte</span>
     <span class="pastille">4 bugs existants corrigés</span>
     <span class="pastille">chaque chose dans sa catégorie</span>
+    <span class="pastille">les commandes se proposent</span>
   </div>
   <ul class="simple">
     <li>Le travail a été découpé en 24 lots, chacun avec ses tests et sa preuve qu'ils servent.</li>
     <li>
-      Un second outil (Codex) a relu six fois. Il a trouvé quatre vrais trous : les fichiers Word,
+      Un second outil (Codex) a relu neuf fois. Il a trouvé six vrais trous : les fichiers Word,
       Excel et PowerPoint échappaient à la vérification ; l'envoi des résultats pouvait se marcher
-      dessus ; un outil qui n'annonçait pas ce qu'il écrit était rangé « en code » par défaut ; et
-      l'ordre dans lequel deux tâches simultanées prennent leurs verrous tenait par chance. Tous
-      fermés.
+      dessus ; un outil qui n'annonçait pas ce qu'il écrit était rangé « en code » par défaut ;
+      l'ordre dans lequel deux tâches simultanées prennent leurs verrous tenait par chance ; la
+      lecture d'un projet pouvait sortir du dossier autorisé ; et une commande proposée ne montrait
+      pas ce qu'elle lance. Tous fermés.
     </li>
     <li>
       Une de ses demandes a été <b>refusée, avec sa mesure</b> : rendre une règle obligatoire au

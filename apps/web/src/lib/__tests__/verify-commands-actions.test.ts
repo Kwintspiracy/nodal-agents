@@ -568,6 +568,50 @@ describe('discoverVerifyCommandsAction', () => {
     }
   });
 
+  it('un `package.json` qui est un LIEN vers l’extérieur n’est pas lu', async (ctx) => {
+    // Le dossier passe la garde — il est bien attaché — mais le manifeste
+    // lui-même pointe dehors. Aucun `..`, aucun lien de dossier : rien ne se
+    // voit sur le chemin (revue Codex passe 9).
+    const { discoverVerifyCommandsAction } = await actions();
+    const dehors = await mkdtemp(join(tmpdir(), 'nodal-manifeste-'));
+    const projetLie = join(racine, 'projet-lie');
+    try {
+      await mkdir(projetLie, { recursive: true });
+      const cible = join(dehors, 'package.json');
+      await writeFile(cible, JSON.stringify({ scripts: { test: 'secret' } }));
+      try {
+        await symlink(cible, join(projetLie, 'package.json'), 'file');
+      } catch {
+        // Un lien de FICHIER demande des droits que Windows ne donne pas hors
+        // mode développeur (un lien de DOSSIER, si — d'où le test de jonction
+        // ci-dessus, qui passe partout). Le cas est marqué NON ÉPROUVÉ plutôt
+        // que rendu vert : la CI Linux, elle, l'exécute à chaque tour.
+        console.warn(
+          '[test] LIEN_FICHIER_IMPOSSIBLE — le cas « manifeste qui est un lien » n’est PAS exercé ici',
+        );
+        ctx.skip();
+        return;
+      }
+      const res = await discoverVerifyCommandsAction({ projectPath: projetLie });
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.data).toEqual([]);
+    } finally {
+      await rm(projetLie, { recursive: true, force: true });
+      await rm(dehors, { recursive: true, force: true });
+    }
+  });
+
+  it('un chemin qui N’EXISTE PAS est refusé, pas accepté sur sa forme écrite', async () => {
+    // Accepter la forme lexicale d'un chemin inexistant laissait un lien créé
+    // ensuite à cet emplacement être suivi à la lecture.
+    const { discoverVerifyCommandsAction } = await actions();
+    const res = await discoverVerifyCommandsAction({ projectPath: join(racine, 'jamais-cree') });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe('not_found');
+  });
+
   it('un dossier attaché SANS manifeste rend une liste vide, jamais une commande inventée', async () => {
     const { discoverVerifyCommandsAction } = await actions();
     const vide = join(racine, 'vide');

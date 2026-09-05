@@ -156,7 +156,7 @@ quatre.
 |---|---|---|---|
 | **v7-A** | Le type de livrable vient du hook, plus de littéral dans `intent.ts` ; `office_file` traverse la tuyauterie jusqu'à l'écran, avec un vérificateur qui rend « pas encore vérifiable » | ① | FAIT le 05/09 (`22255204` + `5198a8ee`) |
 | **v7-B** | Vérificateur `office_file` (ouvre, recalcule, invariants de structure) et `outbound_action` (constat d'envoi depuis l'outbox), tous deux **sans pouvoir**. **`outbound_action` est descendu de A vers B** : son constat vient de l'outbox, pas d'une intention de mutation, et la primitive ne traite que les livrables mutables | v7-A | à faire |
-| **v7-C** | Découverte des commandes d'un projet + proposition cochée + carte d'approbation dans le canal d'origine | v7-A | à faire |
+| **v7-C** | Découverte des commandes d'un projet + proposition cochée + carte d'approbation dans le canal d'origine | v7-A | **découverte FAITE** le 05/09 (`0e396200` + `99077742`) ; l'approbation dans le canal reste |
 | **v7-D** | Extraction des critères depuis la demande + filtre mécanique + rendu dans le détail du run | v7-A, v7-B | à faire |
 
 Chaque PR suit la discipline de ① : tests sur données réelles, une mutation par
@@ -197,6 +197,36 @@ Trois sont fermées, la quatrième est un ticket à part :
 | L'ordre de verrouillage se raisonnait sur le TYPE | Une passe dédiée prend tous les verrous par clé, sur une liste de types déclarée, avec déduplication. La règle est une fonction pure, testée avec deux types verrouillants |
 | Le témoin du cas UNC était insuffisant | **Il cachait un vrai bug** : ma chaîne de test avait été mangée par le shell et la seconde graphie était silencieusement ignorée. Le test était vert pour la mauvaise raison |
 | Un outil qui écrit dans un workspace mais oublie `mutatesWorkspace` échappe à tout | **NON FERMÉ** — voir ci-dessous |
+
+### v7-C — la découverte est livrée ; l'approbation dans le canal reste
+
+Ce que l'écran fait maintenant, sur un projet sans commande : il LIT le projet
+et propose ce qu'il y trouve, avec un bouton unique. `package.json` porte ses
+scripts, `Cargo.toml` et `go.mod` désignent leur outil, `deno.json` ses tâches.
+Les propositions sortent du moins cher au plus cher, parce que la séquence
+s'arrête au premier rouge.
+
+La découverte est une **fonction pure de `shared`** : elle reçoit le texte des
+manifestes, l'appelant lit le disque. Ce n'est pas de l'élégance — c'est ce qui
+rend la même liste atteignable depuis le runner et depuis un canal de
+discussion, sans que chacun réimplémente la lecture. C'est la moitié manquante
+de v7-C qui en dépend.
+
+Ce que la revue a changé dans cette brique (passe 8) :
+
+| Constat | Traitement |
+|---|---|
+| La garde de périmètre comparait des chemins LEXICAUX : `<racine>/../ailleurs` la passait, et une jonction Windows en sortait sans qu'aucun `..` n'apparaisse | `resolve` puis `realpath` des deux côtés. Deux tests, dont un qui était d'abord vert pour la mauvaise raison (`path.join` collapse les `..` lui-même) |
+| Un nom de script ne garantit pas une preuve : `"test": "next dev"` ne rendrait jamais la main | On ne peut pas le deviner, on le MONTRE. La proposition porte ce que le script lance, l'écran l'affiche |
+| `pytest` était détecté dans un commentaire | Une vraie section `[tool.pytest...]` est exigée |
+| Les virgules finales, usuelles en JSONC, faisaient disparaître un `deno.jsonc` ordinaire | Retirées hors chaîne |
+| `stat` puis `readFile` n'est pas une lecture bornée | Un descripteur, un tampon fixe |
+
+**Ce qui reste de v7-C** : l'approbation demandée **dans le canal d'origine**.
+Quentin lance une tâche par Telegram, la commande n'est pas approuvée, et Nodal
+doit lui poser la question là où il est. Les boutons en ligne de Telegram
+existent déjà ; ce qui manque est le lien entre « une preuve attend une
+approbation » et « ce job vient de ce canal ».
 
 ### v7-B — la décision de conception à prendre AVANT de coder
 

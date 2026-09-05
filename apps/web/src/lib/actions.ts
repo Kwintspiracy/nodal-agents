@@ -28,7 +28,9 @@ import {
   access as fsAccess,
   opendir as fsOpendir,
   open as fsOpen,
+  lstat as fsLstat,
 } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import {
   deriveProjectRoot,
   isInsideWorkspace,
@@ -13008,12 +13010,15 @@ export async function discoverVerifyCommandsAction(
     // jonction Windows posée dans un dossier attaché sort du périmètre sans
     // qu'aucun `..` n'apparaisse. Les deux côtés passent donc par `realpath`,
     // exactement comme `resolveAndCheckPath` dans packages/tools.
-    const projectPath = await realPathOrLexical(pathResolve(parsed.data.projectPath));
+    const projectPath = await realPathOrNull(pathResolve(parsed.data.projectPath));
+    if (projectPath === null) return fail('not_found', 'Project not found');
     const roots = await db
       .select({ path: agentWorkspaces.path })
       .from(agentWorkspaces)
       .where(eq(agentWorkspaces.entityId, session.entityId));
-    const realRoots = await Promise.all(roots.map((r) => realPathOrLexical(pathResolve(r.path))));
+    const realRoots = (
+      await Promise.all(roots.map((r) => realPathOrNull(pathResolve(r.path))))
+    ).filter((r): r is string => r !== null);
     // Dans un dossier attaché, ou rien. Refusé AVANT la première lecture.
     if (!realRoots.some((root) => isUnderPath(projectPath, root))) {
       return fail('not_found', 'Project not found');
@@ -13044,15 +13049,19 @@ export async function discoverVerifyCommandsAction(
 }
 
 /**
- * Le chemin RÉEL, normalisé — liens et jonctions résolus. Un chemin
- * injoignable rend sa forme lexicale : la comparaison de périmètre échouera
- * proprement, plutôt que de lever au milieu d'une garde.
+ * Le chemin RÉEL, normalisé — liens et jonctions résolus. `null` si le chemin
+ * n'existe pas.
+ *
+ * Rendre la forme lexicale d'un chemin inexistant était une faille (revue
+ * Codex PR #46, passe 9) : le dossier passait la garde par comparaison de
+ * texte, et un lien créé ensuite à cet emplacement était suivi à la lecture.
+ * Un chemin qui n'existe pas n'a rien à proposer de toute façon.
  */
-async function realPathOrLexical(path: string): Promise<string> {
+async function realPathOrNull(path: string): Promise<string | null> {
   try {
     return normalizePath(await fsRealpath(path));
   } catch {
-    return normalizePath(path);
+    return null;
   }
 }
 
@@ -13066,21 +13075,41 @@ async function readManifest(path: string): Promise<string | null> {
   // Lecture RÉELLEMENT bornée. `stat` puis `readFile` ne l'est pas : le
   // fichier peut grossir ou être remplacé entre les deux appels, et la lecture
   // dépasserait le plafond qu'on croyait tenir (revue Codex PR #46, passe 8).
-  // Un descripteur ouvert une fois, un tampon de taille fixe : ce qui n'entre
-  // pas n'est jamais lu.
+  // Un descripteur ouvert une fois, un tampon de taille fixe.
+  //
+  // LE MANIFESTE NE DOIT PAS ÊTRE UN LIEN. Un `package.json` qui pointe hors
+  // du dossier attaché ferait sortir la lecture du périmètre sans qu'aucun
+  // `..` ni aucun lien de dossier n'apparaisse (revue passe 9). `O_NOFOLLOW`
+  // le refuse au noyau là où il existe ; ailleurs (Windows) le `lstat`
+  // ci-dessous le refuse, avec la fenêtre que ça implique — voir la note du
+  // rapport de passe 9 : la fermer demanderait `openat`, que Node n'expose pas.
   let handle: Awaited<ReturnType<typeof fsOpen>> | null = null;
   try {
-    handle = await fsOpen(path, 'r');
+    if ((await fsLstat(path)).isSymbolicLink()) return null;
+    const noFollow = (fsConstants as Record<string, number | undefined>)['O_NOFOLLOW'] ?? 0;
+    handle = await fsOpen(path, fsConstants.O_RDONLY | noFollow);
     if (!(await handle.stat()).isFile()) return null;
+
+    // Une lecture peut être COURTE : un seul `read` ne remplit pas forcément
+    // le tampon, et un fichier trop gros passerait pour un fragment accepté
+    // (revue passe 9). On boucle jusqu'à EOF ou jusqu'au dépassement.
     const buffer = Buffer.allocUnsafe(MAX_MANIFEST_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    // Plus gros que le plafond : ce n'est pas un manifeste, et on ne devine
-    // rien sur un morceau tronqué.
-    if (bytesRead > MAX_MANIFEST_BYTES) return null;
-    return buffer.subarray(0, bytesRead).toString('utf8');
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      // Plus gros que le plafond : ce n'est pas un manifeste, et on ne devine
+      // rien sur un morceau tronqué.
+      if (total > MAX_MANIFEST_BYTES) return null;
+    }
+    return buffer.subarray(0, total).toString('utf8');
   } catch {
     return null;
   } finally {
+    // Fermeture TENTÉE : une erreur de `close` est avalée pour ne pas
+    // transformer un manifeste lu en panne. Ce n'est donc pas « toujours
+    // refermé », et le dire autrement serait faux.
     await handle?.close().catch(() => {});
   }
 }
