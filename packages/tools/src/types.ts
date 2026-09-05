@@ -300,8 +300,21 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    *     require approval and touches no file. Inferring from it would checkpoint
    *     connector edits and skip the actual writes — exactly backwards.
    *
-   * Set it on tools that write to disk, and only those: an over-broad flag
+   * Set it on tools that write INTO AN ATTACHED WORKSPACE, and only those.
+   * Not « tools that write to disk » — this comment said that until the 05/09
+   * and it was wrong in a way that mattered (revue Codex PR #46, passe 6):
+   * `skill_file_write` writes to disk, inside the skill folder, which is no
+   * workspace and no deliverable. It is correctly unflagged, and a reader
+   * following the old wording would have flagged it. An over-broad flag also
    * makes every turn pay a snapshot it does not need.
+   *
+   * WHAT THIS DOES NOT GUARANTEE, said plainly: a tool that writes into a
+   * workspace and FORGETS this flag skips the checkpoint and the verification
+   * seam entirely. No type and no scanner catches that — proving a function
+   * writes requires running it, and every static proxy (an `fs` import, a path
+   * resolver shared with the read tools) is wrong in both directions. It is a
+   * DECLARATION, like `riskLevel`. The registry's architecture test covers the
+   * next step only: every tool that declares this must declare what it writes.
    */
   mutatesWorkspace?: boolean;
   /**

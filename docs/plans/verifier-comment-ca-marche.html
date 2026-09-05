@@ -221,6 +221,22 @@
     border-left-color: var(--decide);
     background: var(--decide-bg);
   }
+  .bloc.regle {
+    border-left-color: var(--done);
+    background: var(--done-bg);
+  }
+  .etiquette {
+    display: inline-block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--done);
+    border: 1px solid var(--done);
+    border-radius: 999px;
+    padding: 2px 9px;
+    margin-bottom: 8px;
+  }
   .bloc h3 {
     font-family: Archivo, system-ui, sans-serif;
     font-size: 18px;
@@ -291,11 +307,12 @@
 
 <div class="wrap">
   <header>
-    <p class="eyebrow">Point d'arrêt · 5 septembre 2026</p>
+    <p class="eyebrow">Point d'arrêt · mis à jour le 5 septembre 2026</p>
     <h1>Comment Nodal vérifie</h1>
     <p class="lede">
-      Tout le chantier en une page, sans jargon. À la fin, cinq choses à décider — dont deux défauts
-      que tu as trouvés en cinq minutes d'écran.
+      Tout le chantier en une page, sans jargon. Tu as trouvé deux défauts en cinq minutes d'écran.
+      Le tableur qui relançait les tests du code est corrigé. L'écran qui ne te propose rien est le
+      prochain lot. Restent deux choses à trancher.
     </p>
   </header>
 
@@ -364,20 +381,21 @@
   </div>
 
   <h2>Et si je demande un fichier Excel ?</h2>
+  <p>C'est la question que tu as posée. Voici où on en est le 5 septembre, en deux temps.</p>
   <p>
-    C'est la question que tu as posée, et voici la réponse honnête : <b>aujourd'hui, rien</b>. Il
-    n'y a pas d'écran, pas de vérification, rien.
+    <b>Ce qui marche maintenant :</b> ton tableur existe pour Nodal. Il a sa ligne, son identité, et
+    il n'est plus confondu avec le code. Le détail du run le nomme et dit la vérité : « pas encore
+    vérifié ». Il ne t'envoie plus chercher un réglage qui n'existe pas.
   </p>
   <p>
-    Vérifier un tableur, ce n'est pas lancer une commande — ça n'aurait aucun sens. C'est autre
-    chose : le fichier s'ouvre vraiment, les formules recalculent, les totaux tombent juste, les
-    chiffres du rapport concordent avec ceux du tableau. Rien de tout cela ne se tape dans un champ
-    : Nodal le fait, ou ne le fait pas.
+    <b>Ce qui manque encore :</b> la vérification elle-même. Vérifier un tableur, ce n'est pas
+    lancer une commande, ça n'aurait aucun sens. C'est autre chose : le fichier s'ouvre vraiment,
+    les formules recalculent, les totaux tombent juste, les chiffres du rapport concordent avec ceux
+    du tableau. Rien de tout cela ne se tape dans un champ. Nodal le fait, ou ne le fait pas.
   </p>
   <p>
-    Ce travail existe dans le plan. Il est prévu <b>après trois autres lots</b>. Autrement dit, j'ai
-    livré en premier la partie qui te demande de configurer, et laissé pour plus tard celle qui ne
-    te demanderait rien. Vu de ta place, c'est le mauvais ordre.
+    Et rien de tout cela ne fait tourner du code du projet. Donc rien de tout cela n'aura jamais
+    besoin de ton approbation. C'est le lot suivant.
   </p>
 
   <h2>Et quand je passe par Telegram ?</h2>
@@ -414,9 +432,9 @@
     livraisons. Je l'ai remontée devant tous les autres lots.
   </p>
 
-  <h2>Deux défauts que ta question met au jour</h2>
+  <h2>Les deux défauts que ta question a mis au jour</h2>
   <div class="bloc casse">
-    <h3>1. L'écran ne te propose rien</h3>
+    <h3>1. L'écran ne te propose rien — prochain lot</h3>
     <p>
       Tu as cliqué « Add a command » et tu n'as pas su quoi mettre. Ce qu'il faut y taper
       aujourd'hui, c'est ce que <b>tu</b> lancerais toi-même pour savoir si le projet marche encore
@@ -428,16 +446,27 @@
       défaut.
     </p>
   </div>
-  <div class="bloc casse">
-    <h3>2. Un tableur déclenche les tests du code</h3>
+  <div class="bloc regle">
+    <span class="etiquette">corrigé le 5 septembre</span>
+    <h3>2. Un tableur déclenchait les tests du code</h3>
     <p>
-      Si un agent écrit un fichier Excel <b>dans</b> un projet de code, Nodal marque le projet comme
-      modifié et relance ses tests — alors que le code n'a pas bougé d'une ligne.
+      Si un agent écrivait un fichier Excel <b>dans</b> un projet de code, Nodal marquait le projet
+      comme modifié et relançait ses tests. Le code n'avait pas bougé d'une ligne.
     </p>
     <p>
-      La cause : il n'existe qu'une seule sorte de livrable branchée, le projet de code. Tout ce
-      qu'un agent écrit y est rangé, faute de mieux. C'est moi qui l'ai introduit hier, en
-      rattachant les fichiers Office à la seule tuyauterie disponible.
+      La cause : une seule sorte de livrable était branchée, le projet de code. Tout ce qu'un agent
+      écrivait y était rangé, faute de mieux.
+    </p>
+    <p>
+      Désormais chaque outil déclare <b>ce qu'il produit</b>. Un tableur est un tableur. Il a sa
+      propre ligne, sa propre identité, et il ne relance plus les tests du dépôt qui l'héberge. Le
+      dépôt, lui, reste marqué dès qu'un fichier texte y est écrit : c'est le côté prudent, une
+      vérification de trop coûte moins cher qu'une livraison jamais vérifiée.
+    </p>
+    <p>
+      Ce que Nodal ne sait pas <b>encore</b> faire, et qu'il dit clairement à l'écran : vérifier le
+      tableur lui-même. Il s'ouvre ? Les feuilles demandées existent ? Aucune cellule en erreur ?
+      C'est le lot suivant.
     </p>
   </div>
 
@@ -455,30 +484,32 @@
     </p>
   </div>
 
-  <div class="bloc decision">
+  <div class="bloc regle">
+    <span class="etiquette">fait le 5 septembre</span>
     <h3>2. Ranger chaque chose dans sa catégorie</h3>
     <p>
       Un fichier Excel écrit par un agent est un livrable <b>à part</b>, pas une modification du
       projet de code qui l'héberge. Il ne relance pas les tests. En attendant son propre
-      vérificateur, son état est simplement « pas encore vérifiable », dit tel quel.
+      vérificateur, son état est « pas encore vérifié », dit tel quel.
     </p>
-    <p class="reco">
-      <b>Ma recommandation : oui, avant de merger.</b> Petit aussi, et sans ça on affiche un
-      résultat qui ne veut rien dire.
+    <p>
+      C'est livré. Chaque outil déclare ce qu'il produit, et un outil qui ne le déclare pas est
+      <b>refusé</b> plutôt que rangé au hasard. Codex a relu, a trouvé deux vrais défauts dans ma
+      première version, et les deux sont corrigés.
     </p>
   </div>
 
   <div class="bloc decision">
-    <h3>3. v7 en premier — c'est fait, dis-moi si tu n'es pas d'accord</h3>
+    <h3>3. v7 en premier, et la première brique est livrée</h3>
     <p>
       J'ai remonté « vérifier sans configurer » devant tous les autres lots, et repoussé la semaine
       d'observation derrière : sans v7, elle ne mesurerait que les projets configurés à la main,
       c'est-à-dire aucun.
     </p>
     <p class="reco">
-      <b>Quatre livraisons</b> : le type de livrable se déduit ; les vérifications sans pouvoir ; la
-      découverte des commandes et l'approbation dans le canal ; les critères tirés de ta demande. Je
-      peux commencer par la première dès que tu me le dis.
+      <b>Quatre livraisons, la première est faite</b> : le type de livrable se déduit (fait) ; les
+      vérifications sans pouvoir ; la découverte des commandes et l'approbation dans le canal ; les
+      critères tirés de ta demande. J'enchaîne sur la deuxième sauf avis contraire.
     </p>
   </div>
 
@@ -503,16 +534,24 @@
   <h2>Ce que j'ai fait</h2>
   <div class="fait">
     <span class="pastille">24 lots de travail</span>
-    <span class="pastille">4 relectures externes</span>
+    <span class="pastille">6 relectures externes</span>
     <span class="pastille">CI verte</span>
     <span class="pastille">4 bugs existants corrigés</span>
+    <span class="pastille">chaque chose dans sa catégorie</span>
   </div>
   <ul class="simple">
     <li>Le travail a été découpé en 24 lots, chacun avec ses tests et sa preuve qu'ils servent.</li>
     <li>
-      Un second outil (Codex) a relu quatre fois. Il a trouvé deux vrais trous : les fichiers Word,
-      Excel et PowerPoint échappaient à la vérification, et l'envoi des résultats pouvait se marcher
-      dessus. Les deux sont fermés.
+      Un second outil (Codex) a relu six fois. Il a trouvé quatre vrais trous : les fichiers Word,
+      Excel et PowerPoint échappaient à la vérification ; l'envoi des résultats pouvait se marcher
+      dessus ; un outil qui n'annonçait pas ce qu'il écrit était rangé « en code » par défaut ; et
+      l'ordre dans lequel deux tâches simultanées prennent leurs verrous tenait par chance. Tous
+      fermés.
+    </li>
+    <li>
+      Une de ses demandes a été <b>refusée, avec sa mesure</b> : rendre une règle obligatoire au
+      compilateur cassait 204 endroits sans rapport. Elle est imposée par un test qui la dit en
+      toutes lettres.
     </li>
     <li>
       Quatre bugs qui existaient <b>déjà</b> sont corrigés au passage — dont un message de fin de

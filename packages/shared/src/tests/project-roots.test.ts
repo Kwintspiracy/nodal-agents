@@ -241,9 +241,20 @@ describe('resolveFileDeliverables — l’identité d’un livrable FICHIER', ()
     expect(keys(out)).toEqual(['c:/dev/app/docs/2026/bilan.xlsx']);
   });
 
+  it('un partage UNC en ANTISLASHS, seul, rend la bonne identité', () => {
+    // Témoin SÉPARÉ (revue Codex passe 6) : dans le test de déduplication qui
+    // suit, la première cible produit déjà le résultat attendu — la seconde
+    // pourrait être ignorée sans que rien ne rougisse.
+    const out = resolveFileDeliverables({
+      targets: [doc('\\\\SRV\\part\\app\\rapport.xlsx')],
+      workspaceRoots: ['//srv/part'],
+    });
+    expect(keys(out)).toEqual(['//srv/part/app/rapport.xlsx']);
+  });
+
   it('un partage UNC est retenu, et sa casse est repliée comme un chemin Windows', () => {
     const out = resolveFileDeliverables({
-      targets: [doc('//srv/part/App/Rapport.xlsx'), doc('\\SRV\part\app\rapport.xlsx')],
+      targets: [doc('//srv/part/App/Rapport.xlsx'), doc('\\\\SRV\\part\\app\\rapport.xlsx')],
       workspaceRoots: ['//srv/part'],
     });
     // Deux écritures du MÊME classeur — une seule identité, sinon un job

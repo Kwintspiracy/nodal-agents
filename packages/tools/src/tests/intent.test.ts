@@ -24,8 +24,9 @@ import {
   eq,
 } from '@nodal-agents/db';
 import { projectKey, normalizePath } from '@nodal-agents/shared';
+import type { DeliverableType } from '@nodal-agents/shared';
 import { executeTool } from '../execute';
-import { writeMutationIntent } from '../verification/intent';
+import { writeMutationIntent, codeProjectLockOrder } from '../verification/intent';
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileEditTool } from '../builtin/file-ops/file-edit';
 import { runCommandTool } from '../builtin/run-command';
@@ -750,5 +751,54 @@ describe('les refus et les silences interdits', () => {
     // La transaction a ROULÉ EN ARRIÈRE : la ligne code_projects créée juste
     // avant l'échec ne survit pas, sinon l'epoch aurait avancé sans intention.
     expect(await projectRow(keyOf(ws))).toBeUndefined();
+  });
+});
+
+describe('l’ordre de verrouillage — sur le VERROU, jamais sur le type', () => {
+  // Le test d'intégration du lot mixte ne pouvait pas prouver cette règle :
+  // un seul type verrouille `code_projects` aujourd'hui, donc l'ordre par
+  // (type, clé) et l'ordre par clé coïncident (revue Codex passe 6). La règle
+  // se teste donc ici, avec un ensemble de types verrouillants arbitraire.
+  const d = (deliverableType: DeliverableType, key: string) => ({
+    deliverableType,
+    key,
+    path: key,
+  });
+
+  it('deux types verrouillants : l’ordre est celui des CLÉS, pas celui des types', () => {
+    const deux: ReadonlySet<DeliverableType> = new Set(['code_project', 'office_file']);
+    // Rangés par (type, clé), ces quatre livrables donneraient z, a, m, b.
+    const ordre = codeProjectLockOrder(
+      [
+        d('code_project', 'z'),
+        d('code_project', 'a'),
+        d('office_file', 'm'),
+        d('office_file', 'b'),
+      ],
+      deux,
+    );
+    expect(ordre.map((x) => x.key)).toEqual(['a', 'b', 'm', 'z']);
+  });
+
+  it('un type non verrouillant est écarté — il ne prend aucun verrou', () => {
+    const ordre = codeProjectLockOrder(
+      [d('office_file', 'a'), d('code_project', 'b')],
+      new Set(['code_project']),
+    );
+    expect(ordre.map((x) => x.key)).toEqual(['b']);
+  });
+
+  it('une clé vue deux fois n’est verrouillée qu’une seule fois', () => {
+    // Sinon la même ligne serait incrémentée deux fois, et une configuration
+    // qui n'a changé qu'une fois vieillirait double.
+    const deux: ReadonlySet<DeliverableType> = new Set(['code_project', 'office_file']);
+    const ordre = codeProjectLockOrder([d('code_project', 'k'), d('office_file', 'k')], deux);
+    expect(ordre).toHaveLength(1);
+    expect(ordre[0]?.deliverableType).toBe('code_project');
+  });
+
+  it('par défaut, seul le projet de code verrouille — c’est l’état réel du dépôt', () => {
+    const ordre = codeProjectLockOrder([d('office_file', 'a'), d('code_project', 'b')]);
+    expect(ordre.map((x) => x.key)).toEqual(['b']);
   });
 });

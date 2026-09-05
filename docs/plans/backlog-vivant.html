@@ -540,17 +540,21 @@
   <div class="card next">
     <h3>
       <span class="num">③</span> Vérifier &amp; Corriger — la loop de vérification
-      <span class="pill amber">PR① CODÉE ET RELUE · PR #46 · V7 À DÉVELOPPER</span>
+      <span class="pill amber">PR① + v7-A CODÉES · PR #46 · 6 PASSES CODEX</span>
       <span class="pill plain size">la plus grosse</span>
     </h3>
     <p>
       <b>PR① est codée, relue et verte</b> (<code>feat/verifier-corriger-pr1</code>, PR #46) : 24
-      tickets, 4 passes <code>codex review</code>, CI verte. Quatre bugs existants fermés au
-      passage. <b>Mais l'essai à l'écran a montré le vrai trou</b>, et il change l'ordre du reste :
-      la vérification exigeait d'être <b>configurée à l'avance sur un écran</b>, alors qu'une tâche
-      arrive le plus souvent par Telegram, sans écran ni moment pour cocher quoi que ce soit. D'où
-      <b>v7 « vérifier sans configurer »</b>, remontée devant tous les autres lots : le type de
-      livrable se déduit de ce qui est produit ; tout ce qui se vérifie
+      tickets, 6 passes <code>codex review</code>, CI verte. Quatre bugs existants fermés au
+      passage. <b>La première brique de v7 est livrée le 05/09</b> : chaque outil déclare CE QU'IL
+      PRODUIT, un tableur écrit dans un dépôt ne relance plus les tests du dépôt, et un outil qui ne
+      déclare rien est refusé plutôt que rangé « en code » par défaut. La passe 5 a trouvé deux
+      vrais défauts dans cette brique (le repli du seam, l'ordre des verrous déduit du type) : les
+      deux sont fermés. <b>L'essai à l'écran avait montré le vrai trou</b>, et il change l'ordre du
+      reste : la vérification exigeait d'être <b>configurée à l'avance sur un écran</b>, alors
+      qu'une tâche arrive le plus souvent par Telegram, sans écran ni moment pour cocher quoi que ce
+      soit. D'où <b>v7 « vérifier sans configurer »</b>, remontée devant tous les autres lots : le
+      type de livrable se déduit de ce qui est produit ; tout ce qui se vérifie
       <b>sans exécuter de code du dépôt</b> (un tableur s'ouvre et recalcule, un message est bien
       arrivé) tourne toujours, sans réglage ; les commandes d'un projet sont découvertes et
       approuvées <b>dans le canal d'où vient la demande</b> ; et les exigences de la demande
@@ -576,9 +580,11 @@
       close.
     </p>
     <p>
-      Séquence : passe Codex sur la v5 → PR① fondations (rien de visible, preuve journalisée) →
-      observation → PR② surfaces Nodal + UI (garde active) → PR③ runtime CLI + réparation → PR④
-      revue bornée. Puis, même famille : les écritures qui s'écrasent (read-before-write).
+      Séquence : PR① fondations (faite) → <b>v7-A le type de livrable vient de l'outil (faite)</b>
+      → v7-B vérifier un document et un envoi, sans pouvoir → v7-C découvrir les commandes et les
+      faire approuver dans le canal d'origine → v7-D les critères tirés de la demande → observation
+      → garde active → runtime CLI → revue bornée. Puis, même famille : les écritures qui s'écrasent
+      (read-before-write).
     </p>
   </div>
 

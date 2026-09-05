@@ -407,6 +407,34 @@ async function traceSkippedSurface(
 }
 
 /**
+ * Les livrables dont il faut verrouiller la ligne `code_projects`, DANS
+ * L'ORDRE où les verrous doivent être pris : clé croissante, une seule fois
+ * par clé.
+ *
+ * Fonction pure et exportée pour Être TESTABLE (revue Codex PR #46, passe 6 :
+ * le test d'intégration restait vert sans la passe dédiée, faute d'un second
+ * type verrouillant pour distinguer les deux ordres). Elle se teste ici avec
+ * un ensemble de types arbitraire, ce que la base ne permet pas encore.
+ *
+ * La déduplication par clé n'est pas cosmétique : deux livrables de types
+ * différents qui désigneraient la même ligne l'incrémenteraient DEUX FOIS,
+ * donc feraient vieillir une configuration qui n'a changé qu'une fois.
+ */
+export function codeProjectLockOrder<T extends { deliverableType: DeliverableType; key: string }>(
+  deliverables: readonly T[],
+  lockingTypes: ReadonlySet<DeliverableType> = TYPES_LOCKING_CODE_PROJECTS,
+): readonly T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const d of deliverables) {
+    if (!lockingTypes.has(d.deliverableType) || seen.has(d.key)) continue;
+    seen.add(d.key);
+    out.push(d);
+  }
+  return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
  * Verrouille la ligne `code_projects` du projet, crée-la si elle manque, et
  * incrémente son `verification_epoch`. Rendu : l'epoch APRÈS incrément.
  *
@@ -586,10 +614,7 @@ export async function writeMutationIntent(
       // sont pris ici, par clé croissante, quel que soit le type qui les
       // demande. Ajouter un type à `TYPES_LOCKING_CODE_PROJECTS` suffit.
       const epochs = new Map<string, number>();
-      const locking = deliverables
-        .filter((d) => TYPES_LOCKING_CODE_PROJECTS.has(d.deliverableType))
-        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-      for (const deliverable of locking) {
+      for (const deliverable of codeProjectLockOrder(deliverables)) {
         epochs.set(deliverable.key, await bumpProjectEpoch(tx, ctx.entityId, deliverable));
       }
 

@@ -188,6 +188,35 @@ Preuve par mutation : reclasser le hook Office en projet de code fait rougir
 les deux tests d'intention. Côté finalisation, un fichier témoin constate
 qu'aucune commande du projet ne tourne pour un document.
 
+Deux passes Codex de plus (5 et 6) ont trouvé quatre choses dans cette brique.
+Trois sont fermées, la quatrième est un ticket à part :
+
+| Constat | Traitement |
+|---|---|
+| Un outil mutant sans hook retombait sur « tous les workspaces, en projet de code » | Le repli est supprimé. L'appel est refusé (`intent_no_targets_hook`), l'écriture n'a pas lieu |
+| L'ordre de verrouillage se raisonnait sur le TYPE | Une passe dédiée prend tous les verrous par clé, sur une liste de types déclarée, avec déduplication. La règle est une fonction pure, testée avec deux types verrouillants |
+| Le témoin du cas UNC était insuffisant | **Il cachait un vrai bug** : ma chaîne de test avait été mangée par le shell et la seconde graphie était silencieusement ignorée. Le test était vert pour la mauvaise raison |
+| Un outil qui écrit dans un workspace mais oublie `mutatesWorkspace` échappe à tout | **NON FERMÉ** — voir ci-dessous |
+
+### Ticket ouvert : le marqueur `mutatesWorkspace` reste une déclaration
+
+Rien ne prouve mécaniquement qu'une fonction écrit. Les deux proxys statiques
+disponibles sont faux dans les deux sens : un import de `node:fs` est porté
+aussi par des outils de lecture, et `resolveAndCheckPath` — la porte d'entrée
+d'un chemin de workspace — est partagée avec `file_read`, `file_list` et
+`file_search`.
+
+Ce que la revue a tout de même corrigé : le commentaire du champ disait
+« les outils qui écrivent sur le disque », ce qui est plus large que la règle.
+`skill_file_write` écrit sur le disque, dans le dossier d'une skill, qui n'est
+ni un workspace ni un livrable — il est correctement non marqué, et un lecteur
+suivant l'ancienne formulation l'aurait marqué à tort.
+
+Pistes pour le ticket, aucune gratuite : un scanner sur les primitives
+d'écriture de workspace une fois qu'elles passent toutes par UNE porte
+nommée ; ou faire porter l'écriture par un helper qui pose l'intention
+lui-même, rendant le marqueur inutile.
+
 ### Ce que v7 ne fait PAS
 
 Elle ne branche pas la garde (toujours en ③), ne touche pas au protocole de
