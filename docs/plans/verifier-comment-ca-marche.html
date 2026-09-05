@@ -380,6 +380,40 @@
     te demanderait rien. Vu de ta place, c'est le mauvais ordre.
   </p>
 
+  <h2>Et quand je passe par Telegram ?</h2>
+  <p>
+    C'est le cas qui compte, et c'est celui qui casse tout ce que j'ai livré. Tu écris « crée-moi
+    ceci » depuis Telegram. Tu n'as pas d'écran. Il n'y a aucun moment où tu peux cocher quoi que ce
+    soit. Or aujourd'hui, sans configuration, <b>rien ne se vérifie</b>.
+  </p>
+  <p>
+    Donc la vérification ne doit pas se configurer : elle doit se <b>déduire</b>. De ce que tu as
+    demandé, et de ce que l'agent a produit. La bonne ligne de partage n'est pas « du code ou pas du
+    code », c'est celle-ci :
+  </p>
+  <div class="ecrans">
+    <div class="ecran">
+      <span class="ou">Sans pouvoir — aucune permission</span>
+      <p>
+        Nodal ouvre le fichier qu'il vient de produire, recalcule, compare les totaux, relit le
+        message qu'il a envoyé. Il ne lance rien qui vienne du dépôt. Ça peut donc tourner
+        <b>toujours</b>, sans réglage et sans te déranger.
+      </p>
+    </div>
+    <div class="ecran">
+      <span class="ou">Avec pouvoir — une permission, une fois</span>
+      <p>
+        Lancer les tests d'un projet exécute du code du dépôt. Là, il faut ton accord — mais une
+        seule fois par projet, et Nodal peut te le demander <b>dans Telegram</b>, avec deux boutons.
+        Ce mécanisme existe déjà pour les autres approbations.
+      </p>
+    </div>
+  </div>
+  <p>
+    C'est écrit dans le plan sous le nom <b>v7, « vérifier sans configurer »</b>, découpé en quatre
+    livraisons. Je l'ai remontée devant tous les autres lots.
+  </p>
+
   <h2>Deux défauts que ta question met au jour</h2>
   <div class="bloc casse">
     <h3>1. L'écran ne te propose rien</h3>
@@ -435,14 +469,16 @@
   </div>
 
   <div class="bloc decision">
-    <h3>3. Faut-il remonter le non-code avant le reste ?</h3>
+    <h3>3. v7 en premier — c'est fait, dis-moi si tu n'es pas d'accord</h3>
     <p>
-      Le plan prévoit encore trois lots avant les fichiers Office et les messages envoyés. Je peux
-      inverser : le vérificateur de tableurs d'abord, le durcissement du code après.
+      J'ai remonté « vérifier sans configurer » devant tous les autres lots, et repoussé la semaine
+      d'observation derrière : sans v7, elle ne mesurerait que les projets configurés à la main,
+      c'est-à-dire aucun.
     </p>
     <p class="reco">
-      <b>Ma recommandation : oui.</b> C'est là que tu vois la valeur sans rien configurer, et c'est
-      là que les agents produisent le plus de choses que personne ne relit.
+      <b>Quatre livraisons</b> : le type de livrable se déduit ; les vérifications sans pouvoir ; la
+      découverte des commandes et l'approbation dans le canal ; les critères tirés de ta demande. Je
+      peux commencer par la première dès que tu me le dis.
     </p>
   </div>
 

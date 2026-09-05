@@ -39,12 +39,136 @@ jugement couvre l'intention, le design et la qualité des tests eux-mêmes.
 |---|----|---------|----|
 | 0 | Passes Codex sur la v6 | Passe 7 (03/09) : 11 questions, 9 TROU/FAUX, 8 bloquants — fermés en v6.1. Passe 8 : 6 fermés, 5 partiels (résidus v4 dans PR④, la primitive et le cron), **1 neuf bloquant** (deux contrats de hash) — fermés en v6.2 : hash unique normatif, PR④ réécrite, `review_pending` dans l'union, prédicats par livrable, reprise idempotente du cron, écrivains du modèle atomique. Passe 9 : tout fermé, **1 neuf bloquant** (crash entre `completedAt` et la livraison canal = root jamais relivré — bug latent EXISTANT, vérifié) → v6.3 : outbox `job_deliveries` sur le modèle atomique, réclamation à deux populations, section v3 marquée historique. Passe 10 : tout fermé, **2 neufs bloquants dans le correctif de la passe 9** (pas de claim atomique ; latence de 120 s pour les jobs interactifs) → v6.4 : claim par `UPDATE … RETURNING` avec lease, drain immédiat post-commit, tick en reprise seule. Passe 11 (dernière sur plan) : drain FERMÉ ; claim NON FERMÉ (lease 60 s < timeouts réels des adaptateurs, vérifié) + 1 neuf (borne 3 hors du claim) → v6.5 : `attempts < 3` dans le WHERE, timeout d'envoi imposé par l'outbox (90 s), lease = 2× (180 s). **Boucle sur plan CLOSE — 11 passes, 14 bloquants fermés. Prochaine action : découpage de PR①.** | ✅ **close** |
 | ① | Fondations + observation outillée | Schéma exact — état par **(job, livrable)** (v6-A) ; **vérificateurs pluggables**, le code (liste ordonnée de commandes, v5-A) en est le premier ; `projectKey` partagé + migration ; primitive terminale typée (cron compris) ; **outbox de livraison `job_deliveries`** (v6.3 — ferme un bug existant) ; moteur pur testé ; **écrivains d'intention sur les cinq surfaces + réglage utilisateur des surfaces (D8)** ; **UI de configuration et de lecture (D9)** ; infra de tests de course sur vrai Postgres. **Garde NON branchée** : la preuve tourne, se journalise et se lit — c'est la phase d'observation (v5-C). | ⬜ en découpage (03/09) |
-| ①→② | Observation | Une semaine de vrais jobs sur la stack de Quentin, preuve journalisée et lisible sans bloquer : taux de rouge, faux rouges (commande mal configurée), durée des preuves. Les seuils de ② se calent sur ces chiffres. | ⬜ |
-| ② | Garde active + `code_task` | Garde branchée sur la primitive (états de décision, libellé « succès non vérifié »), preuve code_task sous verrou décisionnelle, compteurs persistants (`red_streak`), **extrait de feedback borné** (v5-B), **contrôle d'oracle sur les tests écrits par l'agent** (v6-B). | ⬜ |
-| ③ | Runtime CLI | Finally unique (heartbeat + verrous), multi-projets, réparation unique, livraison conditionnée au résultat typé. | ⬜ |
-| ④ | Protocole revue à N relecteurs | Snapshot `job_protocol='review'`, verdict immuable **et fondé** (chaque constat cite sa preuve, v6-D), `review_rounds`, preuves de lignée ; **pool de relecteurs et politique par type de tâche (0-3) en base, lancés par le harnais en parallèle, un seul passage chacun** (v6-C) ; textes de skills. | ⬜ |
-| ⑤ | Vérificateurs de livrables non-code | Fichiers Office (s'ouvre, recalcule, **invariants déclarés** tiennent) ; **relecture après écriture** sur les connecteurs (le message existe, l'événement est là) ; ancrage des affirmations aux sources ouvertes. Un vérificateur par lot, sur la tuyauterie de ①. (v6-A) | ⬜ après ④ |
+| ② | **La vérification se choisit toute seule** (v7 — nouveau, remonté devant tout le reste) | Le type de livrable se DÉDUIT de ce qui est produit ; les vérifications **sans pouvoir** tournent toujours, sans configuration ni approbation ; les commandes du projet sont **découvertes** et approuvées **dans le canal d'où vient la demande** ; les exigences de la demande deviennent des critères vérifiables. Détail : § « v7 — vérifier sans configurer ». | ⬜ **prochain** |
+| ②→③ | Observation | Une semaine de vrais jobs sur la stack de Quentin, preuve journalisée et lisible sans bloquer : taux de rouge, faux rouges, durée des preuves. Les seuils de la garde se calent sur ces chiffres. **Déplacée après v7** : sans elle, l'observation ne mesure que les projets configurés à la main, c'est-à-dire aucun. | ⬜ |
+| ③ | Garde active + `code_task` | Garde branchée sur la primitive (états de décision, libellé « succès non vérifié »), preuve code_task sous verrou décisionnelle, compteurs persistants (`red_streak`), **extrait de feedback borné** (v5-B), **contrôle d'oracle sur les tests écrits par l'agent** (v6-B). | ⬜ |
+| ④ | Runtime CLI | Finally unique (heartbeat + verrous), multi-projets, réparation unique, livraison conditionnée au résultat typé. | ⬜ |
+| ⑤ | Protocole revue à N relecteurs | Snapshot `job_protocol='review'`, verdict immuable **et fondé** (chaque constat cite sa preuve, v6-D), `review_rounds`, preuves de lignée ; **pool de relecteurs et politique par type de tâche (0-3) en base, lancés par le harnais en parallèle, un seul passage chacun** (v6-C) ; textes de skills. | ⬜ |
 | suite | Écritures périmées | Read-before-write typé (`FS_NOT_OBSERVED` / `FS_STALE_VERSION`) sur les outils fichiers — même famille (« corriger » sans s'écraser), hors de ce plan, juste après lui | ⬜ backlog harnais n°1 |
+
+## v7 — vérifier sans configurer (05/09, demande de Quentin)
+
+### Le constat qui déclenche cette version
+
+Quentin, devant l'écran livré en ① : « je m'en fous des commandes, pourquoi
+devrais-je en donner ? Imagine, je lance un projet **via Telegram** : je ne suis
+pas sur l'interface, je ne peux rien cocher. Il faut que le système comprenne ce
+que je demande et choisisse les vérifications correspondantes. Et pour un fichier
+Excel, ça marche comment ? »
+
+Trois choses sont vraies dans cette phrase, vérifiées dans le code avant d'écrire
+cette section :
+
+1. **Le canal d'entrée n'est pas l'interface.** Une tâche arrive par Telegram,
+   Discord, un cron, un webhook. Il n'y a pas de moment où l'utilisateur voit un
+   écran. Or ① fait de la configuration un PRÉREQUIS : sans commandes approuvées,
+   `loadConfig` rend `not_configured` et rien ne tourne. Sur le chemin réel de
+   Quentin, la vérification ne se déclencherait donc jamais.
+2. **Le type de livrable est codé en dur.** `intent.ts` pose
+   `deliverableType: 'code_project'` pour toute écriture, quel que soit l'outil —
+   un `.xlsx` écrit dans un projet marque le projet sale et relance ses tests
+   alors que le code n'a pas bougé. Défaut introduit en fermant le P0 « outils
+   Office sans intention » de la revue Codex.
+3. **Le non-code n'a rien**, et il était prévu en dernier (lot ⑤, après trois
+   autres). L'ordre livrait d'abord ce qui exige de configurer, et remettait à
+   plus tard ce qui ne demanderait rien.
+
+### Le principe
+
+> **Ce qu'il faut vérifier se déduit de ce qui a été produit et de ce qui a été
+> demandé. L'utilisateur ne configure rien. Il n'est sollicité que lorsque
+> vérifier exige d'exécuter du code du dépôt — et alors, on le lui demande LÀ OÙ
+> IL EST.**
+
+La ligne de partage n'est pas « code / non-code » mais **« avec pouvoir / sans
+pouvoir »** :
+
+| | Ce que Nodal fait | Permission |
+|---|---|---|
+| **Sans pouvoir** | Ouvre le fichier produit, recalcule, compare, relit ce qui a été envoyé, vérifie qu'un chiffre cité existe dans la source | **Aucune.** Nodal lit ce qu'il a lui-même produit ; rien du dépôt ne s'exécute |
+| **Avec pouvoir** | Lance `pnpm test`, `pytest`, un `Makefile` | **Une fois par projet**, parce qu'un agent qui modifie `package.json` contrôle ce que la commande lance (D1) |
+
+C'est cette ligne qui rend le cas Telegram possible : par défaut, tout ce qui se
+vérifie sans pouvoir est vérifié, sans écran, sans question.
+
+### Ancrages (lectures du 05/09)
+
+- **GUISpector** (arXiv 2510.04791) — des exigences en langage naturel non
+  structuré sont converties, par un LLM en zero-shot, en une représentation
+  structurée dont des critères d'acceptation. C'est exactement le geste de la
+  brique D ci-dessous ; le papier confirme que l'extraction marche, pas que les
+  critères extraits soient tous vérifiables — d'où le filtre mécanique qu'on
+  ajoute.
+- **« Define Done, Not Effort »** (digitalapplied, 2026) — le levier le plus fort
+  d'un prompt d'agent est le critère d'acceptation écrit, assorti d'un contrôle
+  que l'agent peut lancer.
+- **Prédicats exécutables / evidence-grounded verification** (arXiv 2607.01793,
+  2607.12650) — la vérification doit produire un prédicat exécutable et un
+  artefact ré-exécutable hors ligne, jamais un score de confiance. Cohérent avec
+  les invariants déclarés de v6-A et avec `verification_runs`.
+- Rappel de v6 : *All Smoke No Alarm* (2606.18168) — 80 % des tests d'agents sans
+  oracle fort. Un critère tiré d'une demande est un oracle FAIBLE tant qu'il n'est
+  pas mécaniquement vérifiable : c'est la raison du filtre, pas une précaution de
+  style.
+
+### Les quatre briques
+
+**A — Le type de livrable se déduit de ce qui est produit.** Mécanique, zéro LLM.
+Le hook `resolveMutationTargets` rend aujourd'hui un chemin ; il rendra aussi un
+TYPE. `xlsx_*` / `docx_*` / `pptx_*` ⇒ `office_file`. Une écriture de fichier dans
+un projet ⇒ `code_project` seulement si le fichier appartient au projet (source,
+config, test) ; sinon `other`. `telegram_send_message` et les autres envois ⇒
+`outbound_action`. Le littéral en dur d'`intent.ts:431` disparaît : le type vient
+de l'appelant, comme la cible. Ferme le défaut n°2 ci-dessus.
+
+**B — Les vérifications sans pouvoir tournent toujours.** Un vérificateur
+`office_file` : le fichier s'ouvre vraiment, les formules recalculent, les
+totaux d'une colonne égalent la somme de ses lignes, aucune cellule n'est en
+`#REF!` / `#DIV/0!`. Un vérificateur `outbound_action` : le message est
+réellement arrivé (l'outbox le sait déjà). Aucune de ces vérifications n'exécute
+quoi que ce soit du dépôt ⇒ aucune approbation, aucun réglage, aucun écran.
+C'est la brique qui donne de la valeur à quelqu'un qui n'ouvre jamais
+l'interface.
+
+**C — Les commandes du projet sont découvertes, puis approuvées là où tu es.**
+Découverte mécanique : `package.json` (scripts `test`, `typecheck`, `lint`,
+`build`), `pyproject.toml`, `Makefile`, `cargo`. Proposition **cochée par
+défaut** sur l'écran. Et si la demande vient d'un canal : quand un projet
+découvert n'a pas encore d'approbation, Nodal envoie **dans ce canal** la carte
+d'approbation — le mécanisme existe déjà (boutons inline ✅ / ❌,
+`apps/runner/src/telegram/approval-callback.ts`), il n'y a pas à l'inventer. Un
+seul geste, une seule fois par projet. Tant que ce n'est pas approuvé, l'état
+reste « pas encore vérifiable », dit tel quel, et le job n'est jamais bloqué.
+
+**D — Les exigences de la demande deviennent des critères vérifiables.** « Fais-moi
+le tableau avec les totaux par mois » porte un invariant. Un agent extrait les
+critères candidats de la demande (ancré : GUISpector), puis **un filtre mécanique
+ne garde que ceux qu'une machine sait vérifier sur le livrable produit** — les
+autres sont jetés, jamais devinés, jamais transformés en jugement flou. Les
+critères retenus sont affichés dans le détail du run, avec leur verdict. Un
+critère non retenu est dit lui aussi : « je n'ai pas su vérifier ça
+mécaniquement ». Cette brique dépend de A et B ; elle vient en dernier des
+quatre.
+
+### Découpage en PR (à raffiner en tickets avant de coder)
+
+| PR | Contenu | Dépend de |
+|---|---|---|
+| **v7-A** | Le type de livrable vient du hook, plus de littéral dans `intent.ts` ; `office_file` et `outbound_action` traversent la tuyauterie jusqu'à l'écran, sans vérificateur (état « pas encore vérifiable ») | ① |
+| **v7-B** | Vérificateur `office_file` (ouvre, recalcule, invariants de structure) et `outbound_action` (constat d'envoi depuis l'outbox), tous deux **sans pouvoir** | v7-A |
+| **v7-C** | Découverte des commandes d'un projet + proposition cochée + carte d'approbation dans le canal d'origine | v7-A |
+| **v7-D** | Extraction des critères depuis la demande + filtre mécanique + rendu dans le détail du run | v7-A, v7-B |
+
+Chaque PR suit la discipline de ① : tests sur données réelles, une mutation par
+garde, `codex review` en boucle jusqu'au retour vide.
+
+### Ce que v7 ne fait PAS
+
+Elle ne branche pas la garde (toujours en ③), ne touche pas au protocole de
+revue (⑤), et n'invente aucun jugement : un critère qui ne se vérifie pas
+mécaniquement est écarté, pas confié à un LLM qui donnerait un avis. La ligne
+« la machine d'abord, un relecteur différent ensuite, jamais un juge unique »
+reste celle de v6.
 
 ## Principes
 
