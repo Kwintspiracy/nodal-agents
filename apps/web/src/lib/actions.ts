@@ -118,6 +118,7 @@ import {
   cliRuns,
   verificationRuns,
   jobDeliverableVerificationState,
+  jobDeliveries,
 } from '@nodal-agents/db';
 import {
   groupVerificationRuns,
@@ -2244,6 +2245,21 @@ export type SpaceConversationView = {
     scheduleName: string | null;
   };
   feed: ConversationFeed;
+  /** P3 — ce que la preuve a fait pour ce travail et ses délégués (même lecture que le détail Code). */
+  verification: {
+    sequences: VerificationSequenceView[];
+    skippedSurfaces: string[];
+    unconfigured: VerificationUnconfiguredView[];
+  };
+  /** P3 — la file d'envoi de ce travail (`job_deliveries`), telle quelle. */
+  deliveries: Array<{
+    channel: string;
+    chatId: string;
+    outcome: string;
+    attempts: number;
+    createdAt: Date | null;
+    updatedAt: Date | null;
+  }>;
 };
 
 /**
@@ -2321,6 +2337,109 @@ export async function getSpaceConversationAction(
         .orderBy(llmCalls.createdAt),
     ]);
 
+    // P3 — les preuves du travail ET de ses délégués (T24 : la preuve d'un
+    // délégué remonte à la racine), bornées à l'entité ; la trace D8 des
+    // surfaces décochées vient des jobs eux-mêmes, jamais du réglage courant ;
+    // et la file d'envoi, telle qu'elle est.
+    // Les descendants à TOUTE profondeur, niveau par niveau (revue passe 20 :
+    // les enfants directs seuls laissaient la preuve d'un petit-enfant hors de
+    // la racine, alors que le détail Code la remonte — même lecture, même
+    // ROLLUP_MAX_DEPTH). Chacun porte sa trace D8.
+    const descendants: Array<{ id: string; verificationSkippedSurfaces: unknown }> = [];
+    {
+      let frontier = [id];
+      const seen = new Set<string>([id]);
+      for (let depth = 0; depth < ROLLUP_MAX_DEPTH && frontier.length > 0; depth++) {
+        const rows = await db
+          .select({
+            id: agentJobs.id,
+            verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
+          })
+          .from(agentJobs)
+          .where(
+            and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.parentJobId, frontier)),
+          );
+        const next: string[] = [];
+        for (const r of rows) {
+          if (seen.has(r.id)) continue;
+          seen.add(r.id);
+          descendants.push(r);
+          next.push(r.id);
+        }
+        frontier = next;
+      }
+    }
+    const relevantIds = [id, ...descendants.map((d) => d.id)];
+    const [verificationRunRows, unconfiguredRows, deliveryRows] = await Promise.all([
+      db
+        .select({
+          jobId: verificationRuns.jobId,
+          deliverableType: verificationRuns.deliverableType,
+          canonicalKey: verificationRuns.canonicalKey,
+          sequenceId: verificationRuns.sequenceId,
+          commandRank: verificationRuns.commandRank,
+          command: verificationRuns.command,
+          exitCode: verificationRuns.exitCode,
+          outcomeKind: verificationRuns.outcomeKind,
+          durationMs: verificationRuns.durationMs,
+          verdict: verificationRuns.verdict,
+          testedGeneration: verificationRuns.testedGeneration,
+          testedEpoch: verificationRuns.testedEpoch,
+          createdAt: verificationRuns.createdAt,
+        })
+        .from(verificationRuns)
+        .where(
+          and(
+            eq(verificationRuns.entityId, session.entityId),
+            inArray(verificationRuns.jobId, relevantIds),
+          ),
+        ),
+      db
+        .select({
+          deliverableType: jobDeliverableVerificationState.deliverableType,
+          canonicalKey: jobDeliverableVerificationState.canonicalKey,
+          displayPath: jobDeliverableVerificationState.displayPathSnapshot,
+          decisionStatus: jobDeliverableVerificationState.decisionStatus,
+        })
+        .from(jobDeliverableVerificationState)
+        .where(
+          and(
+            inArray(jobDeliverableVerificationState.jobId, relevantIds),
+            inArray(jobDeliverableVerificationState.decisionStatus, [
+              'not_configured',
+              'pending_approval',
+            ]),
+          ),
+        ),
+      db
+        .select({
+          channel: jobDeliveries.channel,
+          chatId: jobDeliveries.chatId,
+          outcome: jobDeliveries.outcome,
+          attempts: jobDeliveries.attempts,
+          createdAt: jobDeliveries.createdAt,
+          updatedAt: jobDeliveries.updatedAt,
+        })
+        .from(jobDeliveries)
+        .where(eq(jobDeliveries.jobId, id))
+        .orderBy(jobDeliveries.createdAt),
+    ]);
+    const verification = {
+      sequences: groupVerificationRuns(verificationRunRows),
+      skippedSurfaces: mergeSkippedSurfaces([
+        job.verificationSkippedSurfaces,
+        ...descendants.map((d) => d.verificationSkippedSurfaces),
+      ]),
+      unconfigured: unconfiguredRows.map(
+        (r): VerificationUnconfiguredView => ({
+          deliverableType: r.deliverableType,
+          canonicalKey: r.canonicalKey,
+          displayPath: r.displayPath,
+          reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
+        }),
+      ),
+    };
+
     const scheduleName =
       job.channel === 'cron' && job.triggerContext?.type === 'cron'
         ? job.triggerContext.scheduleName
@@ -2373,6 +2492,8 @@ export async function getSpaceConversationAction(
         scheduleName,
       },
       feed,
+      verification,
+      deliveries: deliveryRows,
     });
   } catch (err) {
     console.error('[getSpaceConversationAction]', err);

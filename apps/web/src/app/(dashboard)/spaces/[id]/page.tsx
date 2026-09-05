@@ -5,6 +5,8 @@ import PageShell from '@/components/ui/PageShell';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import ConversationFeedView from '../ConversationFeedView.tsx';
 import LiveRefresh from '../LiveRefresh.tsx';
+import DeliveriesCard from '../DeliveriesCard.tsx';
+import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
 import { formatCost, formatTokens } from '../format.ts';
 import { truncate } from '@/lib/format-time';
 
@@ -40,7 +42,7 @@ export default async function SpaceConversationPage({
     );
   }
 
-  const { job, feed } = result.data;
+  const { job, feed, verification, deliveries } = result.data;
   const live = !TERMINAL.has(job.status ?? '');
   const firstLine = job.task.split('\n')[0] ?? job.task;
   const subtitle = [
@@ -76,6 +78,19 @@ export default async function SpaceConversationPage({
     >
       <LiveRefresh live={live} />
       <ConversationFeedView feed={feed} />
+      {/* P3 — la preuve, la même carte que le détail Code (elle n'est jamais
+          vide : elle dit « pas encore », « hors vérification », « rien à
+          configurer »), puis la file d'envoi. */}
+      <div className="mx-auto mt-8 max-w-[840px] space-y-6">
+        <VerificationSection
+          sequences={verification.sequences}
+          skippedSurfaces={verification.skippedSurfaces}
+          unconfigured={verification.unconfigured}
+          stage={job.status ?? 'pending'}
+          live={live}
+        />
+        <DeliveriesCard deliveries={deliveries} />
+      </div>
     </PageShell>
   );
 }

@@ -6,7 +6,15 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, toolCalls, llmCalls, entities, users } from '@nodal-agents/db';
+import {
+  agentJobs,
+  toolCalls,
+  llmCalls,
+  entities,
+  users,
+  verificationRuns,
+  jobDeliveries,
+} from '@nodal-agents/db';
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -200,6 +208,74 @@ beforeAll(async () => {
     .returning();
   childId = child!.id;
 
+  // P3 — une preuve rouge (deux commandes, la seconde a échoué) sur l'ENFANT,
+  // qui doit remonter à la racine ; et un envoi Telegram encore en reprise.
+  const seq = '33333333-3333-4333-8333-333333333333';
+  await testDb.insert(verificationRuns).values([
+    {
+      jobId: childId,
+      entityId: seed.entityId,
+      deliverableType: 'code_project',
+      canonicalKey: 'd:/apps/projet',
+      sequenceId: seq,
+      commandRank: 1,
+      command: 'pnpm typecheck',
+      exitCode: 0,
+      outcomeKind: 'exit',
+      durationMs: 1500,
+      verdict: 'green',
+    },
+    {
+      jobId: childId,
+      entityId: seed.entityId,
+      deliverableType: 'code_project',
+      canonicalKey: 'd:/apps/projet',
+      sequenceId: seq,
+      commandRank: 2,
+      command: 'pnpm test',
+      exitCode: 1,
+      outcomeKind: 'exit',
+      stdoutTail: '1 failed',
+      durationMs: 9000,
+      verdict: 'red',
+    },
+  ]);
+  // …et un PETIT-ENFANT avec sa propre preuve, verte : elle doit remonter aussi
+  // (revue passe 20 : les enfants directs seuls la laissaient dehors).
+  const [grandchild] = await testDb
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'internal',
+      task: 'sous-sous-tâche',
+      status: 'completed',
+      parentJobId: childId,
+    })
+    .returning();
+  await testDb.insert(verificationRuns).values({
+    jobId: grandchild!.id,
+    entityId: seed.entityId,
+    deliverableType: 'code_project',
+    canonicalKey: 'd:/apps/projet',
+    sequenceId: '44444444-4444-4444-8444-444444444444',
+    commandRank: 1,
+    command: 'pnpm lint',
+    exitCode: 0,
+    outcomeKind: 'exit',
+    durationMs: 700,
+    verdict: 'green',
+  });
+  await testDb.insert(jobDeliveries).values({
+    jobId,
+    channel: 'telegram',
+    chatId: '4242',
+    payload: 'Tu aimes les tableaux.',
+    outcome: 'attempted',
+    idempotencyKey: `p3-${jobId}`,
+    attempts: 2,
+  });
+
   // Un job d'une AUTRE entité : il ne doit pas se lire depuis celle-ci.
   const [otherUser] = await testDb
     .insert(users)
@@ -310,6 +386,32 @@ describe('getSpaceConversationAction', () => {
     // L'en-tête de la page non plus ne montre pas le secret.
     expect(r.data.job.task).not.toContain(secret);
     expect(r.data.feed.items.some((i) => i.kind === 'note')).toBe(false);
+  });
+
+  it("P3 : la preuve d'un délégué remonte à la racine, et la file d'envoi se lit telle quelle", async () => {
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(jobId);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // Deux séquences : celle de l'enfant (rouge) ET celle du petit-enfant (verte).
+    expect(r.data.verification.sequences).toHaveLength(2);
+    const s0 = r.data.verification.sequences.find((x) => x.jobId === childId)!;
+    expect(s0.verdict).toBe('red');
+    const s1 = r.data.verification.sequences.find((x) => x.jobId !== childId)!;
+    expect(s1.verdict).toBe('green');
+    expect(s1.runs.map((x) => x.command)).toEqual(['pnpm lint']);
+    expect(s0.runs.map((x) => [x.commandRank, x.command, x.verdict])).toEqual([
+      [1, 'pnpm typecheck', 'green'],
+      [2, 'pnpm test', 'red'],
+    ]);
+    expect(r.data.verification.unconfigured).toEqual([]);
+    expect(r.data.deliveries).toHaveLength(1);
+    expect(r.data.deliveries[0]).toMatchObject({
+      channel: 'telegram',
+      chatId: '4242',
+      outcome: 'attempted',
+      attempts: 2,
+    });
   });
 
   it("ne lit pas le job d'une autre entité, ni un id qui n'est pas un uuid", async () => {
