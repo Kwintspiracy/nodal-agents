@@ -445,6 +445,10 @@
     background: var(--mono-bg);
     color: var(--ink-faint);
   }
+  .s.done {
+    background: var(--green-soft);
+    color: var(--green);
+  }
 
   .tech-divider {
     margin: 64px 0 0;
@@ -896,8 +900,8 @@
   <h2>PR① est codée — ce qui existe maintenant (04/09)</h2>
   <p>
     Les 24 tickets du découpage sont sur la branche <code>feat/verifier-corriger-pr1</code>, chacun
-    avec ses tests sur données réelles et ses mutations rouges. Rien n'est encore mergé ni relu par
-    Codex.
+    avec ses tests sur données réelles et ses mutations rouges. <b>Six passes Codex</b>, CI verte,
+    pas encore mergée (la #45 passe devant).
   </p>
   <p>
     <b>Ce que tu pourras faire, une fois la stack redémarrée</b> (elle appliquera quatre migrations)
@@ -1106,6 +1110,57 @@
     </table>
   </details>
 
+  <h2>Vérifier sans rien configurer (v7 — 05/09)</h2>
+  <p>
+    L'essai à l'écran a montré le vrai trou, et il change l'ordre de tout le reste. La vérification
+    de PR① exige d'être <b>configurée à l'avance, sur un écran</b>. Or une tâche arrive le plus
+    souvent par Telegram : pas d'écran, aucun moment pour cocher quoi que ce soit. Et personne ne
+    devrait avoir à connaître des commandes pour qu'un travail soit vérifié.
+  </p>
+  <p>
+    Le principe qui remplace la configuration :
+    <b>ce qu'il faut vérifier se déduit de ce qui a été produit et de ce qui a été demandé</b>. La
+    seule ligne qui compte est <b>avec pouvoir / sans pouvoir</b>. Ouvrir un classeur, constater
+    qu'une formule recalcule, vérifier qu'un message est bien parti : rien de tout cela n'exécute du
+    code du dépôt, donc rien ne demande d'approbation. Lancer <code>pnpm test</code>, si : ça
+    s'approuve une fois par projet, et l'approbation peut se donner
+    <b>dans le canal d'où vient la demande</b>.
+  </p>
+
+  <div class="suivi" style="margin-top: 22px">
+    <div class="row">
+      <span class="k">A</span
+      ><span class="t"
+        ><b>Chaque outil déclare ce qu'il produit</b>Un tableur écrit dans un dépôt est un livrable
+        à part : il ne relance plus les tests du dépôt, et le dépôt ne décide pas s'il est correct.
+        Un outil qui ne déclare rien est refusé, plus rangé « en code » par défaut.</span
+      ><span class="s done">fait le 05/09</span>
+    </div>
+    <div class="row">
+      <span class="k">B</span
+      ><span class="t"
+        ><b>Vérifier un document et un envoi, sans pouvoir</b>Le classeur s'ouvre, les feuilles
+        demandées existent, aucune cellule n'est en erreur. Le message est bien parti. Aucune de ces
+        preuves n'exécute de code : aucune n'a jamais à être approuvée.</span
+      ><span class="s next">prochain</span>
+    </div>
+    <div class="row">
+      <span class="k">C</span
+      ><span class="t"
+        ><b>Les commandes se découvrent, l'approbation vient à toi</b>Nodal lit le projet, y trouve
+        les commandes qui existent vraiment, les propose déjà cochées. Si l'accord manque, il te le
+        demande là où tu es — Telegram sait déjà afficher des boutons.</span
+      ><span class="s todo">après A</span>
+    </div>
+    <div class="row">
+      <span class="k">D</span
+      ><span class="t"
+        ><b>Ta demande devient des critères</b>« Un onglet par mois » et « les totaux en gras » sont
+        vérifiables par une machine. Ce qui ne l'est pas est écarté, pas confié à un juge.</span
+      ><span class="s todo">après A et B</span>
+    </div>
+  </div>
+
   <h2>Le chemin</h2>
   <div class="suivi">
     <div class="row">
@@ -1129,11 +1184,19 @@
       ><span class="s next">codée · à relire</span>
     </div>
     <div class="row">
+      <span class="k">②</span
+      ><span class="t"
+        ><b>Vérifier sans rien configurer</b>Le type de livrable se déduit (fait) ; les
+        vérifications sans pouvoir ; les commandes découvertes et approuvées dans ton canal ; les
+        critères tirés de ta demande.</span
+      ><span class="s next">A faite · B, C, D à venir</span>
+    </div>
+    <div class="row">
       <span class="k">👁</span
       ><span class="t"
         ><b>Une semaine d'observation</b>Sur ta stack, tes vrais jobs. On mesure avant
         d'imposer.</span
-      ><span class="s todo">après ①</span>
+      ><span class="s todo">après ②</span>
     </div>
     <div class="row">
       <span class="k">②</span
