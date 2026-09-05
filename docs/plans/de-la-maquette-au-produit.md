@@ -18,6 +18,39 @@ prépare pas et ne la présuppose pas.
 **L'effort porte sur le déroulé du chat**, dans ce nouvel espace. Les écrans
 existants (Runs, Code, Chat) ne sont pas touchés par les lots 1 à 3.
 
+**De la maquette, on garde le fil de conversation. Rien d'autre.** La barre
+latérale, le header, le design system et les pages existantes ne changent pas.
+La maquette est une intention ; là où elle diverge de l'existant, l'existant
+gagne.
+
+## Ce qui arrive par Telegram — rappel de Quentin, 05/09
+
+Le dessin montre l'espace comme si tout se passait sur le web. Or la plupart des
+demandes arrivent par Telegram. Trois choses que le plan doit tenir, et que la
+maquette ne montre pas.
+
+**1. Où atterrit une demande venue d'un canal.** Aujourd'hui elle devient un job
+(`channel: 'telegram'`, `chat_id`, `conversation_id`). Pour qu'elle apparaisse
+dans un espace, il faut la rattacher. Règle proposée pour P6 : l'espace d'une
+tâche venue d'un canal se déduit de **là où ses livrables ont atterri** — les
+clés canoniques des intentions de mutation, déjà écrites avant chaque écriture.
+Aucune commande à taper. Une tâche sans livrable dans le dossier d'un espace
+reste dans le fil général. **À trancher avant P6** ; l'alternative est un espace
+par conversation Telegram, plus simple et plus bête.
+
+**2. Ce que Telegram reçoit en retour.** Chaque tour de l'agent est miroité dans
+le canal : sa prose telle quelle, ses questions en boutons (P7 réutilise
+`approvals/notify.ts`), ses livrables en carte (`job_deliveries` existe).
+L'espace web et Telegram montrent la **même** conversation ; ce qui est répondu
+d'un côté apparaît de l'autre. P2 affiche l'origine de chaque message — la
+maquette le faisait pour les messages de Quentin (« depuis Telegram »), pas pour
+ce que Nodal a envoyé.
+
+**3. Ce que Telegram ne peut pas montrer.** Ni diff, ni tableau, ni groupe
+replié. Le canal reçoit la prose, le fichier joint, et un lien vers l'espace.
+« Le livrable est la page » se lit dans Telegram comme « le livrable est le
+fichier joint, et une ligne ».
+
 ## Suivi
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
@@ -100,6 +133,10 @@ dispatchées par P1, les sous-agents en groupes indentés avec leur pastille.
 par tour pour les jetons de chaque groupe ; les jobs enfants par
 `parent_job_id`.
 
+**Origine.** Chaque message porte d'où il vient — Telegram, le dashboard, une
+automatisation — et chaque envoi de Nodal vers un canal apparaît dans le fil,
+pas seulement les messages reçus.
+
 **Règle de groupage.** Une suite d'appels d'outils entre deux parties `text` de
 l'agent forme un groupe. Le titre du groupe est déduit des cartes qu'il contient
 (« 3 fichiers écrits », « Réflexion et recherche »), jamais écrit en dur.
@@ -175,8 +212,13 @@ l'ancêtre ; la sorte se déduit des marques de code déjà listées
 un réglage de l'espace de sorte code. La table `code_projects` reste ; l'espace
 la référence.
 
+**Rattachement d'une tâche venue d'un canal.** Voir « Ce qui arrive par
+Telegram » : par les livrables, sauf décision contraire de Quentin avant P6.
+
 **Garde.** Une tâche lancée depuis un espace y reste (ne remonte pas dans le
-fil) ; trois tâches dans le même dossier déclenchent la proposition, deux non.
+fil) ; une tâche Telegram dont le livrable atterrit dans le dossier d'un espace
+apparaît dans cet espace ; trois tâches dans le même dossier déclenchent la
+proposition, deux non.
 
 ### P7 · `ask_user` — M
 

@@ -336,6 +336,32 @@
     sont pas touchés par les lots 1 à 3.
   </p>
 
+  <p>
+    <b>De la maquette, on garde le fil de conversation. Rien d'autre.</b> Là où elle diverge de
+    l'existant, l'existant gagne.
+  </p>
+
+  <h2>Ce qui arrive par Telegram</h2>
+  <p>
+    Le dessin montre l'espace comme si tout se passait sur le web. Or la plupart des demandes
+    arrivent par Telegram. Trois choses que le plan tient, et que la maquette ne montre pas.
+  </p>
+  <p>
+    <b>Où atterrit une demande venue d'un canal.</b> Pour qu'elle apparaisse dans un espace, il faut
+    la rattacher. Règle proposée : l'espace se déduit de <b>là où ses livrables ont atterri</b>, les
+    clés déjà écrites avant chaque écriture. Aucune commande à taper. À trancher avant P6 ;
+    l'alternative est un espace par conversation Telegram.
+  </p>
+  <p>
+    <b>Ce que Telegram reçoit en retour.</b> Chaque tour de l'agent est miroité dans le canal : sa
+    prose, ses questions en boutons, ses livrables en carte. L'espace et Telegram montrent la
+    <b>même</b> conversation ; ce qui est répondu d'un côté apparaît de l'autre.
+  </p>
+  <p>
+    <b>Ce que Telegram ne peut pas montrer.</b> Ni diff, ni tableau, ni groupe replié. Le canal
+    reçoit la prose, le fichier joint, et un lien vers l'espace.
+  </p>
+
   <h2>Où on en est</h2>
   <div class="tablewrap">
     <table>
@@ -617,6 +643,13 @@
         ><code>messages</code> pour la prose et le raisonnement ; <code>tool_calls</code> pour les
         durées et sorties ; <code>llm_calls</code> par tour pour les jetons de chaque groupe ; les
         jobs enfants.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">origine</span
+      ><span class="v"
+        >Chaque message porte d'où il vient, Telegram, dashboard ou automatisation, et chaque envoi
+        de Nodal vers un canal apparaît dans le fil.</span
       >
     </div>
     <div class="ligne">
