@@ -14,6 +14,7 @@
 import { toolCalls } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { redactSecretsForAudit, redactSecretsInText } from '@nodal-agents/shared';
+import type { ToolCard } from '@nodal-agents/shared';
 
 /**
  * Plafond par ligne d audit. Une sortie d outil peut faire des megaoctets (un
@@ -146,6 +147,11 @@ export function makeLiveToolRecorder(args: {
         // Same namespace as the runtime path, so ONE surface renders both and a
         // CLI-internal Read is never mistaken for a Nodal builtin.
         toolName: `cli:${started.name}`,
+        // La carte se pose ICI, a la source qui connait les noms d outils du
+        // CLI (P1) — jamais dans l ecran. Pas de charge utile : l enregistreur
+        // n a que la ligne d evenement, pas une sortie structuree ; l ecran
+        // montre l entree et la sortie brutes et le dit.
+        card: cliToolCard(started.name),
         toolInput: redactSecretsForAudit(started.input) as Record<string, unknown>,
         // La SORTIE aussi, et elle porte le vrai risque : redactSecretsForAudit
         // masque par NOM DE CHAMP, ce qui ne dit rien d un texte libre. Or ces
@@ -235,4 +241,33 @@ export function makeEssentialCapture(provider: 'claude' | 'codex'): {
     },
     transcript: (): string => [...pinned, ...kept].join('\n'),
   };
+}
+
+// ─── La carte d un outil interne du CLI ─────────────────────────────────────
+//
+// Les noms sont ceux que Claude Code et Codex emettent dans leur flux JSON —
+// la meme connaissance que celle qui sert a analyser ce flux (providers.ts).
+// Un nom inconnu rend `generic`, l aveu, pas une devinette.
+const CLI_TOOL_CARDS: Readonly<Record<string, ToolCard>> = {
+  // Claude Code
+  Read: 'read',
+  Edit: 'files',
+  MultiEdit: 'files',
+  Write: 'files',
+  NotebookEdit: 'files',
+  Bash: 'terminal',
+  Grep: 'search',
+  Glob: 'search',
+  WebSearch: 'search',
+  WebFetch: 'read',
+  Task: 'delegation',
+  // Codex
+  shell: 'terminal',
+  exec_command: 'terminal',
+  apply_patch: 'files',
+  web_search: 'search',
+};
+
+export function cliToolCard(name: string): ToolCard {
+  return CLI_TOOL_CARDS[name] ?? 'generic';
 }

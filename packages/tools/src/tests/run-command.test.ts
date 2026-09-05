@@ -12,7 +12,9 @@ import { WorkspaceError } from '../builtin/file-ops/workspace';
 import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
 import { createToolRegistry } from '../registry';
 import { computeToolWhitelist } from '../whitelist';
-import type { ToolContext } from '../types';
+import type { ToolContext, ToolDefinition } from '../types';
+import { presentToolResult } from '../cards';
+import type { z } from 'zod';
 
 let workspaceDir: string;
 
@@ -202,5 +204,31 @@ describe('run_command gating', () => {
       reg,
     );
     expect(withSkill.map((t) => t.name)).toContain('run_command');
+  });
+});
+
+// ─── P1 : la carte terminal, sur une vraie commande ──────────────────────────
+
+describe('présentation (P1) — run_command', () => {
+  it('une commande réelle remplit la carte terminal : commande, code, fin de sortie, cwd', async () => {
+    const input = {
+      purpose: 'run test command',
+      command: `node -e "process.stdout.write('hello-card')"`,
+    };
+    const out = await runCommandTool.execute(input, ctx());
+    const p = presentToolResult(
+      runCommandTool as unknown as ToolDefinition<z.ZodTypeAny, unknown>,
+      input,
+      out,
+    );
+    expect(p).toEqual({
+      card: 'terminal',
+      command: input.command,
+      exitCode: 0,
+      timedOut: false,
+      stdoutTail: 'hello-card',
+      stderrTail: '',
+      cwd: out.cwd,
+    });
   });
 });

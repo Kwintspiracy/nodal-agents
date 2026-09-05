@@ -20,6 +20,7 @@ import {
   fetchBoundedUrl,
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
+import { sentCard } from '../presenters';
 
 // Telegram photo size limit. Uploads above this cap silently fail or are
 // rejected server-side; we enforce the cap locally so the error is clear.
@@ -112,6 +113,13 @@ Fail conditions:
 
     riskLevel: 'write',
     card: 'sent',
+    present: ({ input, output }) =>
+      sentCard({
+        channel: input.channel ?? 'telegram',
+        kind: 'image',
+        bytes: output.bytes,
+        ...(input.chatId ? { target: input.chatId } : {}),
+      }),
 
     async execute(input: SendImageInput, ctx: ToolContext): Promise<SendImageOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved

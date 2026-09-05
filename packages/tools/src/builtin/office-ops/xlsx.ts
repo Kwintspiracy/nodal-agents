@@ -17,6 +17,7 @@ import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { detailOf, failureText, searchCard, tableCard, writtenFile } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -268,6 +269,17 @@ export const xlsxReadTool: ToolDefinition<typeof XlsxReadInput, XlsxReadOutput> 
   inputSchema: XlsxReadInput,
   riskLevel: 'read',
   card: 'table',
+  present: ({ output }) =>
+    output.ok
+      ? tableCard(
+          output.sheets.map((s) => ({
+            name: s.name,
+            columns: [],
+            rows: s.rows,
+            truncated: s.truncated,
+          })),
+        )
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbook(ctx, input.path);
     if (!load.ok) return load;
@@ -346,6 +358,10 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
   inputSchema: XlsxSetCellInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -402,6 +418,10 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
   inputSchema: XlsxSetRangeInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -468,6 +488,10 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
     inputSchema: XlsxAppendRowsInput,
     riskLevel: 'write',
     card: 'files',
+    present: ({ input, output }) =>
+      output.ok
+        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+        : failureText(output.reason),
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -520,6 +544,10 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
   inputSchema: XlsxAddSheetInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -566,6 +594,10 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
   inputSchema: XlsxCreateInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'created', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const workbook = new ExcelJS.Workbook();
     workbook.addWorksheet(input.sheet);
@@ -607,6 +639,10 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
     inputSchema: XlsxDeleteRowsInput,
     riskLevel: 'destructive',
     card: 'files',
+    present: ({ input, output }) =>
+      output.ok
+        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+        : failureText(output.reason),
     defaultApproval: 'require_approval',
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
@@ -727,6 +763,10 @@ export const xlsxFormatRangeTool: ToolDefinition<
   inputSchema: XlsxFormatRangeInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const { font, fill, border, alignment } = input;
     if (!font && !fill && !border && !alignment && input.num_fmt === undefined) {
@@ -847,6 +887,10 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
     inputSchema: XlsxInsertRowsInput,
     riskLevel: 'write',
     card: 'files',
+    present: ({ input, output }) =>
+      output.ok
+        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+        : failureText(output.reason),
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -905,6 +949,10 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
   inputSchema: XlsxDeleteColumnsInput,
   riskLevel: 'destructive',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
@@ -967,6 +1015,10 @@ export const xlsxInsertColumnsTool: ToolDefinition<
   inputSchema: XlsxInsertColumnsInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1023,6 +1075,10 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
     inputSchema: XlsxMergeCellsInput,
     riskLevel: 'write',
     card: 'files',
+    present: ({ input, output }) =>
+      output.ok
+        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+        : failureText(output.reason),
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -1081,6 +1137,10 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
   inputSchema: XlsxUnmergeCellsInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1159,6 +1219,10 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
   inputSchema: XlsxSetColumnWidthsInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     if ((!input.widths || input.widths.length === 0) && !input.autofit) {
       return { ok: false, reason: 'Provide widths and/or set autofit:true.' };
@@ -1245,6 +1309,10 @@ export const xlsxFreezePanesTool: ToolDefinition<
   inputSchema: XlsxFreezePanesInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1305,6 +1373,14 @@ export const xlsxFindCellsTool: ToolDefinition<typeof XlsxFindCellsInput, XlsxFi
   inputSchema: XlsxFindCellsInput,
   riskLevel: 'read',
   card: 'search',
+  present: ({ input, output }) =>
+    output.ok
+      ? searchCard({
+          query: input.query,
+          hits: output.matches.map((m) => ({ title: m.value, ref: `${m.sheet}!${m.cell}` })),
+          truncated: output.truncated,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbook(ctx, input.path);
     if (!load.ok) return load;

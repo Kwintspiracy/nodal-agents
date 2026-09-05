@@ -27,9 +27,29 @@ export {
   cardForTool,
   declaresCard,
   assertToolCard,
+  presentToolResult,
   ToolCardError,
+  ToolPresentationError,
   TOOL_CARD_GENERIC,
 } from './cards';
+// Les briques de présentation, pour les outils nés HORS de ce paquet
+// (assign_<agent> dans orchestration) — la forme de la charge utile est dans
+// @nodal-agents/shared, les plafonds sont appliqués ici.
+export {
+  textCard,
+  failureText,
+  readCard,
+  searchCard,
+  filesCard,
+  writtenFile,
+  tableCard,
+  recordsTable,
+  terminalCard,
+  sentCard,
+  checksCard,
+  delegationCard,
+  detailOf,
+} from './presenters';
 export type {
   MutationIntentOutcome,
   MutationIntentContext,

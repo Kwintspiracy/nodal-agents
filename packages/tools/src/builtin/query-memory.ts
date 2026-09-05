@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { agentMemory, eq, and, desc } from '@nodal-agents/db';
 import { keywordSearchMemories } from '@nodal-agents/memory';
 import type { ToolDefinition } from '../types';
+import { recordsTable } from '../presenters';
 
 export const QueryMemoryInputSchema = z.object({
   query: z
@@ -52,6 +53,11 @@ export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, Memo
   inputSchema: QueryMemoryInputSchema,
   riskLevel: 'write', // write because it updates last_accessed_at on matched rows
   card: 'table',
+  present: ({ output }) =>
+    recordsTable(
+      output.map((m) => ({ ...m })),
+      { columns: ['fact', 'category', 'importance', 'skill_tags', 'created_at'] },
+    ),
   execute: async (input, ctx) => {
     const sort = input.sort ?? 'importance';
     const limit = input.limit ?? 50;

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { getAdapter } from '@nodal-agents/delivery';
 import { resolveBotToken, resolveRecipientChatId, resolveChannelForJob } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
+import { sentCard } from '../presenters';
 
 // ─── Input / Output ───────────────────────────────────────────────────────────
 
@@ -105,6 +106,12 @@ Fail conditions:
 
     riskLevel: 'write',
     card: 'sent',
+    present: ({ input }) =>
+      sentCard({
+        channel: input.channel ?? 'telegram',
+        kind: 'message',
+        ...(input.chatId ? { target: input.chatId } : {}),
+      }),
 
     async execute(
       input: TelegramSendMessageInput,

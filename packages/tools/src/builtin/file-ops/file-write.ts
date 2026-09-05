@@ -5,6 +5,7 @@ import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { failureText, writtenFile } from '../../presenters';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
@@ -51,6 +52,10 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
   card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'written', { bytes: output.bytes })
+      : failureText(output.reason),
   mutatesWorkspace: true,
   // The ONE file this call is about to write — the same resolution execute()
   // does below, run again here rather than guessed at the seam. Resolving

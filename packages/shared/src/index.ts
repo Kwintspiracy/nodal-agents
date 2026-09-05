@@ -1,6 +1,7 @@
 // @nodal-agents/shared — canonical Zod schemas and TypeScript types for the entire platform
 
 export * from './enums';
+export * from './tool-cards';
 export * from './ids';
 export * from './entities/entity';
 export * from './entities/user';

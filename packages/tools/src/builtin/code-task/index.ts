@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { delegationCard } from '../../presenters';
 import { assertWorkspacesConfigured, resolveAndCheckPath } from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
@@ -223,6 +224,17 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   // Ses pas à lui arrivent à part, en lignes tool_calls vivantes (live-events),
   // exactement comme ceux d'un sous-agent Nodal sous `assign_<agent>`.
   card: 'delegation',
+  present: ({ input, output }) =>
+    delegationCard({
+      to: `${output.provider} ${output.cliVersion}`,
+      task: input.task,
+      ok: !output.isError,
+      resultText: output.resultText,
+      error: output.errorDetail,
+      durationMs: output.durationMs,
+      costUsd: output.costUsd,
+      sessionId: output.sessionId,
+    }),
   // Le CLI ecrit dans le workspace en mode write. Marque sans condition : le
   // marqueur est statique, et un mode lu a l execution ne peut pas le nuancer —
   // un instantane de trop coute une seconde, un instantane manquant coute le

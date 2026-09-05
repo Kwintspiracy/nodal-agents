@@ -113,6 +113,17 @@ describe('generateAssignTools', () => {
     // agent se montre comme une délégation. Ces outils naissent hors du registre
     // de `tools`, donc hors de `cards.test.ts` — la carte se garde ici.
     expect(tool.card).toBe('delegation');
+    // Et sa charge utile : qui reçoit, quoi — la réponse viendra du sous-job.
+    expect(tool.present?.({ input: { task: 'do work' }, output: undefined as never })).toEqual({
+      card: 'delegation',
+      to: expect.stringMatching(/^Worker test-email-sender-/),
+      task: 'do work',
+      ok: true,
+      resultText: null,
+      error: null,
+      durationMs: null,
+      costUsd: null,
+    });
   });
 
   it('tool description is data-driven (not hardcoded)', async () => {

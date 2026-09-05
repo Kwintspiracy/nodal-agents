@@ -1,5 +1,6 @@
 // cards.test.ts — tout outil que le PRODUIT expédie déclare comment son
-// résultat se montre (plan « De la maquette au produit », P1).
+// résultat se montre, et comment sa sortie remplit cette carte (plan « De la
+// maquette au produit », P1).
 //
 // Pourquoi par ÉNUMÉRATION du registre et non par liste : une liste écrite à
 // la main vieillit en silence (voir intent-wiring.test.ts, même leçon). Ici les
@@ -11,6 +12,13 @@
 // `query_memory: 'text'` passait alors que sa sortie est tabulaire. La table
 // épingle chaque choix ; le changer se fait à découvert, dans le diff.
 //
+// Pourquoi un `present()` par carte à structure : les passes 12 et 13 ont
+// montré qu'une étiquette sans forme oblige l'écran à dispatcher par nom quand
+// même (`table` : tableau nu ici, `{ sheets }` là). La forme est dans
+// @nodal-agents/shared ; ici on vérifie que chaque outil la remplit, sur ses
+// VRAIES sorties (voir aussi file-ops.test.ts, run-command.test.ts,
+// xlsx.test.ts, execute.test.ts).
+//
 // Ce que ce test NE couvre PAS, et le dit : les outils tiers (serveurs MCP,
 // adaptateurs de connecteurs) ont droit au repli `generic`. Le seul outil MCP
 // est construit par une fabrique qui le déclare ; les adaptateurs restent sur
@@ -19,7 +27,7 @@
 // suites portent l'assertion (assign-tools.test.ts, task-tools.test.ts).
 
 import { describe, it, expect } from 'vitest';
-import { TOOL_CARDS } from '@nodal-agents/shared';
+import { TOOL_CARDS, CARDS_NEEDING_PRESENTER } from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
@@ -32,7 +40,14 @@ import {
   createSendAudioTool,
   createSendVoiceTool,
 } from '../communication';
-import { cardForTool, declaresCard, ToolCardError, TOOL_CARD_GENERIC } from '../cards';
+import {
+  cardForTool,
+  declaresCard,
+  presentToolResult,
+  ToolCardError,
+  ToolPresentationError,
+  TOOL_CARD_GENERIC,
+} from '../cards';
 import type { ToolDefinition } from '../types';
 import type { z } from 'zod';
 
@@ -61,10 +76,8 @@ const productTools: AnyTool[] = [...registry.list(), ...capabilityTools];
  *   read       — le contenu d'un document lu
  *   search     — des correspondances
  *   files      — des fichiers écrits, modifiés ou listés
- *   table      — des lignes à colonnes stables, et RIEN AUTOUR : la sortie EST
- *                le tableau (query_memory) ou l'écran sait où le lire (xlsx_read).
- *                Une enveloppe `{ ok, models }` reste `text` (passe 12) : la
- *                carte ne saurait pas quel champ ouvrir sans dispatcher par nom.
+ *   table      — des lignes à colonnes stables ; la charge utile EST le tableau
+ *                (`tables[]`), quelle que soit la forme de sortie de l'outil
  *   terminal   — une commande, sa sortie, son code de sortie
  *   sent       — quelque chose est parti vers un canal
  *   checks     — un verdict de vérification
@@ -177,6 +190,15 @@ describe('la carte des outils du produit', () => {
     expect(reelles).toEqual(EXPECTED_CARDS);
   });
 
+  it('CHAQUE outil à carte structurée dit comment sa sortie la remplit (present)', () => {
+    // Nommés un par un : « registerBuiltins a levé » ne dirait pas lequel.
+    const muets = productTools
+      .filter((t) => t.card !== undefined && CARDS_NEEDING_PRESENTER.includes(t.card))
+      .filter((t) => typeof t.present !== 'function')
+      .map((t) => `${t.name} (${String(t.card)})`);
+    expect(muets, `cartes structurées sans present() : ${muets.join(', ')}`).toEqual([]);
+  });
+
   it('les cartes déclarées couvrent le vocabulaire utile, pas une seule valeur passe-partout', () => {
     // Si tout déclarait `text`, le contrat serait respecté à la lettre et
     // inutile en pratique : l'écran n'aurait rien à dispatcher. `question` est
@@ -215,22 +237,109 @@ describe('cardForTool — le repli est `generic` pour une ABSENCE, une erreur po
     expect(() => cardForTool(tordu)).toThrow(/generic/); // le message dit comment réparer
   });
 
+  it("une carte à structure SANS present() lève — une demi-déclaration n'est pas une déclaration", () => {
+    const demi = { ...base, name: 'demi', card: 'table' } as AnyTool;
+    expect(() => cardForTool(demi)).toThrow(ToolPresentationError);
+    expect(() => cardForTool(demi)).toThrow(/declares card "table" but no `present\(\)`/);
+  });
+
   it('une carte déclarée dans le vocabulaire est rendue telle quelle', () => {
     for (const c of TOOL_CARDS) {
-      expect(cardForTool({ ...base, card: c } as AnyTool)).toBe(c);
+      const tool = {
+        ...base,
+        card: c,
+        ...(CARDS_NEEDING_PRESENTER.includes(c)
+          ? { present: () => ({ card: 'text', text: '' }) }
+          : {}),
+      } as AnyTool;
+      expect(cardForTool(tool)).toBe(c);
     }
   });
 
-  it("le registre REFUSE un outil à carte inventée — au démarrage, pas à l'affichage", () => {
+  it("le registre REFUSE un outil à carte inventée ou sans présentateur — au démarrage, pas à l'affichage", () => {
     const local = createToolRegistry();
     const tordu = { ...base, name: 'tordu_registre', card: 'fancy' } as unknown as AnyTool;
     expect(() => local.register(tordu)).toThrow(ToolCardError);
-    // Refusé, donc ABSENT : rien n'a été enregistré à moitié.
+    const demi = { ...base, name: 'demi_registre', card: 'files' } as AnyTool;
+    expect(() => local.register(demi)).toThrow(ToolPresentationError);
+    // Refusés, donc ABSENTS : rien n'a été enregistré à moitié.
     expect(local.get('tordu_registre')).toBeUndefined();
+    expect(local.get('demi_registre')).toBeUndefined();
     expect(local.list()).toEqual([]);
     // Et le même registre accepte toujours un outil sain, ou sans carte.
     local.register({ ...base, name: 'sain', card: 'text' } as AnyTool);
     local.register({ ...base, name: 'muet' } as AnyTool);
     expect(local.list().map((t) => t.name)).toEqual(['sain', 'muet']);
+  });
+});
+
+describe('presentToolResult — la charge utile que la ligne tool_calls persiste', () => {
+  const base = {
+    name: 'p',
+    description: '',
+    inputSchema: {} as z.ZodTypeAny,
+    riskLevel: 'read' as const,
+    execute: async () => null,
+  };
+
+  it('carte text sans présentateur : la sortie en texte, un objet devient du JSON lisible', () => {
+    expect(presentToolResult({ ...base, card: 'text' } as AnyTool, {}, 'fait')).toEqual({
+      card: 'text',
+      text: 'fait',
+    });
+    const p = presentToolResult(
+      { ...base, card: 'text' } as AnyTool,
+      {},
+      { ok: true, message: 'm' },
+    );
+    expect(p.card).toBe('text');
+    expect(p.card === 'text' && p.text).toContain('"message": "m"');
+  });
+
+  it('carte generic : rien à porter — entrée et sortie sont déjà sur la ligne', () => {
+    expect(presentToolResult(base as AnyTool, { a: 1 }, { b: 2 })).toEqual({ card: 'generic' });
+  });
+
+  it('un présentateur qui rend une AUTRE carte que la déclarée est refusé', () => {
+    const menteur = {
+      ...base,
+      card: 'files',
+      present: () => ({
+        card: 'terminal',
+        command: 'ls',
+        exitCode: 0,
+        timedOut: false,
+        stdoutTail: '',
+        stderrTail: '',
+      }),
+    } as AnyTool;
+    expect(() => presentToolResult(menteur, {}, {})).toThrow(ToolPresentationError);
+    expect(() => presentToolResult(menteur, {}, {})).toThrow(/returned card "terminal"/);
+  });
+
+  it('un présentateur dont la charge utile ne respecte pas la forme est refusé, en nommant le champ', () => {
+    const bancal = {
+      ...base,
+      card: 'table',
+      present: () => ({ card: 'table', tables: [] }), // min(1)
+    } as AnyTool;
+    expect(() => presentToolResult(bancal, {}, {})).toThrow(ToolPresentationError);
+    expect(() => presentToolResult(bancal, {}, {})).toThrow(/tables/);
+  });
+
+  it('un présentateur peut rendre text pour un ÉCHEC — la ligne garde la carte déclarée', () => {
+    const files = {
+      ...base,
+      card: 'files',
+      present: ({ output }: { output: unknown }) => ({
+        card: 'text',
+        text: `rien écrit : ${String((output as { reason: string }).reason)}`,
+      }),
+    } as AnyTool;
+    expect(presentToolResult(files, {}, { ok: false, reason: 'lecture seule' })).toEqual({
+      card: 'text',
+      text: 'rien écrit : lecture seule',
+    });
+    expect(cardForTool(files)).toBe('files');
   });
 });

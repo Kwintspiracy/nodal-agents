@@ -638,6 +638,13 @@
       "when": 1786000012000,
       "tag": "0091_verification_surfaces",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1786000013000,
+      "tag": "0092_tool_calls_card",
+      "breakpoints": true
     }
   ]
 }

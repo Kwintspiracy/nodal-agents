@@ -17,6 +17,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
+import { terminalCard } from '../presenters';
 import {
   assertWorkspacesConfigured,
   resolveAndCheckPath,
@@ -110,6 +111,15 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
   card: 'terminal',
+  present: ({ input, output }) =>
+    terminalCard({
+      command: input.command,
+      exitCode: output.exitCode,
+      timedOut: output.timedOut,
+      stdout: output.stdout,
+      stderr: output.stderr,
+      cwd: output.cwd,
+    }),
   mutatesWorkspace: true,
   defaultApproval: 'require_approval',
   // Le cwd résolu ET tous les dossiers attachés. Un shell n'est pas un

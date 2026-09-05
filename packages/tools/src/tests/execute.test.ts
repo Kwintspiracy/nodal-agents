@@ -97,6 +97,71 @@ describe('executeTool', () => {
     expect(found?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  // ── P1 : la carte et la charge utile sur la ligne d'audit ──────────────────
+
+  it('P1 : la ligne porte la carte DÉCLARÉE et la charge utile que present() a tirée de la sortie', async () => {
+    const tool = makeSimpleTool({
+      name: 'card_tool',
+      card: 'files',
+      present: ({ input, output }) => ({
+        card: 'files',
+        files: [{ path: input.value, action: 'created', detail: output }],
+        total: 1,
+        truncated: false,
+      }),
+    });
+    const uniqueVal = `card-${Date.now()}`;
+    const result = await executeTool(tool, { value: uniqueVal }, makeCtx(), makeOpts());
+    expect(result.outcome).toBe('success');
+
+    const row = (await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId))).find(
+      (c) => c.toolName === 'card_tool' && (c.toolInput as { value?: string })?.value === uniqueVal,
+    );
+    expect(row?.card).toBe('files');
+    expect(row?.presented).toEqual({
+      card: 'files',
+      files: [{ path: uniqueVal, action: 'created', detail: `result:${uniqueVal}` }],
+      total: 1,
+      truncated: false,
+    });
+  });
+
+  it('P1 : carte text sans present() → la sortie en texte ; erreur de validation → carte posée, charge NULL', async () => {
+    const tool = makeSimpleTool({ name: 'text_tool', card: 'text' });
+    const uniqueVal = `text-${Date.now()}`;
+    await executeTool(tool, { value: uniqueVal }, makeCtx(), makeOpts());
+    await executeTool(tool, { value: 12 }, makeCtx(), makeOpts()); // invalide
+    const rows = (await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId))).filter(
+      (c) => c.toolName === 'text_tool',
+    );
+    const ok = rows.find((c) => (c.toolInput as { value?: unknown })?.value === uniqueVal);
+    const ko = rows.find((c) => (c.toolInput as { value?: unknown })?.value === 12);
+    expect(ok?.card).toBe('text');
+    expect(ok?.presented).toEqual({ card: 'text', text: `result:${uniqueVal}` });
+    // L'outil n'a rien produit : la carte reste la sienne, la charge est nulle —
+    // l'écran montre l'erreur depuis tool_output et le dit.
+    expect(ko?.card).toBe('text');
+    expect(ko?.presented).toBeNull();
+  });
+
+  it("P1 : un present() qui viole sa carte ne fait PAS échouer l'outil — la ligne garde la carte, charge NULL", async () => {
+    const tool = makeSimpleTool({
+      name: 'broken_presenter_tool',
+      card: 'table',
+      present: () => ({ card: 'table', tables: [] }), // min(1) — forme violée
+    });
+    const uniqueVal = `broken-${Date.now()}`;
+    const result = await executeTool(tool, { value: uniqueVal }, makeCtx(), makeOpts());
+    expect(result.outcome).toBe('success'); // le travail de l'agent n'en souffre pas
+    const row = (await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId))).find(
+      (c) =>
+        c.toolName === 'broken_presenter_tool' &&
+        (c.toolInput as { value?: string })?.value === uniqueVal,
+    );
+    expect(row?.card).toBe('table');
+    expect(row?.presented).toBeNull();
+  });
+
   // ── Validation error ────────────────────────────────────────────────────────
 
   it('returns error on invalid input (fails Zod validation)', async () => {

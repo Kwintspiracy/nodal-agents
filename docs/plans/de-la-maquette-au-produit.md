@@ -55,7 +55,7 @@ fichier joint, et une ligne ».
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
-| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1 codée** (`277aef63`, 06/09), en revue Codex · P2 suivante |
+| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1 codée et élargie** (carte + charge utile persistée, 06/09), passes Codex 11-13 traitées, passe 14 en cours · P2 suivante |
 | 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
 | 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
@@ -103,23 +103,53 @@ Chaque pierre suit la discipline du dépôt : tests sur lignes réelles, une
 mutation par garde, `codex review` en boucle jusqu'au retour vide. Tailles : S
 moins d'un jour, M deux à trois jours, L une semaine, XL indéterminée.
 
-### P1 · Le contrat de rendu — M
+### P1 · Le contrat de rendu — M → L
 
-**Ce que ça pose.** Chaque outil déclare comment son résultat s'affiche : une
-carte parmi `text · files · table · terminal · checks · sent · question ·
-generic`. L'écran dispatche sur la carte, jamais sur le nom de l'outil. C'est le
-modèle de DeepSeek Harness (`presentResult`, vocabulaire neutre, l'outil
-n'importe jamais un type d'interface), et c'est la condition posée le 05/09 :
-sans lui, l'écran doit être édité à chaque outil ajouté et il meurt.
+**Ce que ça pose.** Chaque outil déclare DEUX choses. Sa **carte** — comment son
+résultat s'affiche, une parmi `text · read · search · files · table · terminal ·
+sent · checks · question · delegation · generic` — et, pour toute carte à
+structure, son **présentateur** `present()` : comment on tire de SA sortie la
+charge utile de CETTE carte. La forme de chaque charge utile est écrite une
+fois pour toutes (`packages/shared/src/tool-cards.ts`, schémas zod plafonnés) ;
+les briques qui la construisent sont dans `packages/tools/src/presenters.ts`.
+L'écran dispatche sur la carte et lit la charge utile, jamais le nom de l'outil.
+C'est le modèle de DeepSeek Harness (`presentResult` + le `meta` de
+présentation attaché au résultat), et la condition posée le 05/09 : sans lui,
+l'écran doit être édité à chaque outil ajouté et il meurt.
+
+**Où ça vit.** Carte et charge utile sont **persistées sur la ligne
+`tool_calls`** (`card`, `presented` — migration 0092) au moment de
+l'exécution, par `executeTool`. L'écran lit la ligne, jamais le registre ; une
+ligne d'hier se dessine comme le jour où elle a été écrite. Les lignes
+antérieures et celles de l'enregistreur vivant du CLI (`cli:*`, qui n'a qu'un
+événement, pas une sortie) portent `presented = NULL` : l'écran montre
+l'entrée et la sortie brutes et le dit.
 
 **Sur quoi ça s'appuie.** `MutationTarget.deliverableType` (v7-A) est déjà une
 déclaration par l'outil. Le contrat de rendu est son frère pour la lecture.
 
-**Garde.** Le test d'énumération du registre (`intent-wiring.test.ts`) gagne une
-assertion : tout outil déclare sa carte. Un outil sans carte rougit en le
-nommant.
+**Ce que la revue a corrigé dans cette pierre** (passes 11 à 13, dans l'ordre) :
+une carte inventée était rabattue en silence sur `generic` → elle lève, et le
+registre la refuse au démarrage ; `query_memory` était `text` alors que sa
+sortie est tabulaire → `table` ; `code_task` était `files` alors qu'il ne rend
+aucun fichier → `delegation` ; trois `list_*` requalifiés `table` par excès de
+zèle → `text` (leur sortie est une enveloppe) ; et le constat qui a élargi la
+pierre : **une étiquette sans forme oblige quand même à dispatcher par nom**
+(`xlsx_read` rend `{ sheets }`, `query_memory` un tableau nu, même carte) → la
+charge utile typée et le présentateur par outil.
+
+**Garde.** `cards.test.ts` énumère le registre : tout outil déclare sa carte,
+la table complète nom → carte est épinglée (72 outils), toute carte à structure
+a son présentateur, et le registre refuse au démarrage une carte inventée ou
+sans présentateur. Les présentateurs sont vérifiés sur de **vraies sorties**
+(`file-ops`, `run-command`, `xlsx`, `execute` : la ligne `tool_calls` porte
+carte et charge). Mutations mesurées : présentateur retiré → rouge au
+démarrage, en nommant l'outil ; lignes décalées dans `xlsx_read` → rouge ;
+charge non persistée → rouge.
 
 **Hors périmètre.** Aucun rendu ici — c'est le contrat, pas les composants.
+Les ~140 adaptateurs de connecteurs restent `generic` : leur qualification est
+une pierre à part.
 
 ### P2 · La conversation — L
 

@@ -384,7 +384,7 @@
             Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée,
             avec preuves, coûts, jetons. Runs, Code et Chat inchangés.
           </td>
-          <td><span class="etat">P1 codée · en revue</span></td>
+          <td><span class="etat">P1 codée et élargie · passe 14</span></td>
         </tr>
         <tr>
           <td class="k">2 · L'espace où l'on reste</td>
@@ -600,11 +600,16 @@
     <div class="ligne">
       <span class="l">ça pose</span
       ><span class="v"
-        >Chaque outil déclare comment son résultat s'affiche : une carte parmi
-        <code>text · files · table · terminal · checks · sent · question · generic</code>. L'écran
-        dispatche sur la carte, jamais sur le nom de l'outil. C'est le modèle de DeepSeek Harness,
-        et la condition posée aujourd'hui : sans lui, l'écran doit être édité à chaque outil ajouté,
-        et il meurt.</span
+        >Chaque outil déclare deux choses : sa <b>carte</b> — comment son résultat s'affiche, parmi
+        <code
+          >text · read · search · files · table · terminal · sent · checks · question · delegation ·
+          generic</code
+        >
+        — et, pour toute carte à structure, son <b>présentateur</b> : comment on tire de sa sortie
+        la charge utile de cette carte (forme écrite une fois dans <code>tool-cards.ts</code>).
+        Carte et charge utile sont persistées sur la ligne <code>tool_calls</code> (migration 0092)
+        : l'écran lit la ligne, jamais le registre, jamais le nom de l'outil. C'est le modèle de
+        DeepSeek Harness, et la condition posée le 05/09 : sans lui, l'écran meurt.</span
       >
     </div>
     <div class="ligne">
@@ -617,8 +622,13 @@
     <div class="ligne">
       <span class="l">garde</span
       ><span class="v"
-        >Le test d'énumération du registre gagne une assertion : tout outil déclare sa carte. Un
-        outil sans carte rougit en le nommant.</span
+        >Le registre est énuméré : tout outil déclare sa carte (table complète épinglée, 72 outils),
+        toute carte à structure a son présentateur, une carte inventée ou sans présentateur est
+        refusée au démarrage en nommant l'outil. Les présentateurs sont vérifiés sur de vraies
+        sorties (fichiers, commande, classeur, ligne d'audit). Trois mutations mesurées rouges. Ce
+        que la revue a corrigé (passes 11-13) : repli silencieux → erreur ; query_memory → table ;
+        code_task → delegation ; et l'élargissement même de la pierre — une étiquette sans forme
+        oblige quand même à dispatcher par nom.</span
       >
     </div>
   </div>

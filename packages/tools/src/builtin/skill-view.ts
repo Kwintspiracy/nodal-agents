@@ -10,6 +10,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { agentSkills, eq, and } from '@nodal-agents/db';
 import type { ToolDefinition, ToolContext } from '../types';
+import { failureText, readCard } from '../presenters';
 import { resolveSkillRoot } from './skill-ops/skill-files';
 
 export const SkillViewInputSchema = z.object({
@@ -79,6 +80,8 @@ export const skillViewTool: ToolDefinition<typeof SkillViewInputSchema, SkillVie
   inputSchema: SkillViewInputSchema,
   riskLevel: 'read',
   card: 'read',
+  present: ({ output }) =>
+    output.ok ? readCard({ path: output.name, text: output.content }) : failureText(output.error),
   execute: async (input, ctx) => {
     const [row] = await ctx.db
       .select({ name: agentSkills.name, content: agentSkills.content })

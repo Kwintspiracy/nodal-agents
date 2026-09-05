@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
+import { searchCard } from '../presenters';
 
 export const WebSearchInputSchema = z.object({
   query: z.string().min(1).describe('The search query.'),
@@ -150,6 +151,11 @@ export const webSearchTool: ToolDefinition<typeof WebSearchInputSchema, WebSearc
   inputSchema: WebSearchInputSchema,
   riskLevel: 'read',
   card: 'search',
+  present: ({ input, output }) =>
+    searchCard({
+      query: input.query,
+      hits: output.results.map((r) => ({ title: r.title, ref: r.url, snippet: r.snippet })),
+    }),
   execute: async (input, ctx) => {
     // Premium backend injected by the runner (Tavily > Firecrawl) wins.
     if (ctx.searchBackend) {

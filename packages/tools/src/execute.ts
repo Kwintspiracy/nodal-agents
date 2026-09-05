@@ -18,6 +18,8 @@ import type {
   ApprovalGateRequest,
 } from './types';
 import { InvalidInputError } from './errors';
+import { cardForTool, presentToolResult } from './cards';
+import type { ToolCardPayload } from '@nodal-agents/shared';
 import { snapshot } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent } from './verification/intent';
@@ -92,6 +94,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   opts: ExecuteOptions,
 ): Promise<ToolExecutionResult> {
   const startMs = Date.now();
+  // The audit row reads the tool's card and presenter; the generic parameters
+  // are erased the same way the registry erases them (see registry.ts).
+  const auditTool = tool as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
 
   // ── 1. Input validation ────────────────────────────────────────────────────
   const parsed = tool.inputSchema.safeParse(rawInput);
@@ -102,7 +107,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       error: `invalid_input: ${detail}`,
     };
     // Still write audit row for failed validations
-    await _writeToolCall(ctx, tool.name, rawInput, JSON.stringify(result), Date.now() - startMs);
+    await _writeToolCall(ctx, auditTool, rawInput, JSON.stringify(result), Date.now() - startMs);
     return result;
   }
 
@@ -137,7 +142,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
@@ -331,7 +336,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     };
     await _writeToolCall(
       ctx,
-      tool.name,
+      auditTool,
       validatedInput,
       JSON.stringify(result),
       Date.now() - startMs,
@@ -368,7 +373,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       const result: ToolExecutionResult = { outcome: 'error', error: 'approval_insert_failed' };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
@@ -393,7 +398,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     };
     await _writeToolCall(
       ctx,
-      tool.name,
+      auditTool,
       validatedInput,
       JSON.stringify(approvalResult),
       Date.now() - startMs,
@@ -425,7 +430,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       const result: ToolExecutionResult = { outcome: 'error', error: intentFailure };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
@@ -438,7 +443,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       const result: ToolExecutionResult = { outcome: 'error', error: failure };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
@@ -451,7 +456,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   try {
     const output = await tool.execute(validatedInput, ctx);
     const durationMs = Date.now() - startMs;
-    await _writeToolCall(ctx, tool.name, validatedInput, JSON.stringify(output), durationMs);
+    await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
+      value: output,
+    });
     return { outcome: 'success', output };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these
@@ -489,7 +496,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       : { outcome: 'error', error: errorMsg };
     await _writeToolCall(
       ctx,
-      tool.name,
+      auditTool,
       validatedInput,
       JSON.stringify(result),
       Date.now() - startMs,
@@ -754,16 +761,38 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
 
 async function _writeToolCall(
   ctx: ToolContext,
-  toolName: string,
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
   input: unknown,
   output: string,
   durationMs: number,
+  /** The tool's ACTUAL output — only on a successful execution; absent, the row records no payload. */
+  produced?: { value: unknown },
 ): Promise<void> {
+  const toolName = tool.name;
+  // P1 (plan « De la maquette au produit »): the row carries the card the tool
+  // DECLARES and the payload its present() drew from the output, so the
+  // conversation screen reads the row and never the registry. A presenter
+  // that violates its card's contract is a bug in THAT tool — logged loud,
+  // never allowed to fail the agent's work: the row then keeps the card and a
+  // NULL payload, and the screen shows raw input/output saying so.
+  let card: string | null = null;
+  let presented: ToolCardPayload | null = null;
+  try {
+    card = cardForTool(tool);
+    if (produced) presented = presentToolResult(tool, input, produced.value);
+  } catch (err) {
+    console.error(
+      `[tools] card/presentation failed for "${toolName}" (job=${ctx.jobId}) — row keeps card=${String(card)} and presented=NULL:`,
+      err,
+    );
+  }
   try {
     await ctx.db.insert(toolCalls).values({
       entityId: ctx.entityId,
       jobId: ctx.jobId,
       toolName,
+      card,
+      presented,
       // NOUVEAU-1: the audit trail is never re-executed, so we store a
       // secret-redacted copy — create_connector/create_mcp API keys and stdio
       // env values must not sit in cleartext in tool_calls or render to the

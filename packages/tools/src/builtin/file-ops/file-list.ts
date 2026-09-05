@@ -9,6 +9,7 @@ import { readdir, realpath, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { failureText, filesCard } from '../../presenters';
 import {
   resolveAndCheckPath,
   assertWorkspacesConfigured,
@@ -83,6 +84,18 @@ export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOu
   inputSchema: FileListInputSchema,
   riskLevel: 'read',
   card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? filesCard(
+          output.entries.map((e) => ({
+            path: e.name,
+            action: 'listed' as const,
+            bytes: e.size,
+            detail: e.type,
+          })),
+          { truncated: output.truncated },
+        )
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     try {
       // Guard first (throws if not configured at all)

@@ -33,6 +33,7 @@ import {
 import JSZip from 'jszip';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { detailOf, failureText, readCard, writtenFile } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -252,6 +253,15 @@ export const docxReadTool: ToolDefinition<typeof DocxReadInput, DocxReadOutput> 
   inputSchema: DocxReadInput,
   riskLevel: 'read',
   card: 'read',
+  present: ({ input, output }) =>
+    output.ok
+      ? readCard({
+          path: input.path,
+          text: output.text,
+          truncated: output.truncated,
+          sections: output.paragraphs.length,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -368,6 +378,8 @@ export const docxCreateTool: ToolDefinition<typeof DocxCreateInput, DocxCreateOu
   inputSchema: DocxCreateInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ output }) =>
+    output.ok ? writtenFile(output.path, 'created') : failureText(output.reason),
   execute: async (input, ctx) => {
     let usesNumberedList = false;
     const children: (Paragraph | Table)[] = [];
@@ -545,6 +557,10 @@ export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, Do
   // it's a plain write, same posture as xlsx_append_rows.
   riskLevel: 'write',
   card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -719,6 +735,10 @@ export const docxReplaceTextTool: ToolDefinition<
   inputSchema: DocxReplaceTextInput,
   riskLevel: 'write',
   card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

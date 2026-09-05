@@ -273,6 +273,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       duration_ms integer,
       turn integer,
       tool_call_id text,
+      -- 0092 (P1) : la carte déclarée par l'outil et la charge utile présentée.
+      card text,
+      presented jsonb,
       created_at timestamptz DEFAULT now()
     );
 

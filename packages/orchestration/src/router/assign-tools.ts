@@ -15,6 +15,7 @@ import {
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { DelegationPendingError } from '../errors';
+import { delegationCard } from '@nodal-agents/tools';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, ChildAgent } from '../types';
 
 // ─── Input schema for every assign_* tool ────────────────────────────────────
@@ -252,6 +253,11 @@ export async function generateAssignTools(
       // Un travail confié à un autre agent : la conversation le rend comme un
       // groupe indenté portant les actes de l'enfant (P1, `ToolCard`).
       card: 'delegation',
+      // La charge utile de la carte : qui reçoit, quoi. La réponse de l'enfant
+      // n'existe pas encore quand ce présentateur est appelé — execute() lève
+      // avant toute ligne d'audit ; l'écran lit le sous-job par parent_job_id.
+      present: ({ input }) =>
+        delegationCard({ to: agentName, task: input.task, ok: true, resultText: null }),
       // execute() throws DelegationPendingError — the runner must intercept this
       // and call handleDelegation() to suspend the parent and create the child job.
       // The tool never actually returns a value; the signal IS the error.

@@ -20,6 +20,14 @@ export const toolCalls = pgTable(
     // makes this row JOINABLE to the transcript message and to llm_calls by
     // turn — the full-copy tool_output was previously unlinkable.
     toolCallId: text('tool_call_id'),
+    // P1 (plan « De la maquette au produit ») : la carte DÉCLARÉE par l'outil
+    // et la charge utile que son present() a tirée de la sortie — persistées
+    // ici pour que l'écran lise la ligne sans rejouer l'outil ni connaître son
+    // nom. null sur les lignes antérieures à 0092 et sur celles que
+    // l'enregistreur vivant du CLI écrit sans sortie exploitable : l'écran le
+    // dit tel quel (entrée et sortie brutes), il n'invente pas une carte.
+    card: text('card'),
+    presented: jsonb('presented'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [

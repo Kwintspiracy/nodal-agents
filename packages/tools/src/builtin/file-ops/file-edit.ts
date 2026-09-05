@@ -12,6 +12,7 @@ import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { detailOf, failureText, writtenFile } from '../../presenters';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
@@ -62,6 +63,13 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
   card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', {
+          bytes: output.bytes,
+          detail: detailOf(output, ['edited', 'bytes']),
+        })
+      : failureText(output.reason),
   mutatesWorkspace: true,
   // The ONE file this edit is about to change — same contract, same reasons
   // as file_write's hook (declared target, resolved twice, empty on a

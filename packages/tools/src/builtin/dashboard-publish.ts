@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { agentJobs, eq } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
+import { sentCard } from '../presenters';
 
 export const DashboardPublishInputSchema = z.object({
   text: z
@@ -39,6 +40,7 @@ export const dashboardPublishTool: ToolDefinition<
   inputSchema: DashboardPublishInputSchema,
   riskLevel: 'write',
   card: 'sent',
+  present: () => sentCard({ channel: 'dashboard', kind: 'dashboard' }),
   execute: async (input, ctx) => {
     await ctx.db
       .update(agentJobs)

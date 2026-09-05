@@ -26,6 +26,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
+import { terminalCard } from '../presenters';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
 import { buildChildEnv } from './child-env';
 import { SHARED_WORKSPACE_LABEL } from './file-ops/workspace';
@@ -198,6 +199,14 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
     card: 'terminal',
+    present: ({ output }) =>
+      terminalCard({
+        command: `${output.interpreter} ${output.script}`,
+        exitCode: output.exitCode,
+        timedOut: output.timedOut,
+        stdout: output.stdout,
+        stderr: output.stderr,
+      }),
     mutatesWorkspace: true,
     defaultApproval: 'require_approval',
     // TOUS les dossiers attachés, jamais le bundle de la skill. Le contrat du

@@ -4,7 +4,12 @@
 import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
-import type { MutationTarget, OperationRiskLevel, ToolCard } from '@nodal-agents/shared';
+import type {
+  MutationTarget,
+  OperationRiskLevel,
+  ToolCard,
+  ToolCardPayload,
+} from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
@@ -12,7 +17,7 @@ export type RiskLevel = OperationRiskLevel;
 
 // Re-exported so a tool file declaring `resolveMutationTargets` or `card`
 // imports its argument type from the same place as the field itself.
-export type { MutationTarget, ToolCard };
+export type { MutationTarget, ToolCard, ToolCardPayload };
 
 // ─── ToolContext ───────────────────────────────────────────────────────────────
 
@@ -265,6 +270,26 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * registry test (`cards.test.ts`), which names any builtin that falls back.
    */
   card?: ToolCard;
+  /**
+   * How THIS tool's output fills its card's payload (shapes in
+   * `@nodal-agents/shared`, `tool-cards.ts`; builders in `presenters.ts`).
+   * Required for every structured card (`read`, `search`, `files`, `table`,
+   * `terminal`, `sent`, `checks`, `delegation`) — `assertToolCard` refuses the
+   * tool otherwise, at registration. A `text` card needs none (the output is
+   * shown as text); `generic` carries nothing.
+   *
+   * Called ONCE per successful execution, in `executeTool`, and the payload is
+   * persisted on the `tool_calls` row (`presented`) — the screen never re-runs
+   * a presenter, it reads what was recorded (same model as DeepSeek Harness's
+   * result `meta`). For a failed output (`{ ok: false, reason }`) return
+   * `failureText(reason)`: the row keeps the declared card, the payload says
+   * why there is nothing to draw.
+   */
+  // Declared as a METHOD, not a function-typed property: method parameters
+  // stay bivariant under strictFunctionTypes, so a tool typed on its own
+  // input/output still assigns to the erased ToolDefinition<ZodTypeAny, unknown>
+  // the registry and the audit path hold (same reason `execute` is a method).
+  present?(args: { input: z.infer<TInput>; output: TOutput }): ToolCardPayload;
   /**
    * Approval posture when NO approval rule matches this tool. Absent (the norm)
    * means "execute" — the historical default. A tool sets this to

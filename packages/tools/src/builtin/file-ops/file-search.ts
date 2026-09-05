@@ -9,6 +9,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { failureText, searchCard } from '../../presenters';
 import {
   assertWorkspacesConfigured,
   resolveAndCheckPath,
@@ -92,6 +93,18 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
   inputSchema: FileSearchInputSchema,
   riskLevel: 'read',
   card: 'search',
+  present: ({ input, output }) =>
+    output.ok
+      ? searchCard({
+          query: input.pattern,
+          hits: output.matches.map((m) =>
+            m.kind === 'content'
+              ? { title: m.path, ref: `${m.path}:${m.line}`, snippet: m.snippet }
+              : { title: m.path, ref: m.path },
+          ),
+          truncated: output.truncated,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     try {
       const workspaces = assertWorkspacesConfigured(ctx);

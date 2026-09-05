@@ -1,11 +1,14 @@
-// cards.ts — la carte d'un outil, résolue en UN endroit (plan « De la maquette
-// au produit », P1).
+// cards.ts — la carte d'un outil, et sa charge utile, résolues en UN endroit
+// (plan « De la maquette au produit », P1).
 //
-// LE CONTRAT. Un outil déclare `card` — comment son résultat se montre. L'écran
-// de conversation dispatche sur cette valeur, jamais sur le nom de l'outil :
-// c'est ce qui empêche l'écran de devenir un `switch` sur des noms qu'il faut
-// éditer à chaque outil ajouté (revue Codex, 05/09 : « sans ce contrat, l'écran
-// meurt »).
+// LE CONTRAT. Un outil déclare `card` — comment son résultat se montre — et,
+// pour toute carte à structure, `present()` — comment on tire de SA sortie la
+// charge utile de CETTE carte (formes dans `@nodal-agents/shared`,
+// `tool-cards.ts`). L'écran de conversation dispatche sur la carte et lit la
+// charge utile, jamais le nom de l'outil : c'est ce qui empêche l'écran de
+// devenir un `switch` sur des noms qu'il faut éditer à chaque outil ajouté
+// (revue Codex, 05/09 : « sans ce contrat, l'écran meurt » ; passes 12-13 :
+// « une étiquette sans forme oblige à dispatcher par nom quand même »).
 //
 // LE REPLI, ET POURQUOI IL EST HONNÊTE. Un outil SANS carte rend `generic`, la
 // carte qui affiche l'entrée et la sortie brutes en le disant. Ce n'est pas un
@@ -16,21 +19,22 @@
 // celui qui manque. Les outils tiers (serveurs MCP, adaptateurs) y ont droit,
 // le temps qu'une carte plus juste leur soit donnée.
 //
-// CE QUI N'EST PAS UN REPLI. Une carte DÉCLARÉE hors du vocabulaire n'est pas
-// une absence, c'est une violation du contrat — la première version la
-// rabattait sur `generic` en silence, et la revue (passe 11) a nommé ça pour ce
-// que c'était : un repli silencieux. Elle lève, au plus tôt : à l'enregistrement
-// pour les outils du registre, à la première lecture pour les autres.
+// CE QUI N'EST PAS UN REPLI. Une carte DÉCLARÉE hors du vocabulaire, une carte à
+// structure sans `present()`, une charge utile qui ne respecte pas la forme de
+// sa carte : trois violations du contrat, trois erreurs LEVÉES — à
+// l'enregistrement quand c'est possible, à la présentation sinon. Jamais un
+// rabattement silencieux sur `generic`.
 
-import { TOOL_CARDS } from '@nodal-agents/shared';
-import type { ToolCard } from '@nodal-agents/shared';
+import { TOOL_CARDS, CARDS_NEEDING_PRESENTER, ToolCardPayloadSchema } from '@nodal-agents/shared';
+import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type { ToolDefinition } from './types';
+import { textCard } from './presenters';
 
 /** La carte des outils qui n'en déclarent pas. Nommée pour être cherchée. */
-export const TOOL_CARD_GENERIC: ToolCard = 'generic';
+export const TOOL_CARD_GENERIC = 'generic' as const satisfies ToolCard;
 
-type CardBearer = Pick<ToolDefinition<z.ZodTypeAny, unknown>, 'name' | 'card'>;
+type CardBearer = Pick<ToolDefinition<z.ZodTypeAny, unknown>, 'name' | 'card' | 'present'>;
 
 /** Un outil a déclaré une carte que le vocabulaire ne connaît pas. */
 export class ToolCardError extends Error {
@@ -46,18 +50,36 @@ export class ToolCardError extends Error {
   }
 }
 
+/** La présentation d'un résultat a violé le contrat de sa carte. */
+export class ToolPresentationError extends Error {
+  constructor(
+    public readonly toolName: string,
+    detail: string,
+  ) {
+    super(`tool "${toolName}": ${detail}`);
+    this.name = 'ToolPresentationError';
+  }
+}
+
 function isKnownCard(value: string): value is ToolCard {
   return (TOOL_CARDS as readonly string[]).includes(value);
 }
 
 /**
- * Lève si l'outil déclare une carte hors du vocabulaire. Ne dit rien d'un outil
- * qui n'en déclare pas — l'absence est permise, l'invention ne l'est pas.
+ * Lève si l'outil déclare une carte hors du vocabulaire, ou une carte à
+ * structure sans `present()`. Ne dit rien d'un outil qui ne déclare pas de
+ * carte — l'absence est permise, l'invention et la demi-déclaration non.
  */
 export function assertToolCard(tool: CardBearer): void {
   const declared: string | undefined = tool.card;
-  if (declared !== undefined && !isKnownCard(declared)) {
-    throw new ToolCardError(tool.name, declared);
+  if (declared === undefined) return;
+  if (!isKnownCard(declared)) throw new ToolCardError(tool.name, declared);
+  if (CARDS_NEEDING_PRESENTER.includes(declared) && tool.present === undefined) {
+    throw new ToolPresentationError(
+      tool.name,
+      `declares card "${declared}" but no \`present()\` — a structured card needs the tool to ` +
+        `say how its output fills that card's payload (packages/tools/src/presenters.ts)`,
+    );
   }
 }
 
@@ -71,4 +93,49 @@ export function cardForTool(tool: CardBearer): ToolCard {
 export function declaresCard(tool: CardBearer): boolean {
   assertToolCard(tool);
   return tool.card !== undefined;
+}
+
+/**
+ * La charge utile d'un résultat, telle que la ligne `tool_calls` la persiste et
+ * que l'écran la lit.
+ *
+ * - l'outil a un `present()` : sa charge utile, VALIDÉE contre la forme de la
+ *   carte. Elle peut être une carte `text` quand le résultat est un échec
+ *   (`failureText`) — la ligne garde la carte déclarée, la charge dit pourquoi
+ *   il n'y a rien à dessiner. Toute autre carte que la déclarée est refusée.
+ * - carte `text` sans `present()` : la sortie, en texte, plafonnée.
+ * - carte `generic` : rien à porter — l'entrée et la sortie sont sur la ligne.
+ * - carte à structure sans `present()` : refusé (déjà refusé à
+ *   l'enregistrement ; répété ici pour les outils nés hors registre).
+ */
+export function presentToolResult(
+  tool: CardBearer,
+  input: unknown,
+  output: unknown,
+): ToolCardPayload {
+  const card = cardForTool(tool);
+  if (tool.present !== undefined) {
+    const raw = tool.present({ input, output });
+    const parsed = ToolCardPayloadSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ToolPresentationError(
+        tool.name,
+        `present() returned a payload that does not fit any card: ${parsed.error.issues
+          .slice(0, 3)
+          .map((i) => `${i.path.join('.') || '<root>'} ${i.message}`)
+          .join('; ')}`,
+      );
+    }
+    if (parsed.data.card !== card && parsed.data.card !== 'text') {
+      throw new ToolPresentationError(
+        tool.name,
+        `present() returned card "${parsed.data.card}" for a tool that declares "${card}"`,
+      );
+    }
+    return parsed.data;
+  }
+  if (card === 'text') return textCard(output);
+  if (card === TOOL_CARD_GENERIC) return { card: TOOL_CARD_GENERIC };
+  // assertToolCard a déjà levé pour ce cas ; la ligne existe pour le typage.
+  throw new ToolPresentationError(tool.name, `declares card "${card}" but no \`present()\``);
 }
