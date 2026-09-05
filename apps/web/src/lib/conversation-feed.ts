@@ -15,6 +15,8 @@
 //              envoi, verdict, délégation)
 //   note     — un rappel du runner à l'agent (les messages `user` qui suivent
 //              la demande sont des nudges, jamais l'utilisateur)
+//   history  — ce qui PRÉCÈDE la demande : l'historique d'une conversation que
+//              le runner préfixe au transcript (thread-history.ts) — replié
 //   child    — un travail confié à un autre agent, avec son propre fil
 //   answer   — la réponse finale, quand le travail est terminé
 //
@@ -143,12 +145,28 @@ export type FeedItem =
   | { kind: 'note'; text: string }
   | {
       kind: 'turn';
+      /** Rang d'affichage, 1..n dans CE job. */
       index: number;
+      /**
+       * Le compteur `turn` du runner, celui de `llm_calls.turn` — lu sur la ligne
+       * d'audit d'un appel du tour (`audit`), ou déduit du tour précédent quand
+       * le tour n'a appelé aucun outil (`inferred`). Le runner avance ce
+       * compteur avant chaque tentative LLM, y compris une tentative rejetée
+       * sans message de l'agent : l'index d'affichage ne suffit pas.
+       */
+      turn: number;
+      turnSource: 'audit' | 'inferred';
       agent: { name: string | null; slug: string | null };
       model: string | null;
       blocks: TurnBlock[];
       usage: TurnUsage | null;
     }
+  /**
+   * Ce qui précède la demande : l'historique d'une conversation (Telegram,
+   * Slack…) que le runner préfixe au transcript (thread-history.ts) pour que
+   * l'agent se souvienne. Ce n'est PAS ce job — le fil le montre replié, à part.
+   */
+  | { kind: 'history'; exchanges: Array<{ role: 'user' | 'agent'; text: string }> }
   | { kind: 'child'; job: FeedChildJob }
   | { kind: 'answer'; text: string }
   | { kind: 'failure'; text: string };
@@ -240,6 +258,38 @@ function outcomeOf(row: FeedToolCallRow | undefined): StepOutcome {
 
 type ReasoningPart = { type: 'reasoning'; text: string };
 
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  return blocksFromContent(withoutReasoning(content))
+    .filter((b) => b.kind === 'text')
+    .map((b) => b.text ?? '')
+    .join('\n');
+}
+
+/** L'index du DERNIER message `user` dont le texte est exactement la tâche ; 0 sinon. */
+function lastIndexOfTask(messages: readonly unknown[], task: string): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i] as { role?: unknown; content?: unknown };
+    if (m.role === 'user' && typeof m.content === 'string' && m.content === task) return i;
+  }
+  return 0;
+}
+
+/** L'historique en échanges lisibles : qui a dit quoi, sans les résultats d'outils. */
+function exchangesOf(
+  messages: readonly unknown[],
+): Array<{ role: 'user' | 'agent'; text: string }> {
+  const out: Array<{ role: 'user' | 'agent'; text: string }> = [];
+  for (const raw of messages) {
+    const m = raw as { role?: unknown; content?: unknown };
+    if (m.role !== 'user' && m.role !== 'assistant') continue;
+    const text = textOf(m.content).trim();
+    if (text === '') continue;
+    out.push({ role: m.role === 'user' ? 'user' : 'agent', text });
+  }
+  return out;
+}
+
 /** Le contenu sans ses parties `reasoning` — blocksFromContent ne les connaît pas et les rendrait en texte JSON. */
 function withoutReasoning(content: unknown): unknown {
   if (!Array.isArray(content)) return content;
@@ -318,11 +368,21 @@ export function buildConversationFeed(
     usageByTurn.set(call.turn, u);
   }
 
+  // La frontière : le message `user` qui EST la demande de ce job — le dernier
+  // égal à `job.task` (l'historique préfixé peut contenir une demande identique
+  // plus ancienne ; les messages `user` qui suivent la demande sont des rappels
+  // du runner, jamais égaux à la tâche). Rien trouvé : tout est ce job.
+  const boundary = lastIndexOfTask(job.messages, job.task);
+  const before = job.messages.slice(0, boundary);
+  const current = job.messages.slice(boundary);
+  if (before.length > 0) items.push({ kind: 'history', exchanges: exchangesOf(before) });
+
   let turnIndex = 0;
+  let lastTurn = 0;
   let sawRequest = false;
   let toolCallCount = 0;
 
-  for (const raw of job.messages) {
+  for (const raw of current) {
     const msg = raw as { role?: unknown; content?: unknown };
     const role = msg.role;
 
@@ -363,6 +423,7 @@ export function buildConversationFeed(
         if (pending.length > 0) blocks.push({ kind: 'steps', steps: pending });
         pending = [];
       };
+      const rowTurns: number[] = [];
       for (const text of reasoningParts(msg.content)) {
         pending.push({ kind: 'reasoning', text });
       }
@@ -371,6 +432,7 @@ export function buildConversationFeed(
         toolCallCount += 1;
         const toolName = b.toolName ?? 'unknown';
         const row = rowFor(b.toolCallId ?? '', toolName);
+        if (row && row.turn !== null) rowTurns.push(row.turn);
         const card = row && isToolCard(row.card) ? row.card : null;
         const step: Extract<Step, { kind: 'tool' }> = {
           kind: 'tool',
@@ -392,10 +454,16 @@ export function buildConversationFeed(
       }
       flush();
 
-      const u = usageByTurn.get(turnIndex);
+      const auditTurn = rowTurns[0];
+      const turn = auditTurn ?? lastTurn + 1;
+      const turnSource: 'audit' | 'inferred' = auditTurn !== undefined ? 'audit' : 'inferred';
+      lastTurn = turn;
+      const u = usageByTurn.get(turn);
       items.push({
         kind: 'turn',
         index: turnIndex,
+        turn,
+        turnSource,
         agent: { name: job.agentName, slug: job.agentSlug },
         model: u?.model ?? null,
         blocks,

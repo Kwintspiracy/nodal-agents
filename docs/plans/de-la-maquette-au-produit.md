@@ -55,7 +55,7 @@ fichier joint, et une ligne ».
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
-| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1 codée et élargie** (carte + charge utile persistée, 06/09), passes Codex 11-13 traitées, passe 14 en cours · P2 suivante |
+| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1 CLOSE** (passe 16 : « aucun constat neuf ») · **P2 codée** (page /spaces, 06/09) en revue Codex (passe 17) · P3-P4 suivantes |
 | 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
 | 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
@@ -152,6 +152,17 @@ Les ~140 adaptateurs de connecteurs restent `generic` : leur qualification est
 une pierre à part.
 
 ### P2 · La conversation — L
+
+> **État au 06/09** : codée — `apps/web/src/lib/conversation-feed.ts` (le
+> modèle, pur), `app/(dashboard)/spaces/` (liste + fil), action
+> `getSpaceConversationAction`, entrée « Spaces » dans la barre latérale (la
+> seule touche à l'existant). Repli/carte décidé sur la carte persistée ET sur
+> ce que la charge a à dessiner (`showsAlone`). Les messages `user` après la
+> demande sont lus comme des rappels du runner — **à vérifier contre
+> `thread-history.ts`** (historique préfixé d'une conversation Telegram),
+> question posée à la passe 17. Vérification visuelle : la base de Quentin
+> est en `local-auth`, je n'ai pas le mot de passe — la page est prouvée par
+> `tsc`, le rendu HTML statique et l'action sur pglite, pas par Playwright.
 
 **Ce que ça pose.** La page du nouvel espace rend la conversation dessinée : les
 messages de l'utilisateur, la prose de l'agent, les groupes d'actions repliés

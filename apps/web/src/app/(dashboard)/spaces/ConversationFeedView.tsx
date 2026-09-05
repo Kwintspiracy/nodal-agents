@@ -17,6 +17,7 @@ import type {
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
 import StepsGroup from './StepsGroup.tsx';
+import HistoryGroup from './HistoryGroup.tsx';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
@@ -57,7 +58,7 @@ function FeedItemView({ item }: { item: FeedItem }) {
             meta={[
               item.model,
               item.usage
-                ? `${formatTokens(item.usage.inputTokens + item.usage.outputTokens)} tokens`
+                ? `${item.turnSource === 'inferred' ? '≈ ' : ''}${formatTokens(item.usage.inputTokens + item.usage.outputTokens)} tokens`
                 : null,
               item.usage && item.usage.durationMs > 0 ? formatMs(item.usage.durationMs) : null,
               item.usage && item.usage.costUsd !== null ? formatCost(item.usage.costUsd) : null,
@@ -73,6 +74,8 @@ function FeedItemView({ item }: { item: FeedItem }) {
           )}
         </Turn>
       );
+    case 'history':
+      return <HistoryGroup exchanges={item.exchanges} />;
     case 'child':
       return <ChildCard job={item.job} />;
     case 'answer':

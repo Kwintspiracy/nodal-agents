@@ -28,6 +28,13 @@ const tool = (over: Partial<Extract<Step, { kind: 'tool' }>>): Extract<Step, { k
 const feed: ConversationFeed = {
   items: [
     {
+      kind: 'history',
+      exchanges: [
+        { role: 'user', text: 'Quoi de neuf hier ?' },
+        { role: 'agent', text: 'Deux nouveautés hier.' },
+      ],
+    },
+    {
       kind: 'request',
       text: 'Prépare la revue',
       origin: { channel: 'cron', scheduleName: 'Revue mensuelle', chatId: null },
@@ -36,6 +43,8 @@ const feed: ConversationFeed = {
     {
       kind: 'turn',
       index: 1,
+      turn: 1,
+      turnSource: 'audit',
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'claude-opus-5',
       usage: {
@@ -168,7 +177,7 @@ describe('ConversationFeedView', () => {
 
   it('les actions mineures sont repliées sous un titre déduit des CARTES, pas des noms', () => {
     const summary = summarizeSteps(
-      feed.items[1]!.kind === 'turn' ? (feed.items[1].blocks[1] as { steps: Step[] }).steps : [],
+      feed.items[2]!.kind === 'turn' ? (feed.items[2].blocks[1] as { steps: Step[] }).steps : [],
     );
     expect(summary).toBe('reasoning · 1 table · 1 raw result');
     expect(html).toContain(summary);
@@ -200,6 +209,17 @@ describe('ConversationFeedView', () => {
     expect(html).toContain('legacy_tool');
     expect(html).toContain('files · raw');
     expect(html).toContain('&quot;path&quot;: &quot;a.md&quot;');
+  });
+
+  it("l'historique de la conversation est là, replié, et dit combien de messages il porte", () => {
+    expect(html).toContain('Earlier in this conversation');
+    expect(html).toContain('2 messages');
+    // Replié : le texte des anciens échanges n'est pas dans le HTML initial…
+    expect(html).not.toContain('Deux nouveautés hier.');
+    // …et il précède la demande.
+    expect(html.indexOf('Earlier in this conversation')).toBeLessThan(
+      html.indexOf('Prépare la revue'),
+    );
   });
 
   it('le rappel du runner est dit comme tel, et la réponse finale ferme le fil', () => {

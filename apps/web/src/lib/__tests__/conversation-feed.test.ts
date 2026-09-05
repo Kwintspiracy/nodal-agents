@@ -496,3 +496,230 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
     expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: 'delivery_spam_guard' });
   });
 });
+
+describe('buildConversationFeed — historique préfixé et alignement des tours (passe 17)', () => {
+  const TASK = 'Quoi de neuf ?';
+
+  it("l'historique d'une conversation Telegram est un item à part ; la demande est le DERNIER message égal à la tâche", () => {
+    // thread-history.ts préfixe les échanges précédents en messages ordinaires,
+    // avec des appels d'outil synthétiques `history-tool-N` et un résultat
+    // `messageId: 'history'`. La demande précédente était la MÊME phrase.
+    const j: FeedJob = {
+      ...job,
+      channel: 'telegram',
+      task: TASK,
+      result: 'Rien depuis hier.',
+      messages: [
+        { role: 'user', content: TASK },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'history-tool-1',
+              toolName: 'telegram_send_message',
+              input: { text: 'Deux nouveautés hier.' },
+            },
+            { type: 'text', text: '[ledger] 1 action' },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'history-tool-1',
+              toolName: 'telegram_send_message',
+              output: { type: 'json', value: { messageId: 'history' } },
+            },
+          ],
+        },
+        { role: 'user', content: 'Merci' },
+        { role: 'assistant', content: 'De rien.' },
+        // ── la demande de CE job ──
+        { role: 'user', content: TASK },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'c1',
+              toolName: 'web_search',
+              input: { query: 'nodal' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'c1',
+              toolName: 'web_search',
+              output: { type: 'json', value: { results: [] } },
+            },
+          ],
+        },
+        { role: 'assistant', content: 'Rien depuis hier.' },
+      ],
+    };
+    const rows: FeedToolCallRow[] = [
+      {
+        toolCallId: 'c1',
+        toolName: 'web_search',
+        card: 'search',
+        presented: null,
+        durationMs: 900,
+        turn: 1,
+        toolInput: {},
+        toolOutput: '{"results":[]}',
+        createdAt: null,
+      },
+    ];
+    const llm: FeedLlmCallRow[] = [
+      {
+        turn: 1,
+        source: 'job',
+        modelEffective: 'm',
+        provider: 'p',
+        inputTokens: 10,
+        outputTokens: 1,
+        cachedTokens: 0,
+        cacheCreationTokens: null,
+        costUsd: null,
+        durationMs: 5,
+      },
+      {
+        turn: 2,
+        source: 'job',
+        modelEffective: 'm',
+        provider: 'p',
+        inputTokens: 20,
+        outputTokens: 2,
+        cachedTokens: 0,
+        cacheCreationTokens: null,
+        costUsd: null,
+        durationMs: 6,
+      },
+    ];
+    const feed = buildConversationFeed(j, rows, llm);
+    expect(feed.items.map((i) => i.kind)).toEqual(['history', 'request', 'turn', 'turn', 'answer']);
+    expect(feed.items[0]).toEqual({
+      kind: 'history',
+      exchanges: [
+        { role: 'user', text: TASK },
+        { role: 'agent', text: '[ledger] 1 action' },
+        { role: 'user', text: 'Merci' },
+        { role: 'agent', text: 'De rien.' },
+      ],
+    });
+    // Aucun « Nodal reminded the agent » pour de vrais messages de l'utilisateur.
+    expect(feed.items.some((i) => i.kind === 'note')).toBe(false);
+    // Les tours sont ceux de CE job : 2, pas 4 ; et l'historique n'a pas compté d'appels.
+    expect(feed.totals.turns).toBe(2);
+    expect(feed.totals.toolCalls).toBe(1);
+    const t1 = feed.items[2];
+    expect(t1?.kind === 'turn' && [t1.index, t1.turn, t1.turnSource]).toEqual([1, 1, 'audit']);
+    expect(t1?.kind === 'turn' && t1.usage?.inputTokens).toBe(10);
+  });
+
+  it("le tour d'un message vient de la ligne d'audit : une tentative rejetée sans message de l'agent décale le compteur, pas le fil", () => {
+    // Runner : tour 1 = appel c1 ; tour 2 = tentative rejetée (outil indisponible)
+    // → seulement un `[système]` ; tour 3 = appel c2 ; tour 4 = réponse texte.
+    const j: FeedJob = {
+      ...job,
+      messages: [
+        { role: 'user', content: job.task },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'file_read', input: { path: 'a' } },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'c1',
+              toolName: 'file_read',
+              output: { type: 'json', value: { ok: true } },
+            },
+          ],
+        },
+        { role: 'user', content: "[système] L'outil `foo` n'existe pas." },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool-call', toolCallId: 'c2', toolName: 'file_read', input: { path: 'b' } },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'c2',
+              toolName: 'file_read',
+              output: { type: 'json', value: { ok: true } },
+            },
+          ],
+        },
+        { role: 'assistant', content: 'Voilà.' },
+      ],
+    };
+    const rows: FeedToolCallRow[] = [
+      {
+        toolCallId: 'c1',
+        toolName: 'file_read',
+        card: 'read',
+        presented: null,
+        durationMs: 1,
+        turn: 1,
+        toolInput: {},
+        toolOutput: '{"ok":true}',
+        createdAt: null,
+      },
+      {
+        toolCallId: 'c2',
+        toolName: 'file_read',
+        card: 'read',
+        presented: null,
+        durationMs: 1,
+        turn: 3,
+        toolInput: {},
+        toolOutput: '{"ok":true}',
+        createdAt: null,
+      },
+    ];
+    const llm = (turn: number, input: number): FeedLlmCallRow => ({
+      turn,
+      source: 'job',
+      modelEffective: `m${turn}`,
+      provider: 'p',
+      inputTokens: input,
+      outputTokens: 0,
+      cachedTokens: 0,
+      cacheCreationTokens: null,
+      costUsd: null,
+      durationMs: 1,
+    });
+    const feed = buildConversationFeed(j, rows, [
+      llm(1, 100),
+      llm(2, 200),
+      llm(3, 300),
+      llm(4, 400),
+    ]);
+    const turns = feed.items.filter((i) => i.kind === 'turn');
+    expect(
+      turns.map(
+        (t) => t.kind === 'turn' && [t.index, t.turn, t.turnSource, t.model, t.usage?.inputTokens],
+      ),
+    ).toEqual([
+      [1, 1, 'audit', 'm1', 100],
+      [2, 3, 'audit', 'm3', 300], // pas m2 : le tour 2 n'a produit aucun message
+      [3, 4, 'inferred', 'm4', 400], // texte seul : déduit du tour précédent, et dit tel quel
+    ]);
+    expect(feed.items.filter((i) => i.kind === 'note')).toHaveLength(1);
+  });
+});
