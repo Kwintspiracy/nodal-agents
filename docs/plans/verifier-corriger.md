@@ -39,7 +39,7 @@ jugement couvre l'intention, le design et la qualité des tests eux-mêmes.
 |---|----|---------|----|
 | 0 | Passes Codex sur la v6 | Passe 7 (03/09) : 11 questions, 9 TROU/FAUX, 8 bloquants — fermés en v6.1. Passe 8 : 6 fermés, 5 partiels (résidus v4 dans PR④, la primitive et le cron), **1 neuf bloquant** (deux contrats de hash) — fermés en v6.2 : hash unique normatif, PR④ réécrite, `review_pending` dans l'union, prédicats par livrable, reprise idempotente du cron, écrivains du modèle atomique. Passe 9 : tout fermé, **1 neuf bloquant** (crash entre `completedAt` et la livraison canal = root jamais relivré — bug latent EXISTANT, vérifié) → v6.3 : outbox `job_deliveries` sur le modèle atomique, réclamation à deux populations, section v3 marquée historique. Passe 10 : tout fermé, **2 neufs bloquants dans le correctif de la passe 9** (pas de claim atomique ; latence de 120 s pour les jobs interactifs) → v6.4 : claim par `UPDATE … RETURNING` avec lease, drain immédiat post-commit, tick en reprise seule. Passe 11 (dernière sur plan) : drain FERMÉ ; claim NON FERMÉ (lease 60 s < timeouts réels des adaptateurs, vérifié) + 1 neuf (borne 3 hors du claim) → v6.5 : `attempts < 3` dans le WHERE, timeout d'envoi imposé par l'outbox (90 s), lease = 2× (180 s). **Boucle sur plan CLOSE — 11 passes, 14 bloquants fermés. Prochaine action : découpage de PR①.** | ✅ **close** |
 | ① | Fondations + observation outillée | Schéma exact — état par **(job, livrable)** (v6-A) ; **vérificateurs pluggables**, le code (liste ordonnée de commandes, v5-A) en est le premier ; `projectKey` partagé + migration ; primitive terminale typée (cron compris) ; **outbox de livraison `job_deliveries`** (v6.3 — ferme un bug existant) ; moteur pur testé ; **écrivains d'intention sur les cinq surfaces + réglage utilisateur des surfaces (D8)** ; **UI de configuration et de lecture (D9)** ; infra de tests de course sur vrai Postgres. **Garde NON branchée** : la preuve tourne, se journalise et se lit — c'est la phase d'observation (v5-C). | ⬜ en découpage (03/09) |
-| ② | **La vérification se choisit toute seule** (v7 — nouveau, remonté devant tout le reste) | Le type de livrable se DÉDUIT de ce qui est produit ; les vérifications **sans pouvoir** tournent toujours, sans configuration ni approbation ; les commandes du projet sont **découvertes** et approuvées **dans le canal d'où vient la demande** ; les exigences de la demande deviennent des critères vérifiables. Détail : § « v7 — vérifier sans configurer ». | ⬜ **prochain** |
+| ② | **La vérification se choisit toute seule** (v7 — nouveau, remonté devant tout le reste) | Le type de livrable se DÉDUIT de ce qui est produit ; les vérifications **sans pouvoir** tournent toujours, sans configuration ni approbation ; les commandes du projet sont **découvertes** et approuvées **dans le canal d'où vient la demande** ; les exigences de la demande deviennent des critères vérifiables. Détail : § « v7 — vérifier sans configurer ». | **v7-A faite** (05/09) — restent B, C, D |
 | ②→③ | Observation | Une semaine de vrais jobs sur la stack de Quentin, preuve journalisée et lisible sans bloquer : taux de rouge, faux rouges, durée des preuves. Les seuils de la garde se calent sur ces chiffres. **Déplacée après v7** : sans elle, l'observation ne mesure que les projets configurés à la main, c'est-à-dire aucun. | ⬜ |
 | ③ | Garde active + `code_task` | Garde branchée sur la primitive (états de décision, libellé « succès non vérifié »), preuve code_task sous verrou décisionnelle, compteurs persistants (`red_streak`), **extrait de feedback borné** (v5-B), **contrôle d'oracle sur les tests écrits par l'agent** (v6-B). | ⬜ |
 | ④ | Runtime CLI | Finally unique (heartbeat + verrous), multi-projets, réparation unique, livraison conditionnée au résultat typé. | ⬜ |
@@ -152,15 +152,41 @@ quatre.
 
 ### Découpage en PR (à raffiner en tickets avant de coder)
 
-| PR | Contenu | Dépend de |
-|---|---|---|
-| **v7-A** | Le type de livrable vient du hook, plus de littéral dans `intent.ts` ; `office_file` et `outbound_action` traversent la tuyauterie jusqu'à l'écran, sans vérificateur (état « pas encore vérifiable ») | ① |
-| **v7-B** | Vérificateur `office_file` (ouvre, recalcule, invariants de structure) et `outbound_action` (constat d'envoi depuis l'outbox), tous deux **sans pouvoir** | v7-A |
-| **v7-C** | Découverte des commandes d'un projet + proposition cochée + carte d'approbation dans le canal d'origine | v7-A |
-| **v7-D** | Extraction des critères depuis la demande + filtre mécanique + rendu dans le détail du run | v7-A, v7-B |
+| PR | Contenu | Dépend de | État |
+|---|---|---|---|
+| **v7-A** | Le type de livrable vient du hook, plus de littéral dans `intent.ts` ; `office_file` traverse la tuyauterie jusqu'à l'écran, avec un vérificateur qui rend « pas encore vérifiable » | ① | FAIT le 05/09 (`22255204` + `5198a8ee`) |
+| **v7-B** | Vérificateur `office_file` (ouvre, recalcule, invariants de structure) et `outbound_action` (constat d'envoi depuis l'outbox), tous deux **sans pouvoir**. **`outbound_action` est descendu de A vers B** : son constat vient de l'outbox, pas d'une intention de mutation, et la primitive ne traite que les livrables mutables | v7-A | à faire |
+| **v7-C** | Découverte des commandes d'un projet + proposition cochée + carte d'approbation dans le canal d'origine | v7-A | à faire |
+| **v7-D** | Extraction des critères depuis la demande + filtre mécanique + rendu dans le détail du run | v7-A, v7-B | à faire |
 
 Chaque PR suit la discipline de ① : tests sur données réelles, une mutation par
 garde, `codex review` en boucle jusqu'au retour vide.
+
+### v7-A — livrée le 05/09, et ce qu'elle a corrigé dans le plan
+
+Ce que le plan disait, et qui était faux :
+
+| Le plan disait | Ce que le code a montré |
+|---|---|
+| `outbound_action` traverse la tuyauterie en v7-A | **Non.** Son constat vient de l'**outbox**, pas d'une intention de mutation, et la primitive terminale ne traite que les livrables **mutables** (générations sale / vérifiée). Descendu en v7-B, avec son propre chemin |
+| `office_file` traverse **sans vérificateur** | **Impossible.** `finalize.ts` résout un vérificateur pour CHAQUE livrable : un type sans vérificateur fait **lever** la finalisation d'un job parfaitement normal. Il en faut donc un, qui rend « pas configuré » |
+| Le type se déduit de ce qui est produit | Vrai, mais **pas depuis le chemin**. Une première version classait par extension : `data/fixtures/users.csv` devenait un document, donc éditer une donnée de test ne relançait plus les tests. Le type vient de l'**outil**, jamais d'un suffixe |
+
+Ce que v7-A a livré :
+
+- le type de livrable est **obligatoire** sur une cible de mutation — un outil
+  mutant ajouté sans le déclarer est une erreur du compilateur ;
+- deux règles de canonicalisation, choisies par un `switch` **exhaustif** : le
+  projet englobant pour un projet de code, le fichier lui-même pour un
+  document ;
+- un type déclaré sans règle est **refusé**, et l'écriture n'a pas lieu ;
+- pas de ligne `code_projects` pour un document — il apparaîtrait comme un
+  projet dans l'onglet Code ;
+- l'écran ne renvoie plus un document vers « sa carte de projet dans Code ».
+
+Preuve par mutation : reclasser le hook Office en projet de code fait rougir
+les deux tests d'intention. Côté finalisation, un fichier témoin constate
+qu'aucune commande du projet ne tourne pour un document.
 
 ### Ce que v7 ne fait PAS
 
