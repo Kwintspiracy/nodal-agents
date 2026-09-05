@@ -61,7 +61,10 @@ const productTools: AnyTool[] = [...registry.list(), ...capabilityTools];
  *   read       — le contenu d'un document lu
  *   search     — des correspondances
  *   files      — des fichiers écrits, modifiés ou listés
- *   table      — des lignes à colonnes stables
+ *   table      — des lignes à colonnes stables, et RIEN AUTOUR : la sortie EST
+ *                le tableau (query_memory) ou l'écran sait où le lire (xlsx_read).
+ *                Une enveloppe `{ ok, models }` reste `text` (passe 12) : la
+ *                carte ne saurait pas quel champ ouvrir sans dispatcher par nom.
  *   terminal   — une commande, sa sortie, son code de sortie
  *   sent       — quelque chose est parti vers un canal
  *   checks     — un verdict de vérification
@@ -92,9 +95,9 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   file_read: 'read',
   file_search: 'search',
   file_write: 'files',
-  list_conversations: 'table',
-  list_models: 'table',
-  list_schedules: 'table',
+  list_conversations: 'text',
+  list_models: 'text',
+  list_schedules: 'text',
   mark_memory_helpful: 'text',
   mark_memory_outdated: 'text',
   pptx_append_slides: 'files',
