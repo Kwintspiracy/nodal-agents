@@ -228,6 +228,20 @@ doit lui poser la question là où il est. Les boutons en ligne de Telegram
 existent déjà ; ce qui manque est le lien entre « une preuve attend une
 approbation » et « ce job vient de ce canal ».
 
+### Ce que la découverte rend sur CE dépôt (essai réel, 05/09)
+
+`package.json` de Nodal-Agents porte dix-neuf scripts. La découverte en propose
+quatre, dans cet ordre : `pnpm run typecheck`, `pnpm run lint`, `pnpm run test`,
+`pnpm run build` — avec `pnpm` lu dans `packageManager`, pas deviné. C'est
+exactement ce qu'une personne taperait.
+
+Elle ne propose PAS `deps:check`, `format:check`, `secrets:check` ni
+`hygiene:check`, qui seraient pourtant de bonnes preuves ici. C'est délibéré :
+ces noms sont des conventions de CE dépôt, et élargir la liste ramènerait le
+problème qu'elle évite (`test:e2e` démarre un navigateur, `build:docs` publie un
+site). **La découverte propose un plancher, pas un plafond** : le propriétaire
+ajoute ce qu'il veut par-dessus, et c'est l'écran qui existe pour ça.
+
 ### v7-C, seconde moitié — l'approbation dans le canal, découpée
 
 **L'infrastructure existe déjà**, vérifiée dans le code le 05/09 :
