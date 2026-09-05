@@ -1,0 +1,804 @@
+<!-- artifact: https://claude.ai/code/artifact/a8cf8e8f-2bc8-4787-bb0d-176c326d6266 -->
+<title>Montrer ce qui a été fait</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Literata:opsz,wght@7..72,400..600&family=JetBrains+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f1f3f4;
+    --surface: #ffffff;
+    --sunk: #e5e8ea;
+    --ink: #171a1d;
+    --ink-2: #4a5257;
+    --ink-3: #7b8388;
+    --rule: #d8dcde;
+    --accent: #0f6b63;
+    --accent-bg: #dcece9;
+    --other: #565a86;
+    --other-bg: #e6e6f2;
+    --warn: #8a5a1c;
+    --warn-bg: #f3e9da;
+    --mono-bg: #e9ecee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #14171a;
+      --surface: #1c2024;
+      --sunk: #24292e;
+      --ink: #e5e8ea;
+      --ink-2: #a8b0b5;
+      --ink-3: #767d82;
+      --rule: #2f353a;
+      --accent: #4fbfae;
+      --accent-bg: #14302c;
+      --other: #9a9ec9;
+      --other-bg: #23243a;
+      --warn: #d3a45c;
+      --warn-bg: #2e2617;
+      --mono-bg: #171b1e;
+    }
+  }
+  :root[data-theme='dark'] {
+    --ground: #14171a;
+    --surface: #1c2024;
+    --sunk: #24292e;
+    --ink: #e5e8ea;
+    --ink-2: #a8b0b5;
+    --ink-3: #767d82;
+    --rule: #2f353a;
+    --accent: #4fbfae;
+    --accent-bg: #14302c;
+    --other: #9a9ec9;
+    --other-bg: #23243a;
+    --warn: #d3a45c;
+    --warn-bg: #2e2617;
+    --mono-bg: #171b1e;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: Literata, Georgia, serif;
+    font-size: 17px;
+    line-height: 1.68;
+    font-optical-sizing: auto;
+  }
+  .wrap {
+    max-width: 740px;
+    margin: 0 auto;
+    padding: 0 22px 96px;
+  }
+
+  header {
+    padding: 56px 0 12px;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+    font-size: clamp(34px, 6.4vw, 52px);
+    font-weight: 750;
+    font-stretch: 86%;
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 20px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 32em;
+  }
+
+  h2 {
+    font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+    font-size: 25px;
+    font-weight: 700;
+    font-stretch: 88%;
+    letter-spacing: -0.012em;
+    margin: 52px 0 12px;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+    font-size: 17.5px;
+    font-weight: 700;
+    margin: 0 0 6px;
+  }
+  p {
+    margin: 0 0 15px;
+    max-width: 34em;
+  }
+  strong,
+  b {
+    font-weight: 600;
+  }
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.84em;
+    background: var(--mono-bg);
+    padding: 1.5px 5px;
+    border-radius: 4px;
+  }
+
+  .tight p {
+    margin-bottom: 7px;
+  }
+
+  /* Les deux harnais, cote à cote */
+  .harnais {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(285px, 1fr));
+    gap: 14px;
+    margin: 24px 0;
+  }
+  .h-card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .h-card .qui {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--other);
+    display: block;
+    margin-bottom: 10px;
+  }
+  .h-card ul {
+    margin: 10px 0 0;
+    padding-left: 17px;
+  }
+  .h-card li {
+    font-size: 15.5px;
+    line-height: 1.5;
+    margin: 7px 0;
+    color: var(--ink-2);
+  }
+  .h-card li b {
+    color: var(--ink);
+  }
+
+  .verdict {
+    background: var(--other-bg);
+    border-left: 4px solid var(--other);
+    border-radius: 0 10px 10px 0;
+    padding: 18px 22px;
+    margin: 22px 0;
+  }
+  .verdict p {
+    margin: 0;
+    max-width: none;
+  }
+  .verdict p + p {
+    margin-top: 10px;
+  }
+
+  /* Vocabulaire — les cartes que chaque outil déclare */
+  .vocab {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 14px 0 4px;
+  }
+  .chip {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    background: var(--sunk);
+    color: var(--ink-2);
+    border-radius: 6px;
+    padding: 4px 10px;
+  }
+
+  /* Aujourd'hui chez nous */
+  .constat {
+    background: var(--warn-bg);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 20px 0;
+  }
+  .constat p:last-child {
+    margin-bottom: 0;
+  }
+  .constat b {
+    color: var(--warn);
+  }
+
+  /* Propositions */
+  .propo {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin: 16px 0;
+  }
+  .propo.reco {
+    border-color: var(--accent);
+    border-width: 1.5px;
+  }
+  .propo .tete {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .propo .tete h3 {
+    margin: 0;
+  }
+  .ampleur {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+    margin-left: auto;
+    white-space: nowrap;
+    background: var(--sunk);
+    color: var(--ink-3);
+  }
+  .ampleur.s {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+  .ampleur.l {
+    background: var(--warn-bg);
+    color: var(--warn);
+  }
+  .these {
+    font-size: 17.5px;
+    color: var(--ink);
+    margin: 0 0 14px;
+    max-width: none;
+  }
+  .ligne {
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    gap: 14px;
+    padding: 9px 0;
+    border-top: 1px solid var(--rule);
+    font-size: 15.5px;
+    line-height: 1.5;
+  }
+  .ligne .l {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 4px;
+  }
+  .ligne .v {
+    color: var(--ink-2);
+  }
+  .ligne .v b {
+    color: var(--ink);
+  }
+  .ligne.tue .l {
+    color: var(--accent);
+  }
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    background: var(--surface);
+    margin: 20px 0;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14.5px;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 400;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  td:first-child {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  td {
+    color: var(--ink-2);
+  }
+
+  ol.suite {
+    counter-reset: s;
+    list-style: none;
+    padding: 0;
+    margin: 18px 0;
+    max-width: 34em;
+  }
+  ol.suite li {
+    counter-increment: s;
+    position: relative;
+    padding-left: 40px;
+    margin: 12px 0;
+    color: var(--ink-2);
+  }
+  ol.suite li::before {
+    content: counter(s);
+    position: absolute;
+    left: 0;
+    top: 2px;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-family: 'Bricolage Grotesque', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  ol.suite li b {
+    color: var(--ink);
+  }
+
+  details {
+    margin-top: 44px;
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+  }
+  summary {
+    font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+    font-size: 14.5px;
+    font-weight: 650;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+  details p,
+  details li,
+  details td {
+    font-size: 15px;
+    color: var(--ink-2);
+  }
+  .src {
+    font-size: 14px;
+    color: var(--ink-3);
+    margin-top: 22px;
+  }
+  .src a {
+    color: var(--accent);
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Recherche et propositions · 5 septembre 2026</p>
+    <h1>Montrer ce qui a été fait</h1>
+    <p class="lede">
+      Une app React, un résumé de recherche, un fichier Excel. Trois choses qui n'ont rien à voir,
+      et que Nodal présente aujourd'hui exactement pareil.
+    </p>
+  </header>
+
+  <h2>Ta question, remise droite</h2>
+  <p>
+    L'amalgame « fichier Excel devenu projet de code » est de moi, pas de toi. Tu poses autre chose,
+    et c'est plus juste : <b>Nodal n'a aucune idée de ce qu'il vient de produire.</b> Il sait
+    seulement <i>où</i> ça a atterri.
+  </p>
+  <p>
+    D'où la confusion. Un dossier attaché est appelé « projet ». Ce qu'on y écrit hérite de ce nom,
+    que ce soit une app React, un rapport ou une page HTML de synthèse. Et à l'écran, les trois
+    finissent dans le même bloc de texte brut.
+  </p>
+
+  <h2>Comment font les deux harnais</h2>
+  <p>
+    Lu dans leur code, pas dans leur communication. Hermes est sur ce disque, dsh aussi. La
+    conclusion est la même des deux côtés, et elle surprend.
+  </p>
+
+  <div class="harnais">
+    <div class="h-card">
+      <span class="qui">Hermes</span>
+      <h3>Une conversation, un rail</h3>
+      <ul>
+        <li>
+          <b>Aucun onglet Code, aucune notion de projet.</b> Les vues sont : chat, agents,
+          artifacts, skills, messaging, cron, réglages. C'est tout.
+        </li>
+        <li>
+          Un rail de droite prévisualise ce qu'on lui donne, avec <b>quatre formes seulement</b> :
+          texte, HTML, image, binaire. Plus une vue diff quand le fichier a changé.
+        </li>
+        <li>
+          Une galerie « Artifacts » qui <b>relit la conversation</b> et en extrait images, fichiers
+          et liens à coups d'expressions régulières.
+        </li>
+        <li>
+          Le rail <b>ne s'ouvre jamais tout seul</b>. Ils ont essayé, ils sont revenus en arrière :
+          seule une vignette dans la ligne d'outil l'ouvre.
+        </li>
+      </ul>
+    </div>
+
+    <div class="h-card">
+      <span class="qui">DeepSeek Harness</span>
+      <h3>L'outil déclare sa forme</h3>
+      <ul>
+        <li>
+          <b>Aucune notion de projet non plus.</b> Mais un module entier appelé « deliverables », ce
+          qui n'existe nulle part ailleurs.
+        </li>
+        <li>
+          Chaque outil déclare <b>comment son résultat se montre</b>. Six formes, choisies par
+          l'outil, jamais devinées par l'écran.
+        </li>
+        <li>
+          Chaque tour de conversation se termine par une <b>rangée de pastilles</b> : les fichiers
+          produits, cliquables, tirés de ce que les outils ont déclaré écrire.
+        </li>
+        <li>
+          Leur phrase, mot pour mot : un fichier produit est listé
+          <b>« que le modèle ait pensé à le nommer ou non »</b>.
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="vocab">
+    <span class="chip">generic</span><span class="chip">terminal</span><span class="chip">diff</span
+    ><span class="chip">read</span><span class="chip">search</span><span class="chip">web</span>
+  </div>
+  <p style="font-size: 15px; color: var(--ink-3)">
+    Les six formes que déclare un outil dsh. Un outil n'importe jamais un type d'interface : il dit
+    ce qu'il fait, l'écran traduit.
+  </p>
+
+  <div class="verdict">
+    <p>
+      <b>Ni l'un ni l'autre ne classe le CONTENANT. Les deux classent le RÉSULTAT.</b>
+    </p>
+    <p>
+      Personne ne se demande « ce dossier est-il un projet de code ». La question posée est « qu'est
+      ce que cet appel vient de produire, et à quoi ça ressemble ». C'est l'inverse de ce que fait
+      Nodal.
+    </p>
+  </div>
+
+  <h2>Et nous, aujourd'hui</h2>
+  <div class="constat">
+    <p>
+      <b>Seize onglets.</b> Chat, Jobs, Code, Approvals, Automations, Connectors, Credentials, Logs,
+      MCP, Memories, Skills, Learned skills, Agents, Providers, Réglages.
+    </p>
+    <p>
+      <b>Un résultat de tâche est du texte brut</b>, dans un bloc à chasse fixe. Le chat aussi.
+      Qu'on ait produit un tableur, une page web ou une application, l'écran affiche les mêmes
+      caractères.
+    </p>
+    <p>
+      <b>« Projet » veut dire « dossier attaché »</b>, quel que soit son contenu. C'est ce qui t'a
+      envoyé chercher des commandes de test pour un dossier de rapports.
+    </p>
+  </div>
+  <p>
+    Un point à notre avantage, et il compte : depuis ce matin,
+    <b>chaque outil qui écrit déclare ce qu'il produit</b>. C'est exactement la matière dont dsh se
+    sert pour sa rangée de pastilles, et c'est plus fiable que la relecture d'Hermes à coups
+    d'expressions régulières. Nous avons la bonne donnée. Nous n'en faisons rien à l'écran.
+  </p>
+
+  <h2>Quatre propositions</h2>
+  <p>
+    Elles ne s'enchaînent pas. Ce sont quatre paris différents, de la retouche à la refonte. Chacune
+    dit ce qu'elle tue, parce que c'est le seul critère qui compte.
+  </p>
+
+  <div class="propo reco">
+    <div class="tete">
+      <h3>A · Le résultat porte sa forme</h3>
+      <span class="ampleur s">chantier moyen</span>
+    </div>
+    <p class="these">
+      Chaque outil dit déjà ce qu'il produit. Il dit en plus <b>comment ça se montre</b> : un diff,
+      un terminal, un document, une page, une image, un message envoyé. L'écran de tâche affiche
+      chaque résultat dans sa forme.
+    </p>
+    <div class="ligne">
+      <span class="l">Sur l'écran</span
+      ><span class="v"
+        >Un fichier Excel apparaît comme un tableau. Une page HTML s'affiche. Un changement de code
+        montre ses lignes ajoutées et retirées. Une recherche web montre ses sources.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">Ça coûte</span
+      ><span class="v"
+        >Un vocabulaire de formes à figer, puis un composant par forme. La déclaration existe déjà,
+        c'est ce qui a été livré aujourd'hui.</span
+      >
+    </div>
+    <div class="ligne tue">
+      <span class="l">Ça tue</span
+      ><span class="v"
+        ><b>Le bloc de texte brut universel.</b> Et l'idée qu'un tableur soit un changement de
+        code.</span
+      >
+    </div>
+  </div>
+
+  <div class="propo reco">
+    <div class="tete">
+      <h3>B · La rangée des livrables</h3>
+      <span class="ampleur s">petit chantier</span>
+    </div>
+    <p class="these">
+      Chaque tâche se termine par la liste de ce qu'elle a produit, cliquable. Pas ce que l'agent a
+      raconté avoir fait : ce que les outils ont réellement écrit.
+    </p>
+    <div class="ligne">
+      <span class="l">Sur l'écran</span
+      ><span class="v"
+        >Sous le résultat, une rangée : <code>rapport.xlsx</code>, <code>synthese.html</code>,
+        <code>src/App.tsx</code>. On clique, ça s'ouvre.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">Ça coûte</span
+      ><span class="v"
+        >Peu. La donnée est déjà en base, écrite avant chaque écriture. Il manque la lecture et la
+        rangée.</span
+      >
+    </div>
+    <div class="ligne tue">
+      <span class="l">Ça tue</span
+      ><span class="v"
+        ><b>« Il dit que c'est fait, mais où ? »</b> Un agent qui oublie de nommer son fichier ne
+        peut plus le cacher.</span
+      >
+    </div>
+  </div>
+
+  <div class="propo">
+    <div class="tete">
+      <h3>C · Un dossier dit ce qu'il est</h3>
+      <span class="ampleur s">retouche</span>
+    </div>
+    <p class="these">
+      Un dossier attaché qui ne porte aucune marque de code (<code>.git</code>,
+      <code>package.json</code>, <code>Cargo.toml</code>) n'est pas un projet de code. On ne lui
+      demande jamais de commandes de test.
+    </p>
+    <div class="ligne">
+      <span class="l">Sur l'écran</span
+      ><span class="v"
+        >Tes dossiers de documents disparaissent de l'onglet Code. Ils n'y avaient rien à
+        faire.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">Ça coûte</span
+      ><span class="v">Presque rien. La liste des marques existe déjà dans le code.</span>
+    </div>
+    <div class="ligne tue">
+      <span class="l">Ça tue</span
+      ><span class="v"
+        ><b>Le symptôme, pas la cause.</b> Le résultat reste du texte brut, et les seize onglets
+        restent seize onglets.</span
+      >
+    </div>
+  </div>
+
+  <div class="propo">
+    <div class="tete">
+      <h3>D · Une seule surface</h3>
+      <span class="ampleur l">refonte</span>
+    </div>
+    <p class="these">
+      Chat, Jobs et Code fusionnent en une seule chronologie. Une tâche est un échange. Le résultat
+      se rend selon sa forme. Un panneau latéral montre ce qu'on ouvre. « Code » devient un filtre,
+      plus un endroit.
+    </p>
+    <div class="ligne">
+      <span class="l">Sur l'écran</span
+      ><span class="v"
+        >Un seul endroit où regarder. Ce que tu demandes et ce que tu obtiens sont au même
+        fil.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">Ça coûte</span
+      ><span class="v"
+        >Cher. Trois écrans à fondre en un, et une migration de navigation. C'est pourtant là que
+        les deux harnais sont arrivés, séparément.</span
+      >
+    </div>
+    <div class="ligne tue">
+      <span class="l">Ça tue</span
+      ><span class="v"><b>La question « je regarde où ? »</b> Et la moitié des onglets.</span>
+    </div>
+  </div>
+
+  <h2>Ce que je recommande</h2>
+  <p>
+    <b>A et B d'abord, ensemble.</b> Ce sont les deux moitiés d'une même idée, et elles se posent
+    sur ce qui a été livré aujourd'hui sans rien casser. À elles deux, elles répondent à ta question
+    : une app, un résumé et un tableur cessent de se ressembler.
+  </p>
+  <p>
+    <b>C est un détail à faire au passage</b>, pas une proposition à part. Une ligne de règle, pour
+    que tes dossiers de documents sortent d'un écran de code.
+  </p>
+  <p>
+    <b>D est la destination</b>, pas le prochain pas. Les deux références y sont arrivées, donc la
+    question n'est pas « si » mais « quand ». La faire maintenant serait la faire sans savoir à quoi
+    ressemble un résultat bien rendu, puisque aucun ne l'est encore.
+  </p>
+
+  <ol class="suite">
+    <li>
+      <b>Le vocabulaire des formes.</b> Figer la liste, en s'appuyant sur celle de dsh plutôt qu'en
+      inventant la nôtre. Six formes suffisent chez eux.
+    </li>
+    <li>
+      <b>La rangée des livrables</b> sur l'écran d'une tâche. C'est le plus petit pas visible, et il
+      utilise une donnée déjà écrite.
+    </li>
+    <li>
+      <b>Un composant par forme</b>, dans l'ordre de ce que tu produis le plus : document, page,
+      diff, terminal.
+    </li>
+    <li><b>La règle du dossier</b>, en même temps que le premier composant document.</li>
+    <li><b>Alors seulement</b>, décider si les trois écrans fusionnent.</li>
+  </ol>
+
+  <p>
+    Il me faut ton arbitrage sur une seule chose : <b>est-ce qu'on vise D</b>, même à échéance
+    lointaine ? Si oui, A et B se dessinent différemment, pour être déjà des morceaux de la surface
+    unique plutôt que des ajouts à trois écrans qui vont disparaître.
+  </p>
+
+  <details>
+    <summary>Pour les ingénieurs : où c'est vérifié, et le vocabulaire exact</summary>
+
+    <h3 style="margin-top: 18px">Hermes</h3>
+    <p>
+      <code>apps/desktop/src/app/</code> : les vues sont
+      <code
+        >agents artifacts chat command-center cron gateway learning messaging profiles settings
+        skills starmap</code
+      >. Aucune vue code, aucune vue runs.
+    </p>
+    <p>
+      Le rail : <code>previewKind: 'binary' | 'html' | 'image' | 'text'</code> et
+      <code>target.kind: 'file' | 'url'</code>, plus un <code>renderMode</code> source ou rendu,
+      plus une vue diff. La galerie : <code>ArtifactKind = 'image' | 'file' | 'link'</code>,
+      extraite par cinq expressions régulières sur le texte des messages.
+    </p>
+    <p>
+      Le retour en arrière sur l'ouverture automatique est écrit dans
+      <code>use-preview-routing.ts</code> : « Tool results no longer auto-register/open a preview —
+      the inline preview card in the tool row is the only entry point ».
+    </p>
+
+    <h3>DeepSeek Harness</h3>
+    <p>
+      <code>packages/client/ui-deliverables</code>. Le contrat de rendu est déclaré par l'outil via
+      <code>presentCall</code> et <code>presentResult</code>, qui rendent une carte étiquetée parmi
+      <code>generic terminal diff read search web</code>. Règle centrale de leur documentation : «
+      the neutral vocabulary lives in dsh-tools ; tools never import a UI or transport type ».
+    </p>
+    <p>
+      Les présentateurs sont des fonctions <b>pures</b> : aucune entrée-sortie, aucune lecture
+      d'état de session, ni horloge ni aléatoire. Une mutation est reconnue
+      <b>par son intention de rendu, pas par le nom de l'outil</b> — exactement la règle posée dans
+      Nodal ce matin, trouvée séparément.
+    </p>
+    <p>
+      Le rendu des mentions : un chemin en <code>code</code> dans la prose finale devient cliquable
+      s'il correspond exactement à un chemin produit, ou s'il est le nom de fichier d'un seul chemin
+      produit. Un nom partagé par deux chemins <b>reste inerte plutôt que de deviner</b>.
+    </p>
+
+    <h3>Nodal</h3>
+    <p>
+      Le résultat d'une tâche : <code>apps/web/src/app/(dashboard)/jobs/[id]/page.tsx</code>, un
+      <code>&lt;pre&gt;</code> en <code>whitespace-pre-wrap</code>. Le chat :
+      <code>ChatClient.tsx</code>, même chose. La règle qui appelle « projet » tout dossier attaché
+      : <code>resolveProjectRoots</code> dans <code>packages/shared/src/project-roots.ts</code>, qui
+      ne regarde jamais si le dossier contient du code.
+    </p>
+    <p>
+      La donnée déjà écrite : la table d'état par livrable, alimentée avant chaque écriture par le
+      helper d'intention de mutation. C'est elle qui rend la proposition B presque gratuite.
+    </p>
+
+    <h3>Ailleurs</h3>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Qui</th>
+            <th>Ce qu'ils font</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Claude</td>
+            <td>
+              Panneau d'artifact à côté de la conversation, le produit du travail sort du fil de
+              discussion et devient un objet qu'on édite, qu'on décline, qu'on télécharge
+            </td>
+          </tr>
+          <tr>
+            <td>Lovable</td>
+            <td>
+              Colonne de chat et aperçu vivant côte à côte ; la demande reconstruit l'app et
+              l'aperçu se met à jour
+            </td>
+          </tr>
+          <tr>
+            <td>Microsoft Agent Framework</td>
+            <td>
+              Aucune intention de rendu : l'outil rend une valeur, le client affiche une progression
+              générique. En retard sur dsh de ce point de vue
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="src">
+      Sources lues :
+      <a
+        href="https://deepseek-harness.github.io/deepseek-harness/en/reference/cookbook/adding-a-tool"
+        >DeepSeek Harness, référence d'écriture d'un outil</a
+      >
+      ·
+      <a
+        href="https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/backend-tool-rendering"
+        >Microsoft, rendu des outils backend avec AG-UI</a
+      >
+      ·
+      <a href="https://www.aydesign.ai/blog/best-ai-agent-ui-examples-2026"
+        >Panorama des interfaces d'agents 2026</a
+      >
+      ·
+      <a href="https://www.librechat.ai/docs/features/artifacts">LibreChat, artifacts</a>. Les deux
+      harnais ont surtout été lus dans leur code, sur ce disque.
+    </p>
+  </details>
+</div>
