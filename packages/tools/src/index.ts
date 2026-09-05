@@ -23,7 +23,13 @@ export type {
 export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
 // La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
 // comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
-export { cardForTool, declaresCard, TOOL_CARD_GENERIC } from './cards';
+export {
+  cardForTool,
+  declaresCard,
+  assertToolCard,
+  ToolCardError,
+  TOOL_CARD_GENERIC,
+} from './cards';
 export type {
   MutationIntentOutcome,
   MutationIntentContext,

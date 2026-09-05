@@ -6,14 +6,21 @@
 // outils sont DÉCOUVERTS — un outil ajouté demain sans `card` fait rougir ce
 // fichier en se nommant, sans qu'aucune liste n'ait à être tenue.
 //
+// Pourquoi, EN PLUS, une table complète nom → carte : la revue (passe 11) a
+// montré que l'énumération prouve la PRÉSENCE d'une carte, pas sa JUSTESSE —
+// `query_memory: 'text'` passait alors que sa sortie est tabulaire. La table
+// épingle chaque choix ; le changer se fait à découvert, dans le diff.
+//
 // Ce que ce test NE couvre PAS, et le dit : les outils tiers (serveurs MCP,
 // adaptateurs de connecteurs) ont droit au repli `generic`. Le seul outil MCP
 // est construit par une fabrique qui le déclare ; les adaptateurs restent sur
-// le repli, et la seconde suite ci-dessous vérifie que ce repli est bien
-// `generic` et rien d'autre.
+// le repli. Les outils nés dans `orchestration` (`assign_<agent>`,
+// `create_task`, `list_tasks`) ne passent pas par ce registre : leurs propres
+// suites portent l'assertion (assign-tools.test.ts, task-tools.test.ts).
 
 import { describe, it, expect } from 'vitest';
 import { TOOL_CARDS } from '@nodal-agents/shared';
+import type { ToolCard } from '@nodal-agents/shared';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
 import { createListConversationsTool } from '../builtin/list-conversations';
@@ -25,7 +32,7 @@ import {
   createSendAudioTool,
   createSendVoiceTool,
 } from '../communication';
-import { cardForTool, declaresCard, TOOL_CARD_GENERIC } from '../cards';
+import { cardForTool, declaresCard, ToolCardError, TOOL_CARD_GENERIC } from '../cards';
 import type { ToolDefinition } from '../types';
 import type { z } from 'zod';
 
@@ -44,6 +51,96 @@ const capabilityTools: AnyTool[] = [
   createSendVoiceTool(),
   createListConversationsTool(),
 ] as unknown as AnyTool[];
+
+const productTools: AnyTool[] = [...registry.list(), ...capabilityTools];
+
+/**
+ * La carte de CHAQUE outil du produit, épinglée. Lire une ligne, c'est lire ce
+ * que l'écran montrera pour ce résultat :
+ *   text       — une réponse, un accusé (« fait », « erreur : … »)
+ *   read       — le contenu d'un document lu
+ *   search     — des correspondances
+ *   files      — des fichiers écrits, modifiés ou listés
+ *   table      — des lignes à colonnes stables
+ *   terminal   — une commande, sa sortie, son code de sortie
+ *   sent       — quelque chose est parti vers un canal
+ *   checks     — un verdict de vérification
+ *   delegation — un travail confié à un autre agent (Nodal ou CLI de code)
+ */
+const EXPECTED_CARDS: Record<string, ToolCard> = {
+  attach_agent: 'text',
+  attach_connector: 'text',
+  attach_mcp: 'text',
+  attach_skill: 'text',
+  code_task: 'delegation',
+  create_agent: 'text',
+  create_connector: 'text',
+  create_mcp: 'text',
+  create_schedule: 'text',
+  create_skill: 'text',
+  dashboard_publish: 'sent',
+  detach_agent: 'text',
+  detach_connector: 'text',
+  detach_mcp: 'text',
+  detach_skill: 'text',
+  docx_append_paragraphs: 'files',
+  docx_create: 'files',
+  docx_read: 'read',
+  docx_replace_text: 'files',
+  file_edit: 'files',
+  file_list: 'files',
+  file_read: 'read',
+  file_search: 'search',
+  file_write: 'files',
+  list_conversations: 'table',
+  list_models: 'table',
+  list_schedules: 'table',
+  mark_memory_helpful: 'text',
+  mark_memory_outdated: 'text',
+  pptx_append_slides: 'files',
+  pptx_create: 'files',
+  pptx_read: 'read',
+  pptx_replace_text: 'files',
+  query_memory: 'table',
+  return_result: 'text',
+  review_verdict: 'checks',
+  run_command: 'terminal',
+  run_schedule: 'text',
+  run_skill_script: 'terminal',
+  save_memory: 'text',
+  search_history: 'search',
+  send_audio: 'sent',
+  send_file: 'sent',
+  send_image: 'sent',
+  send_video: 'sent',
+  send_voice: 'sent',
+  skill_file_list: 'files',
+  skill_file_read: 'read',
+  skill_file_write: 'files',
+  skill_view: 'read',
+  telegram_send_message: 'sent',
+  toggle_schedule: 'text',
+  update_agent: 'text',
+  update_schedule: 'text',
+  update_skill: 'text',
+  web_search: 'search',
+  xlsx_add_sheet: 'files',
+  xlsx_append_rows: 'files',
+  xlsx_create: 'files',
+  xlsx_delete_columns: 'files',
+  xlsx_delete_rows: 'files',
+  xlsx_find_cells: 'search',
+  xlsx_format_range: 'files',
+  xlsx_freeze_panes: 'files',
+  xlsx_insert_columns: 'files',
+  xlsx_insert_rows: 'files',
+  xlsx_merge_cells: 'files',
+  xlsx_read: 'table',
+  xlsx_set_cell: 'files',
+  xlsx_set_column_widths: 'files',
+  xlsx_set_range: 'files',
+  xlsx_unmerge_cells: 'files',
+};
 
 describe('la carte des outils du produit', () => {
   it('le registre expose bien des outils — sinon la boucle serait verte pour rien', () => {
@@ -66,47 +163,32 @@ describe('la carte des outils du produit', () => {
     expect(sansCarte, `outils de capacité sans \`card\` : ${sansCarte.join(', ')}`).toEqual([]);
   });
 
+  it('la carte de chaque outil est CELLE attendue — la table complète, pas dix ancres', () => {
+    // Un outil nouveau apparaît ici sans ligne : le diff le nomme et l'auteur
+    // écrit la sienne. Un outil requalifié par accident apparaît aussi.
+    const reelles = Object.fromEntries(
+      productTools
+        .map((t): [string, ToolCard] => [t.name, cardForTool(t)])
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+    expect(reelles).toEqual(EXPECTED_CARDS);
+  });
+
   it('les cartes déclarées couvrent le vocabulaire utile, pas une seule valeur passe-partout', () => {
     // Si tout déclarait `text`, le contrat serait respecté à la lettre et
-    // inutile en pratique : l'écran n'aurait rien à dispatcher.
-    const utilisees = new Set([...registry.list(), ...capabilityTools].map((t) => cardForTool(t)));
-    for (const attendue of [
-      'text',
-      'read',
-      'search',
-      'files',
-      'table',
-      'terminal',
-      'sent',
-      'checks',
-    ]) {
-      expect(
-        utilisees.has(attendue as (typeof TOOL_CARDS)[number]),
-        `aucun outil ne déclare '${attendue}'`,
-      ).toBe(true);
+    // inutile en pratique : l'écran n'aurait rien à dispatcher. `question` est
+    // la seule carte sans outil : elle naît d'une approbation, pas d'un outil.
+    const utilisees = new Set(productTools.map((t) => cardForTool(t)));
+    for (const attendue of TOOL_CARDS) {
+      if (attendue === 'question' || attendue === TOOL_CARD_GENERIC) continue;
+      expect(utilisees.has(attendue), `aucun outil ne déclare '${attendue}'`).toBe(true);
     }
     // Et aucun outil du produit ne se repose sur le repli.
     expect(utilisees.has(TOOL_CARD_GENERIC)).toBe(false);
   });
-
-  it('les cartes que chaque famille déclare sont celles que l’écran attend', () => {
-    // Quelques ancres nommées : si quelqu'un requalifie `run_command` en `text`,
-    // la carte terminal disparaît de l'écran sans que rien ne casse ailleurs.
-    const carte = (name: string) => cardForTool(registry.get(name) as AnyTool);
-    expect(carte('run_command')).toBe('terminal');
-    expect(carte('run_skill_script')).toBe('terminal');
-    expect(carte('file_write')).toBe('files');
-    expect(carte('code_task')).toBe('files');
-    expect(carte('file_read')).toBe('read');
-    expect(carte('web_search')).toBe('search');
-    expect(carte('xlsx_read')).toBe('table');
-    expect(carte('review_verdict')).toBe('checks');
-    expect(carte('return_result')).toBe('text');
-    expect(carte('dashboard_publish')).toBe('sent');
-  });
 });
 
-describe('cardForTool — le repli est `generic`, et seulement lui', () => {
+describe('cardForTool — le repli est `generic` pour une ABSENCE, une erreur pour une INVENTION', () => {
   const base = {
     name: 'tiers',
     description: 'outil tiers',
@@ -115,22 +197,37 @@ describe('cardForTool — le repli est `generic`, et seulement lui', () => {
     execute: async () => null,
   };
 
-  it('un outil sans carte rend generic — l’aveu, pas une devinette', () => {
+  it("un outil sans carte rend generic — l'aveu, pas une devinette", () => {
     expect(cardForTool(base as AnyTool)).toBe('generic');
     expect(declaresCard(base as AnyTool)).toBe(false);
   });
 
-  it('une carte hors du vocabulaire est traitée comme absente', () => {
-    // Un outil tiers qui inventerait `'fancy'` ne peut être dispatché par aucun
-    // écran : la dire `generic` est plus vrai que de la laisser passer.
-    const tordu = { ...base, card: 'fancy' } as unknown as AnyTool;
-    expect(cardForTool(tordu)).toBe('generic');
-    expect(declaresCard(tordu)).toBe(false);
+  it("une carte hors du vocabulaire LÈVE, en nommant l'outil et la valeur", () => {
+    // Revue passe 11 : la première version la rabattait sur `generic` — un
+    // repli silencieux (invariant #4). Une carte inventée est une violation du
+    // contrat, pas une absence.
+    const tordu = { ...base, name: 'tordu', card: 'fancy' } as unknown as AnyTool;
+    expect(() => cardForTool(tordu)).toThrow(ToolCardError);
+    expect(() => declaresCard(tordu)).toThrow(/tool "tordu" declares card "fancy"/);
+    expect(() => cardForTool(tordu)).toThrow(/generic/); // le message dit comment réparer
   });
 
   it('une carte déclarée dans le vocabulaire est rendue telle quelle', () => {
     for (const c of TOOL_CARDS) {
       expect(cardForTool({ ...base, card: c } as AnyTool)).toBe(c);
     }
+  });
+
+  it("le registre REFUSE un outil à carte inventée — au démarrage, pas à l'affichage", () => {
+    const local = createToolRegistry();
+    const tordu = { ...base, name: 'tordu_registre', card: 'fancy' } as unknown as AnyTool;
+    expect(() => local.register(tordu)).toThrow(ToolCardError);
+    // Refusé, donc ABSENT : rien n'a été enregistré à moitié.
+    expect(local.get('tordu_registre')).toBeUndefined();
+    expect(local.list()).toEqual([]);
+    // Et le même registre accepte toujours un outil sain, ou sans carte.
+    local.register({ ...base, name: 'sain', card: 'text' } as AnyTool);
+    local.register({ ...base, name: 'muet' } as AnyTool);
+    expect(local.list().map((t) => t.name)).toEqual(['sain', 'muet']);
   });
 });

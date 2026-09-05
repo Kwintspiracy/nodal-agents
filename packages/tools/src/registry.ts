@@ -2,6 +2,7 @@
 
 import type { z } from 'zod';
 import { RISK_LEVELS } from './types';
+import { assertToolCard } from './cards';
 import type { ToolDefinition, ToolRegistry, ToolListFilter, AiSdkTool, RiskLevel } from './types';
 
 // ─── createToolRegistry ────────────────────────────────────────────────────────
@@ -16,6 +17,10 @@ export function createToolRegistry(): ToolRegistry {
 
   return {
     register<TInput extends z.ZodTypeAny, TOutput>(tool: ToolDefinition<TInput, TOutput>): void {
+      // Une carte inventée est refusée ICI, au démarrage, pas rabattue sur
+      // `generic` au moment d'afficher (P1, revue passe 11) : l'outil n'entre
+      // pas dans le registre et l'erreur nomme l'outil et le vocabulaire.
+      assertToolCard(tool);
       // Overwrite if already registered (allows adapters to refresh).
       // The double cast is required because TypeScript's strict generic
       // invariance prevents direct assignment: ToolDefinition<TInput, TOutput>
