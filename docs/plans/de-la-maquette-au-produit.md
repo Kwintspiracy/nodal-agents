@@ -8,11 +8,21 @@ travaille et montre ses résultats, avec une barre d'état permanente et une
 étagère fixe. Vision : « Le livrable est la page »
 (https://claude.ai/code/artifact/f2cd2ddd-639b-4a9b-9f85-4386cf45a574).
 
+## Périmètre — fixé par Quentin le 05/09
+
+**La barre latérale ne bouge pas.** Ses seize entrées restent telles quelles.
+On ajoute UNE entrée, « Spaces », qui ouvre le nouvel espace. Fusionner Chat,
+Runs et Code est une décision ultérieure, peut-être jamais prise : ce plan ne la
+prépare pas et ne la présuppose pas.
+
+**L'effort porte sur le déroulé du chat**, dans ce nouvel espace. Les écrans
+existants (Runs, Code, Chat) ne sont pas touchés par les lots 1 à 3.
+
 ## Suivi
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
-| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | La page d'un job devient la conversation dessinée, avec preuves, coûts, jetons. Aucune migration | ⬜ prochain |
+| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | ⬜ prochain |
 | 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
 | 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
@@ -51,8 +61,7 @@ perde son sens.
 | **On garde** | v7-C : la découverte des commandes | C'est le contenu du panneau « Vérifié » de l'étagère |
 | **On garde** | Les primitives du design system : `Table`, `MonoMicroTag`, `PrimaryButton`, `Banner`, `EdRow` | La maquette les reprend au pixel |
 | **On garde** | `JobMessages.blocksFromContent` (le lecteur des trois formats de messages) | Il sait déjà lire les parties ; on change ce qu'on en fait |
-| **On remplace** | Le rendu de `JobMessages` et le `<pre>` du résultat de job | Par la conversation (P2) |
-| **On remplace** | « Projet » = dossier attaché, dans l'onglet Code | Par l'espace (P6), qui sait s'il est du code ou des documents |
+| **On ne touche pas** | Les écrans Runs, Code et Chat, et la barre latérale | Décision de Quentin le 05/09 : le nouvel espace vit à côté, derrière une entrée de plus. `JobMessages` reste en place ; son lecteur de messages est réutilisé par la conversation |
 | **On jette** | Rien | Aucun travail livré n'est contredit par le dessin |
 
 ## Les pierres
@@ -81,7 +90,7 @@ nommant.
 
 ### P2 · La conversation — L
 
-**Ce que ça pose.** La page d'un job devient la conversation dessinée : les
+**Ce que ça pose.** La page du nouvel espace rend la conversation dessinée : les
 messages de l'utilisateur, la prose de l'agent, les groupes d'actions repliés
 (« Réflexion et recherche · 4 étapes · 9,4 s · 12 480 jetons »), les cartes
 dispatchées par P1, les sous-agents en groupes indentés avec leur pastille.
@@ -154,8 +163,9 @@ diff » et pas une erreur.
 **Ce que ça pose.** L'objet durable de la vision : une table `espaces` (nom,
 dossier racine, sorte `code | documents`), `agent_jobs.espace_id`, la page de
 l'espace = l'étagère + la conversation concaténée de ses jobs, la proposition de
-créer un espace quand trois tâches atterrissent au même endroit. L'onglet Code
-devient la liste des espaces de sorte code.
+créer un espace quand trois tâches atterrissent au même endroit. L'espace est
+atteint par l'entrée « Spaces » de la barre latérale ; l'onglet Code ne change
+pas.
 
 **Sur quoi ça s'appuie.** `agent_workspaces` et `code_projects` en sont
 l'ancêtre ; la sorte se déduit des marques de code déjà listées
@@ -204,10 +214,9 @@ bouton « L'application » ouvre l'URL locale dans un onglet.
 
 ## Ce que ça fait aux seize onglets
 
-Rien de brutal. À la fin du lot 1, Jobs montre la conversation. À la fin du lot
-2, Code est devenu Espaces. Le Chat reste. La fusion en une seule surface — le
-« D » de la vision — devient une conséquence à constater, pas une étape à
-décider maintenant.
+Une entrée de plus, « Spaces ». Rien d'autre. Runs, Code et Chat restent tels
+qu'ils sont. Les fusionner un jour est une décision de Quentin, pas une
+conséquence de ce plan.
 
 ## Ce que ça fait au plan Vérifier & Corriger
 
