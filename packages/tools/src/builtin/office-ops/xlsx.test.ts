@@ -153,6 +153,8 @@ describe('xlsx_read', () => {
     expect(p.tables[0]?.total).toBe(result.sheets[0]?.rows.length);
     expect(p.tables[0]?.truncated).toBe(false);
     expect(p.tables[0]?.columns).toEqual([]); // la première ligne n'est PAS supposée être un en-tête
+    expect(p.tables[0]?.header).toBe('unknown'); // et la charge le DIT, P8 ne devinera pas
+    expect(p.tables[0]?.clipped).toBe(false);
     expect(p.tables[1]?.rows).toEqual(result.sheets[1]?.rows);
   });
 

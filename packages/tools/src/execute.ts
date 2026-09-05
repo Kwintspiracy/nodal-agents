@@ -18,7 +18,7 @@ import type {
   ApprovalGateRequest,
 } from './types';
 import { InvalidInputError } from './errors';
-import { cardForTool, presentToolResult } from './cards';
+import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
 import { snapshot } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
@@ -770,21 +770,26 @@ async function _writeToolCall(
 ): Promise<void> {
   const toolName = tool.name;
   // P1 (plan « De la maquette au produit »): the row carries the card the tool
-  // DECLARES and the payload its present() drew from the output, so the
-  // conversation screen reads the row and never the registry. A presenter
-  // that violates its card's contract is a bug in THAT tool — logged loud,
-  // never allowed to fail the agent's work: the row then keeps the card and a
-  // NULL payload, and the screen shows raw input/output saying so.
-  let card: string | null = null;
+  // DECLARES — as declared, never recomputed nor rabattue — and the payload its
+  // present() drew from the output, so the conversation screen reads the row
+  // and never the registry. A presenter that violates its card's contract is a
+  // bug in THAT tool: never allowed to fail the agent's work, but never
+  // invisible either (revue passe 14) — the row records the error in
+  // `presentation_error`, keeps its card, and `presented` stays NULL, so the
+  // screen shows raw input/output saying why, and the bug can be counted.
+  const card: string = typeof tool.card === 'string' ? tool.card : 'generic';
   let presented: ToolCardPayload | null = null;
-  try {
-    card = cardForTool(tool);
-    if (produced) presented = presentToolResult(tool, input, produced.value);
-  } catch (err) {
-    console.error(
-      `[tools] card/presentation failed for "${toolName}" (job=${ctx.jobId}) — row keeps card=${String(card)} and presented=NULL:`,
-      err,
-    );
+  let presentationError: string | null = null;
+  if (produced) {
+    try {
+      presented = presentToolResult(tool, input, produced.value);
+    } catch (err) {
+      presentationError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      console.error(
+        `[tools] presentation failed for "${toolName}" (job=${ctx.jobId}) — recorded on the row (presentation_error), presented=NULL:`,
+        err,
+      );
+    }
   }
   try {
     await ctx.db.insert(toolCalls).values({
@@ -793,6 +798,7 @@ async function _writeToolCall(
       toolName,
       card,
       presented,
+      presentationError,
       // NOUVEAU-1: the audit trail is never re-executed, so we store a
       // secret-redacted copy — create_connector/create_mcp API keys and stdio
       // env values must not sit in cleartext in tool_calls or render to the

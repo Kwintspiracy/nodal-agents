@@ -12,8 +12,33 @@ import {
   CARD_TEXT_MAX,
 } from '../index';
 
+const terminal = {
+  card: 'terminal',
+  command: 'ls',
+  exitCode: 0,
+  timedOut: false,
+  stdoutTail: '',
+  stdoutTruncated: false,
+  stderrTail: '',
+  stderrTruncated: false,
+};
+
+const table = (rows: unknown[][]) => ({
+  card: 'table',
+  tables: [
+    {
+      columns: ['a'],
+      header: 'columns',
+      rows,
+      total: rows.length,
+      truncated: false,
+      clipped: false,
+    },
+  ],
+});
+
 describe('ToolCardPayloadSchema — une forme par carte', () => {
-  it('chaque carte du vocabulaire a sa forme, et aucune forme n’est orpheline', () => {
+  it("chaque carte du vocabulaire a sa forme, et aucune forme n'est orpheline", () => {
     const shapes = ToolCardPayloadSchema.options.map((o) => o.shape.card.value);
     expect([...shapes].sort()).toEqual([...TOOL_CARDS].sort());
   });
@@ -27,21 +52,25 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
   it('accepte une charge utile de chaque carte', () => {
     const samples = [
       { card: 'text', text: 'fait' },
+      { card: 'text', text: 'rien écrit : lecture seule', failure: true, truncated: false },
       { card: 'read', path: 'a.md', excerpt: '# a', chars: 3, truncated: false },
       { card: 'search', query: 'q', hits: [{ title: 't', ref: 'r' }], total: 1, truncated: false },
       { card: 'files', files: [{ path: 'a', action: 'created' }], total: 1, truncated: false },
+      table([['1'], [2], [null]]),
       {
         card: 'table',
-        tables: [{ columns: ['a'], rows: [['1'], [2], [null]], total: 3, truncated: false }],
+        tables: [
+          {
+            columns: [],
+            header: 'unknown',
+            rows: [['x']],
+            total: 1,
+            truncated: false,
+            clipped: true,
+          },
+        ],
       },
-      {
-        card: 'terminal',
-        command: 'ls',
-        exitCode: 0,
-        timedOut: false,
-        stdoutTail: '',
-        stderrTail: '',
-      },
+      terminal,
       { card: 'sent', channel: 'telegram', kind: 'message' },
       { card: 'checks', verdict: 'pass', summary: 'ok', items: [], total: 0 },
       {
@@ -59,7 +88,7 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
     ];
     for (const s of samples) {
       const r = ToolCardPayloadSchema.safeParse(s);
-      expect(r.success, `${s.card}: ${r.success ? '' : r.error.message}`).toBe(true);
+      expect(r.success, `${String(s.card)}: ${r.success ? '' : r.error.message}`).toBe(true);
     }
   });
 
@@ -68,12 +97,9 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
     // `files` sans `files`
     expect(ToolCardPayloadSchema.safeParse({ card: 'files', total: 0 }).success).toBe(false);
     // une table de CARD_ROWS_MAX + 1 lignes : la carte se dessine, elle n'archive pas
-    const rows = Array.from({ length: CARD_ROWS_MAX + 1 }, () => ['x']);
     expect(
-      ToolCardPayloadSchema.safeParse({
-        card: 'table',
-        tables: [{ columns: ['a'], rows, total: rows.length, truncated: false }],
-      }).success,
+      ToolCardPayloadSchema.safeParse(table(Array.from({ length: CARD_ROWS_MAX + 1 }, () => ['x'])))
+        .success,
     ).toBe(false);
     const hits = Array.from({ length: CARD_ITEMS_MAX + 1 }, () => ({ title: 't' }));
     expect(
@@ -88,6 +114,20 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
     expect(
       ToolCardPayloadSchema.safeParse({ card: 'text', text: 'x'.repeat(CARD_TEXT_MAX + 1) })
         .success,
+    ).toBe(false);
+  });
+
+  it('ce qui a été coupé se DIT : une table sans `header`/`clipped`, un terminal sans ses drapeaux, sont refusés', () => {
+    // Revue passe 14 : une charge tronquée passait pour complète.
+    const { header: _h, ...sansHeader } = table([['x']]).tables[0]!;
+    expect(ToolCardPayloadSchema.safeParse({ card: 'table', tables: [sansHeader] }).success).toBe(
+      false,
+    );
+    const { stdoutTruncated: _s, ...sansDrapeau } = terminal;
+    expect(ToolCardPayloadSchema.safeParse(sansDrapeau).success).toBe(false);
+    // `failure` ne peut être que true : « failure: false » n'est pas un état, c'est du bruit.
+    expect(
+      ToolCardPayloadSchema.safeParse({ card: 'text', text: 'x', failure: false }).success,
     ).toBe(false);
   });
 });

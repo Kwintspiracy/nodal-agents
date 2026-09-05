@@ -28,6 +28,10 @@ export const toolCalls = pgTable(
     // dit tel quel (entrée et sortie brutes), il n'invente pas une carte.
     card: text('card'),
     presented: jsonb('presented'),
+    // L'échec du présentateur, s'il y en a eu un : `presented` est alors NULL et
+    // CETTE colonne dit pourquoi — requêtable, pas seulement loggée (revue
+    // passe 14). NULL = aucune erreur (charge présente, ou rien à présenter).
+    presentationError: text('presentation_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [

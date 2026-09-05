@@ -572,6 +572,7 @@ describe('présentation (P1) — file_write, file_read, file_list, file_search',
     expect(bad.ok).toBe(false);
     const pb = presentToolResult(asAny(fileReadTool), { path: 'sub/absent.md' }, bad);
     expect(pb.card).toBe('text');
+    expect(pb.card === 'text' && pb.failure).toBe(true); // un échec, pas un succès en texte
     expect(pb.card === 'text' && pb.text).toMatch(/absent\.md/);
   });
 });

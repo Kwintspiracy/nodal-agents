@@ -275,6 +275,7 @@ export const xlsxReadTool: ToolDefinition<typeof XlsxReadInput, XlsxReadOutput> 
           output.sheets.map((s) => ({
             name: s.name,
             columns: [],
+            header: 'unknown',
             rows: s.rows,
             truncated: s.truncated,
           })),

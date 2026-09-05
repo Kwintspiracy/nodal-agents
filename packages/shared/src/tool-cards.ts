@@ -33,6 +33,15 @@ const text = (max: number) => z.string().max(max);
 export const TextCardSchema = z.object({
   card: z.literal('text'),
   text: text(CARD_TEXT_MAX),
+  /**
+   * Présent et vrai UNIQUEMENT quand ce texte est la raison d'un ÉCHEC posé
+   * sous une carte structurée (`failureText`). Jamais `false` : un succès n'a
+   * pas ce champ. C'est ce discriminant que `presentToolResult` exige pour
+   * admettre un `text` là où une autre carte était déclarée (revue passe 14).
+   */
+  failure: z.literal(true).optional(),
+  /** Le texte a été coupé au plafond — absent quand il est entier. */
+  truncated: z.boolean().optional(),
 });
 
 /** Le contenu d'un document lu : un extrait, et de quoi dire ce qu'on n'a pas montré. */
@@ -92,12 +101,20 @@ export const TableCardSchema = z.object({
       z.object({
         name: text(CARD_LABEL_MAX).optional(),
         columns: z.array(text(CARD_CELL_MAX)),
+        /**
+         * `columns` : les colonnes ci-dessus SONT l'en-tête. `unknown` :
+         * personne ne sait si la première ligne est un en-tête (un classeur lu
+         * tel quel) — le rendu ne le devine pas, il le dit ou le demande (P8).
+         */
+        header: z.enum(['columns', 'unknown']),
         rows: z
           .array(z.array(z.union([text(CARD_CELL_MAX), z.number(), z.null()])))
           .max(CARD_ROWS_MAX),
         /** Nombre de lignes réel — `rows` en montre au plus CARD_ROWS_MAX. */
         total: z.number().int().nonnegative(),
         truncated: z.boolean(),
+        /** Au moins une cellule a été coupée au plafond CARD_CELL_MAX. */
+        clipped: z.boolean(),
       }),
     )
     .min(1),
@@ -110,7 +127,10 @@ export const TerminalCardSchema = z.object({
   exitCode: z.number().int().nullable(),
   timedOut: z.boolean(),
   stdoutTail: text(CARD_EXCERPT_MAX),
+  /** La sortie était plus longue que ce qui est gardé — la fin est là, pas le début. */
+  stdoutTruncated: z.boolean(),
   stderrTail: text(CARD_EXCERPT_MAX),
+  stderrTruncated: z.boolean(),
   cwd: text(CARD_LABEL_MAX).optional(),
 });
 

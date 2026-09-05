@@ -124,6 +124,7 @@ describe('executeTool', () => {
       total: 1,
       truncated: false,
     });
+    expect(row?.presentationError).toBeNull();
   });
 
   it('P1 : carte text sans present() → la sortie en texte ; erreur de validation → carte posée, charge NULL', async () => {
@@ -160,6 +161,9 @@ describe('executeTool', () => {
     );
     expect(row?.card).toBe('table');
     expect(row?.presented).toBeNull();
+    // Requêtable, pas seulement loggé (revue passe 14).
+    expect(row?.presentationError).toMatch(/ToolPresentationError/);
+    expect(row?.presentationError).toMatch(/tables/);
   });
 
   // ── Validation error ────────────────────────────────────────────────────────

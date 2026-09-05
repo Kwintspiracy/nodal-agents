@@ -21,9 +21,10 @@
 //
 // CE QUI N'EST PAS UN REPLI. Une carte DÉCLARÉE hors du vocabulaire, une carte à
 // structure sans `present()`, une charge utile qui ne respecte pas la forme de
-// sa carte : trois violations du contrat, trois erreurs LEVÉES — à
-// l'enregistrement quand c'est possible, à la présentation sinon. Jamais un
-// rabattement silencieux sur `generic`.
+// sa carte, un SUCCÈS présenté en texte sous une carte structurée : quatre
+// violations du contrat, quatre erreurs LEVÉES — à l'enregistrement quand c'est
+// possible, à la présentation sinon. Jamais un rabattement silencieux sur
+// `generic`.
 
 import { TOOL_CARDS, CARDS_NEEDING_PRESENTER, ToolCardPayloadSchema } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
@@ -100,9 +101,12 @@ export function declaresCard(tool: CardBearer): boolean {
  * que l'écran la lit.
  *
  * - l'outil a un `present()` : sa charge utile, VALIDÉE contre la forme de la
- *   carte. Elle peut être une carte `text` quand le résultat est un échec
- *   (`failureText`) — la ligne garde la carte déclarée, la charge dit pourquoi
- *   il n'y a rien à dessiner. Toute autre carte que la déclarée est refusée.
+ *   carte. La seule charge d'une AUTRE carte qu'on accepte est un `text`
+ *   marqué `failure: true` (`failureText`) : le résultat est un échec, la ligne
+ *   garde la carte déclarée, la charge dit pourquoi il n'y a rien à dessiner.
+ *   Un `text` de succès sous une carte structurée est refusé — sinon un outil
+ *   `files` pourrait réussir et se dispenser de son contrat sans que rien ne
+ *   le dise (revue passe 14).
  * - carte `text` sans `present()` : la sortie, en texte, plafonnée.
  * - carte `generic` : rien à porter — l'entrée et la sortie sont sur la ligne.
  * - carte à structure sans `present()` : refusé (déjà refusé à
@@ -126,13 +130,18 @@ export function presentToolResult(
           .join('; ')}`,
       );
     }
-    if (parsed.data.card !== card && parsed.data.card !== 'text') {
-      throw new ToolPresentationError(
-        tool.name,
-        `present() returned card "${parsed.data.card}" for a tool that declares "${card}"`,
-      );
+    const payload = parsed.data;
+    if (payload.card !== card) {
+      const isDeclaredFailure = payload.card === 'text' && payload.failure === true;
+      if (!isDeclaredFailure) {
+        throw new ToolPresentationError(
+          tool.name,
+          `present() returned card "${payload.card}" for a tool that declares "${card}" — ` +
+            `only a \`text\` payload marked \`failure: true\` may stand in for a structured card`,
+        );
+      }
     }
-    return parsed.data;
+    return payload;
   }
   if (card === 'text') return textCard(output);
   if (card === TOOL_CARD_GENERIC) return { card: TOOL_CARD_GENERIC };

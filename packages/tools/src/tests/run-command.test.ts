@@ -227,7 +227,9 @@ describe('présentation (P1) — run_command', () => {
       exitCode: 0,
       timedOut: false,
       stdoutTail: 'hello-card',
+      stdoutTruncated: false,
       stderrTail: '',
+      stderrTruncated: false,
       cwd: out.cwd,
     });
   });

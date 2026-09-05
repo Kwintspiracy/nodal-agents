@@ -261,11 +261,11 @@ const CLI_TOOL_CARDS: Readonly<Record<string, ToolCard>> = {
   WebSearch: 'search',
   WebFetch: 'read',
   Task: 'delegation',
-  // Codex
-  shell: 'terminal',
-  exec_command: 'terminal',
-  apply_patch: 'files',
-  web_search: 'search',
+  // Codex (--json) : le parseur ci-dessus ne laisse passer que ces deux types
+  // d'item, et les pose comme `name` (revue passe 14 : la première table
+  // nommait shell/apply_patch, que le flux n'émet pas).
+  command_execution: 'terminal',
+  file_change: 'files',
 };
 
 export function cliToolCard(name: string): ToolCard {

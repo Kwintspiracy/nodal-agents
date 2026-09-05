@@ -276,6 +276,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- 0092 (P1) : la carte déclarée par l'outil et la charge utile présentée.
       card text,
       presented jsonb,
+      presentation_error text,
       created_at timestamptz DEFAULT now()
     );
 

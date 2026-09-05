@@ -4,7 +4,8 @@
 // (`tool-cards.ts`) et applique les plafonds : un outil qui rend 10 000
 // lignes en montre 50 et dit `total: 10000, truncated: true`. Les outils ne
 // coupent jamais eux-mêmes ; ils passent leur sortie entière, c'est ici qu'on
-// mesure.
+// mesure — et ce qui a été coupé se DIT (revue passe 14 : un extrait coupé
+// annonçait `truncated: false`).
 
 import {
   CARD_CELL_MAX,
@@ -38,18 +39,30 @@ function stringify(value: unknown): string {
   }
 }
 
-/** Une réponse ou un accusé. Sortie objet → JSON lisible, plafonné. */
+/** Une réponse ou un accusé. Sortie objet → JSON lisible, plafonné — et dit coupé s'il l'est. */
 export function textCard(value: unknown): CardPayloadFor<'text'> {
-  return { card: 'text', text: clip(stringify(value), CARD_TEXT_MAX) };
+  const full = stringify(value);
+  return {
+    card: 'text',
+    text: clip(full, CARD_TEXT_MAX),
+    ...(full.length > CARD_TEXT_MAX ? { truncated: true } : {}),
+  };
 }
 
 /**
- * La raison d'un échec, sur une carte `text`. Un outil dont la sortie est
- * `{ ok: false, reason }` la rend ainsi : la ligne garde la carte DÉCLARÉE
- * (`files`, `table`…), la charge utile dit pourquoi il n'y a rien à dessiner.
+ * La raison d'un échec, sur une carte `text` marquée `failure: true`. Un outil
+ * dont la sortie est `{ ok: false, reason }` la rend ainsi : la ligne garde la
+ * carte DÉCLARÉE (`files`, `table`…), la charge dit pourquoi il n'y a rien à
+ * dessiner. C'est la SEULE charge `text` qu'une carte structurée accepte
+ * (`presentToolResult`) — un succès ne peut pas se cacher derrière du texte.
  */
 export function failureText(reason: string): CardPayloadFor<'text'> {
-  return { card: 'text', text: clip(reason, CARD_TEXT_MAX) };
+  return {
+    card: 'text',
+    text: clip(reason, CARD_TEXT_MAX),
+    failure: true,
+    ...(reason.length > CARD_TEXT_MAX ? { truncated: true } : {}),
+  };
 }
 
 export function readCard(a: {
@@ -63,7 +76,8 @@ export function readCard(a: {
     path: a.path === null ? null : clip(a.path, CARD_LABEL_MAX),
     excerpt: clip(a.text, CARD_EXCERPT_MAX),
     chars: a.text.length,
-    truncated: a.truncated ?? false,
+    // Coupé par l'outil (il n'a pas tout lu) OU par nous (l'extrait est plus court que le texte).
+    truncated: (a.truncated ?? false) || a.text.length > CARD_EXCERPT_MAX,
     ...(a.sections !== undefined ? { sections: a.sections } : {}),
   };
 }
@@ -126,12 +140,13 @@ export function writtenFile(
 
 type Cell = string | number | null;
 
-function cell(v: unknown): Cell {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string') return clip(v, CARD_CELL_MAX);
-  if (v instanceof Date) return v.toISOString();
-  return clip(stringify(v), CARD_CELL_MAX);
+/** Une cellule plafonnée, et si elle l'a été. */
+function cell(v: unknown): [Cell, boolean] {
+  if (v === null || v === undefined) return [null, false];
+  if (typeof v === 'number') return [v, false];
+  if (v instanceof Date) return [v.toISOString(), false];
+  const s = typeof v === 'string' ? v : stringify(v);
+  return [clip(s, CARD_CELL_MAX), s.length > CARD_CELL_MAX];
 }
 
 export function tableCard(
@@ -139,6 +154,12 @@ export function tableCard(
     name?: string;
     columns: ReadonlyArray<string>;
     rows: ReadonlyArray<ReadonlyArray<unknown>>;
+    /**
+     * `columns` : les colonnes données SONT l'en-tête. `unknown` : personne ne
+     * sait si la première ligne est un en-tête (un classeur lu tel quel) — le
+     * rendu ne le devinera pas, il le demandera ou le dira.
+     */
+    header?: 'columns' | 'unknown';
     total?: number;
     truncated?: boolean;
   }>,
@@ -146,13 +167,22 @@ export function tableCard(
   return {
     card: 'table',
     tables: tables.map((t) => {
-      const shown = t.rows.slice(0, CARD_ROWS_MAX).map((r) => r.map(cell));
+      let clipped = false;
+      const shown = t.rows.slice(0, CARD_ROWS_MAX).map((r) =>
+        r.map((v) => {
+          const [c, wasClipped] = cell(v);
+          if (wasClipped) clipped = true;
+          return c;
+        }),
+      );
       return {
         ...(t.name !== undefined ? { name: clip(t.name, CARD_LABEL_MAX) } : {}),
         columns: t.columns.map((c) => clip(c, CARD_CELL_MAX)),
+        header: t.header ?? (t.columns.length > 0 ? 'columns' : 'unknown'),
         rows: shown,
         total: t.total ?? t.rows.length,
         truncated: (t.truncated ?? false) || shown.length < t.rows.length,
+        clipped,
       };
     }),
   };
@@ -160,7 +190,7 @@ export function tableCard(
 
 /**
  * Des enregistrements homogènes (`{ id, fact, … }[]`) en table : les colonnes
- * sont les clés du premier enregistrement, dans son ordre.
+ * sont les clés du premier enregistrement, dans son ordre — et sont l'en-tête.
  */
 export function recordsTable(
   records: ReadonlyArray<Record<string, unknown>>,
@@ -171,6 +201,7 @@ export function recordsTable(
     {
       ...(opts.name !== undefined ? { name: opts.name } : {}),
       columns,
+      header: 'columns',
       rows: records.map((r) => columns.map((c) => r[c])),
     },
   ]);
@@ -190,7 +221,9 @@ export function terminalCard(a: {
     exitCode: a.exitCode,
     timedOut: a.timedOut ?? false,
     stdoutTail: tail(a.stdout, CARD_EXCERPT_MAX),
+    stdoutTruncated: a.stdout.length > CARD_EXCERPT_MAX,
     stderrTail: tail(a.stderr, CARD_EXCERPT_MAX),
+    stderrTruncated: a.stderr.length > CARD_EXCERPT_MAX,
     ...(a.cwd !== undefined ? { cwd: clip(a.cwd, CARD_LABEL_MAX) } : {}),
   };
 }

@@ -310,7 +310,9 @@ describe('presentToolResult — la charge utile que la ligne tool_calls persiste
         exitCode: 0,
         timedOut: false,
         stdoutTail: '',
+        stdoutTruncated: false,
         stderrTail: '',
+        stderrTruncated: false,
       }),
     } as AnyTool;
     expect(() => presentToolResult(menteur, {}, {})).toThrow(ToolPresentationError);
@@ -334,12 +336,27 @@ describe('presentToolResult — la charge utile que la ligne tool_calls persiste
       present: ({ output }: { output: unknown }) => ({
         card: 'text',
         text: `rien écrit : ${String((output as { reason: string }).reason)}`,
+        failure: true,
       }),
     } as AnyTool;
     expect(presentToolResult(files, {}, { ok: false, reason: 'lecture seule' })).toEqual({
       card: 'text',
       text: 'rien écrit : lecture seule',
+      failure: true,
     });
     expect(cardForTool(files)).toBe('files');
+  });
+  it('un text de SUCCÈS sous une carte structurée est refusé — le contrat ne se contourne pas', () => {
+    // Revue passe 14 : sans ce refus, un outil `files` pouvait réussir et
+    // rendre du texte, neutralisant son contrat sans que rien ne le dise.
+    const paresseux = {
+      ...base,
+      card: 'files',
+      present: () => ({ card: 'text', text: 'fait' }),
+    } as AnyTool;
+    expect(() => presentToolResult(paresseux, {}, { ok: true })).toThrow(ToolPresentationError);
+    expect(() => presentToolResult(paresseux, {}, { ok: true })).toThrow(
+      /only a `text` payload marked `failure: true`/,
+    );
   });
 });
