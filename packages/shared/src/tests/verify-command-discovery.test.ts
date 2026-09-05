@@ -150,6 +150,65 @@ describe('discoverVerifyCommands — ce que le projet dit de lui-même', () => {
     expect(out.map((c) => c.timeoutSeconds)).toEqual([180, 600, 900]);
   });
 
+  it('la proposition porte CE QUE LE SCRIPT LANCE', () => {
+    // Un nom de script ne garantit rien : un projet peut appeler `next dev`
+    // depuis `test`, et la commande ne rendrait jamais la main. Le
+    // propriétaire doit voir la vraie ligne avant d'approuver un pouvoir
+    // (revue Codex passe 8).
+    const out = discoverVerifyCommands({
+      packageJson: pkg({ scripts: { test: 'next dev', typecheck: 'tsc --noEmit' } }),
+      lockfiles: ['pnpm-lock.yaml'],
+    });
+    expect(out.map((c) => [c.command, c.runs])).toEqual([
+      ['pnpm run typecheck', 'tsc --noEmit'],
+      ['pnpm run test', 'next dev'],
+    ]);
+    // Une commande conventionnelle ne passe par aucun script : rien à montrer.
+    expect(discoverVerifyCommands({ hasGoMod: true })[0]?.runs).toBeUndefined();
+  });
+
+  it('`pytest` exige une vraie SECTION de configuration, pas le mot quelque part', () => {
+    // Le mot dans un commentaire ou une description proposait une commande que
+    // la machine n'a peut-être pas, et son « command not found » se serait lu
+    // comme un rouge de code (revue Codex passe 8).
+    const nonSections = [
+      '# on utilisait pytest avant\n[project]\nname = "x"\n',
+      '[project]\ndescription = "outils pour pytest"\n',
+      '[project.optional-dependencies]\ndev = ["pytest"]\n',
+    ];
+    for (const toml of nonSections) {
+      expect(discoverVerifyCommands({ pyprojectToml: toml }), toml).toEqual([]);
+    }
+    for (const toml of ['[tool.pytest.ini_options]\n', '[tool.pytest]\n']) {
+      expect(discoverVerifyCommands({ pyprojectToml: toml }).map((c) => c.command)).toEqual([
+        'pytest',
+      ]);
+    }
+  });
+
+  it('les virgules finales d’un `deno.jsonc` ne le font pas disparaître', () => {
+    // Elles sont usuelles et valides en JSONC, et `JSON.parse` les refuse : un
+    // manifeste parfaitement ordinaire était silencieusement ignoré.
+    const out = discoverVerifyCommands({
+      denoJson: `{
+  "tasks": {
+    "test": "deno test -A",
+  },
+}`,
+    });
+    expect(out.map((c) => c.command)).toEqual(['deno check .', 'deno task test']);
+  });
+
+  it('une virgule DANS une chaîne survit au nettoyage', () => {
+    const out = discoverVerifyCommands({
+      denoJson: '{"tasks": {"test": "echo a,}"}}',
+    });
+    expect(out.map((c) => [c.command, c.runs])).toEqual([
+      ['deno check .', undefined],
+      ['deno task test', 'echo a,}'],
+    ]);
+  });
+
   it('chaque proposition porte un CODE de provenance, jamais une phrase', () => {
     const out = discoverVerifyCommands({
       packageJson: pkg({ scripts: { test: 'x' } }),

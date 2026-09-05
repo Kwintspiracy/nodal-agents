@@ -5,7 +5,6 @@ import { revalidatePath } from 'next/cache';
 import { headers, cookies } from 'next/headers';
 import { z } from 'zod';
 import {
-  readFile as fsReadFile,
   writeFile as fsWriteFile,
   rename as fsRename,
   unlink as fsUnlink,
@@ -24,7 +23,12 @@ import {
 } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { realpath as fsRealpath, access as fsAccess, opendir as fsOpendir } from 'node:fs/promises';
+import {
+  realpath as fsRealpath,
+  access as fsAccess,
+  opendir as fsOpendir,
+  open as fsOpen,
+} from 'node:fs/promises';
 import {
   deriveProjectRoot,
   isInsideWorkspace,
@@ -12998,18 +13002,22 @@ export async function discoverVerifyCommandsAction(
     if (denied === 'not_found') return fail('not_found', 'Workspace not found');
     if (denied) return fail('forbidden', 'Only the workspace owner can read proof commands.');
 
-    const projectPath = normalizePath(parsed.data.projectPath);
+    // LE CHEMIN RÉEL, pas celui qu'on a reçu. `isUnderPath` est un test de
+    // préfixe : `C:/ws/../../Users/x` COMMENCE par `C:/ws/` et passerait la
+    // garde, puis `pathJoin` résoudrait le `..` et lirait dehors. Et une
+    // jonction Windows posée dans un dossier attaché sort du périmètre sans
+    // qu'aucun `..` n'apparaisse. Les deux côtés passent donc par `realpath`,
+    // exactement comme `resolveAndCheckPath` dans packages/tools.
+    const projectPath = await realPathOrLexical(pathResolve(parsed.data.projectPath));
     const roots = await db
       .select({ path: agentWorkspaces.path })
       .from(agentWorkspaces)
       .where(eq(agentWorkspaces.entityId, session.entityId));
-    // Dans un dossier attaché, ou rien. Un chemin hors périmètre est refusé
-    // AVANT la première lecture disque.
-    const inside = roots.some((r) => {
-      const root = normalizePath(r.path);
-      return projectPath === root || isUnderPath(projectPath, root);
-    });
-    if (!inside) return fail('not_found', 'Project not found');
+    const realRoots = await Promise.all(roots.map((r) => realPathOrLexical(pathResolve(r.path))));
+    // Dans un dossier attaché, ou rien. Refusé AVANT la première lecture.
+    if (!realRoots.some((root) => isUnderPath(projectPath, root))) {
+      return fail('not_found', 'Project not found');
+    }
 
     const manifests: Record<string, unknown> = {};
     for (const [key, file] of MANIFEST_FILES) {
@@ -13036,18 +13044,44 @@ export async function discoverVerifyCommandsAction(
 }
 
 /**
+ * Le chemin RÉEL, normalisé — liens et jonctions résolus. Un chemin
+ * injoignable rend sa forme lexicale : la comparaison de périmètre échouera
+ * proprement, plutôt que de lever au milieu d'une garde.
+ */
+async function realPathOrLexical(path: string): Promise<string> {
+  try {
+    return normalizePath(await fsRealpath(path));
+  } catch {
+    return normalizePath(path);
+  }
+}
+
+/**
  * Le texte d'un manifeste, ou `null`. Un fichier absent, illisible ou trop
  * gros rend `null` — la découverte se passe de lui, elle n'échoue pas pour
  * autant : un projet dont le `package.json` est cassé garde ses propositions
  * Rust ou Go.
  */
 async function readManifest(path: string): Promise<string | null> {
+  // Lecture RÉELLEMENT bornée. `stat` puis `readFile` ne l'est pas : le
+  // fichier peut grossir ou être remplacé entre les deux appels, et la lecture
+  // dépasserait le plafond qu'on croyait tenir (revue Codex PR #46, passe 8).
+  // Un descripteur ouvert une fois, un tampon de taille fixe : ce qui n'entre
+  // pas n'est jamais lu.
+  let handle: Awaited<ReturnType<typeof fsOpen>> | null = null;
   try {
-    const stats = await fsStat(path);
-    if (!stats.isFile() || stats.size > MAX_MANIFEST_BYTES) return null;
-    return await fsReadFile(path, 'utf8');
+    handle = await fsOpen(path, 'r');
+    if (!(await handle.stat()).isFile()) return null;
+    const buffer = Buffer.allocUnsafe(MAX_MANIFEST_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    // Plus gros que le plafond : ce n'est pas un manifeste, et on ne devine
+    // rien sur un morceau tronqué.
+    if (bytesRead > MAX_MANIFEST_BYTES) return null;
+    return buffer.subarray(0, bytesRead).toString('utf8');
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
 }
 

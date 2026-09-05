@@ -59,6 +59,16 @@ export type ProjectVerification = Pick<
 /** Une ligne du brouillon : le timeout est du TEXTE tant qu'il est saisi. */
 type Draft = { command: string; timeout: string };
 
+/**
+ * Une proposition, plus CE QU'ELLE LANCE quand elle passe par un script.
+ *
+ * Le nom d'un script ne dit rien de ce qu'il fait : un projet peut appeler
+ * `next dev` depuis `test`, et la commande ne rendrait jamais la main (revue
+ * Codex PR #46, passe 8). Le propriétaire doit voir la vraie ligne avant
+ * d'approuver un pouvoir.
+ */
+type Suggestion = Draft & { runs?: string };
+
 /** Cinq minutes — un `pnpm test` ordinaire tient dedans sans être infini. */
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const MAX_TIMEOUT_SECONDS = 3600;
@@ -124,7 +134,7 @@ export default function ProjectVerificationPanel({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, startTransition] = useTransition();
   /** Les propositions lues dans le projet — `null` tant qu'on n'a pas cherché. */
-  const [suggested, setSuggested] = useState<Draft[] | null>(null);
+  const [suggested, setSuggested] = useState<Suggestion[] | null>(null);
 
   // Resynchronisation sur l'état SERVEUR quand il change (après une écriture
   // réussie, la relecture remonte jusqu'ici). Reset dérivé au rendu, le
@@ -285,6 +295,7 @@ export default function ProjectVerificationPanel({
             {suggested.map((sug, i) => (
               <li key={i} className="font-mono text-body-12 text-ink-3">
                 {sug.command}
+                {sug.runs !== undefined && <span className="text-ink-4"> → {sug.runs}</span>}
               </li>
             ))}
           </ul>
@@ -292,7 +303,9 @@ export default function ProjectVerificationPanel({
             type="button"
             disabled={!editable}
             data-testid="verify-use-suggested"
-            onClick={() => setDraft(suggested)}
+            onClick={() =>
+              setDraft(suggested.map((sug) => ({ command: sug.command, timeout: sug.timeout })))
+            }
           >
             Add these
           </PrimaryButton>

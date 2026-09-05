@@ -8,9 +8,9 @@
 // seul le propriétaire écrit, dans SON espace seulement.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and, agentWorkspaces, codeProjects, entities, users } from '@nodal-agents/db';
@@ -499,9 +499,15 @@ describe('discoverVerifyCommandsAction', () => {
     expect(res.data.map((c) => c.timeoutSeconds)).toEqual([180, 600]);
   });
 
-  it('un chemin HORS des dossiers attachés est refusé AVANT toute lecture', async () => {
+  it('un chemin HORS des dossiers attachés est refusé', async () => {
     // Sans cette garde, l'action dirait à qui la sollicite si un
     // `package.json` existe à un chemin arbitraire de la machine.
+    //
+    // Ce test prouve le REFUS, pas l'ordre : il resterait vert si la garde
+    // s'appliquait après les lectures (revue Codex passe 8). Que rien ne soit
+    // lu avant est STRUCTUREL — le `return` précède la boucle de lecture dans
+    // `discoverVerifyCommandsAction` — et le prouver demanderait d'injecter un
+    // adaptateur de système de fichiers. Dit plutôt que sous-entendu.
     const { discoverVerifyCommandsAction } = await actions();
     const dehors = await mkdtemp(join(tmpdir(), 'nodal-dehors-'));
     try {
@@ -511,6 +517,53 @@ describe('discoverVerifyCommandsAction', () => {
       if (res.ok) return;
       expect(res.code).toBe('not_found');
     } finally {
+      await rm(dehors, { recursive: true, force: true });
+    }
+  });
+
+  it('un `..` ne sort PAS du périmètre', async () => {
+    // `isUnderPath` est un test de préfixe : `<racine>/../<ailleurs>` commence
+    // par la racine et passerait la garde, puis `join` résoudrait le `..` et
+    // lirait dehors. Le chemin est donc résolu AVANT d'être comparé.
+    const { discoverVerifyCommandsAction } = await actions();
+    const dehors = await mkdtemp(join(tmpdir(), 'nodal-remonte-'));
+    try {
+      await writeFile(join(dehors, 'package.json'), JSON.stringify({ scripts: { test: 'x' } }));
+      // Concaténation, PAS `join` : `path.join` collapse les `..` lui-même, et
+      // le test n'enverrait jamais celui qu'il prétend envoyer. Il resterait
+      // vert sans la garde.
+      const res = await discoverVerifyCommandsAction({
+        projectPath: `${racine}/../${basename(dehors)}`,
+      });
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.code).toBe('not_found');
+    } finally {
+      await rm(dehors, { recursive: true, force: true });
+    }
+  });
+
+  it('un LIEN posé dans un dossier attaché ne fait pas sortir du périmètre', async () => {
+    // Aucun `..` n'apparaît, et pourtant la cible est dehors. Sans `realpath`,
+    // la garde ne voit que le chemin du lien, qui est bien sous la racine.
+    const { discoverVerifyCommandsAction } = await actions();
+    const dehors = await mkdtemp(join(tmpdir(), 'nodal-lien-cible-'));
+    const lien = join(racine, 'raccourci');
+    try {
+      await writeFile(join(dehors, 'package.json'), JSON.stringify({ scripts: { test: 'x' } }));
+      try {
+        await symlink(dehors, lien, 'junction');
+      } catch {
+        // Un environnement qui refuse les liens ne peut pas prouver ce cas :
+        // il est DIT non exécuté plutôt que rendu vert par un `return` muet.
+        expect.fail('lien impossible à créer : ce cas n’a PAS été éprouvé');
+      }
+      const res = await discoverVerifyCommandsAction({ projectPath: lien });
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.code).toBe('not_found');
+    } finally {
+      await rm(lien, { recursive: true, force: true });
       await rm(dehors, { recursive: true, force: true });
     }
   });

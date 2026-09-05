@@ -53,6 +53,18 @@ export type DiscoverySource =
 export interface DiscoveredCommand extends VerifyCommand {
   readonly source: DiscoverySource;
   /**
+   * Ce que le script LANCE VRAIMENT, quand la proposition passe par un script
+   * de manifeste (`"test": "next dev"`).
+   *
+   * Un nom de script ne garantit rien (revue Codex PR #46, passe 8) : un
+   * projet peut appeler `next dev` depuis `test`, et la commande ne rendrait
+   * jamais la main. Le nom seul est donc une proposition AVEUGLE. L'écran
+   * montre cette valeur à côté de la commande, pour que le propriétaire voie
+   * ce qu'il approuve. `undefined` pour une commande conventionnelle
+   * (`cargo check`), qui ne passe par aucun script.
+   */
+  readonly runs?: string;
+  /**
    * Le rang de COÛT, pas d'importance : 0 est le contrôle le moins cher.
    *
    * La séquence de preuve s'arrête au premier rouge (§ « commandes graduées »
@@ -127,20 +139,22 @@ export function discoverVerifyCommands(manifests: ProjectManifests): readonly Di
         packageManagerFromField(pkg['packageManager']) ??
         packageManagerFromLockfiles(manifests.lockfiles ?? []);
       for (const [name, rank] of SCRIPT_RANKS) {
-        if (typeof scripts[name] !== 'string') continue;
-        out.push(command(`${pm} run ${name}`, rank, 'package_json_script'));
+        const runs = scripts[name];
+        if (typeof runs !== 'string') continue;
+        out.push(command(`${pm} run ${name}`, rank, 'package_json_script', runs));
       }
     }
   }
 
-  const deno = parseJson(stripJsonComments(manifests.denoJson));
+  const deno = parseJson(stripTrailingCommas(stripJsonComments(manifests.denoJson)));
   if (deno) {
     out.push(command('deno check .', 0, 'deno_check'));
     const tasks = deno['tasks'];
     if (isRecord(tasks)) {
       for (const [name, rank] of SCRIPT_RANKS) {
-        if (typeof tasks[name] !== 'string') continue;
-        out.push(command(`deno task ${name}`, rank, 'deno_task'));
+        const runs = tasks[name];
+        if (typeof runs !== 'string') continue;
+        out.push(command(`deno task ${name}`, rank, 'deno_task', runs));
       }
     }
   }
@@ -158,7 +172,14 @@ export function discoverVerifyCommands(manifests: ProjectManifests): readonly Di
   // Python n'a pas de convention de script. `pytest` n'est proposé que si le
   // projet le NOMME lui-même : sinon la commande échouerait « command not
   // found », et un rouge d'outillage passerait pour un rouge de code.
-  if (manifests.pyprojectToml !== undefined && /pytest/i.test(manifests.pyprojectToml)) {
+  // `[tool.pytest...]` — une vraie SECTION de configuration. Chercher le mot
+  // `pytest` n'importe où l'attrapait dans un commentaire ou une description,
+  // et proposait une commande que la machine n'a peut-être pas (revue Codex
+  // passe 8) : son « command not found » se lirait comme un rouge de code.
+  if (
+    manifests.pyprojectToml !== undefined &&
+    /^\s*\[tool\.pytest[.\]]/m.test(manifests.pyprojectToml)
+  ) {
     out.push(command('pytest', 2, 'pytest'));
   }
 
@@ -171,8 +192,14 @@ export function discoverVerifyCommands(manifests: ProjectManifests): readonly Di
     .slice(0, VERIFY_COMMANDS_MAX);
 }
 
-function command(text: string, rank: number, source: DiscoverySource): DiscoveredCommand {
-  return { command: text, timeoutSeconds: TIMEOUT_BY_RANK[rank] ?? 300, rank, source };
+function command(
+  text: string,
+  rank: number,
+  source: DiscoverySource,
+  runs?: string,
+): DiscoveredCommand {
+  const base = { command: text, timeoutSeconds: TIMEOUT_BY_RANK[rank] ?? 300, rank, source };
+  return runs === undefined ? base : { ...base, runs };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -223,6 +250,45 @@ function stripJsonComments(text: string | undefined): string | undefined {
       while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
       i++;
       continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+/**
+ * Retire les virgules finales, valides en JSONC et refusées par `JSON.parse`.
+ *
+ * Sans ça, un `deno.jsonc` parfaitement ordinaire — elles y sont usuelles —
+ * était silencieusement ignoré et le projet ne proposait rien (revue Codex
+ * PR #46, passe 8). Le retrait se fait HORS chaîne, sinon `"a,}"` perdrait sa
+ * virgule.
+ */
+function stripTrailingCommas(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] as string;
+    if (inString) {
+      out += c;
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === ',') {
+      // La virgule ne survit que si un vrai jeton suit, hors espaces.
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j] as string)) j++;
+      const next = text[j];
+      if (next === '}' || next === ']' || next === undefined) continue;
     }
     out += c;
   }
