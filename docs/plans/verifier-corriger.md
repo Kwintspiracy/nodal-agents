@@ -228,6 +228,40 @@ doit lui poser la question là où il est. Les boutons en ligne de Telegram
 existent déjà ; ce qui manque est le lien entre « une preuve attend une
 approbation » et « ce job vient de ce canal ».
 
+### v7-C, seconde moitié — l'approbation dans le canal, découpée
+
+**L'infrastructure existe déjà**, vérifiée dans le code le 05/09 :
+`apps/runner/src/approvals/notify.ts` envoie une carte d'approbation avec des
+boutons en ligne, **neutre vis-à-vis du canal** (elle passe par l'adaptateur de
+`@nodal-agents/delivery`), et `telegram/approval-callback.ts` résout le clic.
+Un job sans canal ni conversation ne reçoit simplement pas de carte.
+
+Ce qui manque n'est donc pas la plomberie, c'est **le déclencheur et le
+résolveur** : la carte existante nait d'un `ApprovalGateRequest` du niveau
+outil, alors qu'ici l'objet approuvé est le **manifeste de preuve d'un projet**.
+
+**QUAND la carte part.** À la FINALISATION, pas au démarrage. Le job se termine
+« non vérifié », et la carte dit pourquoi et ce qu'il faudrait pour que la
+prochaine fois soit prouvée. Demander au démarrage ferait attendre l'utilisateur
+avant même que le travail commence, pour une garde qui n'est pas encore active.
+
+**Les tickets, dans l'ordre :**
+
+| # | Ce que ça fait |
+|---|---|
+| 1 | Un préfixe de rappel PROPRE (`prf`), distinct de celui des outils : un clic sur une vieille carte ne doit jamais tomber dans le mauvais résolveur |
+| 2 | Le corps de la carte : le projet, les commandes proposées, **ce que chaque script lance**, et l'avertissement en toutes lettres (une commande de preuve exécute du code du dépôt avec le compte du propriétaire) |
+| 3 | Le déclencheur : la finalisation trouve un livrable `not_configured` sur un projet où la découverte rend au moins une commande ⇒ une carte, **une seule fois par projet**, jamais à chaque job |
+| 4 | Le résolveur du clic : écrit `verify_commands` PUIS `verify_approved_manifest_hash`, avec le hash que le SERVEUR recalcule — jamais celui du message, qui est vieux d'autant que la carte |
+| 5 | Le refus : écrit une trace, et la carte ne revient pas pour ce projet |
+| 6 | La garde du propriétaire : seul lui approuve, même contrôle que l'écran (`assertProjectOwner`, comparaison directe avec `entities.userId`) |
+
+**Le piège à ne pas répéter** : la carte porte des commandes lues à un instant
+donné. Entre l'envoi et le clic, un agent peut avoir modifié `package.json`. Le
+résolveur doit donc **relire les manifestes et refuser si la liste a changé**,
+exactement comme l'écran refuse un hash périmé. Sans ça, approuver « pnpm run
+test » approuverait ce que `test` est devenu entre-temps.
+
 ### v7-B — la décision de conception à prendre AVANT de coder
 
 Le contrat d'un vérificateur (`apps/runner/src/verification/types.ts`) est
