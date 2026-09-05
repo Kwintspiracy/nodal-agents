@@ -54,6 +54,19 @@ import type { ToolContext } from '../types';
  */
 const DELIVERABLE_TYPE_CODE_PROJECT = 'code_project';
 
+/**
+ * Les types de livrable dont l'état de configuration vit dans `code_projects`,
+ * donc ceux qui prennent un verrou sur cette table.
+ *
+ * Déclaré séparément du type lui-même : l'ordre de verrouillage se raisonne
+ * sur la TABLE verrouillée, pas sur le nom du type. Un type ajouté ici entre
+ * dans la même passe de verrous, triée par clé — il ne crée pas un second
+ * ordre concurrent (revue Codex PR #46, passe 5).
+ */
+const TYPES_LOCKING_CODE_PROJECTS: ReadonlySet<DeliverableType> = new Set([
+  DELIVERABLE_TYPE_CODE_PROJECT,
+]);
+
 /** L'état lisible que pose une intention. */
 const DECISION_STATUS_DIRTY = 'dirty';
 
@@ -350,12 +363,14 @@ async function resolveDeliverables(
     }
   }
 
-  // Tri par (type, clé) croissants. Ce n'est PAS de l'affichage : c'est
-  // l'ordre de verrouillage des lignes `code_projects`, que deux jobs
-  // concurrents doivent prendre dans le même sens. `code_project` passe avant
-  // `office_file` par l'ordre alphabétique, et les clés d'un même type
-  // restent croissantes entre elles — la garantie que donnait déjà
-  // `resolveProjectRoots` est préservée, pas remplacée.
+  // Tri par (type, clé) croissants — un ordre STABLE, pour que deux appels
+  // identiques rendent la même liste et que les tests portent sur un rang.
+  //
+  // Ce n'est PAS ce qui garantit l'ordre des verrous : celui-là est repris
+  // par une passe dédiée dans la transaction, triée par clé sur les seuls
+  // livrables qui verrouillent `code_projects`. Faire porter les deux rôles
+  // à ce tri marchait par accident et cassait au premier type ajouté (revue
+  // Codex PR #46, passe 5).
   return out.sort((a, b) =>
     a.deliverableType !== b.deliverableType
       ? a.deliverableType < b.deliverableType
@@ -557,19 +572,43 @@ export async function writeMutationIntent(
         return { kind: 'already_terminal', surface } as const;
       }
 
+      // PASSE 1 — LES VERROUS, avant toute autre écriture.
+      //
+      // L'ordre de verrouillage se décide sur l'identité PHYSIQUE du verrou
+      // (la table, la clé), jamais sur le type LOGIQUE du livrable. Trier les
+      // livrables par (type, clé) et compter dessus marchait par accident :
+      // `code_project` est seul à verrouiller `code_projects`, et il tombe
+      // premier en ordre alphabétique. Le jour où un second type verrouille
+      // la même table, deux jobs prendraient les mêmes lignes dans deux ordres
+      // et s'interbloqueraient (revue Codex PR #46, passe 5).
+      //
+      // Cette passe retire la question : TOUS les verrous `code_projects`
+      // sont pris ici, par clé croissante, quel que soit le type qui les
+      // demande. Ajouter un type à `TYPES_LOCKING_CODE_PROJECTS` suffit.
+      const epochs = new Map<string, number>();
+      const locking = deliverables
+        .filter((d) => TYPES_LOCKING_CODE_PROJECTS.has(d.deliverableType))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      for (const deliverable of locking) {
+        epochs.set(deliverable.key, await bumpProjectEpoch(tx, ctx.entityId, deliverable));
+      }
+
+      // PASSE 2 — les états. Aucun verrou n'est pris ici.
       const dirtied: DirtiedDeliverable[] = [];
-      // `deliverables` sort déjà trié par (type, clé) croissants : c'est
-      // L'ORDRE DE VERROUILLAGE, pas une commodité d'affichage.
       for (const deliverable of deliverables) {
         // L'epoch de configuration vit dans `code_projects` — la table des
         // projets de code, et d'eux seuls. Un fichier bureautique n'a pas de
         // ligne là-dedans : lui en créer une le ferait apparaître comme un
         // projet dans l'onglet Code (v7-A). Son epoch est donc `null`, et la
         // finalisation sait déjà lire un epoch absent (`not_configured`).
-        let verificationEpoch: number | null = null;
-        if (deliverable.deliverableType === DELIVERABLE_TYPE_CODE_PROJECT) {
-          verificationEpoch = await bumpProjectEpoch(tx, ctx.entityId, deliverable);
-        }
+        const verificationEpoch = TYPES_LOCKING_CODE_PROJECTS.has(deliverable.deliverableType)
+          ? (epochs.get(deliverable.key) ?? null)
+          : null;
+        if (
+          TYPES_LOCKING_CODE_PROJECTS.has(deliverable.deliverableType) &&
+          verificationEpoch === null
+        )
+          throw new IntentFailure('intent_epoch_missing');
 
         const [state] = await tx
           .insert(jobDeliverableVerificationState)

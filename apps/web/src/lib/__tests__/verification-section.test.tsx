@@ -119,6 +119,24 @@ describe('VerificationSection', () => {
     expect(html).toContain('not checked');
   });
 
+  it('un type inconnu ne se fait PAS passer pour un document', () => {
+    // Le jour où un envoi (`outbound_action`) atteint cette liste, « is a
+    // document » serait faux sans que rien ne le signale.
+    const html = render({
+      unconfigured: [
+        {
+          deliverableType: 'outbound_action',
+          canonicalKey: 'telegram:42',
+          displayPath: null,
+          reason: 'not_configured',
+        },
+      ],
+    });
+    expect(html).toContain('is not checked yet');
+    expect(html).not.toContain('is a document');
+    expect(html).not.toContain('project card in Code');
+  });
+
   it('une preuve : ses commandes dans l’ordre des rangs, code de sortie, durée, verdict', () => {
     const html = render({ sequences: [SEQ] });
     expect(html).toContain('Verification · 1');

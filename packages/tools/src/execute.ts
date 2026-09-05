@@ -621,28 +621,33 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
     return 'verification_intent_failed: intent_surface_unmapped';
   }
 
+  // Un outil mutant SANS hook est refusé, jamais rangé au hasard.
+  //
+  // Le repli d'avant fabriquait des cibles « tous les workspaces attachés, en
+  // projet de code ». Conservateur en apparence, faux en pratique : il
+  // réintroduisait ICI le littéral de classement que v7-A vient de retirer du
+  // helper d'intention, et il aurait classé en code un outil qui produit tout
+  // autre chose (revue Codex PR #46, passe 5). Le seul endroit qui SAIT ce
+  // qu'un appel produit est l'outil ; sans sa déclaration, on ne devine pas.
+  //
+  // Ce cas est déjà interdit par le test d'architecture du registre (T18) :
+  // ce refus est la garde qui le rend vrai à l'exécution aussi.
+  if (!tool.resolveMutationTargets) {
+    console.error(
+      `[verification] VERIFICATION_INTENT_NO_TARGETS_HOOK tool=${tool.name} job=${ctx.jobId}`,
+    );
+    return 'verification_intent_failed: intent_no_targets_hook';
+  }
+
   let targets: readonly MutationTarget[];
-  if (tool.resolveMutationTargets) {
-    try {
-      targets = await tool.resolveMutationTargets(input, ctx);
-    } catch (err) {
-      console.error(
-        `[verification] VERIFICATION_INTENT_TARGETS_FAILED tool=${tool.name} job=${ctx.jobId} ` +
-          `error=${err instanceof Error ? err.message : String(err)}`,
-      );
-      return 'verification_intent_failed: intent_targets_failed';
-    }
-  } else {
-    // Sans hook, on ne sait pas CE QUE l'outil produit : le périmètre
-    // conservateur est le projet de code, qui coûte une preuve de trop plutôt
-    // qu'une livraison non vérifiée. Un outil mutant sans hook est par
-    // ailleurs interdit par le test d'architecture du registre (T18) : cette
-    // branche est un filet, pas un chemin normal.
-    targets = (ctx.workspaces ?? []).map((w) => ({
-      kind: 'dir' as const,
-      path: w.path,
-      deliverableType: 'code_project' as const,
-    }));
+  try {
+    targets = await tool.resolveMutationTargets(input, ctx);
+  } catch (err) {
+    console.error(
+      `[verification] VERIFICATION_INTENT_TARGETS_FAILED tool=${tool.name} job=${ctx.jobId} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 'verification_intent_failed: intent_targets_failed';
   }
 
   const outcome = await writeMutationIntent(ctx, { surface, targets });

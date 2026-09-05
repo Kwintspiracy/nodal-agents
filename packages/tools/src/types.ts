@@ -305,9 +305,20 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    */
   mutatesWorkspace?: boolean;
   /**
-   * Optional PER-CALL declaration of WHAT this call is about to write —
-   * the paths from which the verification layer derives the code projects it
-   * marks dirty BEFORE the write happens (plan « Vérifier & Corriger », D8).
+   * PER-CALL declaration of WHAT this call is about to write — the targets
+   * from which the verification layer derives the deliverables it marks dirty
+   * BEFORE the write happens (plan « Vérifier & Corriger », D8).
+   *
+   * OPTIONAL IN THE TYPE, REQUIRED IN FACT when `mutatesWorkspace` is true.
+   * The seam REFUSES a mutating tool that declares no hook
+   * (`intent_no_targets_hook`, execute.ts) and the registry's architecture
+   * test (T18) fails on one. Expressing the pairing as a discriminated union
+   * was tried and abandoned (revue Codex PR #46, passe 5): intersecting the
+   * union with this interface loses the parameter bivariance every
+   * `ToolDefinition<SpecificSchema>` relies on to be stored in a registry of
+   * `ToolDefinition<z.ZodTypeAny>`, and produced 204 errors on unrelated
+   * fields. The pairing is enforced, just not by the compiler — same
+   * mechanism as invariants #1, #2 and #6 (see CLAUDE.md).
    *
    * Same argument as `computeApproval` right below: the answer depends on the
    * call's actual TARGET, not on the tool's identity. `file_write` writes one

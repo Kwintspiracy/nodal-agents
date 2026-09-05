@@ -59,9 +59,17 @@ function unconfiguredTag(u: VerificationUnconfiguredView): string {
 function unconfiguredReason(u: VerificationUnconfiguredView): string {
   if (u.reason === 'pending_approval')
     return 'has proof commands waiting for the owner’s approval.';
-  if (u.deliverableType === 'code_project')
-    return 'has no proof commands. Add them on its project card in Code.';
-  return 'is a document. Nodal does not check documents yet.';
+  // Une phrase par type NOMMÉ, jamais un `else` qui voudrait dire « document »
+  // (revue Codex PR #46, passe 5) : le jour où un type d'envoi arrive ici,
+  // « is a document » serait faux, et faux sans que rien ne le signale.
+  switch (u.deliverableType) {
+    case 'code_project':
+      return 'has no proof commands. Add them on its project card in Code.';
+    case 'office_file':
+      return 'is a document. Nodal does not check documents yet.';
+    default:
+      return 'is not checked yet.';
+  }
 }
 
 function verdictTag(verdict: string) {

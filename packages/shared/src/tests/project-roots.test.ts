@@ -9,7 +9,12 @@
 // l'ordre de verrouillage du protocole transactionnel.
 
 import { describe, it, expect } from 'vitest';
-import { resolveProjectRoots, isDriveRoot, PROJECT_MARKERS } from '../project-roots';
+import {
+  resolveProjectRoots,
+  resolveFileDeliverables,
+  isDriveRoot,
+  PROJECT_MARKERS,
+} from '../project-roots';
 import type { MutationTarget } from '../project-roots';
 
 const noMarker = () => false;
@@ -207,5 +212,86 @@ describe('les briques exportées', () => {
     expect(PROJECT_MARKERS).toContain('package.json');
     expect(PROJECT_MARKERS).toContain('pyproject.toml');
     expect(PROJECT_MARKERS).toContain('Cargo.toml');
+  });
+});
+
+describe('resolveFileDeliverables — l’identité d’un livrable FICHIER', () => {
+  // La contrepartie de `resolveProjectRoots` pour les types dont l'identité est
+  // le fichier lui-même (v7-A). Ces cas manquaient : la revue Codex passe 5 les
+  // a nommés un par un.
+  const doc = (path: string): MutationTarget => ({
+    kind: 'file',
+    path,
+    deliverableType: 'office_file',
+  });
+
+  it('un fichier POSÉ À LA RACINE attachée est retenu, sous son propre chemin', () => {
+    const out = resolveFileDeliverables({
+      targets: [doc('C:/dev/app/rapport.xlsx')],
+      workspaceRoots: ['C:/dev/app'],
+    });
+    expect(out).toEqual([{ key: 'c:/dev/app/rapport.xlsx', path: 'C:/dev/app/rapport.xlsx' }]);
+  });
+
+  it('un fichier NICHÉ garde son chemin — il ne remonte jamais au projet', () => {
+    const out = resolveFileDeliverables({
+      targets: [doc('C:/dev/app/docs/2026/bilan.xlsx')],
+      workspaceRoots: ['C:/dev'],
+    });
+    expect(keys(out)).toEqual(['c:/dev/app/docs/2026/bilan.xlsx']);
+  });
+
+  it('un partage UNC est retenu, et sa casse est repliée comme un chemin Windows', () => {
+    const out = resolveFileDeliverables({
+      targets: [doc('//srv/part/App/Rapport.xlsx'), doc('\\SRV\part\app\rapport.xlsx')],
+      workspaceRoots: ['//srv/part'],
+    });
+    // Deux écritures du MÊME classeur — une seule identité, sinon un job
+    // porterait deux états pour un seul livrable.
+    expect(out).toHaveLength(1);
+    expect(keys(out)).toEqual(['//srv/part/app/rapport.xlsx']);
+  });
+
+  it('sur un système sensible à la casse, deux casses sont deux fichiers', () => {
+    const out = resolveFileDeliverables({
+      targets: [doc('/srv/App/a.xlsx'), doc('/srv/app/a.xlsx')],
+      workspaceRoots: ['/srv'],
+    });
+    expect(keys(out)).toEqual(['/srv/App/a.xlsx', '/srv/app/a.xlsx']);
+  });
+
+  it('hors de tout dossier attaché : aucun livrable', () => {
+    expect(
+      resolveFileDeliverables({
+        targets: [doc('C:/ailleurs/rapport.xlsx')],
+        workspaceRoots: ['C:/dev'],
+      }),
+    ).toEqual([]);
+  });
+
+  it('une racine de disque n’attache rien — elle engloberait la machine', () => {
+    expect(
+      resolveFileDeliverables({
+        targets: [doc('C:/rapport.xlsx')],
+        workspaceRoots: ['C:/'],
+      }),
+    ).toEqual([]);
+  });
+
+  it('un DOSSIER n’est jamais un livrable fichier', () => {
+    expect(
+      resolveFileDeliverables({
+        targets: [{ kind: 'dir', path: 'C:/dev/app', deliverableType: 'office_file' }],
+        workspaceRoots: ['C:/dev'],
+      }),
+    ).toEqual([]);
+  });
+
+  it('la liste sort TRIÉE par clé croissante, dédupliquée', () => {
+    const out = resolveFileDeliverables({
+      targets: [doc('C:/dev/z.xlsx'), doc('C:/dev/a.xlsx'), doc('C:/DEV/Z.xlsx')],
+      workspaceRoots: ['C:/dev'],
+    });
+    expect(keys(out)).toEqual(['c:/dev/a.xlsx', 'c:/dev/z.xlsx']);
   });
 });

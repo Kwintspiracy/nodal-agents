@@ -206,6 +206,88 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect((await projectRow(keyOf(ws)))?.verificationEpoch).toBe(1);
   });
 
+  it('un lot MIXTE : deux projets et un classeur, en UN seul appel', async () => {
+    // La passe de verrous prend les lignes `code_projects` par clé croissante,
+    // indépendamment du type. Deux projets et un document dans le même appel
+    // doivent donner trois états, deux lignes de projet, et l'ordre de la
+    // liste rendue doit être stable (revue Codex PR #46, passe 5).
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await mkdir(join(ws, 'alpha'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{}');
+    await writeFile(join(ws, 'alpha', 'package.json'), '{}');
+
+    const outcome = await writeMutationIntent(ctx(), {
+      surface: 'fileOps',
+      targets: [
+        { kind: 'file', path: join(ws, 'zeta', 'a.ts'), deliverableType: 'code_project' },
+        { kind: 'file', path: join(ws, 'alpha', 'b.ts'), deliverableType: 'code_project' },
+        { kind: 'file', path: join(ws, 'zeta', 'r.xlsx'), deliverableType: 'office_file' },
+      ],
+    });
+
+    expect(outcome.kind).toBe('written');
+    if (outcome.kind !== 'written') return;
+    expect(outcome.deliverables.map((d) => [d.deliverableType, d.key])).toEqual([
+      ['code_project', keyOf(join(ws, 'alpha'))],
+      ['code_project', keyOf(join(ws, 'zeta'))],
+      ['office_file', keyOf(join(ws, 'zeta', 'r.xlsx'))],
+    ]);
+    // Le document n'a pas d'epoch : rien à faire vieillir pour lui.
+    expect(outcome.deliverables.map((d) => d.verificationEpoch)).toEqual([1, 1, null]);
+    expect(await statesOf(jobId)).toHaveLength(3);
+    expect(await projectRow(keyOf(join(ws, 'zeta')))).toBeDefined();
+    expect(await projectRow(keyOf(join(ws, 'alpha')))).toBeDefined();
+    // Le classeur n'a PAS créé de ligne de projet à son nom.
+    expect(await projectRow(keyOf(join(ws, 'zeta', 'r.xlsx')))).toBeUndefined();
+  });
+
+  it('un lot mixte dont UN type est non branché : tout est refusé, rien n’est posé', async () => {
+    // L'outil mute de façon atomique APRÈS le seam : poser les intentions
+    // connues et laisser passer l'inconnue produirait une écriture sans état
+    // de vérification. L'échec intégral est la seule issue cohérente.
+    await writeFile(join(ws, 'package.json'), '{}');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const outcome = await writeMutationIntent(ctx(), {
+        surface: 'fileOps',
+        targets: [
+          { kind: 'file', path: join(ws, 'a.ts'), deliverableType: 'code_project' },
+          { kind: 'file', path: join(ws, 'note.md'), deliverableType: 'document' },
+        ],
+      });
+      expect(outcome).toEqual({ kind: 'failed', code: 'intent_type_unsupported' });
+    } finally {
+      err.mockRestore();
+    }
+    expect(await statesOf(jobId)).toHaveLength(0);
+    expect(await projectRow(keyOf(ws))).toBeUndefined();
+  });
+
+  it('un outil mutant SANS hook est refusé — plus de repli « tout en projet de code »', async () => {
+    // Le repli fabriquait des cibles `code_project` pour tous les workspaces :
+    // il réintroduisait dans le runtime le littéral que v7-A retire du helper
+    // (revue Codex PR #46, passe 5). L'outil garde son nom, donc sa surface :
+    // ce test isole bien l'absence de hook.
+    const { resolveMutationTargets: _sansHook, ...tool } = fileWriteTool;
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await executeTool(tool as never, { path: 'a.txt', content: 'x' }, ctx(), opts);
+      expect(res.outcome).toBe('error');
+      if (res.outcome !== 'error') return;
+      expect(res.error).toBe('verification_intent_failed: intent_no_targets_hook');
+      expect(
+        err.mock.calls
+          .map((c) => String(c[0]))
+          .some((l) => l.includes('VERIFICATION_INTENT_NO_TARGETS_HOOK tool=file_write')),
+      ).toBe(true);
+    } finally {
+      err.mockRestore();
+    }
+    expect(await exists(join(ws, 'a.txt')), 'l’écriture a eu lieu sans intention').toBe(false);
+    expect(await statesOf(jobId)).toHaveLength(0);
+    expect(await projectRow(keyOf(ws))).toBeUndefined();
+  });
+
   it('un type de livrable sans règle de canonicalisation est REFUSÉ', async () => {
     // `document` est réservé par le plan, sans canonicaliseur branché. Une clé
     // inventée ici donnerait un état qui ne désigne rien : l'intention échoue,

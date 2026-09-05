@@ -212,6 +212,20 @@ describe('l’intention, par énumération du registre', () => {
     expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(join(ws, 'rapport.docx'))]);
   });
 
+  it('TOUT outil mutant du registre déclare CE QU’IL PRODUIT', () => {
+    // La paire (`mutatesWorkspace: true`, `resolveMutationTargets`) n'est pas
+    // exprimable au compilateur : l'union discriminée a été essayée et perd la
+    // bivariance dont dépend le registre (204 erreurs, revue Codex passe 5).
+    // Elle est donc imposée ICI, en toutes lettres, plutôt que déduite de
+    // l'échec d'un autre test.
+    const sansHook = mutatingTools.filter((t) => !t.resolveMutationTargets).map((t) => t.name);
+    expect(
+      sansHook,
+      `outils mutants sans resolveMutationTargets : ${sansHook.join(', ')} — ` +
+        'le seam les refuse à l’exécution, déclarez ce que l’appel produit',
+    ).toEqual([]);
+  });
+
   it('chaque outil mutant du registre pose une ligne d’état sale sur le projet attendu', async () => {
     // Les outils Office sont couverts par le test précédent (hook partagé +
     // représentant) : ici, les outils à hook PROPRE, un input par outil.
@@ -279,11 +293,13 @@ describe('la sonde — ce que le seam fait d’un outil marqué', () => {
     };
   }
 
-  it('un outil mutant SANS hook retombe sur TOUS les workspaces', async () => {
-    // Le repli de `takeMutationIntent` quand un outil ne déclare pas
-    // `resolveMutationTargets` : conservatif, c'est le bon côté où se tromper
-    // — un projet sali pour rien coûte une preuve, un projet manqué coûte une
-    // livraison non vérifiée.
+  it('un outil mutant SANS hook est REFUSÉ par le seam', async () => {
+    // Ce test disait l'inverse jusqu'au 05/09 : le seam retombait sur « tous
+    // les workspaces attachés, en projet de code ». Conservatif en apparence,
+    // faux en pratique — c'était un littéral de classement dans le runtime,
+    // celui-là même que v7-A retire du helper d'intention, et il aurait classé
+    // en code un outil qui produit tout autre chose (revue Codex passe 5).
+    // Le seul endroit qui SAIT ce qu'un appel produit est l'outil.
     const a = await freshWorkspace('ws-a');
     const b = await freshWorkspace('ws-b');
     const jobId = await freshJob();
@@ -305,11 +321,12 @@ describe('la sonde — ce que le seam fait d’un outil marqué', () => {
     );
 
     const res = await executeTool(probe, {}, ctx([a, b], jobId), probeOptions());
-    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    expect(res.outcome).toBe('error');
+    if (res.outcome !== 'error') return;
+    expect(res.error).toBe('verification_intent_failed: intent_no_targets_hook');
 
-    const rows = await statesOf(jobId);
-    expect(rows.map((r) => r.canonicalKey).sort()).toEqual([keyOf(a), keyOf(b)].sort());
-    for (const row of rows) expect(row.dirtyGeneration).toBe(1);
+    // Ni état, ni ligne de projet : rien n'a été deviné à sa place.
+    expect(await statesOf(jobId)).toHaveLength(0);
   });
 
   it('l’intention PRÉCÈDE l’exécution', async () => {
@@ -327,6 +344,15 @@ describe('la sonde — ce que le seam fait d’un outil marqué', () => {
       inputSchema: z.object({}),
       riskLevel: 'write',
       mutatesWorkspace: true,
+      // Le hook est désormais exigé de tout outil mutant : la sonde le porte,
+      // et vise le workspace — ce que ce test observe est l'ORDRE, pas le
+      // classement.
+      resolveMutationTargets: async (_i: Record<string, never>, c: ToolContext) =>
+        (c.workspaces ?? []).map((w) => ({
+          kind: 'dir' as const,
+          path: w.path,
+          deliverableType: 'code_project' as const,
+        })),
       execute: async (_input: Record<string, never>, c: ToolContext) => {
         const rows = await c.db
           .select()
