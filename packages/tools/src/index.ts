@@ -25,7 +25,7 @@ export type {
   MutationIntentOutcome,
   MutationIntentContext,
   WriteMutationIntentArgs,
-  DirtiedProject,
+  DirtiedDeliverable,
 } from './verification/intent';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant

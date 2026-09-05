@@ -31,6 +31,7 @@ import { fileEditTool } from '../builtin/file-ops/file-edit';
 import { runCommandTool } from '../builtin/run-command';
 import { runSkillScriptTool } from '../builtin/run-skill-script';
 import { codeTaskTool } from '../builtin/code-task';
+import { OFFICE_TOOLS } from '../builtin/office-ops';
 import type { ApprovalRule, ExecuteOptions, ToolContext } from '../types';
 
 // `@electric-sql/pglite` n'est PAS une dépendance de ce paquet (le harnais la
@@ -138,6 +139,96 @@ const exists = async (p: string): Promise<boolean> => {
 };
 
 describe('l’intention de mutation, posée par executeTool', () => {
+  // ── v7-A : le type de livrable vient de l'outil ──────────────────────────
+  //
+  // Le défaut corrigé ici : le type était écrit en dur à `code_project`, donc
+  // un classeur écrit dans un dépôt salissait LE DÉPÔT. La finalisation
+  // relançait `pnpm test` pour prouver un `.xlsx`, et le `.xlsx` n'était
+  // vérifié par rien. MUTATION : remettre `deliverableType: 'code_project'`
+  // dans `officeMutationTargets` fait rougir les deux tests qui suivent.
+
+  const officeTool = (name: string) => {
+    const tool = OFFICE_TOOLS.find((t) => t.name === name);
+    if (!tool) throw new Error(`outil office introuvable: ${name}`);
+    return tool;
+  };
+
+  it('un .xlsx écrit dans un projet de code salit LE FICHIER, pas le projet', async () => {
+    await writeFile(join(ws, 'package.json'), '{}');
+
+    const res = await executeTool(
+      officeTool('xlsx_create') as never,
+      { path: 'rapport.xlsx', sheet: 'Feuille1' },
+      ctx(),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+    expect(await exists(join(ws, 'rapport.xlsx'))).toBe(true);
+
+    const rows = await statesOf(jobId);
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.deliverableType).toBe('office_file');
+    expect(row.canonicalKey).toBe(keyOf(join(ws, 'rapport.xlsx')));
+    expect(row.dirtyGeneration).toBe(1);
+    expect(row.decisionStatus).toBe('dirty');
+
+    // LE point du lot : le projet n'a pas bougé. Aucune ligne `code_projects`
+    // créée, donc aucun epoch à faire vieillir et aucune preuve à relancer.
+    expect(await projectRow(keyOf(ws))).toBeUndefined();
+    expect(rows.some((r) => r.deliverableType === 'code_project')).toBe(false);
+  });
+
+  it('code puis classeur dans le même dossier ⇒ DEUX livrables distincts', async () => {
+    await writeFile(join(ws, 'package.json'), '{}');
+
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'src.ts', content: 'const a = 1;' },
+      ctx(),
+      opts,
+    );
+    await executeTool(
+      officeTool('xlsx_create') as never,
+      { path: 'donnees.xlsx', sheet: 'F1' },
+      ctx(),
+      opts,
+    );
+
+    const rows = (await statesOf(jobId)).sort((a, b) =>
+      a.deliverableType.localeCompare(b.deliverableType),
+    );
+    expect(rows.map((r) => r.deliverableType)).toEqual(['code_project', 'office_file']);
+    expect(rows[0]!.canonicalKey).toBe(keyOf(ws));
+    expect(rows[1]!.canonicalKey).toBe(keyOf(join(ws, 'donnees.xlsx')));
+    // Une seule écriture de code : l'epoch du projet vaut 1, pas 2. Le
+    // classeur ne fait pas vieillir la configuration du dépôt.
+    expect((await projectRow(keyOf(ws)))?.verificationEpoch).toBe(1);
+  });
+
+  it('un type de livrable sans règle de canonicalisation est REFUSÉ', async () => {
+    // `document` est réservé par le plan, sans canonicaliseur branché. Une clé
+    // inventée ici donnerait un état qui ne désigne rien : l'intention échoue,
+    // et le seam refusera l'écriture.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const outcome = await writeMutationIntent(ctx(), {
+        surface: 'fileOps',
+        targets: [{ kind: 'file', path: join(ws, 'note.md'), deliverableType: 'document' }],
+      });
+      expect(outcome).toEqual({ kind: 'failed', code: 'intent_type_unsupported' });
+      expect(
+        err.mock.calls
+          .map((c) => String(c[0]))
+          .some((l) => l.includes('VERIFICATION_INTENT_TYPE_UNSUPPORTED type=document')),
+      ).toBe(true);
+    } finally {
+      err.mockRestore();
+    }
+    expect(await statesOf(jobId)).toHaveLength(0);
+    expect(await projectRow(keyOf(ws))).toBeUndefined();
+  });
+
   it('file_write pose l’intention sur le PROJET ENGLOBANT', async () => {
     // Le dossier attaché porte un manifeste : c'est LUI le projet, et une
     // écriture trois niveaux plus bas le salit lui, pas `sub`.
@@ -224,12 +315,12 @@ describe('l’intention de mutation, posée par executeTool', () => {
     // croissant, pas celui du readdir ni celui des workspaces.
     const intent = await writeMutationIntent(ctx(), {
       surface: 'shell',
-      targets: [{ kind: 'dir', path: ws }],
+      targets: [{ kind: 'dir', path: ws, deliverableType: 'code_project' }],
     });
     expect(intent.kind).toBe('written');
     if (intent.kind !== 'written') return;
-    expect(intent.projects.map((p) => p.key)).toEqual(
-      [...intent.projects.map((p) => p.key)].sort(),
+    expect(intent.deliverables.map((d) => d.key)).toEqual(
+      [...intent.deliverables.map((d) => d.key)].sort(),
     );
   });
 
@@ -494,7 +585,7 @@ describe('les refus et les silences interdits', () => {
 
     const outcome = await writeMutationIntent(ctx(), {
       surface: 'fileOps',
-      targets: [{ kind: 'file', path: join(ws, 'a.txt') }],
+      targets: [{ kind: 'file', path: join(ws, 'a.txt'), deliverableType: 'code_project' }],
     });
     expect(outcome.kind).toBe('already_terminal');
 
@@ -520,7 +611,10 @@ describe('les refus et les silences interdits', () => {
     try {
       const outcome = await writeMutationIntent(
         { db, entityId: seed.entityId, jobId: null, workspaces: [{ label: 'shared', path: ws }] },
-        { surface: 'cliRuntime', targets: [{ kind: 'dir', path: ws }] },
+        {
+          surface: 'cliRuntime',
+          targets: [{ kind: 'dir', path: ws, deliverableType: 'code_project' }],
+        },
       );
       expect(outcome).toEqual({ kind: 'skipped', reason: 'no_job_context', surface: 'cliRuntime' });
       const logged = warn.mock.calls.map((c) => String(c[0]));

@@ -118,10 +118,19 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
   // Le plan tranche pareil : « tous les projets du périmètre d'écriture
   // (conservatif) ».
   resolveMutationTargets: async (input, ctx) => {
-    const roots = (ctx.workspaces ?? []).map((w) => ({ kind: 'dir' as const, path: w.path }));
+    // Un shell touche le PROJET : on ne sait pas quels fichiers il écrira, mais
+    // le périmètre déclaré est celui d'un projet de code (v7-A).
+    const roots = (ctx.workspaces ?? []).map((w) => ({
+      kind: 'dir' as const,
+      path: w.path,
+      deliverableType: 'code_project' as const,
+    }));
     try {
       const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
-      return [{ kind: 'dir' as const, path: cwd }, ...roots];
+      return [
+        { kind: 'dir' as const, path: cwd, deliverableType: 'code_project' as const },
+        ...roots,
+      ];
     } catch {
       // cwd irrésolu : la commande ne partira pas, mais les dossiers attachés
       // restent le périmètre déclaré — rien n'est retiré par une panne.

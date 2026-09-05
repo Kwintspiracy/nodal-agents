@@ -19,10 +19,12 @@
 // « aucun littéral de type de livrable dans la primitive » (T13(c)).
 //
 // Un type sans vérificateur est REFUSÉ, jamais accepté avec une clé inventée
-// (invariant #4 : pas de repli silencieux). C'est le cas de tous les types
-// réservés de `DELIVERABLE_TYPES` en PR① — seul `code_project` est branché.
+// (invariant #4 : pas de repli silencieux). C'est le cas des types réservés de
+// `DELIVERABLE_TYPES` que rien ne sait encore canonicaliser ; `code_project`
+// et `office_file` sont branchés (v7-A).
 
 import { codeProjectVerifier } from './code-project.ts';
+import { officeFileVerifier } from './office-file.ts';
 import type { DeliverableVerifier } from './types.ts';
 
 export type {
@@ -53,7 +55,9 @@ export class DeliverableTypeUnsupportedError extends Error {
  * recopiant leurs noms ici (une deuxième liste finirait par diverger).
  */
 const VERIFIERS: ReadonlyMap<string, DeliverableVerifier> = new Map(
-  [codeProjectVerifier].map((verifier) => [verifier.deliverableType, verifier] as const),
+  [codeProjectVerifier, officeFileVerifier].map(
+    (verifier) => [verifier.deliverableType, verifier] as const,
+  ),
 );
 
 /**

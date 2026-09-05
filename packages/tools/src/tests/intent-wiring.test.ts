@@ -205,8 +205,11 @@ describe('l’intention, par énumération du registre', () => {
       autoApproveMutating(),
     );
     expect(res.outcome, 'docx_create s’est arrêté avant le seam').not.toBe('awaiting_approval');
+    // v7-A : le livrable est LE FICHIER, pas le projet qui l'héberge. Un
+    // document écrit dans un dépôt ne relance pas les tests du dépôt.
     const rows = await statesOf(jobId);
-    expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(ws)]);
+    expect(rows.map((r) => r.deliverableType)).toEqual(['office_file']);
+    expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(join(ws, 'rapport.docx'))]);
   });
 
   it('chaque outil mutant du registre pose une ligne d’état sale sur le projet attendu', async () => {

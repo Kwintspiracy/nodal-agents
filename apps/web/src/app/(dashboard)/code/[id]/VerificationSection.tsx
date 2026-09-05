@@ -42,6 +42,28 @@ const VERDICT_TAG: Record<string, { tone: 'skill' | 'err' | 'warn'; label: strin
   infra_error: { tone: 'warn', label: 'infra error' },
 };
 
+/**
+ * Ce qu'on dit d'un livrable que la preuve n'a pas éprouvé.
+ *
+ * « not configured » veut dire « le propriétaire n'a rien configuré », et
+ * c'est vrai d'un projet de code. Un document n'a RIEN à configurer : dire à
+ * son propriétaire d'aller ajouter des commandes sur une carte de projet
+ * l'envoie chercher un réglage qui n'existe pas. Chaque type dit donc sa
+ * propre vérité (v7-A).
+ */
+function unconfiguredTag(u: VerificationUnconfiguredView): string {
+  if (u.reason === 'pending_approval') return 'awaiting approval';
+  return u.deliverableType === 'code_project' ? 'not configured' : 'not checked';
+}
+
+function unconfiguredReason(u: VerificationUnconfiguredView): string {
+  if (u.reason === 'pending_approval')
+    return 'has proof commands waiting for the owner’s approval.';
+  if (u.deliverableType === 'code_project')
+    return 'has no proof commands. Add them on its project card in Code.';
+  return 'is a document. Nodal does not check documents yet.';
+}
+
 function verdictTag(verdict: string) {
   return VERDICT_TAG[verdict] ?? { tone: 'warn' as const, label: verdict };
 }
@@ -107,17 +129,11 @@ export default function VerificationSection({
                   key={`${u.deliverableType}:${u.canonicalKey}`}
                   className="flex flex-wrap items-center gap-2 text-body-13 text-ink-3"
                 >
-                  <MonoMicroTag tone="ink">
-                    {u.reason === 'pending_approval' ? 'awaiting approval' : 'not configured'}
-                  </MonoMicroTag>
+                  <MonoMicroTag tone="ink">{unconfiguredTag(u)}</MonoMicroTag>
                   <span className="min-w-0 truncate font-mono" title={u.canonicalKey}>
                     {u.displayPath ?? u.canonicalKey}
                   </span>
-                  <span>
-                    {u.reason === 'pending_approval'
-                      ? 'has proof commands waiting for the owner’s approval.'
-                      : 'has no proof commands. Add them on its project card in Code.'}
-                  </span>
+                  <span>{unconfiguredReason(u)}</span>
                 </li>
               ))}
             </ul>

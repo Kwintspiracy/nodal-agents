@@ -4,6 +4,7 @@ import { writeFile, rename, mkdir, unlink } from 'node:fs/promises';
 import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { deliverableTypeForPath } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import {
   resolveAndCheckPath,
@@ -62,7 +63,9 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   // same error a few lines down, with the message the agent can act on.
   resolveMutationTargets: async (input, ctx) => {
     try {
-      return [{ kind: 'file', path: await resolveAndCheckPath(ctx, input.path) }];
+      const path = await resolveAndCheckPath(ctx, input.path);
+      // Le type vient de ce qui est ÉCRIT, pas du dossier d'atterrissage (v7-A).
+      return [{ kind: 'file', path, deliverableType: deliverableTypeForPath(path) }];
     } catch {
       return [];
     }

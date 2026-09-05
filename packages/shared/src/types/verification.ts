@@ -88,3 +88,42 @@ export const VERIFY_COMMANDS_MAX = 5;
  */
 export const VerifyCommandsSchema = z.array(VerifyCommandSchema).min(1).max(VERIFY_COMMANDS_MAX);
 export type VerifyCommands = z.infer<typeof VerifyCommandsSchema>;
+
+// ─── Classer un livrable par ce qu'il EST (v7-A) ─────────────────────────────
+
+/**
+ * Extensions dont le contenu est un document bureautique. Un fichier qui les
+ * porte est un livrable À PART, quel que soit l'outil qui l'a écrit et quel que
+ * soit le dossier où il atterrit.
+ *
+ * Les formats hérités (`.xls`, `.doc`, `.ppt`) sont dans la liste : un agent
+ * peut en produire, et les ranger avec le code serait la même erreur.
+ */
+export const OFFICE_FILE_EXTENSIONS: readonly string[] = [
+  '.xlsx',
+  '.xlsm',
+  '.xls',
+  '.docx',
+  '.doc',
+  '.pptx',
+  '.ppt',
+  '.csv',
+] as const;
+
+/**
+ * Le type de livrable que produit une écriture, déduit du CHEMIN seul.
+ *
+ * Mécanique, sans LLM et sans devinette : l'extension suffit à distinguer un
+ * tableur d'un fichier source. C'est ce qui empêche un `.xlsx` déposé dans un
+ * dépôt de marquer le dépôt comme modifié et d'en relancer les tests (v7-A —
+ * le défaut trouvé par Quentin en essayant l'écran).
+ *
+ * Tout le reste est `code_project` : c'est le comportement d'avant, et il est
+ * juste dans le cas dominant (une écriture dans un dossier de travail fait
+ * partie du projet). Affiner « ce fichier appartient-il vraiment au projet »
+ * demande un jugement, pas une extension — ce sera un ticket à part.
+ */
+export function deliverableTypeForPath(path: string): DeliverableType {
+  const lower = path.toLowerCase();
+  return OFFICE_FILE_EXTENSIONS.some((ext) => lower.endsWith(ext)) ? 'office_file' : 'code_project';
+}

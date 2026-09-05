@@ -229,7 +229,14 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
   resolveMutationTargets: async (input, ctx) => {
     if (input.mode !== 'write') return [];
     try {
-      return [{ kind: 'dir' as const, path: await resolveAndCheckPath(ctx, input.cwd ?? '.') }];
+      // Un harnais de code travaille sur le PROJET, par construction.
+      return [
+        {
+          kind: 'dir' as const,
+          path: await resolveAndCheckPath(ctx, input.cwd ?? '.'),
+          deliverableType: 'code_project' as const,
+        },
+      ];
     } catch {
       // cwd irrésolu : `execute` échouera dessus avant tout spawn.
       return [];

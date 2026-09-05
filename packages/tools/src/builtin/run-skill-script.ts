@@ -205,7 +205,11 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
     // pas où un script écrit — le périmètre déclaré ici doit donc être celui
     // qu'un script peut réellement atteindre.
     resolveMutationTargets: async (_input: RunSkillScriptInput, ctx: ToolContext) =>
-      (ctx.workspaces ?? []).map((w) => ({ kind: 'dir' as const, path: w.path })),
+      (ctx.workspaces ?? []).map((w) => ({
+        kind: 'dir' as const,
+        path: w.path,
+        deliverableType: 'code_project' as const,
+      })),
     execute: async (
       input: RunSkillScriptInput,
       ctx: ToolContext,

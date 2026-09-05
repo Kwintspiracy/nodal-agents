@@ -365,6 +365,45 @@ describe('finalizeJobSuccess — phase d’observation (v5-C)', () => {
 // ─── Livrables non prouvables ───────────────────────────────────────────────
 
 describe('finalizeJobSuccess — non configuré et non approuvé', () => {
+  it('un livrable office_file finalise sans lever, et n’emprunte PAS les commandes du projet', async () => {
+    // v7-A. Avant, tout était rangé en `code_project` : un classeur écrit dans
+    // un dépôt déclenchait la séquence de preuve DU DÉPÔT. Deux choses à
+    // prouver ici : (1) le type traverse la primitive sans lever
+    // `DELIVERABLE_TYPE_UNSUPPORTED`, (2) aucune commande du projet ne tourne
+    // pour lui — constaté par un fichier témoin que la commande écrirait.
+    const witness = join(dir, 'temoin-office.txt');
+    const cmd = await script(
+      'office.js',
+      `require('node:fs').writeFileSync(${JSON.stringify(witness)}, 'x')`,
+    );
+    await setProject([{ command: cmd, timeoutSeconds: 20 }], 'current');
+
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'office_file', `${key}/rapport.xlsx`, 1);
+
+    const outcome = await finalizeJobSuccess(
+      asDb(),
+      { jobId: jobId, result: 'classeur écrit', toolsUsed: ['xlsx_create'] },
+      deps(),
+    );
+
+    expect(await exists(witness)).toBe(false);
+    expect(await runsOf(jobId)).toHaveLength(0);
+    expect(outcome.kind).toBe('completed_unverified');
+    expect(outcome.decisions).toEqual([
+      {
+        deliverableType: 'office_file',
+        canonicalKey: `${key}/rapport.xlsx`,
+        decisionStatus: 'not_configured',
+        settled: false,
+        unverifiable: true,
+        due: false,
+      },
+    ]);
+    expect((await stateRow(stateId)).decisionStatus).toBe('not_configured');
+    expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
   it('verify_commands NULL ⇒ aucune ligne verification_runs, état not_configured, completed_unverified', async () => {
     await setProject(null, null);
     const jobId = await insertJob('processing');
@@ -660,7 +699,10 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
 describe('finalizeJobSuccess — le registre décide, pas la primitive', () => {
   it('un livrable d’un type sans vérificateur ⇒ DELIVERABLE_TYPE_UNSUPPORTED, rien n’est écrit', async () => {
     const jobId = await insertJob('processing');
-    const stateId = await insertState(jobId, 'office_file', '/srv/rapport.docx', 1);
+    // `document` reste réservé sans vérificateur (v7-A en branche deux :
+    // `code_project` et `office_file`). Le jour où il en gagne un, ce test
+    // doit être reporté sur un type encore réservé — pas supprimé.
+    const stateId = await insertState(jobId, 'document', '/srv/rapport.docx', 1);
 
     await expect(
       finalizeJobSuccess(asDb(), { jobId: jobId, result: 'ok', toolsUsed: [] }, deps()),

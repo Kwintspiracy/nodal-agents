@@ -633,7 +633,16 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
       return 'verification_intent_failed: intent_targets_failed';
     }
   } else {
-    targets = (ctx.workspaces ?? []).map((w) => ({ kind: 'dir' as const, path: w.path }));
+    // Sans hook, on ne sait pas CE QUE l'outil produit : le périmètre
+    // conservateur est le projet de code, qui coûte une preuve de trop plutôt
+    // qu'une livraison non vérifiée. Un outil mutant sans hook est par
+    // ailleurs interdit par le test d'architecture du registre (T18) : cette
+    // branche est un filet, pas un chemin normal.
+    targets = (ctx.workspaces ?? []).map((w) => ({
+      kind: 'dir' as const,
+      path: w.path,
+      deliverableType: 'code_project' as const,
+    }));
   }
 
   const outcome = await writeMutationIntent(ctx, { surface, targets });

@@ -33,14 +33,16 @@ import {
   eq,
   sql,
 } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import {
   PROJECT_MARKERS,
   isTerminalJobStatus,
   normalizePath,
   projectKey,
+  resolveFileDeliverables,
   resolveProjectRoots,
+  type DeliverableType,
   type MutationTarget,
-  type ProjectRoot,
   type VerificationSurfaceKey,
 } from '@nodal-agents/shared';
 import type { ToolContext } from '../types';
@@ -63,14 +65,20 @@ const DECISION_STATUS_DIRTY = 'dirty';
  */
 export const MAX_PROJECTS = 12;
 
-/** Un projet réellement sali par cet appel. */
-export interface DirtiedProject {
+/** Un livrable réellement sali par cet appel. */
+export interface DirtiedDeliverable {
+  /** Ce que l'outil a déclaré produire — ce qui choisira le vérificateur. */
+  readonly deliverableType: DeliverableType;
   readonly key: string;
   readonly path: string;
   /** La génération sale posée par CET appel (1 au premier passage). */
   readonly dirtyGeneration: number;
-  /** L'epoch de configuration après incrément. */
-  readonly verificationEpoch: number;
+  /**
+   * L'epoch de configuration après incrément, ou `null` pour un type qui n'a
+   * pas de configuration à faire vieillir (v7-A : seuls les projets de code
+   * en ont une, dans `code_projects`).
+   */
+  readonly verificationEpoch: number | null;
 }
 
 /**
@@ -81,7 +89,7 @@ export type MutationIntentOutcome =
   | {
       readonly kind: 'written';
       readonly surface: VerificationSurfaceKey;
-      readonly projects: readonly DirtiedProject[];
+      readonly deliverables: readonly DirtiedDeliverable[];
     }
   /** Aucune cible ne retombe sur un projet — rien à salir, et ce n'est pas une panne. */
   | { readonly kind: 'no_targets'; readonly surface: VerificationSurfaceKey }
@@ -169,9 +177,9 @@ function rebaseOntoLexicalRoots(
   return targets.map((t) => {
     const real = realPathOf(t.path);
     for (const root of roots) {
-      if (real === root.real) return { kind: t.kind, path: root.lexical };
+      if (real === root.real) return { ...t, path: root.lexical };
       if (real.startsWith(`${root.real}/`)) {
-        return { kind: t.kind, path: `${root.lexical}${real.slice(root.real.length)}` };
+        return { ...t, path: `${root.lexical}${real.slice(root.real.length)}` };
       }
     }
     return t;
@@ -214,7 +222,7 @@ async function expandWorkspaceRoots(
     }
     // Racine qui porte un manifeste : c'est ELLE le projet, pas ses enfants.
     if (hasMarker(path)) {
-      out.push({ kind: 'dir', path });
+      out.push({ kind: 'dir', path, deliverableType: target.deliverableType });
       continue;
     }
     let children: string[];
@@ -242,10 +250,123 @@ async function expandWorkspaceRoots(
       );
     }
     for (const child of children.slice(0, MAX_PROJECTS)) {
-      out.push({ kind: 'dir', path: `${path}/${child}` });
+      out.push({ kind: 'dir', path: `${path}/${child}`, deliverableType: target.deliverableType });
     }
   }
   return out;
+}
+
+/**
+ * UN livrable résolu : ce qu'il est, sa clé d'identité, le chemin à afficher.
+ */
+interface ResolvedDeliverable {
+  readonly deliverableType: DeliverableType;
+  readonly key: string;
+  readonly path: string;
+}
+
+/**
+ * Range chaque cible dans SON type de livrable, et applique à chacun sa règle
+ * de canonicalisation (v7-A).
+ *
+ * LE DÉFAUT QUE CECI CORRIGE. Le type était écrit en dur — tout ce qu'un agent
+ * touchait devenait un `code_project`. Écrire un tableau de bord `.xlsx` dans
+ * un dépôt marquait le DÉPÔT modifié : la finalisation relançait `pnpm test`
+ * pour prouver un classeur, et le classeur lui-même n'était vérifié par rien.
+ * Le type vient maintenant de l'outil, qui sait ce qu'il produit.
+ *
+ * Deux règles, une par type branché :
+ *   - `code_project` : le PROJET qui contient la cible (`resolveProjectRoots`),
+ *     après expansion des dossiers attachés sans manifeste ;
+ *   - `office_file` : le FICHIER lui-même (`resolveFileDeliverables`). Aucune
+ *     remontée au projet : un document a sa propre identité, ses propres
+ *     vérifications, et ne salit pas le code qui l'héberge.
+ *
+ * Le `switch` est EXHAUSTIF sur `DeliverableType` : ajouter un type à la liste
+ * partagée sans lui donner de règle ici est une erreur du compilateur, pas un
+ * livrable rangé au hasard. Un type déclaré mais non branché est REFUSÉ —
+ * l'intention échoue, l'écriture est refusée, et personne ne croit vérifié ce
+ * que rien ne sait canonicaliser (invariant #4).
+ */
+async function resolveDeliverables(
+  targets: readonly MutationTarget[],
+  workspaceRoots: readonly string[],
+): Promise<readonly ResolvedDeliverable[]> {
+  const rebased = rebaseOntoLexicalRoots(targets, workspaceRoots);
+  const byType = new Map<DeliverableType, MutationTarget[]>();
+  for (const target of rebased) {
+    const bucket = byType.get(target.deliverableType);
+    if (bucket) bucket.push(target);
+    else byType.set(target.deliverableType, [target]);
+  }
+
+  const out: ResolvedDeliverable[] = [];
+  for (const [deliverableType, group] of byType) {
+    switch (deliverableType) {
+      case 'code_project': {
+        const expanded = await expandWorkspaceRoots(group, workspaceRoots);
+        for (const project of resolveProjectRoots({
+          targets: expanded,
+          workspaceRoots,
+          hasMarker,
+        })) {
+          out.push({ deliverableType, key: project.key, path: project.path });
+        }
+        break;
+      }
+      case 'office_file': {
+        // Un dossier n'est pas un document. Le cas n'existe pas aujourd'hui
+        // (les outils Office ciblent tous un `path` de fichier) ; s'il
+        // apparaissait, il serait DIT plutôt que rangé en silence.
+        const dirs = group.filter((t) => t.kind !== 'file').length;
+        if (dirs > 0) {
+          console.warn(
+            `[verification] VERIFICATION_INTENT_DIR_TARGET_IGNORED type=${deliverableType} count=${dirs}`,
+          );
+        }
+        for (const file of resolveFileDeliverables({ targets: group, workspaceRoots })) {
+          out.push({ deliverableType, key: file.key, path: file.path });
+        }
+        break;
+      }
+      case 'document':
+      case 'outbound_action':
+      case 'other': {
+        // Réservés par le plan, sans règle de canonicalisation branchée. Une
+        // clé inventée ici donnerait un état de vérification qui ne désigne
+        // rien — et un livrable qu'aucun écran ne retrouve.
+        console.error(
+          `[verification] VERIFICATION_INTENT_TYPE_UNSUPPORTED type=${deliverableType} ` +
+            `count=${group.length}`,
+        );
+        throw new IntentFailure('intent_type_unsupported');
+      }
+      default: {
+        // Exhaustivité prouvée par le compilateur : `never` ici casse le build
+        // le jour où `DELIVERABLE_TYPES` gagne une valeur sans règle.
+        const unreachable: never = deliverableType;
+        throw new IntentFailure(`intent_type_unsupported:${String(unreachable)}`);
+      }
+    }
+  }
+
+  // Tri par (type, clé) croissants. Ce n'est PAS de l'affichage : c'est
+  // l'ordre de verrouillage des lignes `code_projects`, que deux jobs
+  // concurrents doivent prendre dans le même sens. `code_project` passe avant
+  // `office_file` par l'ordre alphabétique, et les clés d'un même type
+  // restent croissantes entre elles — la garantie que donnait déjà
+  // `resolveProjectRoots` est préservée, pas remplacée.
+  return out.sort((a, b) =>
+    a.deliverableType !== b.deliverableType
+      ? a.deliverableType < b.deliverableType
+        ? -1
+        : 1
+      : a.key < b.key
+        ? -1
+        : a.key > b.key
+          ? 1
+          : 0,
+  );
 }
 
 /**
@@ -268,6 +389,53 @@ async function traceSkippedSurface(
         ELSE ${agentJobs.verificationSkippedSurfaces} || ${payload}::jsonb END`,
     })
     .where(eq(agentJobs.id, jobId));
+}
+
+/**
+ * Verrouille la ligne `code_projects` du projet, crée-la si elle manque, et
+ * incrémente son `verification_epoch`. Rendu : l'epoch APRÈS incrément.
+ *
+ * La ligne est CRÉÉE si absente : la table est vide par défaut (elle n'existe
+ * que si le propriétaire a renommé, masqué ou configuré), et sans cette
+ * création la finalisation verrouillerait puis lirait des lignes inexistantes.
+ *
+ * Appelé DANS la transaction de l'appelant, et pour les projets de code
+ * SEULEMENT : c'est la table des projets de code. Y insérer un fichier
+ * bureautique le ferait apparaître comme un projet dans l'onglet Code.
+ */
+async function bumpProjectEpoch(
+  tx: AnyDrizzleDb,
+  entityId: string,
+  deliverable: ResolvedDeliverable,
+): Promise<number> {
+  await tx
+    .insert(codeProjects)
+    .values({
+      entityId,
+      projectPath: deliverable.path,
+      projectKey: deliverable.key,
+      verificationEpoch: 0,
+    })
+    .onConflictDoNothing({ target: [codeProjects.entityId, codeProjects.projectKey] });
+
+  const [locked] = await tx
+    .select({ id: codeProjects.id })
+    .from(codeProjects)
+    .where(and(eq(codeProjects.entityId, entityId), eq(codeProjects.projectKey, deliverable.key)))
+    .for('update')
+    .limit(1);
+  if (!locked) throw new IntentFailure('intent_project_row_missing');
+
+  const [bumped] = await tx
+    .update(codeProjects)
+    .set({
+      verificationEpoch: sql`${codeProjects.verificationEpoch} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(eq(codeProjects.id, locked.id))
+    .returning({ verificationEpoch: codeProjects.verificationEpoch });
+  if (!bumped) throw new IntentFailure('intent_epoch_bump_failed');
+  return bumped.verificationEpoch;
 }
 
 /**
@@ -347,20 +515,19 @@ export async function writeMutationIntent(
   }
 
   const workspaceRoots = (ctx.workspaces ?? []).map((w) => normalizePath(w.path));
-  let projects: readonly ProjectRoot[];
+  let deliverables: readonly ResolvedDeliverable[];
   try {
-    const rebased = rebaseOntoLexicalRoots(targets, workspaceRoots);
-    const expanded = await expandWorkspaceRoots(rebased, workspaceRoots);
-    projects = resolveProjectRoots({ targets: expanded, workspaceRoots, hasMarker });
+    deliverables = await resolveDeliverables(targets, workspaceRoots);
   } catch (err) {
+    const code = err instanceof IntentFailure ? err.code : 'intent_resolve_failed';
     console.error(
       `[verification] VERIFICATION_INTENT_RESOLVE_FAILED surface=${surface} job=${jobId} ` +
-        `error=${err instanceof Error ? err.message : String(err)}`,
+        `code=${code} error=${err instanceof Error ? err.message : String(err)}`,
     );
-    return { kind: 'failed', code: 'intent_resolve_failed' };
+    return { kind: 'failed', code };
   }
 
-  if (projects.length === 0) return { kind: 'no_targets', surface };
+  if (deliverables.length === 0) return { kind: 'no_targets', surface };
 
   try {
     return await ctx.db.transaction(async (tx) => {
@@ -390,47 +557,27 @@ export async function writeMutationIntent(
         return { kind: 'already_terminal', surface } as const;
       }
 
-      const dirtied: DirtiedProject[] = [];
-      // `projects` sort déjà trié par clé croissante : c'est L'ORDRE DE
-      // VERROUILLAGE, pas une commodité d'affichage.
-      for (const project of projects) {
-        await tx
-          .insert(codeProjects)
-          .values({
-            entityId: ctx.entityId,
-            projectPath: project.path,
-            projectKey: project.key,
-            verificationEpoch: 0,
-          })
-          .onConflictDoNothing({ target: [codeProjects.entityId, codeProjects.projectKey] });
-
-        const [locked] = await tx
-          .select({ id: codeProjects.id })
-          .from(codeProjects)
-          .where(
-            and(eq(codeProjects.entityId, ctx.entityId), eq(codeProjects.projectKey, project.key)),
-          )
-          .for('update')
-          .limit(1);
-        if (!locked) throw new IntentFailure('intent_project_row_missing');
-
-        const [bumped] = await tx
-          .update(codeProjects)
-          .set({
-            verificationEpoch: sql`${codeProjects.verificationEpoch} + 1`,
-            updatedAt: new Date(),
-          })
-          .where(eq(codeProjects.id, locked.id))
-          .returning({ verificationEpoch: codeProjects.verificationEpoch });
-        if (!bumped) throw new IntentFailure('intent_epoch_bump_failed');
+      const dirtied: DirtiedDeliverable[] = [];
+      // `deliverables` sort déjà trié par (type, clé) croissants : c'est
+      // L'ORDRE DE VERROUILLAGE, pas une commodité d'affichage.
+      for (const deliverable of deliverables) {
+        // L'epoch de configuration vit dans `code_projects` — la table des
+        // projets de code, et d'eux seuls. Un fichier bureautique n'a pas de
+        // ligne là-dedans : lui en créer une le ferait apparaître comme un
+        // projet dans l'onglet Code (v7-A). Son epoch est donc `null`, et la
+        // finalisation sait déjà lire un epoch absent (`not_configured`).
+        let verificationEpoch: number | null = null;
+        if (deliverable.deliverableType === DELIVERABLE_TYPE_CODE_PROJECT) {
+          verificationEpoch = await bumpProjectEpoch(tx, ctx.entityId, deliverable);
+        }
 
         const [state] = await tx
           .insert(jobDeliverableVerificationState)
           .values({
             jobId,
-            deliverableType: DELIVERABLE_TYPE_CODE_PROJECT,
-            canonicalKey: project.key,
-            displayPathSnapshot: project.path,
+            deliverableType: deliverable.deliverableType,
+            canonicalKey: deliverable.key,
+            displayPathSnapshot: deliverable.path,
             dirtyGeneration: 1,
             decisionStatus: DECISION_STATUS_DIRTY,
           })
@@ -443,7 +590,7 @@ export async function writeMutationIntent(
             set: {
               dirtyGeneration: sql`${jobDeliverableVerificationState.dirtyGeneration} + 1`,
               decisionStatus: DECISION_STATUS_DIRTY,
-              displayPathSnapshot: project.path,
+              displayPathSnapshot: deliverable.path,
               updatedAt: new Date(),
             },
           })
@@ -451,14 +598,15 @@ export async function writeMutationIntent(
         if (!state?.dirtyGeneration) throw new IntentFailure('intent_state_write_failed');
 
         dirtied.push({
-          key: project.key,
-          path: project.path,
+          deliverableType: deliverable.deliverableType,
+          key: deliverable.key,
+          path: deliverable.path,
           dirtyGeneration: state.dirtyGeneration,
-          verificationEpoch: bumped.verificationEpoch,
+          verificationEpoch,
         });
       }
 
-      return { kind: 'written', surface, projects: dirtied } as const;
+      return { kind: 'written', surface, deliverables: dirtied } as const;
     });
   } catch (err) {
     const code = err instanceof IntentFailure ? err.code : 'intent_write_failed';

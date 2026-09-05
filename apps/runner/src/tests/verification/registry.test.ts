@@ -20,13 +20,13 @@ describe('registre — un type sans vérificateur est refusé', () => {
   it('getVerifier d’un type réservé lève DELIVERABLE_TYPE_UNSUPPORTED', () => {
     let caught: unknown = null;
     try {
-      getVerifier('office_file');
+      getVerifier('document');
     } catch (error) {
       caught = error;
     }
     expect(caught).toBeInstanceOf(DeliverableTypeUnsupportedError);
     expect((caught as DeliverableTypeUnsupportedError).code).toBe(DELIVERABLE_TYPE_UNSUPPORTED);
-    expect((caught as DeliverableTypeUnsupportedError).deliverableType).toBe('office_file');
+    expect((caught as DeliverableTypeUnsupportedError).deliverableType).toBe('document');
   });
 
   it('canonicalKeyFor refuse aussi — aucune clé n’est inventée pour un type inconnu', () => {
@@ -37,9 +37,26 @@ describe('registre — un type sans vérificateur est refusé', () => {
     expect(() => canonicalKeyFor('inconnu', '/srv/App')).toThrow(DELIVERABLE_TYPE_UNSUPPORTED);
   });
 
-  it('un seul type est branché en PR① — le registre s’indexe sur le vérificateur, pas sur une liste recopiée', () => {
-    expect(registeredDeliverableTypes()).toEqual(['code_project']);
+  it('deux types sont branchés en v7-A — le registre s’indexe sur le vérificateur, pas sur une liste recopiée', () => {
+    expect([...registeredDeliverableTypes()].sort()).toEqual(['code_project', 'office_file']);
     expect(getVerifier('code_project').deliverableType).toBe('code_project');
+    expect(getVerifier('office_file').deliverableType).toBe('office_file');
+  });
+
+  it('office_file : même règle d’identité que partout, et rien à configurer (v7-A)', async () => {
+    const verifier = getVerifier('office_file');
+    // L'identité d'un document est son chemin, replié en casse sur Windows
+    // seulement — `projectKey`, la seule copie de cette règle du dépôt.
+    expect(verifier.canonicalize('D:\Dev\App\rapport.xlsx')).toBe(
+      projectKey('D:\Dev\App\rapport.xlsx'),
+    );
+    expect(verifier.canonicalize('/srv/App/a.docx')).not.toBe(
+      verifier.canonicalize('/srv/app/a.docx'),
+    );
+    // `not_configured` : non vérifiable, jamais vert par défaut.
+    expect(await verifier.loadConfig(null as never, { entityId: 'e', canonicalKey: 'k' })).toEqual({
+      kind: 'not_configured',
+    });
   });
 });
 

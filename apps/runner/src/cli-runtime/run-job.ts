@@ -294,7 +294,12 @@ export async function runCliRuntimeJob(args: {
         { db, entityId: job.entityId ?? '', jobId, workspaces: args.workspaces },
         {
           surface: 'cliRuntime',
-          targets: args.workspaces.map((w) => ({ kind: 'dir' as const, path: w.path })),
+          // Un harnais de code travaille sur le PROJET (v7-A).
+          targets: args.workspaces.map((w) => ({
+            kind: 'dir' as const,
+            path: w.path,
+            deliverableType: 'code_project' as const,
+          })),
         },
       );
       if (intent.kind === 'failed') {

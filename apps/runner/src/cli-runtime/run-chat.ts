@@ -194,7 +194,12 @@ export async function runCliRuntimeChatTurn(args: {
         { db, entityId, jobId: null, workspaces: wsRows },
         {
           surface: 'cliRuntime',
-          targets: wsRows.map((w) => ({ kind: 'dir' as const, path: w.path })),
+          // Un harnais de code travaille sur le PROJET (v7-A).
+          targets: wsRows.map((w) => ({
+            kind: 'dir' as const,
+            path: w.path,
+            deliverableType: 'code_project' as const,
+          })),
         },
       );
       if (intent.kind === 'failed') {

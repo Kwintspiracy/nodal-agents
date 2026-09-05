@@ -88,7 +88,11 @@ export async function officeMutationTargets(
   const path = (input as { path?: unknown }).path;
   if (typeof path !== 'string') return [];
   try {
-    return [{ kind: 'file', path: await resolveAndCheckPath(ctx, path) }];
+    // Un document bureautique est un livrable À PART, jamais une modification
+    // du projet de code qui l'héberge (v7-A) : il ne relance pas ses tests.
+    return [
+      { kind: 'file', path: await resolveAndCheckPath(ctx, path), deliverableType: 'office_file' },
+    ];
   } catch {
     return [];
   }

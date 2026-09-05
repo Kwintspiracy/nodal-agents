@@ -11,6 +11,7 @@ import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { deliverableTypeForPath } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import {
   resolveAndCheckPath,
@@ -67,7 +68,9 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   // resolution failure that execute() will report properly).
   resolveMutationTargets: async (input, ctx) => {
     try {
-      return [{ kind: 'file', path: await resolveAndCheckPath(ctx, input.path) }];
+      const path = await resolveAndCheckPath(ctx, input.path);
+      // Le type vient de ce qui est ÉDITÉ, pas du dossier (v7-A).
+      return [{ kind: 'file', path, deliverableType: deliverableTypeForPath(path) }];
     } catch {
       return [];
     }

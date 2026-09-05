@@ -100,6 +100,25 @@ describe('VerificationSection', () => {
     expect(html).toContain('d:/apps/b');
   });
 
+  it('un document ne renvoie PAS vers une carte de projet (v7-A)', () => {
+    // Dire à quelqu'un d'aller ajouter des commandes de preuve sur la carte de
+    // projet d'un classeur l'envoie chercher un réglage qui n'existe pas :
+    // aucun écran ne configure la vérification d'un document.
+    const html = render({
+      unconfigured: [
+        {
+          deliverableType: 'office_file',
+          canonicalKey: 'd:/apps/a/rapport.xlsx',
+          displayPath: 'D:\APPS\a\rapport.xlsx',
+          reason: 'not_configured',
+        },
+      ],
+    });
+    expect(html).toContain('Nodal does not check documents yet');
+    expect(html).not.toContain('project card in Code');
+    expect(html).toContain('not checked');
+  });
+
   it('une preuve : ses commandes dans l’ordre des rangs, code de sortie, durée, verdict', () => {
     const html = render({ sequences: [SEQ] });
     expect(html).toContain('Verification · 1');

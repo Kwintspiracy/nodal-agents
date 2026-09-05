@@ -19,6 +19,7 @@
 // via `hasMarker`, jamais faite ici.
 
 import { isWindowsPath, normalizePath, projectKey } from './project-key';
+import type { DeliverableType } from './types/verification';
 
 /**
  * Ce qu'un outil s'apprête à toucher. `kind` tranche une ambiguïté qu'aucun
@@ -30,6 +31,19 @@ import { isWindowsPath, normalizePath, projectKey } from './project-key';
 export interface MutationTarget {
   readonly kind: 'file' | 'dir';
   readonly path: string;
+  /**
+   * CE QUE cet appel produit — pas où il l'écrit (v7-A).
+   *
+   * Le type était codé en dur à `'code_project'` dans le helper d'intention,
+   * si bien qu'un tableur écrit dans un dépôt marquait le DÉPÔT comme modifié
+   * et relançait ses tests, alors que pas une ligne de code n'avait bougé.
+   * L'outil sait ce qu'il produit ; il le déclare, et la vérification range
+   * chaque livrable dans sa catégorie.
+   *
+   * Obligatoire, jamais par défaut : un outil mutant ajouté demain doit être
+   * une erreur du compilateur, pas un livrable rangé au hasard.
+   */
+  readonly deliverableType: DeliverableType;
 }
 
 /** Un projet touché : sa clé d'identité, et le chemin à afficher. */
@@ -151,6 +165,46 @@ export function resolveProjectRoots(input: ResolveProjectRootsInput): readonly P
     // Premier chemin gagnant : la clé est l'identité, le chemin n'est que
     // l'affichage — deux casses du même dossier Windows n'en font pas deux.
     if (!found.has(key)) found.set(key, projectPath);
+  }
+
+  return [...found.entries()]
+    .map(([key, path]) => ({ key, path }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
+ * Les livrables FICHIER touchés par une liste de cibles, dédupliqués, triés
+ * par clé croissante.
+ *
+ * La contrepartie de `resolveProjectRoots` pour les livrables dont l'identité
+ * est le FICHIER lui-même, pas le projet qui l'héberge (v7-A). Un tableur
+ * écrit dans un dépôt est un livrable à part : il ne relance pas les tests du
+ * dépôt, et le dépôt ne décide pas s'il est correct.
+ *
+ * La règle d'appartenance reste la même — hors de tout dossier attaché, aucun
+ * livrable — parce qu'elle protège la même chose : un chemin qui a échappé au
+ * contrôle de périmètre de l'outil ne doit pas créer d'état de vérification.
+ * Un dossier n'est jamais un livrable fichier : `kind: 'dir'` est ignoré ici,
+ * et l'appelant journalise ce qu'il a laissé de côté.
+ */
+export function resolveFileDeliverables(input: {
+  readonly targets: readonly MutationTarget[];
+  readonly workspaceRoots: readonly string[];
+}): readonly ProjectRoot[] {
+  const roots = input.workspaceRoots
+    .map(normalizePath)
+    .filter((r) => r !== '' && !isDriveRoot(r))
+    .sort((a, b) => b.length - a.length);
+
+  const found = new Map<string, string>();
+  for (const target of input.targets) {
+    if (target.kind !== 'file') continue;
+    const p = normalizePath(target.path);
+    if (p === '' || isDriveRoot(p)) continue;
+    const dir = p.replace(/\/[^/]*$/, '');
+    if (!roots.some((r) => within(dir, r))) continue;
+    const key = projectKey(p);
+    if (!found.has(key)) found.set(key, p);
   }
 
   return [...found.entries()]

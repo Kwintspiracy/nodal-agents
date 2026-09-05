@@ -13,8 +13,19 @@ import { resolveProjectRoots, isDriveRoot, PROJECT_MARKERS } from '../project-ro
 import type { MutationTarget } from '../project-roots';
 
 const noMarker = () => false;
-const file = (path: string): MutationTarget => ({ kind: 'file', path });
-const dir = (path: string): MutationTarget => ({ kind: 'dir', path });
+// `resolveProjectRoots` ne résout QUE des projets de code : les autres types de
+// livrable (un fichier Office) portent leur propre chemin comme identité et ne
+// passent jamais par ce résolveur (v7-A).
+const file = (path: string): MutationTarget => ({
+  kind: 'file',
+  path,
+  deliverableType: 'code_project',
+});
+const dir = (path: string): MutationTarget => ({
+  kind: 'dir',
+  path,
+  deliverableType: 'code_project',
+});
 
 const keys = (r: readonly { key: string }[]): string[] => r.map((p) => p.key);
 
