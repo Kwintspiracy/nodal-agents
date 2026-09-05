@@ -53,6 +53,8 @@ import {
   type ProjectManifests,
   type VerifyCommand,
   type VerificationSurfaces,
+  redactTranscriptForDisplay,
+  redactSecretsInText,
 } from '@nodal-agents/shared';
 import {
   currentManifestHash,
@@ -181,6 +183,7 @@ import {
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
+import { buildConversationFeed, type ConversationFeed } from './conversation-feed.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
@@ -2221,6 +2224,153 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
   } catch (err) {
     console.error('[getJobDetailAction]', err);
     return fail('db_error', 'Failed to load job');
+  }
+}
+
+// ─── Spaces (P2, plan « De la maquette au produit ») ─────────────────────────
+
+export type SpaceConversationView = {
+  job: {
+    id: string;
+    task: string;
+    channel: string;
+    status: string | null;
+    agentName: string | null;
+    agentSlug: string | null;
+    createdAt: Date | null;
+    completedAt: Date | null;
+    conversationId: string | null;
+    parentJobId: string | null;
+    scheduleName: string | null;
+  };
+  feed: ConversationFeed;
+};
+
+/**
+ * Le fil d'un travail, prêt à dessiner : le job et ses messages, ses lignes
+ * d'audit (carte + charge utile persistées par P1), ses appels LLM par tour,
+ * ses enfants — assemblés par `buildConversationFeed` (pur, testé sur la
+ * vraie forme des lignes). Les messages sont masqués à l'affichage
+ * (SECRET-001), jamais à l'écriture.
+ */
+export async function getSpaceConversationAction(
+  id: string,
+): Promise<ActionResult<SpaceConversationView>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid job id');
+    }
+    const db = getDb();
+
+    const [row] = await db
+      .select({ job: agentJobs, agentName: agents.name, agentSlug: agents.slug })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Job not found');
+    const job = row.job;
+
+    const [childRows, toolRows, llmRows] = await Promise.all([
+      db
+        .select({
+          id: agentJobs.id,
+          agentName: agents.name,
+          agentSlug: agents.slug,
+          status: agentJobs.status,
+          task: agentJobs.task,
+          result: agentJobs.result,
+          error: agentJobs.error,
+          createdAt: agentJobs.createdAt,
+          completedAt: agentJobs.completedAt,
+        })
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(eq(agentJobs.parentJobId, id), eq(agentJobs.entityId, session.entityId)))
+        .orderBy(agentJobs.createdAt),
+      db
+        .select({
+          toolCallId: toolCalls.toolCallId,
+          toolName: toolCalls.toolName,
+          card: toolCalls.card,
+          presented: toolCalls.presented,
+          durationMs: toolCalls.durationMs,
+          turn: toolCalls.turn,
+          toolInput: toolCalls.toolInput,
+          toolOutput: toolCalls.toolOutput,
+          createdAt: toolCalls.createdAt,
+        })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.jobId, id), eq(toolCalls.entityId, session.entityId)))
+        .orderBy(toolCalls.createdAt),
+      db
+        .select({
+          turn: llmCalls.turn,
+          source: llmCalls.source,
+          modelEffective: llmCalls.modelEffective,
+          provider: llmCalls.provider,
+          inputTokens: llmCalls.inputTokens,
+          outputTokens: llmCalls.outputTokens,
+          cachedTokens: llmCalls.cachedTokens,
+          cacheCreationTokens: llmCalls.cacheCreationTokens,
+          costUsd: llmCalls.costUsd,
+          durationMs: llmCalls.durationMs,
+        })
+        .from(llmCalls)
+        .where(and(eq(llmCalls.jobId, id), eq(llmCalls.entityId, session.entityId)))
+        .orderBy(llmCalls.createdAt),
+    ]);
+
+    const scheduleName =
+      job.channel === 'cron' && job.triggerContext?.type === 'cron'
+        ? job.triggerContext.scheduleName
+        : null;
+    const messages = redactTranscriptForDisplay(
+      Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [],
+    );
+    const feed = buildConversationFeed(
+      {
+        id: job.id,
+        task: job.task,
+        channel: job.channel,
+        chatId: job.chatId,
+        status: job.status,
+        result: job.result,
+        error: job.error,
+        agentName: row.agentName,
+        agentSlug: row.agentSlug,
+        createdAt: job.createdAt,
+        completedAt: job.completedAt,
+        messages,
+        scheduleName,
+        children: childRows,
+      },
+      toolRows.map((t) => ({
+        ...t,
+        toolOutput: t.toolOutput === null ? null : redactSecretsInText(t.toolOutput),
+      })),
+      llmRows,
+    );
+
+    return ok({
+      job: {
+        id: job.id,
+        task: job.task,
+        channel: job.channel,
+        status: job.status,
+        agentName: row.agentName,
+        agentSlug: row.agentSlug,
+        createdAt: job.createdAt,
+        completedAt: job.completedAt,
+        conversationId: job.conversationId,
+        parentJobId: job.parentJobId,
+        scheduleName,
+      },
+      feed,
+    });
+  } catch (err) {
+    console.error('[getSpaceConversationAction]', err);
+    return fail('db_error', 'Failed to load the conversation');
   }
 }
 
