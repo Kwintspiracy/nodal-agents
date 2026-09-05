@@ -109,6 +109,10 @@ describe('generateAssignTools', () => {
     const tool = tools[0]!;
     expect(tool.name).toMatch(/^assign_test_email_sender_\d+$/);
     expect(tool.name).not.toContain('-'); // hyphens converted to underscores
+    // P1 (plan « De la maquette au produit ») : un travail confié à un autre
+    // agent se montre comme une délégation. Ces outils naissent hors du registre
+    // de `tools`, donc hors de `cards.test.ts` — la carte se garde ici.
+    expect(tool.card).toBe('delegation');
   });
 
   it('tool description is data-driven (not hardcoded)', async () => {

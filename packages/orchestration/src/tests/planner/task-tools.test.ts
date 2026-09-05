@@ -87,6 +87,10 @@ describe('generateTaskTools', () => {
     expect(tools).toHaveLength(2);
     expect(tools[0]?.name).toBe('create_task');
     expect(tools[1]?.name).toBe('list_tasks');
+    // P1 (plan « De la maquette au produit ») : ces deux outils vivent hors du
+    // registre de `tools`, donc hors de `cards.test.ts`. Leur carte se garde ici.
+    expect(tools[0]?.card).toBe('text');
+    expect(tools[1]?.card).toBe('text');
   });
 
   describe('create_task', () => {
