@@ -11,7 +11,6 @@ import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { deliverableTypeForPath } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import {
   resolveAndCheckPath,
@@ -69,8 +68,10 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   resolveMutationTargets: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
-      // Le type vient de ce qui est ÉDITÉ, pas du dossier (v7-A).
-      return [{ kind: 'file', path, deliverableType: deliverableTypeForPath(path) }];
+      // Même règle que file_write : cet outil édite du TEXTE dans un dossier
+      // attaché, donc du projet. Aucune reconnaissance d'extension (v7-A) —
+      // rien dans un chemin ne distingue une donnée de test d'un livrable.
+      return [{ kind: 'file', path, deliverableType: 'code_project' }];
     } catch {
       return [];
     }

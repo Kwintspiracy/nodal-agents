@@ -4,7 +4,6 @@ import { writeFile, rename, mkdir, unlink } from 'node:fs/promises';
 import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { deliverableTypeForPath } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
 import {
   resolveAndCheckPath,
@@ -64,8 +63,13 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   resolveMutationTargets: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
-      // Le type vient de ce qui est ÉCRIT, pas du dossier d'atterrissage (v7-A).
-      return [{ kind: 'file', path, deliverableType: deliverableTypeForPath(path) }];
+      // Cet outil écrit du TEXTE dans un dossier attaché : ce qu'il produit
+      // fait partie du projet, et le projet doit se reprouver. Aucune
+      // reconnaissance d'extension ici (v7-A) — `data/fixtures/x.csv` est du
+      // code, `rapport.csv` n'en est pas, et rien dans le chemin ne les
+      // distingue. Les outils Office, eux, produisent des DOCUMENTS sans
+      // ambiguïté : c'est leur hook qui déclare `office_file`.
+      return [{ kind: 'file', path, deliverableType: 'code_project' }];
     } catch {
       return [];
     }
