@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { headers, cookies } from 'next/headers';
 import { z } from 'zod';
 import {
+  readFile as fsReadFile,
   writeFile as fsWriteFile,
   rename as fsRename,
   unlink as fsUnlink,
@@ -32,14 +33,18 @@ import {
   type WorkspaceRef,
   projectNameFromPath,
   fallbackProjectFromAgentWorkspaces,
+  isUnderPath,
 } from './code-projects.ts';
 import {
   isWindowsPath,
   normalizePath,
   projectKey,
+  discoverVerifyCommands,
   VerifyCommandsSchema,
   VerificationSurfacesSchema,
   parseVerificationSurfaces,
+  type DiscoveredCommand,
+  type ProjectManifests,
   type VerifyCommand,
   type VerificationSurfaces,
 } from '@nodal-agents/shared';
@@ -12945,6 +12950,113 @@ export async function setCodeProjectVerifyCommandsAction(
   } catch (err) {
     console.error('[setCodeProjectVerifyCommandsAction]', err);
     return fail('db_error', 'Failed to save the proof commands');
+  }
+}
+
+// ─── Découverte des commandes (plan « Vérifier & Corriger », v7-C) ──────────
+//
+// L'écran disait « Add a command » devant un champ vide, et le premier
+// utilisateur à l'essayer n'a pas su quoi taper. Le projet, lui, le dit :
+// `package.json` porte ses scripts, `Cargo.toml` et `go.mod` désignent leur
+// outil. Cette action les LIT et rend des PROPOSITIONS — elle n'approuve rien
+// et n'écrit rien.
+//
+// LE CHEMIN EST VÉRIFIÉ AVANT TOUTE LECTURE. Il arrive du client ; sans garde,
+// l'action dirait à qui la sollicite si `C:/quelque/part/package.json` existe.
+// Il doit donc être DANS un dossier attaché à cet espace — la même règle que
+// celle qui décide ce que l'onglet Code affiche.
+
+const DiscoverVerifyCommandsSchema = z.object({
+  projectPath: z.string().min(1).max(4096),
+});
+
+/** Les manifestes lus à la racine d'un projet — noms figés, jamais un motif. */
+const MANIFEST_FILES = [
+  ['packageJson', 'package.json'],
+  ['denoJson', 'deno.json'],
+  ['cargoToml', 'Cargo.toml'],
+  ['pyprojectToml', 'pyproject.toml'],
+] as const;
+
+/** Les verrous reconnus — leur PRÉSENCE désigne le gestionnaire, pas leur contenu. */
+const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lockb'] as const;
+
+/** Un manifeste plus gros que ça n'est pas un manifeste. Lu borné, pas en entier. */
+const MAX_MANIFEST_BYTES = 512 * 1024;
+
+export async function discoverVerifyCommandsAction(
+  raw: unknown,
+): Promise<ActionResult<DiscoveredCommand[]>> {
+  try {
+    const session = await getSession();
+    const parsed = DiscoverVerifyCommandsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const denied = await assertProjectOwner(db, session);
+    if (denied === 'not_found') return fail('not_found', 'Workspace not found');
+    if (denied) return fail('forbidden', 'Only the workspace owner can read proof commands.');
+
+    const projectPath = normalizePath(parsed.data.projectPath);
+    const roots = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.entityId, session.entityId));
+    // Dans un dossier attaché, ou rien. Un chemin hors périmètre est refusé
+    // AVANT la première lecture disque.
+    const inside = roots.some((r) => {
+      const root = normalizePath(r.path);
+      return projectPath === root || isUnderPath(projectPath, root);
+    });
+    if (!inside) return fail('not_found', 'Project not found');
+
+    const manifests: Record<string, unknown> = {};
+    for (const [key, file] of MANIFEST_FILES) {
+      const text = await readManifest(pathJoin(projectPath, file));
+      if (text !== null) manifests[key] = text;
+    }
+    // `deno.jsonc` seulement si `deno.json` manque : deux fichiers, une clé.
+    if (manifests['denoJson'] === undefined) {
+      const jsonc = await readManifest(pathJoin(projectPath, 'deno.jsonc'));
+      if (jsonc !== null) manifests['denoJson'] = jsonc;
+    }
+    manifests['hasGoMod'] = await fileExists(pathJoin(projectPath, 'go.mod'));
+    const locks: string[] = [];
+    for (const f of LOCKFILES) {
+      if (await fileExists(pathJoin(projectPath, f))) locks.push(f);
+    }
+    manifests['lockfiles'] = locks;
+
+    return ok([...discoverVerifyCommands(manifests as ProjectManifests)]);
+  } catch (err) {
+    console.error('[discoverVerifyCommandsAction]', err);
+    return fail('db_error', 'Failed to read the project');
+  }
+}
+
+/**
+ * Le texte d'un manifeste, ou `null`. Un fichier absent, illisible ou trop
+ * gros rend `null` — la découverte se passe de lui, elle n'échoue pas pour
+ * autant : un projet dont le `package.json` est cassé garde ses propositions
+ * Rust ou Go.
+ */
+async function readManifest(path: string): Promise<string | null> {
+  try {
+    const stats = await fsStat(path);
+    if (!stats.isFile() || stats.size > MAX_MANIFEST_BYTES) return null;
+    return await fsReadFile(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Le fichier existe ? Asynchrone comme le reste — `existsSync` bloque le serveur. */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await fsStat(path)).isFile();
+  } catch {
+    return false;
   }
 }
 

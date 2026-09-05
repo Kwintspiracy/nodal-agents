@@ -7,10 +7,13 @@
 // SERVEUR recalcule (le hash du client n'est qu'un jeton de concurrence) ;
 // seul le propriétaire écrit, dans SON espace seulement.
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, and, codeProjects, entities, users } from '@nodal-agents/db';
+import { eq, and, agentWorkspaces, codeProjects, entities, users } from '@nodal-agents/db';
 import { projectKey, hashVerificationManifest } from '@nodal-agents/shared';
 import { codeProjectManifest, deriveVerifyStatus } from '../verification-display.ts';
 
@@ -450,5 +453,82 @@ describe('getCodeTabOwnerAction', () => {
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.data.isOwner).toBe(false);
     });
+  });
+});
+
+// ─── v7-C : ce que le projet propose de lui-même ────────────────────────────
+//
+// Le défaut d'origine : l'écran affichait « Add a command » devant un champ
+// vide, et le premier utilisateur à l'essayer n'a pas su quoi taper. Ces tests
+// écrivent de VRAIS manifestes sur le disque et lisent ce que l'action rend.
+
+describe('discoverVerifyCommandsAction', () => {
+  let racine: string;
+  let projet: string;
+
+  beforeAll(async () => {
+    racine = await mkdtemp(join(tmpdir(), 'nodal-decouverte-'));
+    projet = join(racine, 'appli');
+    await mkdir(projet, { recursive: true });
+    await writeFile(
+      join(projet, 'package.json'),
+      JSON.stringify({ scripts: { test: 'vitest', typecheck: 'tsc --noEmit' } }),
+    );
+    await writeFile(join(projet, 'pnpm-lock.yaml'), 'lockfileVersion: 9');
+    // Le dossier ATTACHÉ est la racine : le projet est son enfant.
+    await testDb.insert(agentWorkspaces).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      label: 'shared',
+      path: racine,
+    });
+  });
+
+  afterAll(async () => {
+    await testDb.delete(agentWorkspaces).where(eq(agentWorkspaces.entityId, seed.entityId));
+    await rm(racine, { recursive: true, force: true });
+  });
+
+  it('lit les scripts du projet et les rend du moins cher au plus cher', async () => {
+    const { discoverVerifyCommandsAction } = await actions();
+    const res = await discoverVerifyCommandsAction({ projectPath: projet });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Le gestionnaire vient du VERROU présent sur le disque, pas d'un défaut.
+    expect(res.data.map((c) => c.command)).toEqual(['pnpm run typecheck', 'pnpm run test']);
+    expect(res.data.map((c) => c.timeoutSeconds)).toEqual([180, 600]);
+  });
+
+  it('un chemin HORS des dossiers attachés est refusé AVANT toute lecture', async () => {
+    // Sans cette garde, l'action dirait à qui la sollicite si un
+    // `package.json` existe à un chemin arbitraire de la machine.
+    const { discoverVerifyCommandsAction } = await actions();
+    const dehors = await mkdtemp(join(tmpdir(), 'nodal-dehors-'));
+    try {
+      await writeFile(join(dehors, 'package.json'), JSON.stringify({ scripts: { test: 'x' } }));
+      const res = await discoverVerifyCommandsAction({ projectPath: dehors });
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.code).toBe('not_found');
+    } finally {
+      await rm(dehors, { recursive: true, force: true });
+    }
+  });
+
+  it('un dossier attaché SANS manifeste rend une liste vide, jamais une commande inventée', async () => {
+    const { discoverVerifyCommandsAction } = await actions();
+    const vide = join(racine, 'vide');
+    await mkdir(vide, { recursive: true });
+    const res = await discoverVerifyCommandsAction({ projectPath: vide });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data).toEqual([]);
+  });
+
+  it('n’écrit RIEN : la découverte propose, elle n’approuve pas', async () => {
+    await reset();
+    const { discoverVerifyCommandsAction } = await actions();
+    await discoverVerifyCommandsAction({ projectPath: projet });
+    expect(await row(seed.entityId, projet)).toBeNull();
   });
 });

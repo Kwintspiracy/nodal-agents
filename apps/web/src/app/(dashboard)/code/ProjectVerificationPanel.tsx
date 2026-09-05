@@ -30,11 +30,12 @@
  * (l'action serveur exige 1 à 5 — un brouillon vide serait un cul-de-sac).
  */
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { ArrowDown, ArrowUp, X } from '@phosphor-icons/react/dist/ssr';
 import {
   approveCodeProjectVerifyManifestAction,
+  discoverVerifyCommandsAction,
   listCodeProjectPrefsAction,
   setCodeProjectVerifyCommandsAction,
   type CodeProjectPrefs,
@@ -122,6 +123,8 @@ export default function ProjectVerificationPanel({
   const [draft, setDraft] = useState<Draft[]>(() => toDraft(serverCommands));
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, startTransition] = useTransition();
+  /** Les propositions lues dans le projet — `null` tant qu'on n'a pas cherché. */
+  const [suggested, setSuggested] = useState<Draft[] | null>(null);
 
   // Resynchronisation sur l'état SERVEUR quand il change (après une écriture
   // réussie, la relecture remonte jusqu'ici). Reset dérivé au rendu, le
@@ -133,6 +136,35 @@ export default function ProjectVerificationPanel({
     setPrevServerSig(serverSig);
     setDraft(toDraft(serverCommands));
   }
+
+  // LES PROPOSITIONS (v7-C). Le projet dit lui-même ce qu'il lance pour se
+  // prouver : `package.json` porte ses scripts, `Cargo.toml` et `go.mod`
+  // désignent leur outil. On ne le demande donc pas — on le lit, et on
+  // pré-remplit. L'utilisateur qui a cliqué « Add a command » sans savoir quoi
+  // taper n'avait pas tort : rien ne le lui disait.
+  //
+  // Uniquement quand RIEN n'est configuré : un projet déjà réglé ne se fait pas
+  // réécrire par une découverte. Et jamais pour un non-propriétaire, qui ne
+  // pourrait rien en faire.
+  const unconfigured = serverCommands === null || serverCommands.length === 0;
+  useEffect(() => {
+    if (!isOwner || !unconfigured) return;
+    let annule = false;
+    void (async () => {
+      const res = await discoverVerifyCommandsAction({ projectPath });
+      if (annule) return;
+      // Un échec de lecture ne dit rien de faux : aucune proposition, et
+      // l'écran garde son état d'avant.
+      setSuggested(
+        res.ok
+          ? res.data.map((c) => ({ command: c.command, timeout: String(c.timeoutSeconds) }))
+          : [],
+      );
+    })();
+    return () => {
+      annule = true;
+    };
+  }, [projectPath, isOwner, unconfigured]);
 
   const commands = toCommands(draft);
   const dirty = signature(draft) !== serverSig;
@@ -246,8 +278,33 @@ export default function ProjectVerificationPanel({
         </p>
       )}
 
+      {draft.length === 0 && suggested !== null && suggested.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-rule-2 p-3">
+          <p className="text-body-13 text-ink-2">Found in this project. Add them, then approve.</p>
+          <ul className="space-y-1">
+            {suggested.map((sug, i) => (
+              <li key={i} className="font-mono text-body-12 text-ink-3">
+                {sug.command}
+              </li>
+            ))}
+          </ul>
+          <PrimaryButton
+            type="button"
+            disabled={!editable}
+            data-testid="verify-use-suggested"
+            onClick={() => setDraft(suggested)}
+          >
+            Add these
+          </PrimaryButton>
+        </div>
+      )}
+
       {draft.length === 0 ? (
-        <p className="text-body-13 text-ink-4">No proof commands yet.</p>
+        <p className="text-body-13 text-ink-4">
+          {suggested !== null && suggested.length === 0
+            ? 'No proof commands yet, and nothing to suggest: this folder has no manifest Nodal reads.'
+            : 'No proof commands yet.'}
+        </p>
       ) : (
         <div className="space-y-2">
           {draft.map((d, i) => (
