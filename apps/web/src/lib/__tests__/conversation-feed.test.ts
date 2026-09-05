@@ -718,7 +718,7 @@ describe('buildConversationFeed — historique préfixé et alignement des tours
     ).toEqual([
       [1, 1, 'audit', 'm1', 100],
       [2, 3, 'audit', 'm3', 300], // pas m2 : le tour 2 n'a produit aucun message
-      [3, 4, 'inferred', 'm4', 400], // texte seul : déduit du tour précédent, et dit tel quel
+      [3, 4, 'inferred', null, undefined], // texte seul : déduit, donc SANS métriques (elles pourraient être celles de la tentative rejetée)
     ]);
     expect(feed.items.filter((i) => i.kind === 'note')).toHaveLength(1);
   });

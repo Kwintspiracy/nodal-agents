@@ -2328,10 +2328,16 @@ export async function getSpaceConversationAction(
     const messages = redactTranscriptForDisplay(
       Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [],
     );
+    // La tâche passe par la MÊME rédaction que les messages : le modèle trouve
+    // la demande en comparant les deux (`content === task`), et une demande qui
+    // contient un secret serait masquée d'un côté seulement (revue passe 18).
+    const [redactedRequest] = redactTranscriptForDisplay([{ role: 'user', content: job.task }]);
+    const displayTask =
+      typeof redactedRequest?.content === 'string' ? redactedRequest.content : job.task;
     const feed = buildConversationFeed(
       {
         id: job.id,
-        task: job.task,
+        task: displayTask,
         channel: job.channel,
         chatId: job.chatId,
         status: job.status,
@@ -2355,7 +2361,7 @@ export async function getSpaceConversationAction(
     return ok({
       job: {
         id: job.id,
-        task: job.task,
+        task: displayTask,
         channel: job.channel,
         status: job.status,
         agentName: row.agentName,

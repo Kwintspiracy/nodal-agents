@@ -152,7 +152,9 @@ export type FeedItem =
        * d'audit d'un appel du tour (`audit`), ou déduit du tour précédent quand
        * le tour n'a appelé aucun outil (`inferred`). Le runner avance ce
        * compteur avant chaque tentative LLM, y compris une tentative rejetée
-       * sans message de l'agent : l'index d'affichage ne suffit pas.
+       * sans message de l'agent : l'index d'affichage ne suffit pas — et un
+       * tour déduit ne porte NI modèle NI jetons (`usage: null`), parce qu'il
+       * pourrait désigner l'appel d'une tentative rejetée.
        */
       turn: number;
       turnSource: 'audit' | 'inferred';
@@ -458,7 +460,11 @@ export function buildConversationFeed(
       const turn = auditTurn ?? lastTurn + 1;
       const turnSource: 'audit' | 'inferred' = auditTurn !== undefined ? 'audit' : 'inferred';
       lastTurn = turn;
-      const u = usageByTurn.get(turn);
+      // Un tour DÉDUIT ne reçoit aucune métrique : `lastTurn + 1` peut désigner
+      // une tentative rejetée (le runner a compté un tour sans message), et
+      // afficher ses jetons ici les attribuerait au mauvais appel (passe 18).
+      // Les totaux du job, eux, restent justes.
+      const u = turnSource === 'audit' ? usageByTurn.get(turn) : undefined;
       items.push({
         kind: 'turn',
         index: turnIndex,

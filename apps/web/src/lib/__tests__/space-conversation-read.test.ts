@@ -275,6 +275,43 @@ describe('getSpaceConversationAction', () => {
     });
   });
 
+  it('une demande qui contient un secret garde sa frontière : la tâche est rédigée comme les messages', async () => {
+    // Passe 18 : les messages passent par redactTranscriptForDisplay, la tâche
+    // comparée doit passer par la même — sinon la frontière tombe à 0 et
+    // l'historique redevient « ce job ».
+    const secret = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : clé factice pour éprouver la rédaction)
+    const task = `Utilise la clé ${secret} pour lister les modèles`;
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '4242',
+        task,
+        status: 'completed',
+        result: 'Trois modèles.',
+        messages: [
+          { role: 'user', content: 'Bonjour' },
+          { role: 'assistant', content: 'Bonjour Quentin.' },
+          { role: 'user', content: task },
+          { role: 'assistant', content: 'Trois modèles.' },
+        ],
+      })
+      .returning();
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(j!.id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.feed.items.map((i) => i.kind)).toEqual(['history', 'request', 'turn', 'answer']);
+    const request = r.data.feed.items[1];
+    expect(request?.kind === 'request' && request.text).not.toContain(secret);
+    expect(request?.kind === 'request' && request.text).toContain('[secret masqué]');
+    // L'en-tête de la page non plus ne montre pas le secret.
+    expect(r.data.job.task).not.toContain(secret);
+    expect(r.data.feed.items.some((i) => i.kind === 'note')).toBe(false);
+  });
+
   it("ne lit pas le job d'une autre entité, ni un id qui n'est pas un uuid", async () => {
     const { getSpaceConversationAction } = await actions();
     const foreign = await getSpaceConversationAction(foreignJobId);

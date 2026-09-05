@@ -58,7 +58,7 @@ function FeedItemView({ item }: { item: FeedItem }) {
             meta={[
               item.model,
               item.usage
-                ? `${item.turnSource === 'inferred' ? '≈ ' : ''}${formatTokens(item.usage.inputTokens + item.usage.outputTokens)} tokens`
+                ? `${formatTokens(item.usage.inputTokens + item.usage.outputTokens)} tokens`
                 : null,
               item.usage && item.usage.durationMs > 0 ? formatMs(item.usage.durationMs) : null,
               item.usage && item.usage.costUsd !== null ? formatCost(item.usage.costUsd) : null,
