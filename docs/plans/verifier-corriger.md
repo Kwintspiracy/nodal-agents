@@ -198,6 +198,48 @@ Trois sont fermées, la quatrième est un ticket à part :
 | Le témoin du cas UNC était insuffisant | **Il cachait un vrai bug** : ma chaîne de test avait été mangée par le shell et la seconde graphie était silencieusement ignorée. Le test était vert pour la mauvaise raison |
 | Un outil qui écrit dans un workspace mais oublie `mutatesWorkspace` échappe à tout | **NON FERMÉ** — voir ci-dessous |
 
+### v7-B — la décision de conception à prendre AVANT de coder
+
+Le contrat d'un vérificateur (`apps/runner/src/verification/types.ts`) est
+entièrement dessiné autour d'une **séquence de commandes** : `ReadyConfig` porte
+un `cwd` et des `VerifyCommand`, et chaque trace (`ProofCommandRecord`) porte un
+`command`, un `outcomeKind` parmi `exit | timeout | spawn_error`, et un
+`exitCode`. La table `verification_runs` a les mêmes colonnes, avec un CHECK sur
+`outcome_kind`.
+
+Or vérifier un classeur ne lance aucune commande. « Le fichier s'ouvre »,
+« la feuille `Janvier` existe », « aucune cellule ne porte `#REF!` » n'ont ni
+répertoire d'exécution, ni code de sortie. Écrire `exitCode: 0` pour dire
+« l'onglet existe » serait un mensonge de forme, du même genre que celui que v7-A
+vient de retirer.
+
+**Trois options, une seule défendable.**
+
+| Option | Ce qu'elle coûte | Verdict |
+|---|---|---|
+| Faire passer les contrôles de document pour des commandes (`command: "office:opens"`, `exitCode: 0/1`) | Rien à migrer, mais la colonne `command` cesse de vouloir dire commande, et le CHECK `outcome_kind` ment | **Non.** C'est exactement le défaut de v7-A, réintroduit une couche plus bas |
+| Généraliser le contrat en « contrôle » : un `checkId` (code, pas phrase), un verdict, un détail, et `exitCode`/`outcomeKind` deviennent propres à la famille « commande » | Une migration, un renommage qui traverse la primitive, l'écran et les tests | **Oui.** Le contrat dit alors ce qu'il fait : prouver, pas lancer |
+| Une table séparée pour les contrôles de document | Deux vues à réconcilier dans l'écran de run, et deux façons de lire « ce qui a été prouvé » | Non — c'est la deuxième vérité que ce plan existe pour éviter |
+
+**Tranché : la deuxième.** `ProofCommandRecord` devient `ProofCheckRecord`, avec
+un `checkId` obligatoire (`office.opens`, `office.sheet_present`,
+`code.command`) et une issue qui dépend de la famille. La ligne de
+`verification_runs` garde toutes ses colonnes ; `command` devient nullable et
+`outcome_kind` gagne les issues d'un contrôle sans processus. La migration est
+petite ; le renommage ne l'est pas, et c'est le vrai coût de v7-B.
+
+**Ce que v7-B vérifiera d'un classeur**, et rien de plus (chaque contrôle est
+sans pouvoir — aucun ne fait tourner de code du dépôt, donc aucun ne demande
+d'approbation) :
+
+- le fichier s'ouvre avec la bibliothèque déjà utilisée par les outils Office ;
+- il porte au moins une feuille, et celles que la demande nommait ;
+- aucune cellule ne porte une erreur de formule (`#REF!`, `#VALUE!`, `#DIV/0!`) ;
+- il n'est pas vide alors que la demande promettait des données.
+
+Les deux derniers dépendent de v7-D pour savoir ce que la demande promettait ;
+sans elle, v7-B rend les deux premiers, et le dit.
+
 ### Ticket ouvert : le marqueur `mutatesWorkspace` reste une déclaration
 
 Rien ne prouve mécaniquement qu'une fonction écrit. Les deux proxys statiques
