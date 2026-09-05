@@ -540,17 +540,19 @@
   <div class="card next">
     <h3>
       <span class="num">③</span> Vérifier &amp; Corriger — la loop de vérification
-      <span class="pill amber">PR① + v7-A CODÉES · PR #46 · 6 PASSES CODEX</span>
+      <span class="pill amber">PR① + v7-A + DÉCOUVERTE · PR #46 · 10 PASSES CODEX</span>
       <span class="pill plain size">la plus grosse</span>
     </h3>
     <p>
       <b>PR① est codée, relue et verte</b> (<code>feat/verifier-corriger-pr1</code>, PR #46) : 24
-      tickets, 6 passes <code>codex review</code>, CI verte. Quatre bugs existants fermés au
+      tickets, 10 passes <code>codex review</code>, CI verte. Quatre bugs existants fermés au
       passage. <b>La première brique de v7 est livrée le 05/09</b> : chaque outil déclare CE QU'IL
       PRODUIT, un tableur écrit dans un dépôt ne relance plus les tests du dépôt, et un outil qui ne
       déclare rien est refusé plutôt que rangé « en code » par défaut. La passe 5 a trouvé deux
       vrais défauts dans cette brique (le repli du seam, l'ordre des verrous déduit du type) : les
-      deux sont fermés. <b>L'essai à l'écran avait montré le vrai trou</b>, et il change l'ordre du
+      deux sont fermés. <b>Et l'écran ne demande plus de commandes : il les propose</b>, lues dans
+      le projet, avec ce que chacune lance vraiment — c'est le second défaut que Quentin a heurté,
+      fermé le 05/09. <b>L'essai à l'écran avait montré le vrai trou</b>, et il change l'ordre du
       reste : la vérification exigeait d'être <b>configurée à l'avance sur un écran</b>, alors
       qu'une tâche arrive le plus souvent par Telegram, sans écran ni moment pour cocher quoi que ce
       soit. D'où <b>v7 « vérifier sans configurer »</b>, remontée devant tous les autres lots : le
@@ -580,11 +582,11 @@
       close.
     </p>
     <p>
-      Séquence : PR① fondations (faite) → <b>v7-A le type de livrable vient de l'outil (faite)</b>
-      → v7-B vérifier un document et un envoi, sans pouvoir → v7-C découvrir les commandes et les
-      faire approuver dans le canal d'origine → v7-D les critères tirés de la demande → observation
-      → garde active → runtime CLI → revue bornée. Puis, même famille : les écritures qui s'écrasent
-      (read-before-write).
+      Séquence : PR① fondations (faite) → <b>v7-A le type de livrable vient de l'outil (faite)</b> →
+      <b>v7-C découverte des commandes (faite)</b> → v7-C approbation dans le canal d'origine → v7-B
+      vérifier un document et un envoi, sans pouvoir → v7-D les critères tirés de la demande →
+      observation → garde active → runtime CLI → revue bornée. Puis, même famille : les écritures
+      qui s'écrasent (read-before-write).
     </p>
   </div>
 
