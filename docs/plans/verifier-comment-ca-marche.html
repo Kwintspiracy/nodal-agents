@@ -294,8 +294,8 @@
     <p class="eyebrow">Point d'arrêt · 5 septembre 2026</p>
     <h1>Comment Nodal vérifie</h1>
     <p class="lede">
-      Tout le chantier en une page, sans jargon. À la fin, trois choses à décider — dont celle que
-      tu viens de trouver toi-même.
+      Tout le chantier en une page, sans jargon. À la fin, cinq choses à décider — dont deux défauts
+      que tu as trouvés en cinq minutes d'écran.
     </p>
   </header>
 
@@ -303,7 +303,7 @@
   <div class="tight">
     <p>Aujourd'hui, un agent finit son travail et écrit « c'est fait ».</p>
     <p>Personne ne vérifie que c'est vrai.</p>
-    <p>On veut que Nodal le vérifie lui-même, en lançant des commandes que tu as approuvées.</p>
+    <p>On veut que Nodal le vérifie lui-même, avant de te dire que c'est terminé.</p>
   </div>
 
   <h2>Comment ça marche</h2>
@@ -319,14 +319,21 @@
     <div class="etape">
       <span class="n">3</span>
       <p>
-        Nodal lance <b>tes commandes</b> dans ce dossier, dans l'ordre, et s'arrête à la première
-        qui échoue.
+        Nodal relance la vérification de ce projet, et s'arrête à la première chose qui ne va pas.
       </p>
     </div>
     <div class="etape">
       <span class="n">4</span>
-      <p>Nodal garde le résultat de chaque commande. Tu le lis dans le détail du run.</p>
+      <p>Nodal garde le résultat. Tu le lis dans le détail du run.</p>
     </div>
+  </div>
+
+  <div class="note">
+    <p>
+      <b>Tu ne donnes rien à chaque tâche.</b> La vérification est attachée au <b>projet</b>, une
+      fois. Ensuite, tous les jobs qui touchent ce projet la relancent tout seuls. Ma première
+      version de cette page laissait croire le contraire.
+    </p>
   </div>
 
   <div class="note">
@@ -356,38 +363,91 @@
     </div>
   </div>
 
-  <h2>Ce qui cloche</h2>
+  <h2>Et si je demande un fichier Excel ?</h2>
+  <p>
+    C'est la question que tu as posée, et voici la réponse honnête : <b>aujourd'hui, rien</b>. Il
+    n'y a pas d'écran, pas de vérification, rien.
+  </p>
+  <p>
+    Vérifier un tableur, ce n'est pas lancer une commande — ça n'aurait aucun sens. C'est autre
+    chose : le fichier s'ouvre vraiment, les formules recalculent, les totaux tombent juste, les
+    chiffres du rapport concordent avec ceux du tableau. Rien de tout cela ne se tape dans un champ
+    : Nodal le fait, ou ne le fait pas.
+  </p>
+  <p>
+    Ce travail existe dans le plan. Il est prévu <b>après trois autres lots</b>. Autrement dit, j'ai
+    livré en premier la partie qui te demande de configurer, et laissé pour plus tard celle qui ne
+    te demanderait rien. Vu de ta place, c'est le mauvais ordre.
+  </p>
+
+  <h2>Deux défauts que ta question met au jour</h2>
   <div class="bloc casse">
-    <h3>Tu as cliqué « Add a command » et tu n'as pas su quoi mettre. C'est un défaut.</h3>
+    <h3>1. L'écran ne te propose rien</h3>
     <p>
-      Ce qu'il faut y mettre aujourd'hui : la commande que <b>tu</b> taperais toi-même pour savoir
-      si le projet marche encore. Sur ce dépôt, ce serait <code>pnpm test</code>, puis
-      <code>pnpm typecheck</code>.
+      Tu as cliqué « Add a command » et tu n'as pas su quoi mettre. Ce qu'il faut y taper
+      aujourd'hui, c'est ce que <b>tu</b> lancerais toi-même pour savoir si le projet marche encore
+      — ici <code>pnpm test</code>, puis <code>pnpm typecheck</code>.
     </p>
     <p>
-      Ce que l'écran devrait faire : te les proposer tout seul. Nodal sait lire le
-      <code>package.json</code> du projet ; il y trouve les commandes qui existent vraiment. Tu
-      n'aurais qu'à cocher. Il ne le fait pas — et tu as raison, un utilisateur ne devinera pas
-      mieux que toi.
+      Mais tu ne devrais pas avoir à le savoir. Nodal sait lire le <code>package.json</code> du
+      projet, il y trouve les commandes qui existent vraiment. Il devrait les proposer, cochées par
+      défaut.
+    </p>
+  </div>
+  <div class="bloc casse">
+    <h3>2. Un tableur déclenche les tests du code</h3>
+    <p>
+      Si un agent écrit un fichier Excel <b>dans</b> un projet de code, Nodal marque le projet comme
+      modifié et relance ses tests — alors que le code n'a pas bougé d'une ligne.
+    </p>
+    <p>
+      La cause : il n'existe qu'une seule sorte de livrable branchée, le projet de code. Tout ce
+      qu'un agent écrit y est rangé, faute de mieux. C'est moi qui l'ai introduit hier, en
+      rattachant les fichiers Office à la seule tuyauterie disponible.
     </p>
   </div>
 
   <h2>À toi de décider</h2>
 
   <div class="bloc decision">
-    <h3>1. Faut-il guider ce champ avant de livrer ?</h3>
+    <h3>1. Rien à configurer du tout</h3>
     <p>
-      Nodal lit le projet, propose ses commandes, tu coches. Tu peux toujours en écrire une à la
-      main.
+      Nodal lit le projet, trouve ses commandes, les propose <b>déjà cochées</b>. Tu ne fais rien.
+      Tu ne touches à cet écran que si tu veux changer quelque chose.
     </p>
     <p class="reco">
-      <b>Ma recommandation : oui, avant de merger.</b> C'est un petit travail, et sans ça personne
-      ne configurera jamais rien — donc la semaine d'observation ne mesurerait rien.
+      <b>Ma recommandation : oui, avant de merger.</b> C'est un petit travail. Sans ça, personne ne
+      configurera jamais rien, et la semaine d'observation ne mesurera rien du tout.
     </p>
   </div>
 
   <div class="bloc decision">
-    <h3>2. Deux dossiers qui pointent au même endroit</h3>
+    <h3>2. Ranger chaque chose dans sa catégorie</h3>
+    <p>
+      Un fichier Excel écrit par un agent est un livrable <b>à part</b>, pas une modification du
+      projet de code qui l'héberge. Il ne relance pas les tests. En attendant son propre
+      vérificateur, son état est simplement « pas encore vérifiable », dit tel quel.
+    </p>
+    <p class="reco">
+      <b>Ma recommandation : oui, avant de merger.</b> Petit aussi, et sans ça on affiche un
+      résultat qui ne veut rien dire.
+    </p>
+  </div>
+
+  <div class="bloc decision">
+    <h3>3. Faut-il remonter le non-code avant le reste ?</h3>
+    <p>
+      Le plan prévoit encore trois lots avant les fichiers Office et les messages envoyés. Je peux
+      inverser : le vérificateur de tableurs d'abord, le durcissement du code après.
+    </p>
+    <p class="reco">
+      <b>Ma recommandation : oui.</b> C'est là que tu vois la valeur sans rien configurer, et c'est
+      là que les agents produisent le plus de choses que personne ne relit.
+    </p>
+  </div>
+
+  <div class="bloc decision">
+    <h3>4. Deux dossiers qui pointent au même endroit</h3>
     <p>
       Si le même dossier est attaché deux fois — une fois directement, une fois par un raccourci —
       le même projet compte double. Les commandes sont d'un côté, les résultats de l'autre.
@@ -399,7 +459,7 @@
   </div>
 
   <div class="bloc decision">
-    <h3>3. L'ordre des livraisons</h3>
+    <h3>5. L'ordre des livraisons</h3>
     <p>La #45 (les recettes d'agents) attend toujours ton merge. La #46 est celle-ci.</p>
     <p class="reco"><b>La #45 d'abord</b>, puis la #46 : celle-ci part de la branche principale.</p>
   </div>
