@@ -1,0 +1,1063 @@
+<!-- artifact: https://claude.ai/code/artifact/f2cd2ddd-639b-4a9b-9f85-4386cf45a574 -->
+<title>Le livrable est la page</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400..700&family=Newsreader:opsz,wght@6..72,400..600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+/>
+<style>
+  :root {
+    --paper: #edefee;
+    --surface: #ffffff;
+    --canvas: #dbdfde;
+    --sunk: #e6e9e8;
+    --ink: #14181a;
+    --ink-2: #48565d;
+    --ink-3: #7c898e;
+    --rule: #cfd5d4;
+    --rule-2: #bcc4c3;
+    --accent: #8f2d56;
+    --accent-bg: #f4e3ea;
+    --sur-accent: #ffffff;
+    --ok: #2c6a4a;
+    --ok-bg: #dfeee7;
+    --mono-bg: #e4e8e7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --paper: #131617;
+      --surface: #1c2022;
+      --canvas: #0d0f10;
+      --sunk: #23282a;
+      --ink: #e6e9e8;
+      --ink-2: #a3b0b5;
+      --ink-3: #75817f;
+      --rule: #2c3234;
+      --rule-2: #3a4143;
+      --accent: #e08aa6;
+      --accent-bg: #2e1a22;
+      --sur-accent: #1b0d13;
+      --ok: #6cbd95;
+      --ok-bg: #162b22;
+      --mono-bg: #171b1c;
+    }
+  }
+  :root[data-theme='dark'] {
+    --paper: #131617;
+    --surface: #1c2022;
+    --canvas: #0d0f10;
+    --sunk: #23282a;
+    --ink: #e6e9e8;
+    --ink-2: #a3b0b5;
+    --ink-3: #75817f;
+    --rule: #2c3234;
+    --rule-2: #3a4143;
+    --accent: #e08aa6;
+    --accent-bg: #2e1a22;
+    --sur-accent: #1b0d13;
+    --ok: #6cbd95;
+    --ok-bg: #162b22;
+    --mono-bg: #171b1c;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Newsreader, Georgia, serif;
+    font-size: 17.5px;
+    line-height: 1.65;
+    font-optical-sizing: auto;
+  }
+  .wrap {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0 20px 100px;
+  }
+  .col {
+    max-width: 660px;
+    margin: 0 auto;
+  }
+
+  header {
+    padding: 60px 0 8px;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 16px;
+  }
+  h1 {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: clamp(38px, 7.2vw, 62px);
+    font-weight: 700;
+    line-height: 0.98;
+    letter-spacing: -0.028em;
+    margin: 0 0 20px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: 21px;
+    line-height: 1.42;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 26em;
+  }
+
+  h2 {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: 27px;
+    font-weight: 650;
+    letter-spacing: -0.018em;
+    margin: 56px 0 14px;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: 18px;
+    font-weight: 650;
+    margin: 0 0 6px;
+  }
+  p {
+    margin: 0 0 15px;
+  }
+  b,
+  strong {
+    font-weight: 600;
+  }
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.82em;
+    background: var(--mono-bg);
+    padding: 1.5px 5px;
+    border-radius: 4px;
+  }
+
+  /* Le parti pris, en gros */
+  .parti {
+    border-top: 2px solid var(--ink);
+    border-bottom: 2px solid var(--ink);
+    padding: 24px 0;
+    margin: 30px 0;
+  }
+  .parti p {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: 24px;
+    line-height: 1.32;
+    letter-spacing: -0.014em;
+    margin: 0;
+  }
+  .parti p + p {
+    margin-top: 12px;
+  }
+  .parti .em {
+    color: var(--accent);
+  }
+
+  .avant-apres {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .ap {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .ap .t {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .ap p {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+  .ap.now {
+    border-left: 3px solid var(--rule-2);
+  }
+  .ap.next {
+    border-left: 3px solid var(--accent);
+  }
+
+  /* ── Bande de maquettes ────────────────────────────────────── */
+  .band {
+    background: var(--canvas);
+    border-radius: 16px;
+    padding: 26px 22px 28px;
+    margin: 26px 0 10px;
+  }
+  .band .cap {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 14px;
+  }
+  .note {
+    max-width: 660px;
+    margin: 0 auto 34px;
+    font-size: 16px;
+    color: var(--ink-2);
+  }
+  .note b {
+    color: var(--ink);
+  }
+
+  /* Le châssis d'écran */
+  .screen {
+    background: var(--surface);
+    border: 1px solid var(--rule-2);
+    border-radius: 10px;
+    overflow: hidden;
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+  }
+  .screen .bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--sunk);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--rule-2);
+  }
+  .bar .titre {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-3);
+    margin-left: 6px;
+  }
+  .body {
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    min-height: 300px;
+  }
+  .nav {
+    border-right: 1px solid var(--rule);
+    padding: 14px 10px;
+    background: var(--sunk);
+  }
+  .nav .item {
+    font-size: 13px;
+    color: var(--ink-3);
+    padding: 5px 8px;
+    border-radius: 6px;
+    margin-bottom: 2px;
+  }
+  .nav .item.on {
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .nav .sep {
+    height: 1px;
+    background: var(--rule);
+    margin: 10px 4px;
+  }
+  .main {
+    padding: 16px 18px;
+    min-width: 0;
+  }
+
+  /* Lignes de travaux */
+  .work {
+    display: grid;
+    grid-template-columns: 92px 1fr auto;
+    gap: 14px;
+    align-items: start;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .work:last-child {
+    border-bottom: none;
+  }
+  .forme {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    background: var(--mono-bg);
+    border-radius: 5px;
+    padding: 3px 7px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .work .nom {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 3px;
+    line-height: 1.3;
+  }
+  .work .quoi {
+    font-size: 13.5px;
+    color: var(--ink-3);
+    margin: 0;
+    line-height: 1.4;
+  }
+  .etat {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: var(--ok-bg);
+    color: var(--ok);
+  }
+  .etat.att {
+    background: var(--mono-bg);
+    color: var(--ink-3);
+  }
+
+  /* Aperçus miniatures dans les lignes */
+  .apercu {
+    margin-top: 8px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .mini-tab {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+  }
+  .mini-tab td,
+  .mini-tab th {
+    border: 1px solid var(--rule);
+    padding: 3px 7px;
+    text-align: left;
+    color: var(--ink-2);
+  }
+  .mini-tab th {
+    background: var(--sunk);
+    color: var(--ink-3);
+    font-weight: 400;
+  }
+  .mini-page {
+    height: 46px;
+    background: repeating-linear-gradient(var(--mono-bg) 0 6px, var(--surface) 6px 12px);
+    position: relative;
+  }
+  .mini-page::after {
+    content: '';
+    position: absolute;
+    inset: 6px 60% 6px 6px;
+    background: var(--rule-2);
+    border-radius: 2px;
+  }
+  .mini-diff {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    padding: 6px 8px;
+  }
+  .mini-diff .plus {
+    color: var(--ok);
+  }
+  .mini-diff .moins {
+    color: var(--accent);
+  }
+
+  /* Écran d'un livrable */
+  .liv-tete {
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+  }
+  .liv-tete .nom {
+    font-size: 20px;
+    font-weight: 650;
+    margin: 4px 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .liv-tete .meta {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    color: var(--ink-3);
+  }
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 190px;
+    gap: 16px;
+  }
+  .rail {
+    border-left: 1px solid var(--rule);
+    padding-left: 14px;
+    min-width: 0;
+  }
+  .rail .rt {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 8px;
+  }
+  .etape {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    padding: 4px 0;
+    line-height: 1.35;
+  }
+  .etape .n {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    margin-right: 6px;
+  }
+
+  .grille {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+  }
+  .grille th,
+  .grille td {
+    border: 1px solid var(--rule);
+    padding: 5px 9px;
+    text-align: left;
+    color: var(--ink-2);
+  }
+  .grille th {
+    background: var(--sunk);
+    color: var(--ink-3);
+    font-weight: 400;
+  }
+  .grille td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .onglets {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .ong {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    padding: 3px 9px;
+    border: 1px solid var(--rule);
+    border-bottom: none;
+    border-radius: 5px 5px 0 0;
+    color: var(--ink-3);
+    background: var(--sunk);
+  }
+  .ong.on {
+    background: var(--surface);
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .controles {
+    margin-top: 14px;
+    background: var(--ok-bg);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .ctrl {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ok);
+    padding: 2px 0;
+  }
+  .controles .ct {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ok);
+    opacity: 0.75;
+    margin-bottom: 5px;
+  }
+
+  .fichiers {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+  }
+  .fic {
+    display: flex;
+    gap: 10px;
+    padding: 4px 0;
+    color: var(--ink-2);
+    border-bottom: 1px solid var(--rule);
+  }
+  .fic:last-child {
+    border-bottom: none;
+  }
+  .fic .d {
+    margin-left: auto;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  .fic .d .p {
+    color: var(--ok);
+  }
+  .fic .d .m {
+    color: var(--accent);
+  }
+  .diffbox {
+    margin-top: 10px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    overflow-x: auto;
+  }
+  .diffbox .l {
+    padding: 2px 10px;
+    white-space: pre;
+  }
+  .diffbox .l.p {
+    background: var(--ok-bg);
+    color: var(--ok);
+  }
+  .diffbox .l.m {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+
+  /* Carte canal */
+  .phone {
+    max-width: 320px;
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--rule-2);
+    border-radius: 16px;
+    padding: 14px;
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+  }
+  .msg {
+    background: var(--sunk);
+    border-radius: 12px 12px 12px 4px;
+    padding: 12px 14px;
+  }
+  .msg .nom {
+    font-size: 15px;
+    font-weight: 650;
+    margin: 0 0 4px;
+  }
+  .msg p {
+    font-size: 13.5px;
+    color: var(--ink-2);
+    margin: 0 0 8px;
+    line-height: 1.45;
+  }
+  .btns {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .btn {
+    flex: 1;
+    text-align: center;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    padding: 7px 6px;
+    border-radius: 8px;
+    background: var(--mono-bg);
+    color: var(--ink-2);
+  }
+  .btn.prim {
+    background: var(--accent);
+    color: var(--sur-accent);
+  }
+
+  ul.pts {
+    max-width: 660px;
+    margin: 0 auto 16px;
+    padding-left: 20px;
+  }
+  ul.pts li {
+    margin: 9px 0;
+    color: var(--ink-2);
+  }
+  ul.pts li b {
+    color: var(--ink);
+  }
+
+  .demande {
+    background: var(--accent-bg);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin: 30px auto 0;
+    max-width: 660px;
+  }
+  .demande h3 {
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .demande p:last-child {
+    margin-bottom: 0;
+  }
+
+  details {
+    max-width: 660px;
+    margin: 46px auto 0;
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+  }
+  summary {
+    font-family: 'Familjen Grotesk', system-ui, sans-serif;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+  details p,
+  details li {
+    font-size: 15.5px;
+    color: var(--ink-2);
+  }
+
+  @media (max-width: 720px) {
+    .body {
+      grid-template-columns: 1fr;
+    }
+    .nav {
+      display: none;
+    }
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      border-left: none;
+      border-top: 1px solid var(--rule);
+      padding-left: 0;
+      padding-top: 12px;
+    }
+    .work {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="wrap">
+  <header class="col">
+    <p class="eyebrow">Vision produit · 5 septembre 2026</p>
+    <h1>Le livrable est la page</h1>
+    <p class="lede">Nodal montre son processus et cache son produit. On inverse les deux.</p>
+  </header>
+
+  <div class="col">
+    <div class="parti">
+      <p>
+        Aujourd'hui, un travail fini se présente comme <span class="em">une ligne de statut</span> :
+        un identifiant, un badge, et un pavé de texte.
+      </p>
+      <p>
+        Demain, il se présente comme <span class="em">la chose qu'il a produite</span> : le tableau,
+        la page, le diff, le message parti. Le déroulé passe derrière, à un clic.
+      </p>
+    </div>
+
+    <div class="avant-apres">
+      <div class="ap now">
+        <span class="t">La question d'aujourd'hui</span>
+        <p>« Le job 4c06 est completed. Qu'est-ce qu'il a fait, au juste ? »</p>
+      </div>
+      <div class="ap next">
+        <span class="t">La question de demain</span>
+        <p>« Voilà le budget 2027. Il s'ouvre, trois onglets, aucune formule cassée. »</p>
+      </div>
+    </div>
+
+    <p>
+      Ce n'est pas une réorganisation de menus. C'est un renversement :
+      <b>la page d'un travail n'est plus une fiche d'exécution, c'est le livrable lui-même</b>,
+      rendu selon sa forme. Trois écrans suffisent à le montrer.
+    </p>
+  </div>
+
+  <h2 class="col">1 · Une seule liste, et on voit ce que c'est</h2>
+
+  <div class="band">
+    <p class="cap">Écran d'accueil — les travaux, du plus récent au plus ancien</p>
+    <div class="screen">
+      <div class="bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="titre">nodal — travaux</span>
+      </div>
+      <div class="body">
+        <div class="nav">
+          <div class="item on">Travaux</div>
+          <div class="item">Agents</div>
+          <div class="item">Automatisations</div>
+          <div class="sep"></div>
+          <div class="item">Outils</div>
+          <div class="item">Connecteurs</div>
+          <div class="item">Mémoire</div>
+          <div class="sep"></div>
+          <div class="item">Réglages</div>
+        </div>
+        <div class="main">
+          <div class="work">
+            <span class="forme">Tableur</span>
+            <div>
+              <p class="nom">Budget 2027.xlsx</p>
+              <p class="quoi">3 feuilles · 214 lignes · demandé par toi, il y a 4 minutes</p>
+              <div class="apercu">
+                <table class="mini-tab">
+                  <tr>
+                    <th>Poste</th>
+                    <th>T1</th>
+                    <th>T2</th>
+                  </tr>
+                  <tr>
+                    <td>Infrastructure</td>
+                    <td>12 400</td>
+                    <td>12 900</td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+            <span class="etat">vérifié</span>
+          </div>
+
+          <div class="work">
+            <span class="forme">Page</span>
+            <div>
+              <p class="nom">Synthèse — marché des harnais</p>
+              <p class="quoi">9 sources lues · 1 page HTML · il y a 2 heures</p>
+              <div class="apercu">
+                <div class="mini-page"></div>
+              </div>
+            </div>
+            <span class="etat">vérifié</span>
+          </div>
+
+          <div class="work">
+            <span class="forme">Code</span>
+            <div>
+              <p class="nom">nodal-agents · l'écran de facturation</p>
+              <p class="quoi">12 fichiers · typage et tests verts en 3 min 40 · hier</p>
+              <div class="apercu">
+                <div class="mini-diff">
+                  <span class="plus">+ 148</span> &nbsp;<span class="moins">− 22</span>
+                  &nbsp;&nbsp;<span style="color: var(--ink-3)">src/billing/*</span>
+                </div>
+              </div>
+            </div>
+            <span class="etat">vérifié</span>
+          </div>
+
+          <div class="work">
+            <span class="forme">Envoi</span>
+            <div>
+              <p class="nom">Relance aux 4 clients en retard</p>
+              <p class="quoi">4 messages partis · Gmail · hier</p>
+            </div>
+            <span class="etat">vérifié</span>
+          </div>
+
+          <div class="work">
+            <span class="forme">Document</span>
+            <div>
+              <p class="nom">Compte rendu du 3 septembre.docx</p>
+              <p class="quoi">6 pages · avant-hier</p>
+            </div>
+            <span class="etat att">pas vérifié</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    <b>Ce qu'il faut regarder :</b> les cinq lignes ne se ressemblent pas. La forme est écrite à
+    gauche, l'aperçu change avec elle, et l'état dit « vérifié » ou « pas vérifié » sans jamais
+    parler de commandes. Un seul endroit remplace Jobs, Code et une partie du Chat.
+  </p>
+
+  <h2 class="col">2 · Ouvrir un travail, c'est ouvrir la chose</h2>
+
+  <div class="band">
+    <p class="cap">Un tableur livré</p>
+    <div class="screen">
+      <div class="bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="titre">nodal — Budget 2027.xlsx</span>
+      </div>
+      <div class="body">
+        <div class="nav">
+          <div class="item on">Travaux</div>
+          <div class="item">Agents</div>
+          <div class="item">Automatisations</div>
+          <div class="sep"></div>
+          <div class="item">Outils</div>
+          <div class="item">Connecteurs</div>
+          <div class="item">Mémoire</div>
+        </div>
+        <div class="main">
+          <div class="liv-tete">
+            <span class="meta">TABLEUR · ~/Documents/Finances/</span>
+            <p class="nom">Budget 2027.xlsx</p>
+            <span class="meta"
+              >Produit par Alfred · il y a 4 minutes ·
+              <span style="color: var(--ok)">vérifié</span></span
+            >
+          </div>
+          <div class="split">
+            <div>
+              <div class="onglets">
+                <span class="ong on">Synthèse</span><span class="ong">T1</span
+                ><span class="ong">Détail</span>
+              </div>
+              <div style="overflow-x: auto">
+                <table class="grille">
+                  <tr>
+                    <th>Poste</th>
+                    <th>T1</th>
+                    <th>T2</th>
+                    <th>T3</th>
+                    <th>T4</th>
+                  </tr>
+                  <tr>
+                    <td>Infrastructure</td>
+                    <td class="num">12 400</td>
+                    <td class="num">12 900</td>
+                    <td class="num">13 100</td>
+                    <td class="num">13 100</td>
+                  </tr>
+                  <tr>
+                    <td>Modèles</td>
+                    <td class="num">8 200</td>
+                    <td class="num">9 400</td>
+                    <td class="num">9 400</td>
+                    <td class="num">10 000</td>
+                  </tr>
+                  <tr>
+                    <td>Outils tiers</td>
+                    <td class="num">1 850</td>
+                    <td class="num">1 850</td>
+                    <td class="num">2 100</td>
+                    <td class="num">2 100</td>
+                  </tr>
+                  <tr>
+                    <td><b>Total</b></td>
+                    <td class="num"><b>22 450</b></td>
+                    <td class="num"><b>24 150</b></td>
+                    <td class="num"><b>24 600</b></td>
+                    <td class="num"><b>25 200</b></td>
+                  </tr>
+                </table>
+              </div>
+              <div class="controles">
+                <p class="ct">Ce qui a été contrôlé</p>
+                <div class="ctrl">✓ le fichier s'ouvre</div>
+                <div class="ctrl">✓ les 3 feuilles demandées existent</div>
+                <div class="ctrl">✓ aucune cellule en erreur</div>
+                <div class="ctrl">✓ les totaux correspondent à la somme des lignes</div>
+              </div>
+            </div>
+            <div class="rail">
+              <p class="rt">Comment c'est fait</p>
+              <div class="etape"><span class="n">1</span>Lecture de Dépenses-2026.csv</div>
+              <div class="etape"><span class="n">2</span>Création du classeur, 3 feuilles</div>
+              <div class="etape"><span class="n">3</span>Écriture de 214 lignes</div>
+              <div class="etape"><span class="n">4</span>Formules de totaux</div>
+              <p class="rt" style="margin-top: 16px">Fichiers produits</p>
+              <div class="etape">Budget 2027.xlsx</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    <b>Ce qu'il faut regarder :</b> le tableau est la page. Pas une capture, pas un lien de
+    téléchargement : le contenu, lisible tout de suite. Le déroulé de l'agent est à droite, réduit à
+    quatre lignes. Et le bloc vert dit ce qui a été contrôlé, en français, sans jamais montrer une
+    commande.
+  </p>
+
+  <div class="band">
+    <p class="cap">Un projet de code livré</p>
+    <div class="screen">
+      <div class="bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="titre">nodal — l'écran de facturation</span>
+      </div>
+      <div class="body">
+        <div class="nav">
+          <div class="item on">Travaux</div>
+          <div class="item">Agents</div>
+          <div class="item">Automatisations</div>
+          <div class="sep"></div>
+          <div class="item">Outils</div>
+          <div class="item">Connecteurs</div>
+          <div class="item">Mémoire</div>
+        </div>
+        <div class="main">
+          <div class="liv-tete">
+            <span class="meta">CODE · D:/APPS/nodal-agents</span>
+            <p class="nom">L'écran de facturation</p>
+            <span class="meta"
+              >Produit par Codeur · hier · <span style="color: var(--ok)">vérifié</span></span
+            >
+          </div>
+          <div class="split">
+            <div>
+              <div class="fichiers">
+                <div class="fic">
+                  src/billing/Screen.tsx
+                  <span class="d"><span class="p">+96</span> <span class="m">−4</span></span>
+                </div>
+                <div class="fic">
+                  src/billing/rows.ts
+                  <span class="d"><span class="p">+38</span> <span class="m">−12</span></span>
+                </div>
+                <div class="fic">
+                  src/billing/tests/rows.test.ts <span class="d"><span class="p">+14</span></span>
+                </div>
+                <div class="fic" style="color: var(--ink-3)">+ 9 autres fichiers</div>
+              </div>
+              <div class="diffbox">
+                <div class="l m">- const total = rows.length</div>
+                <div class="l p">+ const total = rows.reduce((s, r) =&gt; s + r.amount, 0)</div>
+                <div class="l p">+ if (!Number.isFinite(total)) throw new AmountError(rows)</div>
+              </div>
+              <div class="controles">
+                <p class="ct">Ce qui a été contrôlé</p>
+                <div class="ctrl">✓ le typage passe — 41 s</div>
+                <div class="ctrl">✓ les tests passent — 2 min 48 · 1 248 tests</div>
+                <div class="ctrl">✓ aucun fichier écrit après la preuve</div>
+              </div>
+            </div>
+            <div class="rail">
+              <p class="rt">Comment c'est fait</p>
+              <div class="etape"><span class="n">1</span>Lecture des écrans existants</div>
+              <div class="etape"><span class="n">2</span>Écriture de l'écran</div>
+              <div class="etape"><span class="n">3</span>Un test rouge, corrigé</div>
+              <div class="etape"><span class="n">4</span>Preuve relancée, verte</div>
+              <p class="rt" style="margin-top: 16px">Ouvrir</p>
+              <div class="etape">Le dossier · l'éditeur · le diff complet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    <b>Ce qu'il faut regarder :</b> même châssis, même rail, même bloc vert. Seul le centre change.
+    C'est ça, le parti pris : <b>une seule grammaire d'écran, un rendu par forme de livrable</b>. Et
+    les commandes de preuve ne s'affichent plus comme des commandes, mais comme des phrases avec
+    leur durée.
+  </p>
+
+  <h2 class="col">3 · Et depuis Telegram, la même chose en petit</h2>
+
+  <div class="band">
+    <p class="cap">Ce qui arrive dans la conversation</p>
+    <div class="phone">
+      <div class="msg">
+        <p class="nom">Budget 2027.xlsx</p>
+        <p>3 feuilles, 214 lignes. Il s'ouvre, aucune formule cassée, les totaux tombent juste.</p>
+        <div class="btns">
+          <span class="btn prim">Ouvrir</span><span class="btn">Le déroulé</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    <b>Ce qu'il faut regarder :</b> le canal reçoit le livrable, pas un statut. Même vocabulaire que
+    l'écran, en trois lignes. C'est la même donnée rendue plus petit, pas un second système à
+    entretenir.
+  </p>
+
+  <h2 class="col">Ce que ça coûte, dit franchement</h2>
+  <ul class="pts">
+    <li>
+      <b>Trois écrans fusionnent en un.</b> Jobs, Code et le détail d'un run deviennent « Travaux ».
+      Le Chat reste, mais il cesse d'être l'endroit où on va chercher un résultat.
+    </li>
+    <li>
+      <b>Il faut un rendu par forme.</b> Cinq pour commencer : document, tableur, page, code, envoi.
+      Chacun est un composant, aucun n'est difficile pris seul.
+    </li>
+    <li>
+      <b>Les contrôles doivent parler français.</b> « ✓ le fichier s'ouvre » au lieu de
+      <code>pnpm test — exit 0</code>. C'est du travail d'écriture autant que de code.
+    </li>
+    <li>
+      <b>On perd le tableau de bord d'exploitation.</b> Qui veut voir les statuts bruts, les
+      relances, les erreurs, devra aller dans un écran technique dédié. C'est le prix, et je le
+      crois juste : cet écran sert une fois par mois, l'autre sert dix fois par jour.
+    </li>
+  </ul>
+
+  <div class="col">
+    <p>
+      Ce qui rend ça possible aujourd'hui et pas il y a une semaine :
+      <b>chaque outil déclare désormais ce qu'il produit</b>. La forme d'un livrable n'est plus à
+      deviner, elle est écrite en base avant même l'écriture. Il ne manque que le rendu.
+    </p>
+  </div>
+
+  <div class="demande">
+    <h3>Ce qu'il me faut de toi</h3>
+    <p>
+      Un mot sur le parti pris, pas sur les détails :
+      <b>est-ce que « le livrable est la page » est la bonne direction ?</b>
+    </p>
+    <p>
+      Si oui, je commence par l'écran 1 et deux formes — tableur et code — parce que ce sont celles
+      que tu produis le plus. Le reste suit sans nouvelle décision. Si non, dis-moi ce qui cloche
+      dans les images, c'est fait pour ça.
+    </p>
+  </div>
+
+  <details>
+    <summary>Pour les ingénieurs : d'où vient chaque morceau</summary>
+    <p>
+      <b>La forme d'un livrable</b> existe déjà : le champ obligatoire posé ce matin sur chaque
+      cible de mutation. Il porte aujourd'hui <code>code_project</code> et
+      <code>office_file</code> ; la liste s'étend à <code>document</code>, <code>page</code>,
+      <code>outbound_action</code>.
+    </p>
+    <p>
+      <b>La liste des fichiers produits</b> se lit dans la table d'état par livrable, écrite avant
+      chaque écriture. C'est la même source que la rangée de pastilles de DeepSeek Harness, et elle
+      est plus fiable que l'extraction par expressions régulières d'Hermes.
+    </p>
+    <p>
+      <b>Le rendu par forme</b> suit le contrat de dsh : l'outil déclare une carte, l'écran la
+      traduit, et un outil n'importe jamais un type d'interface. Six cartes chez eux, cinq chez nous
+      pour commencer.
+    </p>
+    <p>
+      <b>Les contrôles en français</b> viennent du moteur de preuve déjà livré. Ce qui change est la
+      couche d'affichage : un code de contrôle plus une durée, jamais la ligne de commande brute.
+    </p>
+    <p>
+      <b>La carte du canal</b> réutilise l'envoi de cartes à boutons qui existe pour les
+      approbations, neutre vis-à-vis du canal.
+    </p>
+  </details>
+</div>
