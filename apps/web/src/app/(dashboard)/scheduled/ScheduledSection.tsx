@@ -33,7 +33,8 @@ function statusVariant(status: string | null): StatusVariant {
  * Les runs d'une automatisation, dépliés. Extrait du composant parent parce
  * qu'un groupe est REPLIÉ par défaut : sans ce point d'entrée, un rendu
  * statique ne peut rien affirmer sur la garde du plan « un run ouvre son fil »
- * (`/spaces/<id>`). Le parent n'a pas d'autre façon de dessiner ses runs.
+ * (`/scheduled/<id>` depuis P8 : /spaces/<id> est la page d'un PROJET). Le
+ * parent n'a pas d'autre façon de dessiner ses runs.
  */
 export function ScheduleRunList({ runs }: { runs: ScheduleGroup['runs'] }) {
   return (
@@ -41,7 +42,7 @@ export function ScheduleRunList({ runs }: { runs: ScheduleGroup['runs'] }) {
       {runs.map((r) => (
         <li key={r.id}>
           <Link
-            href={`/spaces/${r.id}`}
+            href={`/scheduled/${r.id}`}
             className="flex items-center gap-3 px-4 py-1.5 pl-[44px] text-body-12 text-ink-2 hover:bg-hover"
           >
             <span className="text-mono-11 text-ink-4">

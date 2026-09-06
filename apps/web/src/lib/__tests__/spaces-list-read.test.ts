@@ -1,9 +1,12 @@
-// spaces-list-read.test.ts — les deux listes lues en base. P9 : les runs
-// d'automatisation ont leur page, donc leur ACTION. `listSpacesAction` ne rend
-// que des conversations (aucune ligne cron, même quand les runs cron sont plus
-// récents et plus nombreux), `listScheduledRunsAction` ne rend que des runs
-// cron, avec le nom de l'automatisation lu dans la trace et sa propre limite.
-// Dans les deux cas les délégations n'apparaissent pas.
+// spaces-list-read.test.ts — la liste des runs d'automatisation, lue en base.
+// P9 : les runs d'automatisation ont leur page, donc leur ACTION.
+// `listScheduledRunsAction` ne rend que des runs cron, avec le nom de
+// l'automatisation lu dans la trace et sa propre limite ; les délégations
+// n'apparaissent pas.
+//
+// P8 a retiré `listSpacesAction` et ses deux cas : /spaces liste des PROJETS,
+// et la liste de toutes les conversations est celle de P7
+// (`listAllConversationsAction`, testée dans conversation-actions.test.ts).
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -111,29 +114,6 @@ beforeAll(async () => {
     status: 'completed',
     parentJobId: conv!.id,
     createdAt: at(1),
-  });
-});
-
-describe('listSpacesAction', () => {
-  it('ne rend AUCUN run cron, même quand 300 runs cron sont plus récents que la conversation', async () => {
-    const { listSpacesAction } = await actions();
-    const r = await listSpacesAction();
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const channels = r.data.map((x) => x.channel);
-    expect(channels).not.toContain('cron'); // P9 : les runs vivent sur /scheduled
-    expect(channels).not.toContain('internal'); // la délégation n'est pas une tâche de tête
-    // La conversation ancienne est là malgré les 300 runs plus récents.
-    expect(r.data.map((x) => x.task)).toContain('Rappelle-moi ce que j’aime');
-  });
-
-  it('applique sa limite aux conversations', async () => {
-    const { listSpacesAction } = await actions();
-    const r = await listSpacesAction({ conversations: 1 });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.data).toHaveLength(1);
-    expect(r.data[0]!.channel).not.toBe('cron');
   });
 });
 

@@ -1,14 +1,22 @@
+// /scheduled/[id] — LE FIL D'UN RUN (P2-P4, déménagé ici par P8).
+//
+// Cette page était /spaces/[id] tant que Spaces listait des jobs. Spaces liste
+// maintenant des PROJETS, et /spaces/[id] est la page d'un projet : le fil d'un
+// TRAVAIL n'a plus qu'un point d'entrée, celui d'un run d'automatisation qui
+// « ouvre son fil » (garde de P9). Rien d'autre n'a changé — les mêmes cartes,
+// la même preuve, la même barre d'état.
+
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSpaceConversationAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
-import ConversationFeedView from '../ConversationFeedView.tsx';
-import LiveRefresh from '../LiveRefresh.tsx';
-import DeliveriesCard from '../DeliveriesCard.tsx';
-import StatusBar from '../StatusBar.tsx';
+import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.tsx';
+import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
+import DeliveriesCard from '@/app/(dashboard)/spaces/DeliveriesCard.tsx';
+import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
-import { formatCost, formatTokens } from '../format.ts';
+import { formatCost, formatTokens } from '@/app/(dashboard)/spaces/format.ts';
 import { truncate } from '@/lib/format-time';
 
 // Force dynamic — the feed is read per request, and re-read while the job runs.
@@ -24,19 +32,15 @@ function statusVariant(status: string | null): StatusVariant {
   return 'idle';
 }
 
-export default async function SpaceConversationPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function ScheduledRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const result = await getSpaceConversationAction(id);
   if (!result.ok) {
     if (result.code === 'not_found') notFound();
     return (
-      <PageShell title="Space">
-        <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Spaces
+      <PageShell title="Run">
+        <Link href="/scheduled" className="text-xs text-ink-3 hover:text-ink-2">
+          ← Scheduled
         </Link>
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
@@ -65,13 +69,13 @@ export default async function SpaceConversationPage({
       subtitle={subtitle}
       toolbar={
         <div className="flex items-center gap-3">
-          <Link href="/spaces" className="text-xs text-ink-3 hover:text-ink-2">
-            ← Spaces
+          <Link href="/scheduled" className="text-xs text-ink-3 hover:text-ink-2">
+            ← Scheduled
           </Link>
           <StatusPill variant={statusVariant(job.status)} />
           {job.parentJobId && (
             <Link
-              href={`/spaces/${job.parentJobId}`}
+              href={`/scheduled/${job.parentJobId}`}
               className="text-xs text-ink-3 hover:text-ink-2"
             >
               ↑ parent task

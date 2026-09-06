@@ -18,11 +18,14 @@ import {
   agentJobs,
   agentWorkspaces,
   codeProjects,
+  conversations,
   entities,
   users,
+  verificationRuns,
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
-import { mkdtemp, mkdir, rm, readdir, symlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, mkdir, rm, readdir, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -371,6 +374,340 @@ describe('listProjectsAction', () => {
 
     // Le plus actif d'abord.
     expect(result.data[0]!.path).toBe(`${terrain.path}/projet-x`);
+  });
+});
+
+/** Un projet ENREGISTRÉ posé directement en base — sans passer par le disque. */
+async function enregistre(opts: {
+  path: string;
+  name: string;
+  kind?: 'code' | 'documents';
+  entityId?: string;
+  agentId?: string;
+}): Promise<string> {
+  const [row] = await testDb
+    .insert(codeProjects)
+    .values({
+      entityId: opts.entityId ?? seed.entityId,
+      projectPath: opts.path,
+      projectKey: projectKey(opts.path),
+      displayName: opts.name,
+      kind: opts.kind ?? 'code',
+      agentId: opts.agentId ?? seed.agentId,
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    })
+    .returning({ id: codeProjects.id });
+  return row!.id;
+}
+
+/** Une commande de preuve, telle que le moteur l'écrit. */
+async function preuve(cle: string, verdict: 'green' | 'red', at: Date): Promise<void> {
+  await testDb.insert(verificationRuns).values({
+    entityId: seed.entityId,
+    deliverableType: 'code_project',
+    canonicalKey: cle,
+    sequenceId: randomUUID(),
+    commandRank: 0,
+    command: 'pnpm test',
+    exitCode: verdict === 'green' ? 0 : 1,
+    outcomeKind: 'exit',
+    verdict,
+    createdAt: at,
+  });
+}
+
+describe('listProjectsAction — l’état de la preuve', () => {
+  it('rend le verdict de la vérification la plus RÉCENTE, jamais la première venue', async () => {
+    const { listProjectsAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/projet-x`;
+    const sansPreuve = `${terrain.path}/sans-preuve`;
+    await enregistre({ path: sansPreuve, name: 'Sans preuve' });
+
+    // Écrites dans le DÉSORDRE : la plus récente est insérée en premier, pour
+    // qu'un tri absent ne puisse pas passer par chance.
+    await preuve(projectKey(chemin), 'red', new Date('2026-09-04T10:00:00.000Z'));
+    await preuve(projectKey(chemin), 'green', new Date('2026-09-01T10:00:00.000Z'));
+
+    const result = await listProjectsAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const x = result.data.find((p) => p.path === chemin);
+    expect(x!.lastProof).toEqual({
+      verdict: 'fail',
+      at: new Date('2026-09-04T10:00:00.000Z'),
+    });
+
+    // Aucune preuve n'a tourné : `null`, jamais un vert par défaut.
+    const neuf = result.data.find((p) => p.path === sansPreuve);
+    expect(neuf!.lastProof).toBeNull();
+  });
+});
+
+describe('getProjectPageAction', () => {
+  it('liste le dossier sur UN niveau : dossiers d’abord, tailles relues, ignorés comptés', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${racine.replace(/\\/g, '/')}/etagere`;
+    await mkdir(join(chemin, 'zeta-dossier'), { recursive: true });
+    await mkdir(join(chemin, 'alpha-dossier'), { recursive: true });
+    await mkdir(join(chemin, 'node_modules'), { recursive: true });
+    await mkdir(join(chemin, '.git'), { recursive: true });
+    await writeFile(join(chemin, 'b.md'), 'bbbbb'); // 5 octets
+    await writeFile(join(chemin, 'a.txt'), 'aaa'); // 3 octets
+    await writeFile(join(chemin, '.env.example'), 'K=1'); // caché, mais pas ignoré
+    const id = await enregistre({ path: chemin, name: 'Étagère' });
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.files.missing).toBe(false);
+    // Les dossiers d'abord, puis les fichiers, chacun par nom.
+    expect(result.data.files.entries.map((e) => e.name)).toEqual([
+      'alpha-dossier',
+      'zeta-dossier',
+      '.env.example',
+      'a.txt',
+      'b.md',
+    ]);
+    expect(result.data.files.entries.map((e) => e.kind)).toEqual([
+      'dir',
+      'dir',
+      'file',
+      'file',
+      'file',
+    ]);
+    // Les tailles viennent du disque, pas d'un compte de caractères supposé.
+    const parNom = new Map(result.data.files.entries.map((e) => [e.name, e.bytes]));
+    expect(parNom.get('a.txt')).toBe(3);
+    expect(parNom.get('b.md')).toBe(5);
+    expect(parNom.get('alpha-dossier')).toBeNull();
+    // `.git` et `node_modules` : comptés, pas escamotés.
+    expect(result.data.files.ignored).toBe(2);
+    expect(result.data.files.more).toBe(0);
+  });
+
+  it('au-delà du plafond, le reste est COMPTÉ', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${racine.replace(/\\/g, '/')}/plein`;
+    await mkdir(chemin, { recursive: true });
+    // 205 entrées : 200 montrées, 5 dites.
+    for (let i = 0; i < 205; i += 1) {
+      await writeFile(join(chemin, `f${String(i).padStart(3, '0')}.txt`), 'x');
+    }
+    const id = await enregistre({ path: chemin, name: 'Plein' });
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.files.entries).toHaveLength(200);
+    expect(result.data.files.more).toBe(5);
+    expect(result.data.files.entries[0]!.name).toBe('f000.txt');
+  });
+
+  it('un dossier absent est DIT, pas dessiné comme un projet vide', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const id = await enregistre({
+      path: `${racine.replace(/\\/g, '/')}/jamais-cree`,
+      name: 'Fantôme',
+    });
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.files.missing).toBe(true);
+    expect(result.data.files.entries).toEqual([]);
+  });
+
+  it('la preuve du projet : ses séquences et son état d’approbation', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/projet-preuve`;
+    const id = await enregistre({ path: chemin, name: 'Projet preuve' });
+    await testDb
+      .update(codeProjects)
+      .set({ verifyCommands: [{ command: 'pnpm test', timeoutSeconds: 600 }] })
+      .where(eq(codeProjects.id, id));
+    await preuve(projectKey(chemin), 'red', new Date('2026-09-03T10:00:00.000Z'));
+    // La preuve d'un AUTRE dossier ne doit pas remonter ici.
+    await preuve(projectKey(`${terrain.path}/projet-x`), 'green', new Date('2026-09-03T11:00:00Z'));
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.proof.configured).toBe(true);
+    expect(result.data.proof.commands).toEqual([{ command: 'pnpm test', timeoutSeconds: 600 }]);
+    // Des commandes, aucune approbation : en attente, jamais « approuvé ».
+    expect(result.data.proof.approval).toBe('pending_approval');
+    expect(result.data.proof.sequences).toHaveLength(1);
+    expect(result.data.proof.sequences[0]!.verdict).toBe('red');
+    expect(result.data.proof.sequences[0]!.runs[0]!.command).toBe('pnpm test');
+  });
+
+  it('les conversations du projet : celles de ses travaux, et celles qui y sont ancrées', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/projet-conv`;
+    const id = await enregistre({ path: chemin, name: 'Projet conv' });
+
+    const [depuisTelegram] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '4242',
+        title: 'Depuis Telegram',
+        updatedAt: new Date('2026-09-02T10:00:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      task: 'range le dossier',
+      projectId: id,
+      conversationId: depuisTelegram!.id,
+    });
+
+    const [ancienneAncree] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        title: 'Ancienne',
+        currentProjectId: id,
+        updatedAt: new Date('2026-09-01T10:00:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+    const [recenteAncree] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        title: 'Récente',
+        currentProjectId: id,
+        updatedAt: new Date('2026-09-05T10:00:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+
+    const [etrangere] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        title: 'Rien à voir',
+        updatedAt: new Date('2026-09-06T10:00:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ids = result.data.conversations.map((c) => c.id);
+    expect(ids).toContain(depuisTelegram!.id);
+    expect(ids).toContain(ancienneAncree!.id);
+    expect(ids).toContain(recenteAncree!.id);
+    expect(ids, 'une conversation sans lien au projet n’est pas la sienne').not.toContain(
+      etrangere!.id,
+    );
+
+    const parId = new Map(result.data.conversations.map((c) => [c.id, c]));
+    // Un travail rattaché suffit à faire lister la conversation, sans l'ancrer.
+    expect(parId.get(depuisTelegram!.id)!.anchored).toBe(false);
+    expect(parId.get(depuisTelegram!.id)!.channel).toBe('telegram');
+    expect(parId.get(depuisTelegram!.id)!.title).toBe('Depuis Telegram');
+    expect(parId.get(depuisTelegram!.id)!.agentName).toBe('Test Agent');
+    expect(parId.get(recenteAncree!.id)!.anchored).toBe(true);
+    // Les plus récentes d'abord.
+    expect(ids[0]).toBe(recenteAncree!.id);
+
+    // La conversation DU projet : la plus récente ancrée du dashboard.
+    expect(result.data.projectConversationId).toBe(recenteAncree!.id);
+
+    // Et les travaux comptés au passage.
+    expect(result.data.project.jobsCount).toBe(1);
+    expect(result.data.project.name).toBe('Projet conv');
+    expect(result.data.project.agentName).toBe('Test Agent');
+  });
+
+  it('le projet d’une AUTRE entité n’existe pas ici', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const id = await enregistre({
+      path: `${voisin.path}/chez-lui`,
+      name: 'Chez le voisin',
+      entityId: voisin.entityId,
+      agentId: voisin.agentId,
+    });
+
+    const result = await getProjectPageAction(id);
+    expect(result).toEqual({ ok: false, code: 'not_found', message: 'Project not found' });
+  });
+
+  it('une ligne de COMPTABILITÉ n’a pas de page', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/juste-comptable`;
+    const [row] = await testDb
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: chemin,
+        projectKey: projectKey(chemin),
+      })
+      .returning({ id: codeProjects.id });
+
+    const result = await getProjectPageAction(row!.id);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('not_found');
+  });
+});
+
+describe('createProjectConversationAction', () => {
+  it('sans agent ROOT désigné, elle refuse plutôt que de choisir à la place', async () => {
+    const { createProjectConversationAction } = await import('../project-actions.ts');
+    const id = await enregistre({ path: `${terrain.path}/sans-root`, name: 'Sans root' });
+
+    const result = await createProjectConversationAction(id);
+    expect(result).toEqual({
+      ok: false,
+      code: 'no_root_agent',
+      message: 'Designate a ROOT agent in Settings first.',
+    });
+  });
+
+  it('crée une conversation ancrée au projet — la ligne relue le dit', async () => {
+    const { createProjectConversationAction, getProjectPageAction } =
+      await import('../project-actions.ts');
+    await testDb
+      .update(entities)
+      .set({ rootAgentId: seed.agentId })
+      .where(eq(entities.id, seed.entityId));
+    const id = await enregistre({ path: `${terrain.path}/avec-root`, name: 'Avec root' });
+
+    const result = await createProjectConversationAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const [ligne] = await testDb
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, result.data.id));
+    expect(ligne).toBeDefined();
+    expect(ligne!.channel).toBe('dashboard');
+    expect(ligne!.origin).toBe('user');
+    expect(ligne!.currentProjectId).toBe(id);
+    expect(ligne!.title).toBe('Avec root');
+    expect(ligne!.agentId).toBe(seed.agentId);
+
+    // Et la page la reconnaît comme LA conversation du projet.
+    const page = await getProjectPageAction(id);
+    expect(page.ok).toBe(true);
+    if (!page.ok) return;
+    expect(page.data.projectConversationId).toBe(result.data.id);
   });
 });
 

@@ -457,8 +457,11 @@ function statusVariant(status: string | null): StatusVariant {
 function ChildCard({ job }: { job: FeedChildJob }) {
   return (
     <div className="mt-4 pl-[44px]">
+      {/* P8 : le fil d'un JOB vit sur /scheduled/[id] — /spaces/<id> est
+          devenu la page d'un PROJET. Sans ce changement, ouvrir une délégation
+          depuis le fil tombait sur « projet introuvable ». */}
       <Link
-        href={`/spaces/${job.id}`}
+        href={`/scheduled/${job.id}`}
         className="flex max-w-[760px] items-center gap-3 rounded-xl border border-rule-2 bg-paper px-4 py-3 hover:border-rule"
       >
         <AgentAvatar name={job.agentName ?? 'Agent'} size="sm" shape="square" />

@@ -18,7 +18,20 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
 
-export default function ThreadComposer({ conversationId }: { conversationId: string }) {
+export default function ThreadComposer({
+  conversationId,
+  onBeforeSend,
+}: {
+  conversationId: string;
+  /**
+   * P8 — la page d'un projet sans conversation. Appelé AVANT l'envoi, il rend
+   * l'id de la conversation qui doit recevoir le message (elle vient d'être
+   * créée). Une prop plutôt qu'un second composeur : la saisie ne change pas,
+   * seul son point d'arrivée change. S'il lève, rien n'est envoyé et l'écran
+   * le dit (inv. #4).
+   */
+  onBeforeSend?: () => Promise<string>;
+}) {
   const router = useRouter();
   const [message, setMessage] = useState('');
   const [isPending, startTransition] = useTransition();
@@ -27,7 +40,20 @@ export default function ThreadComposer({ conversationId }: { conversationId: str
     const text = message.trim();
     if (text === '') return;
     startTransition(async () => {
-      const r = await sendChatMessageAction({ conversationId, message: text });
+      let target = conversationId;
+      if (onBeforeSend) {
+        try {
+          target = await onBeforeSend();
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Could not open the conversation');
+          return;
+        }
+      }
+      if (target === '') {
+        toast.error('No conversation to write to');
+        return;
+      }
+      const r = await sendChatMessageAction({ conversationId: target, message: text });
       if (!r.ok) {
         toast.error(r.message);
         return;

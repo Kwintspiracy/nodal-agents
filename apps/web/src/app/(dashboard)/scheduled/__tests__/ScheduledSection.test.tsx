@@ -61,9 +61,9 @@ describe('ScheduledSection', () => {
     const changelog = scheduled.find((g) => g.name === 'Changelog');
     expect(changelog).toBeDefined();
     const html = renderToStaticMarkup(<ScheduleRunList runs={changelog!.runs} />);
-    expect(html).toContain('href="/spaces/job-1"');
-    expect(html).toContain('href="/spaces/job-3"');
-    expect(html).not.toContain('href="/spaces/job-2"'); // l'autre automatisation
+    expect(html).toContain('href="/scheduled/job-1"');
+    expect(html).toContain('href="/scheduled/job-3"');
+    expect(html).not.toContain('href="/scheduled/job-2"'); // l'autre automatisation
   });
 
   it('rien à montrer, rien à dessiner', () => {

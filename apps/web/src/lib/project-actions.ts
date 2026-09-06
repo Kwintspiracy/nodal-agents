@@ -20,23 +20,32 @@
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import {
   eq,
   and,
+  or,
   desc,
   sql,
+  inArray,
   isNotNull,
   agents,
   agentJobs,
   agentWorkspaces,
   codeProjects,
+  conversations,
+  entities,
+  verificationRuns,
 } from '@nodal-agents/db';
-import { normalizePath, projectKey } from '@nodal-agents/shared';
+import { normalizePath, projectKey, type VerifyCommand } from '@nodal-agents/shared';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { isUnderPath } from './code-projects.ts';
+import { isSafeSubfolder } from './project-path.ts';
+import { deriveVerifyStatus, type VerifyStatus } from './verification-display.ts';
+import { groupVerificationRuns, type VerificationSequenceView } from './verification-runs-view.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,6 +77,72 @@ export type ProjectListRow = {
   jobsCount: number;
   /** Le plus récent d'entre eux, ou `null` : un projet neuf n'a pas d'activité. */
   lastActivityAt: Date | null;
+  /**
+   * L'état de la PREUVE : le verdict de la commande de vérification la plus
+   * récente sur ce dossier, ou `null` — aucune n'a jamais tourné, ou le projet
+   * ne produit pas de code (rien à prouver, et le dire « échec » serait faux).
+   */
+  lastProof: { verdict: 'pass' | 'fail'; at: Date } | null;
+};
+
+/** Une entrée du dossier, telle que l'étagère la montre. */
+export type ProjectFileEntry = {
+  name: string;
+  kind: 'dir' | 'file';
+  /** La taille d'un fichier, relue sur le disque. `null` pour un dossier. */
+  bytes: number | null;
+};
+
+export type ProjectFilesView = {
+  entries: ProjectFileEntry[];
+  /** Les entrées au-delà du plafond — dites, jamais tues. */
+  more: number;
+  /** `.git` et `node_modules` : comptés, pas escamotés. */
+  ignored: number;
+  /** Le dossier n'est pas lisible (absent, ou ce n'est pas un dossier). */
+  missing: boolean;
+};
+
+export type ProjectProofView = {
+  configured: boolean;
+  commands: VerifyCommand[] | null;
+  approval: VerifyStatus;
+  /** Les dernières séquences de preuve de CE dossier (plafond 3), la plus récente en dernier. */
+  sequences: VerificationSequenceView[];
+};
+
+export type ProjectConversationRow = {
+  id: string;
+  channel: string;
+  /** Vide quand la conversation n'a pas de titre — l'écran décide quoi dire. */
+  title: string;
+  agentName: string | null;
+  agentSlug: string | null;
+  updatedAt: Date | null;
+  /** `current_project_id` pointe ici : la conversation est ANCRÉE au projet. */
+  anchored: boolean;
+};
+
+export type ProjectPageView = {
+  project: {
+    id: string;
+    name: string;
+    path: string;
+    kind: 'code' | 'documents';
+    agentId: string | null;
+    agentName: string | null;
+    agentSlug: string | null;
+    hidden: boolean;
+    registeredFrom: 'spaces' | 'conversation';
+    registeredAt: Date;
+    jobsCount: number;
+    lastActivityAt: Date | null;
+  };
+  files: ProjectFilesView;
+  proof: ProjectProofView;
+  conversations: ProjectConversationRow[];
+  /** La conversation DU projet — celle que la saisie du bas prolonge. */
+  projectConversationId: string | null;
 };
 
 export type ProjectTerrain = {
@@ -148,6 +223,39 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
       )
       .orderBy(sql`max(${agentJobs.createdAt}) desc nulls last`, desc(codeProjects.registeredAt));
 
+    // L'état de la preuve, en UNE requête groupée (`DISTINCT ON` sur la clé,
+    // la plus récente d'abord) — pas une par projet : la liste ne doit pas
+    // dégrader avec le nombre de projets, et une preuve se lit par CLÉ
+    // d'identité, jamais par égalité de texte sur le chemin.
+    const proofKeys = [
+      ...new Set(rows.filter((r) => r.kind !== 'documents').map((r) => projectKey(r.path))),
+    ];
+    const lastProofByKey = new Map<string, { verdict: 'pass' | 'fail'; at: Date }>();
+    if (proofKeys.length > 0) {
+      const proofRows = await db
+        .selectDistinctOn([verificationRuns.canonicalKey], {
+          canonicalKey: verificationRuns.canonicalKey,
+          verdict: verificationRuns.verdict,
+          createdAt: verificationRuns.createdAt,
+        })
+        .from(verificationRuns)
+        .where(
+          and(
+            eq(verificationRuns.entityId, session.entityId),
+            inArray(verificationRuns.canonicalKey, proofKeys),
+          ),
+        )
+        .orderBy(verificationRuns.canonicalKey, desc(verificationRuns.createdAt));
+      for (const p of proofRows) {
+        // `green` est le SEUL verdict qui prouve quelque chose : un rouge et une
+        // erreur d'infrastructure disent tous deux « ce n'est pas prouvé ».
+        lastProofByKey.set(p.canonicalKey, {
+          verdict: p.verdict === 'green' ? 'pass' : 'fail',
+          at: p.createdAt,
+        });
+      }
+    }
+
     return ok(
       rows.map((r) => ({
         id: r.id,
@@ -162,6 +270,7 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectListRow[
         hidden: r.hidden,
         jobsCount: Number(r.jobsCount ?? 0),
         lastActivityAt: r.lastActivityAt ? new Date(r.lastActivityAt) : null,
+        lastProof: r.kind === 'documents' ? null : (lastProofByKey.get(projectKey(r.path)) ?? null),
       })),
     );
   } catch (err) {
@@ -223,25 +332,9 @@ export async function listProjectTerrainsAction(): Promise<ActionResult<ProjectT
 
 // ─── createProjectAction ─────────────────────────────────────────────────────
 
-/**
- * Le sous-dossier accepté : des segments RELATIFS, et rien d'autre.
- *
- * `''` est autorisé — le terrain lui-même devient le projet, ce qui est le cas
- * d'un dépôt attaché tel quel. Tout le reste est refusé plutôt que nettoyé :
- * aplatir `../evil` en `evil` serait accepter une demande en en exécutant une
- * autre, et l'utilisateur n'apprendrait jamais que sa saisie n'a pas été lue
- * telle qu'il l'a écrite.
- */
-function isSafeSubfolder(raw: string): boolean {
-  if (raw === '') return true;
-  const p = raw.replace(/\\/g, '/');
-  // Un chemin ABSOLU ne se rattache à aucun terrain : `C:/…`, `/…`, `//srv/…`.
-  if (/^[a-z]:/i.test(p) || p.startsWith('/')) return false;
-  // Caractères de contrôle : illisibles à l'écran, ingérables sur le disque.
-  if (/[\u0000-\u001f]/.test(p)) return false;
-  const segments = p.split('/');
-  return segments.every((s) => s !== '' && s !== '.' && s !== '..');
-}
+// La règle du sous-dossier (`isSafeSubfolder`) vit dans `project-path.ts` :
+// la modale de création l'applique aussi, pour montrer le chemin final pendant
+// la saisie, et un module 'use server' ne se charge pas dans le navigateur.
 
 /**
  * L'ancêtre EXISTANT le plus proche de `path` (lui-même s'il existe), résolu
@@ -414,5 +507,323 @@ export async function createProjectAction(
   } catch (err) {
     console.error('[projects] PROJECT_CREATE_FAILED', err);
     return fail('create_failed', 'Could not create the project');
+  }
+}
+
+// ─── getProjectPageAction ────────────────────────────────────────────────────
+
+/** Le plafond de l'étagère : au-delà, la page n'est plus une étagère. */
+const FILES_MAX = 200;
+
+/**
+ * Les deux dossiers qu'on ne montre pas comme des dossiers du projet — mais
+ * qu'on COMPTE. Escamoter en silence ferait mentir « voici ce qu'il y a
+ * dedans » ; les lister noierait tout le reste.
+ */
+const IGNORED_ENTRIES = new Set(['.git', 'node_modules']);
+
+/**
+ * Le contenu du dossier, sur UN niveau. Jamais de récursion : l'étagère dit ce
+ * qu'il y a dans le projet, pas ce qu'il y a dans tout l'arbre — et une
+ * récursion sur un dossier de développement lit des dizaines de milliers
+ * d'entrées pour un écran qui en montre deux cents.
+ *
+ * Le listage est réécrit ici plutôt qu'emprunté au runner : le web ne dépend
+ * pas du runner (dependency-cruiser l'interdit), et ce dont l'écran a besoin —
+ * un nom, une sorte, une taille — est plus court que l'inventaire du runner.
+ */
+async function readProjectFolder(path: string): Promise<ProjectFilesView> {
+  let dirents: Dirent[];
+  try {
+    dirents = await readdir(path, { withFileTypes: true });
+  } catch {
+    // Absent, illisible, ou ce n'est pas un dossier : dans les trois cas
+    // l'écran n'a rien à montrer, et il le DIT (inv. #4) au lieu de dessiner
+    // un dossier vide qui ressemblerait à un projet neuf.
+    return { entries: [], more: 0, ignored: 0, missing: true };
+  }
+
+  let ignored = 0;
+  const kept: Array<{ name: string; kind: 'dir' | 'file' }> = [];
+  for (const d of dirents) {
+    if (IGNORED_ENTRIES.has(d.name)) {
+      ignored += 1;
+      continue;
+    }
+    kept.push({ name: d.name, kind: d.isDirectory() ? 'dir' : 'file' });
+  }
+  // Les dossiers d'abord, puis le nom : c'est l'ordre d'un explorateur de
+  // fichiers, celui que l'œil attend.
+  kept.sort((a, b) =>
+    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1,
+  );
+
+  const shown = kept.slice(0, FILES_MAX);
+  const entries = await Promise.all(
+    shown.map(async (e): Promise<ProjectFileEntry> => {
+      if (e.kind === 'dir') return { ...e, bytes: null };
+      try {
+        const s = await stat(`${path}/${e.name}`);
+        return { ...e, bytes: s.size };
+      } catch {
+        // Un fichier disparu entre le listage et la mesure : on le montre
+        // quand même, sans taille, plutôt que de faire échouer la page.
+        return { ...e, bytes: null };
+      }
+    }),
+  );
+  return { entries, more: kept.length - shown.length, ignored, missing: false };
+}
+
+/**
+ * La page d'UN projet : son étagère (le dossier, ses fichiers, sa preuve), ses
+ * conversations, et celle que la saisie du bas prolonge.
+ *
+ * Bornée à l'entité de la session ET aux lignes ENREGISTRÉES : une ligne de
+ * comptabilité n'est pas un projet, et lui ouvrir une page laisserait croire
+ * qu'un dossier touché une fois par un agent a été déclaré.
+ */
+export async function getProjectPageAction(id: string): Promise<ActionResult<ProjectPageView>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid project id');
+    }
+    const db = getDb();
+
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        displayName: codeProjects.displayName,
+        path: codeProjects.projectPath,
+        kind: codeProjects.kind,
+        hidden: codeProjects.hidden,
+        registeredFrom: codeProjects.registeredFrom,
+        registeredAt: codeProjects.registeredAt,
+        agentId: codeProjects.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        verifyCommands: codeProjects.verifyCommands,
+        verifyApprovedManifestHash: codeProjects.verifyApprovedManifestHash,
+      })
+      .from(codeProjects)
+      .leftJoin(agents, eq(agents.id, codeProjects.agentId))
+      .where(
+        and(
+          eq(codeProjects.id, id),
+          eq(codeProjects.entityId, session.entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!row) return fail('not_found', 'Project not found');
+
+    const path = row.path;
+    const key = projectKey(path);
+
+    // Les conversations qui portent un TRAVAIL du projet — sous-requête plutôt
+    // qu'un aller-retour de plus, la liste ci-dessous en a besoin telle quelle.
+    const conversationIdsOfJobs = db
+      .select({ id: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          eq(agentJobs.projectId, id),
+          isNotNull(agentJobs.conversationId),
+        ),
+      );
+
+    const [jobsRows, proofRows, conversationRows, anchoredRows] = await Promise.all([
+      db
+        .select({
+          jobsCount: sql<number>`count(*)`,
+          lastActivityAt: sql<Date | null>`max(${agentJobs.createdAt})`,
+        })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.entityId, session.entityId), eq(agentJobs.projectId, id))),
+      db
+        .select({
+          jobId: verificationRuns.jobId,
+          deliverableType: verificationRuns.deliverableType,
+          canonicalKey: verificationRuns.canonicalKey,
+          sequenceId: verificationRuns.sequenceId,
+          commandRank: verificationRuns.commandRank,
+          command: verificationRuns.command,
+          exitCode: verificationRuns.exitCode,
+          outcomeKind: verificationRuns.outcomeKind,
+          durationMs: verificationRuns.durationMs,
+          verdict: verificationRuns.verdict,
+          testedGeneration: verificationRuns.testedGeneration,
+          testedEpoch: verificationRuns.testedEpoch,
+          createdAt: verificationRuns.createdAt,
+        })
+        .from(verificationRuns)
+        .where(
+          and(
+            eq(verificationRuns.entityId, session.entityId),
+            eq(verificationRuns.canonicalKey, key),
+          ),
+        ),
+      db
+        .select({
+          id: conversations.id,
+          channel: conversations.channel,
+          title: conversations.title,
+          updatedAt: conversations.updatedAt,
+          currentProjectId: conversations.currentProjectId,
+          agentName: agents.name,
+          agentSlug: agents.slug,
+        })
+        .from(conversations)
+        .leftJoin(agents, eq(agents.id, conversations.agentId))
+        .where(
+          and(
+            eq(conversations.entityId, session.entityId),
+            or(
+              eq(conversations.currentProjectId, id),
+              inArray(conversations.id, conversationIdsOfJobs),
+            ),
+          ),
+        )
+        .orderBy(sql`${conversations.updatedAt} desc nulls last`)
+        .limit(50),
+      // La conversation DU projet, cherchée à part : la liste est plafonnée, et
+      // ce que la saisie du bas prolonge ne doit pas dépendre de ce plafond.
+      db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.entityId, session.entityId),
+            eq(conversations.currentProjectId, id),
+            eq(conversations.channel, 'dashboard'),
+          ),
+        )
+        .orderBy(sql`${conversations.updatedAt} desc nulls last`)
+        .limit(1),
+    ]);
+
+    const files = await readProjectFolder(path);
+
+    // La preuve : les 3 dernières séquences (`groupVerificationRuns` les rend
+    // dans l'ordre chronologique, la plus récente en dernier).
+    const sequences = groupVerificationRuns(proofRows);
+    const commands = row.verifyCommands ?? null;
+
+    return ok({
+      project: {
+        id: row.id,
+        name: row.displayName ?? basenameOf(path),
+        path,
+        kind: (row.kind === 'documents' ? 'documents' : 'code') as 'code' | 'documents',
+        agentId: row.agentId,
+        agentName: row.agentName ?? null,
+        agentSlug: row.agentSlug ?? null,
+        hidden: row.hidden,
+        registeredFrom: (row.registeredFrom ?? 'spaces') as 'spaces' | 'conversation',
+        registeredAt: row.registeredAt as Date,
+        jobsCount: Number(jobsRows[0]?.jobsCount ?? 0),
+        lastActivityAt: jobsRows[0]?.lastActivityAt ? new Date(jobsRows[0].lastActivityAt) : null,
+      },
+      files,
+      proof: {
+        configured: commands !== null && commands.length > 0,
+        commands,
+        approval: deriveVerifyStatus({
+          projectPath: path,
+          verifyCommands: commands,
+          verifyApprovedManifestHash: row.verifyApprovedManifestHash,
+        }),
+        sequences: sequences.slice(-3),
+      },
+      conversations: conversationRows.map(
+        (c): ProjectConversationRow => ({
+          id: c.id,
+          channel: c.channel,
+          title: c.title,
+          agentName: c.agentName ?? null,
+          agentSlug: c.agentSlug ?? null,
+          updatedAt: c.updatedAt,
+          anchored: c.currentProjectId === id,
+        }),
+      ),
+      projectConversationId: anchoredRows[0]?.id ?? null,
+    });
+  } catch (err) {
+    console.error('[projects] PROJECT_PAGE_FAILED', err);
+    return fail('page_failed', 'Could not load the project');
+  }
+}
+
+// ─── createProjectConversationAction ─────────────────────────────────────────
+
+/**
+ * Ouvre une conversation ANCRÉE à un projet.
+ *
+ * `current_project_id` est posé DÈS la création, avant le moindre tour : c'est
+ * ce qui fait que le prompt (P6) nomme le bon dossier au premier message, et
+ * que le travail escaladé porte `project_id`. L'attendre d'une première
+ * production ferait commencer la conversation sans son projet.
+ *
+ * L'agent est le ROOT, la même règle que `createConversationAction` : c'est lui
+ * qui répond dans le dashboard, et un projet ne change pas d'interlocuteur.
+ */
+export async function createProjectConversationAction(
+  projectId: string,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    if (!z.string().guid().safeParse(projectId).success) {
+      return fail('validation_failed', 'Invalid project id');
+    }
+    const db = getDb();
+
+    const [project] = await db
+      .select({
+        id: codeProjects.id,
+        displayName: codeProjects.displayName,
+        path: codeProjects.projectPath,
+      })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.id, projectId),
+          eq(codeProjects.entityId, session.entityId),
+          isNotNull(codeProjects.registeredAt),
+        ),
+      )
+      .limit(1);
+    if (!project) return fail('not_found', 'Project not found');
+
+    const [entity] = await db
+      .select({ rootAgentId: entities.rootAgentId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId))
+      .limit(1);
+    const rootAgentId = entity?.rootAgentId ?? null;
+    if (!rootAgentId) return fail('no_root_agent', 'Designate a ROOT agent in Settings first.');
+
+    const [inserted] = await db
+      .insert(conversations)
+      .values({
+        entityId: session.entityId,
+        agentId: rootAgentId,
+        title: project.displayName ?? basenameOf(project.path),
+        origin: 'user',
+        channel: 'dashboard',
+        currentProjectId: project.id,
+      })
+      .returning({ id: conversations.id });
+    if (!inserted) return fail('create_failed', 'Could not open the conversation');
+
+    revalidatePath('/chat');
+    revalidatePath(`/spaces/${projectId}`);
+    return ok({ id: inserted.id });
+  } catch (err) {
+    console.error('[projects] PROJECT_CONVERSATION_FAILED', err);
+    return fail('create_failed', 'Could not open the conversation');
   }
 }
