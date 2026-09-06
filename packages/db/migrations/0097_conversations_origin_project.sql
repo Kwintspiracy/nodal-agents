@@ -13,6 +13,16 @@
 -- seulement ancrée reste listée sur la page, et reste une conversation de
 -- l'utilisateur : seul l'accueil est tenu hors des listes.
 --
+-- AUCUNE ligne existante n'est requalifiée, et c'est voulu (revue Codex, passe
+-- 31) : la seule écriture qui ancre une conversation à sa création
+-- (`createProjectConversationAction`) est née dans le MÊME lot que cette
+-- migration, jamais publiée sans elle — aucune install n'a de conversation de
+-- projet en `origin = 'user'`. Une conversation seulement ANCRÉE par une
+-- production (P6, `current_project_id` posé après coup) n'a jamais été « la
+-- conversation du projet » : la requalifier lui ferait dire ce qu'elle n'est
+-- pas. Mesuré sur la base dev le 06/09 : zéro ligne ancrée avant cette
+-- migration.
+--
 -- DROP puis ADD, jamais ALTER : une contrainte CHECK ne se modifie pas en
 -- place. `IF EXISTS` rend la migration rejouable sur une base où la contrainte
 -- aurait déjà été retirée à la main.
