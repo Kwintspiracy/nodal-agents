@@ -447,12 +447,21 @@
         </tr>
         <tr>
           <td class="k">3 · L'agent qui demande et montre</td>
-          <td>P10 <code>ask_user</code> · P11 fichiers et diff · P12 le tableur rendu</td>
           <td>
-            « Où écrire ? » avec boutons dans le chat et dans Telegram ; diffs cliquables ; un
-            classeur qui s'affiche.
+            P5b registre automatique · P10 <code>ask_user</code> · P11 fichiers et diff · P12 le
+            tableur rendu
           </td>
-          <td><span class="etat attend">après 2</span></td>
+          <td>
+            Les projets de l'onglet Code sont dans Spaces sans un clic ; « Où écrire ? » avec
+            boutons dans le chat et dans Telegram, pour les documents seulement ; diffs cliquables ;
+            un classeur qui s'affiche.
+          </td>
+          <td>
+            <span class="etat">go le 06/09 (soir)</span> — ✅ P5b (<code>16d1f574</code>, passe
+            Codex 32 traitée dans <code>4491ae46</code> + <code>aefdcec3</code>, passe 33 lancée) ·
+            🔄 P10a <code>ask_user</code> (Opus en cours) · ⬜ P10b « où écrire ? » · ⬜ P11 · ⬜
+            P12
+          </td>
         </tr>
         <tr>
           <td class="k">4 · Ce qui reste cher</td>
@@ -1114,6 +1123,89 @@
   <p class="lot"><b>Lot 3</b> · l&#x27;agent qui demande et montre</p>
   <div class="pierre">
     <div class="tete">
+      <span class="num">P5b</span>
+      <h3>Le registre se remplit tout seul</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Question de Quentin le 06/09 au soir : « en quoi les projets qui sont dans le menu Code
+        n'ont pas leur place dans la page Spaces ? » Ils y ont leur place ; la séparation venait de
+        mon découpage (P5 a livré « créé depuis Spaces » et reporté « déclaré par une conversation
+        qui y a produit », que l'onglet Code fait déjà à sa façon). <b>Une seule définition</b> : un
+        dossier où une production de code atterrit et qui porte un manifeste est un projet, déclaré
+        par cette conversation. Le registre se remplit au rattachement ; un backfill au démarrage du
+        runner enregistre ce que l'onglet Code montre déjà ; le chemin du harnais lit les chemins
+        édités. « Rien ne se crée en silence » ne vise plus qu'un dossier sans manifeste : la
+        question de P10 se restreint aux documents.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un <code>file_write</code> dans <code>terrain/app/src/</code> avec
+        <code>terrain/app/package.json</code> enregistre <code>terrain/app</code> et y rattache le
+        job ; le même dans <code>terrain/vrac/</code> n'enregistre rien ; une ligne de comptabilité
+        avec preuve devient le projet sans perdre sa preuve ; un projet rangé s'enregistre en
+        restant rangé ; le backfill est idempotent.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">reste à part</span
+      ><span class="v"
+        >L'onglet Code lit encore sa dérivation ; le faire lire le registre est une pierre
+        ultérieure.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        ><b>Le 06/09</b> (<code>16d1f574</code>, puis <code>4491ae46</code> et
+        <code>aefdcec3</code> pour la passe Codex 32). Codé par moi : l'agent Opus est tombé sur sa
+        limite de session au premier geste, et Sonnet est interdit (Quentin, 06/09). En place :
+        <code>projects/markers.ts</code> (le manifeste et les chemins réels, partagés entre
+        l'intention et le registre), <code>projects/register.ts</code> (une instruction
+        <code>INSERT … ON CONFLICT DO UPDATE … WHERE registered_at IS NULL</code>, nom choisi et
+        masquage jamais touchés), la déclaration dans <code>attach.ts</code> avant la recherche du
+        projet contenant, le chemin CLI qui lit les chemins écrits par le harnais, le backfill au
+        boot du runner. Base dev : 3 projets déclarés (<code>podium-app</code>,
+        <code>igdb-app</code>, <code>notes-app</code>), 5 jobs rattachés ; les 9 autres « projets »
+        de l'onglet Code sont <code>Dev</code> lui-même (sans manifeste) et huit dossiers du coffre
+        Obsidian, masqués et sans manifeste — des documents, pas des projets.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">passe 32</span
+      ><span class="v"
+        >(1) <b>Seules les cibles fichier déclarent</b> : un tour CLI réussi sans édition (« je vais
+        d'abord analyser », en mode écriture) déclarait le dossier attaché à manifeste ; une cible
+        dossier est un périmètre, pas une production — elle rattache à un projet déjà déclaré, elle
+        n'en déclare aucun. (2) Déclaration et rattachement en <b>une transaction</b> : sans job et
+        sans conversation trouvée, la déclaration est annulée ; deux racines tombent ensemble. (3)
+        <code>agent_id</code> = l'unique détenteur, sinon NULL. (4) <code>registered_at</code> =
+        l'instant de la déclaration (Spaces l'affiche comme date d'ajout), et pour que la page d'un
+        projet montre son activité,
+        <b>le backfill rattache l'historique</b> (<code>agent_jobs.project_id</code>) — aussi pour
+        un projet déclaré d'un clic. (5) Les chemins du harnais se résolvent sans le disque. (6)
+        Compteurs du backfill par raison.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">arbitrages</span
+      ><span class="v"
+        ><i>Jonctions</i> : deux dossiers attachés qui pointent vers le même dépôt physique donnent
+        deux projets (D10 de « Vérifier &amp; Corriger », toujours ouvert) — interdire les racines
+        qui se recouvrent, ou accepter deux identités. <i>Historique borné</i> : le rattachement des
+        jobs passés lit la fenêtre du scan (1 500 dernières écritures).
+        <i>Un tour de chat CLI ne déclare jamais</i> (sans job, l'audit ne dit pas quelles écritures
+        sont les siennes) : un dépôt attaché à un agent en runtime CLI attend un tour de job pour
+        apparaître dans Spaces.</span
+      >
+    </div>
+  </div>
+  <div class="pierre">
+    <div class="tete">
       <span class="num">P10</span>
       <h3><code>ask_user</code></h3>
       <span class="taille">M</span>
@@ -1141,6 +1233,21 @@
         >Un <code>ask_user</code> suspend le job ; un clic dans le canal le reprend avec la réponse
         dans le transcript ; une réponse hors options est refusée ; la réponse à « où écrire ? »
         crée le projet et pose le projet courant.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">découpée</span
+      ><span class="v"
+        ><b>P10a — la plomberie</b> (Opus, en cours) : l'outil <code>ask_user</code> (2 à 6 options,
+        carte <code>question</code>), un troisième plancher dans la porte d'approbation (ni une
+        règle <code>auto_approve</code> ni l'autonomie ne sautent une question),
+        <code>approval_requests.kind</code> + <code>answer</code> (migration 0098), la résolution
+        qui refuse une réponse hors options, la carte Telegram à un bouton par option, la page
+        Approvals et la carte dans le fil des trois pages, avec la réponse une fois donnée.
+        <b>P10b — « où écrire ? »</b> (à suivre) : <code>register_project</code> (un projet de
+        documents déclaré depuis la conversation, rattaché aussitôt), la guidance du prompt système
+        (demander avant d'écrire hors de tout projet déclaré et hors manifeste), et une porte qui
+        exige une question répondue dans le même job — sauf autonomie totale.</span
       >
     </div>
   </div>
