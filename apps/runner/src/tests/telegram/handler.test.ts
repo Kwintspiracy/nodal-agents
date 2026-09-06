@@ -361,8 +361,24 @@ describe('handleTelegramUpdate — la CONVERSATION du fil (P6)', () => {
     expect(conv?.title).toBe('rédige le plan');
   });
 
-  it('en GROUPE, /new passe le filtre sans mention ni réponse au bot', async () => {
-    const result = await handleTelegramUpdate({
+  it('en GROUPE, /new passe le filtre ET ouvre une DEUXIÈME conversation', async () => {
+    // L'ancienne version de ce test n'assertait que le passage du filtre — elle
+    // restait verte alors que `/new` arrivait derrière `[Message from …]: ` et
+    // n'ouvrait rien du tout (revue Codex, passe 28).
+    const groupe = (text: string) =>
+      handleTelegramUpdate({
+        update: groupMessage(text, { replyToBot: true }),
+        receivingAgentId: seed.agentId,
+        receivingAgentEntityId: seed.entityId,
+        receivingAgentBotUsername: 'test_bot',
+        tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+      });
+
+    const premier = await groupe('on parle de ça');
+    const ancienJob = await relireJob(premier.jobId!);
+
+    // Sans mention NI réponse au bot : `/new` doit passer par le filtre seul.
+    const nouveau = await handleTelegramUpdate({
       update: groupMessage('/new'),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
@@ -370,13 +386,40 @@ describe('handleTelegramUpdate — la CONVERSATION du fil (P6)', () => {
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
 
-    expect(result.jobId).toBeTruthy();
-    const job = await relireJob(result.jobId!);
-    const [conv] = await db
-      .select({ chatId: conversations.chatId })
+    const job = await relireJob(nouveau.jobId!);
+    expect(job.conversationId).not.toBe(ancienJob.conversationId);
+    const lignes = await db
+      .select({ id: conversations.id })
       .from(conversations)
-      .where(eq(conversations.id, job.conversationId!));
-    expect(conv?.chatId).toBe('-100123');
+      .where(eq(conversations.chatId, '-100123'));
+    expect(lignes).toHaveLength(2);
+    // Le préfixe de groupe enveloppe la commande : l'agent sait toujours qui parle.
+    // Un `/new` NU reste exactement `/new` : pas de préfixe, pour que le tour
+    // soit reconnu comme la commande d'ouverture (`openedByCommand`).
+    expect(job.task).toBe('/new');
+  });
+
+  it('en GROUPE, /new suivi d’un texte garde le préfixe et met le TEXTE en tâche', async () => {
+    const premier = await handleTelegramUpdate({
+      update: groupMessage('on parle de ça', { replyToBot: true }),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    const ancienJob = await relireJob(premier.jobId!);
+
+    const nouveau = await handleTelegramUpdate({
+      update: groupMessage('/new rédige'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    const job = await relireJob(nouveau.jobId!);
+    expect(job.task).toBe('[Message from Alice]: rédige');
+    expect(job.conversationId).not.toBe(ancienJob.conversationId);
   });
 
   it('le job PORTE le projet courant de la conversation', async () => {

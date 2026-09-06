@@ -546,6 +546,35 @@ describe('loadThreadHistory', () => {
     expect(s[0]?.text).toBe('in A');
   });
 
+  it('WhatsApp relit ses tours précédents, en forme TEXTE à deux messages', async () => {
+    // WhatsApp manquait à CONVERSATIONAL_CHANNELS depuis l'origine : chaque
+    // message repartait sans histoire (revue Codex, passe 28). La forme est
+    // TEXTE, pas appel d'outil : le canal n'a pas d'outil d'envoi à lui, et en
+    // inventer un apprendrait au modèle à appeler le vide.
+    await insertCompletedJob({
+      chatId: 'wa-1',
+      channel: 'whatsapp',
+      task: 'tu peux relire mon brief ?',
+      result: 'Oui — il manque la date de livraison.',
+      minutesAgo: 6,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('wa-1', 'whatsapp'),
+      channel: 'whatsapp',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    expect(summarize(history)).toEqual([
+      { role: 'user', text: 'tu peux relire mon brief ?' },
+      { role: 'assistant', text: 'Oui — il manque la date de livraison.' },
+    ]);
+    // Deux messages, pas trois : aucun bloc d'appel d'outil.
+    expect(history).toHaveLength(2);
+    expect(history.some((m) => m.role === 'tool')).toBe(false);
+  });
+
   // ─── L'identité d'un fil est la CONVERSATION (P6) ──────────────────────────
 
   it('relit un tour vieux de TROIS JOURS quand il est dans la même conversation', async () => {

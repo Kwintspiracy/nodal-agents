@@ -178,6 +178,8 @@ export async function handleTelegramUpdate(args: {
   // /ask <slug> <text> routes to a different agent in the same entity.
   let targetAgentId = receivingAgentId;
   let taskText = text;
+  /** Le « qui parle » d'un message de groupe — appliqué APRÈS l'analyse de `/new`. */
+  let groupPrefix: string | null = null;
 
   if (text.startsWith('/ask ')) {
     const parts = text.slice(5).trim().split(/\s+/);
@@ -233,8 +235,31 @@ export async function handleTelegramUpdate(args: {
       body = body.replace(buildMentionRegex(receivingAgentBotUsername!), '').trim();
       if (!body) return { skipped: 'mention_no_text' };
     }
-    taskText = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: ${body}`;
+    taskText = body;
+    groupPrefix = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: `;
   }
+
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094). Clé sur
+  // targetAgentId (pas receivingAgentId) : un `/ask <slug>` route le job vers un
+  // autre agent, et c'est au fil de CET agent qu'il appartient.
+  //
+  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
+  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
+  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
+  // reconnue : en groupe, `/new` ne rouvrait rien (revue Codex, passe 28).
+  //
+  // Un `/new` NU garde `/new` comme tâche : c'est le message que l'utilisateur a
+  // écrit, et le runner n'a rien à fabriquer à sa place (invariant #2) — c'est
+  // le bloc `## Conversation` du prompt qui dira au modèle ce que ça veut dire.
+  const { opensNew, rest } = parseNewConversationCommand(taskText);
+  if (opensNew && rest) taskText = rest;
+  // Le préfixe enveloppe ce qui RESTE : en groupe, l'agent doit toujours savoir
+  // qui parle, `/new` ou pas.
+  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
+  // c'est à ce texte que `loadConversationContext` reconnaît la commande
+  // (`openedByCommand`), et un message qui ne porte aucune demande n'a pas
+  // besoin de dire qui parle.
+  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
 
   // A photo with no caption still becomes a job — give it a neutral task so the
   // agent has context alongside the image (the poller attaches the image next).
@@ -242,15 +267,6 @@ export async function handleTelegramUpdate(args: {
     taskText = 'Image envoyée (sans légende).';
   }
 
-  // La CONVERSATION dont ce message est un tour (P6, migration 0094). Clé sur
-  // targetAgentId (pas receivingAgentId) : un `/ask <slug>` route le job vers un
-  // autre agent, et c'est au fil de CET agent qu'il appartient.
-  //
-  // `/new` ouvre une conversation neuve. Un `/new` NU garde `/new` comme tâche :
-  // c'est le message que l'utilisateur a écrit, et le runner n'a rien à
-  // fabriquer à sa place (invariant #2) — c'est le bloc `## Conversation` du
-  // prompt qui dira au modèle que c'est le premier tour.
-  const { opensNew, rest } = parseNewConversationCommand(taskText);
   const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
@@ -261,7 +277,6 @@ export async function handleTelegramUpdate(args: {
   const conversation = opensNew
     ? await openNewConversation(threadKey)
     : await resolveConversation(threadKey);
-  if (opensNew && rest) taskText = rest;
 
   const [job] = await tx
     .insert(agentJobs)

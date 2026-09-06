@@ -212,7 +212,7 @@ export async function runCliRuntimeChatTurn(args: {
     const workspaceGit = await probeWorkspaceGit(cwd);
     // Le fil et son projet courant (P6) — même bloc `## Conversation` que sur le
     // chemin job : une session CLI de chat est une conversation comme une autre.
-    const conversation = await loadConversationContext(db, conversationId);
+    const conversation = await loadConversationContext(db, conversationId, { task: message });
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,

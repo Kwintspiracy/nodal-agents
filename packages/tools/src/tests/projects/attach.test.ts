@@ -18,7 +18,16 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, codeProjects, conversations, eq, and } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  codeProjects,
+  conversations,
+  entities,
+  users,
+  eq,
+  and,
+} from '@nodal-agents/db';
 import { projectKey, type MutationTarget } from '@nodal-agents/shared';
 import { attachProductionToProject } from '../../projects/attach';
 
@@ -117,6 +126,43 @@ async function conversationNeuve(chatId: string): Promise<string> {
   return row.id;
 }
 
+/** Une conversation appartenant à une AUTRE entité — la cible de `not_found`. */
+async function conversationDUneAutreEntite(chatId: string): Promise<string> {
+  const [user] = await db
+    .insert(users)
+    .values({ email: `voisin-${Date.now()}-${chatId}@example.com` })
+    .returning({ id: users.id });
+  if (!user) throw new Error('insert user');
+  const [autre] = await db
+    .insert(entities)
+    .values({ userId: user.id, name: 'Voisine', slug: `voisine-${Date.now()}-${chatId}` })
+    .returning({ id: entities.id });
+  if (!autre) throw new Error('insert entity');
+  const [agent] = await db
+    .insert(agents)
+    .values({
+      entityId: autre.id,
+      name: 'Agent voisin',
+      slug: `agent-voisin-${Date.now()}-${chatId}`,
+      personality: 'p',
+      role: 'agent',
+    })
+    .returning({ id: agents.id });
+  if (!agent) throw new Error('insert agent');
+  const [row] = await db
+    .insert(conversations)
+    .values({
+      entityId: autre.id,
+      agentId: agent.id,
+      channel: 'telegram',
+      chatId,
+      origin: 'user',
+    })
+    .returning({ id: conversations.id });
+  if (!row) throw new Error('insert conversation');
+  return row.id;
+}
+
 async function projetDeLaConversation(conversationId: string): Promise<string | null> {
   const [row] = await db
     .select({ currentProjectId: conversations.currentProjectId })
@@ -141,6 +187,7 @@ describe('attachProductionToProject', () => {
       projectId: projetId,
       projectPath: `${racine}/projet-x`,
       job: 'attached',
+      jobProjectId: projetId,
       conversation: 'no_conversation',
     });
     expect(await projetDuJob(jobId)).toBe(projetId);
@@ -182,17 +229,19 @@ describe('attachProductionToProject', () => {
       projectId: projetA,
       projectPath: `${racine}/a`,
       job: 'attached',
+      jobProjectId: projetA,
       conversation: 'no_conversation',
     });
 
     const second = await attachProductionToProject(ctx(jobId), [fichier(`${racine}/b/y.ts`)]);
-    // Le kind porte le projet TROUVÉ (B) ; `job: 'kept_existing'` dit que la
-    // ligne, elle, garde A — le premier gagne.
+    // `projectId` porte le projet TROUVÉ (B), `jobProjectId` celui que la ligne
+    // GARDE (A) — le premier gagne, et les deux identités sont dites.
     expect(second).toEqual({
       kind: 'attached',
       projectId: projetB,
       projectPath: `${racine}/b`,
       job: 'kept_existing',
+      jobProjectId: projetA,
       conversation: 'no_conversation',
     });
     expect(await projetDuJob(jobId)).toBe(projetA);
@@ -211,6 +260,7 @@ describe('attachProductionToProject', () => {
       projectId: projetId,
       projectPath: `${racine}/app`,
       job: 'already_attached',
+      jobProjectId: projetId,
       conversation: 'no_conversation',
     });
     expect(await projetDuJob(jobId)).toBe(projetId);
@@ -231,6 +281,7 @@ describe('attachProductionToProject', () => {
       projectId: projetUi,
       projectPath: `${racine}/app/packages/ui`,
       job: 'attached',
+      jobProjectId: projetUi,
       conversation: 'no_conversation',
     });
     expect(await projetDuJob(jobId)).toBe(projetUi);
@@ -259,6 +310,7 @@ describe('attachProductionToProject', () => {
       projectId: projetId,
       projectPath: 'C:/Terrain/Projet-X',
       job: 'attached',
+      jobProjectId: projetId,
       conversation: 'no_conversation',
     });
     expect(await projetDuJob(jobCasse)).toBe(projetId);
@@ -308,6 +360,7 @@ describe('attachProductionToProject', () => {
       projectId: projetId,
       projectPath: racine,
       job: 'attached',
+      jobProjectId: projetId,
       conversation: 'no_conversation',
     });
     expect(await projetDuJob(jobId)).toBe(projetId);
@@ -330,6 +383,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       projectId: projetId,
       projectPath: `${racine}/app`,
       job: 'attached',
+      jobProjectId: projetId,
       conversation: 'set',
     });
     expect(await projetDeLaConversation(conversationId)).toBe(projetId);
@@ -356,6 +410,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       projectId: projetB,
       projectPath: `${racine}/b`,
       job: 'attached',
+      jobProjectId: projetB,
       conversation: 'set',
     });
     expect(await projetDeLaConversation(conversationId)).toBe(projetB);
@@ -378,6 +433,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       projectId: projetB,
       projectPath: `${racine}/b`,
       job: 'kept_existing',
+      jobProjectId: projetA,
       conversation: 'set',
     });
     // Deux règles, deux lignes : le job reste sur A, la conversation passe à B.
@@ -399,9 +455,46 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       projectId: projetId,
       projectPath: `${racine}/docs`,
       job: 'no_job',
+      jobProjectId: null,
       conversation: 'set',
     });
     expect(await projetDeLaConversation(conversationId)).toBe(projetId);
+  });
+
+  it("une conversation d'une AUTRE entité : not_found, et la ligne est INTACTE", async () => {
+    // Le cas est réel : les uuid orphelins d'avant P6 que l'absence de clé
+    // étrangère conserve délibérément. L'UPDATE ne touchait alors aucune ligne
+    // et s'annonçait quand même `set` (revue Codex, passe 28).
+    const racine = `${TERRAIN}-15`;
+    const projetId = await projetEnregistre(`${racine}/app`);
+    const voisine = await conversationDUneAutreEntite('chat-voisin');
+
+    const issue = await attachProductionToProject(ctx(await jobNeuf(), voisine), [
+      fichier(`${racine}/app/x.ts`),
+    ]);
+
+    expect(issue).toEqual({
+      kind: 'attached',
+      projectId: projetId,
+      projectPath: `${racine}/app`,
+      job: 'attached',
+      jobProjectId: projetId,
+      conversation: 'not_found',
+    });
+    // La conversation de l'entité voisine n'a pas bougé.
+    expect(await projetDeLaConversation(voisine)).toBeNull();
+  });
+
+  it('un id de conversation qui ne désigne AUCUNE ligne : not_found', async () => {
+    const racine = `${TERRAIN}-16`;
+    await projetEnregistre(`${racine}/app`);
+
+    const issue = await attachProductionToProject(
+      ctx(await jobNeuf(), '00000000-0000-0000-0000-000000000000'),
+      [fichier(`${racine}/app/x.ts`)],
+    );
+
+    expect(issue).toMatchObject({ kind: 'attached', conversation: 'not_found' });
   });
 
   it('hors de tout projet : la conversation garde son projet courant', async () => {

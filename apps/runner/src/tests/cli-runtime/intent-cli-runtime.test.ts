@@ -18,6 +18,7 @@ import {
   codeProjects,
   conversations,
   jobDeliverableVerificationState,
+  toolCalls,
   workspaceLocks,
   eq,
 } from '@nodal-agents/db';
@@ -344,7 +345,7 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
     expect(await projetDuJob(jobId)).toBeNull();
   });
 
-  it('un tour en ERREUR ne rattache pas non plus', async () => {
+  it('un tour en ERREUR qui n’a RIEN écrit ne rattache pas', async () => {
     await alphaEnregistre();
     const jobId = await newJob();
     fakeRun.mockResolvedValueOnce({ ...greenTurn(), isError: true, errorDetail: 'stop' });
@@ -352,6 +353,52 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
     const outcome = await runJob(jobId, 'write', [alpha]);
 
     expect(outcome.status).not.toBe('completed');
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('un tour en ERREUR qui a ÉCRIT rattache quand même', async () => {
+    // Une CLI qui modifie dix fichiers puis sort en rouge parce que les tests
+    // échouent a bel et bien produit dans ce projet (revue Codex, passe 28,
+    // doute 4). Le signal est `tool_calls` : l'enregistreur d'événements du
+    // harnais y pose une ligne par outil interne, et les outils d'édition
+    // portent un nom connu (EDIT_TOOLS).
+    const projetId = await alphaEnregistre();
+    const jobId = await newJob();
+    fakeRun.mockImplementationOnce(async () => {
+      // Ce que `onEvent` fait en vrai quand le harnais écrit un fichier.
+      await db.insert(toolCalls).values({
+        entityId: seed.entityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: `${alpha}/index.ts` },
+        // `tool_output` est du TEXTE, pas du jsonb — voir le schéma.
+        toolOutput: '{"ok":true}',
+      });
+      return { ...greenTurn(), isError: true, errorDetail: 'tests failed' };
+    });
+
+    const outcome = await runJob(jobId, 'write', [alpha]);
+
+    expect(outcome.status).not.toBe('completed');
+    expect(await projetDuJob(jobId)).toBe(projetId);
+  });
+
+  it('une ligne tool_calls d’un outil NON éditeur ne vaut pas écriture', async () => {
+    await alphaEnregistre();
+    const jobId = await newJob();
+    fakeRun.mockImplementationOnce(async () => {
+      await db.insert(toolCalls).values({
+        entityId: seed.entityId,
+        jobId,
+        toolName: 'cli:Read',
+        toolInput: { file_path: `${alpha}/index.ts` },
+        toolOutput: '{"ok":true}',
+      });
+      return { ...greenTurn(), isError: true, errorDetail: 'stop' };
+    });
+
+    await runJob(jobId, 'write', [alpha]);
+
     expect(await projetDuJob(jobId)).toBeNull();
   });
 

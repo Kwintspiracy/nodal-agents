@@ -127,6 +127,8 @@ export async function handleSlackMessage(args: {
   // /ask <slug> <text> routes to a different agent in the same entity.
   let targetAgentId = receivingAgentId;
   let taskText = effectiveText;
+  /** Le « qui parle » d'un message de groupe — appliqué APRÈS l'analyse de `/new`. */
+  let groupPrefix: string | null = null;
 
   if (effectiveText.startsWith('/ask ')) {
     const parts = effectiveText.slice(5).trim().split(/\s+/);
@@ -171,13 +173,25 @@ export async function handleSlackMessage(args: {
       if (!targetAuth.authorized) return targetAuth.result;
     }
   } else if (isChannel) {
-    taskText = `[Message from ${senderName}]: ${effectiveText}`;
+    groupPrefix = `[Message from ${senderName}]: `;
   }
 
-  // La CONVERSATION dont ce message est un tour (P6, migration 0094). `/new`
-  // ouvre un fil neuf ; un `/new` nu garde `/new` comme tâche — c'est le message
-  // de l'utilisateur, le runner ne fabrique rien à sa place (invariant #2).
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094).
+  //
+  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
+  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
+  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
+  // reconnue : en canal, `/new` ne rouvrait rien (revue Codex, passe 28).
+  //
+  // Un `/new` NU garde `/new` comme tâche : c'est le message de l'utilisateur,
+  // et le runner ne fabrique rien à sa place (invariant #2).
   const { opensNew, rest } = parseNewConversationCommand(taskText);
+  if (opensNew && rest) taskText = rest;
+  // Le préfixe enveloppe ce qui RESTE : l'agent doit toujours savoir qui parle.
+  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
+  // c'est à ce texte que `loadConversationContext` reconnaît la commande
+  // (`openedByCommand`).
+  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
   const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
@@ -188,7 +202,6 @@ export async function handleSlackMessage(args: {
   const conversation = opensNew
     ? await openNewConversation(threadKey)
     : await resolveConversation(threadKey);
-  if (opensNew && rest) taskText = rest;
 
   const [job] = await tx
     .insert(agentJobs)

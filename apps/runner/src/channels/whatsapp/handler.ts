@@ -85,10 +85,15 @@ export async function handleWhatsAppMessage(args: {
   const conversationId = message.conversationId;
   const kind: 'private' | 'group' = message.isGroup ? 'group' : 'private';
   const isCommand = text.startsWith('/ask ');
+  // `/new` est une commande au même titre que `/ask` (revue Codex, passe 28) :
+  // ouvrir une conversation neuve depuis un groupe ne doit pas exiger de
+  // mentionner le bot, sinon la commande n'est jamais atteinte. Séparé de
+  // `isCommand`, qui sert plus bas à reconnaître le routage `/ask` lui-même.
+  const opensNewConversation = parseNewConversationCommand(text).opensNew;
 
   // Groups: only a genuine mention or an explicit /ask bypasses the filter —
   // Baileys gives no upstream mention gate (unlike Slack's app_mention).
-  if (message.isGroup && !isCommand && !message.mentionsSelf) {
+  if (message.isGroup && !isCommand && !opensNewConversation && !message.mentionsSelf) {
     return { skipped: 'group_filter' };
   }
 
@@ -108,6 +113,8 @@ export async function handleWhatsAppMessage(args: {
   // /ask <slug> <text> routes to a different agent in the same entity.
   let targetAgentId = receivingAgentId;
   let taskText = text;
+  /** Le « qui parle » d'un message de groupe — appliqué APRÈS l'analyse de `/new`. */
+  let groupPrefix: string | null = null;
 
   if (isCommand) {
     const parts = text.slice(5).trim().split(/\s+/);
@@ -152,17 +159,29 @@ export async function handleWhatsAppMessage(args: {
       if (!targetAuth.authorized) return targetAuth.result;
     }
   } else if (message.isGroup) {
-    taskText = `[Message from ${senderName}]: ${text}`;
+    groupPrefix = `[Message from ${senderName}]: `;
   }
 
   if (!taskText.trim() && message.mediaPlaceholder) {
     taskText = MEDIA_NO_CAPTION_TEXT;
   }
 
-  // La CONVERSATION dont ce message est un tour (P6, migration 0094). `/new`
-  // ouvre un fil neuf ; un `/new` nu garde `/new` comme tâche — c'est le message
-  // de l'utilisateur, le runner ne fabrique rien à sa place (invariant #2).
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094).
+  //
+  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
+  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
+  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
+  // reconnue : en groupe, `/new` ne rouvrait rien (revue Codex, passe 28).
+  //
+  // Un `/new` NU garde `/new` comme tâche : c'est le message de l'utilisateur,
+  // et le runner ne fabrique rien à sa place (invariant #2).
   const { opensNew, rest } = parseNewConversationCommand(taskText);
+  if (opensNew && rest) taskText = rest;
+  // Le préfixe enveloppe ce qui RESTE : l'agent doit toujours savoir qui parle.
+  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
+  // c'est à ce texte que `loadConversationContext` reconnaît la commande
+  // (`openedByCommand`).
+  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
   const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
@@ -173,7 +192,6 @@ export async function handleWhatsAppMessage(args: {
   const conversation = opensNew
     ? await openNewConversation(threadKey)
     : await resolveConversation(threadKey);
-  if (opensNew && rest) taskText = rest;
 
   const [job] = await tx
     .insert(agentJobs)

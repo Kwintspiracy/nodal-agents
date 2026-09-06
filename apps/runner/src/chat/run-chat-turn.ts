@@ -339,7 +339,7 @@ export async function runChatTurn(opts: {
   // Le fil et son projet courant (P6). Chargé APRÈS l'insert du tour utilisateur
   // (1b ci-dessus) — d'où le « moins un » dans le compte des tours précédents,
   // qui vit dans `loadConversationContext`.
-  const conversation = await loadConversationContext(db, conversationId);
+  const conversation = await loadConversationContext(db, conversationId, { task: message });
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: 'dashboard',
     surface: 'chat',

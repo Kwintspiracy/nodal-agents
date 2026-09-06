@@ -59,8 +59,25 @@ export type AttachOutcome =
        * premier gagne. `no_job` : il n'y avait pas de job (tour de chat).
        */
       readonly job: 'attached' | 'already_attached' | 'kept_existing' | 'no_job';
-      /** `set` : la conversation pointe désormais ce projet. `no_conversation` : il n'y en avait pas. */
-      readonly conversation: 'set' | 'no_conversation';
+      /**
+       * Le projet que le job PORTE après cet appel — le trouvé pour `attached`
+       * et `already_attached`, celui qu'il GARDAIT pour `kept_existing`, `null`
+       * pour `no_job`.
+       *
+       * Il existe parce que `projectId` seul était piégeux (revue Codex, passe
+       * 28) : sur `kept_existing` il désigne le projet IGNORÉ, et un appelant
+       * qui le lit comme « le rattachement effectif » obtient une information
+       * fausse. Les deux identités sont donc exposées, jamais déduites.
+       */
+      readonly jobProjectId: string | null;
+      /**
+       * `set` : la conversation pointe désormais ce projet. `no_conversation` :
+       * il n'y en avait pas. `not_found` : l'id ne désigne aucune ligne de cette
+       * entité — un uuid orphelin d'avant P6, ou un id d'ailleurs. Distingué de
+       * `set` parce que l'UPDATE ne touchait alors AUCUNE ligne tout en
+       * annonçant le contraire.
+       */
+      readonly conversation: 'set' | 'no_conversation' | 'not_found';
     }
   /** Aucune cible ne tombe dans un projet ENREGISTRÉ — et ce n'est pas une panne. */
   | { readonly kind: 'no_project' }
@@ -204,8 +221,10 @@ export async function attachProductionToProject(
     }
     if (!chosen) return { kind: 'no_project' };
 
-    const jobOutcome = jobId ? await markJob(db, jobId, chosen.id) : ('no_job' as const);
-    if (typeof jobOutcome !== 'string') return jobOutcome;
+    const marked = jobId
+      ? await markJob(db, jobId, chosen.id)
+      : ({ job: 'no_job', jobProjectId: null } as const);
+    if ('kind' in marked) return marked;
 
     // Le PROJET COURANT de la conversation (P6). TOUJOURS écrasé : la dernière
     // production décide. C'est l'inverse de la règle du job (« le premier
@@ -214,20 +233,34 @@ export async function attachProductionToProject(
     // travaille MAINTENANT. `entity_id` dans le WHERE : un id de conversation
     // qui arriverait d'ailleurs ne doit pas déplacer le projet d'une entité
     // voisine.
-    let conversationOutcome: 'set' | 'no_conversation' = 'no_conversation';
+    let conversationOutcome: 'set' | 'no_conversation' | 'not_found' = 'no_conversation';
     if (conversationId) {
-      await db
+      // `.returning()` : sans lui, une conversation absente ou d'une autre
+      // entité ne changeait rien ET s'annonçait `set` (revue Codex, passe 28).
+      // Le cas est réel — les uuid orphelins d'avant P6 que l'absence de clé
+      // étrangère conserve délibérément.
+      const touched = await db
         .update(conversations)
         .set({ currentProjectId: chosen.id, updatedAt: new Date() })
-        .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)));
-      conversationOutcome = 'set';
+        .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
+        .returning({ id: conversations.id });
+      if (touched.length > 0) {
+        conversationOutcome = 'set';
+      } else {
+        conversationOutcome = 'not_found';
+        console.error(
+          `[projects] PROJECT_ATTACH_CONVERSATION_NOT_FOUND conversation=${conversationId} ` +
+            `entity=${entityId} project=${chosen.id}`,
+        );
+      }
     }
 
     return {
       kind: 'attached',
       projectId: chosen.id,
       projectPath: chosen.path,
-      job: jobOutcome,
+      job: marked.job,
+      jobProjectId: marked.jobProjectId,
       conversation: conversationOutcome,
     };
   } catch (err) {
@@ -240,6 +273,13 @@ export async function attachProductionToProject(
   }
 }
 
+/** Ce que la ligne `agent_jobs` porte après le passage de `markJob`. */
+interface JobMark {
+  readonly job: 'attached' | 'already_attached' | 'kept_existing';
+  /** Le projet RÉELLEMENT porté par le job — pas forcément celui qu'on a trouvé. */
+  readonly jobProjectId: string;
+}
+
 /**
  * Marque le JOB, et dit ce qu'il en est advenu — ou rend l'issue d'échec, parce
  * qu'une panne sur cette ligne n'est pas rattrapable par la conversation.
@@ -248,7 +288,7 @@ async function markJob(
   db: AnyDrizzleDb,
   jobId: string,
   projectId: string,
-): Promise<'attached' | 'already_attached' | 'kept_existing' | { kind: 'failed'; code: string }> {
+): Promise<JobMark | { kind: 'failed'; code: string }> {
   // UNE instruction pour la règle « le premier gagne » : le `WHERE
   // project_id IS NULL` échoue à s'appliquer si un autre appel a déjà
   // rattaché ce job, sans qu'aucune lecture n'ait eu à le constater.
@@ -257,7 +297,7 @@ async function markJob(
     .set({ projectId })
     .where(and(eq(agentJobs.id, jobId), isNull(agentJobs.projectId)))
     .returning({ projectId: agentJobs.projectId });
-  if (applied.length > 0) return 'attached';
+  if (applied.length > 0) return { job: 'attached', jobProjectId: projectId };
 
   // Rien mis à jour : soit la ligne porte déjà un projet, soit elle n'existe
   // pas. Les deux se distinguent en la relisant, jamais en le supposant.
@@ -276,11 +316,12 @@ async function markJob(
     console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_not_applied job=${jobId}`);
     return { kind: 'failed', code: 'attach_not_applied' };
   }
-  if (job.projectId === projectId) return 'already_attached';
-  // L'ignoré est NOMMÉ (invariant #4) : le type fermé porte le projet trouvé,
-  // pas celui que le job garde — la trace, elle, dit les deux.
+  if (job.projectId === projectId) return { job: 'already_attached', jobProjectId: projectId };
+  // Les DEUX identités sont rendues : `jobProjectId` est celui que le job garde,
+  // `projectId` de l'issue reste celui qu'on a trouvé. La trace dit les deux
+  // aussi — l'ignoré est nommé, jamais oublié (invariant #4).
   console.error(
     `[projects] PROJECT_ATTACH_KEPT_EXISTING job=${jobId} kept=${job.projectId} ignored=${projectId}`,
   );
-  return 'kept_existing';
+  return { job: 'kept_existing', jobProjectId: job.projectId };
 }

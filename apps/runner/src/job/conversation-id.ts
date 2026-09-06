@@ -78,9 +78,30 @@ export function parseNewConversationCommand(text: string): { opensNew: boolean; 
  * La plus RÉCENTE par `created_at` — jamais par `updated_at` : un `/new` insère
  * une ligne neuve dont l'ancienne pourrait encore avoir un `updated_at` plus
  * grand si un job tardif de l'ancienne l'a touchée après coup. L'ordre de
- * NAISSANCE est le seul qui dise laquelle est ouverte.
+ * NAISSANCE est le seul qui dise laquelle est ouverte. `id` départage à
+ * `created_at` égal : deux `/new` en rafale, ou un backfill qui pose la même
+ * date sur plusieurs lignes, laissaient sinon la conversation courante
+ * INDÉTERMINÉE — le fil pouvait changer d'un message à l'autre sans que
+ * personne n'ait rien fait (revue Codex, passe 28).
+ *
+ * SÉRIALISÉ par un verrou consultatif sur le tuple du fil. Sans lui, deux
+ * messages arrivés ensemble constatent tous deux l'absence de ligne et en
+ * créent chacun une : deux conversations naissent sans qu'aucun `/new` n'ait
+ * été tapé, et les deux jobs partent dans des fils différents. L'index du tuple
+ * n'est pas unique et ne peut pas l'être — `/new` existe précisément pour poser
+ * une deuxième ligne sur le même tuple.
+ *
+ * Le verrou est XACT : il tient jusqu'au COMMIT de la transaction appelante.
+ * Les quatre handlers passent leur `tx`, donc il couvre bien la lecture ET
+ * l'insertion. Appelé HORS transaction, il se relâche immédiatement après
+ * l'instruction et ne protège rien — c'est acceptable pour les appelants qui
+ * n'ont pas de course (un tour de chat déjà rattaché à sa ligne), jamais pour
+ * un handler entrant.
  */
 export async function resolveConversation(k: ThreadKey): Promise<ConversationRef> {
+  const threadLockKey = `${k.entityId}:${k.agentId}:${k.channel}:${k.chatId}`;
+  await k.db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${threadLockKey}))`);
+
   const [existing] = await k.db
     .select({ id: conversations.id, currentProjectId: conversations.currentProjectId })
     .from(conversations)
@@ -92,7 +113,7 @@ export async function resolveConversation(k: ThreadKey): Promise<ConversationRef
         eq(conversations.chatId, k.chatId),
       ),
     )
-    .orderBy(desc(conversations.createdAt))
+    .orderBy(desc(conversations.createdAt), desc(conversations.id))
     .limit(1);
   if (existing) return { id: existing.id, currentProjectId: existing.currentProjectId };
 
@@ -168,7 +189,15 @@ export async function touchConversation(
 export async function loadConversationContext(
   db: RunnerDeps['db'],
   conversationId: string,
-  opts: { excludeJobId?: string } = {},
+  opts: {
+    excludeJobId?: string;
+    /**
+     * La tâche / le message du tour COURANT. Sert uniquement à reconnaître un
+     * `/new` nu — le seul cas où le message de l'utilisateur ne porte aucune
+     * demande. Absent ⇒ `openedByCommand` reste false.
+     */
+    task?: string | null;
+  } = {},
 ): Promise<ConversationContext | null> {
   const [conv] = await db
     .select({
@@ -202,7 +231,13 @@ export async function loadConversationContext(
         }
       : null;
 
-  return { id: conv.id, priorTurns, currentProject };
+  // `/new` NU, et sur le PREMIER tour seulement : ailleurs, un message qui
+  // vaut `/new` est une coïncidence sans conséquence. `/new rédige le plan` ne
+  // compte pas non plus — les handlers ont déjà remplacé la tâche par le reste,
+  // et ce reste EST la demande.
+  const openedByCommand = priorTurns === 0 && (opts.task ?? '').trim() === NEW_CONVERSATION_COMMAND;
+
+  return { id: conv.id, priorTurns, openedByCommand, currentProject };
 }
 
 /**

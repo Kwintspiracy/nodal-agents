@@ -177,6 +177,40 @@ describe('resolveConversation / openNewConversation', () => {
     expect(suivante.id).toBe(nouvelle.id);
   });
 
+  it('deux lignes au MÊME created_at : le fil rendu est déterministe', async () => {
+    // Deux `/new` en rafale, ou un backfill qui pose la même date : sans
+    // départage, la conversation courante devenait indéterminée et le fil
+    // pouvait changer d'un message à l'autre (revue Codex, passe 28).
+    //
+    // Les id sont CHOISIS, et le PLUS PETIT est inséré en premier : sans
+    // `id DESC`, un parcours séquentiel rend la première ligne physique — donc
+    // le petit id — et ce test rougit. C'est ce qui le rend probant.
+    const meme = new Date('2026-09-01T10:00:00.000Z');
+    const petit = '00000000-0000-4000-8000-000000000001';
+    const grand = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+    for (const id of [petit, grand]) {
+      await db.insert(conversations).values({
+        id,
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'chat-ex-aequo',
+        origin: 'user',
+        createdAt: meme,
+      });
+    }
+
+    for (let i = 0; i < 3; i++) {
+      expect((await resolveConversation(key('chat-ex-aequo'))).id).toBe(grand);
+    }
+    // Et rien n'a été créé au passage : le fil existait déjà.
+    const lignes = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.chatId, 'chat-ex-aequo'));
+    expect(lignes).toHaveLength(2);
+  });
+
   it('un autre chat_id est un autre fil', async () => {
     const a = await resolveConversation(key('chat-A'));
     const b = await resolveConversation(key('chat-B'));
@@ -340,7 +374,12 @@ describe('loadConversationContext', () => {
     const ctx = await loadConversationContext(db, ref.id, { excludeJobId: courant });
 
     // 2 tours : le premier et le parent. L'enfant ne compte pas, le courant est exclu.
-    expect(ctx).toEqual({ id: ref.id, priorTurns: 2, currentProject: null });
+    expect(ctx).toEqual({
+      id: ref.id,
+      priorTurns: 2,
+      openedByCommand: false,
+      currentProject: null,
+    });
   });
 
   it('sans excludeJobId, le tour courant compte lui aussi', async () => {
@@ -430,6 +469,39 @@ describe('loadConversationContext', () => {
 
     const ctx = await loadConversationContext(db, conv.id);
     expect(ctx?.priorTurns).toBe(2);
+  });
+
+  it('openedByCommand : vrai pour un /new NU au premier tour', async () => {
+    // « Premier tour » ne dit pas « /new » : un premier message naturel a le
+    // même contexte. Le fait est transporté, pas deviné (revue Codex, passe 28).
+    const ref = await resolveConversation(key('chat-new-nu'));
+    const ctx = await loadConversationContext(db, ref.id, { task: '/new' });
+    expect(ctx?.openedByCommand).toBe(true);
+    expect(ctx?.priorTurns).toBe(0);
+  });
+
+  it('openedByCommand : FAUX pour /new suivi d’un texte', async () => {
+    // Les handlers ont déjà remplacé la tâche par le reste : c'est ce reste qui
+    // arrive ici, et c'est une vraie demande.
+    const ref = await resolveConversation(key('chat-new-texte'));
+    const ctx = await loadConversationContext(db, ref.id, { task: 'rédige le plan' });
+    expect(ctx?.openedByCommand).toBe(false);
+  });
+
+  it('openedByCommand : FAUX pour /new quand un tour précède', async () => {
+    // Ailleurs qu'au premier tour, un message qui vaut `/new` est une
+    // coïncidence sans conséquence — le fil, lui, n'est pas neuf.
+    const ref = await resolveConversation(key('chat-new-tardif'));
+    await insererJob({ conversationId: ref.id, chatId: 'chat-new-tardif' });
+    const ctx = await loadConversationContext(db, ref.id, { task: '/new' });
+    expect(ctx?.priorTurns).toBe(1);
+    expect(ctx?.openedByCommand).toBe(false);
+  });
+
+  it('openedByCommand : FAUX quand aucune tâche n’est passée', async () => {
+    const ref = await resolveConversation(key('chat-sans-tache'));
+    const ctx = await loadConversationContext(db, ref.id);
+    expect(ctx?.openedByCommand).toBe(false);
   });
 
   it('un premier message du dashboard donne bien ZÉRO tour précédent', async () => {

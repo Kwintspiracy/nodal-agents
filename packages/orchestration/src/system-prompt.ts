@@ -154,6 +154,17 @@ export interface ConversationContext {
   id: string;
   /** Nombre de tours AVANT celui-ci dans cette conversation. 0 = premier tour. */
   priorTurns: number;
+  /**
+   * L'utilisateur vient d'ouvrir ce fil avec la commande `/new`, et ce message
+   * EST la commande — il ne porte donc aucune demande.
+   *
+   * Sans ce fait, le modèle ne peut pas distinguer `/new` d'une demande
+   * littérale : « premier tour » décrit exactement pareil un premier message
+   * naturel (revue Codex, passe 28, doute 3). Le runner ne réécrit pas le
+   * message de l'utilisateur pour autant — il transporte le fait, et le prompt
+   * en tire une directive.
+   */
+  openedByCommand: boolean;
   /** Le projet courant, ou `null` tant qu'aucune production n'a atterri dans un projet enregistré. */
   currentProject: { name: string; path: string; kind: 'code' | 'documents' } | null;
 }
@@ -396,6 +407,14 @@ function buildConversationBlock(conv: ConversationContext): string {
       ? '- This is the first turn of this conversation: nothing was said before it.'
       : `- Turns before this one: ${conv.priorTurns} (the most recent are replayed in the messages).`,
   ];
+  // Le message EST la commande d'ouverture : le dire, sinon le modèle traite
+  // `/new` comme une demande littérale et invente une réponse à un mot-clé.
+  if (conv.openedByCommand) {
+    lines.push(
+      '- The user just opened this conversation with the /new command; that message ' +
+        'itself carries no request.',
+    );
+  }
   const project = conv.currentProject;
   if (project) {
     // `name` et `path` viennent de la base, où le propriétaire les a écrits —

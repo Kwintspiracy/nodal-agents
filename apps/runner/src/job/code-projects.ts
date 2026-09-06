@@ -46,8 +46,15 @@ export { projectKey };
 // agents quels projets existent, l'onglet les montre au propriétaire, et un
 // désaccord entre les deux ne se voit depuis aucun écran.
 
-/** Outils dont l'input porte un chemin de fichier édité. */
-const EDIT_TOOLS = [
+/**
+ * Outils dont l'input porte un chemin de fichier édité.
+ *
+ * EXPORTÉ depuis le 06/09 (revue Codex, passe 28) : le runtime CLI a besoin de
+ * la même liste pour savoir si un tour a ÉCRIT, et une seconde copie aurait
+ * divergé au premier outil ajouté — exactement ce que ce module dit éviter
+ * entre l'onglet Code et le prompt des agents.
+ */
+export const EDIT_TOOLS = [
   'cli:Edit',
   'cli:Write',
   'cli:MultiEdit',

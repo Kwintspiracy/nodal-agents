@@ -9,7 +9,17 @@
 // conversation, the audit (cli_runs + live tool_calls), and channel delivery
 // of the final text VERBATIM (invariant #2).
 
-import { cliSessions, toolCalls, eq, and, sql, type AnyDrizzleDb } from '@nodal-agents/db';
+import {
+  cliSessions,
+  toolCalls,
+  eq,
+  and,
+  gte,
+  inArray,
+  sql,
+  count,
+  type AnyDrizzleDb,
+} from '@nodal-agents/db';
 import {
   buildSystemPrompt,
   type Agent,
@@ -27,6 +37,9 @@ import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { failJob, touchJob } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
+// LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
+// Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
+import { EDIT_TOOLS } from '../job/code-projects.ts';
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
@@ -116,6 +129,45 @@ export function buildCliRuntimeJobContext(args: {
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
     ...(args.conversation ? { conversation: args.conversation } : {}),
   };
+}
+
+/**
+ * Le harnais a-t-il ÉCRIT pendant ce tour ?
+ *
+ * Le seul signal disponible est l'audit : `tool_calls` reçoit une ligne par
+ * outil interne de la CLI (voir `onEvent` plus haut), et les outils d'édition y
+ * portent un nom connu. On borne au tour courant par `created_at` — une
+ * écriture d'un tour PRÉCÉDENT du même job ne dit rien de celui-ci.
+ *
+ * Pourquoi pas `cli_runs` : il n'a aucun champ de fichiers changés (vérifié
+ * dans packages/db/src/schema/cli-runs.ts). Pourquoi pas le disque : le
+ * comparer avant/après coûterait un inventaire complet du terrain à chaque
+ * tour, pour une question à laquelle l'audit répond déjà.
+ */
+async function harnessWrote(db: AnyDrizzleDb, jobId: string, since: Date): Promise<boolean> {
+  try {
+    const [row] = await db
+      .select({ n: count() })
+      .from(toolCalls)
+      .where(
+        and(
+          eq(toolCalls.jobId, jobId),
+          inArray(toolCalls.toolName, EDIT_TOOLS),
+          gte(toolCalls.createdAt, since),
+        ),
+      );
+    return Number(row?.n ?? 0) > 0;
+  } catch (err) {
+    // Une panne de lecture ne doit pas tuer un tour déjà terminé. Elle est DITE
+    // par un code, et on retombe sur « rien écrit » : ne pas rattacher est
+    // réparable au tour suivant, rattacher à tort ne l'est pas (le registre
+    // pose `project_id` une seule fois, le premier gagne).
+    console.error(
+      `[cli-runtime] CLI_WROTE_PROBE_FAILED job=${jobId} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
 }
 
 export async function runCliRuntimeJob(args: {
@@ -327,7 +379,10 @@ export async function runCliRuntimeJob(args: {
     // Le fil et son projet courant (P6) — `null` pour un job hors conversation,
     // ou dont l'uuid date d'avant P6 et ne pointe aucune ligne.
     const conversation = job.conversationId
-      ? await loadConversationContext(db, job.conversationId, { excludeJobId: jobId })
+      ? await loadConversationContext(db, job.conversationId, {
+          excludeJobId: jobId,
+          task: job.task,
+        })
       : null;
     systemPrompt = await buildSystemPrompt(
       agentRow,
@@ -350,6 +405,10 @@ export async function runCliRuntimeJob(args: {
   const heartbeat = setInterval(() => {
     void touchJob(db, jobId).catch(() => {});
   }, 60_000);
+
+  // L'instant où le tour commence — borne basse pour reconnaître les écritures
+  // que CE tour a produites (voir `harnessWrote` plus bas).
+  const turnStartedAt = new Date();
 
   let turn: CliTurnResult;
   try {
@@ -430,6 +489,39 @@ export async function runCliRuntimeJob(args: {
       });
   }
 
+  // ── Le REGISTRE des projets (P5), APRÈS le tour ───────────────────────────
+  //
+  // Sur les MÊMES cibles que l'intention (les dossiers attachés, le terrain
+  // entier) : un harnais de code qui a travaillé dans un projet enregistré EST
+  // une production dans ce projet, même sans traverser aucun outil. Posé après
+  // `binding.run` et plus avant le spawn (revue Codex passe 27) : une CLI qui
+  // n'a pas démarré n'a rien produit, et le registre ne doit pas dire le
+  // contraire.
+  //
+  // MAIS un tour EN ERREUR peut avoir écrit (revue Codex passe 28) : une CLI
+  // qui modifie dix fichiers puis sort en rouge parce que les tests échouent a
+  // bel et bien produit dans ce projet. Le succès, lui, ne prouve rien non plus
+  // — d'où la condition en deux branches. Le signal d'écriture est
+  // `tool_calls` : les lignes de CE job, portant un outil d'édition, créées
+  // depuis le début du tour. (`cli_runs.files_changed` n'existe pas — vérifié
+  // dans le schéma, pas supposé.)
+  //
+  // Registre, pas garde — son issue n'interdit rien, et elle est posée AVANT le
+  // retour d'erreur pour que le rattachement survive à ce retour.
+  if (mode === 'write') {
+    const turnSucceeded = !turn.isError && turn.finalText !== '';
+    if (turnSucceeded || (await harnessWrote(db, jobId, turnStartedAt))) {
+      await attachProductionToProject(
+        { db, entityId: job.entityId ?? '', jobId, conversationId: job.conversationId ?? null },
+        args.workspaces.map((w) => ({
+          kind: 'dir' as const,
+          path: w.path,
+          deliverableType: 'code_project' as const,
+        })),
+      );
+    }
+  }
+
   if (turn.isError || turn.finalText === '') {
     // An exhausted subscription window must read as exactly that (D0/risques)
     // — as a machine CODE + data, never runner-authored prose (invariant #2:
@@ -443,26 +535,6 @@ export async function runCliRuntimeJob(args: {
         (turn.errorDetail ? ` ${turn.errorDetail}` : '')
       : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
     return fail(code.slice(0, 400));
-  }
-
-  // ── Le REGISTRE des projets (P5), APRÈS un tour réussi ─────────────────────
-  //
-  // Sur les MÊMES cibles que l'intention (les dossiers attachés, le terrain
-  // entier) : un harnais de code qui a travaillé dans un projet enregistré EST
-  // une production dans ce projet, même sans traverser aucun outil. Posé ici
-  // et plus avant le spawn (revue Codex passe 27) : une CLI qui n'a pas
-  // démarré, qui a expiré ou qui est sortie en erreur n'a rien produit, et le
-  // registre ne doit pas dire le contraire. Registre, pas garde — son issue
-  // n'interdit rien.
-  if (mode === 'write') {
-    await attachProductionToProject(
-      { db, entityId: job.entityId ?? '', jobId, conversationId: job.conversationId ?? null },
-      args.workspaces.map((w) => ({
-        kind: 'dir' as const,
-        path: w.path,
-        deliverableType: 'code_project' as const,
-      })),
-    );
   }
 
   // ── La porte terminale (V&C, T11) ─────────────────────────────────────────

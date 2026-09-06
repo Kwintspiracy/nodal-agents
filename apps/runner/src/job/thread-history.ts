@@ -67,8 +67,19 @@ import {
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
  * `task-board`, `internal`) are one-shot invocations and never get prior
  * history injected.
+ *
+ * `whatsapp` a été AJOUTÉ le 06/09 (revue Codex, passe 28). Il manquait depuis
+ * l'origine : le canal a un handler, une conversation, une ligne `conversations`
+ * depuis P6 — et repartait pourtant sans aucun tour précédent à chaque message,
+ * exactement le bug d'amnésie que ce fichier existe pour fermer. Rien ne le
+ * justifiait ; c'était un oubli, pas une décision.
  */
-const CONVERSATIONAL_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'slack', 'discord']);
+const CONVERSATIONAL_CHANNELS: ReadonlySet<string> = new Set([
+  'telegram',
+  'slack',
+  'discord',
+  'whatsapp',
+]);
 
 /** Max prior (user, assistant) pairs to load — enough to hold a multi-step thread. */
 const MAX_TURNS = 8;
@@ -322,11 +333,15 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
  * comes back empty.
  *
  * S3 (multichannel plan): exported so a later phase can extend this map
- * per-channel once other channels get their OWN send tool name (whatsapp is
- * in CONVERSATIONAL_CHANNELS above but has no send tool yet — the delivery
- * tools' NAMES don't change until that phase, so there is nothing to map it
- * to today; adding an entry here ahead of a real tool would just point at a
- * name that doesn't exist).
+ * per-channel once other channels get their OWN send tool name.
+ *
+ * WhatsApp est dans CONVERSATIONAL_CHANNELS et VOLONTAIREMENT absent d'ici : il
+ * n'a pas d'outil d'envoi à lui, et les noms des outils de livraison ne
+ * changeront qu'à cette phase-là. Un tour WhatsApp est donc relu sous la forme
+ * TEXTE à deux messages, pas sous la forme appel d'outil à trois — poser ici un
+ * nom d'outil qui n'existe pas apprendrait au modèle à appeler le vide.
+ * (Le commentaire disait l'inverse jusqu'au 06/09 : il affirmait que WhatsApp
+ * était dans l'ensemble au-dessus, ce qui était faux — revue Codex, passe 28.)
  *
  * Discord/Slack ingress (D2, K2): a discord or slack job's send tool IS
  * 'telegram_send_message' — the 6 delivery tools are registered by

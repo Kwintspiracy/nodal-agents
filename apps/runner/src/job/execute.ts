@@ -1094,7 +1094,11 @@ async function runJob(
   // job n'appartient à aucune conversation, ou quand son uuid date d'avant P6 et
   // ne pointe aucune ligne — le bloc `## Conversation` est alors simplement omis.
   const conversationContext = job.conversationId
-    ? await loadConversationContext(db, job.conversationId, { excludeJobId: jobId as string })
+    ? await loadConversationContext(db, job.conversationId, {
+        excludeJobId: jobId as string,
+        // La tâche sert à reconnaître un `/new` nu — voir openedByCommand.
+        task: job.task,
+      })
     : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
