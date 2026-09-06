@@ -56,6 +56,11 @@ export type {
   WriteMutationIntentArgs,
   DirtiedDeliverable,
 } from './verification/intent';
+// Le REGISTRE des projets (P5) — « ce travail a produit quelque chose DANS ce
+// projet ». Exporté pour les mêmes surfaces que l'intention : le runtime CLI
+// écrit sans traverser executeTool.
+export { attachProductionToProject } from './projects/attach';
+export type { AttachOutcome, AttachContext } from './projects/attach';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';

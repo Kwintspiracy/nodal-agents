@@ -56,6 +56,8 @@ import { sql } from 'drizzle-orm';
 import type { VerifyCommand } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { users } from './users.ts';
+import { agents } from './agents.ts';
+import { agentJobs } from './jobs.ts';
 
 export const codeProjects = pgTable(
   'code_projects',
@@ -87,6 +89,42 @@ export const codeProjects = pgTable(
     verifyApprovedBy: uuid('verify_approved_by').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Ce que le projet PRODUIT — du code, ou des documents (0093).
+     *
+     * Le registre n'est pas réservé au code : un dossier de documents est un
+     * projet au même titre, avec le même terrain et le même rattachement. La
+     * colonne existe pour que l'écran le dise, jamais pour que le runtime en
+     * déduise un comportement — c'est l'outil qui déclare ce qu'il produit
+     * (`deliverableType`), pas le dossier où il écrit.
+     */
+    kind: text('kind').notNull().default('code'),
+    /**
+     * L'agent responsable : celui dont le terrain contient ce projet. SET NULL
+     * — supprimer un agent coupe le lien, il n'emporte pas le projet.
+     */
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    /**
+     * LE discriminant du registre (0093). NULL = ligne de COMPTABILITÉ (un
+     * renommage, un masquage, une configuration de preuve, ou la ligne créée
+     * toute seule par l'intention de mutation quand une écriture atterrit dans
+     * une racine dérivée) ; NOT NULL = projet DÉCLARÉ, celui qu'un écran liste
+     * et auquel un travail se rattache.
+     *
+     * Aucun lecteur existant ne regarde cette colonne : l'onglet Code et la
+     * vérification continuent de lire la ligne par clé, exactement comme avant.
+     */
+    registeredAt: timestamp('registered_at', { withTimezone: true }),
+    /** D'où vient la déclaration : `spaces` (l'écran) ou `conversation` (P6). NULL si non enregistré. */
+    registeredFrom: text('registered_from').$type<'spaces' | 'conversation' | null>(),
+    /**
+     * Le job qui a déclaré ce projet, quand la déclaration vient d'une
+     * conversation. SET NULL : la purge des vieux jobs ne doit pas désinscrire
+     * un projet vivant.
+     */
+    registeredJobId: uuid('registered_job_id').references(() => agentJobs.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -96,6 +134,17 @@ export const codeProjects = pgTable(
     // (code_projects_entity_id_project_path_key, jamais nommé côté Drizzle).
     unique('code_projects_entity_key_unique').on(table.entityId, table.projectKey),
     index('idx_code_projects_entity').on(table.entityId),
+    // Index PARTIEL (0093) : la liste des projets ne lit que les lignes
+    // enregistrées, qui resteront minoritaires devant la comptabilité produite
+    // par les écritures.
+    index('idx_code_projects_registered')
+      .on(table.entityId)
+      .where(sql`${table.registeredAt} IS NOT NULL`),
+    check('code_projects_kind_check', sql`${table.kind} IN ('code','documents')`),
+    check(
+      'code_projects_registered_from_check',
+      sql`${table.registeredFrom} IS NULL OR ${table.registeredFrom} IN ('spaces','conversation')`,
+    ),
     check(
       'code_projects_verify_commands_check',
       sql`${table.verifyCommands} IS NULL OR (jsonb_typeof(${table.verifyCommands}) = 'array' AND jsonb_array_length(${table.verifyCommands}) BETWEEN 1 AND 5)`,

@@ -16,6 +16,7 @@ import {
   recordCliRun,
   assertRuntimeSessionKey,
   writeMutationIntent,
+  attachProductionToProject,
 } from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
@@ -308,6 +309,19 @@ export async function runCliRuntimeJob(args: {
       if (intent.kind === 'already_terminal') {
         throw new Error('verification_intent_failed:intent_already_terminal');
       }
+
+      // Le REGISTRE (P5), sur les MÊMES cibles : un harnais de code qui
+      // travaille dans un projet enregistré EST une production dans ce projet,
+      // même sans traverser aucun outil. Registre, pas garde — son issue
+      // n'interdit rien.
+      await attachProductionToProject(
+        { db, entityId: job.entityId ?? '', jobId },
+        args.workspaces.map((w) => ({
+          kind: 'dir' as const,
+          path: w.path,
+          deliverableType: 'code_project' as const,
+        })),
+      );
     }
 
     const workspaceGit = await probeWorkspaceGit(cwd);

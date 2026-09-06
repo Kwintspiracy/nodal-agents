@@ -23,6 +23,7 @@ import {
   assertRuntimeSessionKey,
   SHARED_WORKSPACE_LABEL,
   writeMutationIntent,
+  attachProductionToProject,
 } from '@nodal-agents/tools';
 import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
@@ -205,6 +206,21 @@ export async function runCliRuntimeChatTurn(args: {
       if (intent.kind === 'failed') {
         throw new Error(`verification_intent_failed:${intent.code}`);
       }
+
+      // Le REGISTRE des projets (P5) — le JUMEAU du chemin job, posé ici pour
+      // la même raison que l'intention l'a été : le site d'appel existe, et le
+      // silence est nommé. Un tour de chat n'a pas de jobId et la colonne de
+      // rattachement vit sur agent_jobs : l'issue est `no_job`, sans aucune
+      // écriture. P6 branchera la CONVERSATION à cet endroit exact — c'est
+      // elle, et pas le job, qui portera le projet d'un tour de chat.
+      await attachProductionToProject(
+        { db, entityId, jobId: null },
+        wsRows.map((w) => ({
+          kind: 'dir' as const,
+          path: w.path,
+          deliverableType: 'code_project' as const,
+        })),
+      );
     }
 
     const workspaceGit = await probeWorkspaceGit(cwd);

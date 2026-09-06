@@ -95,8 +95,13 @@ export function isDriveRoot(p: string): boolean {
  * `dir` est-il ce dossier, ou dedans ? Casse repliée UNIQUEMENT sur un chemin
  * Windows — la même règle que `projectKey`, et pour la même raison : sur un
  * système sensible à la casse, `/srv/App` et `/srv/app` sont deux dossiers.
+ *
+ * EXPORTÉE depuis P5 : le registre des projets doit répondre à la même
+ * question (« cette cible tombe-t-elle dans ce projet enregistré ? »), et une
+ * quatrième copie de la règle de frontière aurait fait un quatrième endroit où
+ * `dev` peut se remettre à avaler `dev-notes`.
  */
-function within(dir: string, root: string): boolean {
+export function isWithinRoot(dir: string, root: string): boolean {
   const isWin = isWindowsPath(dir) || isWindowsPath(root);
   const a = isWin ? dir.toLowerCase() : dir;
   const b = isWin ? root.toLowerCase() : root;
@@ -148,7 +153,7 @@ export function resolveProjectRoots(input: ResolveProjectRootsInput): readonly P
     const dir = target.kind === 'dir' ? p : p.replace(/\/[^/]*$/, '');
     if (dir === '' || isDriveRoot(dir)) continue;
 
-    const root = roots.find((r) => within(dir, r));
+    const root = roots.find((r) => isWithinRoot(dir, r));
     // Hors de tout dossier attaché : aucun projet. Se rabattre sur une racine
     // au hasard serait salir un projet que personne n'a touché.
     if (root === undefined) continue;
@@ -202,7 +207,7 @@ export function resolveFileDeliverables(input: {
     const p = normalizePath(target.path);
     if (p === '' || isDriveRoot(p)) continue;
     const dir = p.replace(/\/[^/]*$/, '');
-    if (!roots.some((r) => within(dir, r))) continue;
+    if (!roots.some((r) => isWithinRoot(dir, r))) continue;
     const key = projectKey(p);
     if (!found.has(key)) found.set(key, p);
   }

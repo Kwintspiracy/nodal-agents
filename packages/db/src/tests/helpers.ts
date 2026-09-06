@@ -186,6 +186,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       finalizing_at timestamptz,
       -- mirrors migration 0091
       verification_skipped_surfaces jsonb NOT NULL DEFAULT '[]',
+      -- project_id (0093) references code_projects, created further below — la
+      -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
+      -- schedule_id ci-dessus.
+      project_id uuid,
       completed_at timestamptz,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
@@ -505,10 +509,39 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       verify_approved_manifest_hash text,
       verify_approved_at timestamptz,
       verify_approved_by uuid REFERENCES users(id) ON DELETE SET NULL,
+      -- mirrors migration 0093 — le REGISTRE : registered_at NULL = ligne de
+      -- comptabilité, NOT NULL = projet déclaré.
+      kind text NOT NULL DEFAULT 'code' CHECK (kind IN ('code','documents')),
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      registered_at timestamptz,
+      registered_from text CHECK (registered_from IS NULL OR registered_from IN ('spaces','conversation')),
+      registered_job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (entity_id, project_key)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_code_projects_registered
+      ON code_projects(entity_id) WHERE registered_at IS NOT NULL;
+
+    -- FK agent_jobs.project_id → code_projects.id (posée une fois la table
+    -- créée : agent_jobs est déclarée bien plus haut dans ce fichier).
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'agent_jobs_project_id_fkey'
+          AND table_name = 'agent_jobs'
+      ) THEN
+        ALTER TABLE agent_jobs
+          ADD CONSTRAINT agent_jobs_project_id_fkey
+          FOREIGN KEY (project_id) REFERENCES code_projects(id) ON DELETE SET NULL;
+      END IF;
+    END;
+    $$;
+
+    CREATE INDEX IF NOT EXISTS idx_agent_jobs_project
+      ON agent_jobs(project_id) WHERE project_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS agent_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

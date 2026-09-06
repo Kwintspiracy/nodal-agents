@@ -23,6 +23,7 @@ import type { ToolCardPayload } from '@nodal-agents/shared';
 import { snapshot } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent } from './verification/intent';
+import { attachProductionToProject } from './projects/attach';
 
 // ─── Outils d'exécution de code ───────────────────────────────────────────────
 
@@ -659,6 +660,25 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
 
   const outcome = await writeMutationIntent(ctx, { surface, targets });
   if (outcome.kind === 'failed') return `verification_intent_failed: ${outcome.code}`;
+
+  // ── Le REGISTRE des projets (P5), sur les MÊMES cibles ────────────────────
+  //
+  // Posé ici et pas ailleurs parce que c'est le seul endroit qui connaît à la
+  // fois le job et ce que l'appel s'apprête à produire. Appelé quand
+  // l'écriture VA avoir lieu (`written`, `no_targets`, `skipped`) et jamais
+  // quand elle est refusée (`failed`, `already_terminal`) : un projet ne se
+  // « rattache » pas un travail qui n'aura pas lieu.
+  //
+  // Son résultat n'influe PAS sur le retour : c'est un registre, pas une
+  // garde. Une panne de rattachement ne doit pas refuser une écriture que
+  // l'intention, elle, a autorisée — elle se dit dans les logs, par un code.
+  if (outcome.kind !== 'already_terminal') {
+    await attachProductionToProject(
+      { db: ctx.db, entityId: ctx.entityId, jobId: ctx.jobId || null },
+      targets,
+    );
+  }
+
   // Un job déjà terminal (annulé, échoué, terminé) ne doit plus RIEN écrire :
   // aucune finalisation ne repassera prouver ce qu'il changerait, et un
   // `cancelled` qui continue d'écrire n'est pas annulé. Refusé, pas laissé

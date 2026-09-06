@@ -205,6 +205,20 @@ export const agentJobs = pgTable(
     verificationSkippedSurfaces: jsonb('verification_skipped_surfaces')
       .notNull()
       .default(sql`'[]'::jsonb`),
+    /**
+     * Le projet ENREGISTRÉ auquel ce travail s'est rattaché (0093, P5).
+     *
+     * Posé UNE SEULE FOIS, par `attachProductionToProject` : le premier projet
+     * touché gagne, et l'`UPDATE … WHERE project_id IS NULL` fait cette règle
+     * sans lecture préalable. NULL tant qu'aucune production n'est tombée dans
+     * un projet déclaré — le rattachement est un registre, jamais une garde.
+     *
+     * Pas de `.references()` ici, comme `parent_job_id` juste au-dessus : la FK
+     * (ON DELETE SET NULL vers code_projects) est posée par la migration. La
+     * déclarer côté Drizzle ferait un cycle d'import avec code-projects.ts, qui
+     * référence déjà agent_jobs pour `registered_job_id`.
+     */
+    projectId: uuid('project_id'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -241,6 +255,12 @@ export const agentJobs = pgTable(
     // (schedule_id + created_at range SUM) had no usable index and seq-scanned
     // the whole table. The (schedule_id, created_at) prefix serves both.
     index('idx_agent_jobs_schedule_created').on(table.scheduleId, table.createdAt),
+    // 0093 : « les travaux de ce projet » (compte et dernière activité de la
+    // liste des projets) — partiel, la colonne reste NULL sur l'immense
+    // majorité des jobs.
+    index('idx_agent_jobs_project')
+      .on(table.projectId)
+      .where(sql`${table.projectId} IS NOT NULL`),
     check(
       'agent_jobs_status_check',
       sql`${table.status} IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')`,
