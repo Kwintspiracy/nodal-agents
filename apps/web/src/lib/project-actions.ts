@@ -20,7 +20,7 @@
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, realpath } from 'node:fs/promises';
 import {
   eq,
   and,
@@ -243,6 +243,40 @@ function isSafeSubfolder(raw: string): boolean {
   return segments.every((s) => s !== '' && s !== '.' && s !== '..');
 }
 
+/**
+ * L'ancêtre EXISTANT le plus proche de `path` (lui-même s'il existe), résolu
+ * en chemin réel — c'est lui que `mkdir -p` prolongerait, liens suivis.
+ */
+async function realNearestAncestor(path: string): Promise<string | null> {
+  let current = normalizePath(path);
+  for (;;) {
+    try {
+      return normalizePath(await realpath(current));
+    } catch {
+      const parent = current.replace(/\/[^/]*$/, '');
+      if (parent === '' || parent === current) return null;
+      current = parent;
+    }
+  }
+}
+
+/**
+ * La cible, une fois les liens suivis, reste-t-elle DANS le terrain réel ?
+ *
+ * Les deux côtés sont ramenés à leur ancêtre EXISTANT le plus proche : un lien
+ * ne peut vivre que dans un dossier qui existe, donc c'est la partie existante
+ * du chemin qui peut mentir, jamais celle que `mkdir -p` va créer. Un terrain
+ * pas encore créé sur le disque (attaché d'avance, ou dans un test) partage
+ * son ancêtre avec la cible et reste donc dedans — la contenance lexicale,
+ * vérifiée avant, fait le reste.
+ */
+async function physicallyInside(target: string, terrain: string): Promise<boolean> {
+  const terrainReal = await realNearestAncestor(terrain);
+  const targetReal = await realNearestAncestor(target);
+  if (terrainReal === null || targetReal === null) return false;
+  return isUnderPath(targetReal, terrainReal);
+}
+
 const createProjectSchema = z.object({
   name: z.string().trim().min(1).max(120),
   agentId: z.string().uuid(),
@@ -304,6 +338,17 @@ export async function createProjectAction(
     }
 
     const key = projectKey(path);
+
+    // Contenance PHYSIQUE, pas seulement lexicale (revue passe 27) : une
+    // jonction ou un lien posé dans le terrain (`terrain/lien` → ailleurs)
+    // passe la validation de texte, et `mkdir` le suivrait pour créer le
+    // dossier HORS du terrain. On résout donc le chemin réel du terrain et
+    // celui de l'ancêtre existant le plus proche de la cible, et c'est leur
+    // contenance qui décide — la même précaution que `resolveAndCheckPath`
+    // côté outils.
+    if (!(await physicallyInside(path, wsPath))) {
+      return fail('validation_failed', 'Resolved path escapes the workspace');
+    }
 
     // Le dossier d'abord (voir l'en-tête) : une ligne sans dossier serait un
     // projet fantôme, un dossier sans ligne n'est qu'un dossier vide.

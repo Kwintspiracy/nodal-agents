@@ -13,7 +13,8 @@ import type { ModelMessage } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentTasks, conversations, chatMessages } from '@nodal-agents/db';
+import { agentJobs, agentTasks, codeProjects, conversations, chatMessages } from '@nodal-agents/db';
+import { projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import { runChatTurn } from '../../chat/run-chat-turn.ts';
 
@@ -133,6 +134,7 @@ beforeEach(async () => {
   await db.delete(agentTasks);
   await db.delete(chatMessages);
   await db.delete(conversations);
+  await db.delete(codeProjects);
   await db.delete(agentJobs).where(eq(agentJobs.agentId, seed.agentId));
 });
 
@@ -362,5 +364,146 @@ describe('runChatTurn — delegated-task visibility', () => {
 
     const seenByModel = flattenText(capturedCalls[0]!);
     expect(seenByModel).not.toContain('[Task');
+  });
+});
+
+// ─── P6 : le projet courant de la conversation ────────────────────────────────
+
+/**
+ * Un client dont le modèle APPELLE `run_task`, et qui retient le prompt système
+ * réellement construit — c'est lui, pas une valeur de retour, qui prouve que le
+ * bloc `## Conversation` est arrivé au modèle.
+ */
+function makeRunTaskLlmClient(
+  instruction: string,
+  capturedSystem: string[],
+): RunnerDeps['llmClient'] {
+  const mockModel = new MockLanguageModelV3({
+    provider: 'mock',
+    modelId: 'mock',
+    doGenerate: async () => ({
+      content: [
+        { type: 'text' as const, text: 'Je lance ça.' },
+        {
+          type: 'tool-call' as const,
+          toolCallId: 'call-run-task-1',
+          toolName: 'run_task',
+          input: JSON.stringify({ instruction }),
+        },
+      ],
+      finishReason: { unified: 'tool-calls' as const, raw: 'tool_use' },
+      usage: {
+        inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 5, text: 5, reasoning: undefined },
+      },
+      warnings: [],
+    }),
+  });
+
+  return {
+    config: { provider: 'anthropic', model: 'mock' } as RunnerDeps['llmClient']['config'],
+    capabilities: {
+      toolUse: true,
+      promptCaching: false,
+      vision: false,
+      structuredOutputs: false,
+      streaming: false,
+    },
+    generateText: (args) => {
+      capturedSystem.push(String((args as { system?: unknown }).system ?? ''));
+      return generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
+    streamText: () => {
+      throw new Error('streamText not supported in mock');
+    },
+    generateObject: () => {
+      throw new Error('generateObject not supported in mock');
+    },
+  };
+}
+
+describe('runChatTurn — le projet courant de la conversation (P6)', () => {
+  it('le job escaladé PORTE le project_id du fil, et le prompt dit le projet', async () => {
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: 'D:/APPS/le-fil-travaille-ici',
+        projectKey: projectKey('D:/APPS/le-fil-travaille-ici'),
+        displayName: 'Le fil travaille ici',
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Le fil ancré',
+        currentProjectId: projet.id,
+      })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('conversation insert failed');
+
+    const capturedSystem: string[] = [];
+    setActiveLlmClient(makeRunTaskLlmClient('ajoute la page de réglages', capturedSystem));
+
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'ajoute la page de réglages',
+    });
+
+    // 1. Le job créé porte le projet — relu en base, jamais déduit du retour.
+    expect(result.ok).toBe(true);
+    const spawnedJobId = (result as { spawnedJobId?: string }).spawnedJobId;
+    expect(spawnedJobId).toBeTruthy();
+    const [job] = await db
+      .select({ projectId: agentJobs.projectId, conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, spawnedJobId!));
+    expect(job?.projectId).toBe(projet.id);
+    expect(job?.conversationId).toBe(conv.id);
+
+    // 2. Le prompt réellement envoyé au modèle nomme le projet et son chemin.
+    expect(capturedSystem[0]).toContain('## Conversation');
+    expect(capturedSystem[0]).toContain('D:/APPS/le-fil-travaille-ici');
+    expect(capturedSystem[0]).toContain('Le fil travaille ici');
+  });
+
+  it('sans projet courant, le job escaladé n’en porte aucun et le prompt le dit', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Fil sans ancrage' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('conversation insert failed');
+
+    const capturedSystem: string[] = [];
+    setActiveLlmClient(makeRunTaskLlmClient('fais un truc', capturedSystem));
+
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'fais un truc',
+    });
+
+    const spawnedJobId = (result as { spawnedJobId?: string }).spawnedJobId;
+    const [job] = await db
+      .select({ projectId: agentJobs.projectId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, spawnedJobId!));
+    expect(job?.projectId).toBeNull();
+    expect(capturedSystem[0]).toContain('- Current project: none yet.');
+    // Premier message du fil : le modèle doit le savoir.
+    expect(capturedSystem[0]).toContain('This is the first turn of this conversation');
   });
 });

@@ -97,15 +97,23 @@ export const agentJobs = pgTable(
     originalTask: text('original_task'),
     chatId: text('chat_id'),
     /**
-     * Groups jobs from the same conversational thread for the Jobs page UI
-     * (migration 0059). Purely a reporting/grouping concern — the runtime
-     * execution path (delegation, cron, task-board) never reads this column.
-     * NULL for non-conversational jobs (cron/schedule/webhook with no parent).
-     * Stamped at creation by apps/runner/src/job/conversation-id.ts, reusing
-     * the exact idle-reset session boundary thread-history.ts already uses
-     * for chat continuity — see that file for the gap rule. Delegated/
-     * task-board children inherit their creator's value; nothing else
-     * mutates it after insert.
+     * La conversation dont ce job est un tour (migration 0059, redéfinie par
+     * 0094 — P6). Ce n'est plus un uuid frappé à la volée : depuis P6, la
+     * valeur RÉFÉRENCE une ligne `conversations`, et l'identité d'un fil est
+     * « une conversation par chat, jusqu'à ce que l'utilisateur en ouvre une
+     * autre » (`/new` dans un canal, le « + » du dashboard) — plus la règle du
+     * SILENCE de 4 h, qui ne survit que comme budget de relecture dans
+     * thread-history.ts. Posée à la création par
+     * apps/runner/src/job/conversation-id.ts ; les enfants (délégation,
+     * task-board) héritent de la valeur de leur créateur ; rien d'autre ne la
+     * mute après l'insert. NULL pour un job non conversationnel (cron,
+     * webhook, sans parent).
+     *
+     * PAS DE CLÉ ÉTRANGÈRE, délibérément (0094) : 95 jobs de la base dev
+     * portent un uuid dont la conversation a été supprimée par l'utilisateur,
+     * et une FK les ramènerait à NULL — la page Runs perdrait le seul
+     * regroupement que cette colonne sert à faire. L'identité vaut pour
+     * l'avenir ; un ancien uuid orphelin reste tel quel.
      */
     conversationId: uuid('conversation_id'),
     /**

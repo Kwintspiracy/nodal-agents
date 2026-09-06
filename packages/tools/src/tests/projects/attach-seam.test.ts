@@ -20,6 +20,7 @@ import { normalizePath, projectKey } from '@nodal-agents/shared';
 import { createToolRegistry } from '../../registry';
 import { registerBuiltins } from '../../builtin';
 import { executeTool } from '../../execute';
+import { MAX_WRITE_BYTES } from '../../builtin/file-ops/workspace';
 import type { ExecuteOptions, ToolContext } from '../../types';
 
 let db: TestDb;
@@ -174,5 +175,40 @@ describe('le registre au seam d’exécution', () => {
     // Le fichier n'existe pas, et aucun projet n'a été rattaché.
     await expect(readFile(dehors, 'utf8')).rejects.toThrow();
     expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('une écriture qui ÉCHOUE dans le projet ne rattache rien ; la suivante, réussie, rattache (revue passe 27)', async () => {
+    const terrain = racine;
+    await writeFile(join(terrain, 'package.json'), '{}');
+    const projetId = await projetEnregistre(terrain);
+    const jobId = await jobNeuf();
+    const tool = registry.get('file_write');
+    if (!tool) throw new Error('file_write absent du registre');
+
+    // Trop gros : l'outil refuse (`ok: false`, un échec sous carte `text`) — la
+    // cible était pourtant DANS le projet. Avant la passe 27, le job était
+    // rattaché avant même que l'outil ne réponde.
+    const tropGros = await executeTool(
+      tool,
+      { path: 'gros.txt', content: 'x'.repeat(MAX_WRITE_BYTES + 1) },
+      ctx(terrain, jobId),
+      options(),
+    );
+    expect(tropGros.outcome).toBe('success');
+    if (tropGros.outcome !== 'success') return;
+    expect((tropGros.output as { ok: boolean }).ok).toBe(false);
+    await expect(readFile(join(terrain, 'gros.txt'), 'utf8')).rejects.toThrow();
+    expect(await projetDuJob(jobId)).toBeNull();
+
+    // La même cible, une écriture qui aboutit : c'est elle qui rattache.
+    const petit = await executeTool(
+      tool,
+      { path: 'petit.txt', content: 'ok' },
+      ctx(terrain, jobId),
+      options(),
+    );
+    expect(petit.outcome).toBe('success');
+    expect(await readFile(join(terrain, 'petit.txt'), 'utf8')).toBe('ok');
+    expect(await projetDuJob(jobId)).toBe(projetId);
   });
 });

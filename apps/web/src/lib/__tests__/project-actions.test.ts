@@ -22,7 +22,7 @@ import {
   users,
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
-import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -238,6 +238,33 @@ describe('createProjectAction', () => {
       message: 'Workspace not found for this agent',
     });
     expect(existsSync(join(racine, 'terrain-voisin', 'vol'))).toBe(false);
+  });
+
+  it('une jonction posée dans le terrain ne fait pas sortir la création (revue passe 27)', async () => {
+    const { createProjectAction } = await import('../project-actions.ts');
+    // `terrain/lien` pointe HORS du terrain : le texte du chemin est dedans,
+    // le disque non. Une jonction de dossier se crée sans droit particulier,
+    // sur Windows comme ailleurs.
+    const ailleurs = join(racine, 'ailleurs-reel');
+    await mkdir(ailleurs, { recursive: true });
+    await mkdir(terrain.path, { recursive: true });
+    await symlink(ailleurs, join(terrain.path, 'lien'), 'junction');
+
+    const result = await createProjectAction({
+      name: 'Par le lien',
+      agentId: seed.agentId,
+      workspaceId: terrain.workspaceId,
+      subfolder: 'lien/externe',
+      kind: 'code',
+    });
+    expect(result).toEqual({
+      ok: false,
+      code: 'validation_failed',
+      message: 'Resolved path escapes the workspace',
+    });
+    // Rien n'a été créé de l'autre côté du lien, et aucune ligne ne le désigne.
+    expect(existsSync(join(ailleurs, 'externe'))).toBe(false);
+    expect(await ligneDuProjet(`${terrain.path}/lien/externe`)).toBeNull();
   });
 
   it('une ligne de COMPTABILITÉ devient le projet, sa preuve conservée', async () => {

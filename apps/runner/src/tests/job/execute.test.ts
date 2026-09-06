@@ -20,6 +20,7 @@ import {
   approvalRules,
   agentMemory,
   chatMessages,
+  codeProjects,
   conversations,
   entities,
   telegramAllowedChats,
@@ -29,7 +30,7 @@ import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
-import { findModelCatalogEntry } from '@nodal-agents/shared';
+import { findModelCatalogEntry, projectKey } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import {
@@ -6039,5 +6040,83 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe('executeJob — le projet courant de la conversation (P6)', () => {
+  it('le prompt PERSISTÉ nomme le projet courant du fil', async () => {
+    // La preuve est la ligne relue : `agent_jobs.system_prompt` est écrit à la
+    // première exécution, donc c'est bien ce que le modèle a reçu.
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: 'D:/APPS/projet-du-fil',
+        projectKey: projectKey('D:/APPS/projet-du-fil'),
+        displayName: 'Projet du fil',
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+
+    const [conv] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'p6-exec',
+        currentProjectId: projet.id,
+      })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('insert conversation');
+
+    // Un tour PRÉCÉDENT dans la même conversation, pour que le compte ne soit
+    // pas zéro — sinon le test ne distinguerait pas les deux branches du bloc.
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'api',
+      task: 'un tour avant',
+      status: 'completed',
+      result: 'fait',
+      conversationId: conv.id,
+    });
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'continue le travail',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+        conversationId: conv.id,
+      })
+      .returning();
+    if (!job) throw new Error('insert job');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-p6-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const rows = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const sp = rows[0]?.systemPrompt ?? '';
+    expect(sp).toContain('## Conversation');
+    expect(sp).toContain('D:/APPS/projet-du-fil');
+    expect(sp).toContain('Projet du fil');
+    expect(sp).toContain('- Turns before this one: 1');
   });
 });

@@ -1,14 +1,40 @@
-// conversation-id.test.ts — resolveConversationId assigns the right
-// conversation_id for the Jobs page grouping (migration 0059): same tuple +
-// short gap → inherit; gap past the idle-reset window → fresh id; no prior
-// job → fresh id.
+// conversation-id.test.ts — l'IDENTITÉ d'un fil (P6).
+//
+// Ce que ces tests protègent :
+//   - un premier message CRÉE une ligne `conversations` relue en base, avec son
+//     canal, son chat et son agent ;
+//   - une semaine de silence ne change RIEN : c'est la même conversation, parce
+//     que personne n'en a ouvert une autre (c'était l'inverse avant P6) ;
+//   - `/new` ouvre une ligne neuve sans toucher à l'ancienne ni à ses jobs ;
+//   - un autre chat, ou un autre agent (le cas `/ask`), est un autre fil ;
+//   - le titre est posé UNE fois, et `updated_at` bouge à chaque tour ;
+//   - `parseNewConversationCommand` ne prend pas `/newer` pour `/new` ;
+//   - `loadConversationContext` compte les tours de TÊTE, respecte
+//     `excludeJobId`, nomme le projet courant, et retire le tour courant sur le
+//     dashboard.
+//
+// Aucune assertion sur une valeur de retour seule : chaque cas relit la base.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, eq } from '@nodal-agents/db';
-import { resolveConversationId } from '../../job/conversation-id.ts';
-import { IDLE_RESET_MS } from '../../job/thread-history.ts';
+import {
+  agentJobs,
+  agents,
+  chatMessages,
+  conversations,
+  codeProjects,
+  eq,
+  and,
+} from '@nodal-agents/db';
+import { projectKey } from '@nodal-agents/shared';
+import {
+  resolveConversation,
+  openNewConversation,
+  touchConversation,
+  parseNewConversationCommand,
+  loadConversationContext,
+} from '../../job/conversation-id.ts';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string };
@@ -21,156 +47,406 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.delete(agentJobs);
+  await db.delete(conversations);
 });
 
-/** Insert a prior job in the given thread, `minutesAgo` before now, optionally
- * completed `completedMinutesAgo` before now (defaults to still-open — the
- * gap falls back to created_at, mirroring thread-history.ts's convention). */
-async function insertPriorJob(opts: {
-  chatId: string;
-  conversationId: string | null;
-  minutesAgo: number;
-  completedMinutesAgo?: number;
-}): Promise<void> {
-  const createdAt = new Date(Date.now() - opts.minutesAgo * 60_000);
-  await db.insert(agentJobs).values({
+/** La clé d'un fil Telegram — le tuple que le canal donne au runner. */
+function key(chatId: string, agentId = seed.agentId) {
+  return {
+    db: db as unknown as Parameters<typeof resolveConversation>[0]['db'],
     entityId: seed.entityId,
-    agentId: seed.agentId,
+    agentId,
     channel: 'telegram',
-    task: 'prior turn',
-    chatId: opts.chatId,
-    status: 'completed',
-    conversationId: opts.conversationId ?? undefined,
-    createdAt,
-    ...(opts.completedMinutesAgo !== undefined
-      ? { completedAt: new Date(Date.now() - opts.completedMinutesAgo * 60_000) }
-      : {}),
-  });
+    chatId,
+  };
 }
 
-describe('resolveConversationId', () => {
-  it('mints a fresh id when there is no prior job in the thread', async () => {
-    const id = await resolveConversationId({
-      db,
+/** La ligne `conversations`, relue. */
+async function relireConversation(id: string) {
+  const [row] = await db
+    .select({
+      id: conversations.id,
+      channel: conversations.channel,
+      chatId: conversations.chatId,
+      agentId: conversations.agentId,
+      entityId: conversations.entityId,
+      title: conversations.title,
+      origin: conversations.origin,
+      currentProjectId: conversations.currentProjectId,
+      updatedAt: conversations.updatedAt,
+      createdAt: conversations.createdAt,
+    })
+    .from(conversations)
+    .where(eq(conversations.id, id));
+  return row ?? null;
+}
+
+/** Un job de TÊTE dans une conversation, éventuellement vieilli. */
+async function insererJob(opts: {
+  conversationId: string;
+  chatId: string;
+  task?: string;
+  minutesAgo?: number;
+  parentJobId?: string;
+}): Promise<string> {
+  const createdAt = opts.minutesAgo ? new Date(Date.now() - opts.minutesAgo * 60_000) : new Date();
+  const [row] = await db
+    .insert(agentJobs)
+    .values({
       entityId: seed.entityId,
       agentId: seed.agentId,
       channel: 'telegram',
-      chatId: 'chat-fresh',
+      task: opts.task ?? 'un tour',
+      chatId: opts.chatId,
+      status: 'completed',
+      conversationId: opts.conversationId,
+      createdAt,
+      completedAt: createdAt,
+      ...(opts.parentJobId !== undefined ? { parentJobId: opts.parentJobId } : {}),
+    })
+    .returning({ id: agentJobs.id });
+  if (!row) throw new Error('insert job');
+  return row.id;
+}
+
+/** Vieillit une conversation ET son job : le cas « une semaine plus tard ». */
+async function vieillirDUneSemaine(conversationId: string): Promise<void> {
+  const ilYAUneSemaine = new Date(Date.now() - 7 * 24 * 60 * 60_000);
+  await db
+    .update(conversations)
+    .set({ createdAt: ilYAUneSemaine, updatedAt: ilYAUneSemaine })
+    .where(eq(conversations.id, conversationId));
+  await db
+    .update(agentJobs)
+    .set({ createdAt: ilYAUneSemaine, completedAt: ilYAUneSemaine })
+    .where(eq(agentJobs.conversationId, conversationId));
+}
+
+describe('resolveConversation / openNewConversation', () => {
+  it('un premier message CRÉE la ligne, avec son canal, son chat et son agent', async () => {
+    const ref = await resolveConversation(key('chat-1'));
+
+    const row = await relireConversation(ref.id);
+    expect(row).toMatchObject({
+      channel: 'telegram',
+      chatId: 'chat-1',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      origin: 'user',
+      title: '',
+      currentProjectId: null,
     });
-    expect(id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(ref.currentProjectId).toBeNull();
   });
 
-  it('inherits the prior job conversation_id when the gap is short', async () => {
-    const priorConvId = '11111111-1111-4111-8111-111111111111';
-    await insertPriorJob({
-      chatId: 'chat-short-gap',
-      conversationId: priorConvId,
-      // Delivered 5 minutes ago — well under IDLE_RESET_MS.
-      minutesAgo: 6,
-      completedMinutesAgo: 5,
-    });
+  it('une SEMAINE plus tard, c’est toujours la même conversation', async () => {
+    // C'est LA règle que P6 inverse : le silence ne coupe plus rien. Avant, un
+    // écart de plus de 4 h frappait un nouvel uuid sans que personne n'ait rien
+    // demandé.
+    const premier = await resolveConversation(key('chat-2'));
+    await insererJob({ conversationId: premier.id, chatId: 'chat-2' });
+    await vieillirDUneSemaine(premier.id);
 
-    const id = await resolveConversationId({
-      db,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: 'chat-short-gap',
-    });
-    expect(id).toBe(priorConvId);
+    const second = await resolveConversation(key('chat-2'));
+
+    expect(second.id).toBe(premier.id);
+    const lignes = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(and(eq(conversations.chatId, 'chat-2'), eq(conversations.channel, 'telegram')));
+    expect(lignes).toHaveLength(1);
   });
 
-  it('mints a fresh id when the gap exceeds the idle-reset window', async () => {
-    const priorConvId = '22222222-2222-4222-8222-222222222222';
-    const pastResetMinutes = IDLE_RESET_MS / 60_000 + 10;
-    await insertPriorJob({
-      chatId: 'chat-long-gap',
-      conversationId: priorConvId,
-      minutesAgo: pastResetMinutes + 1,
-      completedMinutesAgo: pastResetMinutes,
-    });
+  it('openNewConversation ouvre une ligne NEUVE ; l’ancienne et ses jobs sont intacts', async () => {
+    const ancienne = await resolveConversation(key('chat-3'));
+    const jobAncien = await insererJob({ conversationId: ancienne.id, chatId: 'chat-3' });
 
-    const id = await resolveConversationId({
-      db,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: 'chat-long-gap',
-    });
-    expect(id).not.toBe(priorConvId);
+    const nouvelle = await openNewConversation(key('chat-3'));
+
+    expect(nouvelle.id).not.toBe(ancienne.id);
+    // L'ancienne existe toujours — ouvrir un fil n'efface pas le précédent.
+    expect(await relireConversation(ancienne.id)).not.toBeNull();
+    const [job] = await db
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobAncien));
+    expect(job?.conversationId).toBe(ancienne.id);
+
+    // Et c'est bien la NEUVE que le fil rend désormais.
+    const suivante = await resolveConversation(key('chat-3'));
+    expect(suivante.id).toBe(nouvelle.id);
   });
 
-  it('mints a fresh id when the prior job predates the conversation_id column (null)', async () => {
-    await insertPriorJob({
-      chatId: 'chat-legacy',
-      conversationId: null,
-      minutesAgo: 2,
-      completedMinutesAgo: 1,
-    });
+  it('un autre chat_id est un autre fil', async () => {
+    const a = await resolveConversation(key('chat-A'));
+    const b = await resolveConversation(key('chat-B'));
 
-    const id = await resolveConversationId({
-      db,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: 'chat-legacy',
-    });
-    expect(id).toBeTruthy();
+    expect(b.id).not.toBe(a.id);
+    expect((await relireConversation(b.id))?.chatId).toBe('chat-B');
   });
 
-  it('does not cross tuples — a different chat_id never inherits', async () => {
-    const priorConvId = '33333333-3333-4333-8333-333333333333';
-    await insertPriorJob({
-      chatId: 'chat-a',
-      conversationId: priorConvId,
-      minutesAgo: 1,
-      completedMinutesAgo: 0,
-    });
+  it('un autre AGENT sur le même chat est un autre fil (le cas /ask)', async () => {
+    const [autre] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Second Agent',
+        slug: `second-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+      })
+      .returning({ id: agents.id });
+    if (!autre) throw new Error('insert agent');
 
-    const id = await resolveConversationId({
-      db,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: 'chat-b',
-    });
-    expect(id).not.toBe(priorConvId);
+    const premier = await resolveConversation(key('chat-partage'));
+    const second = await resolveConversation(key('chat-partage', autre.id));
+
+    expect(second.id).not.toBe(premier.id);
+    expect((await relireConversation(second.id))?.agentId).toBe(autre.id);
+  });
+
+  it('la conversation neuve n’HÉRITE pas du projet courant de la précédente', async () => {
+    const ancienne = await resolveConversation(key('chat-projet'));
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: '/tmp/p6/app',
+        projectKey: projectKey('/tmp/p6/app'),
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+    await db
+      .update(conversations)
+      .set({ currentProjectId: projet.id })
+      .where(eq(conversations.id, ancienne.id));
+
+    const nouvelle = await openNewConversation(key('chat-projet'));
+
+    expect(nouvelle.currentProjectId).toBeNull();
+    expect((await relireConversation(nouvelle.id))?.currentProjectId).toBeNull();
+  });
+
+  it('resolveConversation rend le projet courant du fil, pour que le job le porte', async () => {
+    const ref = await resolveConversation(key('chat-porte'));
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: '/tmp/p6/porte',
+        projectKey: projectKey('/tmp/p6/porte'),
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+    await db
+      .update(conversations)
+      .set({ currentProjectId: projet.id })
+      .where(eq(conversations.id, ref.id));
+
+    const suivant = await resolveConversation(key('chat-porte'));
+    expect(suivant.currentProjectId).toBe(projet.id);
   });
 });
 
-// Sanity check on the row's actual persisted value, not just the resolver's
-// return — assert against a real DB row like the rest of this suite does.
-describe('resolveConversationId — persisted end-to-end', () => {
-  it('a job inserted with the resolved id round-trips through the DB', async () => {
-    const priorConvId = '44444444-4444-4444-8444-444444444444';
-    await insertPriorJob({
-      chatId: 'chat-e2e',
-      conversationId: priorConvId,
-      minutesAgo: 3,
-      completedMinutesAgo: 2,
-    });
+describe('touchConversation', () => {
+  it('pose le titre UNE seule fois — la première ligne, tronquée à 60', async () => {
+    const ref = await resolveConversation(key('chat-titre'));
+    const longue = 'a'.repeat(80);
 
-    const id = await resolveConversationId({
-      db,
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: 'chat-e2e',
-    });
+    await touchConversation(db, ref.id, `${longue}\nseconde ligne ignorée`);
+    const apresPremier = await relireConversation(ref.id);
+    expect(apresPremier?.title).toBe('a'.repeat(60) + '…');
 
-    const [inserted] = await db
-      .insert(agentJobs)
+    await touchConversation(db, ref.id, 'un tout autre message');
+    expect((await relireConversation(ref.id))?.title).toBe('a'.repeat(60) + '…');
+  });
+
+  it('ne garde que la PREMIÈRE ligne, sans ellipse quand ça tient', async () => {
+    const ref = await resolveConversation(key('chat-titre-court'));
+    await touchConversation(db, ref.id, 'rédige le plan\nles détails suivent');
+    expect((await relireConversation(ref.id))?.title).toBe('rédige le plan');
+  });
+
+  it('fait bouger updated_at à chaque tour', async () => {
+    const ref = await resolveConversation(key('chat-touch'));
+    const vieux = new Date(Date.now() - 60 * 60_000);
+    await db
+      .update(conversations)
+      .set({ updatedAt: vieux, title: 'déjà nommée' })
+      .where(eq(conversations.id, ref.id));
+
+    await touchConversation(db, ref.id, 'un nouveau tour');
+
+    const row = await relireConversation(ref.id);
+    expect(row?.title).toBe('déjà nommée');
+    expect(new Date(row?.updatedAt as unknown as string).getTime()).toBeGreaterThan(
+      vieux.getTime(),
+    );
+  });
+});
+
+describe('parseNewConversationCommand', () => {
+  it('/new nu ouvre un fil et ne laisse aucun reste', () => {
+    expect(parseNewConversationCommand('/new')).toEqual({ opensNew: true, rest: '' });
+    expect(parseNewConversationCommand('  /new  ')).toEqual({ opensNew: true, rest: '' });
+  });
+
+  it('/new suivi d’un texte rend le texte trimé', () => {
+    expect(parseNewConversationCommand('/new  bonjour')).toEqual({
+      opensNew: true,
+      rest: 'bonjour',
+    });
+  });
+
+  it('/newer n’est PAS /new — la frontière est un espace', () => {
+    expect(parseNewConversationCommand('/newer')).toEqual({ opensNew: false, rest: '/newer' });
+    expect(parseNewConversationCommand('/newsletter du mois')).toEqual({
+      opensNew: false,
+      rest: '/newsletter du mois',
+    });
+  });
+
+  it('un /new AU MILIEU d’une phrase ne fait rien', () => {
+    expect(parseNewConversationCommand('x /new')).toEqual({ opensNew: false, rest: 'x /new' });
+  });
+});
+
+describe('loadConversationContext', () => {
+  it('rend null quand la ligne n’existe pas (un uuid d’avant P6)', async () => {
+    const ctx = await loadConversationContext(db, '00000000-0000-0000-0000-000000000000');
+    expect(ctx).toBeNull();
+  });
+
+  it('compte les jobs de TÊTE, hors excludeJobId — les enfants ne sont pas des tours', async () => {
+    const ref = await resolveConversation(key('chat-tours'));
+    await insererJob({ conversationId: ref.id, chatId: 'chat-tours', minutesAgo: 30 });
+    const parent = await insererJob({
+      conversationId: ref.id,
+      chatId: 'chat-tours',
+      minutesAgo: 20,
+    });
+    await insererJob({
+      conversationId: ref.id,
+      chatId: 'chat-tours',
+      minutesAgo: 19,
+      parentJobId: parent,
+    });
+    const courant = await insererJob({ conversationId: ref.id, chatId: 'chat-tours' });
+
+    const ctx = await loadConversationContext(db, ref.id, { excludeJobId: courant });
+
+    // 2 tours : le premier et le parent. L'enfant ne compte pas, le courant est exclu.
+    expect(ctx).toEqual({ id: ref.id, priorTurns: 2, currentProject: null });
+  });
+
+  it('sans excludeJobId, le tour courant compte lui aussi', async () => {
+    const ref = await resolveConversation(key('chat-sans-exclude'));
+    await insererJob({ conversationId: ref.id, chatId: 'chat-sans-exclude' });
+    const ctx = await loadConversationContext(db, ref.id);
+    expect(ctx?.priorTurns).toBe(1);
+  });
+
+  it('le projet courant porte son display_name quand il en a un', async () => {
+    const ref = await resolveConversation(key('chat-nom'));
+    const [projet] = await db
+      .insert(codeProjects)
       .values({
         entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'telegram',
-        task: 'current turn',
-        chatId: 'chat-e2e',
-        conversationId: id,
+        projectPath: 'D:/APPS/mon-app',
+        projectKey: projectKey('D:/APPS/mon-app'),
+        displayName: 'Le Grand Projet',
+        kind: 'documents',
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
       })
-      .returning();
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+    await db
+      .update(conversations)
+      .set({ currentProjectId: projet.id })
+      .where(eq(conversations.id, ref.id));
 
-    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, inserted!.id));
-    expect(row!.conversationId).toBe(priorConvId);
+    const ctx = await loadConversationContext(db, ref.id);
+    expect(ctx?.currentProject).toEqual({
+      name: 'Le Grand Projet',
+      path: 'D:/APPS/mon-app',
+      kind: 'documents',
+    });
+  });
+
+  it('sans display_name, le nom est celui du DOSSIER', async () => {
+    const ref = await resolveConversation(key('chat-basename'));
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: 'D:/APPS/sans-nom-choisi',
+        projectKey: projectKey('D:/APPS/sans-nom-choisi'),
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+    await db
+      .update(conversations)
+      .set({ currentProjectId: projet.id })
+      .where(eq(conversations.id, ref.id));
+
+    const ctx = await loadConversationContext(db, ref.id);
+    expect(ctx?.currentProject).toEqual({
+      name: 'sans-nom-choisi',
+      path: 'D:/APPS/sans-nom-choisi',
+      kind: 'code',
+    });
+  });
+
+  it('une conversation DASHBOARD compte ses messages user MOINS le tour courant', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, origin: 'user' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('insert conversation');
+
+    // Deux échanges complets, puis le tour courant qui vient d'être inséré.
+    for (const [role, content] of [
+      ['user', 'un'],
+      ['assistant', 'réponse un'],
+      ['user', 'deux'],
+      ['assistant', 'réponse deux'],
+      ['user', 'trois — le tour courant'],
+    ] as const) {
+      await db.insert(chatMessages).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role,
+        content,
+      });
+    }
+
+    const ctx = await loadConversationContext(db, conv.id);
+    expect(ctx?.priorTurns).toBe(2);
+  });
+
+  it('un premier message du dashboard donne bien ZÉRO tour précédent', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, origin: 'user' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('insert conversation');
+    await db.insert(chatMessages).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      role: 'user',
+      content: 'le tout premier message',
+    });
+
+    const ctx = await loadConversationContext(db, conv.id);
+    expect(ctx?.priorTurns).toBe(0);
   });
 });

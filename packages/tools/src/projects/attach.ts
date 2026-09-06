@@ -23,7 +23,15 @@
 // jamais une phrase.
 
 import { realpathSync } from 'node:fs';
-import { agentJobs, codeProjects, and, eq, isNull, isNotNull } from '@nodal-agents/db';
+import {
+  agentJobs,
+  codeProjects,
+  conversations,
+  and,
+  eq,
+  isNull,
+  isNotNull,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { isWithinRoot, normalizePath, type MutationTarget } from '@nodal-agents/shared';
 
@@ -31,30 +39,45 @@ import { isWithinRoot, normalizePath, type MutationTarget } from '@nodal-agents/
  * Ce que le rattachement a fait. Type FERMÉ, comme l'issue de l'intention :
  * l'appelant décide sur `kind`, jamais sur un booléen qui confondrait « rien à
  * rattacher » et « la base est tombée ».
+ *
+ * REFONDU par P6. Il y a désormais DEUX lignes à marquer — le job et la
+ * conversation — et elles ne réussissent pas ensemble : un tour de chat CLI n'a
+ * pas de job mais a une conversation, un cron a un job et pas de conversation.
+ * Un `kind` par combinaison aurait fait six cas ; le kind dit ce qui a été
+ * TROUVÉ (un projet, ou rien), et deux champs disent ce que chaque ligne en a
+ * fait. `no_job` cesse donc d'être une issue : c'est l'un des états de `job`.
  */
 export type AttachOutcome =
-  /** Le job porte désormais ce projet. */
-  | { readonly kind: 'attached'; readonly projectId: string; readonly projectPath: string }
-  /** Le job portait déjà CE projet — un tour de plus dans le même projet. */
-  | { readonly kind: 'already_attached'; readonly projectId: string }
-  /** Le job portait un AUTRE projet : le premier gagne, et l'ignoré est nommé. */
+  /** Une cible tombe dans un projet enregistré — et voici ce que chaque ligne en a fait. */
   | {
-      readonly kind: 'kept_existing';
+      readonly kind: 'attached';
       readonly projectId: string;
-      readonly ignoredProjectId: string;
+      readonly projectPath: string;
+      /**
+       * `attached` : le job porte désormais ce projet. `already_attached` : il
+       * portait déjà CELUI-CI. `kept_existing` : il en portait un AUTRE — le
+       * premier gagne. `no_job` : il n'y avait pas de job (tour de chat).
+       */
+      readonly job: 'attached' | 'already_attached' | 'kept_existing' | 'no_job';
+      /** `set` : la conversation pointe désormais ce projet. `no_conversation` : il n'y en avait pas. */
+      readonly conversation: 'set' | 'no_conversation';
     }
   /** Aucune cible ne tombe dans un projet ENREGISTRÉ — et ce n'est pas une panne. */
   | { readonly kind: 'no_project' }
-  /** Un tour de chat, sans job : il n'y a pas de ligne à marquer (P6 y mettra la conversation). */
-  | { readonly kind: 'no_job' }
   /** Le rattachement n'a pas pu être noté. L'écriture, elle, continue. */
   | { readonly kind: 'failed'; readonly code: string };
 
 export interface AttachContext {
   readonly db: AnyDrizzleDb;
   readonly entityId: string;
-  /** `null` pour un tour de chat — voir `no_job`. */
+  /** `null` pour un tour de chat — il n'y a alors pas de ligne `agent_jobs` à marquer. */
   readonly jobId: string | null;
+  /**
+   * La conversation dont ce travail est un tour (P6). `null` hors conversation
+   * (cron, webhook). Non nul ⇒ son `current_project_id` est posé sur le projet
+   * trouvé, TOUJOURS écrasé : la dernière production décide.
+   */
+  readonly conversationId: string | null;
 }
 
 /** Un projet enregistré, réduit à ce que la règle d'appartenance demande. */
@@ -134,18 +157,19 @@ export async function attachProductionToProject(
   ctx: AttachContext,
   targets: readonly MutationTarget[],
 ): Promise<AttachOutcome> {
-  const { db, entityId, jobId } = ctx;
+  const { db, entityId, jobId, conversationId } = ctx;
 
-  // Sans job, il n'y a pas de ligne à marquer : la colonne vit sur agent_jobs.
-  // Dit, jamais deviné — P6 branchera ici la conversation.
-  if (!jobId) return { kind: 'no_job' };
   // Sans entité, il n'y a pas de projets à charger. Ce cas se refuse (le
   // runner construit `entityId: job.entityId ?? ''` en plusieurs points), il
   // ne se contourne pas par un scan de toute la table.
   if (!entityId) {
-    console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_no_entity job=${jobId}`);
+    console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_no_entity job=${jobId ?? '-'}`);
     return { kind: 'failed', code: 'attach_no_entity' };
   }
+  // Ni job ni conversation : il n'existe aucune ligne à marquer. P5 rendait
+  // `no_job` ici ; depuis P6, l'absence de job n'est plus une issue à elle
+  // seule — un tour de chat CLI n'a pas de job et pose quand même son projet.
+  if (!jobId && !conversationId) return { kind: 'no_project' };
   if (targets.length === 0) return { kind: 'no_project' };
 
   try {
@@ -180,42 +204,83 @@ export async function attachProductionToProject(
     }
     if (!chosen) return { kind: 'no_project' };
 
-    // UNE instruction pour la règle « le premier gagne » : le `WHERE
-    // project_id IS NULL` échoue à s'appliquer si un autre appel a déjà
-    // rattaché ce job, sans qu'aucune lecture n'ait eu à le constater.
-    const applied = await db
-      .update(agentJobs)
-      .set({ projectId: chosen.id })
-      .where(and(eq(agentJobs.id, jobId), isNull(agentJobs.projectId)))
-      .returning({ projectId: agentJobs.projectId });
-    if (applied.length > 0) {
-      return { kind: 'attached', projectId: chosen.id, projectPath: chosen.path };
+    const jobOutcome = jobId ? await markJob(db, jobId, chosen.id) : ('no_job' as const);
+    if (typeof jobOutcome !== 'string') return jobOutcome;
+
+    // Le PROJET COURANT de la conversation (P6). TOUJOURS écrasé : la dernière
+    // production décide. C'est l'inverse de la règle du job (« le premier
+    // gagne »), et c'est voulu — un job est un travail, il a produit là où il a
+    // produit ; une conversation dure, et son dossier est celui où l'on
+    // travaille MAINTENANT. `entity_id` dans le WHERE : un id de conversation
+    // qui arriverait d'ailleurs ne doit pas déplacer le projet d'une entité
+    // voisine.
+    let conversationOutcome: 'set' | 'no_conversation' = 'no_conversation';
+    if (conversationId) {
+      await db
+        .update(conversations)
+        .set({ currentProjectId: chosen.id, updatedAt: new Date() })
+        .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)));
+      conversationOutcome = 'set';
     }
 
-    // Rien mis à jour : soit la ligne porte déjà un projet, soit elle n'existe
-    // pas. Les deux se distinguent en la relisant, jamais en le supposant.
-    const [job] = await db
-      .select({ projectId: agentJobs.projectId })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, jobId))
-      .limit(1);
-    if (!job) {
-      console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_job_not_found job=${jobId}`);
-      return { kind: 'failed', code: 'attach_job_not_found' };
-    }
-    if (job.projectId === null) {
-      // La ligne existe, elle est libre, et l'UPDATE n'a rien fait : le seul
-      // scénario restant est une panne de cohérence qu'on ne masque pas.
-      console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_not_applied job=${jobId}`);
-      return { kind: 'failed', code: 'attach_not_applied' };
-    }
-    if (job.projectId === chosen.id) return { kind: 'already_attached', projectId: job.projectId };
-    return { kind: 'kept_existing', projectId: job.projectId, ignoredProjectId: chosen.id };
+    return {
+      kind: 'attached',
+      projectId: chosen.id,
+      projectPath: chosen.path,
+      job: jobOutcome,
+      conversation: conversationOutcome,
+    };
   } catch (err) {
     console.error(
-      `[projects] PROJECT_ATTACH_FAILED code=attach_write_failed job=${jobId} ` +
+      `[projects] PROJECT_ATTACH_FAILED code=attach_write_failed job=${jobId ?? '-'} ` +
+        `conversation=${conversationId ?? '-'} ` +
         `error=${err instanceof Error ? err.message : String(err)}`,
     );
     return { kind: 'failed', code: 'attach_write_failed' };
   }
+}
+
+/**
+ * Marque le JOB, et dit ce qu'il en est advenu — ou rend l'issue d'échec, parce
+ * qu'une panne sur cette ligne n'est pas rattrapable par la conversation.
+ */
+async function markJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  projectId: string,
+): Promise<'attached' | 'already_attached' | 'kept_existing' | { kind: 'failed'; code: string }> {
+  // UNE instruction pour la règle « le premier gagne » : le `WHERE
+  // project_id IS NULL` échoue à s'appliquer si un autre appel a déjà
+  // rattaché ce job, sans qu'aucune lecture n'ait eu à le constater.
+  const applied = await db
+    .update(agentJobs)
+    .set({ projectId })
+    .where(and(eq(agentJobs.id, jobId), isNull(agentJobs.projectId)))
+    .returning({ projectId: agentJobs.projectId });
+  if (applied.length > 0) return 'attached';
+
+  // Rien mis à jour : soit la ligne porte déjà un projet, soit elle n'existe
+  // pas. Les deux se distinguent en la relisant, jamais en le supposant.
+  const [job] = await db
+    .select({ projectId: agentJobs.projectId })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  if (!job) {
+    console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_job_not_found job=${jobId}`);
+    return { kind: 'failed', code: 'attach_job_not_found' };
+  }
+  if (job.projectId === null) {
+    // La ligne existe, elle est libre, et l'UPDATE n'a rien fait : le seul
+    // scénario restant est une panne de cohérence qu'on ne masque pas.
+    console.error(`[projects] PROJECT_ATTACH_FAILED code=attach_not_applied job=${jobId}`);
+    return { kind: 'failed', code: 'attach_not_applied' };
+  }
+  if (job.projectId === projectId) return 'already_attached';
+  // L'ignoré est NOMMÉ (invariant #4) : le type fermé porte le projet trouvé,
+  // pas celui que le job garde — la trace, elle, dit les deux.
+  console.error(
+    `[projects] PROJECT_ATTACH_KEPT_EXISTING job=${jobId} kept=${job.projectId} ignored=${projectId}`,
+  );
+  return 'kept_existing';
 }

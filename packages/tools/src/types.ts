@@ -55,6 +55,17 @@ export interface ToolContext {
    */
   jobChatId: string | null;
   /**
+   * La CONVERSATION dont ce travail est un tour (P6, `conversations.id`).
+   * Distinct de `jobChatId`, qui est l'identifiant du fil SUR le canal : une
+   * même conversation Telegram change d'id ici dès que l'utilisateur tape
+   * `/new`, sans que le chat change.
+   *
+   * Ce que le registre des projets en fait : poser le projet courant du fil
+   * (attach.ts). `null`/absent hors conversation — cron, webhook, contextes de
+   * test légers.
+   */
+  conversationId?: string | null;
+  /**
    * The job's `agent_jobs.channel` value (S3 of the multichannel plan) —
    * 'telegram', 'cron', 'dashboard', 'api', … Populated by the runner from
    * `job.channel` at every ToolContext construction site. Used by

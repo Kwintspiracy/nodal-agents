@@ -26,7 +26,12 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { TERMINAL_STATUSES } from '../job/state.ts';
-import { resolveConversationId } from '../job/conversation-id.ts';
+import {
+  resolveConversation,
+  openNewConversation,
+  touchConversation,
+  parseNewConversationCommand,
+} from '../job/conversation-id.ts';
 import { sanitizeSenderName, escapeRegex } from '../channels/shared.ts';
 
 export interface HandleResult {
@@ -132,7 +137,13 @@ export async function handleTelegramUpdate(args: {
 
   // Group chat: only respond to commands, mentions, or replies to the bot.
   if (isGroup) {
-    const isCommand = text.startsWith('/ask ') || text.startsWith('/agents') || text === '/start';
+    // `/new` est une commande au même titre que `/ask` : dans un groupe, ouvrir
+    // une conversation neuve doit passer le filtre sans avoir à mentionner le bot.
+    const isCommand =
+      text.startsWith('/ask ') ||
+      text.startsWith('/agents') ||
+      text === '/start' ||
+      parseNewConversationCommand(text).opensNew;
     // F-2: only a reply to THIS bot's own message counts — a reply to some
     // OTHER bot in the group (a different agent, a poll bot, whatever) must
     // not wake this one up.
@@ -231,19 +242,26 @@ export async function handleTelegramUpdate(args: {
     taskText = 'Image envoyée (sans légende).';
   }
 
-  // Jobs page grouping (migration 0059): stamp the same conversation_id as
-  // the thread this message continues, using the identical session-gap rule
-  // loadThreadHistory already applies for chat continuity — see
-  // job/conversation-id.ts. Keyed on targetAgentId (not receivingAgentId):
-  // a `/ask <slug>` message routes this job to a different agent, and that
-  // agent's own thread is what it belongs to.
-  const conversationId = await resolveConversationId({
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094). Clé sur
+  // targetAgentId (pas receivingAgentId) : un `/ask <slug>` route le job vers un
+  // autre agent, et c'est au fil de CET agent qu'il appartient.
+  //
+  // `/new` ouvre une conversation neuve. Un `/new` NU garde `/new` comme tâche :
+  // c'est le message que l'utilisateur a écrit, et le runner n'a rien à
+  // fabriquer à sa place (invariant #2) — c'est le bloc `## Conversation` du
+  // prompt qui dira au modèle que c'est le premier tour.
+  const { opensNew, rest } = parseNewConversationCommand(taskText);
+  const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
     agentId: targetAgentId,
     channel: 'telegram',
     chatId: String(chatId),
-  });
+  };
+  const conversation = opensNew
+    ? await openNewConversation(threadKey)
+    : await resolveConversation(threadKey);
+  if (opensNew && rest) taskText = rest;
 
   const [job] = await tx
     .insert(agentJobs)
@@ -253,7 +271,11 @@ export async function handleTelegramUpdate(args: {
       channel: 'telegram',
       task: taskText,
       chatId: String(chatId),
-      conversationId,
+      conversationId: conversation.id,
+      // Le projet courant du fil suit le travail : un job né dans une
+      // conversation ancrée à un projet porte ce projet dès l'insert, sans
+      // attendre qu'une écriture le rattache.
+      projectId: conversation.currentProjectId,
       status: 'pending',
       // Text-only at insert; when there's a photo the poller upgrades this to a
       // multimodal [text + image] message after downloading the file.
@@ -266,6 +288,9 @@ export async function handleTelegramUpdate(args: {
     // and the offset won't advance, so the next poll re-delivers this update.
     throw new Error('telegram_job_insert_failed');
   }
+
+  // La conversation est vivante, et elle prend son nom sur le premier message.
+  await touchConversation(tx, conversation.id, taskText);
 
   // Atomically record the last-seen chat_id so the dashboard can offer
   // "send result via Telegram" for this agent. F-3: only for PRIVATE chats —

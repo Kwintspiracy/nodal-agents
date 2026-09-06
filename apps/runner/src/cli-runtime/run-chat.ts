@@ -34,6 +34,7 @@ import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
+import { loadConversationContext } from '../job/conversation-id.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
 const RUNTIME_CHAT_TIMEOUT_MS = 600_000;
@@ -206,24 +207,12 @@ export async function runCliRuntimeChatTurn(args: {
       if (intent.kind === 'failed') {
         throw new Error(`verification_intent_failed:${intent.code}`);
       }
-
-      // Le REGISTRE des projets (P5) — le JUMEAU du chemin job, posé ici pour
-      // la même raison que l'intention l'a été : le site d'appel existe, et le
-      // silence est nommé. Un tour de chat n'a pas de jobId et la colonne de
-      // rattachement vit sur agent_jobs : l'issue est `no_job`, sans aucune
-      // écriture. P6 branchera la CONVERSATION à cet endroit exact — c'est
-      // elle, et pas le job, qui portera le projet d'un tour de chat.
-      await attachProductionToProject(
-        { db, entityId, jobId: null },
-        wsRows.map((w) => ({
-          kind: 'dir' as const,
-          path: w.path,
-          deliverableType: 'code_project' as const,
-        })),
-      );
     }
 
     const workspaceGit = await probeWorkspaceGit(cwd);
+    // Le fil et son projet courant (P6) — même bloc `## Conversation` que sur le
+    // chemin job : une session CLI de chat est une conversation comme une autre.
+    const conversation = await loadConversationContext(db, conversationId);
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,
@@ -232,6 +221,7 @@ export async function runCliRuntimeChatTurn(args: {
         task: message,
         workspaceGit,
         workspaces: wsRows,
+        ...(conversation ? { conversation } : {}),
       }),
     );
   } catch (err) {
@@ -319,6 +309,23 @@ export async function runCliRuntimeChatTurn(args: {
         ? 'subscription_limit_reached'
         : `cli_runtime_error: ${(turn.errorDetail ?? 'no final text').slice(0, 200)}`,
     };
+  }
+
+  // ── Le REGISTRE des projets (P5), APRÈS un tour réussi — le JUMEAU du chemin
+  // job (run-job.ts). Un tour de chat n'a pas de jobId, et la colonne de
+  // rattachement vit sur agent_jobs : c'est la CONVERSATION qui porte le projet
+  // ici (P6), et elle suffit. L'issue est `{ job: 'no_job', conversation: 'set' }`.
+  // Après le tour, pas avant (revue Codex passe 27) : un tour en erreur n'a rien
+  // produit, et le projet courant du fil ne doit pas bouger pour lui.
+  if (mode === 'write') {
+    await attachProductionToProject(
+      { db, entityId, jobId: null, conversationId },
+      wsRows.map((w) => ({
+        kind: 'dir' as const,
+        path: w.path,
+        deliverableType: 'code_project' as const,
+      })),
+    );
   }
 
   await db.insert(chatMessages).values({

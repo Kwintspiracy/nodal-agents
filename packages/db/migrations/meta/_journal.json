@@ -652,6 +652,13 @@
       "when": 1786000014000,
       "tag": "0093_project_registry",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1786000015000,
+      "tag": "0094_conversations_all_channels",
+      "breakpoints": true
     }
   ]
 }

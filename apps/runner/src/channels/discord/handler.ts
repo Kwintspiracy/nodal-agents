@@ -24,7 +24,12 @@ import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import { resolveConversationId } from '../../job/conversation-id.ts';
+import {
+  resolveConversation,
+  openNewConversation,
+  touchConversation,
+  parseNewConversationCommand,
+} from '../../job/conversation-id.ts';
 import { pruneTelegramWorkspace } from '../../telegram/handler.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
 import type { DiscordInboundMessage } from './types.ts';
@@ -189,13 +194,21 @@ export async function handleDiscordMessage(args: {
     taskText = 'Image envoyée (sans légende).';
   }
 
-  const jobConversationId = await resolveConversationId({
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094). `/new`
+  // ouvre un fil neuf ; un `/new` nu garde `/new` comme tâche — c'est le message
+  // de l'utilisateur, le runner ne fabrique rien à sa place (invariant #2).
+  const { opensNew, rest } = parseNewConversationCommand(taskText);
+  const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
     agentId: targetAgentId,
     channel: 'discord',
     chatId: conversationId,
-  });
+  };
+  const conversation = opensNew
+    ? await openNewConversation(threadKey)
+    : await resolveConversation(threadKey);
+  if (opensNew && rest) taskText = rest;
 
   const [job] = await tx
     .insert(agentJobs)
@@ -205,7 +218,9 @@ export async function handleDiscordMessage(args: {
       channel: 'discord',
       task: taskText,
       chatId: conversationId,
-      conversationId: jobConversationId,
+      conversationId: conversation.id,
+      // Le projet courant du fil suit le travail dès l'insert.
+      projectId: conversation.currentProjectId,
       status: 'pending',
       messages: [{ role: 'user', content: taskText }],
     })
@@ -217,6 +232,9 @@ export async function handleDiscordMessage(args: {
     // cursor to retry from, but this mirrors telegram's fail-loud contract).
     throw new Error('discord_job_insert_failed');
   }
+
+  // La conversation est vivante, et elle prend son nom sur le premier message.
+  await touchConversation(tx, conversation.id, taskText);
 
   return {
     jobId: job.id,

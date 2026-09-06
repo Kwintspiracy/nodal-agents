@@ -11298,6 +11298,11 @@ export async function listConversationsAction(): Promise<
           // it never appears in the dashboard's Chats list, whether the
           // operator skips it or finishes it.
           eq(conversations.origin, 'user'),
+          // P6 : `conversations` porte désormais TOUS les canaux. Sans ce
+          // filtre, les fils Telegram du ROOT apparaîtraient dans la liste du
+          // chat et s'ouvriraient VIDES — leurs tours sont des `agent_jobs`, pas
+          // des `chat_messages`. P7 lève ce filtre en unifiant les deux vues.
+          eq(conversations.channel, 'dashboard'),
         ),
       )
       .orderBy(desc(conversations.updatedAt))

@@ -417,6 +417,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // A failure here REFUSES the write. That is deliberate and it is the whole
   // contract: a net that silently is not there is worse than no net, because it
   // is the one the owner believed they had (invariant #4).
+  // Les cibles de mutation, gardées jusqu'à l'exécution : le registre des
+  // projets (P5) ne se pose qu'une fois l'écriture RÉUSSIE.
+  let mutationTargets: readonly MutationTarget[] | null = null;
   if (tool.mutatesWorkspace) {
     // ── 2.8 Intention de mutation — le projet est sale AVANT d'être écrit ────
     //
@@ -426,9 +429,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // avant `tool.execute`. UN seul point de pose pour les cinq outils
     // mutants, au lieu de cinq disciplines parallèles — « avant la mutation »
     // devient vrai par construction.
-    const intentFailure = await takeMutationIntent(tool, validatedInput, ctx);
-    if (intentFailure) {
-      const result: ToolExecutionResult = { outcome: 'error', error: intentFailure };
+    const gate = await takeMutationIntent(tool, validatedInput, ctx);
+    if ('error' in gate) {
+      const result: ToolExecutionResult = { outcome: 'error', error: gate.error };
       await _writeToolCall(
         ctx,
         auditTool,
@@ -451,6 +454,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       );
       return result;
     }
+    mutationTargets = gate.targets;
   }
 
   // ── 3. Execute ─────────────────────────────────────────────────────────────
@@ -460,6 +464,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
       value: output,
     });
+
+    // ── 3.5 Le REGISTRE des projets (P5), APRÈS l'écriture ────────────────────
+    //
+    // Sur les MÊMES cibles que l'intention, mais une fois le succès connu : un
+    // outil qui a refusé (chemin hors terrain, fichier trop gros — un échec
+    // sous carte `text`, `failure: true`) ou qui a levé n'a rien produit, et
+    // « ce travail a produit dans ce projet » serait faux (revue Codex passe
+    // 27). Son résultat n'influe PAS sur le retour : c'est un registre, pas une
+    // garde — une panne ici se dit dans les logs, par un code, jamais en
+    // refusant une écriture qui, elle, a eu lieu.
+    if (mutationTargets && !isPresentedFailure(auditTool, validatedInput, output)) {
+      await attachProductionToProject(
+        {
+          db: ctx.db,
+          entityId: ctx.entityId,
+          jobId: ctx.jobId || null,
+          // P6 : la conversation aussi retient où le travail a atterri, et c'est
+          // elle qui le redit au modèle au tour suivant.
+          conversationId: ctx.conversationId ?? null,
+        },
+        mutationTargets,
+      );
+    }
     return { outcome: 'success', output };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these
@@ -612,11 +639,41 @@ const MAX_REMEMBERED_TURNS = 500;
  * err on: a project marked dirty for nothing costs a proof, a project missed
  * costs an unverified delivery.
  */
+/**
+ * Ce que la porte de mutation rend : le refus (le message que l'agent lira),
+ * ou les CIBLES que l'intention a posées — gardées pour que le rattachement au
+ * projet (registre) se fasse APRÈS l'exécution, sur les mêmes cibles, et
+ * seulement si elle a réussi (revue Codex passe 27 : rattacher avant, c'était
+ * dire « ce travail a produit dans ce projet » d'un outil qui n'avait encore
+ * rien produit, et qui pouvait encore échouer).
+ */
+type MutationGate = { readonly error: string } | { readonly targets: readonly MutationTarget[] };
+
+/**
+ * Un résultat qui est un ÉCHEC sous une carte structurée (`failureText`,
+ * P1) : l'outil a répondu, mais rien n'a été produit. C'est la seule lecture
+ * du succès qui ne dépende pas de la forme de sortie de chaque outil. Un
+ * présentateur qui lève est un bug de CET outil (déjà compté dans
+ * `presentation_error`) — il ne doit pas cacher une production réelle.
+ */
+function isPresentedFailure(
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
+  input: unknown,
+  output: unknown,
+): boolean {
+  try {
+    const presented = presentToolResult(tool, input, output);
+    return presented.card === 'text' && presented.failure === true;
+  } catch {
+    return false;
+  }
+}
+
 async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
   tool: ToolDefinition<TInput, TOutput>,
   input: z.infer<TInput>,
   ctx: ToolContext,
-): Promise<string | null> {
+): Promise<MutationGate> {
   // A mutating tool absent from the surface table cannot be attributed to any
   // owner setting — it would write outside verification without anyone having
   // chosen that. Refused, not silently allowed (T18 turns this into an
@@ -626,7 +683,7 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
     console.error(
       `[verification] VERIFICATION_SURFACE_UNMAPPED tool=${tool.name} job=${ctx.jobId}`,
     );
-    return 'verification_intent_failed: intent_surface_unmapped';
+    return { error: 'verification_intent_failed: intent_surface_unmapped' };
   }
 
   // Un outil mutant SANS hook est refusé, jamais rangé au hasard.
@@ -644,7 +701,7 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
     console.error(
       `[verification] VERIFICATION_INTENT_NO_TARGETS_HOOK tool=${tool.name} job=${ctx.jobId}`,
     );
-    return 'verification_intent_failed: intent_no_targets_hook';
+    return { error: 'verification_intent_failed: intent_no_targets_hook' };
   }
 
   let targets: readonly MutationTarget[];
@@ -655,37 +712,21 @@ async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
       `[verification] VERIFICATION_INTENT_TARGETS_FAILED tool=${tool.name} job=${ctx.jobId} ` +
         `error=${err instanceof Error ? err.message : String(err)}`,
     );
-    return 'verification_intent_failed: intent_targets_failed';
+    return { error: 'verification_intent_failed: intent_targets_failed' };
   }
 
   const outcome = await writeMutationIntent(ctx, { surface, targets });
-  if (outcome.kind === 'failed') return `verification_intent_failed: ${outcome.code}`;
-
-  // ── Le REGISTRE des projets (P5), sur les MÊMES cibles ────────────────────
-  //
-  // Posé ici et pas ailleurs parce que c'est le seul endroit qui connaît à la
-  // fois le job et ce que l'appel s'apprête à produire. Appelé quand
-  // l'écriture VA avoir lieu (`written`, `no_targets`, `skipped`) et jamais
-  // quand elle est refusée (`failed`, `already_terminal`) : un projet ne se
-  // « rattache » pas un travail qui n'aura pas lieu.
-  //
-  // Son résultat n'influe PAS sur le retour : c'est un registre, pas une
-  // garde. Une panne de rattachement ne doit pas refuser une écriture que
-  // l'intention, elle, a autorisée — elle se dit dans les logs, par un code.
-  if (outcome.kind !== 'already_terminal') {
-    await attachProductionToProject(
-      { db: ctx.db, entityId: ctx.entityId, jobId: ctx.jobId || null },
-      targets,
-    );
-  }
+  if (outcome.kind === 'failed') return { error: `verification_intent_failed: ${outcome.code}` };
 
   // Un job déjà terminal (annulé, échoué, terminé) ne doit plus RIEN écrire :
   // aucune finalisation ne repassera prouver ce qu'il changerait, et un
   // `cancelled` qui continue d'écrire n'est pas annulé. Refusé, pas laissé
   // passer sans intention (revue de T16).
   if (outcome.kind === 'already_terminal')
-    return 'verification_intent_failed: intent_already_terminal';
-  return null;
+    return { error: 'verification_intent_failed: intent_already_terminal' };
+  // Les cibles remontent à l'appelant : le REGISTRE des projets (P5) les
+  // relira après l'exécution, une fois le succès connu — voir executeTool.
+  return { targets };
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   agentJobs,
   agentWorkspaces,
   codeProjects,
+  conversations,
   jobDeliverableVerificationState,
   workspaceLocks,
   eq,
@@ -262,6 +263,15 @@ describe('run-chat : le jumeau, sans jobId', () => {
       path: alpha,
       position: 0,
     });
+    // Depuis P6, le tour charge le contexte de sa CONVERSATION avant d'appeler
+    // le CLI : il lui faut donc une vraie ligne. `conv-t17` n'en était pas un —
+    // il ne l'a jamais été, l'ancien chemin ne le lisait simplement jamais sur
+    // la branche en erreur.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, origin: 'user' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('insert conversation');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // Un tour en erreur : le test s'arrête après le binding, sans écrire de
     // message de chat (pas de conversation à mettre à jour ici).
@@ -271,7 +281,7 @@ describe('run-chat : le jumeau, sans jobId', () => {
         db: db as unknown as Parameters<typeof runCliRuntimeChatTurn>[0]['db'],
         entityId: seed.entityId,
         agentRow: baseAgent,
-        conversationId: 'conv-t17',
+        conversationId: conv.id,
         message: 'écris',
       });
       expect(result.ok).toBe(false);
@@ -285,5 +295,73 @@ describe('run-chat : le jumeau, sans jobId', () => {
     }
     expect(await db.select().from(jobDeliverableVerificationState)).toEqual([]);
     expect(await locksHeld()).toEqual([]);
+  });
+});
+
+describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)', () => {
+  /** `alpha` déclaré comme projet ENREGISTRÉ (P5) : c'est à lui qu'un tour réussi se rattache. */
+  async function alphaEnregistre(): Promise<string> {
+    const [row] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: normalizePath(alpha),
+        projectKey: keyOf(alpha),
+        displayName: 'Alpha',
+        agentId: seed.agentId,
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!row) throw new Error('insert projet');
+    return row.id;
+  }
+  const projetDuJob = async (jobId: string): Promise<string | null> => {
+    const [row] = await db
+      .select({ projectId: agentJobs.projectId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row?.projectId ?? null;
+  };
+
+  it('un tour RÉUSSI dans un projet enregistré rattache le job', async () => {
+    const projetId = await alphaEnregistre();
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    const outcome = await runJob(jobId, 'write', [alpha]);
+
+    expect(outcome.status).toBe('completed');
+    expect(await projetDuJob(jobId)).toBe(projetId);
+  });
+
+  it('le binding LÈVE : rien n’a été produit, le job ne porte aucun projet', async () => {
+    await alphaEnregistre();
+    const jobId = await newJob();
+    fakeRun.mockRejectedValueOnce(new Error('binding exploded'));
+
+    await expect(runJob(jobId, 'write', [alpha])).rejects.toThrow('binding exploded');
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('un tour en ERREUR ne rattache pas non plus', async () => {
+    await alphaEnregistre();
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce({ ...greenTurn(), isError: true, errorDetail: 'stop' });
+
+    const outcome = await runJob(jobId, 'write', [alpha]);
+
+    expect(outcome.status).not.toBe('completed');
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('en mode read, un tour réussi ne rattache rien : rien n’a été écrit', async () => {
+    await alphaEnregistre();
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    await runJob(jobId, 'read', [alpha]);
+
+    expect(await projetDuJob(jobId)).toBeNull();
   });
 });

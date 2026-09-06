@@ -10,7 +10,11 @@
 // of the final text VERBATIM (invariant #2).
 
 import { cliSessions, toolCalls, eq, and, sql, type AnyDrizzleDb } from '@nodal-agents/db';
-import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
+import {
+  buildSystemPrompt,
+  type Agent,
+  type ConversationContext,
+} from '@nodal-agents/orchestration';
 import {
   assertCliBudget,
   recordCliRun,
@@ -22,6 +26,7 @@ import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './w
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
 import { failJob, touchJob } from '../job/state.ts';
+import { loadConversationContext } from '../job/conversation-id.ts';
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
@@ -95,6 +100,12 @@ export function buildCliRuntimeJobContext(args: {
    * le prompt et les outils ne voyaient pas les mêmes dossiers.
    */
   workspaces?: ReadonlyArray<{ label: string; path: string }>;
+  /**
+   * Le fil dont ce tour fait partie, et son projet courant (P6). Une session CLI
+   * est une conversation comme une autre : elle doit savoir dans quel dossier
+   * elle travaille, et depuis combien de tours.
+   */
+  conversation?: ConversationContext;
 }): Parameters<typeof buildSystemPrompt>[2] {
   return {
     origin: args.origin,
@@ -103,6 +114,7 @@ export function buildCliRuntimeJobContext(args: {
     ...(args.chatId ? { telegramChatId: args.chatId } : {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
+    ...(args.conversation ? { conversation: args.conversation } : {}),
   };
 }
 
@@ -309,22 +321,14 @@ export async function runCliRuntimeJob(args: {
       if (intent.kind === 'already_terminal') {
         throw new Error('verification_intent_failed:intent_already_terminal');
       }
-
-      // Le REGISTRE (P5), sur les MÊMES cibles : un harnais de code qui
-      // travaille dans un projet enregistré EST une production dans ce projet,
-      // même sans traverser aucun outil. Registre, pas garde — son issue
-      // n'interdit rien.
-      await attachProductionToProject(
-        { db, entityId: job.entityId ?? '', jobId },
-        args.workspaces.map((w) => ({
-          kind: 'dir' as const,
-          path: w.path,
-          deliverableType: 'code_project' as const,
-        })),
-      );
     }
 
     const workspaceGit = await probeWorkspaceGit(cwd);
+    // Le fil et son projet courant (P6) — `null` pour un job hors conversation,
+    // ou dont l'uuid date d'avant P6 et ne pointe aucune ligne.
+    const conversation = job.conversationId
+      ? await loadConversationContext(db, job.conversationId, { excludeJobId: jobId })
+      : null;
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,
@@ -334,6 +338,7 @@ export async function runCliRuntimeJob(args: {
         chatId: job.chatId,
         workspaceGit,
         workspaces: args.workspaces,
+        ...(conversation ? { conversation } : {}),
       }),
     );
   } catch (err) {
@@ -438,6 +443,26 @@ export async function runCliRuntimeJob(args: {
         (turn.errorDetail ? ` ${turn.errorDetail}` : '')
       : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
     return fail(code.slice(0, 400));
+  }
+
+  // ── Le REGISTRE des projets (P5), APRÈS un tour réussi ─────────────────────
+  //
+  // Sur les MÊMES cibles que l'intention (les dossiers attachés, le terrain
+  // entier) : un harnais de code qui a travaillé dans un projet enregistré EST
+  // une production dans ce projet, même sans traverser aucun outil. Posé ici
+  // et plus avant le spawn (revue Codex passe 27) : une CLI qui n'a pas
+  // démarré, qui a expiré ou qui est sortie en erreur n'a rien produit, et le
+  // registre ne doit pas dire le contraire. Registre, pas garde — son issue
+  // n'interdit rien.
+  if (mode === 'write') {
+    await attachProductionToProject(
+      { db, entityId: job.entityId ?? '', jobId, conversationId: job.conversationId ?? null },
+      args.workspaces.map((w) => ({
+        kind: 'dir' as const,
+        path: w.path,
+        deliverableType: 'code_project' as const,
+      })),
+    );
   }
 
   // ── La porte terminale (V&C, T11) ─────────────────────────────────────────

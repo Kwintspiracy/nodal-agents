@@ -92,7 +92,7 @@ replié — il reçoit la prose, le fichier joint, et un lien vers le projet.
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
 | 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | ✅ **LOT 1 CLOS le 06/09** — P1 (passe 16), P2 (19), P3 (21), P4 (24-25 : « aucun constat neuf ») ; retours de Quentin traités (automatisations à part, fil nettoyé sur capture réelle, coût cache-aware) · ⚠️ à voir par Quentin dans son navigateur : /spaces et un fil récent |
-| 2 | **Le projet et la conversation** | P5 registre des projets · P6 conversation continue et projet courant · P7 Chat pour toutes les conversations, encart · P8 Spaces = projets, nouveau projet, chat du projet · P9 Scheduled | Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les automatisations ont leur page | 🟡 **go de Quentin le 06/09** — ordre : P5 · P9 (en parallèle) → P6 → P7 → P8 ; chaque pierre codée par Opus, relue par moi, puis `codex review` |
+| 2 | **Le projet et la conversation** | P5 registre des projets · P6 conversation continue et projet courant · P7 Chat pour toutes les conversations, encart · P8 Spaces = projets, nouveau projet, chat du projet · P9 Scheduled | Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les automatisations ont leur page | 🟡 **go de Quentin le 06/09** — ordre : P5 · P9 (en parallèle) → P6 → P7 → P8 ; chaque pierre codée par Opus, relue par moi, puis `codex review`. ✅ P9 (`b9ff0f1b`, passe 26 traitée) · ✅ P5 (`fd2293c3`, passe 27 : 2 constats traités) · ✅ P6 (livré, passe 28 à suivre) · 🟡 P7 en cours · ⬜ P8. La CI de la PR, rouge depuis le lot 1 (lint web, test GLM, cycle d'import P4b), est réparée au passage |
 | 3 | **L'agent qui demande et montre** | P10 `ask_user` · P11 fichiers et diff · P12 le tableur rendu | « Où écrire ? » avec boutons dans le chat et dans Telegram ; diffs cliquables ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P13 relecteurs (= PR④ de Vérifier & Corriger) · P14 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre du projet | ⬜ |
 
@@ -275,6 +275,11 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 
 **À vérifier.** La sorte `documents` n'a pas de marqueur : créée à la main ou par la question, jamais devinée.
 
+**Livré le 06/09 (`fd2293c3`, passe Codex 27).** Le registre est `code_projects` étendu (`registered_at` NULL = ligne de comptabilité, NOT NULL = projet ; `kind`, `agent_id`, `registered_from`, `registered_job_id`) et `agent_jobs.project_id`. Le rattachement lit les cibles de l'intention de mutation (contenance, le plus niché gagne, le premier projet du job gagne). Deux décisions prises en chemin, **à valider par Quentin** :
+
+- *Le terrain lui-même peut être le projet* (`subfolder` vide dans « Nouveau projet ») : le cas d'un dépôt attaché tel quel. Codex note qu'un terrain-projet englobe alors TOUT ce que l'agent y écrit, `terrain/vrac` compris, et que sur le chemin du harnais de code (dont la cible est le terrain entier) chaque session s'y rattache. Si Quentin tient à « projet = sous-dossier strict », il suffit de refuser le sous-dossier vide.
+- *Le rattachement se fait après le succès de l'écriture*, pas avant (contrairement à l'intention de mutation, qui reste conservatrice) : un outil qui échoue ne « produit » rien dans le projet.
+
 ### P6 · La conversation continue et son projet courant — M
 
 **Ce que ça pose.** Une conversation est un fil : un par chat Telegram, Slack ou Discord, un par conversation du dashboard. Il dure **jusqu'à ce que tu en ouvres une autre** (un bouton dans le dashboard, une commande dans le canal, à nommer). Elle porte un **projet courant**, posé quand une production atterrit dans un projet ou quand elle naît depuis la page d'un projet, et redit au modèle à chaque tour.
@@ -284,6 +289,8 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 **Sur quoi ça s'appuie.** `conversations` + `chat_messages` (dashboard), `agent_jobs.conversation_id` (285 jobs Telegram sur 286 le portent, mesuré le 06/09), `resolveConversationId` et `thread-history.ts` pour la relecture.
 
 **Garde.** Deux messages Telegram à une semaine d'écart sont dans la même conversation ; « nouvelle conversation » en ouvre une autre, la précédente reste lisible ; une production dans un projet pose le projet courant et le tour suivant le voit dans son prompt ; la relecture reste sous le budget quelle que soit la longueur du fil.
+
+**Livré le 06/09 (commit P6, passe Codex 28 à suivre).** `conversations` est la table de TOUS les canaux (migration 0094 : `channel`, `chat_id`, `current_project_id`, backfill d'une ligne par conversation de canal existante — 54 sur la base dev) ; **pas de clé étrangère** depuis `agent_jobs.conversation_id` (95 jobs de la base dev portent l'uuid d'une conversation supprimée, la page Runs perdrait leur regroupement). La commande est **`/new`** (nu : la tâche reste `/new`, le prompt dit « premier tour » ; suivi d'un texte : c'est le texte) ; un fil neuf ne reprend pas le projet courant du précédent. La relecture lit les jobs de tête de la conversation sous `MAX_TURNS` et `BUDGET_CHARS` ; le silence de 4 h a disparu. Le bloc `## Conversation` du prompt dit le nombre de tours précédents et le projet courant (nom, dossier, sorte). Un job né dans une conversation ancrée porte son `project_id` dès l'insert (canaux et escalade `run_task`). Un tour de chat du runtime CLI pose le projet courant sans job. Hors périmètre, à faire plus tard : l'ancienne variable `THREAD_IDLE_RESET_MINUTES` ne survit que dans le script de backfill 0059.
 
 ### P7 · Chat, la maison de toutes les conversations — L
 
@@ -316,6 +323,8 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 **Sur quoi ça s'appuie.** `listSpacesAction` (deux requêtes, deux limites), `groupSpaces`, `ScheduledSection` : le code existe, il change de page.
 
 **Garde.** Aucun run cron dans Spaces ni dans Chat ; un run ouvre son fil.
+
+**Livré le 06/09 (`b9ff0f1b`, passe Codex 26 → `0cb5889b`).** Entrée « Scheduled » (icône `CalendarCheck`), page `/scheduled`, `listScheduledRunsAction` ; Spaces sans cron (garde mutée). La passe 26 a fait remonter deux dettes du lot 1, corrigées : l'id d'une automatisation supprimée survit désormais dans la provenance du job (deux homonymes supprimées restaient une seule ligne), et les trois `<button>` bruts de ClampedText/StatusBar sont passés par le DS. **Décision à valider par Quentin** : le contrat documenté de `TextButton` a été élargi à la *disclosure inline* (« Show more », les segments jetons/coût de la barre d'état) plutôt que de créer un composant DS de disclosure compact (qui exigerait sa parité Figma) ; « Back to the conversation » est un `RowActionButton`.
 
 **Lot 3 · L'agent qui demande et montre**
 

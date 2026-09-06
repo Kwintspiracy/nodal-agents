@@ -128,6 +128,7 @@ import { failJob, cancelJob, setJobStatus, saveCheckpoint, touchJob, claimJob } 
 import { finalizeJobSuccess } from './finalize.ts';
 import { drainDeliveries } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
@@ -248,6 +249,9 @@ async function resolveSearchBackend(
         entityId: '',
         db,
         jobChatId: null,
+        // Pas de job, pas de conversation : cet appel de recherche n'est le tour
+        // de rien (P6).
+        conversationId: null,
       } as never)) as {
         results?: Array<{
           title?: string;
@@ -1086,6 +1090,12 @@ async function runJob(
     sharedWorkspacePath,
   );
   const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;
+  // Le fil dont ce job est un tour, et son projet courant (P6). `null` quand le
+  // job n'appartient à aucune conversation, ou quand son uuid date d'avant P6 et
+  // ne pointe aucune ligne — le bloc `## Conversation` est alors simplement omis.
+  const conversationContext = job.conversationId
+    ? await loadConversationContext(db, job.conversationId, { excludeJobId: jobId as string })
+    : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     // LA liste, celle que les outils ont — partagé compris. Le prompt la
@@ -1103,6 +1113,7 @@ async function runJob(
       return inv === undefined ? {} : { workspaceInventory: inv };
     })(),
     ...(workspaceGit ? { workspaceGit } : {}),
+    ...(conversationContext ? { conversation: conversationContext } : {}),
     deployment,
   };
 
@@ -1777,10 +1788,8 @@ async function runJob(
     try {
       const history = await loadThreadHistory({
         db,
-        entityId: job.entityId,
-        agentId: job.agentId,
+        conversationId: job.conversationId ?? null,
         channel: job.channel,
-        chatId: job.chatId,
         excludeJobId: jobId as string,
       });
       if (history.length > 0) {
@@ -1934,6 +1943,9 @@ async function runJob(
                   turn,
                   toolCallId: req.toolCallId ?? undefined,
                   jobChatId: job.chatId ?? null,
+                  // P6 : la conversation du fil, pour que le registre des projets y pose
+                  // le projet courant.
+                  conversationId: job.conversationId ?? null,
                   jobChannel: job.channel,
                   activeChannels,
                   notifyChannelOverride,
@@ -3070,6 +3082,9 @@ async function runJob(
         // number; the per-call toolCallId is spread at each executeTool site.
         turn,
         jobChatId: job.chatId ?? null,
+        // P6 : la conversation du fil, pour que le registre des projets y pose
+        // le projet courant.
+        conversationId: job.conversationId ?? null,
         jobChannel: job.channel,
         activeChannels,
         notifyChannelOverride,
@@ -3360,6 +3375,9 @@ async function runJob(
                 turn,
                 toolCallId: call.id,
                 jobChatId: job.chatId ?? null,
+                // P6 : la conversation du fil, pour que le registre des projets y pose
+                // le projet courant.
+                conversationId: job.conversationId ?? null,
                 jobChannel: job.channel,
                 activeChannels,
                 notifyChannelOverride,
