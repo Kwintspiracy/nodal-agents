@@ -127,6 +127,35 @@ describe('executeTool', () => {
     expect(row?.presentationError).toBeNull();
   });
 
+  // ── P7 : le niveau de risque déclaré, sur la ligne d'audit ────────────────
+
+  it("P7 : la ligne porte le risk_level DÉCLARÉ par l'outil, tel quel", async () => {
+    // Deux niveaux différents sur deux appels : une constante posée à
+    // l'insertion passerait le premier et rougirait au second.
+    const lecture = `risk-read-${Date.now()}`;
+    const destruction = `risk-destructive-${Date.now()}`;
+    await executeTool(
+      makeSimpleTool({ name: 'risk_read_tool', riskLevel: 'read' }),
+      { value: lecture },
+      makeCtx(),
+      makeOpts(),
+    );
+    await executeTool(
+      makeSimpleTool({ name: 'risk_destructive_tool', riskLevel: 'destructive' }),
+      { value: destruction },
+      makeCtx(),
+      makeOpts(),
+    );
+
+    const rows = await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId));
+    const lue = rows.find((c) => (c.toolInput as { value?: string })?.value === lecture);
+    const detruite = rows.find((c) => (c.toolInput as { value?: string })?.value === destruction);
+    expect(lue?.toolName).toBe('risk_read_tool');
+    expect(lue?.riskLevel).toBe('read');
+    expect(detruite?.toolName).toBe('risk_destructive_tool');
+    expect(detruite?.riskLevel).toBe('destructive');
+  });
+
   it('P1 : carte text sans present() → la sortie en texte ; erreur de validation → carte posée, charge NULL', async () => {
     const tool = makeSimpleTool({ name: 'text_tool', card: 'text' });
     const uniqueVal = `text-${Date.now()}`;

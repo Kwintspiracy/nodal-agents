@@ -860,6 +860,10 @@ async function _writeToolCall(
       card,
       presented,
       presentationError,
+      // P7 (0095) : le niveau de risque DÉCLARÉ, tel quel — jamais recalculé.
+      // C'est le seul classement dont l'écran dispose pour un connecteur tiers,
+      // dont la carte `generic` ne distingue pas une lecture d'une écriture.
+      riskLevel: tool.riskLevel,
       // NOUVEAU-1: the audit trail is never re-executed, so we store a
       // secret-redacted copy — create_connector/create_mcp API keys and stdio
       // env values must not sit in cleartext in tool_calls or render to the

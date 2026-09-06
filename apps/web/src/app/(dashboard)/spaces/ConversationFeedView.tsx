@@ -20,6 +20,7 @@ import type {
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
 import StepsGroup from './StepsGroup.tsx';
+import ProducedCard from './ProducedCard.tsx';
 import HistoryGroup from './HistoryGroup.tsx';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
@@ -93,6 +94,18 @@ function FeedItemView({ item }: { item: FeedItem }) {
           <p className="mb-1 text-label-11 uppercase tracking-wider text-ink-4">Answer</p>
           <p className="whitespace-pre-wrap text-body-15 text-ink">{item.text}</p>
         </div>
+      );
+    case 'produced':
+      // P7 — ce qui est sorti du chat à ce tour. Il ne paraît QUE là :
+      // `buildConversationThread` ne pose l'item que sur un tour qui a produit.
+      return <ProducedCard verdict={item.verdict} project={item.project} />;
+    case 'handoff':
+      // P7 — la consigne passée au travail. Repliée dans le style des notes :
+      // la demande de l'utilisateur est juste au-dessus, écrite de sa main.
+      return (
+        <p className="mt-3 truncate pl-[44px] text-mono-11 text-ink-4" title={item.text}>
+          Handed to the work · {item.text}
+        </p>
       );
     case 'failure':
       return (

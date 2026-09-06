@@ -1,42 +1,30 @@
-import Link from 'next/link';
-import { listConversationsAction } from '@/lib/actions.ts';
-import PageHeader from '@/components/ui/PageHeader';
-import ChatClient from './ChatClient.tsx';
+// /chat — la maison de TOUTES les conversations (P7).
+//
+// Le chat à deux volets a disparu avec cette page : une liste, et un fil par
+// conversation (`/chat/[id]`), comme n'importe quelle application de
+// messagerie. Les fils de canaux (Telegram, Slack, Discord, WhatsApp) sont
+// ici au même titre que ceux du dashboard — c'est le même agent, et le canal
+// n'est qu'un moyen d'y accéder.
+
+import PageShell from '@/components/ui/PageShell';
+import { listAllConversationsAction } from '@/lib/conversation-actions.ts';
+import ConversationsList from './ConversationsList.tsx';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ChatPage() {
-  const res = await listConversationsAction();
-  const data = res.ok ? res.data : { rootAgentId: null, rootName: null, conversations: [] };
-
-  // Chat is a full-height surface, so it wears the shared header directly (the
-  // one component every page uses) and keeps a viewport-filling body rather than
-  // the centered PageShell body.
-  if (!data.rootAgentId) {
-    return (
-      <>
-        <PageHeader title="Chat" />
-        <div className="flex h-[calc(100vh-13rem)] flex-col items-center justify-center gap-3 px-5 text-center sm:px-8 lg:px-9">
-          <p className="text-sm text-ink-3">
-            Designate a ROOT agent in Settings to chat with it here.
-          </p>
-          <Link
-            href="/settings"
-            className="inline-flex items-center rounded-md bg-ink px-4 py-2 text-sm font-medium text-canvas transition-[filter] hover:brightness-[0.92]"
-          >
-            Go to Settings
-          </Link>
-        </div>
-      </>
-    );
-  }
+  const result = await listAllConversationsAction();
 
   return (
-    <>
-      <PageHeader title="Chat" subtitle={data.rootName ? `with ${data.rootName}` : undefined} />
-      <div className="flex h-[calc(100vh-9rem)] flex-col px-5 pt-4 pb-4 sm:px-8 lg:px-9">
-        <ChatClient initialConversations={data.conversations} rootName={data.rootName} />
-      </div>
-    </>
+    <PageShell
+      title="Chat"
+      subtitle="Every conversation, from the dashboard and from your channels."
+    >
+      {result.ok ? (
+        <ConversationsList rows={result.data} />
+      ) : (
+        <p className="text-sm text-err">{result.message}</p>
+      )}
+    </PageShell>
   );
 }

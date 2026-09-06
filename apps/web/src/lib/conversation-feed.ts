@@ -24,9 +24,11 @@
 // réutilisé et non copié — plan, « ce qu'on garde ». Les parties `reasoning`
 // (persistées par le runner, execute.ts) sont lues ici, en amont.
 
-import { TOOL_CARDS, ToolCardPayloadSchema } from '@nodal-agents/shared';
+import { TOOL_CARDS } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 import { blocksFromContent } from '@/components/JobMessages.tsx';
+import { parsePresented } from './tool-card-payload.ts';
+import type { ProductionVerdict } from './chat-or-work.ts';
 
 // ─── Entrées ──────────────────────────────────────────────────────────────────
 
@@ -171,7 +173,24 @@ export type FeedItem =
   | { kind: 'history'; exchanges: Array<{ role: 'user' | 'agent'; text: string }> }
   | { kind: 'child'; job: FeedChildJob }
   | { kind: 'answer'; text: string }
-  | { kind: 'failure'; text: string };
+  | { kind: 'failure'; text: string }
+  /**
+   * P7 — ce qui est SORTI du chat à ce tour, et où ça vit. Posé par
+   * `conversation-thread.ts`, jamais par `buildConversationFeed` : un job seul
+   * ne sait rien du projet courant ni des lignes de ses descendants.
+   */
+  | {
+      kind: 'produced';
+      jobId: string;
+      verdict: ProductionVerdict;
+      project: { id: string; name: string; path: string } | null;
+    }
+  /**
+   * P7 — la consigne que le chat a passée au travail. Ce n'est pas la demande
+   * de l'utilisateur (elle est déjà au-dessus, telle qu'il l'a écrite) : c'est
+   * sa reformulation par l'agent, repliée.
+   */
+  | { kind: 'handoff'; text: string };
 
 export type FeedTotals = {
   turns: number;
@@ -230,12 +249,6 @@ export function showsAlone(step: Extract<Step, { kind: 'tool' }>): boolean {
 
 function isToolCard(value: string | null): value is ToolCard {
   return value !== null && (TOOL_CARDS as readonly string[]).includes(value);
-}
-
-function parsePresented(value: unknown): ToolCardPayload | null {
-  if (value === null || value === undefined) return null;
-  const parsed = ToolCardPayloadSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
 }
 
 /**

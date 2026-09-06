@@ -281,6 +281,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       card text,
       presented jsonb,
       presentation_error text,
+      -- 0095 (P7) : le niveau de risque declare par l'outil. NULL sur les
+      -- lignes d'avant et sur les lignes cli:*, ecrites hors registre.
+      risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
       created_at timestamptz DEFAULT now()
     );
 

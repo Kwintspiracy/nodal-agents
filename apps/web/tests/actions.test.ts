@@ -1903,31 +1903,6 @@ describe('listDelegationRunsAction', () => {
   });
 });
 
-describe('getChatJobStatusAction', () => {
-  it('scopes the children-by-parentJobId query to the session entity (alignment with getJobDetailAction)', async () => {
-    currentDb = makeDb([
-      {
-        status: 'completed',
-        result: 'done',
-        agentName: 'Worker',
-        agentSlug: 'worker',
-      },
-    ]) as typeof currentDb;
-    const { getChatJobStatusAction } = await import('../src/lib/actions.ts');
-    const r = await getChatJobStatusAction('cccccccc-0000-0000-0000-000000000009');
-    expect(r.ok).toBe(true);
-
-    // Same shared-chain trick: [0] is the job-by-id query, [1] is the
-    // children-by-parentJobId query this fix scopes.
-    const selectSpy = (currentDb as unknown as { select: ReturnType<typeof vi.fn> }).select;
-    const chainObj = selectSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
-    const childrenWhereArg = chainObj.where.mock.calls[1]?.[0];
-    const serialized = serializeSqlCondition(childrenWhereArg);
-    expect(serialized).toContain('"name":"entity_id"');
-    expect(serialized).toContain(LOCAL_ENTITY_ID);
-  });
-});
-
 // ─── Telegram actions ─────────────────────────────────────────────────────────
 
 describe('getAgentTelegramConfigAction', () => {
@@ -4374,46 +4349,6 @@ describe('sendChatMessageAction', () => {
   });
 });
 
-describe('listConversationsAction', () => {
-  it('returns empty when no ROOT is designated', async () => {
-    currentDb = makeDbSeq([[{ rootAgentId: null }]]) as typeof currentDb;
-    const { listConversationsAction } = await import('../src/lib/actions.ts');
-    const r = await listConversationsAction();
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.rootAgentId).toBeNull();
-      expect(r.data.conversations).toEqual([]);
-    }
-  });
-
-  it('lists the ROOT conversations (most recent first) with a last-message preview', async () => {
-    const rootId = 'aaaaaaaa-0000-0000-0000-000000000310';
-    currentDb = makeDbSeq([
-      [{ rootAgentId: rootId }], // entity lookup
-      [{ name: 'Conciergus' }], // root agent name
-      [
-        { id: 'c1', title: 'Q2 board deck', updatedAt: new Date() },
-        { id: 'c2', title: 'Weekend backlog', updatedAt: new Date() },
-      ],
-      [
-        // preview messages (most recent first); first-per-conversation wins
-        { conversationId: 'c1', content: 'Compiled the revenue + burn tables.' },
-        { conversationId: 'c2', content: '54 tickets triaged.' },
-      ],
-    ]) as typeof currentDb;
-
-    const { listConversationsAction } = await import('../src/lib/actions.ts');
-    const r = await listConversationsAction();
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.rootName).toBe('Conciergus');
-      expect(r.data.conversations).toHaveLength(2);
-      expect(r.data.conversations[0]!.title).toBe('Q2 board deck');
-      expect(r.data.conversations[0]!.preview).toBe('Compiled the revenue + burn tables.');
-    }
-  });
-});
-
 describe('createConversationAction', () => {
   it('fails when no ROOT agent is designated', async () => {
     currentDb = makeDbMixed({ select: [{ rootAgentId: null }] }) as typeof currentDb;
@@ -4433,42 +4368,6 @@ describe('createConversationAction', () => {
     const r = await createConversationAction();
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.id).toBe(convId);
-  });
-});
-
-describe('listChatAction', () => {
-  it('rejects a non-uuid conversation id', async () => {
-    const { listChatAction } = await import('../src/lib/actions.ts');
-    const r = await listChatAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('returns not_found when the conversation is missing / cross-entity', async () => {
-    currentDb = makeDbSeq([[]]) as typeof currentDb; // conversation verify → empty
-    const { listChatAction } = await import('../src/lib/actions.ts');
-    const r = await listChatAction(CHAT_CONV_ID);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('returns the conversation messages', async () => {
-    currentDb = makeDbSeq([
-      [{ id: CHAT_CONV_ID }], // conversation verify
-      [
-        { id: 'm1', role: 'user', content: 'salut' },
-        { id: 'm2', role: 'assistant', content: 'Bonjour Quentin !' },
-      ],
-    ]) as typeof currentDb;
-
-    const { listChatAction } = await import('../src/lib/actions.ts');
-    const r = await listChatAction(CHAT_CONV_ID);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.messages).toHaveLength(2);
-      expect(r.data.messages[0]).toEqual({ id: 'm1', role: 'user', content: 'salut' });
-      expect(r.data.messages[1]!.content).toBe('Bonjour Quentin !');
-    }
   });
 });
 

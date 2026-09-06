@@ -53,8 +53,6 @@ import {
   type ProjectManifests,
   type VerifyCommand,
   type VerificationSurfaces,
-  redactTranscriptForDisplay,
-  redactSecretsInText,
 } from '@nodal-agents/shared';
 import {
   currentManifestHash,
@@ -78,7 +76,6 @@ import {
   agents,
   agentAssignments,
   agentJobs,
-  chatMessages,
   conversations,
   connectors,
   credentials,
@@ -185,8 +182,9 @@ import {
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
-import { buildConversationFeed, type ConversationFeed } from './conversation-feed.ts';
+import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
+import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
@@ -2427,9 +2425,9 @@ export type SpaceConversationView = {
 /**
  * Le fil d'un travail, prêt à dessiner : le job et ses messages, ses lignes
  * d'audit (carte + charge utile persistées par P1), ses appels LLM par tour,
- * ses enfants — assemblés par `buildConversationFeed` (pur, testé sur la
- * vraie forme des lignes). Les messages sont masqués à l'affichage
- * (SECRET-001), jamais à l'écriture.
+ * ses enfants — assemblés par `assembleJobFeed` (`job-feed.ts`), le MÊME
+ * assemblage que le fil d'une conversation (P7). Les messages sont masqués à
+ * l'affichage (SECRET-001), jamais à l'écriture.
  */
 export async function getSpaceConversationAction(
   id: string,
@@ -2449,55 +2447,13 @@ export async function getSpaceConversationAction(
     if (!row) return fail('not_found', 'Job not found');
     const job = row.job;
 
-    const [childRows, toolRows, llmRows] = await Promise.all([
-      db
-        .select({
-          id: agentJobs.id,
-          agentName: agents.name,
-          agentSlug: agents.slug,
-          status: agentJobs.status,
-          task: agentJobs.task,
-          result: agentJobs.result,
-          error: agentJobs.error,
-          createdAt: agentJobs.createdAt,
-          completedAt: agentJobs.completedAt,
-        })
-        .from(agentJobs)
-        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-        .where(and(eq(agentJobs.parentJobId, id), eq(agentJobs.entityId, session.entityId)))
-        .orderBy(agentJobs.createdAt),
-      db
-        .select({
-          toolCallId: toolCalls.toolCallId,
-          toolName: toolCalls.toolName,
-          card: toolCalls.card,
-          presented: toolCalls.presented,
-          durationMs: toolCalls.durationMs,
-          turn: toolCalls.turn,
-          toolInput: toolCalls.toolInput,
-          toolOutput: toolCalls.toolOutput,
-          createdAt: toolCalls.createdAt,
-        })
-        .from(toolCalls)
-        .where(and(eq(toolCalls.jobId, id), eq(toolCalls.entityId, session.entityId)))
-        .orderBy(toolCalls.createdAt),
-      db
-        .select({
-          turn: llmCalls.turn,
-          source: llmCalls.source,
-          modelEffective: llmCalls.modelEffective,
-          provider: llmCalls.provider,
-          inputTokens: llmCalls.inputTokens,
-          outputTokens: llmCalls.outputTokens,
-          cachedTokens: llmCalls.cachedTokens,
-          cacheCreationTokens: llmCalls.cacheCreationTokens,
-          costUsd: llmCalls.costUsd,
-          durationMs: llmCalls.durationMs,
-        })
-        .from(llmCalls)
-        .where(and(eq(llmCalls.jobId, id), eq(llmCalls.entityId, session.entityId)))
-        .orderBy(llmCalls.createdAt),
-    ]);
+    // Le fil du job : extrait dans `job-feed.ts` (P7) et partagé avec le fil
+    // d'une conversation, qui en assemble un par job de tête.
+    const { feed, displayTask, scheduleName } = await assembleJobFeed(db, session.entityId, {
+      job,
+      agentName: row.agentName,
+      agentSlug: row.agentSlug,
+    });
 
     // P3 — les preuves du travail ET de ses délégués (T24 : la preuve d'un
     // délégué remonte à la racine), bornées à l'entité ; la trace D8 des
@@ -2507,30 +2463,7 @@ export async function getSpaceConversationAction(
     // les enfants directs seuls laissaient la preuve d'un petit-enfant hors de
     // la racine, alors que le détail Code la remonte — même lecture, même
     // ROLLUP_MAX_DEPTH). Chacun porte sa trace D8.
-    const descendants: Array<{ id: string; verificationSkippedSurfaces: unknown }> = [];
-    {
-      let frontier = [id];
-      const seen = new Set<string>([id]);
-      for (let depth = 0; depth < ROLLUP_MAX_DEPTH && frontier.length > 0; depth++) {
-        const rows = await db
-          .select({
-            id: agentJobs.id,
-            verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
-          })
-          .from(agentJobs)
-          .where(
-            and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.parentJobId, frontier)),
-          );
-        const next: string[] = [];
-        for (const r of rows) {
-          if (seen.has(r.id)) continue;
-          seen.add(r.id);
-          descendants.push(r);
-          next.push(r.id);
-        }
-        frontier = next;
-      }
-    }
+    const descendants = await collectDescendants(db, session.entityId, [id]);
     const relevantIds = [id, ...descendants.map((d) => d.id)];
     const [verificationRunRows, unconfiguredRows, deliveryRows, costRows, approvalRows] =
       await Promise.all([
@@ -2640,43 +2573,6 @@ export async function getSpaceConversationAction(
         }),
       ),
     };
-
-    const scheduleName =
-      job.channel === 'cron' && job.triggerContext?.type === 'cron'
-        ? job.triggerContext.scheduleName
-        : null;
-    const messages = redactTranscriptForDisplay(
-      Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [],
-    );
-    // La tâche passe par la MÊME rédaction que les messages : le modèle trouve
-    // la demande en comparant les deux (`content === task`), et une demande qui
-    // contient un secret serait masquée d'un côté seulement (revue passe 18).
-    const [redactedRequest] = redactTranscriptForDisplay([{ role: 'user', content: job.task }]);
-    const displayTask =
-      typeof redactedRequest?.content === 'string' ? redactedRequest.content : job.task;
-    const feed = buildConversationFeed(
-      {
-        id: job.id,
-        task: displayTask,
-        channel: job.channel,
-        chatId: job.chatId,
-        status: job.status,
-        result: job.result,
-        error: job.error,
-        agentName: row.agentName,
-        agentSlug: row.agentSlug,
-        createdAt: job.createdAt,
-        completedAt: job.completedAt,
-        messages,
-        scheduleName,
-        children: childRows,
-      },
-      toolRows.map((t) => ({
-        ...t,
-        toolOutput: t.toolOutput === null ? null : redactSecretsInText(t.toolOutput),
-      })),
-      llmRows,
-    );
 
     return ok({
       job: {
@@ -11222,32 +11118,18 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
   }
 }
 
-// ─── In-app chat (V4 — conversation-first) ────────────────────────────────────
-// A conversation is NOT a job. Turns live in `chat_messages`, grouped under a
-// `conversations` row (the sidebar entries). Pure conversation never creates an
-// agent_jobs row. The runner (/api/chat) is the single writer of messages; it
-// persists both turns + bumps the conversation, and returns the reply.
-// Targets the entity's ROOT agent.
-
-export type ConversationView = {
-  id: string;
-  title: string;
-  preview: string;
-  updatedAt: Date | null;
-};
-export type ChatMessageView = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  jobId: string | null;
-};
-
-/** A dispatched action job's live state, for the in-chat dispatch card. */
-export type ChatJobStatus = {
-  status: string;
-  result: string | null;
-  children: { agentName: string; status: string }[];
-};
+// ─── In-app chat — ce qui ÉCRIT une conversation ──────────────────────────────
+// Une conversation n'est pas un job. Les tours du dashboard vivent dans
+// `chat_messages`, sous une ligne `conversations` ; une conversation pure ne
+// crée jamais de `agent_jobs`. Le runner (/api/chat) est le seul écrivain des
+// messages : il persiste les deux tours, remonte la conversation, et rend la
+// réponse. Il vise l'agent ROOT de l'entité.
+//
+// La LECTURE, elle, a quitté ce fichier avec P7 : `listAllConversationsAction`
+// et `getConversationThreadAction` vivent dans `conversation-actions.ts`, qui
+// lit TOUS les canaux. `listConversationsAction`, `listChatAction` et
+// `getChatJobStatusAction` ont été retirées avec le chat à deux volets qu'elles
+// servaient — un mode canonique par feature.
 
 /** Resolve the entity's ROOT agent (id + name), or null when none is designated. */
 async function resolveRoot(
@@ -11267,76 +11149,6 @@ async function resolveRoot(
     .where(and(eq(agents.id, rootAgentId), eq(agents.entityId, entityId)))
     .limit(1);
   return { rootAgentId, rootName: root?.name ?? null };
-}
-
-export async function listConversationsAction(): Promise<
-  ActionResult<{
-    rootAgentId: string | null;
-    rootName: string | null;
-    conversations: ConversationView[];
-  }>
-> {
-  try {
-    const session = await getSession();
-    const db = getDb();
-    const { rootAgentId, rootName } = await resolveRoot(db, session.entityId);
-    if (!rootAgentId) return ok({ rootAgentId: null, rootName: null, conversations: [] });
-
-    const rows = await db
-      .select({
-        id: conversations.id,
-        title: conversations.title,
-        updatedAt: conversations.updatedAt,
-      })
-      .from(conversations)
-      .where(
-        and(
-          eq(conversations.entityId, session.entityId),
-          eq(conversations.agentId, rootAgentId),
-          // The onboarding welcome interview stamps its conversation with
-          // origin='onboarding' at creation time — never rewritten later — so
-          // it never appears in the dashboard's Chats list, whether the
-          // operator skips it or finishes it.
-          eq(conversations.origin, 'user'),
-          // P6 : `conversations` porte désormais TOUS les canaux. Sans ce
-          // filtre, les fils Telegram du ROOT apparaîtraient dans la liste du
-          // chat et s'ouvriraient VIDES — leurs tours sont des `agent_jobs`, pas
-          // des `chat_messages`. P7 lève ce filtre en unifiant les deux vues.
-          eq(conversations.channel, 'dashboard'),
-        ),
-      )
-      .orderBy(desc(conversations.updatedAt))
-      .limit(200);
-
-    // Per-conversation preview = the most recent message. One extra query over
-    // the listed conversations; take the first (newest) message per conversation.
-    const convIds = rows.map((r) => r.id);
-    const previewByConv = new Map<string, string>();
-    if (convIds.length > 0) {
-      const msgs = await db
-        .select({ conversationId: chatMessages.conversationId, content: chatMessages.content })
-        .from(chatMessages)
-        .where(inArray(chatMessages.conversationId, convIds))
-        .orderBy(desc(chatMessages.createdAt))
-        .limit(1000);
-      for (const m of msgs) {
-        if (m.conversationId && !previewByConv.has(m.conversationId)) {
-          previewByConv.set(m.conversationId, m.content);
-        }
-      }
-    }
-
-    const list: ConversationView[] = rows.map((r) => ({
-      id: r.id,
-      title: r.title,
-      preview: previewByConv.get(r.id) ?? '',
-      updatedAt: r.updatedAt,
-    }));
-    return ok({ rootAgentId, rootName, conversations: list });
-  } catch (err) {
-    console.error('[listConversationsAction]', err);
-    return fail('db_error', 'Failed to load conversations');
-  }
 }
 
 export async function createConversationAction(
@@ -11381,50 +11193,6 @@ export async function deleteConversationAction(id: string): Promise<ActionResult
   } catch (err) {
     console.error('[deleteConversationAction]', err);
     return fail('db_error', 'Failed to delete conversation');
-  }
-}
-
-export async function listChatAction(
-  conversationId: string,
-): Promise<ActionResult<{ messages: ChatMessageView[] }>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(conversationId).success) {
-      return fail('validation_failed', 'Invalid conversation id');
-    }
-    const db = getDb();
-    // Verify the conversation belongs to this entity before reading its messages.
-    const [conv] = await db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(
-        and(eq(conversations.id, conversationId), eq(conversations.entityId, session.entityId)),
-      )
-      .limit(1);
-    if (!conv) return fail('not_found', 'Conversation not found');
-
-    const rows = await db
-      .select({
-        id: chatMessages.id,
-        role: chatMessages.role,
-        content: chatMessages.content,
-        jobId: chatMessages.jobId,
-      })
-      .from(chatMessages)
-      .where(eq(chatMessages.conversationId, conversationId))
-      .orderBy(chatMessages.createdAt)
-      .limit(500);
-
-    const messages: ChatMessageView[] = rows.map((r) => ({
-      id: r.id,
-      role: r.role as 'user' | 'assistant',
-      content: r.content,
-      jobId: r.jobId,
-    }));
-    return ok({ messages });
-  } catch (err) {
-    console.error('[listChatAction]', err);
-    return fail('db_error', 'Failed to load chat');
   }
 }
 
@@ -11490,43 +11258,6 @@ export async function sendChatMessageAction(
   } catch (err) {
     console.error('[sendChatMessageAction]', err);
     return fail('db_error', 'Failed to send message');
-  }
-}
-
-export async function getChatJobStatusAction(jobId: string): Promise<ActionResult<ChatJobStatus>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(jobId).success) {
-      return fail('validation_failed', 'Invalid job id');
-    }
-    const db = getDb();
-    const [job] = await db
-      .select({ status: agentJobs.status, result: agentJobs.result })
-      .from(agentJobs)
-      .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, session.entityId)))
-      .limit(1);
-    if (!job) return fail('not_found', 'Job not found');
-
-    // Delegated sub-agents (children) = the "DISPATCHED TO N AGENTS" rows.
-    const childRows = await db
-      .select({
-        agentName: agents.name,
-        agentSlug: agents.slug,
-        status: agentJobs.status,
-      })
-      .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(and(eq(agentJobs.parentJobId, jobId), eq(agentJobs.entityId, session.entityId)))
-      .orderBy(agentJobs.createdAt);
-
-    const children = childRows.map((r) => ({
-      agentName: r.agentName ?? r.agentSlug ?? 'agent',
-      status: r.status ?? 'pending',
-    }));
-    return ok({ status: job.status ?? 'pending', result: job.result, children });
-  } catch (err) {
-    console.error('[getChatJobStatusAction]', err);
-    return fail('db_error', 'Failed to load job status');
   }
 }
 
