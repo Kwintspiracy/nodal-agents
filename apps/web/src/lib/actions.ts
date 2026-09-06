@@ -186,6 +186,7 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { buildConversationFeed, type ConversationFeed } from './conversation-feed.ts';
+import { aggregateSpaceCost } from './space-cost.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
@@ -2331,6 +2332,41 @@ export async function listSpacesAction(
   }
 }
 
+/** P4 — ce que ce travail a coûté, lignes réelles agrégées ; rien n'est deviné. */
+export type SpaceCostView = {
+  byAgent: Array<{
+    agentId: string | null;
+    agentName: string;
+    models: string[];
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cacheCreationTokens: number;
+    /** null = aucun appel tarifé ; sinon la somme des appels tarifés. */
+    costUsd: number | null;
+    /** Appels dont le coût est inconnu (modèle sans prix) — le total est alors partiel. */
+    unpricedCalls: number;
+  }>;
+  totals: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cacheCreationTokens: number;
+    costUsd: number | null;
+    unpricedCalls: number;
+    /** Temps des appels LLM, cumulé. */
+    llmDurationMs: number;
+    /** Du début du job à sa fin (ou maintenant s'il court). */
+    durationMs: number;
+    /** Σ (resolved_at − requested_at) des approbations de ce travail et de ses délégués. */
+    humanWaitMs: number;
+    /** Σ duration_ms des commandes de preuve. */
+    proofMs: number;
+  };
+};
+
 export type SpaceConversationView = {
   job: {
     id: string;
@@ -2352,6 +2388,7 @@ export type SpaceConversationView = {
     skippedSurfaces: string[];
     unconfigured: VerificationUnconfiguredView[];
   };
+  cost: SpaceCostView;
   /** P3 — la file d'envoi de ce travail (`job_deliveries`), telle quelle. */
   deliveries: Array<{
     channel: string;
@@ -2471,60 +2508,99 @@ export async function getSpaceConversationAction(
       }
     }
     const relevantIds = [id, ...descendants.map((d) => d.id)];
-    const [verificationRunRows, unconfiguredRows, deliveryRows] = await Promise.all([
-      db
-        .select({
-          jobId: verificationRuns.jobId,
-          deliverableType: verificationRuns.deliverableType,
-          canonicalKey: verificationRuns.canonicalKey,
-          sequenceId: verificationRuns.sequenceId,
-          commandRank: verificationRuns.commandRank,
-          command: verificationRuns.command,
-          exitCode: verificationRuns.exitCode,
-          outcomeKind: verificationRuns.outcomeKind,
-          durationMs: verificationRuns.durationMs,
-          verdict: verificationRuns.verdict,
-          testedGeneration: verificationRuns.testedGeneration,
-          testedEpoch: verificationRuns.testedEpoch,
-          createdAt: verificationRuns.createdAt,
-        })
-        .from(verificationRuns)
-        .where(
-          and(
-            eq(verificationRuns.entityId, session.entityId),
-            inArray(verificationRuns.jobId, relevantIds),
+    const [verificationRunRows, unconfiguredRows, deliveryRows, costRows, approvalRows] =
+      await Promise.all([
+        db
+          .select({
+            jobId: verificationRuns.jobId,
+            deliverableType: verificationRuns.deliverableType,
+            canonicalKey: verificationRuns.canonicalKey,
+            sequenceId: verificationRuns.sequenceId,
+            commandRank: verificationRuns.commandRank,
+            command: verificationRuns.command,
+            exitCode: verificationRuns.exitCode,
+            outcomeKind: verificationRuns.outcomeKind,
+            durationMs: verificationRuns.durationMs,
+            verdict: verificationRuns.verdict,
+            testedGeneration: verificationRuns.testedGeneration,
+            testedEpoch: verificationRuns.testedEpoch,
+            createdAt: verificationRuns.createdAt,
+          })
+          .from(verificationRuns)
+          .where(
+            and(
+              eq(verificationRuns.entityId, session.entityId),
+              inArray(verificationRuns.jobId, relevantIds),
+            ),
           ),
-        ),
-      db
-        .select({
-          deliverableType: jobDeliverableVerificationState.deliverableType,
-          canonicalKey: jobDeliverableVerificationState.canonicalKey,
-          displayPath: jobDeliverableVerificationState.displayPathSnapshot,
-          decisionStatus: jobDeliverableVerificationState.decisionStatus,
-        })
-        .from(jobDeliverableVerificationState)
-        .where(
-          and(
-            inArray(jobDeliverableVerificationState.jobId, relevantIds),
-            inArray(jobDeliverableVerificationState.decisionStatus, [
-              'not_configured',
-              'pending_approval',
-            ]),
+        db
+          .select({
+            deliverableType: jobDeliverableVerificationState.deliverableType,
+            canonicalKey: jobDeliverableVerificationState.canonicalKey,
+            displayPath: jobDeliverableVerificationState.displayPathSnapshot,
+            decisionStatus: jobDeliverableVerificationState.decisionStatus,
+          })
+          .from(jobDeliverableVerificationState)
+          .where(
+            and(
+              inArray(jobDeliverableVerificationState.jobId, relevantIds),
+              inArray(jobDeliverableVerificationState.decisionStatus, [
+                'not_configured',
+                'pending_approval',
+              ]),
+            ),
           ),
-        ),
-      db
-        .select({
-          channel: jobDeliveries.channel,
-          chatId: jobDeliveries.chatId,
-          outcome: jobDeliveries.outcome,
-          attempts: jobDeliveries.attempts,
-          createdAt: jobDeliveries.createdAt,
-          updatedAt: jobDeliveries.updatedAt,
-        })
-        .from(jobDeliveries)
-        .where(eq(jobDeliveries.jobId, id))
-        .orderBy(jobDeliveries.createdAt),
-    ]);
+        db
+          .select({
+            channel: jobDeliveries.channel,
+            chatId: jobDeliveries.chatId,
+            outcome: jobDeliveries.outcome,
+            attempts: jobDeliveries.attempts,
+            createdAt: jobDeliveries.createdAt,
+            updatedAt: jobDeliveries.updatedAt,
+          })
+          .from(jobDeliveries)
+          .where(eq(jobDeliveries.jobId, id))
+          .orderBy(jobDeliveries.createdAt),
+        // P4 — les appels LLM du job ET de ses délégués, avec l'agent qui a appelé.
+        db
+          .select({
+            agentId: llmCalls.agentId,
+            agentName: agents.name,
+            modelEffective: llmCalls.modelEffective,
+            inputTokens: llmCalls.inputTokens,
+            outputTokens: llmCalls.outputTokens,
+            cachedTokens: llmCalls.cachedTokens,
+            cacheCreationTokens: llmCalls.cacheCreationTokens,
+            costUsd: llmCalls.costUsd,
+            durationMs: llmCalls.durationMs,
+          })
+          .from(llmCalls)
+          .leftJoin(agents, eq(agents.id, llmCalls.agentId))
+          .where(
+            and(eq(llmCalls.entityId, session.entityId), inArray(llmCalls.jobId, relevantIds)),
+          ),
+        // P4 — l'attente humaine : chaque approbation tranchée, du moment demandé au moment tranché.
+        db
+          .select({
+            requestedAt: approvalRequests.requestedAt,
+            resolvedAt: approvalRequests.resolvedAt,
+          })
+          .from(approvalRequests)
+          .where(
+            and(
+              eq(approvalRequests.entityId, session.entityId),
+              inArray(approvalRequests.jobId, relevantIds),
+            ),
+          ),
+      ]);
+    const cost = aggregateSpaceCost({
+      calls: costRows,
+      approvals: approvalRows,
+      proofMs: verificationRunRows.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
+      startedAt: job.createdAt,
+      endedAt: job.completedAt,
+    });
     const verification = {
       sequences: groupVerificationRuns(verificationRunRows),
       skippedSurfaces: mergeSkippedSurfaces([
@@ -2594,6 +2670,7 @@ export async function getSpaceConversationAction(
       },
       feed,
       verification,
+      cost,
       deliveries: deliveryRows,
     });
   } catch (err) {

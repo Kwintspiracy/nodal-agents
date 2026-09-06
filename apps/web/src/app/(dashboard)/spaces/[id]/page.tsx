@@ -6,6 +6,7 @@ import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import ConversationFeedView from '../ConversationFeedView.tsx';
 import LiveRefresh from '../LiveRefresh.tsx';
 import DeliveriesCard from '../DeliveriesCard.tsx';
+import StatusBar from '../StatusBar.tsx';
 import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
 import { formatCost, formatTokens } from '../format.ts';
 import { truncate } from '@/lib/format-time';
@@ -42,7 +43,11 @@ export default async function SpaceConversationPage({
     );
   }
 
-  const { job, feed, verification, deliveries } = result.data;
+  const { job, feed, verification, cost, deliveries } = result.data;
+  const lastProof = verification.sequences.at(-1) ?? null;
+  const pendingDeliveries = deliveries.filter(
+    (d) => d.outcome === 'prepared' || d.outcome === 'attempted',
+  ).length;
   const live = !TERMINAL.has(job.status ?? '');
   const firstLine = job.task.split('\n')[0] ?? job.task;
   const subtitle = [
@@ -91,6 +96,15 @@ export default async function SpaceConversationPage({
         />
         <DeliveriesCard deliveries={deliveries} />
       </div>
+      {/* P4 — la barre d'état, permanente en bas de la page ; ses jetons et son
+          coût ouvrent le panneau « What this work cost ». */}
+      <StatusBar
+        cost={cost}
+        proofVerdict={lastProof?.verdict ?? null}
+        proofSequences={verification.sequences.length}
+        pendingDeliveries={pendingDeliveries}
+        live={live}
+      />
     </PageShell>
   );
 }
