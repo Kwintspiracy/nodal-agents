@@ -25,6 +25,15 @@ export const CARD_EXCERPT_MAX = 2000;
 export const CARD_LABEL_MAX = 400;
 export const CARD_ITEMS_MAX = 50;
 export const CARD_ROWS_MAX = 50;
+/**
+ * Colonnes d'une table, en-tête compris. Sans ce plafond, une carte restait
+ * bornée en lignes et en caractères par cellule mais pas en LARGEUR : une
+ * feuille qui occupe les 16 384 colonnes d'Excel aurait écrit jusqu'à 819 200
+ * cellules dans `tool_calls.presented` à chaque écriture (revue Codex PR #46,
+ * passe 46). Vingt colonnes : ce qu'un écran montre sans que l'aperçu devienne
+ * une archive ; le reste se dit (« showing 20 of 35 columns »).
+ */
+export const CARD_COLS_MAX = 20;
 export const CARD_CELL_MAX = 200;
 
 const text = (max: number) => z.string().max(max);
@@ -84,19 +93,27 @@ export const SearchCardSchema = z.object({
  */
 export const TableEntrySchema = z.object({
   name: text(CARD_LABEL_MAX).optional(),
-  columns: z.array(text(CARD_CELL_MAX)),
+  columns: z.array(text(CARD_CELL_MAX)).max(CARD_COLS_MAX),
   /**
    * `columns` : les colonnes ci-dessus SONT l'en-tête. `unknown` :
    * personne ne sait si la première ligne est un en-tête (un classeur lu
    * tel quel) — le rendu ne le devine pas, il le dit ou le demande (P8).
    */
   header: z.enum(['columns', 'unknown']),
-  rows: z.array(z.array(z.union([text(CARD_CELL_MAX), z.number(), z.null()]))).max(CARD_ROWS_MAX),
+  rows: z
+    .array(z.array(z.union([text(CARD_CELL_MAX), z.number(), z.null()])).max(CARD_COLS_MAX))
+    .max(CARD_ROWS_MAX),
   /** Nombre de lignes réel — `rows` en montre au plus CARD_ROWS_MAX. */
   total: z.number().int().nonnegative(),
   truncated: z.boolean(),
   /** Au moins une cellule a été coupée au plafond CARD_CELL_MAX. */
   clipped: z.boolean(),
+  /**
+   * Nombre de colonnes réel — la table en montre au plus CARD_COLS_MAX. Absent
+   * sur les lignes écrites avant ce plafond : l'écran ne dit alors rien de la
+   * largeur, il ne la devine pas.
+   */
+  columnsTotal: z.number().int().nonnegative().optional(),
 });
 
 export type TableEntry = z.infer<typeof TableEntrySchema>;
@@ -121,12 +138,15 @@ export const FilesCardSchema = z.object({
          */
         preview: TableEntrySchema.optional(),
         /**
-         * P12 — la clé canonique du livrable que ce fichier EST :
-         * `projectKey(chemin absolu)`, exactement ce qu'indexe
-         * `job_deliverable_verification_state`. Écrite par l'outil, qui seul
-         * sait où il a écrit ; l'écran s'en sert pour retrouver l'état de
-         * vérification du document, jamais pour l'afficher. Absente ⇒ l'écran
-         * ne dit rien de la vérification, il n'en invente pas (invariant #4).
+         * P12 — la clé canonique du livrable que ce fichier EST, exactement
+         * celle sous laquelle `job_deliverable_verification_state` range son
+         * état : la clé du chemin rebasé sur la racine LEXICALE de l'espace
+         * de travail, pas celle du chemin réel (revue Codex PR #46, passe 46 :
+         * sous une jonction, `projectKey(realpath)` ne retrouvait aucune
+         * ligne). Écrite par l'outil, qui seul sait où il a écrit ; l'écran
+         * s'en sert pour retrouver l'état de vérification du document, jamais
+         * pour l'afficher. Absente ⇒ l'écran ne dit rien de la vérification,
+         * il n'en invente pas (invariant #4).
          */
         deliverableKey: text(CARD_LABEL_MAX).optional(),
       }),

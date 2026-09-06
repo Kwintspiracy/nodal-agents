@@ -8,6 +8,7 @@ import {
   ToolCardPayloadSchema,
   CARDS_NEEDING_PRESENTER,
   CARD_ROWS_MAX,
+  CARD_COLS_MAX,
   CARD_ITEMS_MAX,
   CARD_TEXT_MAX,
 } from '../index';
@@ -114,6 +115,23 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
       ToolCardPayloadSchema.safeParse(table(Array.from({ length: CARD_ROWS_MAX + 1 }, () => ['x'])))
         .success,
     ).toBe(false);
+    // ni en LARGEUR : une ligne de CARD_COLS_MAX + 1 cellules, ou autant de
+    // colonnes d'en-tête, est refusée (revue passe 46 : rien ne bornait la
+    // largeur, une feuille de 16 384 colonnes passait le schéma)
+    const large = Array.from({ length: CARD_COLS_MAX + 1 }, () => 'x');
+    expect(ToolCardPayloadSchema.safeParse(table([large])).success).toBe(false);
+    const enTeteLarge = {
+      ...table([['x']]),
+      tables: [{ ...table([['x']]).tables[0], columns: large }],
+    };
+    expect(ToolCardPayloadSchema.safeParse(enTeteLarge).success).toBe(false);
+    // et CARD_COLS_MAX exactement passe, avec la largeur réelle en plus
+    const juste = Array.from({ length: CARD_COLS_MAX }, () => 'x');
+    const t = table([juste]);
+    expect(
+      ToolCardPayloadSchema.safeParse({ ...t, tables: [{ ...t.tables[0], columnsTotal: 300 }] })
+        .success,
+    ).toBe(true);
     const hits = Array.from({ length: CARD_ITEMS_MAX + 1 }, () => ({ title: 't' }));
     expect(
       ToolCardPayloadSchema.safeParse({

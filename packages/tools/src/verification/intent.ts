@@ -37,7 +37,6 @@ import {
   isTerminalJobStatus,
   normalizePath,
   projectKey,
-  resolveFileDeliverables,
   resolveProjectRoots,
   type DeliverableType,
   type MutationTarget,
@@ -49,6 +48,9 @@ import type { ToolContext } from '../types';
 // autant que l'intention, et deux copies auraient fini par voir deux projets
 // différents pour la même écriture.
 import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
+// La clé d'un document se calcule dans UN module, partagé avec la carte de
+// l'outil qui l'écrit (P12) : voir office-file-key.ts pour ce qui divergeait.
+import { officeFileDeliverables } from './office-file-key';
 
 /**
  * Le type de livrable que PR① sait canonicaliser. Les autres valeurs de
@@ -266,7 +268,10 @@ async function resolveDeliverables(
             `[verification] VERIFICATION_INTENT_DIR_TARGET_IGNORED type=${deliverableType} count=${dirs}`,
           );
         }
-        for (const file of resolveFileDeliverables({ targets: group, workspaceRoots })) {
+        // `group` est déjà rebasé (ligne du haut) ; le rebasage est idempotent,
+        // et passer par la fonction partagée garantit que la carte de l'outil
+        // (P12) et cette ligne d'état portent LA MÊME clé.
+        for (const file of officeFileDeliverables(group, workspaceRoots)) {
           out.push({ deliverableType, key: file.key, path: file.path });
         }
         break;

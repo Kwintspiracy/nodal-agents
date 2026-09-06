@@ -726,7 +726,7 @@ describe('listAllConversationsAction — le titre de repli', () => {
 // ─── P12 — l'état de vérification des DOCUMENTS du fil ────────────────────────
 
 describe('getConversationThreadAction — l’état des documents (P12)', () => {
-  it('charge TOUS les livrables office_file, `dirty` compris, rangés par clé', async () => {
+  it('charge TOUS les livrables office_file, `dirty` compris, un état par (job, clé)', async () => {
     const cleDirty = projectKey('/terrain/bilans/septembre.xlsx');
     const cleVerte = projectKey('/terrain/bilans/aout.xlsx');
     const cleNonConfig = projectKey('/terrain/bilans/juillet.xlsx');
@@ -738,6 +738,18 @@ describe('getConversationThreadAction — l’état des documents (P12)', () => 
         displayPathSnapshot: 'bilans/septembre.xlsx',
         dirtyGeneration: 3,
         verifiedGeneration: 1,
+        decisionStatus: 'dirty',
+      },
+      // Le MÊME fichier que la ligne verte du job B, écrit aussi par le job A
+      // et pas vérifié là : les deux états sont rendus, chacun avec son job —
+      // la carte du job A ne doit pas hériter du « Verified » du job B
+      // (revue Codex PR #46, passe 46).
+      {
+        jobId: telegramConv.jobA,
+        deliverableType: 'office_file',
+        canonicalKey: cleVerte,
+        displayPathSnapshot: 'bilans/aout.xlsx',
+        dirtyGeneration: 1,
         decisionStatus: 'dirty',
       },
       {
@@ -773,12 +785,16 @@ describe('getConversationThreadAction — l’état des documents (P12)', () => 
     const r = await getConversationThreadAction(telegramConv.id);
     if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
 
-    // Les TROIS états sont là — `dirty` et `green` aussi, alors que la section
-    // de preuve (P3) ne s'intéresse qu'aux livrables non configurés.
+    // Les QUATRE états sont là — `dirty` et `green` aussi, alors que la section
+    // de preuve (P3) ne s'intéresse qu'aux livrables non configurés — et le
+    // même fichier vu par deux jobs donne DEUX états, jamais un « dernier ».
+    const [jobBas, jobHaut] = [telegramConv.jobA, telegramConv.jobB].sort();
+    const statusOf = (jobId: string) => (jobId === telegramConv.jobB ? 'green' : 'dirty');
     expect(r.data.verification.deliverables).toEqual([
-      { canonicalKey: cleVerte, status: 'green' },
-      { canonicalKey: cleNonConfig, status: 'not_configured' },
-      { canonicalKey: cleDirty, status: 'dirty' },
+      { jobId: jobBas, canonicalKey: cleVerte, status: statusOf(jobBas) },
+      { jobId: jobHaut, canonicalKey: cleVerte, status: statusOf(jobHaut) },
+      { jobId: telegramConv.jobB, canonicalKey: cleNonConfig, status: 'not_configured' },
+      { jobId: telegramConv.jobA, canonicalKey: cleDirty, status: 'dirty' },
     ]);
 
     // Et la section de preuve, elle, ne voit toujours QUE le non configuré :

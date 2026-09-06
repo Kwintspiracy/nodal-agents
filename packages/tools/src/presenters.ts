@@ -9,6 +9,7 @@
 
 import {
   CARD_CELL_MAX,
+  CARD_COLS_MAX,
   CARD_EXCERPT_MAX,
   CARD_ITEMS_MAX,
   CARD_LABEL_MAX,
@@ -169,6 +170,12 @@ export type TableEntryInput = {
   header?: 'columns' | 'unknown';
   total?: number;
   truncated?: boolean;
+  /**
+   * Largeur réelle, quand l'appelant a déjà coupé les colonnes lui-même (un
+   * aperçu de feuille ne construit pas 16 384 cellules pour en montrer 20).
+   * Sinon elle se mesure ici, sur ce qui est passé.
+   */
+  columnsTotal?: number;
 };
 
 /**
@@ -180,8 +187,16 @@ export function tableEntry(t: TableEntryInput): TableEntry {
   // Coupé quelque part — une cellule OU un intitulé de colonne (revue passe
   // 15 : les colonnes étaient coupées sans que `clipped` le dise).
   let clipped = t.columns.some((c) => c.length > CARD_CELL_MAX);
+  // La LARGEUR se plafonne comme la hauteur (revue Codex PR #46, passe 46 :
+  // `rows` était borné à 50 lignes, mais rien ne bornait le nombre de
+  // cellules par ligne). Mesurée sur TOUTES les lignes passées, pas seulement
+  // celles montrées — une ligne large au-delà de la 50e compte dans la largeur
+  // réelle, sinon la carte annoncerait une table plus étroite qu'elle n'est.
+  let width = t.columns.length;
+  for (const r of t.rows) if (r.length > width) width = r.length;
+  const columnsTotal = Math.max(width, t.columnsTotal ?? 0);
   const shown = t.rows.slice(0, CARD_ROWS_MAX).map((r) =>
-    r.map((v) => {
+    r.slice(0, CARD_COLS_MAX).map((v) => {
       const [c, wasClipped] = cell(v);
       if (wasClipped) clipped = true;
       return c;
@@ -190,7 +205,7 @@ export function tableEntry(t: TableEntryInput): TableEntry {
   const total = t.total ?? t.rows.length;
   return {
     ...(t.name !== undefined ? { name: clip(t.name, CARD_LABEL_MAX) } : {}),
-    columns: t.columns.map((c) => clip(c, CARD_CELL_MAX)),
+    columns: t.columns.slice(0, CARD_COLS_MAX).map((c) => clip(c, CARD_CELL_MAX)),
     header: t.header ?? (t.columns.length > 0 ? 'columns' : 'unknown'),
     rows: shown,
     total,
@@ -200,6 +215,7 @@ export function tableEntry(t: TableEntryInput): TableEntry {
     // (P12), la carte annonçait « complet » sur un aperçu tronqué.
     truncated: (t.truncated ?? false) || shown.length < t.rows.length || shown.length < total,
     clipped,
+    columnsTotal,
   };
 }
 

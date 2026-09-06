@@ -13,7 +13,7 @@ import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 import { readQuestionToolInput } from '@nodal-agents/shared';
-import type { DeliverableStatusView } from '@/lib/verification-runs-view.ts';
+import { deliverableStatusKey, type DeliverableStatusView } from '@/lib/verification-runs-view.ts';
 import type {
   ConversationFeed,
   FeedChildJob,
@@ -31,9 +31,11 @@ import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 type ToolStep = Extract<Step, { kind: 'tool' }>;
 
 /**
- * P12 — l'état de vérification des documents du fil, rangé par clé canonique.
- * Vide par défaut : un appelant qui ne le passe pas obtient des cartes SANS
- * ligne de vérification, jamais une ligne inventée.
+ * P12 — l'état de vérification des documents du fil, rangé par (job, clé
+ * canonique) via `deliverableStatusKey` : la carte d'un classeur lit l'état
+ * du job qui l'a écrit, pas celui d'un autre job du fil. Vide par défaut : un
+ * appelant qui ne le passe pas obtient des cartes SANS ligne de vérification,
+ * jamais une ligne inventée.
  */
 type Deliverables = ReadonlyMap<string, string>;
 
@@ -47,7 +49,9 @@ export default function ConversationFeedView({
   if (feed.items.length === 0) {
     return <p className="text-body-13 text-ink-4">Nothing recorded yet.</p>;
   }
-  const byKey: Deliverables = new Map(deliverables.map((d) => [d.canonicalKey, d.status]));
+  const byKey: Deliverables = new Map(
+    deliverables.map((d) => [deliverableStatusKey(d.jobId, d.canonicalKey), d.status]),
+  );
   return (
     <div className="mx-auto max-w-[840px]">
       {feed.items.map((item, i) => (
@@ -299,8 +303,15 @@ function TableCard({ payload, aside }: { payload: CardPayloadFor<'table'>; aside
  * calculé depuis la charge utile.
  */
 function TableBody({ entry, notes = [] }: { entry: TableEntry; notes?: readonly string[] }) {
+  // La largeur montrée : l'en-tête, ou la ligne la plus large. Comparée à la
+  // largeur réelle quand la charge utile la porte — une ligne antérieure au
+  // plafond des colonnes ne dit rien, et l'écran ne devine pas.
+  const shownWidth = Math.max(entry.columns.length, ...entry.rows.map((r) => r.length));
   const foot = [
     entry.truncated ? `showing ${entry.rows.length} of ${entry.total} rows` : null,
+    entry.columnsTotal !== undefined && entry.columnsTotal > shownWidth
+      ? `showing ${shownWidth} of ${entry.columnsTotal} columns`
+      : null,
     entry.clipped ? 'some cells were shortened' : null,
     entry.header === 'unknown' ? 'first row may or may not be a header' : null,
     ...notes,
@@ -365,11 +376,15 @@ function FilePreview({ entry, status }: { entry: TableEntry; status: string | un
       {entry.name !== undefined && (
         <p className="px-4 pt-3 text-label-11 uppercase tracking-wider text-ink-4">{entry.name}</p>
       )}
+      {/* Ce que l'aperçu tait, dit sans se contredire : une formule que
+          personne n'a calculée s'affiche telle qu'écrite (« =SUM(A1:A2) »),
+          donc le pied ne peut pas prétendre « no formulas » (revue Codex
+          PR #46, passe 46). */}
       <TableBody
         entry={entry}
         notes={[
           ...(entry.total === 0 ? ['empty sheet'] : []),
-          'values only: no formulas, formatting or merged cells',
+          'no formatting or merged cells; uncomputed formulas shown as written',
         ]}
       />
       {note !== undefined && (
@@ -400,13 +415,15 @@ function FilesCard({
         {payload.files.map((f, i) => {
           // P12 — l'aperçu se pose SOUS la ligne du fichier, au-dessus du diff
           // de P11. L'état de vérification ne se lit que si l'outil a écrit la
-          // clé du livrable ET que le fil porte une ligne pour elle.
+          // clé du livrable ET que CE job porte une ligne pour elle.
           const preview =
             f.preview === undefined ? undefined : (
               <FilePreview
                 entry={f.preview}
                 status={
-                  f.deliverableKey === undefined ? undefined : deliverables.get(f.deliverableKey)
+                  f.deliverableKey === undefined
+                    ? undefined
+                    : deliverables.get(deliverableStatusKey(step.jobId, f.deliverableKey))
                 }
               />
             );

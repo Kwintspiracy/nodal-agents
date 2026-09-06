@@ -16,9 +16,10 @@
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { z } from 'zod';
-import type { ToolDefinition } from '../../types';
+import type { ToolContext, ToolDefinition } from '../../types';
 import type { CardPayloadFor } from '@nodal-agents/shared';
-import { CARD_ROWS_MAX, projectKey } from '@nodal-agents/shared';
+import { CARD_COLS_MAX, CARD_ROWS_MAX } from '@nodal-agents/shared';
+import { officeFileDeliverableKey } from '../../verification/office-file-key';
 import {
   detailOf,
   failureText,
@@ -202,18 +203,23 @@ function stringifyCellValue(val: ExcelJS.CellValue): string {
  * workbook IT HOLDS IN MEMORY — never re-read from disk. What was just written
  * is the source of truth; a second read could only disagree with it.
  *
- * `abs_path` is the resolved absolute path. It is NEVER displayed: `present()`
- * turns it into `projectKey(abs_path)`, the canonical key under which
+ * `deliverable_key` is the canonical key under which
  * `job_deliverable_verification_state` records this document's verification
- * state, so the card can say whether the file is verified without the screen
- * having to re-resolve a workspace-relative path.
+ * state — computed by the SAME function the mutation intent uses
+ * (`officeFileDeliverableKey`), so the card finds the row the intent wrote
+ * even when the workspace root is a junction or a symlink (the intent keys
+ * the LEXICAL path, not the real one; Codex review PR #46, pass 46). `null`
+ * when no workspace root contains the file: the card then says nothing about
+ * verification rather than carrying a key nobody wrote.
  */
 export type XlsxSheetPreview = {
   sheet: string;
   rows: Array<Array<string | number | null>>;
   /** Rows the sheet really has — `rows` shows at most CARD_ROWS_MAX of them. */
   total: number;
-  abs_path: string;
+  /** Cells the widest row really has — each row shows at most CARD_COLS_MAX. */
+  columns_total: number;
+  deliverable_key: string | null;
 };
 
 /**
@@ -224,47 +230,90 @@ export type XlsxSheetPreview = {
  * just wrote has no cached result. Rather than print an empty cell — which
  * would read as "blank" — the formula itself is shown ("=SUM(B2:B3)"). A
  * workbook saved by Excel does carry cached results, and those are shown as
- * the values they are.
+ * the values they are. Read through `cell.formula` / `cell.result`, not
+ * `cell.value`: a SHARED formula's value object carries no `formula` field
+ * (exceljs copies only the master's), while `cell.formula` translates it.
  */
-function previewCellValue(val: ExcelJS.CellValue): string | number | null {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'number') return val;
-  if (typeof val === 'boolean') return String(val);
-  if (val instanceof Date) return val.toISOString().slice(0, 10);
-  if (typeof val === 'object' && 'formula' in val) {
-    const formula = val as ExcelJS.CellFormulaValue;
-    const result: unknown = formula.result;
-    if (result === undefined || result === null) return `=${formula.formula}`;
-    if (typeof result === 'number') return result;
-    if (result instanceof Date) return result.toISOString().slice(0, 10);
-    if (typeof result === 'object' && 'error' in result) {
-      return String((result as { error: unknown }).error);
-    }
-    return String(result);
+function previewCellValue(c: ExcelJS.Cell): string | number | null {
+  if (c.type === ExcelJS.ValueType.Formula) {
+    const result: unknown = c.result;
+    if (result === undefined || result === null) return `=${c.formula}`;
+    return previewScalar(result);
   }
-  if (typeof val === 'object' && 'text' in val)
-    return String((val as { text: unknown }).text ?? '');
-  if (typeof val === 'object' && 'result' in val) {
-    return String((val as { result: unknown }).result ?? '');
-  }
-  if (typeof val === 'object' && 'error' in val) return String((val as { error: unknown }).error);
-  return String(val);
+  return previewScalar(c.value);
 }
 
-/** Read back the touched sheet, capped at CARD_ROWS_MAX rows. An empty sheet gives `rows: []`. */
-function sheetPreview(ws: ExcelJS.Worksheet, absPath: string): XlsxSheetPreview {
+/**
+ * What exceljs can hand back as a value or a formula result, made readable.
+ * Rich text is `{ richText: [{ text }] }` — it has no root `text` field, so
+ * without its own branch it printed as "[object Object]" (Codex review
+ * PR #46, pass 46). A hyperlink is `{ text, hyperlink }` and its `text` may
+ * itself be rich. Dates come out of a workbook as UTC instants (that is how
+ * exceljs decodes Excel serials) — the UTC day IS the day written.
+ */
+function previewScalar(val: unknown): string | number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'boolean') return String(val);
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  if (typeof val === 'object') {
+    if ('richText' in val) {
+      const runs = (val as { richText: unknown }).richText;
+      if (Array.isArray(runs)) {
+        return runs.map((r: unknown) => String((r as { text?: unknown })?.text ?? '')).join('');
+      }
+    }
+    if ('text' in val) return previewScalar((val as { text: unknown }).text);
+    if ('error' in val) return String((val as { error: unknown }).error);
+  }
+  // Nothing above knows this shape: spell it out rather than "[object Object]".
+  return JSON.stringify(val);
+}
+
+/**
+ * Read back the touched sheet, capped at CARD_ROWS_MAX rows × CARD_COLS_MAX
+ * cells. An empty sheet gives `rows: []`.
+ *
+ * `eachRow` walks EVERY row with values, even past the cap, because `total`
+ * is exact and nothing cheaper is: `ws.rowCount` counts formatted-but-empty
+ * rows too. That walk is linear and of the same order as the save that just
+ * wrote the workbook — accepted, and said here (Codex review PR #46, pass 46).
+ * Cells are read with `findCell`, which never creates one, so the preview
+ * leaves the in-memory workbook exactly as it was saved.
+ */
+function sheetPreview(ws: ExcelJS.Worksheet, absPath: string, ctx: ToolContext): XlsxSheetPreview {
   const rows: Array<Array<string | number | null>> = [];
   let total = 0;
+  let columnsTotal = 0;
   ws.eachRow((row) => {
     total++;
+    if (row.cellCount > columnsTotal) columnsTotal = row.cellCount;
     if (rows.length >= CARD_ROWS_MAX) return;
     const cells: Array<string | number | null> = [];
-    row.eachCell({ includeEmpty: true }, (c) => {
-      cells.push(previewCellValue(c.value));
-    });
+    const width = Math.min(row.cellCount, CARD_COLS_MAX);
+    for (let col = 1; col <= width; col++) {
+      const c = row.findCell(col);
+      cells.push(c === undefined ? null : previewCellValue(c));
+    }
     rows.push(cells);
   });
-  return { sheet: ws.name, rows, total, abs_path: absPath };
+  const deliverableKey = officeFileDeliverableKey(
+    absPath,
+    (ctx.workspaces ?? []).map((w) => w.path),
+  );
+  if (deliverableKey === null) {
+    // Loud, not silent (invariant #4): the card will carry no key, and the
+    // screen will say nothing about verification for this file.
+    console.warn(`[xlsx] XLSX_PREVIEW_KEY_UNRESOLVED path=${absPath}`);
+  }
+  return {
+    sheet: ws.name,
+    rows,
+    total,
+    columns_total: columnsTotal,
+    deliverable_key: deliverableKey,
+  };
 }
 
 /**
@@ -288,8 +337,9 @@ function writtenWorkbook(
       header: 'unknown',
       rows: p.rows,
       total: p.total,
+      columnsTotal: p.columns_total,
     }),
-    deliverableKey: projectKey(p.abs_path),
+    ...(p.deliverable_key === null ? {} : { deliverableKey: p.deliverable_key }),
   });
 }
 
@@ -495,7 +545,7 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
       ok: true,
       cell: input.cell,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -569,7 +619,7 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
       ok: true,
       rows_written: input.values.length,
       cols_written: Math.max(0, ...input.values.map((r) => r.length)),
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -635,7 +685,7 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
         ok: true,
         rows_appended: input.rows.length,
         new_last_row: lastRow + input.rows.length,
-        preview: sheetPreview(ws, resolvedPath),
+        preview: sheetPreview(ws, resolvedPath, ctx),
       };
     },
   };
@@ -674,7 +724,7 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
     if (!save.ok) return save;
     // A brand-new sheet is empty: `rows: []`, `total: 0` — the card says
     // "empty sheet" rather than showing nothing at all.
-    return { ok: true, sheet: input.name, preview: sheetPreview(added, resolvedPath) };
+    return { ok: true, sheet: input.name, preview: sheetPreview(added, resolvedPath, ctx) };
   },
 };
 
@@ -725,7 +775,7 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
       ok: true,
       path: writeResult.path,
       sheet: input.sheet,
-      preview: sheetPreview(created, writeResult.path),
+      preview: sheetPreview(created, writeResult.path, ctx),
     };
   },
 };
@@ -786,7 +836,7 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
         ok: true,
         rows_deleted: input.count,
         sheet: input.sheet,
-        preview: sheetPreview(ws, resolvedPath),
+        preview: sheetPreview(ws, resolvedPath, ctx),
       };
     },
   };
@@ -970,7 +1020,7 @@ export const xlsxFormatRangeTool: ToolDefinition<
       cells_formatted: cellsFormatted,
       range: input.range,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -1045,7 +1095,7 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
         ok: true,
         rows_inserted: input.rows.length,
         sheet: input.sheet,
-        preview: sheetPreview(ws, resolvedPath),
+        preview: sheetPreview(ws, resolvedPath, ctx),
       };
     },
   };
@@ -1107,7 +1157,7 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
       ok: true,
       columns_deleted: input.count,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -1179,7 +1229,7 @@ export const xlsxInsertColumnsTool: ToolDefinition<
       ok: true,
       columns_inserted: input.columns.length,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -1245,7 +1295,7 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
         ok: true,
         range: input.range,
         sheet: input.sheet,
-        preview: sheetPreview(ws, resolvedPath),
+        preview: sheetPreview(ws, resolvedPath, ctx),
       };
     },
   };
@@ -1301,7 +1351,7 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
       ok: true,
       range: input.range,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -1410,7 +1460,7 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
       ok: true,
       columns_set: columnsSet,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };
@@ -1483,7 +1533,7 @@ export const xlsxFreezePanesTool: ToolDefinition<
       rows_frozen: input.rows,
       columns_frozen: input.columns,
       sheet: input.sheet,
-      preview: sheetPreview(ws, resolvedPath),
+      preview: sheetPreview(ws, resolvedPath, ctx),
     };
   },
 };

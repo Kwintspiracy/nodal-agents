@@ -27,7 +27,13 @@
 // suites portent l'assertion (assign-tools.test.ts, task-tools.test.ts).
 
 import { describe, it, expect } from 'vitest';
-import { TOOL_CARDS, CARDS_NEEDING_PRESENTER, CARD_CELL_MAX } from '@nodal-agents/shared';
+import {
+  TOOL_CARDS,
+  CARDS_NEEDING_PRESENTER,
+  CARD_CELL_MAX,
+  CARD_COLS_MAX,
+  ToolCardPayloadSchema,
+} from '@nodal-agents/shared';
 import type { ToolCard } from '@nodal-agents/shared';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins } from '../builtin';
@@ -378,5 +384,31 @@ describe('tableCard — `clipped` dit la vérité sur TOUT ce qui a été coupé
     expect(tableCard([{ columns: ['a'], rows: [['b']] }]).tables[0]?.clipped).toBe(false);
     // Une cellule coupée le dit aussi.
     expect(tableCard([{ columns: ['a'], rows: [[long]] }]).tables[0]?.clipped).toBe(true);
+  });
+});
+
+describe('tableCard — la LARGEUR se plafonne comme la hauteur (revue passe 46)', () => {
+  it('une table de CARD_COLS_MAX + 5 colonnes en montre CARD_COLS_MAX et porte la largeur réelle', () => {
+    const WIDTH = CARD_COLS_MAX + 5;
+    const columns = Array.from({ length: WIDTH }, (_, i) => `c${i + 1}`);
+    const row = Array.from({ length: WIDTH }, (_, i) => i + 1);
+    const p = tableCard([{ columns, rows: [row, row] }]);
+    const t = p.tables[0]!;
+    expect(t.columns).toHaveLength(CARD_COLS_MAX);
+    expect(t.columns[0]).toBe('c1');
+    expect(t.columns[CARD_COLS_MAX - 1]).toBe(`c${CARD_COLS_MAX}`);
+    for (const r of t.rows) expect(r).toHaveLength(CARD_COLS_MAX);
+    expect(t.columnsTotal).toBe(WIDTH);
+    // Et ce que le présentateur rend est ce que le schéma accepte.
+    expect(ToolCardPayloadSchema.safeParse(p).success).toBe(true);
+  });
+
+  it('la largeur réelle se mesure sur TOUTES les lignes, pas seulement les montrées', () => {
+    const p = tableCard([{ columns: [], header: 'unknown', rows: [['a'], ['b', 'c', 'd']] }]);
+    expect(p.tables[0]?.columnsTotal).toBe(3);
+    // Sans en-tête ni ligne large : la largeur est celle des lignes.
+    expect(tableCard([{ columns: ['x', 'y'], rows: [['1', '2']] }]).tables[0]?.columnsTotal).toBe(
+      2,
+    );
   });
 });

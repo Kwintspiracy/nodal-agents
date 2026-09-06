@@ -544,11 +544,11 @@ export async function getConversationThreadAction(
               ),
             db
               .select({
+                jobId: jobDeliverableVerificationState.jobId,
                 deliverableType: jobDeliverableVerificationState.deliverableType,
                 canonicalKey: jobDeliverableVerificationState.canonicalKey,
                 displayPath: jobDeliverableVerificationState.displayPathSnapshot,
                 decisionStatus: jobDeliverableVerificationState.decisionStatus,
-                updatedAt: jobDeliverableVerificationState.updatedAt,
               })
               .from(jobDeliverableVerificationState)
               .where(

@@ -27,12 +27,16 @@ const PREVIEW = {
   clipped: false,
 };
 
+/** Le job dont la carte montre l'écriture ; l'état lu est CELUI de ce job. */
+const JOB = '11111111-1111-4111-8111-111111111111';
+const AUTRE_JOB = '22222222-2222-4222-8222-222222222222';
+
 function feedWith(payload: CardPayloadFor<'files'>): ConversationFeed {
   const step: Extract<Step, { kind: 'tool' }> = {
     kind: 'tool',
     toolName: 'xlsx_set_range',
     toolCallId: 'call-1',
-    jobId: '11111111-1111-4111-8111-111111111111',
+    jobId: JOB,
     card: 'files',
     presented: payload,
     input: {},
@@ -69,9 +73,16 @@ const cardWith = (
 
 const render = (
   card: CardPayloadFor<'files'>,
-  deliverables: Array<{ canonicalKey: string; status: string }> = [],
+  deliverables: Array<{ jobId?: string; canonicalKey: string; status: string }> = [],
 ): string =>
-  renderToStaticMarkup(<ConversationFeedView feed={feedWith(card)} deliverables={deliverables} />);
+  renderToStaticMarkup(
+    <ConversationFeedView
+      feed={feedWith(card)}
+      deliverables={deliverables.map((d) => ({ jobId: JOB, ...d }))}
+    />,
+  );
+
+const PIED = 'no formatting or merged cells; uncomputed formulas shown as written';
 
 describe('P12 — l’aperçu du classeur sur la carte du fichier', () => {
   it('rend les CELLULES écrites, et dit ce que l’aperçu ne montre pas', () => {
@@ -79,21 +90,41 @@ describe('P12 — l’aperçu du classeur sur la carte du fichier', () => {
     expect(html).toContain('Alice');
     expect(html).toContain('90');
     expect(html).toContain('Data');
-    expect(html).toContain('values only: no formulas, formatting or merged cells');
+    expect(html).toContain(PIED);
     // L'en-tête n'est pas deviné (P1) : la carte le dit.
     expect(html).toContain('first row may or may not be a header');
+  });
+
+  it('le pied ne nie pas ce que la grille montre : une formule non calculée est là, telle qu’écrite', () => {
+    // Revue passe 46 : la grille affichait « =SUM(A1:A2) » et le pied disait
+    // « values only: no formulas ».
+    const html = render(
+      cardWith({ preview: { ...PREVIEW, rows: [[10], [32], ['=SUM(A1:A2)']], total: 3 } }),
+    );
+    expect(html).toContain('=SUM(A1:A2)');
+    expect(html).not.toContain('no formulas');
+    expect(html).toContain(PIED);
   });
 
   it('sans aperçu, rien de plus qu’avant P12', () => {
     const html = render(cardWith());
     expect(html).toContain('ws/report.xlsx');
-    expect(html).not.toContain('values only');
+    expect(html).not.toContain(PIED);
     expect(html).not.toContain('first row may or may not be a header');
   });
 
   it('un aperçu tronqué dit combien de lignes il montre', () => {
     const html = render(cardWith({ preview: { ...PREVIEW, total: 301, truncated: true } }));
     expect(html).toContain('showing 2 of 301 rows');
+  });
+
+  it('un aperçu plus étroit que la feuille dit combien de colonnes il montre — et se tait sans la largeur réelle', () => {
+    const large = render(cardWith({ preview: { ...PREVIEW, columnsTotal: 35 } }));
+    expect(large).toContain('showing 2 of 35 columns');
+    // Largeur réelle égale à la largeur montrée : rien à dire.
+    expect(render(cardWith({ preview: { ...PREVIEW, columnsTotal: 2 } }))).not.toContain('columns');
+    // Ligne antérieure au plafond (pas de `columnsTotal`) : l'écran ne devine pas.
+    expect(render(cardWith({ preview: PREVIEW }))).not.toContain('of 2 columns');
   });
 
   it('une feuille vide le DIT plutôt que de laisser un tableau muet', () => {
@@ -142,7 +173,14 @@ describe('P12 — l’aperçu du classeur sur la carte du fichier', () => {
     const inconnu = render(cardWith({ preview: PREVIEW, deliverableKey: KEY }), [
       { canonicalKey: KEY, status: 'quelque_chose_de_neuf' },
     ]);
-    for (const html of [sansLigne, inconnu]) {
+    // Revue passe 46 : l'état d'un AUTRE job du fil pour le même fichier n'est
+    // pas celui de cette écriture — un job qui aurait fini de vérifier SA
+    // génération après la réécriture posait « Verified » sur la carte du
+    // second. La carte ne lit que la ligne de son job.
+    const autreJob = render(cardWith({ preview: PREVIEW, deliverableKey: KEY }), [
+      { jobId: AUTRE_JOB, canonicalKey: KEY, status: 'green' },
+    ]);
+    for (const html of [sansLigne, inconnu, autreJob]) {
       expect(html).not.toContain('Verified');
       expect(html).not.toContain('Not yet verified');
       expect(html).not.toContain('no checks exist');

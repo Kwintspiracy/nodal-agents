@@ -56,42 +56,55 @@ export type VerificationUnconfiguredView = {
 };
 
 /**
- * L'état de vérification d'un DOCUMENT du fil, rangé par la clé qui
- * l'identifie (P12). `status` est la valeur brute de `decision_status`, telle
- * que la base la porte : l'écran la traduit en une phrase, il n'en fabrique
- * jamais une qui n'y est pas.
+ * L'état de vérification d'un DOCUMENT écrit par UN job du fil (P12).
+ * `status` est la valeur brute de `decision_status`, telle que la base la
+ * porte : l'écran la traduit en une phrase, il n'en fabrique jamais une qui
+ * n'y est pas.
+ *
+ * Par (job, clé), pas par clé seule. La carte d'un classeur écrit montre ce
+ * que CE job vient d'écrire ; l'état qui va avec est celui de ce job pour ce
+ * document — c'est la ligne que l'intention de ce job a ouverte et que sa
+ * finalisation a fermée, sous la règle des générations. Un état « par clé »
+ * qui prenait la ligne la plus récente du fil mélangeait les jobs : un job A
+ * qui finissait de vérifier sa génération APRÈS qu'un job B avait réécrit le
+ * fichier posait « Verified » sur la carte de B, et toutes les cartes
+ * historiques du fil portaient le même état quel que soit le job qui les
+ * avait produites (revue Codex PR #46, passe 46). La table garantit une ligne
+ * par (job, type, clé) : il n'y a rien à départager, donc rien à deviner.
+ *
+ * Ce que ceci ne dit pas, et ne prétend pas dire : si un job écrit deux fois
+ * le même fichier, ses deux cartes lisent la même ligne — l'état de la
+ * dernière génération. Dater chaque carte d'une génération est l'affaire du
+ * vérificateur de documents (v7-B), pas de cette vue.
  */
-export type DeliverableStatusView = { canonicalKey: string; status: string };
+export type DeliverableStatusView = { jobId: string; canonicalKey: string; status: string };
 
 /**
- * Les états des documents, un par clé.
- *
- * Un même document peut avoir un état par JOB du fil. C'est le plus RÉCENT
- * qui vaut — un fait (`updated_at`), pas un arbitrage entre statuts : classer
- * les statuts par gravité reviendrait à décider, à la place de la base, ce
- * qu'est « le vrai » état du fichier.
+ * La clé sous laquelle l'écran range et retrouve l'état d'un document : le
+ * job qui l'a écrit ET l'identité du fichier. Une seule fonction pour les
+ * deux gestes, sinon l'un des deux finit par oublier le job.
  */
+export function deliverableStatusKey(jobId: string, canonicalKey: string): string {
+  return `${jobId} ${canonicalKey}`;
+}
+
+/** Les états des documents du fil, un par (job, clé), triés pour être stables. */
 export function deliverableStatuses(
   rows: ReadonlyArray<{
+    jobId: string;
     deliverableType: string;
     canonicalKey: string;
     decisionStatus: string;
-    updatedAt: Date;
   }>,
 ): DeliverableStatusView[] {
-  const latest = new Map<string, { status: string; at: Date }>();
-  for (const r of rows) {
-    if (r.deliverableType !== 'office_file') continue;
-    const seen = latest.get(r.canonicalKey);
-    if (seen === undefined || r.updatedAt >= seen.at) {
-      latest.set(r.canonicalKey, { status: r.decisionStatus, at: r.updatedAt });
-    }
-  }
-  return [...latest.entries()]
-    .map(([canonicalKey, v]) => ({ canonicalKey, status: v.status }))
-    .sort((a, b) =>
-      a.canonicalKey < b.canonicalKey ? -1 : a.canonicalKey > b.canonicalKey ? 1 : 0,
-    );
+  return rows
+    .filter((r) => r.deliverableType === 'office_file')
+    .map((r) => ({ jobId: r.jobId, canonicalKey: r.canonicalKey, status: r.decisionStatus }))
+    .sort((a, b) => {
+      const k = a.canonicalKey < b.canonicalKey ? -1 : a.canonicalKey > b.canonicalKey ? 1 : 0;
+      if (k !== 0) return k;
+      return a.jobId < b.jobId ? -1 : a.jobId > b.jobId ? 1 : 0;
+    });
 }
 
 /** La ligne brute telle que l'action la lit — un sous-ensemble de VerificationRunRow. */
