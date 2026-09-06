@@ -26,12 +26,38 @@ export function hasMarker(dir: string): boolean {
 /**
  * Le chemin RÉEL d'un dossier ou d'un fichier, normalisé — pour COMPARER,
  * jamais pour nommer (voir `rebaseOntoLexicalRoots`).
+ *
+ * Un chemin qui N'EXISTE PLUS (un fichier écrit puis supprimé dans le même
+ * tour, revue Codex passe 33) est ramené à son ancêtre EXISTANT le plus
+ * proche, résolu, puis le reste est rappendu tel quel — la même règle que la
+ * contenance physique de Spaces (`project-actions.ts`). Sans ça, un chemin
+ * sous un alias (`C:/DEVELO~1/app`, une jonction) restait sous son alias dès
+ * que sa feuille avait disparu, ne tombait plus sous aucune racine réelle, et
+ * la production n'était ni déclarée ni rattachée.
  */
 export function realPathOf(p: string): string {
+  const normalized = normalizePath(p);
   try {
-    return normalizePath(realpathSync.native(p));
+    return normalizePath(realpathSync.native(normalized));
   } catch {
-    return normalizePath(p);
+    // absent, ou alias d'un chemin absent : on remonte.
+  }
+  let current = normalized;
+  const tail: string[] = [];
+  for (;;) {
+    const idx = current.lastIndexOf('/');
+    // Plus d'ancêtre à essayer (racine POSIX, ou chemin sans séparateur).
+    if (idx <= 0) return normalized;
+    tail.unshift(current.slice(idx + 1));
+    current = current.slice(0, idx);
+    // `C:` seul désignerait le dossier courant du lecteur, pas sa racine.
+    const probe = /^[a-z]:$/i.test(current) ? `${current}/` : current;
+    try {
+      const real = normalizePath(realpathSync.native(probe)).replace(/\/$/, '');
+      return `${real}/${tail.join('/')}`;
+    } catch {
+      // cet ancêtre n'existe pas non plus : un cran plus haut.
+    }
   }
 }
 

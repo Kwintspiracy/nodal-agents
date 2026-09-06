@@ -15,7 +15,10 @@
 // rattachement de l'historique vaut pour TOUT projet dérivé qui est au
 // registre, qu'il vienne d'être déclaré ici ou l'ait été depuis Spaces : un
 // projet déclaré d'un clic a la même activité passée qu'un projet déclaré au
-// boot, et sa page doit la montrer aussi.
+// boot, et sa page doit la montrer aussi. BORNÉ (revue Codex, passe 33) : ce
+// sont les jobs de la FENÊTRE du scan (`SCAN_LIMIT` lignes d'édition) — ceux
+// que l'onglet Code montre encore ; un job plus ancien reste sans projet. Ce
+// n'est pas un historique complet, et le plan le dit.
 //
 // IDEMPOTENT : une ligne déjà déclarée n'est pas retouchée
 // (`registerCodeProjects` ne met à jour que `registered_at IS NULL`), un job

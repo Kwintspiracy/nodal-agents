@@ -283,6 +283,14 @@ export async function runCliRuntimeJob(args: {
   // shows the session working in real time. Rows pair tool_use → tool_result
   // by the CLI's own tool_use id.
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // Les écritures d'audit ENCORE EN VOL à la fin du tour (revue Codex, passe
+  // 33) : chaque insertion part sans être attendue — l'audit ne doit jamais
+  // ralentir la CLI — mais `harnessEdits` les LIT juste après `binding.run`.
+  // Le dernier événement d'un tour est précisément une écriture, et son
+  // insertion pouvait être encore en route : chemins vides, projet jamais
+  // déclaré. Elles sont donc gardées ici et attendues (jamais relancées, jamais
+  // bloquantes pour le travail : `allSettled`) avant la lecture.
+  const auditWrites: Promise<unknown>[] = [];
   const onEvent = (evt: ClaudeTurnEvent): void => {
     if (evt.kind === 'tool_use' && evt.toolUseId && evt.toolName) {
       pending.set(evt.toolUseId, {
@@ -296,7 +304,7 @@ export async function runCliRuntimeJob(args: {
       const started = pending.get(evt.toolUseId);
       if (!started) return;
       pending.delete(evt.toolUseId);
-      void db
+      const write = db
         .insert(toolCalls)
         .values({
           entityId: job.entityId,
@@ -315,6 +323,7 @@ export async function runCliRuntimeJob(args: {
         .catch((err: unknown) => {
           console.warn(`[cli-runtime] tool_calls insert failed (job=${jobId}):`, err);
         });
+      auditWrites.push(write);
     }
   };
 
@@ -537,6 +546,10 @@ export async function runCliRuntimeJob(args: {
   // retour d'erreur pour que le rattachement survive à ce retour.
   if (mode === 'write') {
     const turnSucceeded = !turn.isError && turn.finalText !== '';
+    // Toutes les lignes d'audit du tour sont posées avant de les lire — voir
+    // `auditWrites`. Une insertion qui a échoué est déjà journalisée ; elle ne
+    // fait pas échouer le tour.
+    await Promise.allSettled(auditWrites);
     const edits = await harnessEdits(db, jobId, turnStartedAt, args.workspaces);
     if (turnSucceeded || edits.length > 0) {
       await attachProductionToProject(

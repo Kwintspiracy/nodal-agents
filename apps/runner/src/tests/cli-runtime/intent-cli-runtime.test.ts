@@ -24,6 +24,7 @@ import {
 } from '@nodal-agents/db';
 import { projectKey, normalizePath } from '@nodal-agents/shared';
 import type { CliTurnResult } from '../../cli-runtime/provider.ts';
+import type { ClaudeTurnEvent } from '../../cli-runtime/claude-turn.ts';
 import type * as ProviderModule from '../../cli-runtime/provider.ts';
 import type * as OrchestrationModule from '@nodal-agents/orchestration';
 
@@ -514,5 +515,69 @@ describe('run-job : le registre se remplit tout seul (P5b)', () => {
 
     expect(await ligneDeclaree(alpha)).toBeNull();
     expect(await projetDuJob(jobId)).toBeNull();
+  });
+});
+
+describe('run-job : les écritures d’audit en vol sont attendues avant de lire les chemins (passe 33)', () => {
+  const ligneDeclaree = async (path: string) => {
+    const [row] = await db
+      .select({ id: codeProjects.id, registeredAt: codeProjects.registeredAt })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, keyOf(path)));
+    return row && row.registeredAt ? row : null;
+  };
+
+  it('une insertion d’audit encore en route quand la CLI se termine est vue par le registre', async () => {
+    // Une base dont les insertions dans `tool_calls` prennent 80 ms : c'est la
+    // course réelle — l'enregistreur d'événements lance chaque ligne sans
+    // l'attendre, et le dernier événement d'un tour est justement une écriture.
+    const slowDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'insert') return Reflect.get(target, prop, receiver);
+        return (table: unknown) => {
+          const q = (
+            target as unknown as { insert: (t: unknown) => { values: (v: unknown) => unknown } }
+          ).insert(table);
+          if (table !== toolCalls) return q;
+          return {
+            values: (v: unknown) =>
+              new Promise((resolve, reject) => {
+                setTimeout(() => Promise.resolve(q.values(v)).then(resolve, reject), 80);
+              }),
+          };
+        };
+      },
+    });
+    const jobId = await newJob();
+    fakeRun.mockImplementationOnce(async (opts: unknown) => {
+      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
+      onEvent({
+        kind: 'tool_use',
+        toolUseId: 'tu-1',
+        toolName: 'Write',
+        input: { file_path: `${alpha}/src/a.ts` },
+      });
+      onEvent({ kind: 'tool_result', toolUseId: 'tu-1', output: 'ok' });
+      return greenTurn();
+    });
+
+    const outcome = await runCliRuntimeJob({
+      db: slowDb as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+      jobId,
+      job: {
+        entityId: seed.entityId,
+        chatId: null,
+        channel: 'api',
+        conversationId: null,
+        task: 'go',
+        triggerContext: null,
+      },
+      agentRow: { ...baseAgent, cliPermissions: { mode: 'write' } },
+      workspaces: [{ label: 'ws0', path: root }],
+    });
+
+    expect(outcome.status).toBe('completed');
+    const row = await ligneDeclaree(alpha);
+    expect(row, 'la ligne d’audit en vol a été lue trop tôt : alpha non déclaré').not.toBeNull();
   });
 });
