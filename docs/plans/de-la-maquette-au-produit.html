@@ -462,8 +462,10 @@
             <code>934091d4</code>, <code>4f084c21</code>, <code>268f68ef</code> ; passe 36 : aucun
             constat bloquant, rien de neuf) · ✅ P10a <code>ask_user</code> (<code>5c7938a7</code> ;
             passes 37-38 traitées, <code>36dd5c92</code> ; P10a close sous réserve d'un arbitrage
-            sur les textes de chrome) · ✅ P10b « où écrire ? » (<code>baea7599</code> ; passe 39
-            traitée dans <code>5921ba4f</code>, passe 40 lancée) · 🔄 P11 (Opus en cours) · ⬜ P12
+            sur les textes de chrome) · ✅ P10b « où écrire ? » (<code>baea7599</code> ; passes
+            39-40 traitées dans <code>5921ba4f</code>, <code>147159ff</code> ; passe 41 : la liaison
+            texte tombe, <code>register_project</code> passe par l'approbation — en cours) · ✅ P11
+            fichiers et diff (<code>e6713458</code>, passe 42 lancée) · ⬜ P12
           </td>
         </tr>
         <tr>
@@ -1214,24 +1216,29 @@
     <div class="ligne">
       <span class="l">arbitrages</span
       ><span class="v"
-        ><i>Textes de chrome dans le runner</i> (P10a, Codex passes 37-38) : « ❓ X asks: », « Tap
-        an option below », « Pick an option. », « ✅ Answered: … » sont écrits par le runner, comme
-        « ⏳ Approbation requise » et « Already approved. » de la carte d'approbation existante ;
-        Codex lit l'invariant #2 au pied de la lettre (aucun texte utilisateur dans le runner : le
-        chrome doit venir de l'adaptateur de livraison, du web, ou d'une configuration en base) et
-        je le lis comme « jamais à la place de l'agent ». Trancher : garder le chrome où il est (et
-        l'écrire dans CLAUDE.md), ou ouvrir une pierre qui déplace TOUT le chrome des approbations
-        et des questions hors du runner. <i>Connexions figées</i> : Codex (passe 35) pointe qu'une
-        requête sur une connexion morte sans RST tient sa connexion du pool jusqu'aux sondes
-        keepalive de l'OS ; ce n'est pas P5b, c'est le client — poser un
-        <code>statement_timeout</code> par session (sauf backfills), ou un délai de lecture socket,
-        est une décision d'infrastructure à prendre à part. <i>Jonctions</i> : deux dossiers
-        attachés qui pointent vers le même dépôt physique donnent deux projets (D10 de « Vérifier
-        &amp; Corriger », toujours ouvert) — interdire les racines qui se recouvrent, ou accepter
-        deux identités. <i>Historique borné</i> : le rattachement des jobs passés lit la fenêtre du
-        scan (1 500 dernières écritures). <i>Un tour de chat CLI ne déclare jamais</i> (sans job,
-        l'audit ne dit pas quelles écritures sont les siennes) : un dépôt attaché à un agent en
-        runtime CLI attend un tour de job pour apparaître dans Spaces.</span
+        ><i>Un nouveau projet depuis la conversation = une approbation</i> (P10b, Codex passes
+        39-41) : « où ranger ? » (la question) puis « créer ce dossier ? » (la carte d'approbation)
+        — deux clics pour un nouveau projet. L'alternative, pour n'en garder qu'un, est une
+        autorisation STRUCTURÉE portée par l'option de la question (l'option déclare ce qu'elle
+        crée) : une pierre à part, pas un correctif. <i>Textes de chrome dans le runner</i> (P10a,
+        Codex passes 37-38) : « ❓ X asks: », « Tap an option below », « Pick an option. », « ✅
+        Answered: … » sont écrits par le runner, comme « ⏳ Approbation requise » et « Already
+        approved. » de la carte d'approbation existante ; Codex lit l'invariant #2 au pied de la
+        lettre (aucun texte utilisateur dans le runner : le chrome doit venir de l'adaptateur de
+        livraison, du web, ou d'une configuration en base) et je le lis comme « jamais à la place de
+        l'agent ». Trancher : garder le chrome où il est (et l'écrire dans CLAUDE.md), ou ouvrir une
+        pierre qui déplace TOUT le chrome des approbations et des questions hors du runner.
+        <i>Connexions figées</i> : Codex (passe 35) pointe qu'une requête sur une connexion morte
+        sans RST tient sa connexion du pool jusqu'aux sondes keepalive de l'OS ; ce n'est pas P5b,
+        c'est le client — poser un <code>statement_timeout</code> par session (sauf backfills), ou
+        un délai de lecture socket, est une décision d'infrastructure à prendre à part.
+        <i>Jonctions</i> : deux dossiers attachés qui pointent vers le même dépôt physique donnent
+        deux projets (D10 de « Vérifier &amp; Corriger », toujours ouvert) — interdire les racines
+        qui se recouvrent, ou accepter deux identités. <i>Historique borné</i> : le rattachement des
+        jobs passés lit la fenêtre du scan (1 500 dernières écritures).
+        <i>Un tour de chat CLI ne déclare jamais</i> (sans job, l'audit ne dit pas quelles écritures
+        sont les siennes) : un dépôt attaché à un agent en runtime CLI attend un tour de job pour
+        apparaître dans Spaces.</span
       >
     </div>
   </div>
@@ -1294,11 +1301,23 @@
         création (« Quelle couleur ? » → « Bleu » suffisait) ; corrigé dans <code>5921ba4f</code> :
         l'option CHOISIE doit nommer le projet (son nom ou son dossier, accents et casse repliés),
         sinon la carte d'approbation ordinaire ; plus le rollback de la ligne et du dossier si le
-        rattachement échoue, et « cinq projets pertinents au plus » dans la consigne ; passe 40
-        lancée) : <code>register_project</code> (un projet de documents déclaré depuis la
-        conversation, rattaché aussitôt), la guidance du prompt système (demander avant d'écrire
-        hors de tout projet déclaré et hors manifeste), et une porte qui exige une question répondue
-        dans le même job — sauf autonomie totale.</span
+        rattachement échoue, et « cinq projets pertinents au plus » dans la consigne.
+        <b>Passes 40-41</b> : la liaison par le texte de l'option a été resserrée (<code
+          >147159ff</code
+        >
+        : égalité stricte au lieu de la sous-chaîne) puis mise en défaut une troisième fois (un
+        projet EXISTANT proposé par son nom d'affichage, non unique, déverrouille une autre
+        destination) — trois passes sur la même garde, c'est la forme qui est mauvaise :
+        <b
+          >la liaison texte est abandonnée, <code>register_project</code> passe par l'approbation
+          ordinaire</b
+        >
+        (une carte « créer ce dossier ? », relâchée par une règle explicite du propriétaire ou une
+        autonomie qui laisse passer le non-destructif). Un clic de plus pour un nouveau projet, zéro
+        devinette. Arbitrage ci-dessous) : <code>register_project</code> (un projet de documents
+        déclaré depuis la conversation, rattaché aussitôt), la guidance du prompt système (demander
+        avant d'écrire hors de tout projet déclaré et hors manifeste), et une porte qui exige une
+        question répondue dans le même job — sauf autonomie totale.</span
       >
     </div>
   </div>
