@@ -380,6 +380,35 @@ describe('diffFile — une lecture ne dérange pas les instantanés (passe 42)',
     expect(apres).not.toBeNull();
   });
 
+  it('un fichier SUPPRIMÉ depuis l’instantané rend sa suppression, ligne par ligne en `-`', async () => {
+    await writeFile(join(ws, 'parti.txt'), 'un\ndeux\n');
+    const avant = await snapshot(store, ws, 'avant');
+    await rm(join(ws, 'parti.txt'));
+
+    const res = await diffFile(store, ws, avant!.sha, null, 'parti.txt');
+    expect(res.kind).toBe('diff');
+    if (res.kind !== 'diff') return;
+    expect(res.text).toContain('-un');
+    expect(res.text).toContain('-deux');
+    expect(res.text).not.toContain('\n+un');
+  });
+
+  it('la coupe ne tranche jamais un caractère UTF-8 : le texte rendu tient dans la borne', async () => {
+    await writeFile(join(ws, 'accents.txt'), 'x\n');
+    const avant = await snapshot(store, ws, 'avant');
+    // Que des caractères à deux octets : quelle que soit la borne, elle a une
+    // chance sur deux de tomber au milieu de l'un d'eux.
+    const gros = Array.from({ length: 60_000 }, () => 'ééééééé').join('\n');
+    await writeFile(join(ws, 'accents.txt'), gros);
+
+    const res = await diffFile(store, ws, avant!.sha, null, 'accents.txt');
+    expect(res.kind).toBe('diff');
+    if (res.kind !== 'diff') return;
+    expect(res.truncated).toBe(true);
+    expect(Buffer.byteLength(res.text, 'utf8')).toBeLessThanOrEqual(DIFF_MAX_BYTES);
+    expect(res.text.includes('\uFFFD'), 'un caractère a été coupé en deux').toBe(false);
+  }, 60_000);
+
   it("un diff plus gros que le tampon d'execFile est coupé aux octets annoncés, pas une panne", async () => {
     await writeFile(join(ws, 'geant.txt'), 'x\n');
     const avant = await snapshot(store, ws, 'avant');

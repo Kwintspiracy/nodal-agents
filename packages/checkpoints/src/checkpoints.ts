@@ -158,13 +158,33 @@ async function gitRaw(
 }
 
 /**
+ * Coupe un `Buffer` à `max` octets SANS couper un caractère UTF-8 en deux : si
+ * l'octet `max` est la suite d'un caractère commencé avant, on recule jusqu'à
+ * son premier octet et on coupe là (revue Codex, passe 43 — une séquence
+ * incomplète décodée devient U+FFFD, trois octets, et la borne « en octets »
+ * mentait d'un ou deux).
+ */
+function cutAtUtf8Boundary(buf: Buffer, max: number): Buffer {
+  if (buf.length <= max) return buf;
+  let end = max;
+  // 0b10xxxxxx = octet de continuation : le caractère a commencé plus tôt.
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end);
+}
+
+/**
  * Comme `gitRaw`, mais la sortie est lue EN FLUX et coupée à `maxBytes` : au
- * premier octet de trop, le processus est tué et ce qu'on a lu est rendu, dit
- * tronqué (revue Codex, passe 42). Sans ça, un diff de 10 Mo faisait exploser
- * le tampon d'`execFile` AVANT la coupe, et l'écran disait « dossier
- * injoignable » pour un fichier simplement gros. Les OCTETS sont comptés (un
- * `Buffer`), pas les unités UTF-16 d'une chaîne : la borne annoncée est la
- * borne réelle.
+ * premier octet de trop, on DEMANDE l'arrêt du processus et ce qu'on a lu est
+ * rendu, dit tronqué (revue Codex, passe 42). Sans ça, un diff de 10 Mo
+ * faisait exploser le tampon d'`execFile` AVANT la coupe, et l'écran disait
+ * « dossier injoignable » pour un fichier simplement gros. Les OCTETS sont
+ * comptés (un `Buffer`), pas les unités UTF-16 d'une chaîne, et la coupe
+ * respecte les frontières UTF-8 : la borne annoncée est la borne réelle.
+ *
+ * ON NE RÉSOUT QU'À `close` (revue Codex, passe 43), même après `kill()` :
+ * l'appelant supprime l'index jetable juste après, et sous Windows un fichier
+ * encore ouvert par git ne se supprime pas (`EBUSY`) — chaque index orphelin
+ * aurait pesé le poids d'un index complet.
  */
 function gitRawCapped(
   store: string,
@@ -181,21 +201,14 @@ function gitRawCapped(
     const chunks: Buffer[] = [];
     let size = 0;
     let truncated = false;
+    let timedOut = false;
     let settled = false;
     const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
+      if (settled || timedOut) return;
+      timedOut = true;
+      // L'arrêt est demandé ; la promesse se règle à `close`, pas avant.
       child.kill();
-      reject(new Error(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS} ms`));
     }, GIT_TIMEOUT_MS);
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      const all = Buffer.concat(chunks);
-      const cut = truncated ? all.subarray(0, maxBytes) : all;
-      resolve({ text: cut.toString('utf8'), truncated });
-    };
     child.stdout.on('data', (chunk: Buffer) => {
       if (truncated) return;
       chunks.push(chunk);
@@ -204,7 +217,6 @@ function gitRawCapped(
         truncated = true;
         // Tout ce qu'il fallait est là : inutile de laisser git écrire la suite.
         child.kill();
-        finish();
       }
     });
     child.on('error', (err) => {
@@ -215,13 +227,19 @@ function gitRawCapped(
     });
     child.on('close', (code) => {
       if (settled) return;
-      if (code !== 0 && code !== null) {
-        settled = true;
-        clearTimeout(timer);
+      settled = true;
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS} ms`));
+        return;
+      }
+      if (!truncated && code !== 0 && code !== null) {
         reject(new Error(`git ${args[0]} exited with ${code}`));
         return;
       }
-      finish();
+      const all = Buffer.concat(chunks);
+      const cut = truncated ? cutAtUtf8Boundary(all, maxBytes) : all;
+      resolve({ text: cut.toString('utf8'), truncated });
     });
   });
 }
@@ -386,12 +404,14 @@ export async function diffFile(
   try {
     let inTo: boolean;
     if (scratch !== undefined) {
-      // L'index part du commit d'avant, puis le SEUL chemin demandé est restagé
-      // depuis l'arbre de travail : un fichier neuf y entre, un fichier
-      // supprimé en sort. Un chemin ignoré par le `.gitignore` du dossier fait
-      // échouer `add` — c'est exactement l'information qu'on cherche, pas une
-      // panne.
-      await git(store, workspace, ['read-tree', fromSha], scratch);
+      // L'index jetable part VIDE, et le SEUL chemin demandé y est stagé depuis
+      // l'arbre de travail : un fichier neuf ou modifié y entre, un fichier
+      // supprimé n'y entre pas. Le diff qui suit est restreint au même chemin
+      // (`-- relPath`), donc les autres fichiers du commit d'avant, absents de
+      // cet index, ne passent pas pour supprimés — pas besoin d'un `read-tree`
+      // de tout l'arbre à chaque clic (revue Codex, passe 43). Un chemin ignoré
+      // par le `.gitignore` du dossier fait échouer `add` — c'est exactement
+      // l'information qu'on cherche, pas une panne.
       await git(store, workspace, ['add', '-A', '--', relPath], scratch).catch(() => '');
       inTo =
         (await git(store, workspace, ['ls-files', '--cached', '--', relPath], scratch).catch(
