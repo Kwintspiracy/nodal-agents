@@ -14,7 +14,7 @@ import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import TextButton from '@/components/ui/TextButton';
 import RowActionButton from '@/components/ui/RowActionButton';
-import type { SpaceCostView } from '@/lib/actions.ts';
+import type { SpaceCostView } from '@/lib/space-cost.ts';
 import { formatCost, formatMs, formatTokens } from './format.ts';
 
 export type StatusBarProps = {

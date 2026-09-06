@@ -186,7 +186,7 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
 import { buildConversationFeed, type ConversationFeed } from './conversation-feed.ts';
-import { aggregateSpaceCost } from './space-cost.ts';
+import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
@@ -2388,40 +2388,8 @@ export async function listScheduledRunsAction(
   }
 }
 
-/** P4 — ce que ce travail a coûté, lignes réelles agrégées ; rien n'est deviné. */
-export type SpaceCostView = {
-  byAgent: Array<{
-    agentId: string | null;
-    agentName: string;
-    models: string[];
-    calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    cacheCreationTokens: number;
-    /** null = aucun appel tarifé ; sinon la somme des appels tarifés. */
-    costUsd: number | null;
-    /** Appels dont le coût est inconnu (modèle sans prix) — le total est alors partiel. */
-    unpricedCalls: number;
-  }>;
-  totals: {
-    calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    cacheCreationTokens: number;
-    costUsd: number | null;
-    unpricedCalls: number;
-    /** Temps des appels LLM, cumulé. */
-    llmDurationMs: number;
-    /** Du début du job à sa fin (ou maintenant s'il court). */
-    durationMs: number;
-    /** Σ (resolved_at − requested_at) des approbations de ce travail et de ses délégués. */
-    humanWaitMs: number;
-    /** Σ duration_ms des commandes de preuve. */
-    proofMs: number;
-  };
-};
+// P4 — la forme du coût (`SpaceCostView`) vit dans space-cost.ts, avec sa
+// fonction : la déclarer ici faisait un cycle d'import (revue CI du 06/09).
 
 export type SpaceConversationView = {
   job: {

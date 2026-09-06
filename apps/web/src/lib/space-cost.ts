@@ -6,7 +6,44 @@
 // Un coût inconnu reste `null` — jamais un 0 qui voudrait dire « gratuit » —
 // et le nombre d'appels sans prix est compté, pour que l'écran dise « partial ».
 
-import type { SpaceCostView } from './actions.ts';
+// La FORME du coût vit ici, avec sa fonction — pas dans actions.ts, qui
+// l'importait : actions.ts → space-cost.ts → actions.ts faisait un cycle que
+// dependency-cruiser refuse (CI rouge sur la PR #46, vu le 06/09 seulement
+// parce que la vérification d'architecture n'avait jamais tourné sur P4b).
+/** P4 — ce que ce travail a coûté, lignes réelles agrégées ; rien n'est deviné. */
+export type SpaceCostView = {
+  byAgent: Array<{
+    agentId: string | null;
+    agentName: string;
+    models: string[];
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cacheCreationTokens: number;
+    /** null = aucun appel tarifé ; sinon la somme des appels tarifés. */
+    costUsd: number | null;
+    /** Appels dont le coût est inconnu (modèle sans prix) — le total est alors partiel. */
+    unpricedCalls: number;
+  }>;
+  totals: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cacheCreationTokens: number;
+    costUsd: number | null;
+    unpricedCalls: number;
+    /** Temps des appels LLM, cumulé. */
+    llmDurationMs: number;
+    /** Du début du job à sa fin (ou maintenant s'il court). */
+    durationMs: number;
+    /** Σ (resolved_at − requested_at) des approbations de ce travail et de ses délégués. */
+    humanWaitMs: number;
+    /** Σ duration_ms des commandes de preuve. */
+    proofMs: number;
+  };
+};
 
 export type CostCallRow = {
   agentId: string | null;

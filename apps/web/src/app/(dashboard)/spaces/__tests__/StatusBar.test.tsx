@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import StatusBar from '../StatusBar.tsx';
-import type { SpaceCostView } from '@/lib/actions.ts';
+import type { SpaceCostView } from '@/lib/space-cost.ts';
 
 const cost: SpaceCostView = {
   byAgent: [
