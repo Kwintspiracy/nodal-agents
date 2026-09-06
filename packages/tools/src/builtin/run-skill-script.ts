@@ -21,21 +21,22 @@
 //   4. NO SHELL: the interpreter is spawned with an ARG ARRAY (shell:false), so
 //      arguments can never be shell-injected — stricter than run_command.
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
+import { terminalCard } from '../presenters';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
 import { buildChildEnv } from './child-env';
 import { SHARED_WORKSPACE_LABEL } from './file-ops/workspace';
+import { runShellCommand } from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const MAX_TIMEOUT_SECONDS = 1800;
-/** Per-stream capture cap (chars). We keep draining past this, but stop storing. */
-const MAX_OUTPUT_CHARS = 100_000;
+// Le plafond de capture vit dans le moteur partagé (shell-engine.ts).
 
 /**
  * Find a Python that actually RUNS, probing candidates with `--version`.
@@ -197,8 +198,28 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
     inputSchema: runSkillScriptSchema,
     riskLevel: 'destructive',
+    card: 'terminal',
+    present: ({ output }) =>
+      terminalCard({
+        command: `${output.interpreter} ${output.script}`,
+        exitCode: output.exitCode,
+        timedOut: output.timedOut,
+        stdout: output.stdout,
+        stderr: output.stderr,
+      }),
     mutatesWorkspace: true,
     defaultApproval: 'require_approval',
+    // TOUS les dossiers attachés, jamais le bundle de la skill. Le contrat du
+    // tool est que les artefacts vont dans NODAL_SHARED_WORKSPACE, et la
+    // veille `listBundleFiles` plus bas CONSTATE après coup qu'on ne contraint
+    // pas où un script écrit — le périmètre déclaré ici doit donc être celui
+    // qu'un script peut réellement atteindre.
+    resolveMutationTargets: async (_input: RunSkillScriptInput, ctx: ToolContext) =>
+      (ctx.workspaces ?? []).map((w) => ({
+        kind: 'dir' as const,
+        path: w.path,
+        deliverableType: 'code_project' as const,
+      })),
     execute: async (
       input: RunSkillScriptInput,
       ctx: ToolContext,
@@ -307,9 +328,13 @@ async function listBundleFiles(root: string, cap = 5000): Promise<Set<string>> {
   return files;
 }
 
-// ─── Process execution (no shell, timeout + tree-kill, capped output) ─────────
+// ─── Process execution — le moteur partagé (shell-engine.ts) ──────────────────
+//
+// shell:false : argv littéral, aucune interpolation. Ce qui reste ici est la
+// forme du tool_result (interpreter, script) et le contrat historique
+// `exitCode: null` pour « tué ou pas lancé ».
 
-function runScript(
+async function runScript(
   interpreter: string,
   argv: string[],
   cwd: string,
@@ -317,93 +342,26 @@ function runScript(
   scriptLabel: string,
   envExtras?: Record<string, string>,
 ): Promise<RunSkillScriptOutput> {
-  return new Promise<RunSkillScriptOutput>((resolve) => {
-    const isWindows = process.platform === 'win32';
-
-    // shell:false — no shell interpolation; argv is passed literally. detached on
-    // Unix makes the child a process-group leader so the WHOLE tree dies on
-    // timeout (negative pid). On Windows we use taskkill /T instead.
-    const child = spawn(interpreter, argv, {
-      cwd,
-      shell: false,
-      detached: !isWindows,
-      windowsHide: true,
-      // Scrubbed env, NOT process.env — a skill script must not be able to read
-      // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env. See
-      // child-env.ts. Cast for the same ambient-augmentation reason as
-      // run-command.ts (see its comment).
-      env: buildChildEnv(process.env, envExtras) as unknown as NodeJS.ProcessEnv,
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let truncated = false;
-    let timedOut = false;
-    let settled = false;
-
-    const append = (existing: string, chunk: Buffer): string => {
-      if (existing.length >= MAX_OUTPUT_CHARS) {
-        truncated = true;
-        return existing;
-      }
-      const text = chunk.toString('utf8');
-      const room = MAX_OUTPUT_CHARS - existing.length;
-      if (text.length <= room) return existing + text;
-      truncated = true;
-      return existing + text.slice(0, room);
-    };
-    child.stdout?.on('data', (c: Buffer) => {
-      stdout = append(stdout, c);
-    });
-    child.stderr?.on('data', (c: Buffer) => {
-      stderr = append(stderr, c);
-    });
-
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const killTree = (): void => {
-      if (child.pid) {
-        if (isWindows) {
-          try {
-            spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-          } catch {
-            /* taskkill unavailable — fall through */
-          }
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }
-      }
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    };
-
-    const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (graceTimer) clearTimeout(graceTimer);
-      resolve({ exitCode, stdout, stderr, timedOut, truncated, interpreter, script: scriptLabel });
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree();
-      graceTimer = setTimeout(() => finish(null), 3000);
-    }, timeoutMs);
-
-    child.on('error', (err: Error) => {
-      // spawn failure (interpreter missing, cwd vanished, …). Return as a failed
-      // RESULT so the agent gets a tool_result it can react to.
-      stderr = append(stderr, Buffer.from(`${stderr ? '\n' : ''}spawn_error: ${err.message}`));
-      finish(null);
-    });
-    child.on('close', (code: number | null) => finish(code));
+  const run = await runShellCommand({
+    target: { file: interpreter, args: argv },
+    cwd,
+    timeoutMs,
+    // Scrubbed env, NOT process.env — a skill script must not be able to read
+    // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env.
+    env: buildChildEnv(process.env, envExtras),
+    keep: 'head',
   });
+  const o = run.outcome;
+  return {
+    exitCode: o.kind === 'exit' ? o.exitCode : null,
+    stdout: run.stdout,
+    stderr:
+      o.kind === 'spawn_error'
+        ? `${run.stderr}${run.stderr ? '\n' : ''}spawn_error: ${o.message}`
+        : run.stderr,
+    timedOut: o.kind === 'timeout',
+    truncated: run.truncatedStdout || run.truncatedStderr,
+    interpreter,
+    script: scriptLabel,
+  };
 }

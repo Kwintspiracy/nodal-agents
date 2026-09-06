@@ -26,7 +26,12 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { TERMINAL_STATUSES } from '../job/state.ts';
-import { resolveConversationId } from '../job/conversation-id.ts';
+import {
+  resolveConversation,
+  openNewConversation,
+  touchConversation,
+  parseNewConversationCommand,
+} from '../job/conversation-id.ts';
 import { sanitizeSenderName, escapeRegex } from '../channels/shared.ts';
 
 export interface HandleResult {
@@ -132,7 +137,13 @@ export async function handleTelegramUpdate(args: {
 
   // Group chat: only respond to commands, mentions, or replies to the bot.
   if (isGroup) {
-    const isCommand = text.startsWith('/ask ') || text.startsWith('/agents') || text === '/start';
+    // `/new` est une commande au même titre que `/ask` : dans un groupe, ouvrir
+    // une conversation neuve doit passer le filtre sans avoir à mentionner le bot.
+    const isCommand =
+      text.startsWith('/ask ') ||
+      text.startsWith('/agents') ||
+      text === '/start' ||
+      parseNewConversationCommand(text).opensNew;
     // F-2: only a reply to THIS bot's own message counts — a reply to some
     // OTHER bot in the group (a different agent, a poll bot, whatever) must
     // not wake this one up.
@@ -167,6 +178,8 @@ export async function handleTelegramUpdate(args: {
   // /ask <slug> <text> routes to a different agent in the same entity.
   let targetAgentId = receivingAgentId;
   let taskText = text;
+  /** Le « qui parle » d'un message de groupe — appliqué APRÈS l'analyse de `/new`. */
+  let groupPrefix: string | null = null;
 
   if (text.startsWith('/ask ')) {
     const parts = text.slice(5).trim().split(/\s+/);
@@ -222,8 +235,31 @@ export async function handleTelegramUpdate(args: {
       body = body.replace(buildMentionRegex(receivingAgentBotUsername!), '').trim();
       if (!body) return { skipped: 'mention_no_text' };
     }
-    taskText = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: ${body}`;
+    taskText = body;
+    groupPrefix = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: `;
   }
+
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094). Clé sur
+  // targetAgentId (pas receivingAgentId) : un `/ask <slug>` route le job vers un
+  // autre agent, et c'est au fil de CET agent qu'il appartient.
+  //
+  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
+  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
+  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
+  // reconnue : en groupe, `/new` ne rouvrait rien (revue Codex, passe 28).
+  //
+  // Un `/new` NU garde `/new` comme tâche : c'est le message que l'utilisateur a
+  // écrit, et le runner n'a rien à fabriquer à sa place (invariant #2) — c'est
+  // le bloc `## Conversation` du prompt qui dira au modèle ce que ça veut dire.
+  const { opensNew, rest } = parseNewConversationCommand(taskText);
+  if (opensNew && rest) taskText = rest;
+  // Le préfixe enveloppe ce qui RESTE : en groupe, l'agent doit toujours savoir
+  // qui parle, `/new` ou pas.
+  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
+  // c'est à ce texte que `loadConversationContext` reconnaît la commande
+  // (`openedByCommand`), et un message qui ne porte aucune demande n'a pas
+  // besoin de dire qui parle.
+  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
 
   // A photo with no caption still becomes a job — give it a neutral task so the
   // agent has context alongside the image (the poller attaches the image next).
@@ -231,19 +267,16 @@ export async function handleTelegramUpdate(args: {
     taskText = 'Image envoyée (sans légende).';
   }
 
-  // Jobs page grouping (migration 0059): stamp the same conversation_id as
-  // the thread this message continues, using the identical session-gap rule
-  // loadThreadHistory already applies for chat continuity — see
-  // job/conversation-id.ts. Keyed on targetAgentId (not receivingAgentId):
-  // a `/ask <slug>` message routes this job to a different agent, and that
-  // agent's own thread is what it belongs to.
-  const conversationId = await resolveConversationId({
+  const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
     agentId: targetAgentId,
     channel: 'telegram',
     chatId: String(chatId),
-  });
+  };
+  const conversation = opensNew
+    ? await openNewConversation(threadKey)
+    : await resolveConversation(threadKey);
 
   const [job] = await tx
     .insert(agentJobs)
@@ -253,7 +286,11 @@ export async function handleTelegramUpdate(args: {
       channel: 'telegram',
       task: taskText,
       chatId: String(chatId),
-      conversationId,
+      conversationId: conversation.id,
+      // Le projet courant du fil suit le travail : un job né dans une
+      // conversation ancrée à un projet porte ce projet dès l'insert, sans
+      // attendre qu'une écriture le rattache.
+      projectId: conversation.currentProjectId,
       status: 'pending',
       // Text-only at insert; when there's a photo the poller upgrades this to a
       // multimodal [text + image] message after downloading the file.
@@ -266,6 +303,9 @@ export async function handleTelegramUpdate(args: {
     // and the offset won't advance, so the next poll re-delivers this update.
     throw new Error('telegram_job_insert_failed');
   }
+
+  // La conversation est vivante, et elle prend son nom sur le premier message.
+  await touchConversation(tx, conversation.id, taskText);
 
   // Atomically record the last-seen chat_id so the dashboard can offer
   // "send result via Telegram" for this agent. F-3: only for PRIVATE chats —

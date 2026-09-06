@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { agentMemory, eq, and, desc } from '@nodal-agents/db';
 import { keywordSearchMemories } from '@nodal-agents/memory';
 import type { ToolDefinition } from '../types';
+import { searchCard } from '../presenters';
 
 export const QueryMemoryInputSchema = z.object({
   query: z
@@ -51,6 +52,21 @@ export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, Memo
     'filter by skill_tags for narrower lookups.',
   inputSchema: QueryMemoryInputSchema,
   riskLevel: 'write', // write because it updates last_accessed_at on matched rows
+  // Une recherche, pas une table (retour de Quentin, 06/09) : ce que l'agent
+  // fait ici, c'est chercher des souvenirs ; le fil les montre comme des
+  // correspondances repliées, pas comme un tableau de textes longs.
+  card: 'search',
+  present: ({ input, output }) =>
+    searchCard({
+      query: input.query ?? (input.skill_tags?.length ? input.skill_tags.join(', ') : 'recent'),
+      hits: output.map((m) => ({
+        title: m.fact,
+        ref: m.id,
+        snippet: [m.category, m.importance !== null ? `importance ${String(m.importance)}` : null]
+          .filter((x): x is string => x !== null && x !== '')
+          .join(' · '),
+      })),
+    }),
   execute: async (input, ctx) => {
     const sort = input.sort ?? 'importance';
     const limit = input.limit ?? 50;

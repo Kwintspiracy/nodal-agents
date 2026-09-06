@@ -3,6 +3,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { failureText, readCard } from '../../presenters';
 import {
   resolveAndCheckPath,
   MAX_READ_BYTES,
@@ -55,6 +56,16 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
     'even with offset/limit — use `file_search` to locate content, or split the file.',
   inputSchema: FileReadInputSchema,
   riskLevel: 'read',
+  card: 'read',
+  present: ({ input, output }) =>
+    output.ok
+      ? readCard({
+          path: input.path,
+          text: output.content,
+          truncated: output.truncated,
+          sections: output.total_lines,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);

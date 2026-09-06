@@ -1,0 +1,305 @@
+// tool-cards.ts — la CHARGE UTILE de chaque carte (plan « De la maquette au
+// produit », P1, seconde moitié).
+//
+// Une carte n'est pas qu'une étiquette. La revue (passes 12 et 13) l'a montré
+// sur `table` : `query_memory` rend un tableau nu, `xlsx_read` rend
+// `{ sheets: [{ rows }] }` — deux formes pour la même étiquette, et l'écran
+// aurait dû dispatcher par NOM d'outil pour savoir où lire les lignes, ce que
+// le contrat interdit. Donc chaque carte a UNE forme, écrite ici, et chaque
+// outil qui déclare la carte fournit un `present()` qui traduit SA sortie
+// dans CETTE forme (modèle DeepSeek Harness : le `meta` de présentation est
+// attaché au résultat par l'outil, persisté avec lui, et rejoué tel quel).
+//
+// La charge utile est PERSISTÉE sur la ligne `tool_calls` au moment de
+// l'exécution (`tool_calls.presented`). D'où les plafonds : elle doit rester
+// légère — la sortie complète est déjà dans `tool_output`, la carte n'en garde
+// que ce qu'il faut pour se dessiner.
+
+import { z } from 'zod';
+import { TOOL_CARDS } from './enums';
+import type { ToolCard } from './enums';
+
+/** Plafonds de la charge utile — la carte se dessine, elle n'archive pas. */
+export const CARD_TEXT_MAX = 4000;
+export const CARD_EXCERPT_MAX = 2000;
+export const CARD_LABEL_MAX = 400;
+export const CARD_ITEMS_MAX = 50;
+export const CARD_ROWS_MAX = 50;
+/**
+ * Colonnes d'une table, en-tête compris. Sans ce plafond, une carte restait
+ * bornée en lignes et en caractères par cellule mais pas en LARGEUR : une
+ * feuille qui occupe les 16 384 colonnes d'Excel aurait écrit jusqu'à 819 200
+ * cellules dans `tool_calls.presented` à chaque écriture (revue Codex PR #46,
+ * passe 46). Vingt colonnes : ce qu'un écran montre sans que l'aperçu devienne
+ * une archive ; le reste se dit (« showing 20 of 35 columns »).
+ */
+export const CARD_COLS_MAX = 20;
+export const CARD_CELL_MAX = 200;
+
+const text = (max: number) => z.string().max(max);
+
+/** Une réponse, un accusé (« fait »), ou la RAISON d'un échec — la carte de repli d'un résultat raté. */
+export const TextCardSchema = z.object({
+  card: z.literal('text'),
+  text: text(CARD_TEXT_MAX),
+  /**
+   * Présent et vrai UNIQUEMENT quand ce texte est la raison d'un ÉCHEC posé
+   * sous une carte structurée (`failureText`). Jamais `false` : un succès n'a
+   * pas ce champ. C'est ce discriminant que `presentToolResult` exige pour
+   * admettre un `text` là où une autre carte était déclarée (revue passe 14).
+   */
+  failure: z.literal(true).optional(),
+  /** Le texte a été coupé au plafond — absent quand il est entier. */
+  truncated: z.boolean().optional(),
+});
+
+/** Le contenu d'un document lu : un extrait, et de quoi dire ce qu'on n'a pas montré. */
+export const ReadCardSchema = z.object({
+  card: z.literal('read'),
+  /** Chemin ou nom de la chose lue ; null quand la sortie ne le porte pas. */
+  path: z.string().nullable(),
+  excerpt: text(CARD_EXCERPT_MAX),
+  /** Longueur du contenu lu, en caractères — l'extrait en montre une partie. */
+  chars: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  /** Nombre de lignes, paragraphes ou diapositives, selon la nature du document. */
+  sections: z.number().int().nonnegative().optional(),
+});
+
+/** Des correspondances. */
+export const SearchCardSchema = z.object({
+  card: z.literal('search'),
+  query: text(CARD_LABEL_MAX),
+  hits: z
+    .array(
+      z.object({
+        title: text(CARD_LABEL_MAX),
+        /** URL, chemin, cellule, identifiant — ce qui permet d'y retourner. */
+        ref: text(CARD_LABEL_MAX).optional(),
+        snippet: text(CARD_LABEL_MAX).optional(),
+      }),
+    )
+    .max(CARD_ITEMS_MAX),
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+/**
+ * UNE table — des lignes à colonnes stables. Nommée à part parce que deux
+ * cartes la portent : `table` (une par feuille d'un classeur lu) et l'APERÇU
+ * d'un fichier écrit sur la carte `files` (P12). Une seule forme, donc un seul
+ * rendu : l'écran dessine un aperçu avec le composant qui dessine déjà une
+ * table, au lieu d'un second tableau qui divergerait au premier correctif.
+ */
+export const TableEntrySchema = z.object({
+  name: text(CARD_LABEL_MAX).optional(),
+  columns: z.array(text(CARD_CELL_MAX)).max(CARD_COLS_MAX),
+  /**
+   * `columns` : les colonnes ci-dessus SONT l'en-tête. `unknown` :
+   * personne ne sait si la première ligne est un en-tête (un classeur lu
+   * tel quel) — le rendu ne le devine pas, il le dit ou le demande (P8).
+   */
+  header: z.enum(['columns', 'unknown']),
+  rows: z
+    .array(z.array(z.union([text(CARD_CELL_MAX), z.number(), z.null()])).max(CARD_COLS_MAX))
+    .max(CARD_ROWS_MAX),
+  /** Nombre de lignes réel — `rows` en montre au plus CARD_ROWS_MAX. */
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  /** Au moins une cellule a été coupée au plafond CARD_CELL_MAX. */
+  clipped: z.boolean(),
+  /**
+   * Nombre de colonnes réel — la table en montre au plus CARD_COLS_MAX. Absent
+   * sur les lignes écrites avant ce plafond : l'écran ne dit alors rien de la
+   * largeur, il ne la devine pas.
+   */
+  columnsTotal: z.number().int().nonnegative().optional(),
+});
+
+export type TableEntry = z.infer<typeof TableEntrySchema>;
+
+/** Des fichiers écrits, modifiés ou listés. */
+export const FilesCardSchema = z.object({
+  card: z.literal('files'),
+  files: z
+    .array(
+      z.object({
+        path: text(CARD_LABEL_MAX),
+        action: z.enum(['created', 'modified', 'written', 'listed']),
+        bytes: z.number().int().nonnegative().optional(),
+        /** Ce que l'outil dit de ce fichier (« 3 lignes ajoutées · feuille Data »). */
+        detail: text(CARD_LABEL_MAX).optional(),
+        /**
+         * P12 — ce que le fichier CONTIENT maintenant, quand l'outil le sait :
+         * les premières lignes de la feuille qu'il vient d'écrire. Même forme
+         * qu'une table, donc mêmes plafonds et même rendu. Absent partout où
+         * l'outil n'a pas de tableau à montrer (un `.docx`, une liste de
+         * fichiers) — l'écran ne le fabrique jamais.
+         */
+        preview: TableEntrySchema.optional(),
+        /**
+         * P12 — la clé canonique du livrable que ce fichier EST, exactement
+         * celle sous laquelle `job_deliverable_verification_state` range son
+         * état : la clé du chemin rebasé sur la racine LEXICALE de l'espace
+         * de travail, pas celle du chemin réel (revue Codex PR #46, passe 46 :
+         * sous une jonction, `projectKey(realpath)` ne retrouvait aucune
+         * ligne). Écrite par l'outil, qui seul sait où il a écrit ; l'écran
+         * s'en sert pour retrouver l'état de vérification du document, jamais
+         * pour l'afficher. Absente ⇒ l'écran ne dit rien de la vérification,
+         * il n'en invente pas (invariant #4).
+         */
+        deliverableKey: text(CARD_LABEL_MAX).optional(),
+      }),
+    )
+    .max(CARD_ITEMS_MAX),
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+/** Des lignes à colonnes stables — une ou plusieurs tables (un classeur a des feuilles). */
+export const TableCardSchema = z.object({
+  card: z.literal('table'),
+  tables: z.array(TableEntrySchema).min(1),
+});
+
+/** Une commande, sa sortie, son code de sortie. */
+export const TerminalCardSchema = z.object({
+  card: z.literal('terminal'),
+  command: text(CARD_EXCERPT_MAX),
+  exitCode: z.number().int().nullable(),
+  timedOut: z.boolean(),
+  stdoutTail: text(CARD_EXCERPT_MAX),
+  /** La sortie était plus longue que ce qui est gardé — la fin est là, pas le début. */
+  stdoutTruncated: z.boolean(),
+  stderrTail: text(CARD_EXCERPT_MAX),
+  stderrTruncated: z.boolean(),
+  cwd: text(CARD_LABEL_MAX).optional(),
+});
+
+/** Quelque chose est parti vers un canal. */
+export const SentCardSchema = z.object({
+  card: z.literal('sent'),
+  channel: text(CARD_LABEL_MAX),
+  kind: z.enum(['message', 'file', 'image', 'video', 'audio', 'voice', 'dashboard']),
+  /** Le destinataire tel que l'outil le connaît (chat, salon), s'il le sait. */
+  target: text(CARD_LABEL_MAX).optional(),
+  filename: text(CARD_LABEL_MAX).optional(),
+  bytes: z.number().int().nonnegative().optional(),
+});
+
+/** Un verdict de vérification et ses constats. */
+export const ChecksCardSchema = z.object({
+  card: z.literal('checks'),
+  verdict: z.enum(['pass', 'fail']),
+  summary: text(CARD_TEXT_MAX),
+  items: z
+    .array(
+      z.object({
+        label: text(CARD_LABEL_MAX),
+        ok: z.boolean(),
+        ref: text(CARD_LABEL_MAX).optional(),
+        severity: text(CARD_LABEL_MAX).optional(),
+      }),
+    )
+    .max(CARD_ITEMS_MAX),
+  total: z.number().int().nonnegative(),
+});
+
+/** Un travail confié à un autre agent — Nodal ou CLI de code — et sa réponse. */
+export const DelegationCardSchema = z.object({
+  card: z.literal('delegation'),
+  /** Qui a travaillé : un agent, un fournisseur de CLI. */
+  to: text(CARD_LABEL_MAX),
+  task: text(CARD_EXCERPT_MAX),
+  ok: z.boolean(),
+  resultText: text(CARD_TEXT_MAX).nullable(),
+  error: text(CARD_LABEL_MAX).nullable(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  costUsd: z.number().nullable(),
+  sessionId: text(CARD_LABEL_MAX).nullable().optional(),
+});
+
+/**
+ * Une question posée à l'utilisateur, et — quand elle a été répondue — l'option
+ * choisie (P10a). `ask_user` la déclare : la carte porte donc la question ET sa
+ * réponse, parce que l'écran doit montrer les deux sur la MÊME carte (celle qui
+ * a suspendu le travail et celle qui l'a repris sont un seul appel, rejoué).
+ *
+ * `answer` est le LIBELLÉ de l'option, jamais son index : la ligne d'audit est
+ * relue des mois plus tard, alors que la liste d'options d'alors n'existe plus
+ * nulle part ailleurs. `null` (ou absent) = pas encore répondue.
+ */
+export const QuestionCardSchema = z.object({
+  card: z.literal('question'),
+  prompt: text(CARD_TEXT_MAX),
+  options: z.array(text(CARD_LABEL_MAX)).optional(),
+  answer: text(CARD_LABEL_MAX).nullable().optional(),
+});
+
+/**
+ * La question, ses options et son contexte, tels que la LIGNE les porte —
+ * `approval_requests.tool_input` ou `tool_calls.tool_input`, deux colonnes
+ * `jsonb` dont rien ne garantit la forme à la lecture (P10a).
+ *
+ * Ici, et pas dans chaque lecteur : le runner en a besoin pour composer la
+ * carte du canal, le web pour la page Approvals et pour le fil. Trois copies
+ * de la même lecture auraient divergé au premier correctif — c'est exactement
+ * ce que `tool-card-payload.ts` documente déjà côté web.
+ *
+ * Rend `null` dès qu'un champ manque ou n'a pas le bon type : l'appelant
+ * retombe alors sur un affichage brut, jamais sur une question à moitié lue.
+ */
+export function readQuestionToolInput(
+  toolInput: unknown,
+): { question: string; options: string[]; context: string | null } | null {
+  if (typeof toolInput !== 'object' || toolInput === null) return null;
+  const raw = toolInput as { question?: unknown; options?: unknown; context?: unknown };
+  if (typeof raw.question !== 'string' || raw.question.trim() === '') return null;
+  if (!Array.isArray(raw.options)) return null;
+  const options = raw.options.filter((o): o is string => typeof o === 'string');
+  if (options.length !== raw.options.length || options.length === 0) return null;
+  return {
+    question: raw.question,
+    options,
+    context: typeof raw.context === 'string' && raw.context.trim() !== '' ? raw.context : null,
+  };
+}
+
+/**
+ * Rien de mieux à montrer que l'entrée et la sortie brutes — déjà sur la ligne
+ * (`tool_input`, `tool_output`), donc la charge utile ne les répète pas.
+ */
+export const GenericCardSchema = z.object({
+  card: z.literal('generic'),
+});
+
+export const ToolCardPayloadSchema = z.discriminatedUnion('card', [
+  TextCardSchema,
+  ReadCardSchema,
+  SearchCardSchema,
+  FilesCardSchema,
+  TableCardSchema,
+  TerminalCardSchema,
+  SentCardSchema,
+  ChecksCardSchema,
+  DelegationCardSchema,
+  QuestionCardSchema,
+  GenericCardSchema,
+]);
+
+export type ToolCardPayload = z.infer<typeof ToolCardPayloadSchema>;
+export type CardPayloadFor<C extends ToolCard> = Extract<ToolCardPayload, { card: C }>;
+
+/**
+ * Les cartes dont la charge utile a une STRUCTURE — un outil qui déclare l'une
+ * d'elles doit fournir `present()`. `text` se déduit de n'importe quelle
+ * sortie, `generic` n'a rien à porter.
+ *
+ * `question` en faisait partie tant qu'aucun outil ne la déclarait. `ask_user`
+ * la déclare depuis P10a, et sa charge utile a bien une forme (la question, les
+ * options, la réponse) qu'aucune sortie ne donne toute seule : elle est donc
+ * soumise au contrat comme les autres.
+ */
+export const CARDS_NEEDING_PRESENTER: readonly ToolCard[] = TOOL_CARDS.filter(
+  (c) => c !== 'text' && c !== 'generic',
+);

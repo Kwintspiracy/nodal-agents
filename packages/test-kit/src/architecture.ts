@@ -255,6 +255,176 @@ export function scanForPattern(
 }
 
 /**
+ * La règle d'identité d'un chemin (« lettre de lecteur ⇒ casse repliée ») ne
+ * vit qu'à UN endroit : `packages/shared/src/project-key.ts`.
+ *
+ * Elle a existé en trois copies jusqu'au 03/09 (runner, web, outil de code),
+ * et un désaccord entre elles ne se voyait depuis aucun écran : un projet
+ * masqué dans l'interface restait annoncé aux agents, un verrou d'écriture
+ * posé par l'un n'était pas vu par l'autre. Le plan « Vérifier & Corriger »
+ * fait de cette clé l'identité canonique d'un livrable — une quatrième copie
+ * serait une quatrième vérité.
+ *
+ * L'empreinte cherchée est l'expression de lettre de lecteur SUIVIE d'un
+ * slash (`[a-z]:\/`), avec ou sans majuscules dans la classe : c'est ce qui
+ * distingue une règle d'identité de chemin d'un test de racine de disque
+ * (`[a-z]:$`, légitime dans `isDriveRoot`). Le fichier source de la règle est
+ * passé en `skipFiles` par le package qui l'héberge ; ailleurs, rien n'est
+ * permis.
+ */
+export function scanForProjectKeyCopies(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: /\[(?:a-z|A-Z|a-zA-Z|A-Za-z)\]:\\\//,
+    rule: 'project-key-copy',
+  });
+}
+
+/**
+ * Une surface qui MUTE le disque doit passer par le seam d'intention.
+ *
+ * Le plan « Vérifier & Corriger » tient sur une promesse : au moment où un
+ * livrable est prouvé, tout ce qui l'a changé est connu. Cette promesse ne
+ * tient pas par discipline. Elle tient parce qu'il n'existe qu'UN endroit où
+ * un enfant qui écrit est lancé — `executeTool` pour les outils, le helper
+ * d'intention pour le runtime CLI — et parce qu'un `spawn(` recopié ailleurs
+ * est refusé mécaniquement plutôt que remarqué en review.
+ *
+ * Ce que la règle attrape est précis : une NOUVELLE façon d'écrire sur le
+ * disque, ajoutée à côté de celles qui posent l'intention. Un tel ajout ne
+ * casse rien, ne fait rougir aucun test de comportement, et rend simplement
+ * une partie du travail invisible à la vérification — le pire mode de panne
+ * du plan, puisqu'il produit un verdict vert sur un livrable non prouvé.
+ *
+ * Le `pattern` est un paramètre, jamais une constante : les deux applications
+ * cherchent des empreintes différentes (`/\bspawn\(/` dans `packages/tools`,
+ * `/binding\.run\(/` dans `apps/runner`), et une règle par package aurait
+ * redonné deux copies à faire diverger. Les fichiers qui HÉBERGENT le lanceur
+ * légitime sont passés en `skipFiles` par le package qui les porte : la liste
+ * est courte, nommée, et sa longueur est ce qu'on surveille.
+ *
+ * Rappel utile au lecteur : `skipFiles` épargne un FICHIER, pas un
+ * comportement. Retirer l'appel au helper d'intention dans un fichier épargné
+ * ne fait pas rougir cette règle — c'est le test de câblage du package qui
+ * s'en charge, et les deux gardes sont complémentaires par construction.
+ */
+export function scanForMutatingSpawnOutsideIntent(opts: ScanOptions, pattern: RegExp): Violation[] {
+  return scanForPattern(opts, { pattern, rule: 'mutating-spawn-outside-intent' });
+}
+
+/**
+ * Le scanner MULTILIGNE — pour les motifs qu'un appel Drizzle étale sur
+ * plusieurs lignes (`.update(agentJobs)\n  .set({\n    status: …`). Le scanner
+ * ligne par ligne ci-dessus les rate par construction.
+ *
+ * La ligne rapportée est celle où le motif COMMENCE ; le texte, sa première
+ * ligne. Le motif est passé en paramètre comme pour les autres scanners : une
+ * règle = un motif nommé, jamais une constante enfouie ici.
+ */
+export function scanForMultilinePattern(
+  opts: ScanOptions,
+  spec: { pattern: RegExp; rule: string },
+): Violation[] {
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
+    (f) => !isSkipped(f, opts.skipFiles ?? []),
+  );
+  const flags = spec.pattern.flags.includes('g') ? spec.pattern.flags : `${spec.pattern.flags}g`;
+  const out: Violation[] = [];
+  for (const file of files) {
+    const src = readFileSync(file, 'utf-8');
+    for (const m of src.matchAll(new RegExp(spec.pattern.source, flags))) {
+      const line = src.slice(0, m.index ?? 0).split('\n').length;
+      out.push({
+        file,
+        line,
+        text: (m[0].split('\n')[0] ?? '').trim().slice(0, 120),
+        rule: spec.rule,
+      });
+    }
+  }
+  return out;
+}
+
+// ─── Plan « Vérifier & Corriger » : une seule porte terminale, une seule sortie ──
+
+/**
+ * Une écriture DIRECTE du statut terminal de succès sur `agent_jobs`.
+ *
+ * La primitive terminale (`apps/runner/src/job/finalize.ts`) est la seule
+ * porte par laquelle un job finit en succès : c'est elle qui calcule et
+ * journalise la décision de vérification et commet l'intention de livrer
+ * avec le statut. Un `.update(agentJobs)` qui pose `status: 'completed'` (ou
+ * un statut porté par une variable) ailleurs contourne tout cela sans faire
+ * rougir un seul test de comportement.
+ *
+ * Les seuls fichiers légitimes sont passés en `skipFiles` par l'appelant : la
+ * primitive, et l'écriture interne qu'elle appelle (`completeJob`, dans
+ * state.ts) — dont la règle compagne `scanForCompleteJobCallers` garantit
+ * qu'elle n'a AUCUN autre appelant.
+ */
+export const DIRECT_TERMINAL_COMPLETED_PATTERN =
+  /\.update\(agentJobs\)[\s\S]{0,400}?status:\s*(?:'completed'|rootStatus|[a-zA-Z]+Status)/;
+
+export function scanForDirectTerminalCompleted(opts: ScanOptions): Violation[] {
+  return scanForMultilinePattern(opts, {
+    pattern: DIRECT_TERMINAL_COMPLETED_PATTERN,
+    rule: 'no-direct-terminal-completed',
+  });
+}
+
+/** Un appel à `completeJob(` — l'écriture interne de la primitive, qui n'a pas d'autre appelant. */
+export function scanForCompleteJobCallers(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: /\bcompleteJob\(/,
+    rule: 'no-complete-job-caller-outside-primitive',
+  });
+}
+
+/**
+ * Un envoi de canal. Le résultat TERMINAL d'un job ne part que par l'outbox
+ * (`delivery/outbox.ts`) — réclamé, borné, repris. Les envois NON terminaux
+ * (une demande d'approbation, une transition de l'onglet Code, un
+ * rappel de cron, le poller) sont passés en `skipFiles` par l'appelant :
+ * une allowlist EXPLICITE et courte, dont la longueur est ce qu'on surveille.
+ */
+export const TERMINAL_SEND_PATTERN =
+  /\.sendText\(|\.sendMedia\(|getAdapter\(|sendTelegramMessage\(/;
+
+export function scanForTerminalSendOutsideOutbox(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    pattern: TERMINAL_SEND_PATTERN,
+    rule: 'no-terminal-send-outside-outbox',
+  });
+}
+
+/**
+ * Un littéral de type de livrable dans un fichier qui n'a pas le droit d'en
+ * connaître : la primitive terminale n'appelle que le registre des
+ * vérificateurs. Le seul fichier autorisé à porter `'code_project'` est le
+ * vérificateur qui le sert.
+ */
+export const DELIVERABLE_TYPE_LITERAL_PATTERN =
+  /'(?:code_project|office_file|document|outbound_action|other)'/;
+
+export function scanFilesForDeliverableTypeLiterals(files: readonly string[]): Violation[] {
+  const out: Violation[] = [];
+  for (const file of files) {
+    readFileSync(file, 'utf-8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (DELIVERABLE_TYPE_LITERAL_PATTERN.test(line)) {
+          out.push({
+            file,
+            line: i + 1,
+            text: line.trim().slice(0, 120),
+            rule: 'primitive-mentions-no-deliverable-type',
+          });
+        }
+      });
+  }
+  return out;
+}
+
+/**
  * Every source file of the package, concatenated.
  *
  * For the rare assertion that is POSITIVE — "this adapter must import the

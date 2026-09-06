@@ -37,6 +37,7 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'situation; never copy a generic example. The user sees this reason verbatim.',
   inputSchema: ReturnResultInputSchema,
   riskLevel: 'write',
+  card: 'text',
   execute: async (input, _ctx) => {
     // return_result is structural — execution is a pass-through.
     // The runner reads the output to update job status.

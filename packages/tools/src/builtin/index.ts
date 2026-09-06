@@ -3,6 +3,8 @@
 
 import type { ToolRegistry } from '../types';
 import { returnResultTool } from './return-result';
+import { askUserTool } from './ask-user';
+import { registerProjectTool } from './register-project';
 import { saveMemoryTool } from './save-memory';
 import { queryMemoryTool } from './query-memory';
 import { searchHistoryTool } from './search-history';
@@ -29,6 +31,10 @@ import { listModelsTool } from './list-models';
 import { listSchedulesTool } from './list-schedules';
 
 export { returnResultTool } from './return-result';
+export { askUserTool, AskUserInputSchema } from './ask-user';
+export { registerProjectTool, RegisterProjectInputSchema } from './register-project';
+export type { RegisterProjectInput, RegisterProjectOutput } from './register-project';
+export type { AskUserInput, AskUserOutput } from './ask-user';
 export { skillViewTool } from './skill-view';
 export { listModelsTool } from './list-models';
 export { listSchedulesTool } from './list-schedules';
@@ -105,7 +111,24 @@ export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
-export { buildChildEnv } from './child-env';
+export { buildChildEnv, safeEnvAllowlistSnapshot } from './child-env';
+export {
+  runShellCommand,
+  runCommandSequence,
+  killProcessTree,
+  isGreen,
+  SHELL_POLICY_VERSION,
+  DEFAULT_MAX_OUTPUT_CHARS,
+} from './shell-engine';
+export type {
+  CommandOutcome,
+  CommandRunResult,
+  CommandSpec,
+  CommandTarget,
+  SequenceResult,
+  SequenceStepResult,
+  SequenceOptions,
+} from './shell-engine';
 
 /**
  * Register all built-in tools into the given registry.
@@ -118,6 +141,8 @@ export { buildChildEnv } from './child-env';
  */
 export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(returnResultTool);
+  registry.register(askUserTool);
+  registry.register(registerProjectTool);
   registry.register(skillViewTool);
   registry.register(listModelsTool);
   registry.register(listSchedulesTool);
@@ -182,6 +207,17 @@ export function registerBuiltins(registry: ToolRegistry): void {
  */
 export const ALWAYS_ON_TOOLS = [
   'return_result',
+  // ask_user — TOUJOURS disponible, sans skill ni toggle. C'est la leçon de
+  // l'incident de confabulation (11-12/07) : un agent qui ne peut pas demander
+  // invente. Le rendre optionnel reviendrait à laisser un agent sans ce recours
+  // par simple oubli de configuration, et ce qu'il produirait alors serait
+  // indiscernable d'une réponse fondée.
+  'ask_user',
+  // register_project — TOUJOURS disponible, pour la même raison qu'`ask_user` :
+  // c'est la seconde moitié d'un seul geste (P10b). Un agent qui peut demander
+  // « où ranger ce rapport ? » mais pas créer le projet que l'utilisateur vient
+  // de choisir n'aurait plus qu'à écrire quelque part au hasard.
+  'register_project',
   'skill_view',
   'list_models',
   'list_schedules',
@@ -232,6 +268,8 @@ export const UNBLOCKABLE_TOOLS: Readonly<Record<string, string>> = {
  */
 export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: string }> = [
   { name: returnResultTool.name, description: returnResultTool.description },
+  { name: askUserTool.name, description: askUserTool.description },
+  { name: registerProjectTool.name, description: registerProjectTool.description },
   { name: skillViewTool.name, description: skillViewTool.description },
   { name: listModelsTool.name, description: listModelsTool.description },
   { name: listSchedulesTool.name, description: listSchedulesTool.description },

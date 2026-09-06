@@ -12,6 +12,8 @@ import {
   scanForAgentSlugs,
   scanForHardcodedUuids,
   scanForDbDriverImports,
+  scanForProjectKeyCopies,
+  scanForDirectTerminalCompleted,
   assertNoViolations,
 } from '@nodal-agents/test-kit';
 
@@ -28,6 +30,14 @@ describe('architecture invariants', () => {
 
   it('does not import a database driver (only packages/db may)', () => {
     assertNoViolations('driver DB', scanForDbDriverImports({ srcDir }));
+  });
+
+  it('does not re-implement projectKey — the path identity rule lives in @nodal-agents/shared', () => {
+    assertNoViolations('copie de projectKey', scanForProjectKeyCopies({ srcDir }));
+  });
+
+  it('never writes status=completed on agent_jobs — the runner primitive is the only terminal door (V&C T13)', () => {
+    assertNoViolations('écriture terminale directe', scanForDirectTerminalCompleted({ srcDir }));
   });
 
   // Invariant #2 is deliberately NOT asserted here. It governs the RUNNER —

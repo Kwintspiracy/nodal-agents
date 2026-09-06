@@ -22,6 +22,8 @@ import {
   recordCliRun,
   assertRuntimeSessionKey,
   SHARED_WORKSPACE_LABEL,
+  writeMutationIntent,
+  attachProductionToProject,
 } from '@nodal-agents/tools';
 import { resolveWorkspaceList, ensureSharedWorkspace } from '../lib/workspace-list.ts';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
@@ -32,6 +34,7 @@ import { probeWorkspaceGit } from '../lib/workspace-git.ts';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 import { buildCliRuntimeJobContext } from './run-job.ts';
+import { loadConversationContext } from '../job/conversation-id.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
 
 const RUNTIME_CHAT_TIMEOUT_MS = 600_000;
@@ -178,9 +181,38 @@ export async function runCliRuntimeChatTurn(args: {
   //
   // Sous le MÊME filet que le tour — voir run-job.ts : une panne passagère ici
   // laissait les dossiers verrouillés une demi-heure pour tout le monde.
+  //
+  // ── L'intention de mutation, LE JUMEAU du chemin job (T17) — nommé parce
+  // qu'il a déjà été oublié une revue entière (voir workspace-locks.ts). Un
+  // tour de chat n'a PAS de jobId, et la ligne d'état a une FK NOT NULL vers
+  // agent_jobs : le helper rend `skipped` (no_job_context) et le DIT par un
+  // code — le site d'appel existe (dans le try ci-dessous), le silence est
+  // nommé, l'écran le dit dans sa branche chat (T24). Un `failed` (entité
+  // vide) interdit le spawn, comme sur le chemin job.
   let systemPrompt: string;
   try {
+    if (mode === 'write') {
+      const intent = await writeMutationIntent(
+        { db, entityId, jobId: null, workspaces: wsRows },
+        {
+          surface: 'cliRuntime',
+          // Un harnais de code travaille sur le PROJET (v7-A).
+          targets: wsRows.map((w) => ({
+            kind: 'dir' as const,
+            path: w.path,
+            deliverableType: 'code_project' as const,
+          })),
+        },
+      );
+      if (intent.kind === 'failed') {
+        throw new Error(`verification_intent_failed:${intent.code}`);
+      }
+    }
+
     const workspaceGit = await probeWorkspaceGit(cwd);
+    // Le fil et son projet courant (P6) — même bloc `## Conversation` que sur le
+    // chemin job : une session CLI de chat est une conversation comme une autre.
+    const conversation = await loadConversationContext(db, conversationId, { task: message });
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,
@@ -189,6 +221,7 @@ export async function runCliRuntimeChatTurn(args: {
         task: message,
         workspaceGit,
         workspaces: wsRows,
+        ...(conversation ? { conversation } : {}),
       }),
     );
   } catch (err) {
@@ -276,6 +309,29 @@ export async function runCliRuntimeChatTurn(args: {
         ? 'subscription_limit_reached'
         : `cli_runtime_error: ${(turn.errorDetail ?? 'no final text').slice(0, 200)}`,
     };
+  }
+
+  // ── Le REGISTRE des projets (P5), APRÈS un tour réussi — le JUMEAU du chemin
+  // job (run-job.ts). Un tour de chat n'a pas de jobId, et la colonne de
+  // rattachement vit sur agent_jobs : c'est la CONVERSATION qui porte le projet
+  // ici (P6), et elle suffit. L'issue est `{ job: 'no_job', conversation: 'set' }`.
+  // Après le tour, pas avant (revue Codex passe 27) : un tour en erreur n'a rien
+  // produit, et le projet courant du fil ne doit pas bouger pour lui.
+  // Cibles = les DOSSIERS attachés, pas les fichiers écrits (contrairement à
+  // run-job.ts, P5b) : sans job, les lignes `cli:*` de l'audit n'ont pas de
+  // `job_id`, et rien ne dit lesquelles sont celles de CE tour. Un tour de
+  // chat ne DÉCLARE donc jamais de projet (seules les cibles fichier
+  // déclarent — revue Codex, passe 32) ; il se rattache à un projet déjà
+  // déclaré, et un dossier à manifeste attend un tour de JOB pour l'être.
+  if (mode === 'write') {
+    await attachProductionToProject(
+      { db, entityId, jobId: null, conversationId, agentId: agentRow.id, workspaces: wsRows },
+      wsRows.map((w) => ({
+        kind: 'dir' as const,
+        path: w.path,
+        deliverableType: 'code_project' as const,
+      })),
+    );
   }
 
   await db.insert(chatMessages).values({

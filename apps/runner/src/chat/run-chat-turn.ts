@@ -25,6 +25,7 @@ import {
   loadInlineDelegationLedger,
   formatInlineDelegationLines,
 } from '../job/task-ledger.ts';
+import { loadConversationContext } from '../job/conversation-id.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -243,11 +244,29 @@ export async function runChatTurn(opts: {
 
   // 1a. Verify the conversation belongs to this entity (the sidebar entry).
   const [conv] = await db
-    .select({ id: conversations.id, title: conversations.title })
+    .select({
+      id: conversations.id,
+      title: conversations.title,
+      // L'agent DU fil : un tour ne s'écrit que dans la conversation de son
+      // propre agent (revue Codex, passe 29).
+      agentId: conversations.agentId,
+      // Le projet courant du fil (P6) : il suit le job qu'une escalade `run_task`
+      // crée, pour que le travail naisse déjà dans le bon dossier.
+      currentProjectId: conversations.currentProjectId,
+    })
     .from(conversations)
     .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
     .limit(1);
   if (!conv) return { ok: false, error: 'conversation_not_found' };
+
+  // 1a-bis. L'agent demandé DOIT être celui de la conversation.
+  //
+  // Vérifier l'entité ne suffisait pas : l'appelant web résolvait le ROOT
+  // COURANT, si bien qu'après un changement de ROOT, répondre dans l'ancien
+  // fil de A écrivait des messages de B et exécutait B avec l'historique de A.
+  // L'appelant est corrigé, mais la garde vit ICI aussi — et AVANT le moindre
+  // insert : un tour mal adressé ne doit laisser aucune trace (invariant #4).
+  if (conv.agentId !== agentId) return { ok: false, error: 'conversation_agent_mismatch' };
 
   // 1b. Persist the user turn IMMEDIATELY — before the (slower) LLM resolution +
   // system-prompt build — so it's visible the instant the user navigates back to
@@ -329,11 +348,16 @@ export async function runChatTurn(opts: {
   // 3. System prompt — memory is AUTO-INJECTED here (recall is free). The
   //    origin:'dashboard' job-context steers the agent to reply in plain text.
   const deployment = await getDeploymentContext(db, entityId);
+  // Le fil et son projet courant (P6). Chargé APRÈS l'insert du tour utilisateur
+  // (1b ci-dessus) — d'où le « moins un » dans le compte des tours précédents,
+  // qui vit dans `loadConversationContext`.
+  const conversation = await loadConversationContext(db, conversationId, { task: message });
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: 'dashboard',
     surface: 'chat',
     task: message,
     deployment,
+    ...(conversation ? { conversation } : {}),
   });
 
   // 4. Load recent history of THIS conversation (most recent N, chronological).
@@ -490,6 +514,10 @@ export async function runChatTurn(opts: {
         // real conversation entity (the dashboard sidebar thread) — stamp
         // that id directly rather than re-deriving it from a gap heuristic.
         conversationId,
+        // Le projet courant du fil (P6) : le travail escaladé naît dans le
+        // dossier où cette conversation travaille, sans attendre qu'une
+        // écriture l'y rattache.
+        projectId: conv.currentProjectId,
         messages: [{ role: 'user', content: workerContent }],
       })
       .returning({ id: agentJobs.id });

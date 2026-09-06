@@ -351,8 +351,9 @@
 <div class="wrap">
   <h1>Backlog vivant</h1>
   <p class="stamp">
-    Nodal-Agents · mis à jour le 29/08/2026 · une PR par chantier, remis à jour à chaque session ·
-    cap : <b>profils d'agents (Dev team V1)</b>
+    Nodal-Agents · mis à jour le 05/09/2026 · une PR par chantier, remis à jour à chaque session ·
+    cap :
+    <b>merger la #45 puis la #46, publier la 0.8.9, développer v7 « vérifier sans configurer »</b>
   </p>
 
   <h2>Plus aucun P0</h2>
@@ -374,13 +375,34 @@
     <span class="step">0.8.7 publiée + taguée</span><span class="arrow">→</span>
     <span class="step">#40 secrets au repos · mergée</span><span class="arrow">→</span>
     <span class="step">0.8.8 publiée</span><span class="arrow">→</span>
-    <span class="step next">Profils d'agents · prochain</span>
+    <span class="step">#44 CI 18 min → 1 min · mergée</span><span class="arrow">→</span>
+    <span class="step next">#45 Profils d'agents · CI verte, revue close · ATTEND LE MERGE</span
+    ><span class="arrow">→</span>
+    <span class="step">0.8.9 · fix connexion LAN</span>
   </div>
   <p class="pipenote">
-    <b>Rien n'est ouvert.</b> <code>main</code> est propre sur <code>ac014bd7</code>, zéro PR
-    ouverte, zéro issue, <code>0.8.7</code> est <code>latest</code> sur npm (les
-    <code>0.8.0</code> / <code>0.8.1</code> cassées sont dépréciées), tag
-    <code>v0.8.7</code> poussé. La stack tourne en local, tous services sains.
+    <b
+      >Une PR ouverte : <a href="https://github.com/Kwintspiracy/nodal-agents/pull/45">#45</a>, les
+      profils d'agents</b
+    >
+    — plan et bilan des revues dans
+    <a href="https://claude.ai/code/artifact/6bd5e3c9-4fdd-4704-b34a-ec600a9f3d15"
+      >Recettes d'agents</a
+    >. Neuf passes Codex, la dernière sans constat ; six constats pris (création + profil en une
+    transaction, skills système hors du premier workspace, slug libre pour un second agent,
+    catalogue hors du bundle client), un refusé et documenté (recettes en base). Trois correctifs
+    ont suivi la 9<sup>e</sup> passe : la maquette Figma appliquée (« Create New Agent »), read-only
+    requalifié en règle d'autonomie, et le rollback explicite sur slug déjà pris. Elle embarque
+    aussi le fix de la <b>connexion LAN en 500 depuis #38</b> → 0.8.9 à publier après merge.
+  </p>
+  <p class="pipenote">
+    <b>Rien d'autre n'est ouvert.</b> Les cinq checks CI sont verts sur <code>2551cf5e</code>, le
+    dernier commit de la branche — <code>ci</code>, <code>ci-windows</code>,
+    <code>pack-smoke</code>, <code>e2e-smoke</code>, snyk — et la PR est <code>MERGEABLE</code>.
+    <code>main</code> est sur <code>4bb9b6c4</code>, zéro issue, <code>0.8.8</code> est
+    <code>latest</code> sur npm (les <code>0.8.0</code> / <code>0.8.1</code> cassées sont
+    dépréciées), tag <code>v0.8.8</code> poussé.
+    <b>Le seul geste qui manque est le tien : merger.</b>
   </p>
   <p class="pipenote">
     La
@@ -495,31 +517,110 @@
 
   <div class="card next">
     <h3>
-      <span class="num">②</span> Profils d'agents + onboarding guidé
-      <span class="pill amber">PROCHAIN</span> <span class="pill wait">maquettes d'abord</span>
+      <span class="num">②</span> PR #45 — profils d'agents
+      <span class="pill amber">ATTEND LE MERGE</span>
       <span class="pill plain size">la plus grosse</span>
     </h3>
     <p>
-      V1 = UN profil poli de bout en bout : <b>Dev team</b> (lead + développeur + reviewer, bons
-      tools/skills — dont le skill dev de la ①) créé en un geste après 3-5 questions (MCP ? codeur
-      CLI-abonnement ou clé API ? modèle ?). Respecte « le produit ne shippe jamais d'agents » : on
-      shippe des RECETTES (blueprints déclaratifs, <code>packages/catalog/src/profiles/</code>),
-      rien n'existe avant le clic, tout passe par les actions serveur existantes. Maquettes, puis
-      build, puis E2E install vide → premier message au lead → délégation → review.
+      <b>Construite, relue, verte.</b> Un agent à la fois, jamais une équipe livrée clés en main —
+      la v1 du plan proposait de créer trois agents d'un coup, elle a été refaite. Ce qui est livré
+      : l'écran « Create New Agent » sur la maquette Figma (une colonne, cartes radio, compteurs
+      réels), des <b>recettes</b> (blueprints déclaratifs dans <code>packages/catalog</code>) qui
+      pré-remplissent le formulaire existant — rien n'existe en base avant le clic, tout reste
+      modifiable. Les recettes <i>recommandent</i> des connecteurs sans les imposer, et « read-only
+      » est une règle d'autonomie, pas un outil.
+    </p>
+    <p>
+      Création et profil forment <b>une seule transaction</b> : un premier orchestrateur qui échoue
+      laisse l'espace intact, un slug déjà pris annule et répond « conflit ». Elle embarque le fix
+      de la connexion LAN en 500.
+    </p>
+  </div>
+
+  <div class="card next">
+    <h3>
+      <span class="num">③</span> Vérifier &amp; Corriger — la loop de vérification
+      <span class="pill amber">PR① + v7-A + DÉCOUVERTE · PR #46 · 10 PASSES CODEX</span>
+      <span class="pill plain size">la plus grosse</span>
+    </h3>
+    <p>
+      <b>PR① est codée, relue et verte</b> (<code>feat/verifier-corriger-pr1</code>, PR #46) : 24
+      tickets, 10 passes <code>codex review</code>, CI verte. Quatre bugs existants fermés au
+      passage. <b>La première brique de v7 est livrée le 05/09</b> : chaque outil déclare CE QU'IL
+      PRODUIT, un tableur écrit dans un dépôt ne relance plus les tests du dépôt, et un outil qui ne
+      déclare rien est refusé plutôt que rangé « en code » par défaut. La passe 5 a trouvé deux
+      vrais défauts dans cette brique (le repli du seam, l'ordre des verrous déduit du type) : les
+      deux sont fermés. <b>Et l'écran ne demande plus de commandes : il les propose</b>, lues dans
+      le projet, avec ce que chacune lance vraiment — c'est le second défaut que Quentin a heurté,
+      fermé le 05/09. <b>L'essai à l'écran avait montré le vrai trou</b>, et il change l'ordre du
+      reste : la vérification exigeait d'être <b>configurée à l'avance sur un écran</b>, alors
+      qu'une tâche arrive le plus souvent par Telegram, sans écran ni moment pour cocher quoi que ce
+      soit. D'où <b>v7 « vérifier sans configurer »</b>, remontée devant tous les autres lots : le
+      type de livrable se déduit de ce qui est produit ; tout ce qui se vérifie
+      <b>sans exécuter de code du dépôt</b> (un tableur s'ouvre et recalcule, un message est bien
+      arrivé) tourne toujours, sans réglage ; les commandes d'un projet sont découvertes et
+      approuvées <b>dans le canal d'où vient la demande</b> ; et les exigences de la demande
+      deviennent des critères vérifiables. Détail et découpage en quatre PR dans le
+      <a href="https://claude.ai/code/artifact/8744ad8c-e7ec-455a-8ae7-4ca25d826ede">plan</a>, § v7
+      ; la version lisible est le
+      <a href="https://claude.ai/code/artifact/ac38d18a-f4d7-4748-8623-4de71cbed939"
+        >point d'arrêt</a
+      >. Le code devient le premier <b>vérificateur</b> : Nodal lance lui-même les commandes de
+      preuve du projet après le travail d'un agent, et un agent ne peut plus dire « fini » si c'est
+      rouge. Test rouge → une réparation, pas plus ; encore rouge → « bloqué », avec l'extrait
+      d'erreur. Le
+      <a href="https://claude.ai/code/artifact/8744ad8c-e7ec-455a-8ae7-4ca25d826ede">plan v6</a>
+      = la v4 (six passes Codex, D1-D4 tranchées) + v5 (commandes graduées, extrait d'erreur
+      lisible, semaine d'observation) + v6 du 03/09, six papiers lus :
+      <b>ça vaut pour tous les livrables</b>, pas seulement le code (état par livrable, règles
+      déclarées vérifiées par la machine, relecture après écriture sur les connecteurs), et
+      <b>tu définis tes relecteurs</b> : 0 à 3 par type de tâche, familles de modèles distinctes, en
+      parallèle une fois chacun, verdict fondé sur des citations. D5-D7 tranchées le 03/09. Puis
+      <b>cinq passes Codex sur le plan</b> (7 à 11) : 14 bloquants fermés — dont
+      <b>un bug qui existe aujourd'hui</b> : un crash entre « job terminé » et l'envoi au canal perd
+      le résultat à jamais ; fermé par une outbox de livraison qui entre en PR①. Boucle sur plan
+      close.
+    </p>
+    <p>
+      Séquence : PR① fondations (faite) → <b>v7-A le type de livrable vient de l'outil (faite)</b> →
+      <b>v7-C découverte des commandes (faite)</b> → v7-C approbation dans le canal d'origine → v7-B
+      vérifier un document et un envoi, sans pouvoir → v7-D les critères tirés de la demande →
+      observation → garde active → runtime CLI → revue bornée. Puis, même famille : les écritures
+      qui s'écrasent (read-before-write).
     </p>
   </div>
 
   <div class="card">
     <h3>
-      <span class="num">③</span> Release 0.8.7 <span class="pill ok">PUBLIÉE 27/08</span>
+      <span class="num">④</span> Le lanceur ne tue plus un service sain
+      <span class="pill wait">ATTEND TON GO</span>
+      <span class="pill plain size">petite</span>
+    </h3>
+    <p>
+      Diagnostiqué le 02/09 : un runner <b>figé</b> au boot (5 min sans une ligne — HDD à plateaux +
+      antivirus, pas une lenteur : il boote en 13 s quand il boote) fait timeouter le lanceur, qui
+      détruit alors <b>aussi</b> le web et Postgres qui allaient bien, puis envoie l'utilisateur sur
+      une fausse piste. Fix : relancer le seul service figé (détecté en 30 s par un log vide),
+      garder le reste debout, et dire la vraie cause probable. Test de régression : web sain +
+      runner muet ⇒ le web survit.
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>
+      <span class="num">⑤</span> Release 0.8.9 <span class="pill amber">APRÈS LE MERGE</span>
       <span class="pill plain size">rituel connu</span>
     </h3>
     <p>
-      Sortie en <code>0.8.7</code> et non <code>0.8.65</code> — en semver, <code>0.8.65</code> est
-      <i>inférieure</i> à <code>0.8.7</code>. Publiée, taguée <code>v0.8.7</code>,
-      <code>latest</code> sur npm. Le rituel est devenu <b>une commande</b>,
-      <code>pnpm release:check</code> : 12 contrôles, ~20 min, échoue fort. <b>Attention</b> : elle
-      VIDE <code>pack/</code> — jamais après un « publie ».
+      <code>0.8.8</code> est <code>latest</code> sur npm et taguée. La <code>0.8.9</code> suit le
+      merge de la #45 : elle porte le fix de la
+      <b>connexion au dashboard qui répondait 500 en mode LAN</b> depuis la #38 — la seule raison de
+      ne pas attendre la prochaine grosse feature.
+    </p>
+    <p>
+      Le rituel est devenu <b>une commande</b>, <code>pnpm release:check</code> : 12 contrôles, ~20
+      min, échoue fort. <b>Attention</b> : elle VIDE <code>pack/</code> — jamais après un « publie
+      ». Et publier reste ton geste, jamais le mien.
     </p>
   </div>
 
@@ -740,12 +841,6 @@
         <td>
           Snapshot du corps de requête LLM par appel → rejouer/déboguer un run raté, snapshot tests
           sans clé
-        </td>
-      </tr>
-      <tr>
-        <td>Runtime Codex (E-bis)</td>
-        <td>
-          Un agent qui tourne sous l'abonnement Codex — infra prête, manque le tour d'exécution
         </td>
       </tr>
       <tr>

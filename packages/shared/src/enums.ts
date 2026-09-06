@@ -32,6 +32,26 @@ export const JOB_STATUSES = [
 export const JobStatusSchema = z.enum(JOB_STATUSES);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
+/**
+ * Les statuts dont un job ne ressort pas. Une ligne qui en porte un ne doit
+ * plus être écrite : ni finalisée une seconde fois, ni salie par une intention
+ * de mutation arrivée après coup.
+ *
+ * Vivait en TROIS copies identiques — `apps/runner/src/job/state.ts`,
+ * `TERMINAL_ROOT_STATUSES` (cron/deliver-results.ts) et
+ * `TERMINAL_JOB_STATUSES` (cron/reset-orphans.ts). `packages/tools` ne peut
+ * pas importer le runner : le helper d'intention en aurait fait une
+ * quatrième. La liste vit donc ici, avec l'enum dont elle est un
+ * sous-ensemble, et les trois copies du runner sont à retirer quand ce paquet
+ * pourra être touché.
+ */
+export const TERMINAL_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled'];
+
+/** Ce statut, lu en base (donc `string`), est-il terminal ? */
+export function isTerminalJobStatus(status: string): boolean {
+  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
 // agent_tasks.status CHECK constraint
 export const TASK_STATUSES = ['todo', 'in_progress', 'done', 'cancelled', 'blocked'] as const;
 export const TaskStatusSchema = z.enum(TASK_STATUSES);
@@ -113,6 +133,37 @@ export type EntityIndustry = z.infer<typeof EntityIndustrySchema>;
 export const OPERATION_RISK_LEVELS = ['read', 'write', 'destructive'] as const;
 export const OperationRiskLevelSchema = z.enum(OPERATION_RISK_LEVELS);
 export type OperationRiskLevel = z.infer<typeof OperationRiskLevelSchema>;
+
+// La CARTE d'un outil : comment son résultat se montre à l'écran (plan « De la
+// maquette au produit », P1). L'outil la déclare ; l'écran dispatche dessus,
+// jamais sur le nom de l'outil. Vocabulaire FERMÉ, emprunté à DeepSeek Harness
+// (generic/terminal/diff/read/search/web) et étendu à ce que Nodal produit :
+//   text       — une réponse à lire (mémoire, résultat final, réglage écrit)
+//   read       — le contenu d'un fichier, tel que lu
+//   search     — des résultats de recherche (web, fichiers, historique)
+//   files      — des fichiers écrits ou listés, avec leurs diffs
+//   table      — des lignes et colonnes (cellules, enregistrements)
+//   terminal   — la sortie d'une commande
+//   sent       — quelque chose qui est parti vers un canal ou un service
+//   checks     — une liste de contrôles avec verdict (preuve, relecture)
+//   question   — une question posée à l'utilisateur, avec ses options
+//   delegation — un travail confié à un autre agent
+//   generic    — rien de mieux connu : l'entrée et la sortie brutes, dites telles quelles
+export const TOOL_CARDS = [
+  'text',
+  'read',
+  'search',
+  'files',
+  'table',
+  'terminal',
+  'sent',
+  'checks',
+  'question',
+  'delegation',
+  'generic',
+] as const;
+export const ToolCardSchema = z.enum(TOOL_CARDS);
+export type ToolCard = z.infer<typeof ToolCardSchema>;
 
 // mcp_servers.transport CHECK constraint
 export const MCP_TRANSPORTS = ['http', 'stdio'] as const;

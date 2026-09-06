@@ -1903,31 +1903,6 @@ describe('listDelegationRunsAction', () => {
   });
 });
 
-describe('getChatJobStatusAction', () => {
-  it('scopes the children-by-parentJobId query to the session entity (alignment with getJobDetailAction)', async () => {
-    currentDb = makeDb([
-      {
-        status: 'completed',
-        result: 'done',
-        agentName: 'Worker',
-        agentSlug: 'worker',
-      },
-    ]) as typeof currentDb;
-    const { getChatJobStatusAction } = await import('../src/lib/actions.ts');
-    const r = await getChatJobStatusAction('cccccccc-0000-0000-0000-000000000009');
-    expect(r.ok).toBe(true);
-
-    // Same shared-chain trick: [0] is the job-by-id query, [1] is the
-    // children-by-parentJobId query this fix scopes.
-    const selectSpy = (currentDb as unknown as { select: ReturnType<typeof vi.fn> }).select;
-    const chainObj = selectSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
-    const childrenWhereArg = chainObj.where.mock.calls[1]?.[0];
-    const serialized = serializeSqlCondition(childrenWhereArg);
-    expect(serialized).toContain('"name":"entity_id"');
-    expect(serialized).toContain(LOCAL_ENTITY_ID);
-  });
-});
-
 // ─── Telegram actions ─────────────────────────────────────────────────────────
 
 describe('getAgentTelegramConfigAction', () => {
@@ -4296,20 +4271,58 @@ describe('sendChatMessageAction', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('fails (no runner call) when no ROOT agent is designated', async () => {
-    currentDb = makeDbMixed({ select: [{ rootAgentId: null }] }) as typeof currentDb;
+  it('fails (no runner call) when the conversation is missing or belongs elsewhere', async () => {
+    currentDb = makeDbMixed({ select: [] }) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const { sendChatMessageAction } = await import('../src/lib/actions.ts');
     const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'hello' });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('no_root_agent');
+    if (!r.ok) expect(r.code).toBe('conversation_not_found');
     expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("fails (no runner call) when the conversation's agent is disabled", async () => {
+    currentDb = makeDbMixed({
+      select: [{ agentId: 'aaaaaaaa-0000-0000-0000-000000000305', agentActive: false }],
+    }) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'hello' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('agent_inactive');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("sends the CONVERSATION's agent, never the current ROOT (revue Codex, passe 29)", async () => {
+    // La conversation appartient à l'agent A. Que le ROOT ait changé pour B
+    // depuis ne doit RIEN y faire : répondre ici, c'est répondre à A.
+    const agentDuFil = 'aaaaaaaa-0000-0000-0000-000000000A11';
+    const rootCourant = 'aaaaaaaa-0000-0000-0000-000000000B22';
+    currentDb = makeDbMixed({
+      select: [{ agentId: agentDuFil, agentActive: true }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ reply: 'ok' }), { status: 200 }));
+
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'coucou' });
+    expect(r.ok).toBe(true);
+
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body['agentId']).toBe(agentDuFil);
+    expect(body['agentId']).not.toBe(rootCourant);
     fetchSpy.mockRestore();
   });
 
   it('calls the runner /api/chat (no job created) and returns the reply', async () => {
     const rootId = 'aaaaaaaa-0000-0000-0000-000000000301';
-    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [{ agentId: rootId, agentActive: true }],
+    }) as typeof currentDb;
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(
@@ -4345,7 +4358,9 @@ describe('sendChatMessageAction', () => {
 
   it('treats an empty reply (agent escalated without ack text) as success, not failure', async () => {
     const rootId = 'aaaaaaaa-0000-0000-0000-000000000302';
-    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [{ agentId: rootId, agentActive: true }],
+    }) as typeof currentDb;
     // HTTP 200 with an empty reply — the agent escalated via run_task and wrote
     // no acknowledgment; the dispatch card + refetch carry the info.
     const fetchSpy = vi
@@ -4361,7 +4376,9 @@ describe('sendChatMessageAction', () => {
 
   it('fails when the runner returns an HTTP error (e.g. empty_reply glitch → 400)', async () => {
     const rootId = 'aaaaaaaa-0000-0000-0000-000000000303';
-    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [{ agentId: rootId, agentActive: true }],
+    }) as typeof currentDb;
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ error: 'empty_reply' }), { status: 400 }));
@@ -4371,46 +4388,6 @@ describe('sendChatMessageAction', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('chat_failed');
     fetchSpy.mockRestore();
-  });
-});
-
-describe('listConversationsAction', () => {
-  it('returns empty when no ROOT is designated', async () => {
-    currentDb = makeDbSeq([[{ rootAgentId: null }]]) as typeof currentDb;
-    const { listConversationsAction } = await import('../src/lib/actions.ts');
-    const r = await listConversationsAction();
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.rootAgentId).toBeNull();
-      expect(r.data.conversations).toEqual([]);
-    }
-  });
-
-  it('lists the ROOT conversations (most recent first) with a last-message preview', async () => {
-    const rootId = 'aaaaaaaa-0000-0000-0000-000000000310';
-    currentDb = makeDbSeq([
-      [{ rootAgentId: rootId }], // entity lookup
-      [{ name: 'Conciergus' }], // root agent name
-      [
-        { id: 'c1', title: 'Q2 board deck', updatedAt: new Date() },
-        { id: 'c2', title: 'Weekend backlog', updatedAt: new Date() },
-      ],
-      [
-        // preview messages (most recent first); first-per-conversation wins
-        { conversationId: 'c1', content: 'Compiled the revenue + burn tables.' },
-        { conversationId: 'c2', content: '54 tickets triaged.' },
-      ],
-    ]) as typeof currentDb;
-
-    const { listConversationsAction } = await import('../src/lib/actions.ts');
-    const r = await listConversationsAction();
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.rootName).toBe('Conciergus');
-      expect(r.data.conversations).toHaveLength(2);
-      expect(r.data.conversations[0]!.title).toBe('Q2 board deck');
-      expect(r.data.conversations[0]!.preview).toBe('Compiled the revenue + burn tables.');
-    }
   });
 });
 
@@ -4433,42 +4410,6 @@ describe('createConversationAction', () => {
     const r = await createConversationAction();
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.id).toBe(convId);
-  });
-});
-
-describe('listChatAction', () => {
-  it('rejects a non-uuid conversation id', async () => {
-    const { listChatAction } = await import('../src/lib/actions.ts');
-    const r = await listChatAction('bad');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
-  });
-
-  it('returns not_found when the conversation is missing / cross-entity', async () => {
-    currentDb = makeDbSeq([[]]) as typeof currentDb; // conversation verify → empty
-    const { listChatAction } = await import('../src/lib/actions.ts');
-    const r = await listChatAction(CHAT_CONV_ID);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('not_found');
-  });
-
-  it('returns the conversation messages', async () => {
-    currentDb = makeDbSeq([
-      [{ id: CHAT_CONV_ID }], // conversation verify
-      [
-        { id: 'm1', role: 'user', content: 'salut' },
-        { id: 'm2', role: 'assistant', content: 'Bonjour Quentin !' },
-      ],
-    ]) as typeof currentDb;
-
-    const { listChatAction } = await import('../src/lib/actions.ts');
-    const r = await listChatAction(CHAT_CONV_ID);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.messages).toHaveLength(2);
-      expect(r.data.messages[0]).toEqual({ id: 'm1', role: 'user', content: 'salut' });
-      expect(r.data.messages[1]!.content).toBe('Bonjour Quentin !');
-    }
   });
 });
 

@@ -24,7 +24,26 @@ export const approvalRequests = pgTable(
     // toolName alone (a fragility documented in the runner), and stamps the
     // replayed tool_calls row with its original id.
     toolCallId: text('tool_call_id'),
+    /**
+     * Ce que cette ligne DEMANDE (0098, P10a) : 'approval' — approuver ou
+     * refuser une action — ou 'question' — choisir une option parmi celles que
+     * l'agent propose (`ask_user`).
+     *
+     * POSÉE par la porte à la création, depuis ce que l'outil déclare
+     * (`ToolDefinition.asksUser`), jamais devinée après coup par le nom de
+     * l'outil : le web, le runner et Telegram la lisent tous les trois sans
+     * avoir le registre d'outils sous la main.
+     */
+    kind: text('kind').notNull().default('approval'),
     status: text('status').default('pending'),
+    /**
+     * L'option choisie, TELLE QUELLE — le libellé, jamais l'index (0098).
+     * Posée à la résolution, et seulement sur une ligne `kind = 'question'` :
+     * l'écran et le transcript la relisent des mois plus tard, quand la liste
+     * d'options n'existe plus qu'ici, dans `tool_input`. NULL tant que
+     * personne n'a répondu, et sur un refus.
+     */
+    answer: text('answer'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     resolvedBy: text('resolved_by'),
@@ -48,6 +67,7 @@ export const approvalRequests = pgTable(
       'approval_requests_status_check',
       sql`${table.status} IN ('pending','approved','rejected','expired')`,
     ),
+    check('approval_requests_kind_check', sql`${table.kind} IN ('approval','question')`),
   ],
 );
 

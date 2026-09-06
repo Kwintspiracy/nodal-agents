@@ -1,10 +1,16 @@
 // thread-history.test.ts — loadThreadHistory returns the right ModelMessages
-// for prior turns in the same (channel, chat_id) thread.
+// for prior turns of the SAME CONVERSATION (P6).
+//
+// Ce qui a changé avec P6 : la relecture n'est plus bornée par un SILENCE. Un
+// fil est une conversation, il dure jusqu'à ce que l'utilisateur en ouvre une
+// autre, et ce fichier ne décide plus que le BUDGET (MAX_TURNS, BUDGET_CHARS).
+// Les tests de silence (24 h, 12 h, coupure interne, mesure depuis la
+// livraison) sont donc retirés : la règle qu'ils protégeaient n'existe plus.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, agentTasks } from '@nodal-agents/db';
+import { agentJobs, agentTasks, conversations } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import { loadThreadHistory } from '../../job/thread-history.ts';
 
@@ -54,7 +60,28 @@ beforeEach(async () => {
   // not leak into the next test's history query.
   await db.delete(agentTasks);
   await db.delete(agentJobs);
+  await db.delete(conversations);
+  convCache.clear();
 });
+
+/**
+ * UNE conversation par (canal, chat_id) — l'identité d'un fil depuis P6. Les
+ * tests continuent de raisonner en `chatId` parce que c'est ce que l'humain
+ * voit ; la requête, elle, part de la conversation.
+ */
+const convCache = new Map<string, string>();
+async function convFor(chatId: string, channel = 'telegram'): Promise<string> {
+  const key = `${channel}:${chatId}`;
+  const hit = convCache.get(key);
+  if (hit) return hit;
+  const [row] = await db
+    .insert(conversations)
+    .values({ entityId: seed.entityId, agentId: seed.agentId, channel, chatId, origin: 'user' })
+    .returning({ id: conversations.id });
+  if (!row) throw new Error('insert conversation');
+  convCache.set(key, row.id);
+  return row.id;
+}
 
 // Helpers ──────────────────────────────────────────────────────────────────────
 
@@ -76,6 +103,10 @@ async function insertCompletedJob(opts: {
   channel?: string;
   /** Optional `tools_used` — drives the Layer-1 action ledger. Defaults to unset. */
   toolsUsed?: string[];
+  /** La conversation du job — par défaut celle du `chatId` (une par chat). */
+  conversationId?: string;
+  /** Un job ENFANT (délégation) : il hérite du conversation_id sans être un tour. */
+  parentJobId?: string;
 }): Promise<string> {
   const createdAt = opts.minutesAgo ? new Date(Date.now() - opts.minutesAgo * 60_000) : new Date();
   const [row] = await db
@@ -90,6 +121,9 @@ async function insertCompletedJob(opts: {
       result: opts.result,
       messages: (opts.messages ?? []) as never,
       createdAt,
+      conversationId:
+        opts.conversationId ?? (await convFor(opts.chatId, opts.channel ?? 'telegram')),
+      ...(opts.parentJobId !== undefined ? { parentJobId: opts.parentJobId } : {}),
       ...(opts.toolsUsed !== undefined ? { toolsUsed: opts.toolsUsed } : {}),
       ...(opts.completedMinutesAgo !== undefined
         ? { completedAt: new Date(Date.now() - opts.completedMinutesAgo * 60_000) }
@@ -164,10 +198,8 @@ describe('loadThreadHistory', () => {
   it('returns [] when there are no prior jobs in the thread', async () => {
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
     expect(history).toEqual([]);
@@ -178,10 +210,8 @@ describe('loadThreadHistory', () => {
     await insertCompletedJob({ chatId: '12345', task: 'old', result: 'reply' });
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'api',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
     expect(history).toEqual([]);
@@ -201,10 +231,8 @@ describe('loadThreadHistory', () => {
     });
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('777', 'telegram'),
       channel: 'telegram',
-      chatId: '777',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
     const flat = summarize(history);
@@ -225,10 +253,8 @@ describe('loadThreadHistory', () => {
     });
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('888', 'telegram'),
       channel: 'telegram',
-      chatId: '888',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
     expect(history).toEqual([]);
@@ -256,10 +282,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -296,10 +320,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -328,10 +350,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: currentId,
     });
 
@@ -341,129 +361,6 @@ describe('loadThreadHistory', () => {
       { role: 'assistant', text: 'prior reply' },
     ]);
     void otherId;
-  });
-
-  it('drops jobs beyond the 24h outer scan bound', async () => {
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'too old',
-      result: 'too old reply',
-      minutesAgo: 60 * 25, // 25 hours ago — past the 24h MAX_LOOKBACK scan bound
-    });
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'fresh',
-      result: 'fresh reply',
-      minutesAgo: 5,
-    });
-
-    const history = await loadThreadHistory({
-      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: '12345',
-      excludeJobId: '00000000-0000-0000-0000-000000000000',
-    });
-
-    expect(summarize(history)).toEqual([
-      { role: 'user', text: 'fresh' },
-      { role: 'assistant', text: 'fresh reply' },
-    ]);
-  });
-
-  it('resets the session after an idle gap — a 12h-old turn is dropped though within the 24h scan', async () => {
-    // The exact live bug: an unrelated image-gen turn 12h ago bled into a fresh
-    // research request because the old loader used a rolling 24h window. With a
-    // gap-based reset, the 12h silence (>> 30 min) starts a clean conversation.
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'image gen prompt',
-      result: 'image generated',
-      minutesAgo: 60 * 12, // 12h ago — inside the 24h scan, but past the idle gap
-    });
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'research string theory',
-      result: 'research reply',
-      minutesAgo: 3,
-    });
-
-    const history = await loadThreadHistory({
-      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: '12345',
-      excludeJobId: '00000000-0000-0000-0000-000000000000',
-    });
-
-    // Only the recent turn survives — the 12h-old exchange is NOT context.
-    expect(summarize(history)).toEqual([
-      { role: 'user', text: 'research string theory' },
-      { role: 'assistant', text: 'research reply' },
-    ]);
-  });
-
-  it('breaks the session at an internal idle gap — keeps only the contiguous recent run', async () => {
-    // old topic, then a silence past the idle-reset (now 4h), then two recent
-    // turns a few min apart. The old topic is dropped; the recent run is kept.
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'old topic',
-      result: 'old reply',
-      minutesAgo: 60 * 5, // 5h ago — past the 4h idle-reset gap
-    });
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'new A',
-      result: 'reply A',
-      minutesAgo: 8,
-    });
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'new B',
-      result: 'reply B',
-      minutesAgo: 3,
-    });
-
-    const history = await loadThreadHistory({
-      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: '12345',
-      excludeJobId: '00000000-0000-0000-0000-000000000000',
-    });
-
-    // Gap between 'new A' (8 min) and 'old topic' (50 min) = 42 min ≥ 30 → cut.
-    expect(summarize(history)).toEqual([
-      { role: 'user', text: 'new A' },
-      { role: 'assistant', text: 'reply A' },
-      { role: 'user', text: 'new B' },
-      { role: 'assistant', text: 'reply B' },
-    ]);
-  });
-
-  it('returns [] when even the most recent prior turn is past the idle gap', async () => {
-    // Nothing newer than 5h ago → the whole prior session is stale (idle-reset = 4h).
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'stale turn',
-      result: 'stale reply',
-      minutesAgo: 60 * 5,
-    });
-
-    const history = await loadThreadHistory({
-      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: '12345',
-      excludeJobId: '00000000-0000-0000-0000-000000000000',
-    });
-
-    expect(history).toEqual([]);
   });
 
   it('truncates a long message keeping BOTH head and tail (the conclusion survives)', async () => {
@@ -479,10 +376,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -501,9 +396,9 @@ describe('loadThreadHistory', () => {
     // Each turn = 2400 chars (at the per-turn cap, no truncation), so each block
     // counts ≈ 4800 chars in the budget. With BUDGET_CHARS=16000 and 8 prior
     // blocks (≈38 400 total), the helper drops oldest blocks until ≤ 16000 →
-    // 3 blocks survive (≈14 400). All 8 are one active session (5-min gaps,
-    // newest 5 min ago) so the gap reset keeps them and the budget trim is what
-    // is exercised.
+    // 3 blocks survive (≈14 400). Les 8 sont dans la MÊME conversation : depuis
+    // P6 leur âge ne les écarte plus, seul le budget les coupe — c'est
+    // exactement ce que ce test exerce.
     const big = 'y'.repeat(2_400);
     for (let i = 0; i < 8; i++) {
       await insertCompletedJob({
@@ -516,10 +411,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -544,10 +437,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -568,10 +459,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -597,10 +486,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -623,10 +510,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -651,16 +536,174 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('chat-A', 'telegram'),
       channel: 'telegram',
-      chatId: 'chat-A',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
     const s = summarize(history);
     expect(s).toHaveLength(2);
     expect(s[0]?.text).toBe('in A');
+  });
+
+  it('WhatsApp relit ses tours précédents, en forme TEXTE à deux messages', async () => {
+    // WhatsApp manquait à CONVERSATIONAL_CHANNELS depuis l'origine : chaque
+    // message repartait sans histoire (revue Codex, passe 28). La forme est
+    // TEXTE, pas appel d'outil : le canal n'a pas d'outil d'envoi à lui, et en
+    // inventer un apprendrait au modèle à appeler le vide.
+    await insertCompletedJob({
+      chatId: 'wa-1',
+      channel: 'whatsapp',
+      task: 'tu peux relire mon brief ?',
+      result: 'Oui — il manque la date de livraison.',
+      minutesAgo: 6,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('wa-1', 'whatsapp'),
+      channel: 'whatsapp',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    expect(summarize(history)).toEqual([
+      { role: 'user', text: 'tu peux relire mon brief ?' },
+      { role: 'assistant', text: 'Oui — il manque la date de livraison.' },
+    ]);
+    // Deux messages, pas trois : aucun bloc d'appel d'outil.
+    expect(history).toHaveLength(2);
+    expect(history.some((m) => m.role === 'tool')).toBe(false);
+  });
+
+  // ─── L'identité d'un fil est la CONVERSATION (P6) ──────────────────────────
+
+  it('relit un tour vieux de TROIS JOURS quand il est dans la même conversation', async () => {
+    // Avant P6, ce tour était effacé par la marche des silences (4 h). Il ne
+    // l'est plus : personne n'a ouvert de nouvelle conversation, donc le fil
+    // n'a pas changé, quel que soit le temps passé.
+    await insertCompletedJob({
+      chatId: 'fil-long',
+      task: 'on reprendra ça plus tard',
+      result: 'entendu, je garde le contexte',
+      minutesAgo: 60 * 24 * 3,
+      completedMinutesAgo: 60 * 24 * 3,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('fil-long', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    expect(summarize(history)).toEqual([
+      { role: 'user', text: 'on reprendra ça plus tard' },
+      { role: 'assistant', text: 'entendu, je garde le contexte' },
+    ]);
+  });
+
+  it("un tour d'une AUTRE conversation du même chat_id n'est pas relu", async () => {
+    // C'est exactement ce que `/new` produit : deux conversations, un seul chat.
+    const ancienne = await convFor('meme-chat', 'telegram');
+    await insertCompletedJob({
+      chatId: 'meme-chat',
+      conversationId: ancienne,
+      task: 'sujet abandonné',
+      result: 'réponse au sujet abandonné',
+      minutesAgo: 20,
+    });
+
+    const [nouvelle] = await db
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'meme-chat',
+        origin: 'user',
+      })
+      .returning({ id: conversations.id });
+    if (!nouvelle) throw new Error('insert conversation');
+    await insertCompletedJob({
+      chatId: 'meme-chat',
+      conversationId: nouvelle.id,
+      task: 'nouveau sujet',
+      result: 'réponse au nouveau sujet',
+      minutesAgo: 5,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: nouvelle.id,
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    expect(summarize(history)).toEqual([
+      { role: 'user', text: 'nouveau sujet' },
+      { role: 'assistant', text: 'réponse au nouveau sujet' },
+    ]);
+  });
+
+  it("un job ENFANT de la conversation n'est pas un tour", async () => {
+    // Un enfant délégué hérite du conversation_id de son créateur ; le relire
+    // comme un tour ferait apparaître dans l'historique un « message » que
+    // l'utilisateur n'a jamais écrit.
+    const parent = await insertCompletedJob({
+      chatId: 'avec-enfant',
+      task: 'fais faire le travail',
+      result: 'travail délégué et rendu',
+      minutesAgo: 10,
+    });
+    await insertCompletedJob({
+      chatId: 'avec-enfant',
+      parentJobId: parent,
+      task: 'sous-tâche interne',
+      result: 'résultat de la sous-tâche',
+      minutesAgo: 8,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('avec-enfant', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    // UN seul tour utilisateur : celui du parent. La sous-tâche n'en est pas un.
+    expect(s.filter((m) => m.role === 'user')).toEqual([
+      { role: 'user', text: 'fais faire le travail' },
+    ]);
+    expect(s.some((m) => m.text.includes('sous-tâche interne'))).toBe(false);
+    expect(s.some((m) => m.text === 'travail délégué et rendu')).toBe(true);
+    // L'enfant reste VISIBLE là où il doit l'être : le registre des délégations
+    // en ligne, qui dit ce qui a réellement été fait — pas un faux message.
+    expect(s.some((m) => m.text.startsWith('[Delegated to'))).toBe(true);
+  });
+
+  it('neuf tours dans la conversation : les HUIT plus récents sont relus (MAX_TURNS)', async () => {
+    for (let i = 1; i <= 9; i++) {
+      await insertCompletedJob({
+        chatId: 'neuf-tours',
+        task: `tour ${i}`,
+        result: `réponse ${i}`,
+        minutesAgo: (10 - i) * 5,
+      });
+    }
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      conversationId: await convFor('neuf-tours', 'telegram'),
+      channel: 'telegram',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(s).toHaveLength(16);
+    // Le plus ancien est TOMBÉ, et l'ordre reste celui que l'utilisateur a vécu.
+    expect(s[0]).toEqual({ role: 'user', text: 'tour 2' });
+    expect(s[15]).toEqual({ role: 'assistant', text: 'réponse 9' });
   });
 
   // Regression: Telegram channels must produce a 3-message tool-call block
@@ -679,10 +722,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -769,10 +810,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -789,34 +828,6 @@ describe('loadThreadHistory', () => {
     // Most importantly: the stale Cortex/calc text MUST NOT bleed through.
     expect(s[1]?.text).not.toContain('4 × 5');
     expect(s[1]?.text).not.toContain('Cortex');
-  });
-
-  it('measures the idle gap from DELIVERY (completed_at), not job start — a slow job keeps a quick follow-up', async () => {
-    // The live ComfyUI bug (jobs dbbf4d8c → 8b493110). The agent's job was CREATED
-    // 5h ago (when the user sent the photo) but its reply was DELIVERED only 10 min
-    // ago (a slow 4h50m analysis/prep). The user replied right after. A
-    // created_at→created_at gap reads 5h and WIPES the thread; the correct
-    // delivery-based gap is 10 min, so the thread is kept and the agent remembers
-    // exactly what it asked ("launch ComfyUI and tell me").
-    await insertCompletedJob({
-      chatId: '12345',
-      task: 'analyze the photo and prep the workflow',
-      result: 'Workflow ready. Launch ComfyUI and tell me when it is.',
-      minutesAgo: 60 * 5, // created 5h ago — past the 4h idle-reset if measured from creation
-      completedMinutesAgo: 10, // but DELIVERED only 10 min ago
-    });
-
-    const history = await loadThreadHistory({
-      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      channel: 'telegram',
-      chatId: '12345',
-      excludeJobId: '00000000-0000-0000-0000-000000000000',
-    });
-
-    const flat = summarize(history);
-    expect(flat.some((m) => /launch comfyui/i.test(m.text))).toBe(true);
   });
 
   // ─── Action ledger (Layer 1, 2026-07-11 incident) ──────────────────────────
@@ -836,10 +847,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -862,10 +871,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -884,10 +891,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -918,10 +923,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -953,10 +956,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -983,10 +984,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
@@ -1017,10 +1016,8 @@ describe('loadThreadHistory', () => {
 
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
-      entityId: seed.entityId,
-      agentId: seed.agentId,
+      conversationId: await convFor('12345', 'telegram'),
       channel: 'telegram',
-      chatId: '12345',
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 

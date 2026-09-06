@@ -16,6 +16,7 @@ import {
   type AnyDrizzleDb,
   type CliRunInsert,
 } from '@nodal-agents/db';
+import { projectKey } from '@nodal-agents/shared';
 
 /** A write lock older than this is considered abandoned and can be stolen. */
 const LOCK_STALE_MINUTES = 30;
@@ -197,14 +198,14 @@ export class WorkspaceLockedError extends Error {
  * passent tous les deux par cette fonction, et normaliser d'un seul côté aurait
  * fait cesser les deux de se voir — pire que le défaut d'origine.
  *
- * Même règle d'identité que les projets (`projectKey`) : la casse n'est repliée
- * que sur les chemins Windows, où elle n'est pas significative. Sur un système
- * sensible à la casse, `/srv/App` et `/srv/app` sont deux dossiers.
+ * C'est LA MÊME clé que celle des projets (`projectKey`, `@nodal-agents/shared`)
+ * — pas une règle « semblable », la même fonction. Jusqu'au 03/09 elle était
+ * recopiée ici ; le plan « Vérifier & Corriger » fait de cette clé l'identité
+ * canonique d'un livrable, et un verrou d'écriture qui aurait sa propre
+ * variante ne serait vu par personne.
  */
 export function workspaceLockKey(workspacePath: string): string {
-  const s = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '');
-  const isWindows = /^[a-z]:\//i.test(s) || s.startsWith('//');
-  return isWindows ? s.toLowerCase() : s;
+  return projectKey(workspacePath);
 }
 
 /**

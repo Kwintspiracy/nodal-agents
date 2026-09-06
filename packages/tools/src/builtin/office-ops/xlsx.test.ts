@@ -28,7 +28,9 @@ import {
   xlsxFreezePanesTool,
   xlsxFindCellsTool,
 } from './xlsx';
-import type { ToolContext } from '../../types';
+import type { ToolContext, ToolDefinition } from '../../types';
+import { presentToolResult } from '../../cards';
+import type { z } from 'zod';
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +132,30 @@ describe('xlsx_read', () => {
     expect(firstRow).toBeDefined();
     expect(firstRow).toContain('Name');
     expect(firstRow).toContain('Score');
+  });
+
+  it('P1 : la carte table porte une table par feuille, aux lignes EXACTES de la sortie', async () => {
+    await createSampleXlsx('test.xlsx');
+    const input = { path: 'test.xlsx', max_rows: 200 };
+    const result = await xlsxReadTool.execute(input, ctx());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const p = presentToolResult(
+      xlsxReadTool as unknown as ToolDefinition<z.ZodTypeAny, unknown>,
+      input,
+      result,
+    );
+    expect(p.card).toBe('table');
+    if (p.card !== 'table') return;
+    expect(p.tables.map((t) => t.name)).toEqual(['Data', 'Meta']);
+    // La charge utile EST le tableau : mêmes cellules, même ordre, rien réinterprété.
+    expect(p.tables[0]?.rows).toEqual(result.sheets[0]?.rows);
+    expect(p.tables[0]?.total).toBe(result.sheets[0]?.rows.length);
+    expect(p.tables[0]?.truncated).toBe(false);
+    expect(p.tables[0]?.columns).toEqual([]); // la première ligne n'est PAS supposée être un en-tête
+    expect(p.tables[0]?.header).toBe('unknown'); // et la charge le DIT, P8 ne devinera pas
+    expect(p.tables[0]?.clipped).toBe(false);
+    expect(p.tables[1]?.rows).toEqual(result.sheets[1]?.rows);
   });
 
   it('returns formula cached result (not formula string)', async () => {

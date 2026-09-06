@@ -14,7 +14,58 @@ export type {
   ApprovalGateRequest,
   ApprovalRule,
   ToolExecutionResult,
+  MutationTarget,
 } from './types';
+
+// Intention de mutation (plan « Vérifier & Corriger ») — posée au seam
+// d'exécution ; exportée pour les surfaces qui n'y passent PAS (le runtime CLI
+// écrit sans jamais traverser executeTool).
+export { writeMutationIntent, MAX_PROJECTS } from './verification/intent';
+// La carte d'un outil (P1) : ce que l'écran de conversation lit pour choisir
+// comment montrer un résultat. Résolue ici, jamais devinée depuis un nom.
+export {
+  cardForTool,
+  declaresCard,
+  assertToolCard,
+  presentToolResult,
+  ToolCardError,
+  ToolPresentationError,
+  TOOL_CARD_GENERIC,
+} from './cards';
+// Les briques de présentation, pour les outils nés HORS de ce paquet
+// (assign_<agent> dans orchestration) — la forme de la charge utile est dans
+// @nodal-agents/shared, les plafonds sont appliqués ici.
+export {
+  textCard,
+  failureText,
+  readCard,
+  searchCard,
+  filesCard,
+  writtenFile,
+  tableCard,
+  recordsTable,
+  terminalCard,
+  sentCard,
+  checksCard,
+  delegationCard,
+  detailOf,
+} from './presenters';
+export type {
+  MutationIntentOutcome,
+  MutationIntentContext,
+  WriteMutationIntentArgs,
+  DirtiedDeliverable,
+} from './verification/intent';
+// Le REGISTRE des projets (P5) — « ce travail a produit quelque chose DANS ce
+// projet ». Exporté pour les mêmes surfaces que l'intention : le runtime CLI
+// écrit sans traverser executeTool.
+export { attachProductionToProject } from './projects/attach';
+export type { AttachOutcome, AttachContext } from './projects/attach';
+// P5b : la déclaration au registre et le manifeste, partagés avec le backfill
+// du runner pour qu'il déclare exactement ce que le rattachement déclarerait.
+export { registerCodeProjects } from './projects/register';
+export type { RegisterCodeProjectsInput, RegisteredCodeProject } from './projects/register';
+export { hasMarker } from './projects/markers';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';
@@ -73,6 +124,13 @@ export {
   dashboardPublishTool,
   DashboardPublishInputSchema,
   buildChildEnv,
+  safeEnvAllowlistSnapshot,
+  runShellCommand,
+  runCommandSequence,
+  killProcessTree,
+  isGreen,
+  SHELL_POLICY_VERSION,
+  DEFAULT_MAX_OUTPUT_CHARS,
   runCliDoctor,
   resolveCliPath,
   buildSpawnArgv,

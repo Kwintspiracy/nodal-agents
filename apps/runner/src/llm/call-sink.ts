@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto';
 import { llmCalls, type AnyDrizzleDb } from '@nodal-agents/db';
 import type { LlmCallObservation, LlmCallObserver } from '@nodal-agents/llm';
-import { estimateModelCostUsd } from '@nodal-agents/shared';
+import { estimateCallCostUsd } from '@nodal-agents/shared';
 
 export interface LlmCallSinkContext {
   /** Where the call came from: 'job' | 'chat' | 'curator' | 'reflection' | 'cron'. */
@@ -50,13 +50,15 @@ export function makeLlmCallSink(db: AnyDrizzleDb, ctx: LlmCallSinkContext): LlmC
       // exists (e.g. terminal error before a response) — never guessed.
       let costUsd = obs.costUsd;
       if (costUsd === null && inputTokens !== null && outputTokens !== null) {
-        const est = estimateModelCostUsd(
-          obs.provider,
-          obs.modelConfigured,
+        // Cache-aware (P4) : les jetons lus en cache au prix de lecture, les
+        // écrits au prix d'écriture — jamais tous au prix plein.
+        const est = estimateCallCostUsd(obs.provider, obs.modelConfigured, {
           inputTokens,
           outputTokens,
-        );
-        // estimateModelCostUsd returns 0 for models the catalog doesn't price —
+          cachedTokens: obs.usage?.cachedTokens ?? null,
+          cacheCreationTokens: obs.usage?.cacheCreationTokens ?? null,
+        });
+        // estimateCallCostUsd returns 0 for models the catalog doesn't price —
         // that means UNKNOWN, not free: keep null rather than a misleading 0.
         costUsd = est > 0 ? est : null;
       }

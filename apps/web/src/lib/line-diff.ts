@@ -1,11 +1,14 @@
 // line-diff.ts — a minimal line-level diff, for showing a skill update's real
 // text before it is installed (SKILL-003).
 //
-// Written here rather than pulled from a package: the whole point of this diff
-// is to let someone trust what they are about to put into their agents' system
-// prompts, and adding a dependency to render it would be a strange trade. It is
-// a textbook LCS over lines — no heuristics, no fuzzy matching, nothing that
-// could quietly present two different texts as equal.
+// The LCS itself lives in `@nodal-agents/shared` (fragment-diff.ts) since P11:
+// the conversation feed needs the same comparison to render a `file_edit`'s
+// fragment, and two hand-written LCS passes would have drifted at the first
+// adjustment. Presenting two different texts as equal is exactly the bug a diff
+// must never have, so there is one algorithm and this file is its `op`-shaped
+// view — the vocabulary the skill-update preview was already written against.
+
+import { fragmentDiff, FRAGMENT_DIFF_MAX_LINES } from '@nodal-agents/shared';
 
 export type DiffOp = 'same' | 'add' | 'remove';
 
@@ -14,13 +17,14 @@ export interface DiffLine {
   text: string;
 }
 
-/**
- * Lines beyond this are not diffed line-by-line. LCS is O(n×m): two 5000-line
- * texts would be 25M cells, computed in the browser, to render a wall nobody
- * reads. Past the cap the caller gets a whole-file replace, which is honest
- * about being coarse rather than pretending to be precise.
- */
-export const MAX_DIFF_LINES = 2000;
+/** Re-exported under its original name — see FRAGMENT_DIFF_MAX_LINES. */
+export const MAX_DIFF_LINES = FRAGMENT_DIFF_MAX_LINES;
+
+const OP: Readonly<Record<' ' | '+' | '-', DiffOp>> = {
+  ' ': 'same',
+  '+': 'add',
+  '-': 'remove',
+};
 
 /**
  * Diff two texts by line. Returns the full script of operations in order —
@@ -30,46 +34,7 @@ export const MAX_DIFF_LINES = 2000;
  * everything" instead of hanging the tab.
  */
 export function diffLines(before: string, after: string): DiffLine[] {
-  const a = before.length === 0 ? [] : before.split('\n');
-  const b = after.length === 0 ? [] : after.split('\n');
-
-  if (a.length > MAX_DIFF_LINES || b.length > MAX_DIFF_LINES) {
-    return [
-      ...a.map((text): DiffLine => ({ op: 'remove', text })),
-      ...b.map((text): DiffLine => ({ op: 'add', text })),
-    ];
-  }
-
-  // lcs[i][j] = length of the longest common subsequence of a[i:] and b[j:].
-  const lcs: number[][] = Array.from({ length: a.length + 1 }, () =>
-    new Array<number>(b.length + 1).fill(0),
-  );
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      lcs[i]![j] =
-        a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
-    }
-  }
-
-  const out: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      out.push({ op: 'same', text: a[i]! });
-      i++;
-      j++;
-    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
-      out.push({ op: 'remove', text: a[i]! });
-      i++;
-    } else {
-      out.push({ op: 'add', text: b[j]! });
-      j++;
-    }
-  }
-  while (i < a.length) out.push({ op: 'remove', text: a[i++]! });
-  while (j < b.length) out.push({ op: 'add', text: b[j++]! });
-  return out;
+  return fragmentDiff(before, after).lines.map((l) => ({ op: OP[l.kind], text: l.text }));
 }
 
 export interface DiffStats {

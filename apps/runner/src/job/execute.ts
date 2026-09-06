@@ -30,7 +30,7 @@ import {
   parseRootGrants,
   modelContextWindow,
   modelCanSeeImages,
-  estimateModelCostUsd,
+  estimateCallCostUsd,
   isUntrustedTool,
   wrapUntrusted,
 } from '@nodal-agents/shared';
@@ -120,16 +120,15 @@ import type {
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
-import {
-  failJob,
-  completeJob,
-  cancelJob,
-  setJobStatus,
-  saveCheckpoint,
-  touchJob,
-  claimJob,
-} from './state.ts';
+import { failJob, cancelJob, setJobStatus, saveCheckpoint, touchJob, claimJob } from './state.ts';
+// LA porte terminale de succès (plan « Vérifier & Corriger », T09/T10) : les
+// deux chemins de succès de cette boucle passent par elle, jamais par
+// completeJob directement — c'est elle qui calcule et journalise la décision
+// de vérification, et qui commet l'intention de livrer avec le statut.
+import { finalizeJobSuccess } from './finalize.ts';
+import { drainDeliveries } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { buildSharedWorkspaceInventory, inventoryForContext } from '../lib/workspace-inventory.ts';
 import { probeWorkspaceGit, gitProbeTarget } from '../lib/workspace-git.ts';
@@ -250,6 +249,9 @@ async function resolveSearchBackend(
         entityId: '',
         db,
         jobChatId: null,
+        // Pas de job, pas de conversation : cet appel de recherche n'est le tour
+        // de rien (P6).
+        conversationId: null,
       } as never)) as {
         results?: Array<{
           title?: string;
@@ -915,6 +917,7 @@ async function runJob(
         channel: job.channel ?? null,
         conversationId: job.conversationId ?? null,
         task: job.task ?? null,
+        triggerContext: job.triggerContext ?? null,
       },
       // Spread the `agent` already normalised above (line ~856) rather than
       // re-deriving fields here — a second conversion is a second thing to
@@ -1087,6 +1090,16 @@ async function runJob(
     sharedWorkspacePath,
   );
   const workspaceGit = gitProbePath ? await probeWorkspaceGit(gitProbePath) : null;
+  // Le fil dont ce job est un tour, et son projet courant (P6). `null` quand le
+  // job n'appartient à aucune conversation, ou quand son uuid date d'avant P6 et
+  // ne pointe aucune ligne — le bloc `## Conversation` est alors simplement omis.
+  const conversationContext = job.conversationId
+    ? await loadConversationContext(db, job.conversationId, {
+        excludeJobId: jobId as string,
+        // La tâche sert à reconnaître un `/new` nu — voir openedByCommand.
+        task: job.task,
+      })
+    : null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     // LA liste, celle que les outils ont — partagé compris. Le prompt la
@@ -1104,6 +1117,7 @@ async function runJob(
       return inv === undefined ? {} : { workspaceInventory: inv };
     })(),
     ...(workspaceGit ? { workspaceGit } : {}),
+    ...(conversationContext ? { conversation: conversationContext } : {}),
     deployment,
   };
 
@@ -1778,10 +1792,8 @@ async function runJob(
     try {
       const history = await loadThreadHistory({
         db,
-        entityId: job.entityId,
-        agentId: job.agentId,
+        conversationId: job.conversationId ?? null,
         channel: job.channel,
-        chatId: job.chatId,
         excludeJobId: jobId as string,
       });
       if (history.length > 0) {
@@ -1935,6 +1947,9 @@ async function runJob(
                   turn,
                   toolCallId: req.toolCallId ?? undefined,
                   jobChatId: job.chatId ?? null,
+                  // P6 : la conversation du fil, pour que le registre des projets y pose
+                  // le projet courant.
+                  conversationId: job.conversationId ?? null,
                   jobChannel: job.channel,
                   activeChannels,
                   notifyChannelOverride,
@@ -1992,7 +2007,9 @@ async function runJob(
       // whose toolName equals req.toolName and whose output text contains
       // [AWAITING_APPROVAL]). Using toolName for matching is safe because there
       // is at most one pending approval per tool per turn in this design
-      // (one approval at a time; siblings are deferred).
+      // (one approval at a time; siblings are deferred) — including a tool
+      // that asks the user (`asksUser`), which `wouldRequireApproval` keeps
+      // out of the parallel pre-pass for exactly this reason.
       msgs = msgs.map((msg) => {
         if (typeof msg !== 'object' || msg === null || (msg as { role: string }).role !== 'tool') {
           return msg;
@@ -2686,12 +2703,12 @@ async function runJob(
       // for a model with no catalogued price yet.
       const callCostUsd =
         reportedCostUsd ??
-        estimateModelCostUsd(
-          llmClient.config.provider,
-          llmClient.config.model,
-          promptTok,
-          completionT,
-        );
+        estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
+          inputTokens: promptTok,
+          outputTokens: completionT,
+          cachedTokens: Number.isFinite(cachedT) ? cachedT : 0,
+          cacheCreationTokens: cacheWriteT,
+        });
       totalCostUsd += callCostUsd;
       // Capture the upstream provider name (P0-B: served-upstream observability).
       // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
@@ -2916,34 +2933,44 @@ async function runJob(
             await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
-          const completedText = await completeJob(
-            db,
-            jobId as string,
-            textContent,
+          // SANS `delivery` : sur ce chemin le canal a déjà été servi par
+          // l'outil telegram_send_message pendant le run — préparer une
+          // livraison ici DOUBLERAIT le message.
+          const finalized = await finalizeJobSuccess(db, {
+            jobId: jobId as string,
+            result: textContent,
             toolsUsed,
-            runStats(),
+            stats: runStats(),
             messages,
-          );
-          if (!completedText) {
-            trace('terminal_write_lost_race', { turn, writer: 'completeJob_text', jobId });
-          } else {
-            // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
-            // or delay the job response — gates + throttle live inside the hook.
-            // Snapshot carries the FINAL state (in-memory `job` is still
-            // pre-completion). Only runs when completeJob won the terminal write.
-            void maybeRunReflection(
-              deps,
-              db,
-              {
-                ...job,
-                status: 'completed',
-                turn,
-                toolsUsed,
-                messages,
-              },
-              runnerEnv,
-            ).catch((e) => console.warn('[reflection]', e));
+          });
+          if (finalized.kind === 'already_terminal') {
+            // Course perdue : un autre chemin (reaper, annulation) a fini ce job.
+            // Ne PAS prétendre 'completed' — l'ancien code le faisait ici alors
+            // que le chemin return_result rendait déjà already_handled.
+            trace('terminal_write_lost_race', { turn, writer: 'finalize_text', jobId });
+            return { status: 'already_handled' };
           }
+          // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
+          // or delay the job response — gates + throttle live inside the hook.
+          // Snapshot carries the FINAL state (in-memory `job` is still
+          // pre-completion). Only runs when the primitive won the terminal write.
+          void maybeRunReflection(
+            deps,
+            db,
+            {
+              ...job,
+              status: 'completed',
+              turn,
+              toolsUsed,
+              messages,
+            },
+            runnerEnv,
+          ).catch((e) => console.warn('[reflection]', e));
+          // Tout chemin terminal draine — un no-op sans ligne `prepared`, mais
+          // le contrat reste le même pour les quatre portes.
+          await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
+            console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
+          );
           return { status: 'completed', result: withDeliveryNotice(textContent) };
         }
         // No text AND no tool calls — an empty LLM turn. Transient (the model
@@ -3061,6 +3088,9 @@ async function runJob(
         // number; the per-call toolCallId is spread at each executeTool site.
         turn,
         jobChatId: job.chatId ?? null,
+        // P6 : la conversation du fil, pour que le registre des projets y pose
+        // le projet courant.
+        conversationId: job.conversationId ?? null,
         jobChannel: job.channel,
         activeChannels,
         notifyChannelOverride,
@@ -3084,6 +3114,15 @@ async function runJob(
       const wouldRequireApproval = (name: string): boolean => {
         const def = toolMap.get(name);
         if (!def) return false;
+        // Un outil qui POSE UNE QUESTION (P10a, `asksUser`) suspend toujours :
+        // il ne doit jamais entrer dans le pré-passage parallèle (revue Codex,
+        // passe 37). Deux `ask_user` d'un même tour y créaient deux lignes en
+        // attente et deux cartes, puis la reprise — qui retrouve le marqueur
+        // par nom d'outil — attribuait la première réponse au mauvais appel.
+        // Dans la boucle sérielle, la première question suspend et les
+        // suivantes sont différées : une seule ligne par tour, comme pour
+        // toute approbation.
+        if (def.asksUser === true) return true;
         const rule = matchApprovalRule(approvalRuleList, name, agentRow.id, job.entityId ?? '');
         return (rule?.action ?? def.defaultApproval) === 'require_approval';
       };
@@ -3351,6 +3390,9 @@ async function runJob(
                 turn,
                 toolCallId: call.id,
                 jobChatId: job.chatId ?? null,
+                // P6 : la conversation du fil, pour que le registre des projets y pose
+                // le projet courant.
+                conversationId: job.conversationId ?? null,
                 jobChannel: job.channel,
                 activeChannels,
                 notifyChannelOverride,
@@ -4064,39 +4106,43 @@ async function runJob(
           return { status: 'awaiting_tasks' };
         }
 
-        trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
-        const completed = await completeJob(
-          db,
-          jobId as string,
-          finalResult,
+        trace('finalize_call', { turn, toolsUsed, stats: runStats() });
+        // SANS `delivery` — même raison que le chemin texte : le canal a été
+        // servi par l'outil de livraison pendant le run.
+        const finalized = await finalizeJobSuccess(db, {
+          jobId: jobId as string,
+          result: finalResult,
           toolsUsed,
-          runStats(),
+          stats: runStats(),
           messages,
-        );
-        if (!completed) {
+        });
+        if (finalized.kind === 'already_terminal') {
           // The conditional terminal write lost the race — another writer (e.g. the
           // orphan reaper) already finalized this row. Do NOT claim 'completed':
           // report that the row was already handled so the caller never overrides it.
-          trace('terminal_write_lost_race', { turn, writer: 'completeJob', jobId });
+          trace('terminal_write_lost_race', { turn, writer: 'finalize', jobId });
           return { status: 'already_handled' };
-        } else {
-          // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
-          // or delay the job response — gates + throttle live inside the hook.
-          // Snapshot carries the FINAL state (the in-memory `job` row is still
-          // pre-completion). Only runs when completeJob won the terminal write.
-          void maybeRunReflection(
-            deps,
-            db,
-            {
-              ...job,
-              status: 'completed',
-              turn,
-              toolsUsed,
-              messages,
-            },
-            runnerEnv,
-          ).catch((e) => console.warn('[reflection]', e));
         }
+        // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
+        // or delay the job response — gates + throttle live inside the hook.
+        // Snapshot carries the FINAL state (the in-memory `job` row is still
+        // pre-completion). Only runs when the primitive won the terminal write.
+        void maybeRunReflection(
+          deps,
+          db,
+          {
+            ...job,
+            status: 'completed',
+            turn,
+            toolsUsed,
+            messages,
+          },
+          runnerEnv,
+        ).catch((e) => console.warn('[reflection]', e));
+        // Tout chemin terminal draine (no-op sans ligne `prepared`).
+        await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
+          console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
+        );
 
         // Re-fetch agent_jobs.result so the caller (the parent in a router
         // delegation flow) receives the text written by dashboard_publish /

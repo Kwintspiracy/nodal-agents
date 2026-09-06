@@ -168,8 +168,16 @@ describe('les quatre listes de runtimes disent la même chose', () => {
     ]) {
       const src = read(rel);
       // L'assemblage est DANS un try dont le catch rend les verrous.
+      //
+      // La borne de DISTANCE (2000) n'est pas la règle — la règle est « dans un
+      // try qui relâche ». Elle a été portée de 900 à 2000 le 06/09 : le bloc
+      // s'est allongé de deux gestes qui vivent légitimement là (le registre des
+      // projets en P5, le chargement de la conversation en P6), et à 900 le
+      // motif ne trouvait plus RIEN — le test passait donc sur la garde
+      // `not.toBe('')` seule, sans jamais vérifier la relâche. Une borne trop
+      // courte ne durcit pas ce test, elle l'éteint.
       const bloc =
-        /try \{[\s\S]{0,900}?buildSystemPrompt\([\s\S]{0,600}?\} catch[\s\S]{0,200}?\}/.exec(
+        /try \{[\s\S]{0,2000}?buildSystemPrompt\([\s\S]{0,600}?\} catch[\s\S]{0,200}?\}/.exec(
           src,
         )?.[0] ?? '';
       expect(bloc, `${rel} : l'assemblage du prompt n'a pas de filet`).not.toBe('');

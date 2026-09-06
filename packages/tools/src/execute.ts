@@ -1,11 +1,13 @@
 // @nodal-agents/tools — execution wrapper with approval gate and audit trail
 
-import { approvalRequests, toolCalls } from '@nodal-agents/db';
+import { approvalRequests, toolCalls, jobCheckpoints, and, eq, inArray } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
+  surfaceForTool,
+  type MutationTarget,
 } from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
@@ -16,8 +18,12 @@ import type {
   ApprovalGateRequest,
 } from './types';
 import { InvalidInputError } from './errors';
-import { snapshot } from '@nodal-agents/checkpoints';
+import { presentToolResult } from './cards';
+import type { ToolCardPayload } from '@nodal-agents/shared';
+import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
+import { writeMutationIntent } from './verification/intent';
+import { attachProductionToProject } from './projects/attach';
 
 // ─── Outils d'exécution de code ───────────────────────────────────────────────
 
@@ -52,6 +58,38 @@ const CODE_EXECUTION_TOOL_SET = new Set(CODE_EXECUTION_TOOL_NAMES);
 
 export function isCodeExecutionTool(toolName: string): boolean {
   return CODE_EXECUTION_TOOL_SET.has(toolName);
+}
+
+// ─── Questions déjà tranchées ─────────────────────────────────────────────────
+
+/**
+ * A human has already decided THIS call of an asking tool — answered or
+ * declined. Used by the third hardline floor to let the resume path through.
+ *
+ * NO `toolCallId` ⇒ false, always. The resume replays the tool with its
+ * ORIGINAL tool_use id (apps/runner/src/job/execute.ts, `toolCallId:
+ * req.toolCallId ?? undefined`), which is precisely what ties a decision to the
+ * call it answers. Without that id there is nothing to look up, and matching on
+ * the job alone would hand this call an answer given to a DIFFERENT question.
+ * Asking again is the honest outcome — a lightweight context that provides no
+ * call id simply cannot resume, and says so by suspending.
+ */
+async function hasAnsweredQuestion(ctx: ToolContext, toolName: string): Promise<boolean> {
+  if (!ctx.toolCallId) return false;
+  const [row] = await ctx.db
+    .select({ id: approvalRequests.id })
+    .from(approvalRequests)
+    .where(
+      and(
+        eq(approvalRequests.jobId, ctx.jobId),
+        eq(approvalRequests.toolCallId, ctx.toolCallId),
+        eq(approvalRequests.toolName, toolName),
+        eq(approvalRequests.kind, 'question'),
+        inArray(approvalRequests.status, ['approved', 'rejected']),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
 }
 
 // ─── executeTool ──────────────────────────────────────────────────────────────
@@ -89,6 +127,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   opts: ExecuteOptions,
 ): Promise<ToolExecutionResult> {
   const startMs = Date.now();
+  // The audit row reads the tool's card and presenter; the generic parameters
+  // are erased the same way the registry erases them (see registry.ts).
+  const auditTool = tool as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
 
   // ── 1. Input validation ────────────────────────────────────────────────────
   const parsed = tool.inputSchema.safeParse(rawInput);
@@ -99,7 +140,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       error: `invalid_input: ${detail}`,
     };
     // Still write audit row for failed validations
-    await _writeToolCall(ctx, tool.name, rawInput, JSON.stringify(result), Date.now() - startMs);
+    await _writeToolCall(ctx, auditTool, rawInput, JSON.stringify(result), Date.now() - startMs);
     return result;
   }
 
@@ -134,7 +175,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
@@ -313,6 +354,46 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     effectiveAction = 'require_approval';
   }
 
+  // Third hardline floor: a tool that ASKS THE USER (P10a, `ask_user`).
+  //
+  // Not a posture, a mechanism — so it overrides every relaxation, including an
+  // explicit `auto_approve` rule and `fully_autonomous`. Letting a blanket
+  // "never ask me again" run `ask_user` would not save the human a prompt: the
+  // tool's whole input is the answer, so the call would reach execute() with
+  // nothing to read and fail loud with `question_unanswered`. The only useful
+  // meaning of "auto-approve a question" is "ask it anyway".
+  //
+  // `block` still wins, and that is deliberate: an owner who forbids this tool
+  // for an agent forbids it, and the agent gets the ordinary blocked message.
+  //
+  // Once the question HAS been answered (or declined), the floor steps aside so
+  // the runner's resume path can replay the call and read the answer. That is
+  // the same shape as any approved tool — the difference is only that the
+  // synthetic `resume-bypass` auto_approve rule the runner passes would not, on
+  // its own, get past this floor.
+  if (tool.asksUser && effectiveAction !== 'block') {
+    if (!ctx.toolCallId) {
+      // SANS id d'appel, une question ne peut être ni suspendue ni reprise
+      // (revue Codex, passe 37) : la ligne serait créée sans `tool_call_id`, la
+      // reprise la rejouerait sans id, `hasAnsweredQuestion` ne la retrouverait
+      // jamais, et la porte reposerait la question — à l'infini. Un appel sans
+      // id est un appelant qui ne sait pas reprendre : dit par un code, jamais
+      // suspendu.
+      const result: ToolExecutionResult = { outcome: 'error', error: 'question_without_call_id' };
+      await _writeToolCall(
+        ctx,
+        auditTool,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+    effectiveAction = (await hasAnsweredQuestion(ctx, tool.name))
+      ? 'auto_approve'
+      : 'require_approval';
+  }
+
   if (effectiveAction === 'block') {
     // Prescriptive, like the delegation refusals (delegation_depth_exceeded…):
     // the bare word "blocked" gave the model nothing to correct with — it
@@ -328,7 +409,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     };
     await _writeToolCall(
       ctx,
-      tool.name,
+      auditTool,
       validatedInput,
       JSON.stringify(result),
       Date.now() - startMs,
@@ -356,6 +437,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // étape D: the originating tool_use id — lets the resume path target
         // the EXACT awaiting marker instead of matching by toolName alone.
         toolCallId: ctx.toolCallId ?? null,
+        // P10a : ce que la ligne DEMANDE, posé ici depuis ce que l'outil
+        // déclare — jamais deviné plus tard par son nom (invariant #1). Le web,
+        // le runner et Telegram lisent cette colonne pour savoir s'ils doivent
+        // montrer « approuver / refuser » ou une liste d'options.
+        kind: tool.asksUser === true ? 'question' : 'approval',
         status: 'pending',
       })
       .returning();
@@ -365,7 +451,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       const result: ToolExecutionResult = { outcome: 'error', error: 'approval_insert_failed' };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
@@ -380,6 +466,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       jobId: ctx.jobId,
       agentId: ctx.agentId,
       entityId: ctx.entityId,
+      kind: tool.asksUser === true ? 'question' : 'approval',
     };
 
     await opts.onApprovalRequired(gateRequest);
@@ -390,7 +477,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     };
     await _writeToolCall(
       ctx,
-      tool.name,
+      auditTool,
       validatedInput,
       JSON.stringify(approvalResult),
       Date.now() - startMs,
@@ -408,26 +495,81 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // A failure here REFUSES the write. That is deliberate and it is the whole
   // contract: a net that silently is not there is worse than no net, because it
   // is the one the owner believed they had (invariant #4).
+  // Les cibles de mutation, gardées jusqu'à l'exécution : le registre des
+  // projets (P5) ne se pose qu'une fois l'écriture RÉUSSIE.
+  let mutationTargets: readonly MutationTarget[] | null = null;
   if (tool.mutatesWorkspace) {
-    const failure = await takeCheckpointForTurn(tool.name, ctx);
-    if (failure) {
-      const result: ToolExecutionResult = { outcome: 'error', error: failure };
+    // ── 2.8 Intention de mutation — le projet est sale AVANT d'être écrit ────
+    //
+    // Même endroit, même raison que l'instantané ci-dessous : après
+    // l'approbation (salir un projet pour un appel qui reste
+    // `awaiting_approval` et sera peut-être refusé n'aurait aucun sens) et
+    // avant `tool.execute`. UN seul point de pose pour les cinq outils
+    // mutants, au lieu de cinq disciplines parallèles — « avant la mutation »
+    // devient vrai par construction.
+    const gate = await takeMutationIntent(tool, validatedInput, ctx);
+    if ('error' in gate) {
+      const result: ToolExecutionResult = { outcome: 'error', error: gate.error };
       await _writeToolCall(
         ctx,
-        tool.name,
+        auditTool,
         validatedInput,
         JSON.stringify(result),
         Date.now() - startMs,
       );
       return result;
     }
+
+    const failure = await takeCheckpointForTurn(tool.name, ctx);
+    if (failure) {
+      const result: ToolExecutionResult = { outcome: 'error', error: failure };
+      await _writeToolCall(
+        ctx,
+        auditTool,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+    mutationTargets = gate.targets;
   }
 
   // ── 3. Execute ─────────────────────────────────────────────────────────────
   try {
     const output = await tool.execute(validatedInput, ctx);
     const durationMs = Date.now() - startMs;
-    await _writeToolCall(ctx, tool.name, validatedInput, JSON.stringify(output), durationMs);
+    await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
+      value: output,
+    });
+
+    // ── 3.5 Le REGISTRE des projets (P5), APRÈS l'écriture ────────────────────
+    //
+    // Sur les MÊMES cibles que l'intention, mais une fois le succès connu : un
+    // outil qui a refusé (chemin hors terrain, fichier trop gros — un échec
+    // sous carte `text`, `failure: true`) ou qui a levé n'a rien produit, et
+    // « ce travail a produit dans ce projet » serait faux (revue Codex passe
+    // 27). Son résultat n'influe PAS sur le retour : c'est un registre, pas une
+    // garde — une panne ici se dit dans les logs, par un code, jamais en
+    // refusant une écriture qui, elle, a eu lieu.
+    if (mutationTargets && !isPresentedFailure(auditTool, validatedInput, output)) {
+      await attachProductionToProject(
+        {
+          db: ctx.db,
+          entityId: ctx.entityId,
+          jobId: ctx.jobId || null,
+          // P6 : la conversation aussi retient où le travail a atterri, et c'est
+          // elle qui le redit au modèle au tour suivant.
+          conversationId: ctx.conversationId ?? null,
+          // P5b : l'agent et ses dossiers, pour qu'une racine à manifeste où
+          // cette écriture atterrit soit DÉCLARÉE au registre par la même règle
+          // que l'intention l'a salie.
+          agentId: ctx.agentId,
+          workspaces: ctx.workspaces ?? [],
+        },
+        mutationTargets,
+      );
+    }
     return { outcome: 'success', output };
   } catch (err) {
     // Re-throw fatal runner errors — never swallow these
@@ -465,7 +607,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       : { outcome: 'error', error: errorMsg };
     await _writeToolCall(
       ctx,
-      tool.name,
+      auditTool,
       validatedInput,
       JSON.stringify(result),
       Date.now() - startMs,
@@ -567,6 +709,110 @@ const checkpointedTurns = new Set<string>();
 const MAX_REMEMBERED_TURNS = 500;
 
 /**
+ * Mark the projects this call is about to write as dirty, BEFORE it writes.
+ *
+ * Returns null when execution may proceed, or the error string that must
+ * REFUSE the write — the same contract as the checkpoint below, for the same
+ * reason: a guard that silently is not there is worse than no guard, because
+ * it is the one the owner believed they had (invariant #4).
+ *
+ * The target comes from the tool, never from a guess here (see
+ * `resolveMutationTargets` in types.ts). A mutating tool that declares no hook
+ * falls back to EVERY attached workspace — conservative, which is the side to
+ * err on: a project marked dirty for nothing costs a proof, a project missed
+ * costs an unverified delivery.
+ */
+/**
+ * Ce que la porte de mutation rend : le refus (le message que l'agent lira),
+ * ou les CIBLES que l'intention a posées — gardées pour que le rattachement au
+ * projet (registre) se fasse APRÈS l'exécution, sur les mêmes cibles, et
+ * seulement si elle a réussi (revue Codex passe 27 : rattacher avant, c'était
+ * dire « ce travail a produit dans ce projet » d'un outil qui n'avait encore
+ * rien produit, et qui pouvait encore échouer).
+ */
+type MutationGate = { readonly error: string } | { readonly targets: readonly MutationTarget[] };
+
+/**
+ * Un résultat qui est un ÉCHEC sous une carte structurée (`failureText`,
+ * P1) : l'outil a répondu, mais rien n'a été produit. C'est la seule lecture
+ * du succès qui ne dépende pas de la forme de sortie de chaque outil. Un
+ * présentateur qui lève est un bug de CET outil (déjà compté dans
+ * `presentation_error`) — il ne doit pas cacher une production réelle.
+ */
+function isPresentedFailure(
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
+  input: unknown,
+  output: unknown,
+): boolean {
+  try {
+    const presented = presentToolResult(tool, input, output);
+    return presented.card === 'text' && presented.failure === true;
+  } catch {
+    return false;
+  }
+}
+
+async function takeMutationIntent<TInput extends z.ZodTypeAny, TOutput>(
+  tool: ToolDefinition<TInput, TOutput>,
+  input: z.infer<TInput>,
+  ctx: ToolContext,
+): Promise<MutationGate> {
+  // A mutating tool absent from the surface table cannot be attributed to any
+  // owner setting — it would write outside verification without anyone having
+  // chosen that. Refused, not silently allowed (T18 turns this into an
+  // architecture test that enumerates the registry).
+  const surface = surfaceForTool(tool.name);
+  if (!surface) {
+    console.error(
+      `[verification] VERIFICATION_SURFACE_UNMAPPED tool=${tool.name} job=${ctx.jobId}`,
+    );
+    return { error: 'verification_intent_failed: intent_surface_unmapped' };
+  }
+
+  // Un outil mutant SANS hook est refusé, jamais rangé au hasard.
+  //
+  // Le repli d'avant fabriquait des cibles « tous les workspaces attachés, en
+  // projet de code ». Conservateur en apparence, faux en pratique : il
+  // réintroduisait ICI le littéral de classement que v7-A vient de retirer du
+  // helper d'intention, et il aurait classé en code un outil qui produit tout
+  // autre chose (revue Codex PR #46, passe 5). Le seul endroit qui SAIT ce
+  // qu'un appel produit est l'outil ; sans sa déclaration, on ne devine pas.
+  //
+  // Ce cas est déjà interdit par le test d'architecture du registre (T18) :
+  // ce refus est la garde qui le rend vrai à l'exécution aussi.
+  if (!tool.resolveMutationTargets) {
+    console.error(
+      `[verification] VERIFICATION_INTENT_NO_TARGETS_HOOK tool=${tool.name} job=${ctx.jobId}`,
+    );
+    return { error: 'verification_intent_failed: intent_no_targets_hook' };
+  }
+
+  let targets: readonly MutationTarget[];
+  try {
+    targets = await tool.resolveMutationTargets(input, ctx);
+  } catch (err) {
+    console.error(
+      `[verification] VERIFICATION_INTENT_TARGETS_FAILED tool=${tool.name} job=${ctx.jobId} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { error: 'verification_intent_failed: intent_targets_failed' };
+  }
+
+  const outcome = await writeMutationIntent(ctx, { surface, targets });
+  if (outcome.kind === 'failed') return { error: `verification_intent_failed: ${outcome.code}` };
+
+  // Un job déjà terminal (annulé, échoué, terminé) ne doit plus RIEN écrire :
+  // aucune finalisation ne repassera prouver ce qu'il changerait, et un
+  // `cancelled` qui continue d'écrire n'est pas annulé. Refusé, pas laissé
+  // passer sans intention (revue de T16).
+  if (outcome.kind === 'already_terminal')
+    return { error: 'verification_intent_failed: intent_already_terminal' };
+  // Les cibles remontent à l'appelant : le REGISTRE des projets (P5) les
+  // relira après l'exécution, une fois le succès connu — voir executeTool.
+  return { targets };
+}
+
+/**
  * Snapshot the workspace before a mutating tool runs.
  *
  * Returns null when the write may proceed (snapshot taken, already taken this
@@ -644,6 +890,9 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
       }
       checkpointedTurns.add(turnKey);
       if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} ${workspace} before ${toolName}`);
+      // P11 — la photo devient RETROUVABLE : une ligne (travail, tour, dossier,
+      // sha). Ne refuse jamais l'écriture, voir recordTurnCheckpoint.
+      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx);
     } catch (err) {
       // One workspace that cannot be snapshotted is enough to refuse: we have
       // no way to tell it is not the one about to be written.
@@ -657,18 +906,95 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
   return null;
 }
 
+/**
+ * La ligne `job_checkpoints` de ce tour — P11.
+ *
+ * L'instantané existe déjà quand on arrive ici ; cette ligne dit seulement OÙ
+ * le retrouver. D'où deux règles :
+ *
+ * 1. **Elle ne refuse jamais rien.** Une panne d'insertion est un confort de
+ *    lecture perdu (la carte du fil ne montrera pas de diff pour ce tour), pas
+ *    un filet absent. Refuser l'écriture ici transformerait un défaut d'écran
+ *    en blocage du travail. Dite par un code, jamais avalée.
+ * 2. **Pas de `ctx.turn`, pas de ligne.** Sans compteur de tour, le seam
+ *    retombe sur « un instantané par appel » : il n'existe alors AUCUN tour
+ *    auquel rattacher la photo, et un diff « du tour » n'a pas de sens. Une
+ *    ligne inventée (turn = 0, par exemple) mentirait au lecteur.
+ *
+ * `sha` null = `snapshot` n'a rien réenregistré parce que l'arbre n'a pas bougé
+ * depuis la dernière photo. L'état d'avant de CE tour est donc le commit déjà
+ * en tête de la ref : c'est lui qu'on inscrit, pas rien.
+ */
+async function recordTurnCheckpoint(
+  store: string,
+  workspace: string,
+  sha: string | null,
+  ctx: ToolContext,
+): Promise<void> {
+  if (ctx.turn === undefined || !ctx.jobId) return;
+  try {
+    const resolved = sha ?? (await headCheckpoint(store, workspace));
+    if (!resolved) return;
+    await ctx.db
+      .insert(jobCheckpoints)
+      .values({ jobId: ctx.jobId, turn: ctx.turn, workspace, sha: resolved })
+      // La deuxième écriture du même tour retombe sur la même photo : la base
+      // tranche, plutôt qu'un mémo de plus à tenir côté processus.
+      .onConflictDoNothing({
+        target: [jobCheckpoints.jobId, jobCheckpoints.turn, jobCheckpoints.workspace],
+      });
+  } catch (err) {
+    console.error(
+      `[checkpoints] CHECKPOINT_ROW_FAILED job=${ctx.jobId} turn=${ctx.turn} ` +
+        `workspace=${workspace} error=${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function _writeToolCall(
   ctx: ToolContext,
-  toolName: string,
+  tool: ToolDefinition<z.ZodTypeAny, unknown>,
   input: unknown,
   output: string,
   durationMs: number,
+  /** The tool's ACTUAL output — only on a successful execution; absent, the row records no payload. */
+  produced?: { value: unknown },
 ): Promise<void> {
+  const toolName = tool.name;
+  // P1 (plan « De la maquette au produit »): the row carries the card the tool
+  // DECLARES — as declared, never recomputed nor rabattue — and the payload its
+  // present() drew from the output, so the conversation screen reads the row
+  // and never the registry. A presenter that violates its card's contract is a
+  // bug in THAT tool: never allowed to fail the agent's work, but never
+  // invisible either (revue passe 14) — the row records the error in
+  // `presentation_error`, keeps its card, and `presented` stays NULL, so the
+  // screen shows raw input/output saying why, and the bug can be counted.
+  const card: string = typeof tool.card === 'string' ? tool.card : 'generic';
+  let presented: ToolCardPayload | null = null;
+  let presentationError: string | null = null;
+  if (produced) {
+    try {
+      presented = presentToolResult(tool, input, produced.value);
+    } catch (err) {
+      presentationError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      console.error(
+        `[tools] presentation failed for "${toolName}" (job=${ctx.jobId}) — recorded on the row (presentation_error), presented=NULL:`,
+        err,
+      );
+    }
+  }
   try {
     await ctx.db.insert(toolCalls).values({
       entityId: ctx.entityId,
       jobId: ctx.jobId,
       toolName,
+      card,
+      presented,
+      presentationError,
+      // P7 (0095) : le niveau de risque DÉCLARÉ, tel quel — jamais recalculé.
+      // C'est le seul classement dont l'écran dispose pour un connecteur tiers,
+      // dont la carte `generic` ne distingue pas une lecture d'une écriture.
+      riskLevel: tool.riskLevel,
       // NOUVEAU-1: the audit trail is never re-executed, so we store a
       // secret-redacted copy — create_connector/create_mcp API keys and stdio
       // env values must not sit in cleartext in tool_calls or render to the

@@ -36,6 +36,14 @@ export type JobTriggerContext =
       scheduleName: string;
       prevRunAt: string | null;
       /**
+       * L'id de l'automatisation, porté par la PROVENANCE (revue passe 26) :
+       * `agent_jobs.schedule_id` est SET NULL quand l'automatisation est
+       * supprimée, et deux automatisations supprimées puis recréées sous le
+       * même nom fusionnaient en une seule ligne de la page Scheduled. Absent
+       * sur les jobs antérieurs — la page retombe alors sur le nom, et le dit.
+       */
+      scheduleId?: string;
+      /**
        * The schedule's EXPLICITLY chosen notify channel (agent_schedules.notify_channel),
        * carried onto the job so both delivery paths (delivery-guard's send tools
        * AND deliver-results.ts's adapter-direct return) honor the SAME channel the
@@ -89,15 +97,23 @@ export const agentJobs = pgTable(
     originalTask: text('original_task'),
     chatId: text('chat_id'),
     /**
-     * Groups jobs from the same conversational thread for the Jobs page UI
-     * (migration 0059). Purely a reporting/grouping concern — the runtime
-     * execution path (delegation, cron, task-board) never reads this column.
-     * NULL for non-conversational jobs (cron/schedule/webhook with no parent).
-     * Stamped at creation by apps/runner/src/job/conversation-id.ts, reusing
-     * the exact idle-reset session boundary thread-history.ts already uses
-     * for chat continuity — see that file for the gap rule. Delegated/
-     * task-board children inherit their creator's value; nothing else
-     * mutates it after insert.
+     * La conversation dont ce job est un tour (migration 0059, redéfinie par
+     * 0094 — P6). Ce n'est plus un uuid frappé à la volée : depuis P6, la
+     * valeur RÉFÉRENCE une ligne `conversations`, et l'identité d'un fil est
+     * « une conversation par chat, jusqu'à ce que l'utilisateur en ouvre une
+     * autre » (`/new` dans un canal, le « + » du dashboard) — plus la règle du
+     * SILENCE de 4 h, qui ne survit que comme budget de relecture dans
+     * thread-history.ts. Posée à la création par
+     * apps/runner/src/job/conversation-id.ts ; les enfants (délégation,
+     * task-board) héritent de la valeur de leur créateur ; rien d'autre ne la
+     * mute après l'insert. NULL pour un job non conversationnel (cron,
+     * webhook, sans parent).
+     *
+     * PAS DE CLÉ ÉTRANGÈRE, délibérément (0094) : 95 jobs de la base dev
+     * portent un uuid dont la conversation a été supprimée par l'utilisateur,
+     * et une FK les ramènerait à NULL — la page Runs perdrait le seul
+     * regroupement que cette colonne sert à faire. L'identité vaut pour
+     * l'avenir ; un ancien uuid orphelin reste tel quel.
      */
     conversationId: uuid('conversation_id'),
     /**
@@ -184,6 +200,41 @@ export const agentJobs = pgTable(
      */
     lastFailedDelegationSlug: text('last_failed_delegation_slug'),
     pendingDelegation: jsonb('pending_delegation'),
+    /**
+     * Marks a root job as being finalized RIGHT NOW by the delivery cron
+     * (migration 0090, plan « Vérifier & Corriger »). Set at claim time (the
+     * same instant the cron reserves the job for its finalization phase, in
+     * place of the earlier read-then-write race), cleared when finalization
+     * ends (success or failure). Lets a second concurrent tick recognize a
+     * job already being finalized and skip it, instead of racing the first
+     * tick to the terminal write. NULL outside a finalization window.
+     */
+    finalizingAt: timestamp('finalizing_at', { withTimezone: true }),
+    /**
+     * La trace FIGÉE des surfaces décochées au moment où ce run a tourné (D8,
+     * migration 0091) — un ensemble de clés VerificationSurfaceKey, chacune
+     * appendée une fois par le helper d'intention. Le détail d'un run dit
+     * « surface hors vérification » depuis CETTE colonne, jamais depuis le
+     * réglage courant de l'espace : si l'owner recoche demain, les runs d'hier
+     * doivent toujours raconter ce qui s'est passé hier.
+     */
+    verificationSkippedSurfaces: jsonb('verification_skipped_surfaces')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /**
+     * Le projet ENREGISTRÉ auquel ce travail s'est rattaché (0093, P5).
+     *
+     * Posé UNE SEULE FOIS, par `attachProductionToProject` : le premier projet
+     * touché gagne, et l'`UPDATE … WHERE project_id IS NULL` fait cette règle
+     * sans lecture préalable. NULL tant qu'aucune production n'est tombée dans
+     * un projet déclaré — le rattachement est un registre, jamais une garde.
+     *
+     * Pas de `.references()` ici, comme `parent_job_id` juste au-dessus : la FK
+     * (ON DELETE SET NULL vers code_projects) est posée par la migration. La
+     * déclarer côté Drizzle ferait un cycle d'import avec code-projects.ts, qui
+     * référence déjà agent_jobs pour `registered_job_id`.
+     */
+    projectId: uuid('project_id'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -220,6 +271,12 @@ export const agentJobs = pgTable(
     // (schedule_id + created_at range SUM) had no usable index and seq-scanned
     // the whole table. The (schedule_id, created_at) prefix serves both.
     index('idx_agent_jobs_schedule_created').on(table.scheduleId, table.createdAt),
+    // 0093 : « les travaux de ce projet » (compte et dernière activité de la
+    // liste des projets) — partiel, la colonne reste NULL sur l'immense
+    // majorité des jobs.
+    index('idx_agent_jobs_project')
+      .on(table.projectId)
+      .where(sql`${table.projectId} IS NOT NULL`),
     check(
       'agent_jobs_status_check',
       sql`${table.status} IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')`,

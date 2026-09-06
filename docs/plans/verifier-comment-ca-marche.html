@@ -1,0 +1,622 @@
+<!-- artifact: https://claude.ai/code/artifact/ac38d18a-f4d7-4748-8623-4de71cbed939 -->
+<title>Comment Nodal vérifie</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..700&family=Source+Serif+4:opsz,wght@8..60,400..600&family=JetBrains+Mono:wght@400;500&display=swap"
+/>
+<style>
+  :root {
+    --ground: #eef1f3;
+    --surface: #ffffff;
+    --surface-2: #e4e9ec;
+    --ink: #1b2327;
+    --ink-2: #4d585e;
+    --ink-3: #7d878c;
+    --rule: #d6dde0;
+    --done: #1f6f52;
+    --done-bg: #dfeee7;
+    --decide: #8a5e0f;
+    --decide-bg: #f6ecd8;
+    --broken: #9c3f31;
+    --broken-bg: #f7e4e0;
+    --mono-bg: #e7ecee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #14181a;
+      --surface: #1c2124;
+      --surface-2: #252b2f;
+      --ink: #e7ebed;
+      --ink-2: #adb6bb;
+      --ink-3: #7d878c;
+      --rule: #313940;
+      --done: #59b98f;
+      --done-bg: #172c24;
+      --decide: #d3a44f;
+      --decide-bg: #2e2717;
+      --broken: #d98570;
+      --broken-bg: #2f201d;
+      --mono-bg: #171c1f;
+    }
+  }
+  :root[data-theme='dark'] {
+    --ground: #14181a;
+    --surface: #1c2124;
+    --surface-2: #252b2f;
+    --ink: #e7ebed;
+    --ink-2: #adb6bb;
+    --ink-3: #7d878c;
+    --rule: #313940;
+    --done: #59b98f;
+    --done-bg: #172c24;
+    --decide: #d3a44f;
+    --decide-bg: #2e2717;
+    --broken: #d98570;
+    --broken-bg: #2f201d;
+    --mono-bg: #171c1f;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 18px;
+    line-height: 1.62;
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 22px 90px;
+  }
+
+  header {
+    padding: 48px 0 24px;
+  }
+  .eyebrow {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: clamp(34px, 6vw, 46px);
+    font-weight: 700;
+    font-stretch: 88%;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 20px;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 34em;
+  }
+
+  h2 {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 24px;
+    font-weight: 650;
+    font-stretch: 88%;
+    letter-spacing: -0.01em;
+    margin: 46px 0 12px;
+    text-wrap: balance;
+  }
+  p {
+    margin: 0 0 14px;
+    max-width: 36em;
+  }
+  .tight p {
+    margin-bottom: 8px;
+  }
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.82em;
+    background: var(--mono-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  a {
+    color: var(--done);
+  }
+
+  /* Le flux, quatre étapes — c'est une vraie séquence, d'où les numéros. */
+  .flux {
+    display: grid;
+    gap: 10px;
+    margin: 22px 0 8px;
+  }
+  .etape {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    align-items: baseline;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+  .etape .n {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--surface);
+    background: var(--ink);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: start;
+    margin-top: 3px;
+  }
+  .etape p {
+    margin: 0;
+    font-size: 17px;
+  }
+  .etape b {
+    font-weight: 600;
+  }
+
+  .note {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 18px 0;
+    font-size: 17px;
+  }
+  .note p:last-child {
+    margin-bottom: 0;
+  }
+
+  .ecrans {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0;
+  }
+  .ecran {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+  .ecran .ou {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .ecran p {
+    margin: 0;
+    font-size: 17px;
+  }
+
+  .bloc {
+    border-left: 4px solid var(--rule);
+    background: var(--surface);
+    border-radius: 0 10px 10px 0;
+    padding: 18px 22px;
+    margin: 18px 0;
+  }
+  .bloc.casse {
+    border-left-color: var(--broken);
+    background: var(--broken-bg);
+  }
+  .bloc.decision {
+    border-left-color: var(--decide);
+    background: var(--decide-bg);
+  }
+  .bloc.regle {
+    border-left-color: var(--done);
+    background: var(--done-bg);
+  }
+  .etiquette {
+    display: inline-block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--done);
+    border: 1px solid var(--done);
+    border-radius: 999px;
+    padding: 2px 9px;
+    margin-bottom: 8px;
+  }
+  .bloc h3 {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 18px;
+    font-weight: 650;
+    margin: 0 0 8px;
+  }
+  .bloc p:last-child {
+    margin-bottom: 0;
+  }
+  .bloc .reco {
+    font-size: 16px;
+    color: var(--ink-2);
+  }
+  .bloc .reco b {
+    color: var(--ink);
+  }
+
+  ul.simple {
+    margin: 0 0 14px;
+    padding-left: 20px;
+    max-width: 36em;
+  }
+  ul.simple li {
+    margin: 7px 0;
+  }
+
+  .fait {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 16px 0 22px;
+  }
+  .pastille {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--done-bg);
+    color: var(--done);
+  }
+
+  details {
+    margin-top: 34px;
+    border-top: 1px solid var(--rule);
+    padding-top: 16px;
+  }
+  summary {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  summary:focus-visible {
+    outline: 2px solid var(--done);
+    outline-offset: 3px;
+  }
+  details p,
+  details li {
+    font-size: 16px;
+    color: var(--ink-2);
+  }
+  details code {
+    font-size: 0.8em;
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Point d'arrêt · mis à jour le 5 septembre 2026</p>
+    <h1>Comment Nodal vérifie</h1>
+    <p class="lede">
+      Tout le chantier en une page, sans jargon. Tu as trouvé deux défauts en cinq minutes d'écran.
+      Les deux sont corrigés. Restent deux choses à trancher, et une question ouverte sur Telegram.
+    </p>
+  </header>
+
+  <h2>Le problème, en trois phrases</h2>
+  <div class="tight">
+    <p>Aujourd'hui, un agent finit son travail et écrit « c'est fait ».</p>
+    <p>Personne ne vérifie que c'est vrai.</p>
+    <p>On veut que Nodal le vérifie lui-même, avant de te dire que c'est terminé.</p>
+  </div>
+
+  <h2>Comment ça marche</h2>
+  <div class="flux">
+    <div class="etape">
+      <span class="n">1</span>
+      <p>Un agent s'apprête à écrire dans un dossier. Nodal note : <b>ce projet a changé</b>.</p>
+    </div>
+    <div class="etape">
+      <span class="n">2</span>
+      <p>L'agent termine son travail.</p>
+    </div>
+    <div class="etape">
+      <span class="n">3</span>
+      <p>
+        Nodal relance la vérification de ce projet, et s'arrête à la première chose qui ne va pas.
+      </p>
+    </div>
+    <div class="etape">
+      <span class="n">4</span>
+      <p>Nodal garde le résultat. Tu le lis dans le détail du run.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <p>
+      <b>Tu ne donnes rien à chaque tâche.</b> La vérification est attachée au <b>projet</b>, une
+      fois. Ensuite, tous les jobs qui touchent ce projet la relancent tout seuls. Ma première
+      version de cette page laissait croire le contraire.
+    </p>
+  </div>
+
+  <div class="note">
+    <p>
+      <b>Pour l'instant, rien n'est bloqué.</b> Même si une commande échoue, le travail est marqué
+      terminé. C'est voulu : on regarde d'abord ce que ça donne pendant une semaine sur tes vrais
+      jobs. Bloquer viendra après, avec des seuils tirés de ces chiffres.
+    </p>
+  </div>
+
+  <h2>Ce que tu vois à l'écran</h2>
+  <div class="ecrans">
+    <div class="ecran">
+      <span class="ou">Onglet Code, un projet ouvert</span>
+      <p>
+        « Proof commands » : Nodal lit le projet et te propose ce qu'il y trouve, avec ce que chaque
+        commande lance vraiment. Un bouton les ajoute, un second les approuve.
+      </p>
+    </div>
+    <div class="ecran">
+      <span class="ou">Réglages</span>
+      <p>Tu choisis quelles façons de travailler sont vérifiées. Par défaut, toutes.</p>
+    </div>
+    <div class="ecran">
+      <span class="ou">Détail d'un run</span>
+      <p>
+        Ce que la preuve a fait : chaque commande, son résultat, sa durée. Ou pourquoi elle n'a pas
+        tourné.
+      </p>
+    </div>
+  </div>
+
+  <h2>Et si je demande un fichier Excel ?</h2>
+  <p>C'est la question que tu as posée. Voici où on en est le 5 septembre, en deux temps.</p>
+  <p>
+    <b>Ce qui marche maintenant :</b> ton tableur existe pour Nodal. Il a sa ligne, son identité, et
+    il n'est plus confondu avec le code. Le détail du run le nomme et dit la vérité : « pas encore
+    vérifié ». Il ne t'envoie plus chercher un réglage qui n'existe pas.
+  </p>
+  <p>
+    <b>Ce qui manque encore :</b> la vérification elle-même. Vérifier un tableur, ce n'est pas
+    lancer une commande, ça n'aurait aucun sens. C'est autre chose : le fichier s'ouvre vraiment,
+    les formules recalculent, les totaux tombent juste, les chiffres du rapport concordent avec ceux
+    du tableau. Rien de tout cela ne se tape dans un champ. Nodal le fait, ou ne le fait pas.
+  </p>
+  <p>
+    Et rien de tout cela ne fait tourner du code du projet. Donc rien de tout cela n'aura jamais
+    besoin de ton approbation. C'est le lot suivant.
+  </p>
+
+  <h2>Et quand je passe par Telegram ?</h2>
+  <p>
+    C'est le cas qui compte, et c'est celui qui casse tout ce que j'ai livré. Tu écris « crée-moi
+    ceci » depuis Telegram. Tu n'as pas d'écran. Il n'y a aucun moment où tu peux cocher quoi que ce
+    soit. Or aujourd'hui, sans configuration, <b>rien ne se vérifie</b>.
+  </p>
+  <p>
+    Donc la vérification ne doit pas se configurer : elle doit se <b>déduire</b>. De ce que tu as
+    demandé, et de ce que l'agent a produit. La bonne ligne de partage n'est pas « du code ou pas du
+    code », c'est celle-ci :
+  </p>
+  <div class="ecrans">
+    <div class="ecran">
+      <span class="ou">Sans pouvoir — aucune permission</span>
+      <p>
+        Nodal ouvre le fichier qu'il vient de produire, recalcule, compare les totaux, relit le
+        message qu'il a envoyé. Il ne lance rien qui vienne du dépôt. Ça peut donc tourner
+        <b>toujours</b>, sans réglage et sans te déranger.
+      </p>
+    </div>
+    <div class="ecran">
+      <span class="ou">Avec pouvoir — une permission, une fois</span>
+      <p>
+        Lancer les tests d'un projet exécute du code du dépôt. Là, il faut ton accord — mais une
+        seule fois par projet, et Nodal peut te le demander <b>dans Telegram</b>, avec deux boutons.
+        Ce mécanisme existe déjà pour les autres approbations.
+      </p>
+    </div>
+  </div>
+  <p>
+    C'est écrit dans le plan sous le nom <b>v7, « vérifier sans configurer »</b>, découpé en quatre
+    livraisons. Je l'ai remontée devant tous les autres lots.
+  </p>
+
+  <h2>Les deux défauts que ta question a mis au jour — corrigés</h2>
+  <div class="bloc regle">
+    <span class="etiquette">corrigé le 5 septembre</span>
+    <h3>1. L'écran ne te proposait rien</h3>
+    <p>
+      Tu as cliqué « Add a command » et tu n'as pas su quoi mettre. Tu avais raison : rien ne te le
+      disait.
+    </p>
+    <p>
+      Maintenant Nodal lit le projet et te montre ce qu'il y trouve. Un seul bouton, « Add these ».
+      Et à côté de chaque commande, ce qu'elle lance vraiment — parce qu'un projet peut appeler
+      n'importe quoi depuis un script nommé « test », et que tu dois le voir avant d'approuver.
+    </p>
+    <p>
+      Un dossier sans manifeste connu ne propose rien, et le dit. Il n'invente pas une commande qui
+      n'existe pas.
+    </p>
+  </div>
+  <div class="bloc regle">
+    <span class="etiquette">corrigé le 5 septembre</span>
+    <h3>2. Un tableur déclenchait les tests du code</h3>
+    <p>
+      Si un agent écrivait un fichier Excel <b>dans</b> un projet de code, Nodal marquait le projet
+      comme modifié et relançait ses tests. Le code n'avait pas bougé d'une ligne.
+    </p>
+    <p>
+      La cause : une seule sorte de livrable était branchée, le projet de code. Tout ce qu'un agent
+      écrivait y était rangé, faute de mieux.
+    </p>
+    <p>
+      Désormais chaque outil déclare <b>ce qu'il produit</b>. Un tableur est un tableur. Il a sa
+      propre ligne, sa propre identité, et il ne relance plus les tests du dépôt qui l'héberge. Le
+      dépôt, lui, reste marqué dès qu'un fichier texte y est écrit : c'est le côté prudent, une
+      vérification de trop coûte moins cher qu'une livraison jamais vérifiée.
+    </p>
+    <p>
+      Ce que Nodal ne sait pas <b>encore</b> faire, et qu'il dit clairement à l'écran : vérifier le
+      tableur lui-même. Il s'ouvre ? Les feuilles demandées existent ? Aucune cellule en erreur ?
+      C'est le lot suivant.
+    </p>
+  </div>
+
+  <h2>À toi de décider</h2>
+
+  <div class="bloc decision">
+    <span class="etiquette">à moitié fait</span>
+    <h3>1. Rien à configurer du tout</h3>
+    <p>
+      <b>Fait :</b> Nodal lit le projet, trouve ses commandes, te les montre. Un bouton les ajoute.
+    </p>
+    <p>
+      <b>Reste :</b> quand tu lances une tâche depuis Telegram, tu n'as pas cet écran. Nodal doit te
+      poser la question <b>là où tu es</b> : « ce projet veut lancer ceci pour se prouver, tu es
+      d'accord ? », avec deux boutons dans la conversation. Telegram sait déjà afficher des boutons.
+      Ce qui manque est le fil entre « une preuve attend » et « cette tâche vient de ce canal ».
+    </p>
+  </div>
+
+  <div class="bloc regle">
+    <span class="etiquette">fait le 5 septembre</span>
+    <h3>2. Ranger chaque chose dans sa catégorie</h3>
+    <p>
+      Un fichier Excel écrit par un agent est un livrable <b>à part</b>, pas une modification du
+      projet de code qui l'héberge. Il ne relance pas les tests. En attendant son propre
+      vérificateur, son état est « pas encore vérifié », dit tel quel.
+    </p>
+    <p>
+      C'est livré. Chaque outil déclare ce qu'il produit, et un outil qui ne le déclare pas est
+      <b>refusé</b> plutôt que rangé au hasard. Codex a relu, a trouvé deux vrais défauts dans ma
+      première version, et les deux sont corrigés.
+    </p>
+  </div>
+
+  <div class="bloc decision">
+    <h3>3. v7 en premier, et la première brique est livrée</h3>
+    <p>
+      J'ai remonté « vérifier sans configurer » devant tous les autres lots, et repoussé la semaine
+      d'observation derrière : sans v7, elle ne mesurerait que les projets configurés à la main,
+      c'est-à-dire aucun.
+    </p>
+    <p class="reco">
+      <b>Quatre livraisons, la première est faite</b> : le type de livrable se déduit (fait) ; les
+      vérifications sans pouvoir ; la découverte des commandes et l'approbation dans le canal ; les
+      critères tirés de ta demande. J'enchaîne sur la deuxième sauf avis contraire.
+    </p>
+  </div>
+
+  <div class="bloc decision">
+    <h3>4. Deux dossiers qui pointent au même endroit</h3>
+    <p>
+      Si le même dossier est attaché deux fois — une fois directement, une fois par un raccourci —
+      le même projet compte double. Les commandes sont d'un côté, les résultats de l'autre.
+    </p>
+    <p class="reco">
+      <b>Ma recommandation : l'interdire au moment où on attache</b>, avec un message qui nomme les
+      deux dossiers. L'autre option, accepter deux identités, est logique mais déroutante à l'écran.
+    </p>
+  </div>
+
+  <div class="bloc decision">
+    <h3>5. L'ordre des livraisons</h3>
+    <p>La #45 (les recettes d'agents) attend toujours ton merge. La #46 est celle-ci.</p>
+    <p class="reco"><b>La #45 d'abord</b>, puis la #46 : celle-ci part de la branche principale.</p>
+  </div>
+
+  <h2>Ce que j'ai fait</h2>
+  <div class="fait">
+    <span class="pastille">24 lots de travail</span>
+    <span class="pastille">9 relectures externes</span>
+    <span class="pastille">CI verte</span>
+    <span class="pastille">4 bugs existants corrigés</span>
+    <span class="pastille">chaque chose dans sa catégorie</span>
+    <span class="pastille">les commandes se proposent</span>
+  </div>
+  <ul class="simple">
+    <li>Le travail a été découpé en 24 lots, chacun avec ses tests et sa preuve qu'ils servent.</li>
+    <li>
+      Un second outil (Codex) a relu neuf fois. Il a trouvé six vrais trous : les fichiers Word,
+      Excel et PowerPoint échappaient à la vérification ; l'envoi des résultats pouvait se marcher
+      dessus ; un outil qui n'annonçait pas ce qu'il écrit était rangé « en code » par défaut ;
+      l'ordre dans lequel deux tâches simultanées prennent leurs verrous tenait par chance ; la
+      lecture d'un projet pouvait sortir du dossier autorisé ; et une commande proposée ne montrait
+      pas ce qu'elle lance. Tous fermés.
+    </li>
+    <li>
+      Une de ses demandes a été <b>refusée, avec sa mesure</b> : rendre une règle obligatoire au
+      compilateur cassait 204 endroits sans rapport. Elle est imposée par un test qui la dit en
+      toutes lettres.
+    </li>
+    <li>
+      Quatre bugs qui existaient <b>déjà</b> sont corrigés au passage — dont un message de fin de
+      job qui se perdait si Nodal tombait au mauvais moment.
+    </li>
+    <li>L'intégration continue est verte depuis quelques minutes.</li>
+  </ul>
+
+  <h2>Sur quoi c'est basé</h2>
+  <p>
+    Six articles de recherche et la façon dont d'autres harnais s'y prennent. Trois idées en sont
+    sorties, et ce sont elles qui structurent tout le reste.
+  </p>
+  <ul class="simple">
+    <li>
+      <b>La machine d'abord.</b> Tout ce qui peut se vérifier sans jugement se vérifie sans LLM.
+    </li>
+    <li>
+      <b>Un relecteur différent.</b> Pour le reste, un second modèle — d'une autre famille, pas le
+      même deux fois.
+    </li>
+    <li><b>Mesurer avant d'imposer.</b> D'où la semaine où rien n'est bloqué.</li>
+  </ul>
+
+  <details>
+    <summary>Le détail technique (si tu veux le voir)</summary>
+    <p>
+      Le plan complet, avec le suivi lot par lot :
+      <a href="https://claude.ai/code/artifact/8744ad8c-e7ec-455a-8ae7-4ca25d826ede"
+        >Vérifier &amp; Corriger</a
+      >. La branche est <code>feat/verifier-corriger-pr1</code>, la pull request la
+      <code>#46</code>.
+    </p>
+    <ul class="simple">
+      <li>
+        L'identité d'un projet est son chemin, normalisé une seule fois dans le code partagé
+        (<code>projectKey</code>). C'est ce qui a occupé trois des quatre relectures.
+      </li>
+      <li>
+        Une seule porte de sortie pour les jobs (<code>finalizeJobSuccess</code>), et une règle
+        d'architecture qui interdit d'en ouvrir une autre.
+      </li>
+      <li>
+        L'envoi au canal passe par une boîte d'envoi : l'intention est enregistrée avec le statut,
+        l'envoi suit, et le cron reprend ce qui manque.
+      </li>
+      <li>
+        Les tests de concurrence tournent sur un vrai Postgres à deux connexions. Ils passent sur
+        Linux à chaque run ; le runner Windows de GitHub ne peut pas les faire tourner, parce que
+        PostgreSQL refuse de démarrer sous un compte administrateur.
+      </li>
+      <li>
+        Reste aussi, côté ménage : deux copies de règles à retirer dans le runner, et un geste
+        manquant pour effacer toutes les commandes d'un projet.
+      </li>
+    </ul>
+  </details>
+</div>

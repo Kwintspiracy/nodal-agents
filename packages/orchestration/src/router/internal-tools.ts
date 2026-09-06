@@ -23,6 +23,8 @@ import type { OperationDescriptor } from '@nodal-agents/shared';
  */
 const LABELS: Readonly<Record<string, string>> = {
   return_result: 'Finish a task',
+  ask_user: 'Ask the user a question',
+  register_project: 'Create a project',
   skill_view: 'Read its own skills',
   list_models: 'List available models',
   list_schedules: 'List its schedules',
@@ -46,6 +48,7 @@ const LABELS: Readonly<Record<string, string>> = {
  * reaches outside the workspace is `write`; the rest is `read`.
  */
 const RISK: Readonly<Record<string, OperationDescriptor['risk']>> = {
+  register_project: 'write',
   save_memory: 'write',
   mark_memory_helpful: 'write',
   mark_memory_outdated: 'write',
@@ -67,10 +70,10 @@ export type InternalToolDescriptor = OperationDescriptor & {
 };
 
 /**
- * The sixteen always-on tools, in the order the runtime grants them.
+ * The always-on tools, in the order the runtime grants them.
  *
- * `return_result` is included rather than hidden: an owner who counts sixteen
- * tools in the docs and finds fifteen here would reasonably wonder what the
+ * `return_result` is included rather than hidden: an owner who counts the tools
+ * in the docs and finds one fewer here would reasonably wonder what the
  * product is not telling them. It carries `unblockableReason` instead, and the
  * UI renders it locked.
  */

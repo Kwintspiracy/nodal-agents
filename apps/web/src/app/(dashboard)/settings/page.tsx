@@ -7,6 +7,7 @@ import {
   getRootConfigAction,
   listAgentsAction,
   getAutoRunPauseAction,
+  getVerificationSurfacesAction,
   getMcpServerSwitchAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
@@ -19,6 +20,7 @@ import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
 import AutoRunPauseSection from './AutoRunPauseSection.tsx';
+import VerificationSurfacesSection from './VerificationSurfacesSection.tsx';
 import McpServerSection from './McpServerSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
@@ -42,6 +44,7 @@ export default async function SettingsPage() {
     rootConfigResult,
     agentsResult,
     autoRunPauseResult,
+    verificationSurfacesResult,
     mcpSwitchResult,
     installNotesResult,
     tzResult,
@@ -53,6 +56,7 @@ export default async function SettingsPage() {
     getRootConfigAction(),
     listAgentsAction(),
     getAutoRunPauseAction(),
+    getVerificationSurfacesAction(),
     getMcpServerSwitchAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
@@ -128,6 +132,15 @@ export default async function SettingsPage() {
             lede="Per-agent Yolo (Autonomy tab of each agent) decides what auto-runs. This is the workspace-wide emergency brake: pause everything at once, release to re-arm."
           >
             <AutoRunPauseSection initial={autoRunPauseResult.data} />
+          </SetBlock>
+        )}
+
+        {verificationSurfacesResult.ok && (
+          <SetBlock
+            label="Verification surfaces"
+            lede="Which ways of working get proven by a project's proof commands. Uncheck a surface and its runs are no longer verified, and say so."
+          >
+            <VerificationSurfacesSection initial={verificationSurfacesResult.data} />
           </SetBlock>
         )}
 

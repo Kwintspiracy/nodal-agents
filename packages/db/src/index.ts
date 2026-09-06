@@ -59,6 +59,7 @@ export {
   setInstallNotes,
   INSTALL_NOTES_KEY,
 } from './repos/app-settings.ts';
+export { getVerificationSurfaces } from './repos/verification-surfaces.ts';
 export type {
   CreateSkillInput,
   CreateSkillResult,

@@ -610,6 +610,90 @@
       "when": 1786000008000,
       "tag": "0087_workspaces_hidden_from_code",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1786000009000,
+      "tag": "0088_code_projects_project_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1786000010000,
+      "tag": "0089_verification_state_and_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1786000011000,
+      "tag": "0090_job_deliveries_and_finalizing",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1786000012000,
+      "tag": "0091_verification_surfaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1786000013000,
+      "tag": "0092_tool_calls_card",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1786000014000,
+      "tag": "0093_project_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1786000015000,
+      "tag": "0094_conversations_all_channels",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1786000016000,
+      "tag": "0095_tool_calls_risk_level",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1786000017000,
+      "tag": "0096_conversation_titles_prefix",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1786000018000,
+      "tag": "0097_conversations_origin_project",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1786000019000,
+      "tag": "0098_approval_requests_question",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1786000020000,
+      "tag": "0099_job_checkpoints",
+      "breakpoints": true
     }
   ]
 }

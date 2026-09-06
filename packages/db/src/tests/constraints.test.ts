@@ -221,6 +221,76 @@ describe('CHECK constraints', () => {
   });
 });
 
+// ── code_projects.verify_commands (migration 0088) ────────────────────────────
+
+describe('code_projects.verify_commands CHECK (0088)', () => {
+  it('rejects 6 entries (max is 5, v5-A)', async () => {
+    await expect(
+      db.insert(schema.codeProjects).values({
+        entityId: seed.entityId,
+        projectPath: `/srv/verify-6-${Date.now()}`,
+        projectKey: `/srv/verify-6-${Date.now()}`,
+        verifyCommands: Array.from({ length: 6 }, (_, i) => ({
+          command: `echo ${i}`,
+          timeoutSeconds: 5,
+        })),
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects 0 entries (empty array)', async () => {
+    await expect(
+      db.insert(schema.codeProjects).values({
+        entityId: seed.entityId,
+        projectPath: `/srv/verify-0-${Date.now()}`,
+        projectKey: `/srv/verify-0-${Date.now()}`,
+        verifyCommands: [],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects a non-array value', async () => {
+    // Deliberately the wrong shape (a bare object, not an array) to exercise
+    // the CHECK's jsonb_typeof(...) = 'array' branch — cast past the column's
+    // VerifyCommand[] type since the DB, not TypeScript, is what's under test.
+    const notAnArray = { command: 'pnpm test', timeoutSeconds: 60 } as unknown as Array<{
+      command: string;
+      timeoutSeconds: number;
+    }>;
+    await expect(
+      db.insert(schema.codeProjects).values({
+        entityId: seed.entityId,
+        projectPath: `/srv/verify-obj-${Date.now()}`,
+        projectKey: `/srv/verify-obj-${Date.now()}`,
+        verifyCommands: notAnArray,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts 1 to 5 entries and NULL (not_configured)', async () => {
+    const [oneCmd] = await db
+      .insert(schema.codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: `/srv/verify-1-${Date.now()}`,
+        projectKey: `/srv/verify-1-${Date.now()}`,
+        verifyCommands: [{ command: 'pnpm test', timeoutSeconds: 60 }],
+      })
+      .returning();
+    expect(oneCmd?.verifyCommands).toHaveLength(1);
+
+    const [noCmd] = await db
+      .insert(schema.codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: `/srv/verify-null-${Date.now()}`,
+        projectKey: `/srv/verify-null-${Date.now()}`,
+      })
+      .returning();
+    expect(noCmd?.verifyCommands).toBeNull();
+  });
+});
+
 // ── FK CASCADE tests ──────────────────────────────────────────────────────────
 
 describe('FK cascades', () => {
@@ -914,5 +984,289 @@ describe('UNIQUE constraints', () => {
         .insert(schema.entityMembers)
         .values({ entityId: seed.entityId, userId: extraUser!.id, role: 'admin' }),
     ).rejects.toThrow();
+  });
+});
+
+// ── job_deliveries (migration 0090) ───────────────────────────────────────────
+
+describe('job_deliveries constraints (0090)', () => {
+  it('rejects attempts = 4 (CHECK attempts <= 3)', async () => {
+    await expect(
+      db.insert(schema.jobDeliveries).values({
+        jobId: seed.jobId,
+        channel: 'telegram',
+        chatId: 'chat-1',
+        payload: 'hi',
+        outcome: 'attempted',
+        idempotencyKey: `attempts4-${Date.now()}`,
+        attempts: 4,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts attempts = 3 (boundary, not off-by-one)', async () => {
+    const [row] = await db
+      .insert(schema.jobDeliveries)
+      .values({
+        jobId: seed.jobId,
+        channel: 'telegram',
+        chatId: 'chat-1',
+        payload: 'hi',
+        outcome: 'attempted',
+        idempotencyKey: `attempts3-${Date.now()}`,
+        attempts: 3,
+      })
+      .returning();
+    expect(row?.attempts).toBe(3);
+  });
+
+  it('rejects a duplicate idempotency_key', async () => {
+    const key = `dup-idem-${Date.now()}`;
+    await db.insert(schema.jobDeliveries).values({
+      jobId: seed.jobId,
+      channel: 'telegram',
+      chatId: 'chat-1',
+      payload: 'hi',
+      outcome: 'prepared',
+      idempotencyKey: key,
+    });
+    await expect(
+      db.insert(schema.jobDeliveries).values({
+        jobId: seed.jobId,
+        channel: 'telegram',
+        chatId: 'chat-2',
+        payload: 'again',
+        outcome: 'prepared',
+        idempotencyKey: key,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects an outcome outside the enum', async () => {
+    await expect(
+      db.insert(schema.jobDeliveries).values({
+        jobId: seed.jobId,
+        channel: 'telegram',
+        chatId: 'chat-1',
+        payload: 'hi',
+        outcome: 'sent',
+        idempotencyKey: `bad-outcome-${Date.now()}`,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects channel 'cron' — job_deliveries.channel is TRANSPORT, not agent_jobs.channel's ORIGIN vocabulary", async () => {
+    await expect(
+      db.insert(schema.jobDeliveries).values({
+        jobId: seed.jobId,
+        channel: 'cron',
+        chatId: 'chat-1',
+        payload: 'hi',
+        outcome: 'prepared',
+        idempotencyKey: `bad-channel-${Date.now()}`,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('cascade: deleting the job deletes its job_deliveries row', async () => {
+    const [j] = await db
+      .insert(schema.agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'delivery cascade job',
+      })
+      .returning();
+    const [d] = await db
+      .insert(schema.jobDeliveries)
+      .values({
+        jobId: j!.id,
+        channel: 'telegram',
+        chatId: 'chat-1',
+        payload: 'hi',
+        outcome: 'prepared',
+        idempotencyKey: `cascade-${Date.now()}`,
+      })
+      .returning();
+
+    await db.delete(schema.agentJobs).where(eq(schema.agentJobs.id, j!.id));
+    const gone = await db
+      .select()
+      .from(schema.jobDeliveries)
+      .where(eq(schema.jobDeliveries.id, d!.id));
+    expect(gone.length).toBe(0);
+  });
+});
+
+// ── job_deliverable_verification_state + verification_runs (migration 0089) ──
+
+describe('job_deliverable_verification_state + verification_runs constraints (0089)', () => {
+  it('rejects verified_generation > dirty_generation', async () => {
+    await expect(
+      db.insert(schema.jobDeliverableVerificationState).values({
+        jobId: seed.jobId,
+        deliverableType: 'code_project',
+        canonicalKey: `/srv/gen-check-${Date.now()}`,
+        dirtyGeneration: 2,
+        verifiedGeneration: 3,
+        decisionStatus: 'dirty',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts verified_generation === dirty_generation (boundary)', async () => {
+    const [row] = await db
+      .insert(schema.jobDeliverableVerificationState)
+      .values({
+        jobId: seed.jobId,
+        deliverableType: 'code_project',
+        canonicalKey: `/srv/gen-eq-${Date.now()}`,
+        dirtyGeneration: 2,
+        verifiedGeneration: 2,
+        decisionStatus: 'green',
+      })
+      .returning();
+    expect(row?.verifiedGeneration).toBe(2);
+  });
+
+  it('rejects a mutable type (code_project) carrying an outcome', async () => {
+    await expect(
+      db.insert(schema.jobDeliverableVerificationState).values({
+        jobId: seed.jobId,
+        deliverableType: 'code_project',
+        canonicalKey: `/srv/mutable-outcome-${Date.now()}`,
+        dirtyGeneration: 1,
+        outcome: 'confirmed',
+        decisionStatus: 'dirty',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects an outbound_action row with no outcome', async () => {
+    await expect(
+      db.insert(schema.jobDeliverableVerificationState).values({
+        jobId: seed.jobId,
+        deliverableType: 'outbound_action',
+        canonicalKey: `telegram:chat:${Date.now()}`,
+        decisionStatus: 'not_configured',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects an outbound_action row carrying a dirty_generation', async () => {
+    await expect(
+      db.insert(schema.jobDeliverableVerificationState).values({
+        jobId: seed.jobId,
+        deliverableType: 'outbound_action',
+        canonicalKey: `telegram:chat:${Date.now()}`,
+        outcome: 'prepared',
+        dirtyGeneration: 1,
+        decisionStatus: 'not_configured',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts a well-formed outbound_action row', async () => {
+    const [row] = await db
+      .insert(schema.jobDeliverableVerificationState)
+      .values({
+        jobId: seed.jobId,
+        deliverableType: 'outbound_action',
+        canonicalKey: `telegram:chat:${Date.now()}`,
+        outcome: 'prepared',
+        decisionStatus: 'not_configured',
+      })
+      .returning();
+    expect(row?.outcome).toBe('prepared');
+    expect(row?.dirtyGeneration).toBeNull();
+  });
+
+  it('rejects a duplicate (job_id, deliverable_type, canonical_key)', async () => {
+    const key = `/srv/dup-state-${Date.now()}`;
+    await db.insert(schema.jobDeliverableVerificationState).values({
+      jobId: seed.jobId,
+      deliverableType: 'code_project',
+      canonicalKey: key,
+      dirtyGeneration: 1,
+      decisionStatus: 'dirty',
+    });
+    await expect(
+      db.insert(schema.jobDeliverableVerificationState).values({
+        jobId: seed.jobId,
+        deliverableType: 'code_project',
+        canonicalKey: key,
+        dirtyGeneration: 1,
+        decisionStatus: 'dirty',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('verification_runs: rejects a verdict outside the enum', async () => {
+    await expect(
+      db.insert(schema.verificationRuns).values({
+        jobId: seed.jobId,
+        entityId: seed.entityId,
+        deliverableType: 'code_project',
+        canonicalKey: `/srv/bad-verdict-${Date.now()}`,
+        sequenceId: crypto.randomUUID(),
+        commandRank: 0,
+        command: 'pnpm test',
+        outcomeKind: 'exit',
+        verdict: 'yellow',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('deleting the job cascades the state row but the run survives with job_id NULL', async () => {
+    const [j] = await db
+      .insert(schema.agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'verification cascade job',
+      })
+      .returning();
+    const [state] = await db
+      .insert(schema.jobDeliverableVerificationState)
+      .values({
+        jobId: j!.id,
+        deliverableType: 'code_project',
+        canonicalKey: `/srv/cascade-${Date.now()}`,
+        dirtyGeneration: 1,
+        decisionStatus: 'dirty',
+      })
+      .returning();
+    const [run] = await db
+      .insert(schema.verificationRuns)
+      .values({
+        jobId: j!.id,
+        entityId: seed.entityId,
+        deliverableType: 'code_project',
+        canonicalKey: `/srv/cascade-${Date.now()}`,
+        sequenceId: crypto.randomUUID(),
+        commandRank: 0,
+        command: 'pnpm test',
+        outcomeKind: 'exit',
+        exitCode: 0,
+        verdict: 'green',
+      })
+      .returning();
+
+    await db.delete(schema.agentJobs).where(eq(schema.agentJobs.id, j!.id));
+
+    const goneState = await db
+      .select()
+      .from(schema.jobDeliverableVerificationState)
+      .where(eq(schema.jobDeliverableVerificationState.id, state!.id));
+    expect(goneState.length).toBe(0);
+
+    const survivingRun = await db
+      .select()
+      .from(schema.verificationRuns)
+      .where(eq(schema.verificationRuns.id, run!.id));
+    expect(survivingRun).toHaveLength(1);
+    expect(survivingRun[0]?.jobId).toBeNull();
   });
 });

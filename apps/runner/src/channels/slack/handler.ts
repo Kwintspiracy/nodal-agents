@@ -26,7 +26,12 @@ import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { triggerWorker } from '../../routes/agent.ts';
-import { resolveConversationId } from '../../job/conversation-id.ts';
+import {
+  resolveConversation,
+  openNewConversation,
+  touchConversation,
+  parseNewConversationCommand,
+} from '../../job/conversation-id.ts';
 import { sanitizeSenderName, checkConversationAuthorization } from '../shared.ts';
 import type { SlackInboundMessage } from './types.ts';
 
@@ -122,6 +127,8 @@ export async function handleSlackMessage(args: {
   // /ask <slug> <text> routes to a different agent in the same entity.
   let targetAgentId = receivingAgentId;
   let taskText = effectiveText;
+  /** Le « qui parle » d'un message de groupe — appliqué APRÈS l'analyse de `/new`. */
+  let groupPrefix: string | null = null;
 
   if (effectiveText.startsWith('/ask ')) {
     const parts = effectiveText.slice(5).trim().split(/\s+/);
@@ -166,16 +173,35 @@ export async function handleSlackMessage(args: {
       if (!targetAuth.authorized) return targetAuth.result;
     }
   } else if (isChannel) {
-    taskText = `[Message from ${senderName}]: ${effectiveText}`;
+    groupPrefix = `[Message from ${senderName}]: `;
   }
 
-  const jobConversationId = await resolveConversationId({
+  // La CONVERSATION dont ce message est un tour (P6, migration 0094).
+  //
+  // `/new` s'analyse sur le texte que l'utilisateur a TAPÉ — après le retrait de
+  // la mention et après le routage `/ask`, mais AVANT le préfixe de groupe.
+  // Sinon la commande arrive derrière `[Message from …]: ` et n'est plus
+  // reconnue : en canal, `/new` ne rouvrait rien (revue Codex, passe 28).
+  //
+  // Un `/new` NU garde `/new` comme tâche : c'est le message de l'utilisateur,
+  // et le runner ne fabrique rien à sa place (invariant #2).
+  const { opensNew, rest } = parseNewConversationCommand(taskText);
+  if (opensNew && rest) taskText = rest;
+  // Le préfixe enveloppe ce qui RESTE : l'agent doit toujours savoir qui parle.
+  // Sauf pour un `/new` NU : la tâche reste exactement `/new`, sans préfixe —
+  // c'est à ce texte que `loadConversationContext` reconnaît la commande
+  // (`openedByCommand`).
+  if (groupPrefix && !(opensNew && !rest)) taskText = groupPrefix + taskText;
+  const threadKey = {
     db: tx,
     entityId: receivingAgentEntityId,
     agentId: targetAgentId,
     channel: 'slack',
     chatId: conversationId,
-  });
+  };
+  const conversation = opensNew
+    ? await openNewConversation(threadKey)
+    : await resolveConversation(threadKey);
 
   const [job] = await tx
     .insert(agentJobs)
@@ -185,7 +211,9 @@ export async function handleSlackMessage(args: {
       channel: 'slack',
       task: taskText,
       chatId: conversationId,
-      conversationId: jobConversationId,
+      conversationId: conversation.id,
+      // Le projet courant du fil suit le travail dès l'insert.
+      projectId: conversation.currentProjectId,
       status: 'pending',
       messages: [{ role: 'user', content: taskText }],
     })
@@ -197,6 +225,9 @@ export async function handleSlackMessage(args: {
     // events, mirroring discord/handler.ts's fail-loud contract.
     throw new Error('slack_job_insert_failed');
   }
+
+  // La conversation est vivante, et elle prend son nom sur le premier message.
+  await touchConversation(tx, conversation.id, taskText);
 
   return { jobId: job.id };
 }

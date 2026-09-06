@@ -25,13 +25,18 @@ import {
   decryptChannelSecret,
   resolveOwnerConversation,
 } from '@nodal-agents/db';
-import { redactSecretsForAudit, renderExplanationText } from '@nodal-agents/shared';
+import {
+  redactSecretsForAudit,
+  renderExplanationText,
+  readQuestionToolInput,
+} from '@nodal-agents/shared';
 import { explainApprovalRequest } from './explain-request.ts';
 import {
   getAdapter,
   resolveTransportChannel,
   listActiveChannelsForAgent,
   type ApprovalCard,
+  type QuestionCard,
   type ChannelKind,
   type ChannelCredentials,
 } from '@nodal-agents/delivery';
@@ -79,6 +84,32 @@ export async function buildApprovalCardBody(
     renderExplanationText(explanation)
   );
 }
+/**
+ * Le corps de la carte de QUESTION (P10a). Deux étages seulement : la voix de
+ * l'agent — son nom, sa question VERBATIM, le contexte qu'il a jugé utile
+ * (invariant #2 : le produit ne reformule pas ce qu'il demande) — puis une
+ * ligne de plateforme qui dit où répondre.
+ *
+ * Pas d'étage « impact » comme sur une approbation : une question ne fait rien.
+ * Ce qu'il faut savoir pour choisir est dans le contexte que l'agent a écrit.
+ */
+export function buildQuestionCardBody(args: {
+  who: string;
+  question: string;
+  context: string | null;
+  /** Vrai quand le canal rend des boutons — la dernière ligne en dépend. */
+  hasButtons: boolean;
+}): string {
+  return (
+    `❓ ${args.who} asks:\n\n` +
+    `« ${args.question} »\n\n` +
+    (args.context ? `${args.context}\n\n` : '') +
+    (args.hasButtons
+      ? 'Tap an option below, or answer from the dashboard.'
+      : 'Answer from the dashboard: Approvals page.')
+  );
+}
+
 export function approvalCallbackData(approvalRequestId: string, decision: 'a' | 'r'): string {
   return `${APPROVAL_CALLBACK_PREFIX}:${approvalRequestId}:${decision}`;
 }
@@ -404,6 +435,46 @@ export async function notifyApprovalCreated(
       .where(eq(agents.id, req.agentId))
       .limit(1);
     const who = agent?.name ?? 'An agent';
+
+    // ── P10a — une QUESTION n'est pas une approbation ─────────────────────────
+    //
+    // Elle ne demande pas « laisses-tu faire ceci ? » mais « laquelle ? ». Le
+    // corps est donc la voix de l'agent seule (invariant #2 : sa question,
+    // verbatim), et les boutons portent ses options plutôt qu'un ✅/❌.
+    //
+    // `readQuestionInput` rendant null (une ligne dont l'entrée ne se lit pas),
+    // on retombe sur la carte d'approbation : elle sait afficher n'importe
+    // quelle entrée, et une question sans carte serait un job suspendu en
+    // silence — exactement ce que ce module existe pour empêcher.
+    const adapterForKind = getAdapter(channel);
+    const question = req.kind === 'question' ? readQuestionToolInput(req.toolInput) : null;
+    if (question) {
+      const hasButtons =
+        adapterForKind.capabilities.buttons && adapterForKind.sendQuestionCard !== undefined;
+      const text = buildQuestionCardBody({
+        who,
+        question: question.question,
+        context: question.context,
+        hasButtons,
+      });
+      if (hasButtons && adapterForKind.sendQuestionCard) {
+        const card: QuestionCard = {
+          text,
+          options: question.options,
+          callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
+        };
+        await adapterForKind.sendQuestionCard(credentials, conversationId, card);
+      } else {
+        // LIMITE ASSUMÉE de P10a : un canal sans boutons (WhatsApp) ne permet
+        // pas de répondre en ligne. Les options sont numérotées pour que la
+        // question reste lisible, et le dashboard tranche. Lire un numéro dans
+        // un message entrant supposerait de rattacher ce message à CETTE
+        // question, ce qui est un autre problème — pas un repli qu'on improvise.
+        const numbered = question.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+        await adapterForKind.sendText(credentials, conversationId, `${text}\n\n${numbered}`);
+      }
+      return;
+    }
     // Three tiers, WHY first: (1) the agent's own plain-language purpose —
     // invariant #2 applies here, this is the agent's voice, so we show it
     // verbatim or admit it's missing rather than invent one; (2) a

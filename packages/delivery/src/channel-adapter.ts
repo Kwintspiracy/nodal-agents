@@ -63,6 +63,23 @@ export interface ApprovalCard {
   callbackId: string;
 }
 
+/**
+ * Une QUESTION posée à l'utilisateur, avec une option par bouton (P10a).
+ *
+ * Même contrat neutre que `ApprovalCard` : l'adapter ne sait rien des
+ * questions, il sait rendre un texte et N boutons dont le `callback_data` est
+ * `<callbackId>:o<index>`. Le suffixe `o<n>` est ce que le parseur
+ * d'approbations (apps/runner) reconnaît — au plus six options, donc
+ * `apr:` + un uuid + `:o5` fait 43 octets, bien sous le plafond de 64 de
+ * Telegram.
+ */
+export interface QuestionCard {
+  text: string;
+  /** Les libellés, dans l'ordre. L'index du bouton EST l'index dans ce tableau. */
+  options: string[];
+  callbackId: string;
+}
+
 export interface SendResult {
   messageId: string;
 }
@@ -120,6 +137,18 @@ export interface ChannelAdapter {
     creds: ChannelCredentials,
     conversationId: string,
     card: ApprovalCard,
+  ): Promise<SendResult>;
+
+  /**
+   * Optional: only channels with `capabilities.buttons` implement this (P10a).
+   * Separate from `sendApprovalCard` because the shape differs — N options
+   * rather than a fixed approve/reject pair — and because a channel may render
+   * one without the other.
+   */
+  sendQuestionCard?(
+    creds: ChannelCredentials,
+    conversationId: string,
+    card: QuestionCard,
   ): Promise<SendResult>;
 
   /** Optional: only channels with `capabilities.editMessage` implement this. */

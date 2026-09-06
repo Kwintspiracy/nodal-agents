@@ -11,6 +11,7 @@ import { healthRoute } from './routes/health.ts';
 import { agentRoute } from './routes/agent.ts';
 import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
+import { fileDiffRoute } from './routes/file-diff.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { webhookRoute } from './routes/webhook.ts';
@@ -36,6 +37,7 @@ import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { migratePlaintextSecretsToEncrypted } from './bootstrap/migrate-plaintext-secrets.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
+import { backfillRegisteredProjects } from './bootstrap/backfill-registered-projects.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { AuthError, checkRequestOrigin } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
@@ -54,6 +56,19 @@ import type { RunnerDeps } from './deps.ts';
 export function startBackfillBackground(deps: Pick<RunnerDeps, 'db' | 'embeddingClient'>): void {
   void backfillMemoryEmbeddings(deps.db, deps.embeddingClient).catch((err) => {
     console.warn('[runner] memory embedding backfill failed (will retry next boot):', err);
+  });
+}
+
+/**
+ * Le registre des projets se remplit tout seul (P5b) : les projets dérivés de
+ * l'activité passée — ceux de l'onglet Code — sont déclarés au registre, une
+ * fois, par la même règle que l'onglet. Même contrat que le backfill des
+ * embeddings : en tâche de fond, jamais attendu, idempotent, rejoué au boot
+ * suivant s'il échoue.
+ */
+export function startRegistryBackfillBackground(deps: Pick<RunnerDeps, 'db'>): void {
+  void backfillRegisteredProjects(deps.db).catch((err) => {
+    console.warn('[runner] project registry backfill failed (will retry next boot):', err);
   });
 }
 
@@ -199,6 +214,10 @@ export function createApp(
   app.use('/api/chat', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
+  // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
+  // le web appelle avec WORKER_SECRET, un porteur de session ne voit que son
+  // entité (la route le vérifie sur le travail).
+  app.use('/api/jobs/:jobId/file-diff', requireRunnerAuth);
   app.use('/api/whatsapp/pairing', requireRunnerAuth);
   app.use('/api/code-task/doctor', requireRunnerAuth);
 
@@ -215,6 +234,8 @@ export function createApp(
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
   app.post('/api/cron', (c) => cronRoute(c, deps));
+
+  app.get('/api/jobs/:jobId/file-diff', (c) => fileDiffRoute(c, deps));
 
   // Community skill install/uninstall (open Agent Skills format). Own
   // WORKER_SECRET check inside the handlers (web → runner cross-process call).
@@ -399,6 +420,9 @@ async function main(): Promise<void> {
   // the time this starts; a slow or failing backfill degrades to "search
   // still works via keyword" instead of "runner never comes up".
   startBackfillBackground(deps);
+  // P5b : les projets de l'onglet Code sont déclarés au registre — Spaces les
+  // liste sans un clic. Même discipline : après serve(), jamais attendu.
+  startRegistryBackfillBackground(deps);
 
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {

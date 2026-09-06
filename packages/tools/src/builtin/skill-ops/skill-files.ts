@@ -25,6 +25,7 @@ import {
 } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
+import { failureText, filesCard, readCard, writtenFile } from '../../presenters';
 import { windowsPathViolation, MAX_READ_FILE_BYTES } from '../file-ops/workspace';
 import { readLinesWindowed, ReadLinesCapExceededError } from '../file-ops/read-lines';
 
@@ -200,6 +201,16 @@ export const skillFileReadTool: ToolDefinition<
     "reads the skill's own files only, never the agent workspace (use file_read for that).",
   inputSchema: SkillFileReadInputSchema,
   riskLevel: 'read',
+  card: 'read',
+  present: ({ input, output }) =>
+    output.ok
+      ? readCard({
+          path: `${input.skill}/${input.path}`,
+          text: output.content,
+          truncated: output.truncated,
+          sections: output.total_lines,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -306,6 +317,14 @@ export const skillFileListTool: ToolDefinition<
     "to the skill's root.",
   inputSchema: SkillFileListInputSchema,
   riskLevel: 'read',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? filesCard(
+          output.entries.map((e) => ({ path: e.path, action: 'listed' as const, detail: e.type })),
+          { truncated: output.truncated },
+        )
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     try {
       const realRoot = await resolveSkillRoot(ctx, input.skill);
@@ -429,6 +448,13 @@ export const skillFileWriteTool: ToolDefinition<
     'write requires human approval; the user can enable auto-write ("Yolo") per agent × skill.',
   inputSchema: SkillFileWriteInputSchema,
   riskLevel: 'destructive',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, output.overwritten ? 'modified' : 'created', {
+          bytes: output.bytes_written,
+        })
+      : failureText(output.reason),
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     try {

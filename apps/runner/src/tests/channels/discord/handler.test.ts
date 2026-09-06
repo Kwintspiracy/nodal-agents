@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents, channelAllowedConversations } from '@nodal-agents/db';
+import { agentJobs, agents, channelAllowedConversations, conversations } from '@nodal-agents/db';
 import { handleDiscordMessage } from '../../../channels/discord/handler.ts';
 import type { DiscordInboundMessage } from '../../../channels/discord/types.ts';
 
@@ -427,5 +427,80 @@ describe('handleDiscordMessage — /ask routing gated by the TARGET agent allowl
     await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-3'));
     const result = await call(receiverId, dm('/ask not-a-real-agent please help', 'dm-ask-3'));
     expect(result).toEqual({ skipped: 'ask_unknown_agent' });
+  });
+});
+
+describe('handleDiscordMessage — /new dans un SALON (P6, revue Codex passe 28)', () => {
+  /** Autorise le salon, pour que le test porte sur `/new` et pas sur H-1. */
+  async function salonAutorise(agentId: string, channelId: string): Promise<void> {
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'discord',
+      conversationId: channelId,
+      kind: 'channel',
+      role: 'member',
+      status: 'active',
+    });
+  }
+
+  const filsDe = (agentId: string, channelId: string) =>
+    db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.agentId, agentId),
+          eq(conversations.channel, 'discord'),
+          eq(conversations.chatId, channelId),
+        ),
+      );
+
+  const jobDe = async (jobId: string) => {
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    if (!row) throw new Error('job introuvable');
+    return row;
+  };
+
+  it('/new NU passe le filtre SANS mention et ouvre une DEUXIÈME conversation', async () => {
+    // Le filtre de salon ne connaissait pas `/new` : la commande était rejetée
+    // en `group_filter` avant même d'atteindre la résolution du fil.
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-new-1'));
+    await salonAutorise(agentId, 'guild-new-1');
+
+    const premier = await call(
+      agentId,
+      guildMessage(`<@${BOT_ID}> on parle de ça`, { mention: true, channelId: 'guild-new-1' }),
+    );
+    const ancien = await jobDe(premier.jobId!);
+
+    // Sans mention ni réponse au bot : `/new` doit passer par le filtre seul.
+    const nouveau = await call(agentId, guildMessage('/new', { channelId: 'guild-new-1' }));
+    const job = await jobDe(nouveau.jobId!);
+
+    expect(job.conversationId).not.toBe(ancien.conversationId);
+    expect(await filsDe(agentId, 'guild-new-1')).toHaveLength(2);
+    // Un `/new` NU reste exactement `/new` : pas de préfixe, pour que le tour
+    // soit reconnu comme la commande d'ouverture (`openedByCommand`).
+    expect(job.task).toBe('/new');
+  });
+
+  it('/new suivi d’un texte : tâche préfixée avec le TEXTE, dans le fil neuf', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-new-2'));
+    await salonAutorise(agentId, 'guild-new-2');
+
+    const premier = await call(
+      agentId,
+      guildMessage(`<@${BOT_ID}> on parle de ça`, { mention: true, channelId: 'guild-new-2' }),
+    );
+    const ancien = await jobDe(premier.jobId!);
+
+    const nouveau = await call(agentId, guildMessage('/new rédige', { channelId: 'guild-new-2' }));
+    const job = await jobDe(nouveau.jobId!);
+
+    expect(job.task).toBe('[Message from Alice]: rédige');
+    expect(job.conversationId).not.toBe(ancien.conversationId);
   });
 });

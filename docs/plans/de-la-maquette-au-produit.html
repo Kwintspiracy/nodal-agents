@@ -1,0 +1,1538 @@
+<!-- artifact: https://claude.ai/code/artifact/1fd52dac-1542-4bfb-89c8-3d5aff9f248e -->
+<title>De la maquette au produit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Geologica:wght@400..700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+/>
+<style>
+  :root {
+    --ground: #f0f1f0;
+    --surface: #ffffff;
+    --sunk: #e5e7e6;
+    --ink: #15181c;
+    --ink-2: #454c52;
+    --ink-3: #737b81;
+    --rule: #d5d9d8;
+    --navy: #1c2330;
+    --lime: #d4ff2e;
+    --lime-bg: #eef7c8;
+    --lime-ink: #3a6a18;
+    --coral: #b8452c;
+    --coral-bg: #f8e6e1;
+    --mono-bg: #e7eae9;
+    --sur-navy: #e6e9e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #131618;
+      --surface: #1b1f22;
+      --sunk: #23282b;
+      --ink: #e6e9e8;
+      --ink-2: #a9b2b7;
+      --ink-3: #78828a;
+      --rule: #2d3438;
+      --navy: #d4ff2e;
+      --lime: #1c2330;
+      --lime-bg: #22301a;
+      --lime-ink: #c5ec52;
+      --coral: #ee8b74;
+      --coral-bg: #33231e;
+      --mono-bg: #171b1d;
+      --sur-navy: #15181c;
+    }
+  }
+  :root[data-theme='dark'] {
+    --ground: #131618;
+    --surface: #1b1f22;
+    --sunk: #23282b;
+    --ink: #e6e9e8;
+    --ink-2: #a9b2b7;
+    --ink-3: #78828a;
+    --rule: #2d3438;
+    --navy: #d4ff2e;
+    --lime: #1c2330;
+    --lime-bg: #22301a;
+    --lime-ink: #c5ec52;
+    --coral: #ee8b74;
+    --coral-bg: #33231e;
+    --mono-bg: #171b1d;
+    --sur-navy: #15181c;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 0 22px 96px;
+  }
+  header {
+    padding: 56px 0 10px;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: Geologica, system-ui, sans-serif;
+    font-size: clamp(34px, 6.2vw, 50px);
+    font-weight: 650;
+    line-height: 1.04;
+    letter-spacing: -0.024em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 34em;
+  }
+  h2 {
+    font-family: Geologica, system-ui, sans-serif;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.014em;
+    margin: 50px 0 12px;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: Geologica, system-ui, sans-serif;
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+  }
+  p {
+    margin: 0 0 14px;
+    max-width: 36em;
+  }
+  b {
+    font-weight: 600;
+  }
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.84em;
+    background: var(--mono-bg);
+    padding: 1.5px 5px;
+    border-radius: 4px;
+  }
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    background: var(--surface);
+    margin: 18px 0;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14.5px;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  tr:last-child td {
+    border-bottom: none;
+  }
+  td {
+    color: var(--ink-2);
+  }
+  td.k {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .oui,
+  .trou,
+  .non {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .oui {
+    background: var(--lime-bg);
+    color: var(--lime-ink);
+  }
+  .trou {
+    background: var(--coral-bg);
+    color: var(--coral);
+  }
+  .non {
+    background: var(--sunk);
+    color: var(--ink-3);
+  }
+  .etat {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: var(--navy);
+    color: var(--lime);
+  }
+  .etat.attend {
+    background: var(--sunk);
+    color: var(--ink-3);
+  }
+
+  /* Les pierres */
+  .pierre {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin: 14px 0;
+  }
+  .pierre .tete {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .pierre .num {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--lime);
+    background: var(--navy);
+    border-radius: 6px;
+    padding: 3px 8px;
+  }
+  .pierre .taille {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--sunk);
+    border-radius: 999px;
+    padding: 2px 9px;
+    white-space: nowrap;
+  }
+  .pierre .taille.xl {
+    background: var(--coral-bg);
+    color: var(--coral);
+  }
+  .ligne {
+    display: grid;
+    grid-template-columns: 118px 1fr;
+    gap: 14px;
+    padding: 8px 0;
+    border-top: 1px solid var(--rule);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .ligne .l {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 4px;
+  }
+  .ligne .v {
+    color: var(--ink-2);
+  }
+  .ligne .v b {
+    color: var(--ink);
+  }
+  .lot {
+    margin: 44px 0 6px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .lot b {
+    color: var(--ink);
+  }
+  ul.limites {
+    margin: 0;
+    padding-left: 20px;
+    max-width: 36em;
+  }
+  ul.limites li {
+    margin: 8px 0;
+    color: var(--ink-2);
+  }
+  .verdict {
+    background: var(--navy);
+    color: var(--sur-navy);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin: 22px 0;
+  }
+  .verdict p {
+    margin: 0;
+    max-width: none;
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  .verdict p + p {
+    margin-top: 10px;
+  }
+  .verdict b {
+    color: var(--lime);
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Plan · 5 septembre 2026</p>
+    <h1>De la maquette au produit</h1>
+    <p class="lede">
+      Les pierres pour construire l'espace de code dessiné aujourd'hui, en gardant tout ce qui a
+      déjà été livré et qui tient.
+    </p>
+  </header>
+
+  <h2>Périmètre, fixé le 5 septembre</h2>
+  <p>
+    <b>La barre latérale ne bouge pas.</b> Ses seize entrées restent telles quelles. On ajoute une
+    seule entrée, « Spaces », qui ouvre le nouvel espace. Fusionner Chat, Runs et Code est une
+    décision ultérieure, peut-être jamais prise : ce plan ne la prépare pas.
+  </p>
+  <p>
+    <b>L'effort porte sur le déroulé du chat</b>, dans ce nouvel espace. Les écrans existants ne
+    sont pas touchés par le lot 1. Chat évolue au lot 2, sur décision de Quentin du 6 septembre
+    (section suivante).
+  </p>
+
+  <p>
+    <b>De la maquette, on garde le fil de conversation. Rien d'autre.</b> Là où elle diverge de
+    l'existant, l'existant gagne.
+  </p>
+
+  <p>
+    <b>Mis à jour le 6 septembre :</b> Quentin a décidé de faire évoluer la page Chat et d'ajouter
+    une entrée « Scheduled » (section suivante). Le reste de ce périmètre tient.
+  </p>
+
+  <h2>Ce qui a été décidé le 6 septembre</h2>
+  <p>
+    Après avoir vu le lot 1, Quentin a tranché ce que la maquette laissait ouvert. Ce cadre remplace
+    la section « Ce qui arrive par Telegram » du 5 septembre et ses alternatives.
+  </p>
+  <p>
+    <b>Trois objets.</b> Le <b>dossier attribué à un agent</b> est son terrain : ce qu'il a le droit
+    de toucher, pas un espace. Un <b>projet</b> est un sous-dossier de ce terrain, identifié comme
+    tel, créé depuis Spaces ou déclaré par une conversation qui y a produit ; un espace
+    <i>est</i> un projet, et Spaces liste des projets, pas des jobs. Une <b>conversation</b> est un
+    fil continu, dans le dashboard ou dans un canal, qui porte son projet courant dès qu'elle a créé
+    ou touché un projet.
+  </p>
+  <p>
+    <b>La frontière entre un chat et un travail : « quelque chose est sorti du chat ».</b> Lire,
+    chercher, consulter et noter la mémoire, répondre en texte sur n'importe quel canal (le canal
+    est transparent, un sous-agent qui n'a fait que parler aussi) : c'est du chat. Un fichier, un
+    document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, un
+    email ou tout envoi vers un destinataire qui n'est pas un canal de la conversation, le harnais
+    de code : c'est un travail. La règle est récursive sur les agents à qui on a passé la main. Elle
+    se lit sur les cartes, jamais sur un nom d'outil.
+  </p>
+  <p>
+    <b>L'agent de recherche, tranché par Quentin le 6 septembre au moment du go.</b> Il avait cité «
+    utilise l'agent de recherche et ne fait pas la recherche lui-même » comme une production, puis
+    posé qu'un sous-agent qui n'a fait que parler reste du chat. En donnant le go il a confirmé la
+    seconde lecture : « si un sous-agent est utilisé, ça ne correspond pas forcément à un projet ;
+    s'il ne fait que répondre à un message dans le chat, ce n'est pas un projet ». La règle est donc
+    <b>récursive</b> : un agent de recherche qui a seulement répondu reste du chat ; celui qui a
+    produit un document est un travail, et l'encart remonte au tour parent.
+  </p>
+  <p>
+    <b>Chat accueille toutes les conversations</b>, dashboard et Telegram, Slack, Discord. Tout y
+    commence. Au tour où quelque chose sort du chat, un encart dit ce qui a été produit, le projet
+    où il vit (nom, dossier) et renvoie à sa page. La page Chat change de nature : décision du 6
+    septembre, qui lève la consigne du 5 sur ce point.
+  </p>
+  <p>
+    <b>Telegram : une conversation par chat</b>, jusqu'à ce que l'utilisateur en ouvre une autre.
+    Plus de découpage par silences. Ce qu'on redonne à lire au modèle reste un budget.
+  </p>
+  <p>
+    <b>Les runs d'automatisation ont leur propre entrée de menu, « Scheduled ».</b> Distincte
+    d'Automations, qui reste la configuration.
+  </p>
+  <p>
+    <b>La référence produit</b> est l'application Claude : un Chat où tout commence, un Code rangé
+    par projets dont chacun est un dossier choisi par l'utilisateur.
+  </p>
+  <p>
+    Ce que Telegram impose reste vrai : chaque tour de l'agent est miroité dans le canal (prose
+    telle quelle, questions en boutons, livrables en carte) ; l'écran et Telegram montrent la
+    <b>même</b> conversation ; le canal ne montre ni diff, ni tableau, ni groupe replié, il reçoit
+    la prose, le fichier joint, et un lien vers le projet.
+  </p>
+
+  <h2>Où on en est</h2>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Lot</th>
+          <th>Pierres</th>
+          <th>Ce que tu vois à la fin</th>
+          <th>État</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="k">1 · Rendre visible ce qui existe</td>
+          <td>
+            P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état
+            et coût
+          </td>
+          <td>
+            Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée,
+            avec preuves, coûts, jetons. Runs, Code et Chat inchangés.
+          </td>
+          <td><span class="etat">Lot 1 clos · P1-P4</span></td>
+        </tr>
+        <tr>
+          <td class="k">2 · Le projet et la conversation</td>
+          <td>
+            P5 registre des projets · P6 conversation continue et projet courant · P7 Chat pour
+            toutes les conversations, encart · P8 Spaces = projets, nouveau projet, chat du projet ·
+            P9 Scheduled
+          </td>
+          <td>
+            Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les
+            automatisations ont leur page.
+          </td>
+          <td>
+            <span class="etat">LOT 2 CODÉ le 06/09</span> — go de Quentin le 06/09 ; P5, P6, P7, P8,
+            P9 livrés par des agents Opus, relus, passes Codex 26 à 29 traitées, passe 30 en cours ;
+            la CI, rouge depuis le lot 1, est réparée. Reste l'œil de Quentin sur /chat, /spaces et
+            /scheduled, et six arbitrages (voir chaque pierre).
+          </td>
+        </tr>
+        <tr>
+          <td class="k">3 · L'agent qui demande et montre</td>
+          <td>
+            P5b registre automatique · P10 <code>ask_user</code> · P11 fichiers et diff · P12 le
+            tableur rendu
+          </td>
+          <td>
+            Les projets de l'onglet Code sont dans Spaces sans un clic ; « Où écrire ? » avec
+            boutons dans le chat et dans Telegram, pour les documents seulement ; diffs cliquables ;
+            un classeur qui s'affiche.
+          </td>
+          <td>
+            <span class="etat">LOT 3 CLOS côté code le 07/09</span> — passes Codex 32 à 48, CI verte
+            sur <code>51bd3b4b</code> ; attend l'œil de Quentin et les arbitrages ci-dessous — ✅
+            P5b CLOSE (<code>16d1f574</code> ; passes Codex 32-35 traitées dans
+            <code>4491ae46</code>, <code>aefdcec3</code>, <code>934091d4</code>,
+            <code>4f084c21</code>, <code>268f68ef</code> ; passe 36 : aucun constat bloquant, rien
+            de neuf) · ✅ P10a <code>ask_user</code> (<code>5c7938a7</code> ; passes 37-38 traitées,
+            <code>36dd5c92</code> ; P10a close sous réserve d'un arbitrage sur les textes de chrome)
+            · ✅ P10b « où écrire ? » (<code>baea7599</code> ; passes 39-40 traitées dans
+            <code>5921ba4f</code>, <code>147159ff</code> ; passe 41 traitée dans
+            <code>5171c706</code> : la liaison texte tombe, <code>register_project</code> passe par
+            l'approbation ; passe 44 : aucun constat bloquant — P10b CLOSE ; la ligne d'impact de la
+            carte branchée dans <code>c301df1b</code>) · ✅ P11 fichiers et diff CLOSE (<code
+              >e6713458</code
+            >
+            ; passes 42-43 traitées dans <code>ea6170ec</code>, <code>80ee7a8d</code> ; passe 45 :
+            aucun constat bloquant) · ✅ P12 tableur rendu (<code>b4ac14b1</code> ; passe 46 : 3 P0
+            + 2 P1 vrais, traités dans <code>f790a051</code> — la même clé de document pour
+            l'intention et la carte, texte riche lisible, largeur bornée à 20 colonnes, état lu par
+            (job, clé), pied sans contradiction ; passe 47 : un P0 neuf, les cellules couvertes par
+            une fusion répétaient la valeur du maître, corrigé dans <code>e9393c54</code> ; passe 48
+            : aucun constat neuf — <b>P12 CLOSE</b>)
+          </td>
+        </tr>
+        <tr>
+          <td class="k">4 · Ce qui reste cher</td>
+          <td>P13 relecteurs · P14 aperçu vivant</td>
+          <td>Deux relecteurs cités ; l'application qui tourne au centre du projet.</td>
+          <td><span class="etat attend">dernier</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Est-ce que c'est atteignable</h2>
+  <p>
+    Chaque chose que montre le dessin, et d'où viendrait sa donnée. Vérifié dans le code
+    aujourd'hui, fichier et ligne. Rien n'est supposé.
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Le dessin montre</th>
+          <th>Ça vient de</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="k">L'agent parle entre ses actions</td>
+          <td>
+            Chaque message assistant persisté porte son raisonnement, son texte et ses appels
+            d'outils (<code>execute.ts:2857</code>)
+          </td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Le raisonnement</td>
+          <td>
+            Les mêmes messages, avec la signature du fournisseur. Tous les modèles n'en émettent pas
+            : l'écran le dira
+          </td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Chaque outil, avec entrée, sortie, durée</td>
+          <td>
+            <code>tool_calls</code>, écrit à chaque appel (<code>tools/execute.ts:763</code>) et
+            pour les étapes du harnais de code (<code>live-events.ts:142</code>)
+          </td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Jetons, cache, coût, modèle demandé contre effectif, bascule</td>
+          <td><code>llm_calls</code></td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Le harnais de code : session, version, sortie</td>
+          <td><code>cli_runs</code></td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Un sous-agent et ses propres actions</td>
+          <td>Job enfant : <code>parent_job_id</code>, ses lignes portent son identifiant</td>
+          <td><span class="oui">existe</span></td>
+        </tr>
+        <tr>
+          <td class="k">Une approbation avec boutons, depuis Telegram</td>
+          <td><code>tool_approvals</code> et les cartes de <code>approvals/notify.ts</code></td>
+          <td><span class="oui">en prod</span></td>
+        </tr>
+        <tr>
+          <td class="k">Preuve rouge ou verte, extrait, durées</td>
+          <td><code>verification_runs</code> — la PR① de cette semaine</td>
+          <td><span class="oui">livré</span></td>
+        </tr>
+        <tr>
+          <td class="k">Les commandes de preuve proposées</td>
+          <td>La découverte v7-C, livrée ce matin</td>
+          <td><span class="oui">livré</span></td>
+        </tr>
+        <tr>
+          <td class="k">Envois partis ou en attente</td>
+          <td><code>job_deliveries</code></td>
+          <td><span class="oui">livré</span></td>
+        </tr>
+        <tr>
+          <td class="k">Le diff des fichiers écrits par le harnais</td>
+          <td>
+            Le sha de l'instantané est calculé mais <b>jamais écrit en base</b> ; il vit dans le
+            dépôt git des instantanés
+          </td>
+          <td><span class="trou">trou · P5</span></td>
+        </tr>
+        <tr>
+          <td class="k">L'agent pose une question avec des options</td>
+          <td>Aucun outil aujourd'hui</td>
+          <td><span class="trou">à bâtir · P7</span></td>
+        </tr>
+        <tr>
+          <td class="k">Deux relecteurs cités</td>
+          <td>Le protocole n'est pas construit</td>
+          <td><span class="trou">à bâtir · P9</span></td>
+        </tr>
+        <tr>
+          <td class="k">L'application qui tourne</td>
+          <td>Rien</td>
+          <td><span class="non">dernier · P10</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="verdict">
+    <p>
+      <b>Trois lots sur quatre sont une couche d'affichage</b> sur des lignes qui existent déjà en
+      base. Le quatrième est cher, et il peut se faire attendre sans que le reste perde son sens.
+    </p>
+    <p>
+      Une correction à ce que j'avais dit ce soir : la boucle principale écrit bien chaque appel
+      d'outil en base. L'insertion vit dans le paquet des outils, pas dans le runner, et je l'avais
+      cherchée au mauvais endroit.
+    </p>
+  </div>
+
+  <h2>Ce qu'on garde, ce qu'on remplace, ce qu'on jette</h2>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Quoi</th>
+          <th>Pourquoi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="k">On garde</td>
+          <td>
+            Toute la PR① : intention de mutation, état par livrable, primitive terminale, file
+            d'envoi, <code>verification_runs</code>
+          </td>
+          <td>C'est le moteur. Sans elle, les cartes de preuve n'ont rien à afficher.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>v7-A : chaque outil déclare ce qu'il produit</td>
+          <td>C'est la graine du contrat de rendu. On l'étend, on ne le refait pas.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>v7-C : la découverte des commandes</td>
+          <td>C'est le contenu du panneau « Vérifié » de l'étagère.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>Les primitives du design system</td>
+          <td>La maquette les reprend au pixel.</td>
+        </tr>
+        <tr>
+          <td class="k">On garde</td>
+          <td>Le lecteur des messages de <code>JobMessages</code></td>
+          <td>
+            Il sait déjà lire les trois formats. On change ce qu'on en fait, pas comment on lit.
+          </td>
+        </tr>
+        <tr>
+          <td class="k">On ne touche pas</td>
+          <td>
+            Les écrans Runs et Code, et la barre latérale. <b>Mis à jour le 6 septembre :</b> Chat
+            évolue au lot 2 (P7) ; la barre gagne « Scheduled » (P9)
+          </td>
+          <td>
+            Décision de Quentin : le nouvel espace vit à côté, derrière une entrée de plus. Le
+            lecteur de messages de <code>JobMessages</code> est réutilisé.
+          </td>
+        </tr>
+        <tr>
+          <td class="k">On jette</td>
+          <td>Rien</td>
+          <td>Aucun travail livré n'est contredit par le dessin.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Les pierres</h2>
+  <p>
+    Dans l'ordre des dépendances. Chacune suit la discipline du dépôt : tests sur lignes réelles,
+    une mutation par garde, relecture Codex en boucle. Tailles : S moins d'un jour, M deux à trois
+    jours, L une semaine, XL indéterminée.
+  </p>
+
+  <p class="lot"><b>Lot 1</b> · rendre visible ce qui existe</p>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P1</span>
+      <h3>Le contrat de rendu</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Chaque outil déclare deux choses : sa <b>carte</b> — comment son résultat s'affiche, parmi
+        <code
+          >text · read · search · files · table · terminal · sent · checks · question · delegation ·
+          generic</code
+        >
+        — et, pour toute carte à structure, son <b>présentateur</b> : comment on tire de sa sortie
+        la charge utile de cette carte (forme écrite une fois dans <code>tool-cards.ts</code>).
+        Carte et charge utile sont persistées sur la ligne <code>tool_calls</code> (migration 0092)
+        : l'écran lit la ligne, jamais le registre, jamais le nom de l'outil. C'est le modèle de
+        DeepSeek Harness, et la condition posée le 05/09 : sans lui, l'écran meurt.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        >v7-A. Le type de livrable est déjà une déclaration par l'outil ; le contrat de rendu est
+        son frère pour la lecture.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Le registre est énuméré : tout outil déclare sa carte (table complète épinglée, 72 outils),
+        toute carte à structure a son présentateur, une carte inventée ou sans présentateur est
+        refusée au démarrage en nommant l'outil. Les présentateurs sont vérifiés sur de vraies
+        sorties (fichiers, commande, classeur, ligne d'audit). Trois mutations mesurées rouges. Ce
+        que la revue a corrigé (passes 11-13) : repli silencieux → erreur ; query_memory → table ;
+        code_task → delegation ; et l'élargissement même de la pierre — une étiquette sans forme
+        oblige quand même à dispatcher par nom.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P2</span>
+      <h3>La conversation</h3>
+      <span class="taille">L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La page du nouvel espace rend la conversation dessinée : tes messages, la prose de l'agent,
+        les groupes d'actions repliés, les cartes dispatchées par P1, les sous-agents en groupes
+        indentés avec leur pastille.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        ><code>messages</code> pour la prose et le raisonnement ; <code>tool_calls</code> pour les
+        durées et sorties ; <code>llm_calls</code> par tour pour les jetons de chaque groupe ; les
+        jobs enfants.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">origine</span
+      ><span class="v"
+        >Chaque message porte d'où il vient, Telegram, dashboard ou automatisation, et chaque envoi
+        de Nodal vers un canal apparaît dans le fil.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">règle</span
+      ><span class="v"
+        >Une suite d'appels d'outils entre deux prises de parole de l'agent forme un groupe. Son
+        titre est déduit des cartes qu'il contient, jamais écrit en dur.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un transcript de test contenant chaque sorte de partie rend chaque sorte de carte ; aucune
+        partie connue ne retombe sur la carte générique.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">hors périmètre</span
+      ><span class="v"
+        >Le diff cliquable, le tableur rendu, la question à boutons : leurs cartes affichent un état
+        « pas encore rendu » honnête en attendant leur pierre.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P3</span>
+      <h3>Les cartes de preuve et d'envoi</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La carte de preuve rouge ou verte depuis <code>verification_runs</code>, la carte d'envoi
+        depuis <code>job_deliveries</code>, le panneau « Vérifié » de l'étagère depuis les commandes
+        du projet et la découverte.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span><span class="v">Cent pour cent PR① et v7-C.</span>
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v">Une preuve rouge rend l'extrait, une verte ne le rend pas.</span>
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P4</span>
+      <h3>La barre d'état et le coût</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La barre du bas, permanente. Le panneau « Ce que ce travail coûte » avec des
+        <b>phrases</b> avant les chiffres, puis le détail par agent, la répartition du cache,
+        l'attente humaine, le temps de preuve.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s'appuie sur</span
+      ><span class="v"
+        >Un agrégat sur <code>llm_calls</code> et <code>cli_runs</code> par job puis par espace ;
+        l'attente humaine vient des approbations.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >L'agrégat est comparé au centime à un jeu de lignes semé. Le cache lu facturé au dixième,
+        le cache écrit à 1,25×, sinon le test rougit.</span
+      >
+    </div>
+  </div>
+
+  <p class="lot"><b>Lot 2</b> · le projet et la conversation</p>
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P5</span>
+      <h3>Le registre des projets</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Une table des projets : nom, dossier racine, sorte (<code>code</code> ou
+        <code>documents</code>), agent responsable, créé par toi depuis Spaces ou déclaré par une
+        conversation qui y a produit. Le
+        <b>dossier racine d'un projet est un sous-dossier du terrain d'un agent</b>
+        (<code>agent_workspaces</code>) : le terrain est un droit, le projet est un objet. Un
+        sous-dossier qui n'est pas au registre n'est pas un projet.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">la règle</span
+      ><span class="v"
+        >Une production qui atterrit dans un projet enregistré s'y rattache sans rien demander. Hors
+        de tout projet, l'agent demande <b>où</b> avant d'écrire (P10) ; la réponse crée le projet.
+        Rien ne se crée en silence.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s&#x27;appuie sur</span
+      ><span class="v"
+        ><code>agent_workspaces</code> (libellé + chemin, déjà par agent),
+        <code>code_projects</code> et <code>PROJECT_MARKERS</code> (Vérifier &amp; Corriger) pour la
+        sorte <code>code</code>, les intentions de mutation et leurs clés canoniques pour savoir où
+        une production a atterri.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un <code>file_write</code> dans <code>terrain/projet-x/</code> d'un projet enregistré
+        rattache le job à ce projet ; le même écrit dans <code>terrain/vrac/</code> sans projet ne
+        crée rien et déclenche la question ; un chemin hors terrain reste refusé, comme
+        aujourd'hui.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">à vérifier</span
+      ><span class="v"
+        >La sorte <code>documents</code> n'a pas de marqueur : créée à la main ou par la question,
+        jamais devinée.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>fd2293c3</code>, passe Codex 27). Le registre est
+        <code>code_projects</code> étendu (<code>registered_at</code> NULL = ligne de comptabilité,
+        NOT NULL = projet ; <code>kind</code>, <code>agent_id</code>, <code>registered_from</code>)
+        et <code>agent_jobs.project_id</code>. Le rattachement lit les cibles de l'intention de
+        mutation (contenance, le plus niché gagne, le premier projet du job gagne) et se pose
+        <b>après</b> l'exécution réussie. <b>À valider par Quentin</b> : le terrain lui-même peut
+        être le projet (sous-dossier vide) — un terrain-projet englobe alors tout ce que l'agent y
+        écrit, <code>terrain/vrac</code> compris.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P6</span>
+      <h3>La conversation continue et son projet courant</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Une conversation est un fil : un par chat Telegram, Slack ou Discord, un par conversation
+        du dashboard. Il dure <b>jusqu'à ce que tu en ouvres une autre</b> (un bouton dans le
+        dashboard, une commande dans le canal, à nommer). Elle porte un <b>projet courant</b>, posé
+        quand une production atterrit dans un projet ou quand elle naît depuis la page d'un projet,
+        et redit au modèle à chaque tour.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">ce qui change</span
+      ><span class="v"
+        >Le découpage par silences disparaît comme identité de conversation (décision du 06/09). Il
+        reste un <b>budget de relecture</b> : ce qu'on redonne au modèle. La conversation peut avoir
+        trois mois, le prompt non — deux choses différentes, l'identité du fil et la mémoire qu'on
+        en relit.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s&#x27;appuie sur</span
+      ><span class="v"
+        ><code>conversations</code> + <code>chat_messages</code> (dashboard),
+        <code>agent_jobs.conversation_id</code> (285 jobs Telegram sur 286 le portent, mesuré le
+        06/09), <code>resolveConversationId</code> et <code>thread-history.ts</code> pour la
+        relecture.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Deux messages Telegram à une semaine d'écart sont dans la même conversation ; « nouvelle
+        conversation » en ouvre une autre, la précédente reste lisible ; une production dans un
+        projet pose le projet courant et le tour suivant le voit dans son prompt ; la relecture
+        reste sous le budget quelle que soit la longueur du fil.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>ea984c1b</code> + <code>8ab609f1</code>, passe Codex 28).
+        <code>conversations</code> est la table de tous les canaux (migration 0094 : canal, chat,
+        projet courant, une ligne par conversation de canal existante — 54 sur la base de Quentin) ;
+        pas de clé étrangère depuis les jobs (95 jobs portent l'uuid d'une conversation supprimée).
+        La commande est <code>/new</code> (analysée avant le préfixe de groupe, sur les quatre
+        canaux ; un <code>/new</code> nu reste <code>/new</code> et le prompt le dit). La relecture
+        lit les tours de tête de la conversation sous budget ; le silence de 4 h a disparu. Le bloc
+        <code>## Conversation</code> dit les tours précédents et le projet courant. WhatsApp, oublié
+        de la relecture depuis l'origine, y est. La première conversation d'un fil est sérialisée
+        par un verrou.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P7</span>
+      <h3>Chat, la maison de toutes les conversations</h3>
+      <span class="taille">L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La page Chat liste <b>toutes</b> les conversations, tous canaux, avec leur origine. En
+        ouvrir une rend le fil de P2, le même code. Au tour où quelque chose est sorti du chat, un
+        <b>encart</b> dit ce qui a été produit, le projet où il vit (nom, dossier) et le lien vers
+        sa page. Répondre depuis le web dans une conversation venue d'un canal passe par l'outil
+        d'envoi de ce canal.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">la frontière</span
+      ><span class="v"
+        >Chat : lire, chercher, consulter <b>et noter</b> la mémoire, répondre en texte sur
+        n'importe quel canal de la conversation (le canal est transparent), déléguer à un agent qui
+        n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans
+        une base externe, une pièce jointe envoyée, un email ou tout envoi vers un destinataire qui
+        n'est pas un canal de la conversation, le harnais de code. <b>Récursif</b> sur les
+        descendants. Se lit sur les cartes de P1 ; les outils tiers (<code>generic</code>) exigent
+        de persister leur niveau de risque sur <code>tool_calls</code>, une colonne de plus. Les
+        outils natifs se classent par leur <b>carte</b>, jamais par leur niveau de risque :
+        <code>save_memory</code> est <code>write</code> pour la garde d'exécution mais
+        <code>text</code> pour la carte, donc chat ; le niveau de risque ne sert qu'aux outils
+        tiers, qui n'ont que <code>generic</code>.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">hors périmètre</span
+      ><span class="v"
+        >La page Runs et son classificateur <code>classifyJob</code> (qui compte une recherche web
+        comme une tâche) restent tels quels.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un
+        <code>save_memory</code> : sans encart. Un <code>file_write</code> dans un projet : encart
+        avec le lien. Un email avec les résultats : encart. Un connecteur en écriture : encart ; en
+        lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit :
+        encart sur le tour parent.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">tranché</span
+      ><span class="v"
+        ><b>L'agent de recherche</b> suit la règle récursive (Quentin, 06/09, au go du lot 2) : seul
+        ce que le sous-agent a produit compte. « S'il ne fait que répondre à un message dans le
+        chat, ce n'est pas un projet. » Déléguer n'est jamais en soi une production.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">à vérifier</span
+      ><span class="v"
+        ><b>Deux sources pour un fil.</b> Une conversation du dashboard vit dans
+        <code>conversations</code> + <code>chat_messages</code> ; le contrat du schéma dit qu'un
+        tour pur ne crée pas de job et qu'un tour devenu action porte <code>jobId</code>. Le fil de
+        P2 lit un job : P7 doit lire les deux (les tours dans <code>chat_messages</code>, les
+        actions par leur job) — à vérifier dans le code du chat avant de découper P7. Et répondre
+        depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi
+        permet aujourd'hui.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>55ec67eb</code> + <code>717a28da</code>, passe Codex 29).
+        <code>/chat</code> liste toutes les conversations (origine, agent, titre sans le préfixe de
+        groupe, projet courant, tours, activité) ; <code>/chat/[id]</code> rend le fil de P2 sur
+        toute la conversation (les jobs de tête d'un canal, ou les tours du dashboard avec le
+        travail escaladé sous chacun), la preuve et le coût de tout le fil, la saisie en bas pour le
+        dashboard — envoyée à l'agent <b>de la conversation</b>, plus au ROOT courant. La frontière
+        chat / travail se lit sur les cartes et sur l'issue de l'appel (un refus ne produit rien) ;
+        <code>tool_calls.risk_level</code> (migration 0095) tranche les outils tiers ; les lignes
+        d'avant les cartes sont dites « non classées ». L'encart « Produced » nomme les fichiers, le
+        projet, et renvoie à sa page. Le chat à deux volets a disparu. <b>Limite</b> : répondre
+        depuis le web dans un fil venu d'un canal reste hors périmètre, le fil le dit.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P8</span>
+      <h3>Spaces : la liste des projets et la page du projet</h3>
+      <span class="taille">L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Spaces liste des <b>projets</b>, plus des jobs : nom, dossier, sorte, agent, dernière
+        activité, état de la preuve. Un bouton <b>Nouveau projet</b> : nom, dossier sous un terrain,
+        sorte. La page du projet : l'étagère (dossier, fichiers, preuve, le panneau existant), ses
+        conversations, et <b>la saisie en bas</b>, une conversation dédiée au projet, comme le
+        panneau de chat d'un IDE. Un job créé depuis là naît avec le projet courant.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">ce qui change</span
+      ><span class="v"
+        >La page <code>/spaces/[id]</code> actuelle (le fil d'un job) devient le fil d'une
+        conversation, lue depuis Chat ou depuis le projet. Rien du rendu ne se perd : P2 à P4 sont
+        le fil, la preuve, la barre d'état.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s&#x27;appuie sur</span
+      ><span class="v"
+        >P2-P4 ; <code>ChatClient</code> et <code>sendChatMessageAction</code> pour la saisie ; P5
+        pour le registre ; P6 pour le projet courant.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Créer un projet crée la ligne et son dossier ; parler depuis la page crée un job dont le
+        prompt porte le projet ; un job venu de Telegram qui a produit dans ce dossier apparaît dans
+        les conversations du projet.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>d01585a3</code>, passe Codex 30 en cours). <code>/spaces</code> liste les
+        projets enregistrés (sorte, agent, dossier, travaux, dernier verdict de preuve) ; « New
+        project » ouvre une modale (agent → terrain → sous-dossier avec aperçu du chemin, sorte).
+        <code>/spaces/[id]</code> : l'étagère (dossier, fichiers sur un niveau, preuve), les
+        conversations du projet, le fil de la conversation du projet et la saisie en bas — le
+        premier envoi crée cette conversation, ancrée au projet. Le fil d'un run a déménagé vers
+        <code>/scheduled/[id]</code>. <b>Arbitrages pour Quentin</b> : le lien d'une délégation
+        pointe vers <code>/scheduled/&lt;jobId&gt;</code> faute de route neutre ; la configuration
+        de la preuve n'a pas d'URL propre ; la conversation du projet naît avec le ROOT, pas avec
+        l'agent responsable (reporté au lot 3). <b>Passe Codex 30, traitée</b> : un échec de lecture
+        du fil est dit et retire la saisie ; la preuve ne charge que ses trois dernières séquences ;
+        un dossier illisible dit sa cause ; la conversation du projet est celle
+        <b>ouverte depuis sa page</b> (<code>origin = 'project'</code>, migration 0097), pas la plus
+        récente ancrée ; un lien symbolique est listé sans être suivi. <b>Passe 31</b> : un seul
+        constat, sans population (une conversation de projet née avant 0097 — il n'y en a aucune,
+        l'action et la migration partent ensemble ; mesuré sur la base dev). Le lot 2 est clos côté
+        code.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P9</span>
+      <h3>Scheduled</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Une entrée de menu <b>Scheduled</b> : les automatisations et leurs runs, une ligne par
+        automatisation, repliée, ses runs dessous — ce que la section Scheduled de Spaces fait
+        aujourd'hui, à sa place. Un lien vers Automations pour la configuration. Plus aucun run
+        d'automatisation dans Spaces ni dans Chat.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s&#x27;appuie sur</span
+      ><span class="v"
+        ><code>listSpacesAction</code> (deux requêtes, deux limites), <code>groupSpaces</code>,
+        <code>ScheduledSection</code> : le code existe, il change de page.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v">Aucun run cron dans Spaces ni dans Chat ; un run ouvre son fil.</span>
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>b9ff0f1b</code>, passe Codex 26 → <code>0cb5889b</code>). Entrée «
+        Scheduled », page <code>/scheduled</code> (13 automatisations, 261 runs sur la base de
+        Quentin), Spaces sans cron. La passe 26 a fait remonter deux dettes du lot 1, corrigées :
+        l'id d'une automatisation supprimée survit dans la provenance du job (deux homonymes
+        supprimées restaient une seule ligne) ; les trois boutons bruts de la barre d'état sont
+        passés par le design system. <b>À valider par Quentin</b> : le contrat de
+        <code>TextButton</code> a été élargi à la disclosure inline plutôt que de créer un composant
+        DS de plus.</span
+      >
+    </div>
+  </div>
+
+  <p class="lot"><b>Lot 3</b> · l&#x27;agent qui demande et montre</p>
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P5b</span>
+      <h3>Le registre se remplit tout seul</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Question de Quentin le 06/09 au soir : « en quoi les projets qui sont dans le menu Code
+        n'ont pas leur place dans la page Spaces ? » Ils y ont leur place ; la séparation venait de
+        mon découpage (P5 a livré « créé depuis Spaces » et reporté « déclaré par une conversation
+        qui y a produit », que l'onglet Code fait déjà à sa façon). <b>Une seule définition</b> : un
+        dossier où une production de code atterrit et qui porte un manifeste est un projet, déclaré
+        par cette conversation. Le registre se remplit au rattachement ; un backfill au démarrage du
+        runner enregistre ce que l'onglet Code montre déjà ; le chemin du harnais lit les chemins
+        édités. « Rien ne se crée en silence » ne vise plus qu'un dossier sans manifeste : la
+        question de P10 se restreint aux documents.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un <code>file_write</code> dans <code>terrain/app/src/</code> avec
+        <code>terrain/app/package.json</code> enregistre <code>terrain/app</code> et y rattache le
+        job ; le même dans <code>terrain/vrac/</code> n'enregistre rien ; une ligne de comptabilité
+        avec preuve devient le projet sans perdre sa preuve ; un projet rangé s'enregistre en
+        restant rangé ; le backfill est idempotent.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">reste à part</span
+      ><span class="v"
+        >L'onglet Code lit encore sa dérivation ; le faire lire le registre est une pierre
+        ultérieure.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        ><b>Le 06/09</b> (<code>16d1f574</code>, puis <code>4491ae46</code> et
+        <code>aefdcec3</code> pour la passe Codex 32, <code>934091d4</code> pour la passe 33,
+        <code>4f084c21</code> pour la passe 34). Codé par moi : l'agent Opus est tombé sur sa limite
+        de session au premier geste, et Sonnet est interdit (Quentin, 06/09). En place :
+        <code>projects/markers.ts</code> (le manifeste et les chemins réels, partagés entre
+        l'intention et le registre), <code>projects/register.ts</code> (une instruction
+        <code>INSERT … ON CONFLICT DO UPDATE … WHERE registered_at IS NULL</code>, nom choisi et
+        masquage jamais touchés), la déclaration dans <code>attach.ts</code> avant la recherche du
+        projet contenant, le chemin CLI qui lit les chemins écrits par le harnais, le backfill au
+        boot du runner. Base dev : 3 projets déclarés (<code>podium-app</code>,
+        <code>igdb-app</code>, <code>notes-app</code>), 5 jobs rattachés ; les 9 autres « projets »
+        de l'onglet Code sont <code>Dev</code> lui-même (sans manifeste) et huit dossiers du coffre
+        Obsidian, masqués et sans manifeste — des documents, pas des projets.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">passe 32</span
+      ><span class="v"
+        >(1) <b>Seules les cibles fichier déclarent</b> : un tour CLI réussi sans édition (« je vais
+        d'abord analyser », en mode écriture) déclarait le dossier attaché à manifeste ; une cible
+        dossier est un périmètre, pas une production — elle rattache à un projet déjà déclaré, elle
+        n'en déclare aucun. (2) Déclaration et rattachement en <b>une transaction</b> : sans job et
+        sans conversation trouvée, la déclaration est annulée ; deux racines tombent ensemble. (3)
+        <code>agent_id</code> = l'unique détenteur, sinon NULL. (4) <code>registered_at</code> =
+        l'instant de la déclaration (Spaces l'affiche comme date d'ajout), et pour que la page d'un
+        projet montre son activité,
+        <b>le backfill rattache l'historique</b> (<code>agent_jobs.project_id</code>) — aussi pour
+        un projet déclaré d'un clic. (5) Les chemins du harnais se résolvent sans le disque. (6)
+        Compteurs du backfill par raison. <b>Passe 33</b> (aucun constat bloquant, les huit constats
+        de 32 confirmés traités) : la course entre l'enregistreur d'événements de la CLI (insertions
+        jamais attendues) et la lecture des chemins écrits — les écritures d'audit en vol sont
+        attendues avant de lire ; et <code>realPathOf</code> d'un chemin disparu remonte à l'ancêtre
+        existant (un fichier écrit puis supprimé sous un alias retombe sous sa racine réelle).
+        <b>Passe 34</b> : un P0 vrai — l'attente des écritures d'audit n'avait pas de borne, une
+        connexion figée gelait un tour déjà terminé ; bornée à 5 s, dite par un code ; le test de la
+        course est dit temporel (fenêtre 1,5 s et preuve que le tour a attendu) ; la remontée de
+        <code>realPathOf</code> s'arrête au partage d'un chemin UNC, jamais le serveur seul.
+        <b>Passe 35</b> : le test de la course est refait SANS horloge (<code>268f68ef</code>) ; le
+        P0 restant — une insertion figée n'est pas annulée à la borne et garde sa connexion — n'est
+        pas propre à P5b : c'est la robustesse du client de base (<code>statement_timeout</code>
+        exclu à dessein, keepalive TCP 60 s, <code>lock_timeout</code> 30 s), la même exposition
+        pour toute requête du runner et pour les insertions d'audit d'avant P5b. Arbitrage
+        ci-dessous. <b>Passe 36</b> : Codex confirme les deux points (le test rougit par causalité,
+        sans horloge ; aucun chemin de P5b n'aggrave l'état d'avant) — aucun constat bloquant,
+        <b>P5b close</b>.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">arbitrages</span
+      ><span class="v"
+        ><i>Un nouveau projet depuis la conversation = une approbation</i> (P10b, Codex passes
+        39-41) : « où ranger ? » (la question) puis « créer ce dossier ? » (la carte d'approbation)
+        — deux clics pour un nouveau projet. L'alternative, pour n'en garder qu'un, est une
+        autorisation STRUCTURÉE portée par l'option de la question (l'option déclare ce qu'elle
+        crée) : une pierre à part, pas un correctif. <i>Textes de chrome dans le runner</i> (P10a,
+        Codex passes 37-38) : « ❓ X asks: », « Tap an option below », « Pick an option. », « ✅
+        Answered: … » sont écrits par le runner, comme « ⏳ Approbation requise » et « Already
+        approved. » de la carte d'approbation existante ; Codex lit l'invariant #2 au pied de la
+        lettre (aucun texte utilisateur dans le runner : le chrome doit venir de l'adaptateur de
+        livraison, du web, ou d'une configuration en base) et je le lis comme « jamais à la place de
+        l'agent ». Trancher : garder le chrome où il est (et l'écrire dans CLAUDE.md), ou ouvrir une
+        pierre qui déplace TOUT le chrome des approbations et des questions hors du runner.
+        <i>Connexions figées</i> : Codex (passe 35) pointe qu'une requête sur une connexion morte
+        sans RST tient sa connexion du pool jusqu'aux sondes keepalive de l'OS ; ce n'est pas P5b,
+        c'est le client — poser un <code>statement_timeout</code> par session (sauf backfills), ou
+        un délai de lecture socket, est une décision d'infrastructure à prendre à part.
+        <i>Jonctions</i> : deux dossiers attachés qui pointent vers le même dépôt physique donnent
+        deux projets (D10 de « Vérifier &amp; Corriger », toujours ouvert) — interdire les racines
+        qui se recouvrent, ou accepter deux identités. <i>Historique borné</i> : le rattachement des
+        jobs passés lit la fenêtre du scan (1 500 dernières écritures).
+        <i>Un tour de chat CLI ne déclare jamais</i> (sans job, l'audit ne dit pas quelles écritures
+        sont les siennes) : un dépôt attaché à un agent en runtime CLI attend un tour de job pour
+        apparaître dans Spaces.</span
+      >
+    </div>
+  </div>
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P10</span>
+      <h3><code>ask_user</code></h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Un outil qui pose une question avec des options. Dans la conversation : la carte à boutons.
+        Dans le canal d'origine : la même carte, via l'infrastructure des approbations
+        (<code>notify.ts</code>, préfixe de rappel propre). La réponse reprend le job exactement
+        comme une approbation le fait. <b>Premier usage : « où écrire ? »</b> quand une production
+        sort du chat hors de tout projet (P5).</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">ça absorbe</span
+      ><span class="v"
+        >La seconde moitié de v7-C (approbation des commandes de preuve dans le canal) est un cas de
+        <code>ask_user</code>. Une plomberie, deux usages.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un <code>ask_user</code> suspend le job ; un clic dans le canal le reprend avec la réponse
+        dans le transcript ; une réponse hors options est refusée ; la réponse à « où écrire ? »
+        crée le projet et pose le projet courant.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">découpée</span
+      ><span class="v"
+        ><b>P10a — la plomberie</b> (<b>livrée le 06/09, <code>5c7938a7</code></b
+        >, par opus-p10a sur spec, relue, 10 mutations rouges, migration 0098 appliquée en dev ;
+        <b>passe Codex 37</b> : deux P0 vrais corrigés dans <code>36dd5c92</code> — une question
+        sans id d'appel est refusée au lieu d'être suspendue (sinon reposée à l'infini), et
+        <code>ask_user</code> ne rentre jamais dans le pré-passage parallèle (deux questions d'un
+        tour auraient eu deux lignes et la réponse au mauvais appel) ; le P2 « textes de plateforme
+        » répondu : le runner ne parle jamais à la place de l'agent, mais porte son chrome comme la
+        carte d'approbation existante. <b>Passe 38</b> : les deux P0 confirmés traités ; un P0 hors
+        demande VRAI — deux fichiers du chantier P10b (une suppression et deux fichiers vides)
+        étaient entrés dans le commit par l'index d'un agent en cours, HEAD ne compilait plus côté
+        web ; rétablis aussitôt (<code>5d583c1e</code> et le commit <code>chore(web)</code> qui
+        suit) ; le P2 « textes de chrome dans le runner » reste un DÉSACCORD avec Codex, consigné en
+        arbitrage ci-dessous) : l'outil <code>ask_user</code> (2 à 6 options, carte
+        <code>question</code>), un troisième plancher dans la porte d'approbation (ni une règle
+        <code>auto_approve</code> ni l'autonomie ne sautent une question),
+        <code>approval_requests.kind</code> + <code>answer</code> (migration 0098), la résolution
+        qui refuse une réponse hors options, la carte Telegram à un bouton par option, la page
+        Approvals et la carte dans le fil des trois pages, avec la réponse une fois donnée.
+        <b>P10b — « où écrire ? »</b> (<b>livrée le 06/09, <code>baea7599</code></b
+        >, par opus-p10b sur spec, relue, 7 mutations rouges dont un cas ajouté — une ligne renommée
+        depuis l'onglet Code garde son nom en devenant projet. <b>Passe Codex 39</b> : un P0 vrai,
+        que j'avais posé en doute — n'importe quelle question répondue du job déverrouillait la
+        création (« Quelle couleur ? » → « Bleu » suffisait) ; corrigé dans <code>5921ba4f</code> :
+        l'option CHOISIE doit nommer le projet (son nom ou son dossier, accents et casse repliés),
+        sinon la carte d'approbation ordinaire ; plus le rollback de la ligne et du dossier si le
+        rattachement échoue, et « cinq projets pertinents au plus » dans la consigne.
+        <b>Passes 40-41</b> : la liaison par le texte de l'option a été resserrée (<code
+          >147159ff</code
+        >
+        : égalité stricte au lieu de la sous-chaîne) puis mise en défaut une troisième fois (un
+        projet EXISTANT proposé par son nom d'affichage, non unique, déverrouille une autre
+        destination) — trois passes sur la même garde, c'est la forme qui est mauvaise :
+        <b
+          >la liaison texte est abandonnée, <code>register_project</code> passe par l'approbation
+          ordinaire</b
+        >
+        (une carte « créer ce dossier ? », relâchée par une règle explicite du propriétaire ou une
+        autonomie qui laisse passer le non-destructif). Un clic de plus pour un nouveau projet, zéro
+        devinette. Arbitrage ci-dessous) : <code>register_project</code> (un projet de documents
+        déclaré depuis la conversation, rattaché aussitôt), la guidance du prompt système (demander
+        avant d'écrire hors de tout projet déclaré et hors manifeste), et une porte qui exige une
+        question répondue dans le même job — sauf autonomie totale.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P11</span>
+      <h3>Fichiers et diff</h3>
+      <span class="taille">M</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La carte « 12 fichiers » : la liste cliquable, le diff de la sélection.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s&#x27;appuie sur</span
+      ><span class="v"
+        >Pour <code>file_edit</code>, <code>tool_input</code> porte l'ancien fragment
+        (<code>old_string</code>) et le nouveau : le diff se rend directement. Pour
+        <code>file_write</code>, l'entrée ne porte que le chemin et le <b>nouveau</b> contenu
+        (vérifié le 06/09, <code>file-write.ts</code>) : l'état antérieur doit venir de l'instantané
+        du tour. Pour le harnais de code comme pour <code>file_write</code>, il faut donc le sha de
+        l'instantané : <b>il n'est pas en base.</b> Deux pièces : persister
+        <code>(job_id, turn, sha, workspace)</code> quand <code>takeCheckpointForTurn</code> le
+        calcule (aujourd'hui seulement journalisé), puis <code>git diff</code> dans le dépôt des
+        instantanés.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">limite</span
+      ><span class="v"
+        >Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit ni pour un
+        <code>file_write</code> qui écrase : la carte dit alors « fichiers écrits, sans diff ». Seul
+        <code>file_edit</code> rend son diff partout.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">garde</span
+      ><span class="v"
+        >Un <code>file_edit</code> semé rend son diff exact ; un instantané semé puis un second
+        rendent le diff git attendu ; un <code>file_write</code> qui écrase dans un dossier sans git
+        rend l'état « sans diff » et pas une erreur.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P12</span>
+      <h3>Le tableur rendu</h3>
+      <span class="taille">S</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >La carte <code>table</code> pour un <code>office_file</code> : les premières lignes de la
+        feuille demandée, les contrôles v7-B en pied. Un tableau de valeurs, pas Excel : ni
+        formules, ni fusion, ni mise en forme, dit tel quel. La charge utile de P1 dit déjà si la
+        première ligne est un en-tête (<code>header: 'unknown'</code> pour un classeur lu) : la
+        carte le demande ou le dit, elle ne devine pas.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">s&#x27;appuie sur</span
+      ><span class="v"><code>xlsx_read</code> et sa carte <code>table</code> (P1).</span>
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        ><b>Le 06/09</b> (<code>b4ac14b1</code>, par opus-p12 sur spec, relue, 5 mutations rouges ;
+        passe Codex 46 lancée). Une entrée de la carte <code>files</code> peut porter un aperçu (la
+        même forme qu'une table) et la clé canonique du document ; les 14 outils d'écriture xlsx
+        relisent la feuille touchée dans le classeur qu'ils ont en mémoire (valeurs brutes ; une
+        formule fraîche se montre comme formule, exceljs ne calcule pas) ; la carte montre les
+        premières lignes sous le fichier, dit « values only » et l'en-tête inconnu, et en pied
+        l'état de vérification du document lu par sa clé — <code>not_configured</code> → « Not
+        verified: no checks exist for documents yet », le cas d'aujourd'hui puisque v7-B n'existe
+        pas ; jamais un vert inventé. Un bug de <code>tableCard</code> corrigé au passage (<code
+          >truncated</code
+        >
+        ignorait <code>total</code>).</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">passe 46</span
+      ><span class="v"
+        ><b>Ce que la revue a corrigé dans la pierre</b> (<code>f790a051</code>, 07/09). Cinq
+        constats, tous vérifiés vrais à la source. (1) La « limite dite » de la version précédente
+        n'était pas une limite mais un défaut : la clé de la carte (chemin réel) et celle de
+        l'intention (chemin lexical) sont maintenant calculées par <b>une seule fonction</b>
+        (<code>office-file-key.ts</code>), appelée des deux côtés — sous une jonction, la carte
+        retrouve sa ligne d'état. C'était aussi la cause de la CI Windows rouge sur
+        <code>9dd89c2a</code> : le dossier temporaire y est en forme courte 8.3, la clé réelle ne le
+        valait pas. (2) Le texte riche, un hyperlien riche et une formule partagée sans résultat
+        s'affichaient « [object Object] » : la cellule se lit par <code>formula</code>/<code
+          >result</code
+        >
+        (formule partagée traduite), le texte riche se joint, le repli épelle l'objet. (3) Le pied
+        disait « values only: no formulas » sous une formule montrée telle qu'écrite : il dit
+        maintenant « no formatting or merged cells; uncomputed formulas shown as written ». (4) La
+        carte n'était bornée qu'en lignes : <code>CARD_COLS_MAX</code> (20) au schéma, au
+        présentateur et à l'aperçu, et « showing 20 of 35 columns » quand il y a plus. (5) L'état
+        d'un document était « le plus récent du fil, tous jobs confondus » : un job qui finit de
+        vérifier SA génération après qu'un autre a réécrit le fichier posait « Verified » sur la
+        mauvaise carte. L'état se lit par <b>(job, clé)</b> — la carte d'une écriture porte l'état
+        du job qui l'a faite, une ligne par la contrainte d'unicité, rien à départager.
+        <i>Ce que ça ne dit pas encore</i> : un job qui écrit deux fois le même fichier a deux
+        cartes sur une seule ligne d'état ; dater chaque carte d'une génération est l'affaire du
+        vérificateur de documents (v7-B), pas de cette pierre. Le parcours complet de la feuille
+        pour un <code>total</code> exact est accepté et dit dans le code.
+        <i>Dégradation acceptée</i> : une carte <code>table</code> déjà persistée avec plus de 20
+        colonnes ne passe plus le schéma à l'écran, qui montre alors la sortie brute.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">passes 47-48</span
+      ><span class="v"
+        ><b>Clôture</b> (<code>e9393c54</code>, 07/09). Un seul constat neuf en 47, vrai : une
+        cellule couverte par une fusion rend la valeur de son maître, et « Q1 » fusionné sur A1:C2
+        paraissait six fois — six valeurs là où le classeur n'en tient qu'une. La valeur paraît
+        maintenant une fois, au maître, les cellules couvertes restent vides (le maître est toujours
+        en haut à gauche de la plage : l'aperçu ne peut pas montrer une cellule couverte sans son
+        maître). Les sept autres questions de la passe 47 ont tenu (double rebasage idempotent,
+        racines normalisées, formule partagée traduite après sauvegarde, résultat 0 montré 0, la
+        carte lit le job de l'intention, lignes anciennes rendues brutes). Passe 48 : aucun constat
+        neuf — <b>P12 close, et avec elle le lot 3 côté code</b>.</span
+      >
+    </div>
+  </div>
+
+  <p class="lot"><b>Lot 4</b> · ce qui reste cher</p>
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P13</span>
+      <h3>Les relecteurs</h3>
+      <span class="taille">L</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >C'est la PR④ de Vérifier &amp; Corriger, inchangée. Ici seulement sa carte : deux
+        relecteurs, leur verdict, leur citation. Rien à planifier de neuf, une dépendance à
+        nommer.</span
+      >
+    </div>
+  </div>
+
+  <div class="pierre">
+    <div class="tete">
+      <span class="num">P14</span>
+      <h3>L'aperçu vivant</h3>
+      <span class="taille xl">XL</span>
+    </div>
+    <div class="ligne">
+      <span class="l">ça pose</span
+      ><span class="v"
+        >Lancer et tenir un serveur de développement par projet, l'afficher, gérer ports et arrêts.
+        C'est le produit entier de Lovable. <b>Dernier, et sans promesse.</b> Tant qu'il n'existe
+        pas, le centre du projet montre le dernier diff, et le bouton « L'application » ouvre l'URL
+        locale dans un onglet.</span
+      >
+    </div>
+  </div>
+
+  <h2>Ce que ça fait aux seize onglets</h2>
+  <p>
+    Deux entrées de plus, « Spaces » et « Scheduled ». Et une page qui change de nature :
+    <b>Chat</b>, qui accueille désormais toutes les conversations, décision du 6 septembre. Runs et
+    Code restent tels qu'ils sont ; les fusionner un jour est une décision de Quentin, pas une
+    conséquence de ce plan.
+  </p>
+
+  <h2>Ce que ça fait au plan Vérifier &amp; Corriger</h2>
+  <p>
+    Il continue. Ce plan est la <b>surface</b>, l'autre est le <b>moteur</b>. Les points de contact
+    : v7-B nourrit la carte du tableur (P12), la seconde moitié de v7-C est absorbée par
+    <code>ask_user</code> (P10), les intentions de mutation disent où une production a atterri (P5),
+    le niveau de risque déclaré par les outils sert la frontière chat / travail (P7), PR④ est P13.
+    L'observation, la garde et le runtime CLI ne bougent pas.
+  </p>
+
+  <h2>Les limites, dites avant de commencer</h2>
+  <ul class="limites">
+    <li>
+      Le raisonnement n'est visible que pour les modèles qui l'émettent. L'écran le dira au lieu de
+      faire semblant.
+    </li>
+    <li>Le diff du harnais de code n'existe que dans un dépôt git.</li>
+    <li>Le tableur rendu est un tableau de valeurs.</li>
+    <li>L'aperçu vivant peut ne jamais ressembler au dessin.</li>
+    <li>
+      La maquette est une intention, pas une spécification au pixel : chaque pierre sera validée à
+      l'écran, par Playwright, avant d'être dite finie.
+    </li>
+    <li>
+      La frontière chat / travail dépend du niveau de risque que les outils tiers déclarent : un
+      connecteur qui se déclare mal se classe mal, et l'écran dira d'où vient la classification.
+    </li>
+    <li>
+      Répondre depuis le web dans un fil venu d'un canal dépend de l'outil d'envoi de ce canal ; à
+      vérifier canal par canal avant de le promettre.
+    </li>
+  </ul>
+</div>

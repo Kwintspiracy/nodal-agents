@@ -11,7 +11,13 @@
 //                             site, audit finding #20): a schedule that kicks
 //                             off a long-running orchestrator must not stall
 //                             phases 7/8 for everyone else.
-//   7. deliverCompletedRoots — compile and deliver results for finished root jobs
+//   7. deliverCompletedRoots — compile and finalize finished root jobs; the
+//                             channel return goes through the delivery outbox
+//                             (prepared with the terminal status, drained right
+//                             after — V&C T12)
+//   7b. drainDeliveries      — second population of the outbox: deliveries no
+//                             terminal path confirmed (crash, expired lease),
+//                             then the sweep of exhausted ones (owner alerted)
 
 import {
   resetOrphanedJobs,
@@ -24,6 +30,7 @@ import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
+import { drainDeliveries, sweepExhaustedDeliveries } from '../delivery/outbox.ts';
 import { runCuratorTick } from './run-curator.ts';
 import { runSkillUpdateCheckTick, type SkillUpdateCheckTickEnv } from './run-skill-update-check.ts';
 import { pruneJobMediaFiles } from './prune-media.ts';
@@ -60,6 +67,14 @@ export interface CronTickResult {
    */
   schedulesFired: number;
   rootsDelivered: number;
+  /**
+   * Seconde population de l'outbox (V&C T12) : les livraisons `prepared` que
+   * le drain immédiat de leur chemin terminal n'a pas confirmées (processus
+   * mort, bail expiré) — envoyées ici — et celles qui ont brûlé leurs trois
+   * essais, fermées `rejected` par le sweep (le propriétaire est alerté).
+   */
+  deliveriesSent: number;
+  deliveriesRejected: number;
   curatorStaled: number;
   curatorArchived: number;
   curatorReactivated: number;
@@ -328,6 +343,21 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     );
   }
 
+  // 7b. La seconde population de l'outbox (V&C T12) : reprise des livraisons
+  // que leur chemin terminal n'a pas confirmées (crash entre le commit et le
+  // drain, bail expiré), puis le sweep des lignes à trois essais brûlés.
+  // Ce que le drain immédiat de chaque porte terminale n'a pas fait, ce tick
+  // le fait — c'est la moitié « reprise » du modèle atomique.
+  const deliveries = await guardPhase(
+    'drainDeliveries',
+    async () => {
+      const drained = await drainDeliveries(deps.db, {});
+      const swept = await sweepExhaustedDeliveries(deps.db, {});
+      return { sent: drained.sent, rejected: drained.rejected + swept.rejected };
+    },
+    { sent: 0, rejected: 0 },
+  );
+
   // The curator (Phase 1 lifecycle SQL + Phase 2 LLM passes) must never be
   // able to crash the rest of the tick — retention (below) and every phase
   // ABOVE this line already ran and their effects are committed; only the
@@ -432,6 +462,8 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     tasksExecuted,
     schedulesFired,
     rootsDelivered,
+    deliveriesSent: deliveries.sent,
+    deliveriesRejected: deliveries.rejected,
     curatorStaled: curatorResult.staled,
     curatorArchived: curatorResult.archived,
     curatorReactivated: curatorResult.reactivated,

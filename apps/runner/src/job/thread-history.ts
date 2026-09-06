@@ -5,16 +5,22 @@
 // `agent_jobs` row with a fresh `messages` array — without this helper, the
 // LLM only sees the current turn, never the prior exchanges.
 //
+// CE QUE CE FICHIER DÉCIDE, DEPUIS P6 : ce qu'on RELIT, jamais où le fil
+// commence. L'identité d'un fil est la CONVERSATION (job/conversation-id.ts,
+// migration 0094) — une par chat, jusqu'à ce que l'utilisateur en ouvre une
+// autre. La règle du silence de 4 h qui vivait ici et qui découpait les
+// conversations a disparu : elle décidait l'identité, et elle la décidait mal
+// (répondre le lendemain ouvrait un fil neuf sans que personne ne l'ait
+// demandé). Ce qui reste est un BUDGET : MAX_TURNS tours, BUDGET_CHARS
+// caractères, pour que la relecture d'une conversation qui dure des semaines
+// ne finisse pas par remplir la fenêtre à elle seule.
+//
 // Algorithm (see ~/.claude/plans/compiled-nibbling-stroustrup.md):
 // - Only conversational channels (telegram, slack, discord). Others are
 //   one-shot invocations and get no prior history.
-// - Query up to MAX_TURNS recent completed jobs from the same
-//   (entity, agent, channel, chat_id), then keep only the CURRENT session:
-//   walk newest->oldest and stop at the first silence >= IDLE_RESET_MINUTES.
-//   This is a real gap-based session reset (NOT a rolling time window): a
-//   continuously-active session is kept whole however long it runs, while a
-//   thread the user returns to after a break starts fresh — a 12h-old
-//   exchange is not context for a new request.
+// - Query up to MAX_TURNS recent terminal jobs of the SAME CONVERSATION —
+//   head jobs only (`parent_job_id IS NULL`): a delegated child inherits its
+//   creator's conversation_id without ever having been a user message.
 // - Emit one (user, assistant) pair per prior job, from (task, result).
 //   Skip jobs without a result (hard fail / interrupted — the user saw
 //   nothing on their side either, so showing the LLM a hole is just noise).
@@ -46,7 +52,7 @@
 // `[Task "..." completed: actions — ...; result: ...]` line(s), sourced from
 // the CHILD job's tools_used, not the parent's prose summary.
 
-import { eq, and, ne, gt, desc, inArray } from '@nodal-agents/db';
+import { eq, and, ne, desc, inArray, isNull } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -61,8 +67,19 @@ import {
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
  * `task-board`, `internal`) are one-shot invocations and never get prior
  * history injected.
+ *
+ * `whatsapp` a été AJOUTÉ le 06/09 (revue Codex, passe 28). Il manquait depuis
+ * l'origine : le canal a un handler, une conversation, une ligne `conversations`
+ * depuis P6 — et repartait pourtant sans aucun tour précédent à chaque message,
+ * exactement le bug d'amnésie que ce fichier existe pour fermer. Rien ne le
+ * justifiait ; c'était un oubli, pas une décision.
  */
-const CONVERSATIONAL_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'slack', 'discord']);
+const CONVERSATIONAL_CHANNELS: ReadonlySet<string> = new Set([
+  'telegram',
+  'slack',
+  'discord',
+  'whatsapp',
+]);
 
 /** Max prior (user, assistant) pairs to load — enough to hold a multi-step thread. */
 const MAX_TURNS = 8;
@@ -81,35 +98,6 @@ export const BUDGET_CHARS = 16_000;
  * (F-12, audit #2) — reuse it instead of re-implementing it.
  */
 export const PER_TURN_MAX_CHARS = 2_400;
-/**
- * Idle reset GAP. A silence of at least this long between two consecutive turns
- * (or between the most recent prior turn and now) starts a FRESH conversation —
- * everything before the gap is dropped. A true session reset, not a rolling
- * window.
- *
- * Default raised 30min → 4h: 30 minutes was FAR too aggressive for real human
- * cadence — a user who asks something, goes to do it (launch ComfyUI, render,
- * read a brief), and replies 35+ minutes later got their whole conversation
- * WIPED (measured: 37% of real Telegram turns started with zero history). The
- * asymmetry is the point — carrying a bit of stale context the LLM can ignore is
- * mild; wiping context the user is mid-conversation about is the painful failure.
- * 4h still resets a genuinely-new session (next morning, hours later) and keeps
- * the original "12h-old exchange must not bleed in" bug fixed. Tunable via
- * THREAD_IDLE_RESET_MINUTES.
- */
-const IDLE_RESET_MINUTES = Number(process.env.THREAD_IDLE_RESET_MINUTES) || 240;
-/**
- * Exported so other call sites needing the SAME session boundary reuse it
- * instead of re-deriving it — e.g. job/conversation-id.ts (Jobs page
- * conversation grouping, migration 0059) stamps jobs into the same
- * conversation using this exact gap.
- */
-export const IDLE_RESET_MS = IDLE_RESET_MINUTES * 60_000;
-/**
- * Outer query bound — never scan rows older than this. Pure optimization to cap
- * the candidate scan; the real session boundary is the gap logic, not this.
- */
-const MAX_LOOKBACK_MS = 24 * 60 * 60_000;
 
 /**
  * Built-in tools that create/mutate/delete a platform object — schedules,
@@ -155,12 +143,20 @@ export const STATE_CHANGING_TOOLS: ReadonlySet<string> = new Set([
 
 export interface LoadThreadHistoryOptions {
   db: RunnerDeps['db'];
-  entityId: string;
-  agentId: string;
-  /** Job's `channel` column — `telegram`, `slack`, etc. */
+  /**
+   * LA clé de la relecture depuis P6 : la conversation dont ce job est un tour.
+   * `null` (job hors conversation, ou job d'avant P6 dont l'uuid ne pointe
+   * aucune ligne) ⇒ pas d'historique. `entity_id` / `agent_id` ne servent plus
+   * de clé — la conversation les porte déjà, et deux agents ne partagent jamais
+   * une conversation.
+   */
+  conversationId: string | null;
+  /**
+   * Job's `channel` column — `telegram`, `slack`, etc. Toujours nécessaire :
+   * il décide si ce canal a une histoire (CONVERSATIONAL_CHANNELS) et par quel
+   * outil d'envoi le tour précédent a parlé (CHANNEL_SEND_TOOL).
+   */
   channel: string;
-  /** Job's `chat_id` column — the thread identifier on the channel. */
-  chatId: string;
   /** Current job's id — excluded from the prior-history query. */
   excludeJobId: string;
 }
@@ -171,16 +167,13 @@ export interface LoadThreadHistoryOptions {
  *
  * Returns `[]` (no error thrown) when:
  * - The channel is not conversational.
- * - `chatId` is empty.
- * - No completed prior jobs within the idle window.
+ * - `conversationId` is null.
+ * - The conversation has no terminal prior head job.
  * - All candidate jobs have null/empty `result` (e.g. all soft-skipped).
  */
 export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise<ModelMessage[]> {
   if (!CONVERSATIONAL_CHANNELS.has(opts.channel)) return [];
-  if (!opts.chatId) return [];
-
-  const now = Date.now();
-  const cutoff = new Date(now - MAX_LOOKBACK_MS);
+  if (!opts.conversationId) return [];
 
   const rows = await opts.db
     .select({
@@ -196,10 +189,10 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     .from(agentJobs)
     .where(
       and(
-        eq(agentJobs.entityId, opts.entityId),
-        eq(agentJobs.agentId, opts.agentId),
-        eq(agentJobs.channel, opts.channel),
-        eq(agentJobs.chatId, opts.chatId),
+        eq(agentJobs.conversationId, opts.conversationId),
+        // Les tours du fil sont ses jobs de TÊTE : un enfant délégué hérite du
+        // `conversation_id` de son créateur sans avoir été un message.
+        isNull(agentJobs.parentJobId),
         // Terminal jobs that produced a user-facing turn — NOT just 'completed'.
         // A job that FAILED (e.g. the agent asked the user to launch ComfyUI, so
         // the generation couldn't finish) still DELIVERED a message the user saw
@@ -209,38 +202,16 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
         // are still skipped — only failures that spoke to the user are carried.
         inArray(agentJobs.status, ['completed', 'failed']),
         ne(agentJobs.id, opts.excludeJobId),
-        gt(agentJobs.createdAt, cutoff),
       ),
     )
     .orderBy(desc(agentJobs.createdAt))
     .limit(MAX_TURNS);
 
-  // Gap-based session reset. Walk newest->oldest; keep turns while the user's
-  // SILENCE between them stays under IDLE_RESET; stop at the first real gap.
-  //
-  // CRITICAL: the gap is measured from when the prior turn's reply was DELIVERED
-  // (completed_at) to when the newer turn was created — NOT created_at→created_at.
-  // A job's runtime is NOT user silence: a 28-min image-gen / research / render
-  // job created at 7:22 but delivered at 7:49, then answered at 7:57, is an 8-min
-  // gap (7:49→7:57), not 35 min (7:22→7:57). The created_at→created_at form
-  // inflated the gap by the whole job runtime and wiped conversations the user
-  // replied to within seconds — worst exactly for the heavy tasks people then
-  // follow up on. (Verified live on jobs dbbf4d8c → 8b493110.)
-  const session: typeof rows = [];
-  let newerCreatedAt = now; // current message time, for the first comparison
-  for (const row of rows) {
-    const createdAt = new Date(row.createdAt as unknown as string | number | Date).getTime();
-    const deliveredAt = row.completedAt
-      ? new Date(row.completedAt as unknown as string | number | Date).getTime()
-      : createdAt;
-    if (newerCreatedAt - deliveredAt >= IDLE_RESET_MS) break;
-    session.push(row);
-    newerCreatedAt = createdAt;
-  }
-
   // Flip to chronological (oldest first) so the budget loop drops the OLDEST
-  // blocks first.
-  const chronological = session.reverse();
+  // blocks first. Plus de marche par silences : les MAX_TURNS derniers tours de
+  // la conversation SONT la relecture — leur âge ne les disqualifie plus, seul
+  // le budget les écarte.
+  const chronological = [...rows].reverse();
 
   // Delegated-task visibility (2026-07-12 incident, see task-ledger.ts): one
   // batched query for every prior job's own delegated tasks, keyed by job id
@@ -362,11 +333,15 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
  * comes back empty.
  *
  * S3 (multichannel plan): exported so a later phase can extend this map
- * per-channel once other channels get their OWN send tool name (whatsapp is
- * in CONVERSATIONAL_CHANNELS above but has no send tool yet — the delivery
- * tools' NAMES don't change until that phase, so there is nothing to map it
- * to today; adding an entry here ahead of a real tool would just point at a
- * name that doesn't exist).
+ * per-channel once other channels get their OWN send tool name.
+ *
+ * WhatsApp est dans CONVERSATIONAL_CHANNELS et VOLONTAIREMENT absent d'ici : il
+ * n'a pas d'outil d'envoi à lui, et les noms des outils de livraison ne
+ * changeront qu'à cette phase-là. Un tour WhatsApp est donc relu sous la forme
+ * TEXTE à deux messages, pas sous la forme appel d'outil à trois — poser ici un
+ * nom d'outil qui n'existe pas apprendrait au modèle à appeler le vide.
+ * (Le commentaire disait l'inverse jusqu'au 06/09 : il affirmait que WhatsApp
+ * était dans l'ensemble au-dessus, ce qui était faux — revue Codex, passe 28.)
  *
  * Discord/Slack ingress (D2, K2): a discord or slack job's send tool IS
  * 'telegram_send_message' — the 6 delivery tools are registered by

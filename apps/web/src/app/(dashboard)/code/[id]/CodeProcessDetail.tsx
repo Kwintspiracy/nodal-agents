@@ -35,6 +35,7 @@ import {
   type CodingVerdictView,
 } from '@/lib/actions.ts';
 import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
+import VerificationSection from './VerificationSection.tsx';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import DisclosureButton from '@/components/ui/DisclosureButton';
@@ -134,14 +135,35 @@ export default function CodeProcessDetail({
     pipelineIdsRef.current = detail.pipelineJobIds;
   }, [detail.pipelineJobIds]);
 
+  // true tant que le process est vivant ; passe à false au premier effet qui
+  // le voit terminé — c'est la transition que le dernier tick guette.
+  const wasLiveRef = useRef(LIVE_STAGES.has(initialDetail.header.stage));
+
   useEffect(() => {
     if (!LIVE_STAGES.has(stageRef.current)) {
       // Le process n'est plus vivant : purger les cartes d'approbation, sinon
       // elles restent affichées — boutons compris — sur un process terminé
       // (revue P1 du 25/08).
       setPendingApprovals([]);
-      return;
+      if (!wasLiveRef.current) return;
+      wasLiveRef.current = false;
+      // DERNIER TICK. La preuve tourne à la finalisation — au moment exact où
+      // l'étape cesse d'être vivante et où ce poller s'arrête. Un tick de plus
+      // après la sortie de LIVE_STAGES ramène ce que la finalisation a écrit
+      // juste après le statut (T24) ; sans lui la section Verification reste
+      // vide jusqu'à un rechargement manuel.
+      let lastCancelled = false;
+      const last = setTimeout(() => {
+        void getCodingProcessDetailAction(query).then((result) => {
+          if (result.ok && !lastCancelled) setDetail(result.data);
+        });
+      }, POLL_INTERVAL);
+      return () => {
+        lastCancelled = true;
+        clearTimeout(last);
+      };
     }
+    wasLiveRef.current = true;
     let cancelled = false;
     const tick = () => {
       if (!LIVE_STAGES.has(stageRef.current)) return;
@@ -304,6 +326,16 @@ export default function CodeProcessDetail({
           chronologique de TOUS les agents. Plus de sidebar de fichiers ni de
           panneau central : les colonnes étroites, « ça ne va pas du tout ». */}
       <VerdictsSection verdicts={verdicts} stage={header.stage} />
+
+      {/* La preuve — un verdict sur tout le run, avant le détail fichier par
+          fichier. Observation seule en ① (plan « Vérifier & Corriger », T24). */}
+      <VerificationSection
+        sequences={detail.verificationRuns}
+        skippedSurfaces={detail.verificationSkippedSurfaces}
+        unconfigured={detail.verificationUnconfigured}
+        stage={header.stage}
+        live={LIVE_STAGES.has(header.stage)}
+      />
 
       <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
         <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">

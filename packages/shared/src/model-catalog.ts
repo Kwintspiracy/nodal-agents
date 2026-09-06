@@ -107,10 +107,28 @@ export interface ModelCapabilities {
  * them quietly.
  */
 export interface ModelPricing {
-  /** USD per 1M INPUT tokens. */
+  /** USD per 1M INPUT tokens (fresh, cache miss). */
   inputPerMillionUsd: number;
   /** USD per 1M OUTPUT tokens. */
   outputPerMillionUsd: number;
+  /**
+   * USD per 1M input tokens served from the provider's prompt cache (cache
+   * READ). Absent = the vendor's cache rate is unknown to us: those tokens are
+   * then priced as fresh input — an OVER-estimate, said as such by
+   * `hasCachePricing()`, never a silent discount. Source: OpenRouter
+   * `GET /api/v1/models` `pricing.input_cache_read` (2026-09-06), which passes
+   * the vendor's own rate through for Anthropic / OpenAI / Google / MiniMax /
+   * Moonshot — the ratio is NOT universal (Anthropic 0.1×, DeepSeek 0.5×,
+   * Kimi ≈0.17×), hence a price per model, never a factor.
+   */
+  cacheReadPerMillionUsd?: number;
+  /**
+   * USD per 1M input tokens WRITTEN to the cache (Anthropic bills 1.25×,
+   * Google bills storage well under the input rate, most vendors bill nothing
+   * extra). Absent = unknown → priced as fresh input, same policy as reads.
+   * Source: `pricing.input_cache_write`, same fetch.
+   */
+  cacheWritePerMillionUsd?: number;
 }
 
 export interface ModelCatalogEntry {
@@ -212,7 +230,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.3, outputPerMillionUsd: 1.2 },
+      pricing: {
+        inputPerMillionUsd: 0.3,
+        outputPerMillionUsd: 1.2,
+        cacheReadPerMillionUsd: 0.06,
+      },
     },
     {
       modelId: 'MiniMax-M2.7',
@@ -220,7 +242,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Latest M2-series — non-reasoning per MiniMax docs.
       capabilities: { tools: true, forcedToolChoice: false },
       contextWindow: 200_000,
-      pricing: { inputPerMillionUsd: 0.3, outputPerMillionUsd: 1.2 },
+      pricing: {
+        inputPerMillionUsd: 0.3,
+        outputPerMillionUsd: 1.2,
+        cacheReadPerMillionUsd: 0.06,
+      },
     },
     {
       modelId: 'MiniMax-M2',
@@ -228,7 +254,10 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Stable previous-generation baseline — non-reasoning.
       capabilities: { tools: true, forcedToolChoice: false },
       contextWindow: 200_000,
-      pricing: { inputPerMillionUsd: 0.255, outputPerMillionUsd: 1.02 },
+      pricing: {
+        inputPerMillionUsd: 0.255,
+        outputPerMillionUsd: 1.02,
+      },
     },
   ],
   // ─── Native Moonshot / Kimi (api.moonshot.ai/v1) ────────────────────────────
@@ -256,7 +285,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'onoff', mandatory: true },
       },
       contextWindow: 262_144,
-      pricing: { inputPerMillionUsd: 0.95, outputPerMillionUsd: 4 },
+      pricing: {
+        inputPerMillionUsd: 0.95,
+        outputPerMillionUsd: 4,
+        cacheReadPerMillionUsd: 0.16,
+      },
     },
     {
       modelId: 'kimi-k2.7-code',
@@ -268,7 +301,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'onoff', mandatory: true },
       },
       contextWindow: 262_144,
-      pricing: { inputPerMillionUsd: 0.7, outputPerMillionUsd: 3.5 },
+      pricing: {
+        inputPerMillionUsd: 0.7,
+        outputPerMillionUsd: 3.5,
+        cacheReadPerMillionUsd: 0.18,
+      },
     },
     {
       modelId: 'kimi-k3',
@@ -287,7 +324,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['max'], mandatory: true },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+      pricing: {
+        inputPerMillionUsd: 3,
+        outputPerMillionUsd: 15,
+        cacheReadPerMillionUsd: 0.3,
+      },
     },
   ],
   // Anthropic — every current Claude supports extended thinking. Auto (no
@@ -309,7 +350,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+      pricing: {
+        inputPerMillionUsd: 5,
+        outputPerMillionUsd: 25,
+        cacheReadPerMillionUsd: 0.5,
+        cacheWritePerMillionUsd: 6.25,
+      },
     },
     {
       modelId: 'claude-sonnet-5',
@@ -321,7 +367,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 10,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 2.5,
+      },
     },
     {
       modelId: 'claude-fable-5',
@@ -333,7 +384,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+      pricing: {
+        inputPerMillionUsd: 10,
+        outputPerMillionUsd: 50,
+        cacheReadPerMillionUsd: 1,
+        cacheWritePerMillionUsd: 12.5,
+      },
     },
     {
       modelId: 'claude-opus-4-8',
@@ -345,7 +401,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
-      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+      pricing: {
+        inputPerMillionUsd: 5,
+        outputPerMillionUsd: 25,
+        cacheReadPerMillionUsd: 0.5,
+        cacheWritePerMillionUsd: 6.25,
+      },
     },
     {
       modelId: 'claude-sonnet-4-6',
@@ -357,7 +418,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
-      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+      pricing: {
+        inputPerMillionUsd: 3,
+        outputPerMillionUsd: 15,
+        cacheReadPerMillionUsd: 0.3,
+        cacheWritePerMillionUsd: 3.75,
+      },
     },
     {
       modelId: 'claude-haiku-4-5-20251001',
@@ -372,7 +438,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 200_000,
-      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 5 },
+      pricing: {
+        inputPerMillionUsd: 1,
+        outputPerMillionUsd: 5,
+        cacheReadPerMillionUsd: 0.1,
+        cacheWritePerMillionUsd: 1.25,
+      },
     },
   ],
   // OpenAI — GPT-5 line takes `reasoning_effort`. Auto = today's behavior
@@ -389,7 +460,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 400_000,
-      pricing: { inputPerMillionUsd: 1.25, outputPerMillionUsd: 10 },
+      pricing: {
+        inputPerMillionUsd: 1.25,
+        outputPerMillionUsd: 10,
+        cacheReadPerMillionUsd: 0.125,
+      },
     },
     {
       modelId: 'gpt-5-mini',
@@ -401,7 +476,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 400_000,
-      pricing: { inputPerMillionUsd: 0.25, outputPerMillionUsd: 2 },
+      pricing: {
+        inputPerMillionUsd: 0.25,
+        outputPerMillionUsd: 2,
+        cacheReadPerMillionUsd: 0.025,
+      },
     },
   ],
   // ─── Native Google (generativelanguage.googleapis.com) ──────────────────────
@@ -441,7 +520,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
+      pricing: {
+        inputPerMillionUsd: 0.75,
+        outputPerMillionUsd: 3.75,
+        cacheReadPerMillionUsd: 0.075,
+        cacheWritePerMillionUsd: 0.0416667,
+      },
     },
     {
       modelId: 'gemini-3.5-flash',
@@ -453,7 +537,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 9 },
+      pricing: {
+        inputPerMillionUsd: 1.5,
+        outputPerMillionUsd: 9,
+        cacheReadPerMillionUsd: 0.15,
+        cacheWritePerMillionUsd: 0.0833333,
+      },
     },
     {
       modelId: 'gemini-3.1-pro-preview',
@@ -465,7 +554,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 12 },
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 12,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 0.375,
+      },
     },
   ],
   // The two entries below are the catalog's only remaining unpriced models, and
@@ -513,7 +607,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+      pricing: {
+        inputPerMillionUsd: 5,
+        outputPerMillionUsd: 25,
+        cacheReadPerMillionUsd: 0.5,
+        cacheWritePerMillionUsd: 6.25,
+      },
     },
     {
       modelId: 'anthropic/claude-opus-5-fast',
@@ -535,7 +634,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 10,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 2.5,
+      },
     },
     {
       modelId: 'anthropic/claude-fable-5',
@@ -546,7 +650,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+      pricing: {
+        inputPerMillionUsd: 10,
+        outputPerMillionUsd: 50,
+        cacheReadPerMillionUsd: 1,
+        cacheWritePerMillionUsd: 12.5,
+      },
     },
     // ─── OpenAI ───────────────────────────────────────────────────────────────
     // OpenAI was absent from the OpenRouter list entirely — not a curation
@@ -561,7 +670,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
-      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.6 },
+      pricing: {
+        inputPerMillionUsd: 0.2,
+        outputPerMillionUsd: 1.2,
+        cacheReadPerMillionUsd: 0.02,
+        cacheWritePerMillionUsd: 0.25,
+      },
     },
     {
       modelId: 'openai/gpt-5.6-luna-pro',
@@ -572,7 +686,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
-      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.6 },
+      pricing: {
+        inputPerMillionUsd: 0.2,
+        outputPerMillionUsd: 1.2,
+        cacheReadPerMillionUsd: 0.02,
+        cacheWritePerMillionUsd: 0.25,
+      },
     },
     {
       modelId: 'openai/gpt-5.6-terra-pro',
@@ -583,7 +702,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_050_000,
-      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 6 },
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 12,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 2.5,
+      },
     },
     // Anthropic — reasoningControl WITHOUT the `reasoning` flag, on purpose:
     // the flag would flip openrouter.ts's always-on default injection; here
@@ -598,7 +722,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 200_000,
-      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 5 },
+      pricing: {
+        inputPerMillionUsd: 1,
+        outputPerMillionUsd: 5,
+        cacheReadPerMillionUsd: 0.1,
+        cacheWritePerMillionUsd: 1.25,
+      },
     },
     {
       modelId: 'anthropic/claude-opus-4.7',
@@ -609,7 +738,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+      pricing: {
+        inputPerMillionUsd: 5,
+        outputPerMillionUsd: 25,
+        cacheReadPerMillionUsd: 0.5,
+        cacheWritePerMillionUsd: 6.25,
+      },
     },
     {
       modelId: 'anthropic/claude-opus-4.7-fast',
@@ -631,7 +765,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+      pricing: {
+        inputPerMillionUsd: 5,
+        outputPerMillionUsd: 25,
+        cacheReadPerMillionUsd: 0.5,
+        cacheWritePerMillionUsd: 6.25,
+      },
     },
     {
       modelId: 'anthropic/claude-opus-4.8-fast',
@@ -653,7 +792,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_000_000,
-      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+      pricing: {
+        inputPerMillionUsd: 3,
+        outputPerMillionUsd: 15,
+        cacheReadPerMillionUsd: 0.3,
+        cacheWritePerMillionUsd: 3.75,
+      },
     },
     // DeepSeek
     {
@@ -661,7 +805,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V3.2',
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 131_072,
-      pricing: { inputPerMillionUsd: 0.269, outputPerMillionUsd: 0.4 },
+      pricing: {
+        inputPerMillionUsd: 0.269,
+        outputPerMillionUsd: 0.4,
+        cacheReadPerMillionUsd: 0.1345,
+      },
     },
     {
       modelId: 'deepseek/deepseek-v4-flash',
@@ -680,7 +828,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
-      pricing: { inputPerMillionUsd: 0.14, outputPerMillionUsd: 0.28 },
+      pricing: {
+        inputPerMillionUsd: 0.08246,
+        outputPerMillionUsd: 0.16492,
+        cacheReadPerMillionUsd: 0.016492,
+      },
     },
     {
       // Dated snapshot of V4 Flash, and currently the cheapest tool-capable
@@ -695,7 +847,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.09, outputPerMillionUsd: 0.18 },
+      pricing: {
+        inputPerMillionUsd: 0.065,
+        outputPerMillionUsd: 0.18,
+        cacheReadPerMillionUsd: 0.016,
+      },
       providerOrder: ['deepseek'],
     },
     {
@@ -711,7 +867,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
-      pricing: { inputPerMillionUsd: 0.63168, outputPerMillionUsd: 1.26336 },
+      pricing: {
+        inputPerMillionUsd: 0.778824,
+        outputPerMillionUsd: 1.55765,
+        cacheReadPerMillionUsd: 0.064902,
+      },
     },
     // Google — all three are thinking models on OpenRouter (supported_parameters
     // includes "reasoning", verified via openrouter.ai/google/… 2026-07-12).
@@ -733,7 +893,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.25, outputPerMillionUsd: 1.5 },
+      pricing: {
+        inputPerMillionUsd: 0.25,
+        outputPerMillionUsd: 1.5,
+        cacheReadPerMillionUsd: 0.025,
+        cacheWritePerMillionUsd: 0.0833333,
+      },
     },
     {
       modelId: 'google/gemini-3.1-pro-preview',
@@ -747,7 +912,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 12 },
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 12,
+        cacheReadPerMillionUsd: 0.2,
+        cacheWritePerMillionUsd: 0.375,
+      },
     },
     {
       modelId: 'google/gemini-3.5-flash',
@@ -761,7 +931,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 9 },
+      pricing: {
+        inputPerMillionUsd: 1.5,
+        outputPerMillionUsd: 9,
+        cacheReadPerMillionUsd: 0.15,
+        cacheWritePerMillionUsd: 0.0833333,
+      },
     },
     {
       // Price corrected 2026-08-22 from GET /api/v1/models (0.00000075 /
@@ -792,7 +967,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.75, outputPerMillionUsd: 3.75 },
+      pricing: {
+        inputPerMillionUsd: 0.75,
+        outputPerMillionUsd: 3.75,
+        cacheReadPerMillionUsd: 0.075,
+        cacheWritePerMillionUsd: 0.0416667,
+      },
     },
     {
       // The OpenRouter twin of the native entry above. forcedToolChoice stays
@@ -821,14 +1001,23 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.375, outputPerMillionUsd: 1.875 },
+      pricing: {
+        inputPerMillionUsd: 0.75,
+        outputPerMillionUsd: 3.75,
+        cacheReadPerMillionUsd: 0.075,
+        cacheWritePerMillionUsd: 0.0416667,
+      },
     },
     {
       modelId: 'google/gemma-4-31b-it',
       label: 'Gemma 4 31B-IT',
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 262_144,
-      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.34 },
+      pricing: {
+        inputPerMillionUsd: 0.09,
+        outputPerMillionUsd: 0.34,
+        cacheReadPerMillionUsd: 0.05,
+      },
     },
     // MiniMax
     {
@@ -845,7 +1034,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.3, outputPerMillionUsd: 1.2 },
+      pricing: {
+        inputPerMillionUsd: 0.3,
+        outputPerMillionUsd: 1.2,
+        cacheReadPerMillionUsd: 0.06,
+      },
     },
     // Z.ai (GLM)
     {
@@ -868,7 +1061,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.76, outputPerMillionUsd: 2.42 },
+      pricing: {
+        inputPerMillionUsd: 0.966,
+        outputPerMillionUsd: 3.036,
+        cacheReadPerMillionUsd: 0.1932,
+      },
     },
     {
       modelId: 'z-ai/glm-5.3',
@@ -890,7 +1087,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 1.4, outputPerMillionUsd: 4.4 },
+      pricing: {
+        inputPerMillionUsd: 1.4,
+        outputPerMillionUsd: 4.4,
+        cacheReadPerMillionUsd: 0.14,
+      },
     },
     {
       modelId: 'z-ai/glm-5.3-flash',
@@ -917,7 +1118,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_310_720,
-      pricing: { inputPerMillionUsd: 0.075, outputPerMillionUsd: 0.25 },
+      pricing: {
+        inputPerMillionUsd: 0.075,
+        outputPerMillionUsd: 0.25,
+        cacheReadPerMillionUsd: 0.015,
+      },
     },
     // Moonshot (Kimi)
     {
@@ -942,7 +1147,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 262_144,
-      pricing: { inputPerMillionUsd: 0.95, outputPerMillionUsd: 4 },
+      pricing: {
+        inputPerMillionUsd: 0.95,
+        outputPerMillionUsd: 4,
+        cacheReadPerMillionUsd: 0.16,
+      },
     },
     {
       modelId: 'moonshotai/kimi-k2.7-code',
@@ -962,7 +1171,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 262_144,
-      pricing: { inputPerMillionUsd: 0.7, outputPerMillionUsd: 3.5 },
+      pricing: {
+        inputPerMillionUsd: 0.66,
+        outputPerMillionUsd: 3.4,
+        cacheReadPerMillionUsd: 0.18,
+      },
     },
     // xAI — grok-4.5 verified via OpenRouter /api/v1/models (2026-07-20):
     // 500K context, text+image, tools + tool_choice + reasoning params.
@@ -983,7 +1196,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 500_000,
-      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
+      pricing: {
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 6,
+        cacheReadPerMillionUsd: 0.3,
+      },
     },
     // Qwen — both verified via OpenRouter /api/v1/models (2026-07-20): 1M
     // context, tools + tool_choice + reasoning params (no native
@@ -1013,7 +1230,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 1.475, outputPerMillionUsd: 4.425 },
+      pricing: {
+        inputPerMillionUsd: 1.475,
+        outputPerMillionUsd: 4.425,
+        cacheReadPerMillionUsd: 0.295,
+        cacheWritePerMillionUsd: 1.84375,
+      },
     },
     {
       modelId: 'qwen/qwen3.7-plus',
@@ -1024,7 +1246,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 0.32, outputPerMillionUsd: 1.28 },
+      pricing: {
+        inputPerMillionUsd: 0.32,
+        outputPerMillionUsd: 1.28,
+        cacheReadPerMillionUsd: 0.064,
+        cacheWritePerMillionUsd: 0.4,
+      },
     },
     {
       modelId: 'moonshotai/kimi-k3',
@@ -1046,7 +1273,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         },
       },
       contextWindow: 1_048_576,
-      pricing: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+      pricing: {
+        inputPerMillionUsd: 3,
+        outputPerMillionUsd: 15,
+        cacheReadPerMillionUsd: 0.3,
+      },
     },
   ],
 };
@@ -1241,20 +1472,75 @@ export function modelContextWindow(
  * doc), not a silent fallback: Guard 1a's token budget remains the backstop
  * for unpriced models, same as before this function existed.
  */
+export interface CallUsageForCost {
+  /** TOTAL input tokens, cache included (AI SDK semantics: reads AND writes). */
+  inputTokens: number;
+  outputTokens: number;
+  /** Input tokens served from cache (usage.cachedInputTokens). */
+  cachedTokens?: number | null;
+  /** Input tokens written to cache (Anthropic cacheCreationInputTokens). */
+  cacheCreationTokens?: number | null;
+}
+
+/**
+ * Estimate a single call's real dollar cost from its token counts × the
+ * catalog's list prices — cache-aware (P4, plan « De la maquette au produit » :
+ * « le coût affiché doit être le plus près possible du coût réel »).
+ *
+ *   fresh  = input − cache reads − cache writes   (floored at 0)
+ *   cost   = fresh × input rate
+ *          + reads  × (cache read rate  ?? input rate)
+ *          + writes × (cache write rate ?? input rate)
+ *          + output × output rate
+ *
+ * A model whose cache rates are unknown is billed as if nothing were cached —
+ * an over-estimate, and `hasCachePricing()` lets a screen say so. Returns 0 —
+ * not an error — for any model without a catalogued `pricing` entry (tracked
+ * debt, see the `pricing` field doc): Guard 1a's token budget remains the
+ * backstop for unpriced models.
+ */
+export function estimateCallCostUsd(
+  provider: string,
+  modelId: string,
+  usage: CallUsageForCost,
+): number {
+  const pricing = findModelCatalogEntry(provider, modelId)?.pricing;
+  if (!pricing) return 0;
+  const pos = (n: number | null | undefined): number =>
+    typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+  const input = pos(usage.inputTokens);
+  const output = pos(usage.outputTokens);
+  const reads = Math.min(pos(usage.cachedTokens), input);
+  const writes = Math.min(pos(usage.cacheCreationTokens), Math.max(0, input - reads));
+  const fresh = Math.max(0, input - reads - writes);
+  const readRate = pricing.cacheReadPerMillionUsd ?? pricing.inputPerMillionUsd;
+  const writeRate = pricing.cacheWritePerMillionUsd ?? pricing.inputPerMillionUsd;
+  return (
+    (fresh / 1_000_000) * pricing.inputPerMillionUsd +
+    (reads / 1_000_000) * readRate +
+    (writes / 1_000_000) * writeRate +
+    (output / 1_000_000) * pricing.outputPerMillionUsd
+  );
+}
+
+/** Does the catalog know this model's cache rates? False = its cached tokens are billed as fresh (over-estimate). */
+export function hasCachePricing(provider: string, modelId: string): boolean {
+  const p = findModelCatalogEntry(provider, modelId)?.pricing;
+  return p !== undefined && p.cacheReadPerMillionUsd !== undefined;
+}
+
+/**
+ * Cache-blind estimate — every input token at the fresh rate. Kept for the
+ * callers and tests that have no cache counts; anything that has them must use
+ * `estimateCallCostUsd`.
+ */
 export function estimateModelCostUsd(
   provider: string,
   modelId: string,
   inputTokens: number,
   outputTokens: number,
 ): number {
-  const pricing = findModelCatalogEntry(provider, modelId)?.pricing;
-  if (!pricing) return 0;
-  const inTok = Number.isFinite(inputTokens) && inputTokens > 0 ? inputTokens : 0;
-  const outTok = Number.isFinite(outputTokens) && outputTokens > 0 ? outputTokens : 0;
-  return (
-    (inTok / 1_000_000) * pricing.inputPerMillionUsd +
-    (outTok / 1_000_000) * pricing.outputPerMillionUsd
-  );
+  return estimateCallCostUsd(provider, modelId, { inputTokens, outputTokens });
 }
 
 // Pretty names for the sub-vendor namespaces seen in OpenRouter model ids.

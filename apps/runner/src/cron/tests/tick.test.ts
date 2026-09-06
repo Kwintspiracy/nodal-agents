@@ -197,6 +197,10 @@ describe('runCronTick (integration)', () => {
     expect(result).toHaveProperty('tasksExecuted');
     expect(result).toHaveProperty('schedulesFired');
     expect(result).toHaveProperty('rootsDelivered');
+    expect(result).toHaveProperty('deliveriesSent');
+    expect(result).toHaveProperty('deliveriesRejected');
+    expect(typeof result.deliveriesSent).toBe('number');
+    expect(typeof result.deliveriesRejected).toBe('number');
     expect(typeof result.orphanJobsReset).toBe('number');
     expect(typeof result.orphansReset).toBe('number');
     expect(typeof result.tasksUnblocked).toBe('number');

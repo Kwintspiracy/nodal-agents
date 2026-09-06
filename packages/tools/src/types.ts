@@ -4,11 +4,20 @@
 import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
-import type { OperationRiskLevel } from '@nodal-agents/shared';
+import type {
+  MutationTarget,
+  OperationRiskLevel,
+  ToolCard,
+  ToolCardPayload,
+} from '@nodal-agents/shared';
 import type { ChannelKind } from '@nodal-agents/delivery';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
+
+// Re-exported so a tool file declaring `resolveMutationTargets` or `card`
+// imports its argument type from the same place as the field itself.
+export type { MutationTarget, ToolCard, ToolCardPayload };
 
 // ─── ToolContext ───────────────────────────────────────────────────────────────
 
@@ -45,6 +54,17 @@ export interface ToolContext {
    * does not explicitly provide a chatId argument.
    */
   jobChatId: string | null;
+  /**
+   * La CONVERSATION dont ce travail est un tour (P6, `conversations.id`).
+   * Distinct de `jobChatId`, qui est l'identifiant du fil SUR le canal : une
+   * même conversation Telegram change d'id ici dès que l'utilisateur tape
+   * `/new`, sans que le chat change.
+   *
+   * Ce que le registre des projets en fait : poser le projet courant du fil
+   * (attach.ts). `null`/absent hors conversation — cron, webhook, contextes de
+   * test légers.
+   */
+  conversationId?: string | null;
   /**
    * The job's `agent_jobs.channel` value (S3 of the multichannel plan) —
    * 'telegram', 'cron', 'dashboard', 'api', … Populated by the runner from
@@ -246,6 +266,42 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
   /**
+   * How this tool's RESULT is shown — the card the conversation view dispatches
+   * on (plan « De la maquette au produit », P1). Declared by the tool, never
+   * inferred from its name: the screen must not grow a `switch` over tool
+   * names that has to be edited every time a tool is added. Same principle as
+   * `resolveMutationTargets` for writes, and the same model as DeepSeek
+   * Harness's `presentResult` — the tool speaks a neutral vocabulary
+   * (`ToolCard`), the UI translates it.
+   *
+   * Optional in the TYPE so third-party tools (MCP servers, connector
+   * adapters) compile without it; `cardForTool()` then resolves them to
+   * `generic`, an HONEST card (raw input and output, said as such), not a
+   * guess. Every tool the product ships MUST declare one — enforced by the
+   * registry test (`cards.test.ts`), which names any builtin that falls back.
+   */
+  card?: ToolCard;
+  /**
+   * How THIS tool's output fills its card's payload (shapes in
+   * `@nodal-agents/shared`, `tool-cards.ts`; builders in `presenters.ts`).
+   * Required for every structured card (`read`, `search`, `files`, `table`,
+   * `terminal`, `sent`, `checks`, `delegation`) — `assertToolCard` refuses the
+   * tool otherwise, at registration. A `text` card needs none (the output is
+   * shown as text); `generic` carries nothing.
+   *
+   * Called ONCE per successful execution, in `executeTool`, and the payload is
+   * persisted on the `tool_calls` row (`presented`) — the screen never re-runs
+   * a presenter, it reads what was recorded (same model as DeepSeek Harness's
+   * result `meta`). For a failed output (`{ ok: false, reason }`) return
+   * `failureText(reason)`: the row keeps the declared card, the payload says
+   * why there is nothing to draw.
+   */
+  // Declared as a METHOD, not a function-typed property: method parameters
+  // stay bivariant under strictFunctionTypes, so a tool typed on its own
+  // input/output still assigns to the erased ToolDefinition<ZodTypeAny, unknown>
+  // the registry and the audit path hold (same reason `execute` is a method).
+  present?(args: { input: z.infer<TInput>; output: TOutput }): ToolCardPayload;
+  /**
    * Approval posture when NO approval rule matches this tool. Absent (the norm)
    * means "execute" — the historical default. A tool sets this to
    * 'require_approval' to be SAFE-BY-DEFAULT: it suspends for human approval
@@ -256,6 +312,22 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * deferred product decision).
    */
   defaultApproval?: 'require_approval';
+  /**
+   * This tool SUSPENDS the job until a human answers it (P10a, `ask_user`).
+   *
+   * The gate treats such a call as an approval request of kind `question`,
+   * WHATEVER the rules and the autonomy level say: neither an explicit
+   * `auto_approve` rule nor `fully_autonomous` can skip it, because there is
+   * nothing to skip to — running `ask_user` with no answer on record has no
+   * meaning, and its only possible outcome would be `question_unanswered`.
+   * A `block` rule IS still honoured: an owner who forbids the tool forbids
+   * it, and the agent gets the ordinary refusal.
+   *
+   * It is NOT a variant of `defaultApproval`: that one expresses a POSTURE an
+   * explicit rule may override. This one expresses a mechanism — the answer
+   * IS the tool's input.
+   */
+  asksUser?: boolean;
   /**
    * Optional check that runs BEFORE the approval gate — the only hook that can
    * refuse a call without a human ever being asked about it.
@@ -296,10 +368,64 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    *     require approval and touches no file. Inferring from it would checkpoint
    *     connector edits and skip the actual writes — exactly backwards.
    *
-   * Set it on tools that write to disk, and only those: an over-broad flag
+   * Set it on tools that write INTO AN ATTACHED WORKSPACE, and only those.
+   * Not « tools that write to disk » — this comment said that until the 05/09
+   * and it was wrong in a way that mattered (revue Codex PR #46, passe 6):
+   * `skill_file_write` writes to disk, inside the skill folder, which is no
+   * workspace and no deliverable. It is correctly unflagged, and a reader
+   * following the old wording would have flagged it. An over-broad flag also
    * makes every turn pay a snapshot it does not need.
+   *
+   * WHAT THIS DOES NOT GUARANTEE, said plainly: a tool that writes into a
+   * workspace and FORGETS this flag skips the checkpoint and the verification
+   * seam entirely. No type and no scanner catches that — proving a function
+   * writes requires running it, and every static proxy (an `fs` import, a path
+   * resolver shared with the read tools) is wrong in both directions. It is a
+   * DECLARATION, like `riskLevel`. The registry's architecture test covers the
+   * next step only: every tool that declares this must declare what it writes.
    */
   mutatesWorkspace?: boolean;
+  /**
+   * PER-CALL declaration of WHAT this call is about to write — the targets
+   * from which the verification layer derives the deliverables it marks dirty
+   * BEFORE the write happens (plan « Vérifier & Corriger », D8).
+   *
+   * OPTIONAL IN THE TYPE, REQUIRED IN FACT when `mutatesWorkspace` is true.
+   * The seam REFUSES a mutating tool that declares no hook
+   * (`intent_no_targets_hook`, execute.ts) and the registry's architecture
+   * test (T18) fails on one. Expressing the pairing as a discriminated union
+   * was tried and abandoned (revue Codex PR #46, passe 5): intersecting the
+   * union with this interface loses the parameter bivariance every
+   * `ToolDefinition<SpecificSchema>` relies on to be stored in a registry of
+   * `ToolDefinition<z.ZodTypeAny>`, and produced 204 errors on unrelated
+   * fields. The pairing is enforced, just not by the compiler — same
+   * mechanism as invariants #1, #2 and #6 (see CLAUDE.md).
+   *
+   * Same argument as `computeApproval` right below: the answer depends on the
+   * call's actual TARGET, not on the tool's identity. `file_write` writes one
+   * resolved path; `run_command` hands a shell to the agent and that shell
+   * writes wherever it likes. One flag cannot say both.
+   *
+   * The target must be DECLARED by the tool, never guessed at the seam. The
+   * checkpoint layer already learned this the hard way (see
+   * `takeCheckpointForTurn`: "executeTool cannot know the target without
+   * re-implementing each tool's path resolution, and a net that depends on
+   * guessing right is not a net"). A tool that declares nothing therefore
+   * falls back CONSERVATIVELY to every workspace in `ctx.workspaces` — the
+   * fallback the plan itself prescribes for the shell surfaces.
+   *
+   * Do NOT try to select tools by `riskLevel` instead: `file_write` and
+   * `file_edit` are 'write', `run_command` is 'destructive', and the level is
+   * a posture about human review, not a statement about the filesystem.
+   *
+   * Returning an EMPTY list is meaningful and different from declaring
+   * nothing: it says "this call writes nothing" (e.g. `code_task` in read
+   * mode) and no project is marked dirty.
+   */
+  resolveMutationTargets?: (
+    input: z.infer<TInput>,
+    ctx: ToolContext,
+  ) => Promise<readonly MutationTarget[]>;
   /**
    * Optional PER-CALL destructiveness check, complementing the static
    * `defaultApproval` above for tools where gating depends on the call's
@@ -369,6 +495,14 @@ export interface ApprovalGateRequest {
   jobId: string;
   agentId: string;
   entityId: string;
+  /**
+   * Ce que la ligne demande (P10a) — la MÊME valeur que la colonne
+   * `approval_requests.kind` que la porte vient d'écrire. Passée ici plutôt
+   * que relue par le notifieur : celui-ci doit choisir entre une carte
+   * d'approbation et une carte de question, et une seconde lecture de la ligne
+   * pourrait diverger de ce qui a été posé.
+   */
+  kind: 'approval' | 'question';
 }
 
 export interface ExecuteOptions {

@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents, channelAllowedConversations } from '@nodal-agents/db';
+import { agentJobs, agents, channelAllowedConversations, conversations } from '@nodal-agents/db';
 import { handleSlackMessage } from '../../../channels/slack/handler.ts';
 import type { SlackInboundMessage } from '../../../channels/slack/types.ts';
 
@@ -412,5 +412,85 @@ describe('handleSlackMessage — /ask routing gated by the TARGET agent allowlis
     await claimOwner(receiverId, dm('bootstrap receiver owner', 'D-ask-3'));
     const result = await call(receiverId, dm('/ask not-a-real-agent please help', 'D-ask-3'));
     expect(result).toEqual({ skipped: 'ask_unknown_agent' });
+  });
+});
+
+describe('handleSlackMessage — /new dans un CANAL (P6, revue Codex passe 28)', () => {
+  /** Autorise le canal, pour que le test porte sur `/new` et pas sur H-1. */
+  async function canalAutorise(agentId: string, conversationId: string): Promise<void> {
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'slack',
+      conversationId,
+      kind: 'channel',
+      role: 'member',
+      status: 'active',
+    });
+  }
+
+  const filsDe = (agentId: string, conversationId: string) =>
+    db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.agentId, agentId),
+          eq(conversations.channel, 'slack'),
+          eq(conversations.chatId, conversationId),
+        ),
+      );
+
+  const jobDe = async (jobId: string) => {
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    if (!row) throw new Error('job introuvable');
+    return row;
+  };
+
+  it('/new NU ouvre une DEUXIÈME conversation et le job y est', async () => {
+    // `parseNewConversationCommand` tournait APRÈS le préfixe `[Message from …]: `
+    // et ne reconnaissait donc jamais la commande dans un canal.
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-new-1'));
+    await canalAutorise(agentId, 'C-NEW-1');
+
+    const premier = await call(
+      agentId,
+      mention(`<@${BOT_ID}> on parle de ça`, { conversationId: 'C-NEW-1' }),
+    );
+    const ancien = await jobDe(premier.jobId!);
+
+    const nouveau = await call(
+      agentId,
+      mention(`<@${BOT_ID}> /new`, { conversationId: 'C-NEW-1' }),
+    );
+    const job = await jobDe(nouveau.jobId!);
+
+    expect(job.conversationId).not.toBe(ancien.conversationId);
+    expect(await filsDe(agentId, 'C-NEW-1')).toHaveLength(2);
+    // Un `/new` NU reste exactement `/new` : pas de préfixe, pour que le tour
+    // soit reconnu comme la commande d'ouverture (`openedByCommand`).
+    expect(job.task).toBe('/new');
+  });
+
+  it('/new suivi d’un texte : tâche préfixée avec le TEXTE, dans le fil neuf', async () => {
+    const agentId = await freshBot();
+    await claimOwner(agentId, dm('bootstrap owner', 'dm-owner-new-2'));
+    await canalAutorise(agentId, 'C-NEW-2');
+
+    const premier = await call(
+      agentId,
+      mention(`<@${BOT_ID}> on parle de ça`, { conversationId: 'C-NEW-2' }),
+    );
+    const ancien = await jobDe(premier.jobId!);
+
+    const nouveau = await call(
+      agentId,
+      mention(`<@${BOT_ID}> /new rédige`, { conversationId: 'C-NEW-2' }),
+    );
+    const job = await jobDe(nouveau.jobId!);
+
+    expect(job.task).toBe('[Message from Alice]: rédige');
+    expect(job.conversationId).not.toBe(ancien.conversationId);
   });
 });

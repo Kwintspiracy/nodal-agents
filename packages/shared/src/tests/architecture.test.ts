@@ -14,6 +14,7 @@ import {
   scanForDbDriverImports,
   scanForUserFacingStrings,
   assertNoViolations,
+  scanForProjectKeyCopies,
 } from '@nodal-agents/test-kit';
 
 const srcDir = join(fileURLToPath(import.meta.url), '..', '..');
@@ -33,5 +34,12 @@ describe('architecture invariants', () => {
 
   it('no hardcoded user-facing prose (invariant #2)', () => {
     assertNoViolations('texte utilisateur en dur', scanForUserFacingStrings({ srcDir }));
+  });
+
+  it('hosts the ONE path identity rule — no second copy even inside this package', () => {
+    assertNoViolations(
+      'copie de projectKey',
+      scanForProjectKeyCopies({ srcDir, skipFiles: ['project-key.ts'] }),
+    );
   });
 });

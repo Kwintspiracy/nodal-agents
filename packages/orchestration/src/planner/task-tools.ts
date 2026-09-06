@@ -92,6 +92,7 @@ export function generateTaskTools(
       'create tasks that do REAL work (research, write a file, send an email, build HTML, …).',
     inputSchema: createTaskSchema,
     riskLevel: 'write',
+    card: 'text',
     execute: async (input: CreateTaskInput, ctx: ToolContext) => {
       // Resolve assigned_to slug → agent_id, scoped to this job's entity —
       // agents.slug is unique per (entity_id, slug), NOT globally (F-6,
@@ -190,6 +191,7 @@ export function generateTaskTools(
       'Returns task IDs (needed for depends_on), titles, statuses, and assignments.',
     inputSchema: listTasksSchema,
     riskLevel: 'read',
+    card: 'text',
     execute: async (input: ListTasksInput, ctx: ToolContext) => {
       const conditions = [
         eq(agentTasks.orchestratorId, orchestratorAgentId as string),

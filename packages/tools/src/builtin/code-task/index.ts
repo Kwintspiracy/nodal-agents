@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { delegationCard } from '../../presenters';
 import { assertWorkspacesConfigured, resolveAndCheckPath } from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
@@ -216,11 +217,50 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     "Delegate a complete dev task (analyse code, find bugs, review, or — in write mode — implement changes) to the coding CLI installed on the owner's machine (Claude Code or Codex), running under the OWNER's subscription in the agent workspace. The CLI is a full autonomous coding agent: give it ONE self-contained task and read its final answer. It sees only your task text and the workspace files, never this conversation. Default mode is read-only. Runs take minutes — do NOT call code_task again for the same goal while unsure; one task, one call, then deliver the result.",
   inputSchema: codeTaskSchema,
   riskLevel: 'destructive',
+  // Une DÉLÉGATION, pas des fichiers : la sortie est la réponse finale d'un
+  // autre agent (le CLI), son coût, sa durée, son code de sortie — jamais une
+  // liste de fichiers ni un diff (revue passe 11 : « `files` décrit quelque
+  // chose que le résultat ne fournit pas », et en mode read rien n'est écrit).
+  // Ses pas à lui arrivent à part, en lignes tool_calls vivantes (live-events),
+  // exactement comme ceux d'un sous-agent Nodal sous `assign_<agent>`.
+  card: 'delegation',
+  present: ({ input, output }) =>
+    delegationCard({
+      to: `${output.provider} ${output.cliVersion}`,
+      task: input.task,
+      ok: !output.isError,
+      resultText: output.resultText,
+      error: output.errorDetail,
+      durationMs: output.durationMs,
+      costUsd: output.costUsd,
+      sessionId: output.sessionId,
+    }),
   // Le CLI ecrit dans le workspace en mode write. Marque sans condition : le
   // marqueur est statique, et un mode lu a l execution ne peut pas le nuancer —
   // un instantane de trop coute une seconde, un instantane manquant coute le
   // travail.
   mutatesWorkspace: true,
+  // Le marqueur ci-dessus est INCONDITIONNEL — un instantané de trop coûte une
+  // seconde. L'argument NE SE TRANSPOSE PAS ici : une intention de trop coûte
+  // une preuve complète (typecheck + tests) sur un projet que personne n'a
+  // touché. Donc la cible suit le MODE : rien en lecture, le projet du cwd en
+  // écriture — le même prédicat que le verrou de workspace pris plus bas.
+  resolveMutationTargets: async (input, ctx) => {
+    if (input.mode !== 'write') return [];
+    try {
+      // Un harnais de code travaille sur le PROJET, par construction.
+      return [
+        {
+          kind: 'dir' as const,
+          path: await resolveAndCheckPath(ctx, input.cwd ?? '.'),
+          deliverableType: 'code_project' as const,
+        },
+      ];
+    } catch {
+      // cwd irrésolu : `execute` échouera dessus avant tout spawn.
+      return [];
+    }
+  },
   defaultApproval: 'require_approval',
   // Runs BEFORE the approval card is written. The refusal below exists because
   // the card would otherwise state a confinement promise this run cannot keep —

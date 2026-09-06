@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
+import { checksCard } from '../presenters';
 
 const findingSchema = z.object({
   file: z
@@ -112,6 +113,18 @@ export const reviewVerdictTool: ToolDefinition<typeof reviewVerdictSchema, Revie
     'return_result so the requesting agent receives it.',
   inputSchema: reviewVerdictSchema,
   riskLevel: 'read',
+  card: 'checks',
+  present: ({ output }) =>
+    checksCard({
+      verdict: output.verdict === 'approve' ? 'pass' : 'fail',
+      summary: output.summary,
+      items: output.findings.map((f) => ({
+        label: f.issue,
+        ok: false,
+        ref: f.line !== undefined ? `${f.file}:${f.line}` : f.file,
+        severity: f.severity,
+      })),
+    }),
   execute: (input) => {
     const counts = { blocker: 0, major: 0, minor: 0 };
     for (const f of input.findings) counts[f.severity] += 1;

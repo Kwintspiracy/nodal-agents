@@ -19,7 +19,11 @@ export {
   listCheckpoints,
   restoreCheckpoint,
   ensureStore,
+  headCheckpoint,
+  diffFile,
   CHECKPOINT_COVERAGE_NOTE,
+  DIFF_MAX_BYTES,
   type Checkpoint,
+  type FileDiff,
 } from './checkpoints';
 export { checkpointsRoot } from './root';

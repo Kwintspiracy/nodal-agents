@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { and, eq, agents, agentWorkspaces, codeProjects, entities, users } from '@nodal-agents/db';
+import { projectKey } from '@nodal-agents/shared';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -521,33 +522,35 @@ describe('les deux gestes du propriétaire (lignes réelles)', () => {
     }
   });
 
-  it('des DOUBLONS de casse hérités d’une vieille base sont tous défaits d’un coup', async () => {
-    // Constat Codex (26/08). La contrainte d'unicité porte sur le TEXTE exact,
-    // héritée de `code_project_archives` (0083) : une base mise à jour peut
-    // déjà contenir deux lignes ne différant que par la casse. N'en corriger
-    // qu'une laissait l'autre à `hidden=true`, et le projet restait masqué pour
-    // toujours — le démasquage semblait fonctionner sans rien changer.
-    //
-    // Les deux lignes sont posées ICI parce qu'elles sont la CONDITION du
-    // scénario (une base héritée), pas le résultat qu'on mesure : ce qu'on
-    // mesure, c'est ce que l'action en fait.
+  it('démasquer une ligne unique par clé — plus de doublon possible sous le nouvel UNIQUE (0088)', async () => {
+    // Avant 0088, la contrainte d'unicité portait sur le TEXTE exact du
+    // chemin : une base héritée pouvait contenir deux lignes ne différant que
+    // par la casse. Depuis 0088, `(entity_id, project_key)` est UNIQUE en
+    // base — ce scénario de doublon est devenu IMPOSSIBLE au niveau de la
+    // table elle-même (couvert par
+    // code-projects-migration-0088.test.ts « ancien UNIQUE retiré, nouveau
+    // posé »). Ce qui reste à prouver ICI, au niveau de l'action : une seule
+    // ligne, posée avec une casse, se retrouve et se démasque correctement
+    // depuis une AUTRE casse — la ligne porte la clé, pas le texte.
     const { setCodeProjectHiddenAction } = await import('../actions.ts');
-    await testDb.insert(codeProjects).values([
-      { entityId: seed.entityId, projectPath: 'D:/Legacy/App', hidden: true },
-      { entityId: seed.entityId, projectPath: 'd:/legacy/app', hidden: true },
-    ]);
+    const original = 'D:/Legacy/App';
+    await testDb.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: original,
+      projectKey: projectKey(original),
+      hidden: true,
+    });
 
-    const r = await setCodeProjectHiddenAction({ projectPath: 'D:/Legacy/App', hidden: false });
+    const r = await setCodeProjectHiddenAction({ projectPath: 'd:/legacy/app', hidden: false });
     expect(r.ok, r.ok ? '' : r.message).toBe(true);
 
     const rows = (
       await testDb.select().from(codeProjects).where(eq(codeProjects.entityId, seed.entityId))
-    ).filter((p) => p.projectPath.toLowerCase() === 'd:/legacy/app');
-    expect(rows).toHaveLength(2);
-    expect(
-      rows.filter((p) => p.hidden),
-      'un doublon est resté masqué : le projet ne peut plus être rétabli',
-    ).toHaveLength(0);
+    ).filter((p) => p.projectKey === projectKey(original));
+    expect(rows, 'une seconde ligne a été créée pour la même clé').toHaveLength(1);
+    expect(rows[0]!.hidden, 'le projet est resté masqué malgré le démasquage').toBe(false);
+    // Le chemin d'origine (la casse de la PREMIÈRE écriture) reste affiché.
+    expect(rows[0]!.projectPath).toBe(original);
   });
 
   it('renommer avec une chaîne vide rend son nom au DOSSIER (null, pas une chaîne vide)', async () => {
@@ -590,9 +593,12 @@ describe('les deux gestes du propriétaire (lignes réelles)', () => {
 
     // Le voisin masque le MÊME chemin : la liste de la session ne voit que la
     // sienne.
-    await testDb
-      .insert(codeProjects)
-      .values({ entityId: foreignEntityId, projectPath: `${racine}/dev/voisin`, hidden: true });
+    await testDb.insert(codeProjects).values({
+      entityId: foreignEntityId,
+      projectPath: `${racine}/dev/voisin`,
+      projectKey: projectKey(`${racine}/dev/voisin`),
+      hidden: true,
+    });
     const list = await listCodeProjectPrefsAction();
     expect(list.ok).toBe(true);
     if (list.ok) {

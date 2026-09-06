@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents, channelAllowedConversations } from '@nodal-agents/db';
+import { agentJobs, agents, channelAllowedConversations, conversations } from '@nodal-agents/db';
 import type { WhatsAppInboundMessage } from '@nodal-agents/delivery';
 import { handleWhatsAppMessage } from '../../../channels/whatsapp/handler.ts';
 
@@ -419,5 +419,86 @@ describe('handleWhatsAppMessage — /ask routing gated by the TARGET agent allow
     await claimOwner(receiverId, dm('bootstrap receiver owner', 'dm-ask-4'));
     const result = await call(receiverId, dm('/ask some-slug', 'dm-ask-4'));
     expect(result).toEqual({ skipped: 'ask_no_text' });
+  });
+});
+
+describe('handleWhatsAppMessage — /new dans un GROUPE (P6, revue Codex passe 28)', () => {
+  /** Autorise le groupe, pour que le test porte sur `/new` et pas sur H-1. */
+  async function groupeAutorise(agentId: string, conversationId: string): Promise<void> {
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'whatsapp',
+      conversationId,
+      kind: 'group',
+      role: 'member',
+      status: 'active',
+    });
+  }
+
+  const filsDe = (agentId: string, conversationId: string) =>
+    db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.agentId, agentId),
+          eq(conversations.channel, 'whatsapp'),
+          eq(conversations.chatId, conversationId),
+        ),
+      );
+
+  const jobDe = async (jobId: string) => {
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    if (!row) throw new Error('job introuvable');
+    return row;
+  };
+
+  it('/new NU passe le filtre SANS mention et ouvre une DEUXIÈME conversation', async () => {
+    // Baileys ne donne aucune porte de mention en amont : le filtre de groupe
+    // rejetait `/new` avant la résolution du fil.
+    const agentId = await freshBot();
+    await seedActiveOwner(agentId, 'dm-owner-new-1');
+    await groupeAutorise(agentId, 'group-new-1@g.us');
+
+    const premier = await call(
+      agentId,
+      groupMessage('on parle de ça', { mentionsSelf: true, conversationId: 'group-new-1@g.us' }),
+    );
+    const ancien = await jobDe(premier.jobId!);
+
+    // Sans mention : `/new` doit passer par le filtre seul.
+    const nouveau = await call(
+      agentId,
+      groupMessage('/new', { conversationId: 'group-new-1@g.us' }),
+    );
+    const job = await jobDe(nouveau.jobId!);
+
+    expect(job.conversationId).not.toBe(ancien.conversationId);
+    expect(await filsDe(agentId, 'group-new-1@g.us')).toHaveLength(2);
+    // Un `/new` NU reste exactement `/new` : pas de préfixe, pour que le tour
+    // soit reconnu comme la commande d'ouverture (`openedByCommand`).
+    expect(job.task).toBe('/new');
+  });
+
+  it('/new suivi d’un texte : tâche préfixée avec le TEXTE, dans le fil neuf', async () => {
+    const agentId = await freshBot();
+    await seedActiveOwner(agentId, 'dm-owner-new-2');
+    await groupeAutorise(agentId, 'group-new-2@g.us');
+
+    const premier = await call(
+      agentId,
+      groupMessage('on parle de ça', { mentionsSelf: true, conversationId: 'group-new-2@g.us' }),
+    );
+    const ancien = await jobDe(premier.jobId!);
+
+    const nouveau = await call(
+      agentId,
+      groupMessage('/new rédige', { conversationId: 'group-new-2@g.us' }),
+    );
+    const job = await jobDe(nouveau.jobId!);
+
+    expect(job.task).toBe('[Message from Alice]: rédige');
+    expect(job.conversationId).not.toBe(ancien.conversationId);
   });
 });

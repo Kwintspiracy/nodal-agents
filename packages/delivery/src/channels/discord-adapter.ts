@@ -46,6 +46,7 @@ import type {
   DiscoveredConversation,
   OutboundMedia,
   ApprovalCard,
+  QuestionCard,
   SendResult,
   BotIdentity,
   TextFormat,
@@ -330,6 +331,49 @@ async function sendApprovalCard(
 }
 
 /**
+ * QuestionCard → a Discord action row of one button per option (P10a).
+ * `custom_id` carries `<callbackId>:o<index>`, the same wire format Telegram
+ * uses, so the shared parser in the runner reads both.
+ *
+ * Discord allows five buttons per action row; `ask_user` allows six options, so
+ * they are laid out five per row. The 100-char `custom_id` and 80-char label
+ * limits are both comfortably above what an option can be (60 chars).
+ */
+async function sendQuestionCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: QuestionCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const channelId = requireChannelId(conversationId);
+  const rest = makeRestClient(botToken);
+
+  const buttons: APIButtonComponentWithCustomId[] = card.options.map((label, i) => ({
+    type: ComponentType.Button,
+    style: i === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary,
+    label,
+    custom_id: `${card.callbackId}:o${i}`,
+  }));
+  const rows: Array<APIActionRowComponent<APIComponentInMessageActionRow>> = [];
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push({ type: ComponentType.ActionRow, components: buttons.slice(i, i + 5) });
+  }
+  const body: RESTPostAPIChannelMessageJSONBody = {
+    content: card.text,
+    components: rows,
+    allowed_mentions: SAFE_ALLOWED_MENTIONS,
+  };
+
+  let message: APIMessage;
+  try {
+    message = (await rest.post(Routes.channelMessages(channelId), { body })) as APIMessage;
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+  return { messageId: message.id };
+}
+
+/**
  * Edit a previously-sent message's text. Best-effort like Telegram's
  * editTelegramMessageText: this is used to turn a resolved approval card into
  * its resolved state, and a failed edit must not undo a decision that already
@@ -441,6 +485,7 @@ export const discordAdapter: ChannelAdapter = {
   sendText,
   sendMedia,
   sendApprovalCard,
+  sendQuestionCard,
   editMessageText,
   listConversations,
   validateCredentials,

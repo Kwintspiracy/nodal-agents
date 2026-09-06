@@ -16,15 +16,13 @@
 // des fonctions async — ces helpers sync (et testables) doivent vivre ici.
 
 import { existsSync as fsExistsSync } from 'node:fs';
-import { isWindowsPath } from './project-key.ts';
+import { isAbsolutePath, isWindowsPath, normalizePath } from '@nodal-agents/shared';
 
 /** Chemin absolu ? (POSIX `/…`, Windows `C:/…` ou UNC `//srv/part`.) */
-function isAbsoluteChangePath(p: string): boolean {
-  return /^[a-z]:\//i.test(p) || p.startsWith('/');
-}
+const isAbsoluteChangePath = isAbsolutePath;
 
 /** Slash-normalisé, sans slash final. */
-export const normPath = (s: string): string => s.replace(/\\/g, '/').replace(/\/+$/, '');
+export const normPath = normalizePath;
 
 /**
  * Le même dossier, écrit différemment ? `C:\Dev`, `c:/Dev` et `C:/Dev/` sont

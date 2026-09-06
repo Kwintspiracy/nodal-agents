@@ -87,7 +87,7 @@ beforeAll(async () => {
   _testEntityId = seed.entityId;
   _rootAgentId = seed.agentId;
 
-  // createConversationAction/listConversationsAction both resolve the
+  // createConversationAction/listAllConversationsAction both resolve the
   // entity's ROOT via entities.rootAgentId.
   await db
     .update(entities)
@@ -130,9 +130,11 @@ describe('onboarding conversation — origin marker (migration 0065)', () => {
     expect(msg?.conversationId).toBe(res.data.id);
   });
 
-  it('listConversationsAction never returns the onboarding conversation — whether it was skipped or finished', async () => {
-    const { createConversationAction, listConversationsAction } =
-      await import('../src/lib/actions.ts');
+  it('listAllConversationsAction never returns the onboarding conversation — whether it was skipped or finished', async () => {
+    // P7 : la LECTURE de la liste a déménagé dans conversation-actions.ts (elle
+    // couvre désormais tous les canaux). L'écriture, elle, n'a pas bougé.
+    const { createConversationAction } = await import('../src/lib/actions.ts');
+    const { listAllConversationsAction } = await import('../src/lib/conversation-actions.ts');
 
     // Case 1: started then skipped — the conversation is never touched again
     // after creation (no "mark as skipped" write path exists, by design —
@@ -158,11 +160,11 @@ describe('onboarding conversation — origin marker (migration 0065)', () => {
     const userChat = await createConversationAction();
     expect(userChat.ok).toBe(true);
 
-    const list = await listConversationsAction();
+    const list = await listAllConversationsAction();
     expect(list.ok).toBe(true);
     if (!list.ok) return;
 
-    const ids = list.data.conversations.map((c) => c.id);
+    const ids = list.data.map((c) => c.id);
     if (skipped.ok) expect(ids).not.toContain(skipped.data.id);
     if (finished.ok) expect(ids).not.toContain(finished.data.id);
     if (userChat.ok) expect(ids).toContain(userChat.data.id);

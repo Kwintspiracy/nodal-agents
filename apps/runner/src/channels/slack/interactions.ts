@@ -9,7 +9,7 @@ import { parseApprovalCallbackData, handleSlackApprovalInteraction } from './app
 import { parseSlackAuthCallbackData, handleSlackAuthInteraction } from './auth-callback.ts';
 
 export type SlackInteractionResult =
-  | { handled: true; kind: 'approval'; decision: 'approve' | 'reject'; jobId: string }
+  | { handled: true; kind: 'approval'; decision: 'approve' | 'reject' | 'answer'; jobId: string }
   | { handled: true; kind: 'auth'; decision: 'allow' | 'deny'; conversationId: string }
   | { handled: false; reason: string };
 

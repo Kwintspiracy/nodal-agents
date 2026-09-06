@@ -127,6 +127,59 @@ export interface JobContext {
     dirtyCount: number | null;
     head: string | null;
   };
+  /**
+   * Le fil dont ce tour fait partie, et son projet courant (P6). Chargé par le
+   * runner (`loadConversationContext`) et rendu en bloc `## Conversation`.
+   * Absent pour un job qui n'appartient à aucune conversation (cron, webhook,
+   * enfant délégué) — le bloc est alors omis, jamais rendu vide.
+   */
+  conversation?: ConversationContext;
+}
+
+// ─── ConversationContext ──────────────────────────────────────────────────────
+
+/**
+ * Ce qu'une conversation dit au modèle à chaque tour (P6).
+ *
+ * Le type vit ICI, pas dans le runner, parce que c'est le prompt qui le
+ * consomme : le runner importe déjà l'orchestration, l'inverse n'est pas vrai.
+ *
+ * Les deux faits qu'il porte sont ceux que le modèle ne peut pas deviner de
+ * l'historique rejoué : combien de tours l'ont précédé (l'historique est
+ * TRONQUÉ par un budget — « rien avant » et « huit tours qui ne tiennent pas »
+ * arrivaient identiques), et dans quel dossier ce fil travaille.
+ */
+export interface ConversationContext {
+  /** L'identité du fil — la ligne `conversations`. */
+  id: string;
+  /** Nombre de tours AVANT celui-ci dans cette conversation. 0 = premier tour. */
+  priorTurns: number;
+  /**
+   * L'utilisateur vient d'ouvrir ce fil avec la commande `/new`, et ce message
+   * EST la commande — il ne porte donc aucune demande.
+   *
+   * Sans ce fait, le modèle ne peut pas distinguer `/new` d'une demande
+   * littérale : « premier tour » décrit exactement pareil un premier message
+   * naturel (revue Codex, passe 28, doute 3). Le runner ne réécrit pas le
+   * message de l'utilisateur pour autant — il transporte le fait, et le prompt
+   * en tire une directive.
+   */
+  openedByCommand: boolean;
+  /** Le projet courant, ou `null` tant qu'aucune production n'a atterri dans un projet enregistré. */
+  currentProject: { name: string; path: string; kind: 'code' | 'documents' } | null;
+  /**
+   * Les projets DÉCLARÉS de l'espace (P10b) — ce que l'agent met en options
+   * quand il demande « où ranger ce document ? ».
+   *
+   * Distincts des projets du bloc `## Runtime`, qui sont DÉRIVÉS de l'activité
+   * de code : ceux-ci sont au REGISTRE (`code_projects.registered_at`), donc
+   * choisis par quelqu'un. Rendus seulement quand la conversation n'a pas
+   * encore de projet — avec un projet courant, la question ne se pose plus, et
+   * la liste ne ferait qu'inviter à en changer.
+   *
+   * Absent sur les appelants qui ne les chargent pas (aperçu du dashboard).
+   */
+  registeredProjects?: ReadonlyArray<{ name: string; path: string; kind: 'code' | 'documents' }>;
 }
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
@@ -342,6 +395,92 @@ function buildJobContextBlock(ctx: JobContext): string {
     );
   }
   return `\n\n## Job context\n${lines.join('\n')}`;
+}
+
+// ─── buildConversationBlock ───────────────────────────────────────────────────
+
+/** Combien de projets déclarés le bloc `## Conversation` liste au plus (P10b). */
+export const REGISTERED_PROJECTS_IN_PROMPT = 12;
+
+/**
+ * Render the `## Conversation` block (P6).
+ *
+ * Deux faits, et rien d'autre. Le premier — combien de tours précèdent — existe
+ * parce que l'historique rejoué est tronqué par un budget : sans cette ligne,
+ * « c'est le premier message » et « huit tours dont aucun n'a tenu dans le
+ * budget » arrivent au modèle sous la même forme, et il ouvre la conversation
+ * comme si de rien n'était devant un utilisateur qui, lui, se souvient.
+ *
+ * Le second — le projet courant — est ce que P6 ajoute de neuf : la
+ * conversation a un dossier, posé par la dernière production qui y a atterri
+ * (attach.ts), et le modèle doit le savoir AVANT d'écrire ailleurs. La phrase
+ * garde sa porte de sortie (`unless the user names another place`) : c'est une
+ * directive au modèle, pas une garde — la garde est l'intention de mutation.
+ */
+function buildConversationBlock(conv: ConversationContext): string {
+  const lines: string[] = [
+    conv.priorTurns === 0
+      ? '- This is the first turn of this conversation: nothing was said before it.'
+      : `- Turns before this one: ${conv.priorTurns} (the most recent are replayed in the messages).`,
+  ];
+  // Le message EST la commande d'ouverture : le dire, sinon le modèle traite
+  // `/new` comme une demande littérale et invente une réponse à un mot-clé.
+  if (conv.openedByCommand) {
+    lines.push(
+      '- The user just opened this conversation with the /new command; that message ' +
+        'itself carries no request.',
+    );
+  }
+  const project = conv.currentProject;
+  if (project) {
+    // `name` et `path` viennent de la base, où le propriétaire les a écrits —
+    // même neutralisation que les projets du bloc Runtime : un nom contenant un
+    // saut de ligne pourrait forger une fausse section du prompt.
+    lines.push(
+      `- Current project: **${sanitizePromptField(project.name, 80)}** — ` +
+        `\`${sanitizePromptField(project.path, 256)}\` (${project.kind}). ` +
+        'Files, documents and code for this conversation belong under this folder ' +
+        'unless the user names another place.',
+    );
+  } else {
+    // P10b — « rien ne se crée en silence ». Texte de PLATEFORME, pas la voix
+    // de l'agent (invariant #2) : c'est une règle de rangement, au même titre
+    // que la phrase du projet courant juste au-dessus. Elle ne dit pas quoi
+    // répondre à l'utilisateur, elle dit dans quel ordre poser les gestes.
+    lines.push(
+      '- Current project: none yet. Nothing produced in this conversation has landed ' +
+        'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
+        'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
+        '`ask_user`: offer up to five relevant registered projects by name, plus one option ' +
+        'for the new project you propose, then call `register_project` for a new one (the ' +
+        'owner confirms the folder once), then write. Code that ' +
+        'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
+        'its own project: never ask for it.',
+    );
+    const registered = conv.registeredProjects ?? [];
+    if (registered.length > 0) {
+      // L'INVENTAIRE dans lequel l'agent puise ses options, plafonné à 12 :
+      // au-delà, la liste coûte plus de contexte qu'elle n'aide.
+      //
+      // Ce n'est PAS la question. `ask_user` n'accepte que six options, et la
+      // consigne ci-dessus en demande cinq au plus, plus « New project » : sans
+      // cette distinction, un espace à douze projets faisait construire au
+      // modèle un appel que le schéma refuse (revue Codex, passe 39, P2).
+      //
+      // Neutralisation identique aux projets du bloc Runtime : ces noms
+      // viennent de la base et du disque, et un saut de ligne dans l'un d'eux
+      // forgerait une fausse section du prompt.
+      const shown = registered.slice(0, REGISTERED_PROJECTS_IN_PROMPT);
+      lines.push('- Registered projects you can offer as options:');
+      for (const p of shown) {
+        lines.push(
+          `  - **${sanitizePromptField(p.name, 80)}** — ` +
+            `\`${sanitizePromptField(p.path, 256)}\` (${p.kind})`,
+        );
+      }
+    }
+  }
+  return `\n\n## Conversation\n${lines.join('\n')}`;
 }
 
 // ─── buildPersistentMemoryBlock ───────────────────────────────────────────────
@@ -764,6 +903,13 @@ export async function buildSystemPrompt(
   //    decides how to use this data (e.g. send via Telegram if chat_id is set).
   const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
 
+  // 7bis. Conversation block — le fil dont ce tour fait partie et son projet
+  //       courant (P6). Volatile par nature : le compte de tours et le projet
+  //       changent d'un tour à l'autre.
+  const conversationBlock = jobContext?.conversation
+    ? buildConversationBlock(jobContext.conversation)
+    : '';
+
   // 8. Behavior layers (see agent-baseline.ts):
   //    L1 baseline — intrinsic discipline for EVERY agent (+ model-aware nudge).
   //    L2 channel  — per-channel etiquette when bound to a channel.
@@ -922,7 +1068,8 @@ export async function buildSystemPrompt(
       )
     : '';
 
-  const volatile = runtimeBlock + memoryBlock + jobContextBlock + inventoryBlock + gitBlock;
+  const volatile =
+    runtimeBlock + memoryBlock + jobContextBlock + conversationBlock + inventoryBlock + gitBlock;
 
   return volatile.trim().length > 0 ? stable + SYSTEM_PROMPT_CACHE_BOUNDARY + volatile : stable;
 }

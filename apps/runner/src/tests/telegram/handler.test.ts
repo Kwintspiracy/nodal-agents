@@ -11,9 +11,12 @@ import { eq, and } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
+  codeProjects,
+  conversations,
   telegramAllowedChats,
   channelAllowedConversations,
 } from '@nodal-agents/db';
+import { projectKey } from '@nodal-agents/shared';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import { handleTelegramUpdate, pruneTelegramWorkspace } from '../../telegram/handler.ts';
 import type { RunnerDeps } from '../../deps.ts';
@@ -32,6 +35,11 @@ beforeAll(async () => {
 // allowlist check into a pass-through for them. The authorization behavior
 // itself is covered by its own describe block (with a fresh agent) at the end.
 beforeEach(async () => {
+  // P6 : chaque test part d'un fil VIERGE. Sans ça, la conversation d'un test
+  // précédent survivrait sur le même chat_id et le test suivant y hériterait.
+  await db.delete(agentJobs);
+  await db.delete(conversations);
+  await db.delete(codeProjects);
   await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
   await db.insert(telegramAllowedChats).values([
     {
@@ -244,66 +252,222 @@ describe('handleTelegramUpdate — private chats', () => {
   });
 });
 
-describe('handleTelegramUpdate — conversation grouping (migration 0059)', () => {
-  it('stamps a conversation_id on a fresh thread', async () => {
-    const result = await handleTelegramUpdate({
-      update: privateMessage('first message', 555),
+describe('handleTelegramUpdate — la CONVERSATION du fil (P6)', () => {
+  const envoyer = (text: string, chatId = 555) =>
+    handleTelegramUpdate({
+      update: privateMessage(text, chatId),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
       receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
-    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
-    expect(job?.conversationId).toBeTruthy();
+
+  const relireJob = async (jobId: string) => {
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    if (!job) throw new Error('job introuvable');
+    return job;
+  };
+
+  it('un premier message CRÉE la ligne conversations, relue avec son canal et son chat', async () => {
+    const result = await envoyer('first message');
+
+    const job = await relireJob(result.jobId!);
+    expect(job.conversationId).toBeTruthy();
+    const [conv] = await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, job.conversationId!));
+    expect(conv).toMatchObject({
+      channel: 'telegram',
+      chatId: '555',
+      agentId: seed.agentId,
+      title: 'first message',
+    });
   });
 
-  it('a second message shortly after in the SAME chat inherits the same conversation_id', async () => {
-    const first = await handleTelegramUpdate({
-      update: privateMessage('are you there?', 555),
-      receivingAgentId: seed.agentId,
-      receivingAgentEntityId: seed.entityId,
-      receivingAgentBotUsername: 'test_bot',
-      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
-    });
-    // Mark the first job completed (delivered) just now, so the gap since
-    // delivery is ~0 — well under the idle-reset window.
+  it('un second message une SEMAINE après hérite du même fil', async () => {
+    const first = await envoyer('are you there?');
+    const ilYAUneSemaine = new Date(Date.now() - 7 * 24 * 60 * 60_000);
     await db
       .update(agentJobs)
-      .set({ status: 'completed', result: 'yes', completedAt: new Date() })
+      .set({
+        status: 'completed',
+        result: 'yes',
+        completedAt: ilYAUneSemaine,
+        createdAt: ilYAUneSemaine,
+      })
       .where(eq(agentJobs.id, first.jobId!));
+    await db
+      .update(conversations)
+      .set({ createdAt: ilYAUneSemaine, updatedAt: ilYAUneSemaine })
+      .where(eq(conversations.channel, 'telegram'));
 
-    const second = await handleTelegramUpdate({
-      update: privateMessage('good, one more thing', 555),
-      receivingAgentId: seed.agentId,
-      receivingAgentEntityId: seed.entityId,
-      receivingAgentBotUsername: 'test_bot',
-      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
-    });
+    const second = await envoyer('good, one more thing');
 
-    const [firstJob] = await db.select().from(agentJobs).where(eq(agentJobs.id, first.jobId!));
-    const [secondJob] = await db.select().from(agentJobs).where(eq(agentJobs.id, second.jobId!));
-    expect(secondJob?.conversationId).toBe(firstJob?.conversationId);
+    const firstJob = await relireJob(first.jobId!);
+    const secondJob = await relireJob(second.jobId!);
+    expect(secondJob.conversationId).toBe(firstJob.conversationId);
+    // Et UNE seule ligne pour ce chat : le silence n'ouvre plus rien.
+    const lignes = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.chatId, '555'));
+    expect(lignes).toHaveLength(1);
   });
 
-  it("a message in a DIFFERENT chat never inherits another thread's conversation_id", async () => {
-    const a = await handleTelegramUpdate({
-      update: privateMessage('hello from chat 555', 555),
-      receivingAgentId: seed.agentId,
-      receivingAgentEntityId: seed.entityId,
-      receivingAgentBotUsername: 'test_bot',
-      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
-    });
-    const b = await handleTelegramUpdate({
-      update: privateMessage('hello from chat 999', 999),
+  it("un message dans un AUTRE chat n'hérite jamais du fil du voisin", async () => {
+    const a = await envoyer('hello from chat 555', 555);
+    const b = await envoyer('hello from chat 999', 999);
+
+    const jobA = await relireJob(a.jobId!);
+    const jobB = await relireJob(b.jobId!);
+    expect(jobA.conversationId).not.toBe(jobB.conversationId);
+  });
+
+  it('/new NU ouvre un fil neuf, garde /new comme tâche, et laisse l’ancien intact', async () => {
+    const premier = await envoyer('le sujet précédent');
+    const ancienJob = await relireJob(premier.jobId!);
+
+    const nouveau = await envoyer('/new');
+
+    const job = await relireJob(nouveau.jobId!);
+    // Le runner ne fabrique AUCUN texte : la tâche est le message de l'utilisateur.
+    expect(job.task).toBe('/new');
+    expect(job.conversationId).not.toBe(ancienJob.conversationId);
+
+    // L'ancienne conversation existe toujours, et son job garde son id.
+    const [ancienne] = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.id, ancienJob.conversationId!));
+    expect(ancienne).toBeTruthy();
+    expect((await relireJob(premier.jobId!)).conversationId).toBe(ancienJob.conversationId);
+  });
+
+  it('/new suivi d’un texte : la tâche est le TEXTE, dans le fil neuf', async () => {
+    const premier = await envoyer('le sujet précédent');
+    const ancienJob = await relireJob(premier.jobId!);
+
+    const nouveau = await envoyer('/new rédige le plan');
+
+    const job = await relireJob(nouveau.jobId!);
+    expect(job.task).toBe('rédige le plan');
+    expect(job.conversationId).not.toBe(ancienJob.conversationId);
+    // Le titre du fil neuf vient du texte, pas de la commande.
+    const [conv] = await db
+      .select({ title: conversations.title })
+      .from(conversations)
+      .where(eq(conversations.id, job.conversationId!));
+    expect(conv?.title).toBe('rédige le plan');
+  });
+
+  it('en GROUPE, /new passe le filtre ET ouvre une DEUXIÈME conversation', async () => {
+    // L'ancienne version de ce test n'assertait que le passage du filtre — elle
+    // restait verte alors que `/new` arrivait derrière `[Message from …]: ` et
+    // n'ouvrait rien du tout (revue Codex, passe 28).
+    const groupe = (text: string) =>
+      handleTelegramUpdate({
+        update: groupMessage(text, { replyToBot: true }),
+        receivingAgentId: seed.agentId,
+        receivingAgentEntityId: seed.entityId,
+        receivingAgentBotUsername: 'test_bot',
+        tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+      });
+
+    const premier = await groupe('on parle de ça');
+    const ancienJob = await relireJob(premier.jobId!);
+
+    // Sans mention NI réponse au bot : `/new` doit passer par le filtre seul.
+    const nouveau = await handleTelegramUpdate({
+      update: groupMessage('/new'),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
       receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
 
-    const [jobA] = await db.select().from(agentJobs).where(eq(agentJobs.id, a.jobId!));
-    const [jobB] = await db.select().from(agentJobs).where(eq(agentJobs.id, b.jobId!));
-    expect(jobA?.conversationId).not.toBe(jobB?.conversationId);
+    const job = await relireJob(nouveau.jobId!);
+    expect(job.conversationId).not.toBe(ancienJob.conversationId);
+    const lignes = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.chatId, '-100123'));
+    expect(lignes).toHaveLength(2);
+    // Le préfixe de groupe enveloppe la commande : l'agent sait toujours qui parle.
+    // Un `/new` NU reste exactement `/new` : pas de préfixe, pour que le tour
+    // soit reconnu comme la commande d'ouverture (`openedByCommand`).
+    expect(job.task).toBe('/new');
+  });
+
+  it('en GROUPE, /new suivi d’un texte garde le préfixe et met le TEXTE en tâche', async () => {
+    const premier = await handleTelegramUpdate({
+      update: groupMessage('on parle de ça', { replyToBot: true }),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    const ancienJob = await relireJob(premier.jobId!);
+
+    const nouveau = await handleTelegramUpdate({
+      update: groupMessage('/new rédige'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    const job = await relireJob(nouveau.jobId!);
+    expect(job.task).toBe('[Message from Alice]: rédige');
+    expect(job.conversationId).not.toBe(ancienJob.conversationId);
+  });
+
+  it('le job PORTE le projet courant de la conversation', async () => {
+    const premier = await envoyer('on commence');
+    const ancienJob = await relireJob(premier.jobId!);
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: 'D:/APPS/le-projet',
+        projectKey: projectKey('D:/APPS/le-projet'),
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+    await db
+      .update(conversations)
+      .set({ currentProjectId: projet.id })
+      .where(eq(conversations.id, ancienJob.conversationId!));
+
+    const suivant = await envoyer('et on continue');
+
+    expect((await relireJob(suivant.jobId!)).projectId).toBe(projet.id);
+  });
+
+  it('un fil NEUF repart sans projet, même si le précédent en avait un', async () => {
+    const premier = await envoyer('on commence');
+    const ancienJob = await relireJob(premier.jobId!);
+    const [projet] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: 'D:/APPS/autre-projet',
+        projectKey: projectKey('D:/APPS/autre-projet'),
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    if (!projet) throw new Error('insert projet');
+    await db
+      .update(conversations)
+      .set({ currentProjectId: projet.id })
+      .where(eq(conversations.id, ancienJob.conversationId!));
+
+    const nouveau = await envoyer('/new autre chose');
+
+    expect((await relireJob(nouveau.jobId!)).projectId).toBeNull();
   });
 });
 

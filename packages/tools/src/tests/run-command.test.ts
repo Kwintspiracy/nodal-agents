@@ -12,7 +12,9 @@ import { WorkspaceError } from '../builtin/file-ops/workspace';
 import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
 import { createToolRegistry } from '../registry';
 import { computeToolWhitelist } from '../whitelist';
-import type { ToolContext } from '../types';
+import type { ToolContext, ToolDefinition } from '../types';
+import { presentToolResult } from '../cards';
+import type { z } from 'zod';
 
 let workspaceDir: string;
 
@@ -108,16 +110,37 @@ describe('run_command builtin', () => {
   });
 
   it('times out and kills a long-running command (with its children)', async () => {
+    // Le processus écrit son pid AVANT de dormir : c'est lui, le petit-enfant
+    // de cmd.exe / sh, qu'on veut voir mort. Le test précédent n'assertait que
+    // `timedOut` et passait avec le tree-kill cassé (sonde du 03/09 : le
+    // petit-enfant survivait 3 fois sur 3).
     const out = await runCommandTool.execute(
       {
         purpose: 'run test command',
-        command: `node -e "setTimeout(()=>{}, 60000)"`,
+        command: `node -e "process.stdout.write(String(process.pid)); setTimeout(()=>{}, 60000)"`,
         timeout_seconds: 1,
       },
       ctx(),
     );
     expect(out.timedOut).toBe(true);
     expect(out.exitCode).not.toBe(0); // killed → no clean exit
+    const pid = Number(out.stdout.trim());
+    expect(Number.isInteger(pid) && pid > 0).toBe(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* déjà mort */
+      }
+    }
+    expect(alive).toBe(false);
   });
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {
@@ -181,5 +204,33 @@ describe('run_command gating', () => {
       reg,
     );
     expect(withSkill.map((t) => t.name)).toContain('run_command');
+  });
+});
+
+// ─── P1 : la carte terminal, sur une vraie commande ──────────────────────────
+
+describe('présentation (P1) — run_command', () => {
+  it('une commande réelle remplit la carte terminal : commande, code, fin de sortie, cwd', async () => {
+    const input = {
+      purpose: 'run test command',
+      command: `node -e "process.stdout.write('hello-card')"`,
+    };
+    const out = await runCommandTool.execute(input, ctx());
+    const p = presentToolResult(
+      runCommandTool as unknown as ToolDefinition<z.ZodTypeAny, unknown>,
+      input,
+      out,
+    );
+    expect(p).toEqual({
+      card: 'terminal',
+      command: input.command,
+      exitCode: 0,
+      timedOut: false,
+      stdoutTail: 'hello-card',
+      stdoutTruncated: false,
+      stderrTail: '',
+      stderrTruncated: false,
+      cwd: out.cwd,
+    });
   });
 });

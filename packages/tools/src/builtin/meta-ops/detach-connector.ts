@@ -27,6 +27,7 @@ export const detachConnectorTool: ToolDefinition<
     'Reversible with attach_connector. Idempotent.',
   inputSchema: DetachConnectorInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const connectorId = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);

@@ -32,6 +32,7 @@ import { Automizer } from 'pptx-automizer';
 import JSZip from 'jszip';
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
+import { detailOf, failureText, readCard, writtenFile } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
 
 // ─── pptx_read ────────────────────────────────────────────────────────────────
@@ -68,6 +69,16 @@ export const pptxReadTool: ToolDefinition<typeof PptxReadInput, PptxReadOutput> 
     'be included.',
   inputSchema: PptxReadInput,
   riskLevel: 'read',
+  card: 'read',
+  present: ({ input, output }) =>
+    output.ok
+      ? readCard({
+          path: input.path,
+          text: output.text,
+          truncated: output.truncated,
+          sections: output.slideCount,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -382,6 +393,11 @@ export const pptxCreateTool: ToolDefinition<typeof PptxCreateInput, PptxCreateOu
     'pptx_append_slides, and to edit text in place use pptx_replace_text.',
   inputSchema: PptxCreateInput,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'created', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const built = await buildPptxGenJsBuffer(ctx, input.slides, input.theme);
     if (!built.ok) return built;
@@ -424,6 +440,11 @@ export const pptxAppendSlidesTool: ToolDefinition<
     'never modified.',
   inputSchema: PptxAppendSlidesInput,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -595,6 +616,11 @@ export const pptxReplaceTextTool: ToolDefinition<
     'anywhere in the presentation (or in the target slide, if slide_index is given).',
   inputSchema: PptxReplaceTextInput,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

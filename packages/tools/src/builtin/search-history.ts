@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { agentJobs, agents, eq, and, desc, sql } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
+import { searchCard } from '../presenters';
 
 export const SearchHistoryInputSchema = z.object({
   query: z
@@ -46,6 +47,12 @@ export const searchHistoryTool: ToolDefinition<typeof SearchHistoryInputSchema, 
     'limit — reach for it when the answer is likely in past work but not in your injected memory.',
   inputSchema: SearchHistoryInputSchema,
   riskLevel: 'read',
+  card: 'search',
+  present: ({ input, output }) =>
+    searchCard({
+      query: input.query,
+      hits: output.map((h) => ({ title: h.task, ref: h.job_id, snippet: h.snippet })),
+    }),
   execute: async (input, ctx) => {
     const limit = input.limit ?? 6;
     // Parameterized — drizzle binds ${...}; no SQL injection surface.

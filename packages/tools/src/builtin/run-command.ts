@@ -15,22 +15,21 @@
 // gate (a human reviews the exact command before it runs) and (2) the per-agent
 // opt-in skill. This is the same trust model as Claude Code's Bash tool.
 
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
+import { terminalCard } from '../presenters';
 import {
   assertWorkspacesConfigured,
   resolveAndCheckPath,
   SHARED_WORKSPACE_LABEL,
 } from './file-ops/workspace';
 import { buildChildEnv } from './child-env';
+import { runShellCommand, type CommandRunResult } from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_TIMEOUT_SECONDS = 300; // npm install with native compile is slow
 const MAX_TIMEOUT_SECONDS = 1800;
-/** Per-stream capture cap (chars). Beyond this we keep draining but stop storing. */
-const MAX_OUTPUT_CHARS = 100_000; // ~25k tokens — plenty for a command's output
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
@@ -111,8 +110,44 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval).',
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
+  card: 'terminal',
+  present: ({ input, output }) =>
+    terminalCard({
+      command: input.command,
+      exitCode: output.exitCode,
+      timedOut: output.timedOut,
+      stdout: output.stdout,
+      stderr: output.stderr,
+      cwd: output.cwd,
+    }),
   mutatesWorkspace: true,
   defaultApproval: 'require_approval',
+  // Le cwd résolu ET tous les dossiers attachés. Un shell n'est pas un
+  // écrivain adressé : `cd ..`, un chemin absolu, un script appelé par le
+  // script — la commande écrit où elle veut. Se limiter au cwd rendrait
+  // l'intention exacte dans le cas facile et FAUSSE dans celui qui compte.
+  // Le plan tranche pareil : « tous les projets du périmètre d'écriture
+  // (conservatif) ».
+  resolveMutationTargets: async (input, ctx) => {
+    // Un shell touche le PROJET : on ne sait pas quels fichiers il écrira, mais
+    // le périmètre déclaré est celui d'un projet de code (v7-A).
+    const roots = (ctx.workspaces ?? []).map((w) => ({
+      kind: 'dir' as const,
+      path: w.path,
+      deliverableType: 'code_project' as const,
+    }));
+    try {
+      const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
+      return [
+        { kind: 'dir' as const, path: cwd, deliverableType: 'code_project' as const },
+        ...roots,
+      ];
+    } catch {
+      // cwd irrésolu : la commande ne partira pas, mais les dossiers attachés
+      // restent le périmètre déclaré — rien n'est retiré par une panne.
+      return roots;
+    }
+  },
   execute: async (input, ctx) => {
     // Fail loud when the agent has no workspace — same contract as the file_* tools.
     assertWorkspacesConfigured(ctx);
@@ -127,122 +162,39 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     const sharedWorkspace = (ctx.workspaces ?? []).find(
       (w) => w.label === SHARED_WORKSPACE_LABEL,
     )?.path;
-    return runInShell(
-      input.command,
+    // Le moteur est partagé (shell-engine.ts) ; ce qui reste ici est la forme
+    // du tool_result que l'agent lit — `keep:'head'` comme avant, pas de
+    // changement silencieux de ce qu'il voit.
+    const run = await runShellCommand({
+      target: { command: input.command },
       cwd,
       timeoutMs,
-      sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
-    );
+      env: buildChildEnv(
+        process.env,
+        sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
+      ),
+      keep: 'head',
+    });
+    return toRunCommandOutput(run);
   },
 };
 
-// ─── Shell execution (cross-platform, timeout + tree-kill, capped output) ─────
-
-function runInShell(
-  command: string,
-  cwd: string,
-  timeoutMs: number,
-  envExtras?: Record<string, string>,
-): Promise<RunCommandOutput> {
-  return new Promise<RunCommandOutput>((resolve) => {
-    const isWindows = process.platform === 'win32';
-
-    // shell:true → `cmd.exe /d /s /c "<command>"` on Windows (so `&&` works —
-    // PowerShell would choke on it) and `/bin/sh -c "<command>"` on Unix.
-    // detached on Unix makes the child a process-group leader so we can kill the
-    // WHOLE tree on timeout (negative pid). On Windows we use taskkill /T instead.
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      detached: !isWindows,
-      windowsHide: true,
-      // Scrubbed env, NOT process.env — a spawned command must not be able to
-      // read DATABASE_URL/WORKER_SECRET/LLM keys via `env`/`printenv`. See
-      // child-env.ts. buildChildEnv is typed as a plain Record (not
-      // NodeJS.ProcessEnv) so it stays independent of ambient global
-      // augmentations some workspace apps add to ProcessEnv (e.g. Next.js's
-      // required NODE_ENV) — spawn's `env` option accepts this shape at
-      // runtime, hence the cast.
-      env: buildChildEnv(process.env, envExtras) as unknown as NodeJS.ProcessEnv,
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let truncated = false;
-    let timedOut = false;
-    let settled = false;
-
-    const append = (existing: string, chunk: Buffer): string => {
-      if (existing.length >= MAX_OUTPUT_CHARS) {
-        truncated = true;
-        return existing;
-      }
-      const text = chunk.toString('utf8');
-      const room = MAX_OUTPUT_CHARS - existing.length;
-      if (text.length <= room) return existing + text;
-      truncated = true;
-      return existing + text.slice(0, room);
-    };
-    // We keep listening (draining the pipe) even after the cap so the child never
-    // blocks on a full OS pipe buffer — we just stop storing.
-    child.stdout?.on('data', (c: Buffer) => {
-      stdout = append(stdout, c);
-    });
-    child.stderr?.on('data', (c: Buffer) => {
-      stderr = append(stderr, c);
-    });
-
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const killTree = (): void => {
-      if (child.pid) {
-        if (isWindows) {
-          // /T = kill the whole tree (cmd.exe → node → grandchildren). /F = force.
-          try {
-            spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-          } catch {
-            /* taskkill unavailable — fall through to child.kill below */
-          }
-        } else {
-          // Negative pid targets the process group created by detached:true.
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }
-      }
-      // Backstop: also SIGKILL the direct child handle.
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    };
-
-    const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (graceTimer) clearTimeout(graceTimer);
-      resolve({ exitCode, stdout, stderr, timedOut, truncated, cwd });
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree();
-      // Guarantee resolution even if 'close' never fires: a stubborn grandchild
-      // can keep a stdio pipe open after the tree-kill, which would otherwise
-      // hang the job forever. The kill was already issued — resolve best-effort.
-      graceTimer = setTimeout(() => finish(null), 3000);
-    }, timeoutMs);
-
-    child.on('error', (err: Error) => {
-      // spawn failure (shell missing, cwd vanished, …). Return it as a failed
-      // RESULT (not a throw) so the agent gets a tool_result it can react to.
-      stderr = append(stderr, Buffer.from(`${stderr ? '\n' : ''}spawn_error: ${err.message}`));
-      finish(null);
-    });
-    child.on('close', (code: number | null) => finish(code));
-  });
+/**
+ * Le contrat historique du tool_result, reconstruit depuis l'issue typée.
+ * `exitCode: null` reste la forme que l'agent connaît pour « tué ou pas
+ * lancé » ; la panne de lancement reste dans stderr sous son code, comme avant.
+ */
+function toRunCommandOutput(run: CommandRunResult): RunCommandOutput {
+  const o = run.outcome;
+  return {
+    exitCode: o.kind === 'exit' ? o.exitCode : null,
+    stdout: run.stdout,
+    stderr:
+      o.kind === 'spawn_error'
+        ? `${run.stderr}${run.stderr ? '\n' : ''}spawn_error: ${o.message}`
+        : run.stderr,
+    timedOut: o.kind === 'timeout',
+    truncated: run.truncatedStdout || run.truncatedStderr,
+    cwd: run.cwd,
+  };
 }

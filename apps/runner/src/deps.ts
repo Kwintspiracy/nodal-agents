@@ -11,6 +11,14 @@ import { LocalTrustProvider, BearerTokenProvider, seedLocalUser } from '@nodal-a
 import type { AuthProvider } from '@nodal-agents/auth';
 import type { RunnerEnv } from './env.ts';
 
+// ─── Runner instance identity ─────────────────────────────────────────────────
+//
+// Minted once at boot in the LEAF module runner-identity.ts (the outbox must
+// not import this composition root for a single UUID — the terminal paths that
+// call it live under this graph, and the cycle would be one import away).
+// Re-exported here so the identity stays readable from the composition root.
+export { runnerInstanceId } from './runner-identity.ts';
+
 // ─── RunnerDeps ───────────────────────────────────────────────────────────────
 
 export interface RunnerDeps {

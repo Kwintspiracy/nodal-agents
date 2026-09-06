@@ -24,6 +24,7 @@ import type {
   ChannelCredentials,
   OutboundMedia,
   ApprovalCard,
+  QuestionCard,
   SendResult,
   BotIdentity,
   TextFormat,
@@ -148,6 +149,31 @@ async function sendApprovalCard(
   return { messageId: String(messageId) };
 }
 
+/**
+ * QuestionCard → un inline keyboard d'UNE option par LIGNE (P10a). Une ligne
+ * chacune, pas deux par rangée : un libellé d'option peut faire soixante
+ * caractères, et Telegram les tronque au milieu du mot sur mobile dès qu'ils
+ * partagent une rangée.
+ */
+async function sendQuestionCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: QuestionCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const chatId = requireChatId(conversationId);
+  const inlineKeyboard: TelegramInlineKeyboard = card.options.map((label, i) => [
+    { text: label, callback_data: `${card.callbackId}:o${i}` },
+  ]);
+  const { messageId } = await sendTelegramMessage({
+    chatId,
+    botToken,
+    text: card.text,
+    inlineKeyboard,
+  });
+  return { messageId: String(messageId) };
+}
+
 async function editMessageText(
   creds: ChannelCredentials,
   conversationId: string,
@@ -175,6 +201,7 @@ export const telegramAdapter: ChannelAdapter = {
   sendText,
   sendMedia,
   sendApprovalCard,
+  sendQuestionCard,
   editMessageText,
   // listConversations: intentionally NOT implemented — the Bot API has no enumeration whatsoever (no "list my chats" endpoint); callers fall back to the allowlist.
   validateCredentials,

@@ -33,6 +33,7 @@ import {
 import JSZip from 'jszip';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { detailOf, failureText, readCard, writtenFile } from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -251,6 +252,16 @@ export const docxReadTool: ToolDefinition<typeof DocxReadInput, DocxReadOutput> 
     'included (mammoth walks the whole document body). Images and headers/footers are not included.',
   inputSchema: DocxReadInput,
   riskLevel: 'read',
+  card: 'read',
+  present: ({ input, output }) =>
+    output.ok
+      ? readCard({
+          path: input.path,
+          text: output.text,
+          truncated: output.truncated,
+          sections: output.paragraphs.length,
+        })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -366,6 +377,9 @@ export const docxCreateTool: ToolDefinition<typeof DocxCreateInput, DocxCreateOu
     'and page breaks. Fails if the file already exists unless overwrite:true is passed.',
   inputSchema: DocxCreateInput,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok ? writtenFile(output.path, 'created') : failureText(output.reason),
   execute: async (input, ctx) => {
     let usesNumberedList = false;
     const children: (Paragraph | Table)[] = [];
@@ -542,6 +556,11 @@ export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, Do
   // <w:p> nodes and never touches or removes anything else in the archive, so
   // it's a plain write, same posture as xlsx_append_rows.
   riskLevel: 'write',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
@@ -715,6 +734,11 @@ export const docxReplaceTextTool: ToolDefinition<
     'Headers/footers are not covered. Fails loud if the text is not found at all.',
   inputSchema: DocxReplaceTextInput,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'modified', { detail: detailOf(output) })
+      : failureText(output.reason),
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;

@@ -97,6 +97,104 @@ describe('executeTool', () => {
     expect(found?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  // ── P1 : la carte et la charge utile sur la ligne d'audit ──────────────────
+
+  it('P1 : la ligne porte la carte DÉCLARÉE et la charge utile que present() a tirée de la sortie', async () => {
+    const tool = makeSimpleTool({
+      name: 'card_tool',
+      card: 'files',
+      present: ({ input, output }) => ({
+        card: 'files',
+        files: [{ path: input.value, action: 'created', detail: output }],
+        total: 1,
+        truncated: false,
+      }),
+    });
+    const uniqueVal = `card-${Date.now()}`;
+    const result = await executeTool(tool, { value: uniqueVal }, makeCtx(), makeOpts());
+    expect(result.outcome).toBe('success');
+
+    const row = (await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId))).find(
+      (c) => c.toolName === 'card_tool' && (c.toolInput as { value?: string })?.value === uniqueVal,
+    );
+    expect(row?.card).toBe('files');
+    expect(row?.presented).toEqual({
+      card: 'files',
+      files: [{ path: uniqueVal, action: 'created', detail: `result:${uniqueVal}` }],
+      total: 1,
+      truncated: false,
+    });
+    expect(row?.presentationError).toBeNull();
+  });
+
+  // ── P7 : le niveau de risque déclaré, sur la ligne d'audit ────────────────
+
+  it("P7 : la ligne porte le risk_level DÉCLARÉ par l'outil, tel quel", async () => {
+    // Deux niveaux différents sur deux appels : une constante posée à
+    // l'insertion passerait le premier et rougirait au second.
+    const lecture = `risk-read-${Date.now()}`;
+    const destruction = `risk-destructive-${Date.now()}`;
+    await executeTool(
+      makeSimpleTool({ name: 'risk_read_tool', riskLevel: 'read' }),
+      { value: lecture },
+      makeCtx(),
+      makeOpts(),
+    );
+    await executeTool(
+      makeSimpleTool({ name: 'risk_destructive_tool', riskLevel: 'destructive' }),
+      { value: destruction },
+      makeCtx(),
+      makeOpts(),
+    );
+
+    const rows = await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId));
+    const lue = rows.find((c) => (c.toolInput as { value?: string })?.value === lecture);
+    const detruite = rows.find((c) => (c.toolInput as { value?: string })?.value === destruction);
+    expect(lue?.toolName).toBe('risk_read_tool');
+    expect(lue?.riskLevel).toBe('read');
+    expect(detruite?.toolName).toBe('risk_destructive_tool');
+    expect(detruite?.riskLevel).toBe('destructive');
+  });
+
+  it('P1 : carte text sans present() → la sortie en texte ; erreur de validation → carte posée, charge NULL', async () => {
+    const tool = makeSimpleTool({ name: 'text_tool', card: 'text' });
+    const uniqueVal = `text-${Date.now()}`;
+    await executeTool(tool, { value: uniqueVal }, makeCtx(), makeOpts());
+    await executeTool(tool, { value: 12 }, makeCtx(), makeOpts()); // invalide
+    const rows = (await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId))).filter(
+      (c) => c.toolName === 'text_tool',
+    );
+    const ok = rows.find((c) => (c.toolInput as { value?: unknown })?.value === uniqueVal);
+    const ko = rows.find((c) => (c.toolInput as { value?: unknown })?.value === 12);
+    expect(ok?.card).toBe('text');
+    expect(ok?.presented).toEqual({ card: 'text', text: `result:${uniqueVal}` });
+    // L'outil n'a rien produit : la carte reste la sienne, la charge est nulle —
+    // l'écran montre l'erreur depuis tool_output et le dit.
+    expect(ko?.card).toBe('text');
+    expect(ko?.presented).toBeNull();
+  });
+
+  it("P1 : un present() qui viole sa carte ne fait PAS échouer l'outil — la ligne garde la carte, charge NULL", async () => {
+    const tool = makeSimpleTool({
+      name: 'broken_presenter_tool',
+      card: 'table',
+      present: () => ({ card: 'table', tables: [] }), // min(1) — forme violée
+    });
+    const uniqueVal = `broken-${Date.now()}`;
+    const result = await executeTool(tool, { value: uniqueVal }, makeCtx(), makeOpts());
+    expect(result.outcome).toBe('success'); // le travail de l'agent n'en souffre pas
+    const row = (await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId))).find(
+      (c) =>
+        c.toolName === 'broken_presenter_tool' &&
+        (c.toolInput as { value?: string })?.value === uniqueVal,
+    );
+    expect(row?.card).toBe('table');
+    expect(row?.presented).toBeNull();
+    // Requêtable, pas seulement loggé (revue passe 14).
+    expect(row?.presentationError).toMatch(/ToolPresentationError/);
+    expect(row?.presentationError).toMatch(/tables/);
+  });
+
   // ── Validation error ────────────────────────────────────────────────────────
 
   it('returns error on invalid input (fails Zod validation)', async () => {

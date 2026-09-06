@@ -547,6 +547,9 @@ describe('runScheduleTick', () => {
     expect(job.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',
+      // L'id vit aussi dans la provenance (passe 26) : il survit au SET NULL
+      // de schedule_id quand l'automatisation est supprimée.
+      scheduleId: sched.id,
       prevRunAt: priorRun.toISOString(),
       notifyChannel: null,
     });
@@ -571,6 +574,7 @@ describe('runScheduleTick', () => {
     expect(jobs[0]!.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',
+      scheduleId: sched.id,
       prevRunAt: null,
       notifyChannel: null,
     });
@@ -883,6 +887,7 @@ describe('runScheduleTick', () => {
     expect(jobs[0]!.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',
+      scheduleId: expect.any(String),
       prevRunAt: null,
       notifyChannel: 'discord',
     });
@@ -965,6 +970,7 @@ describe('runScheduleTick', () => {
     expect(jobs[0]!.triggerContext).toEqual({
       type: 'cron',
       scheduleName: 'Test schedule',
+      scheduleId: expect.any(String),
       prevRunAt: null,
       notifyChannel: null,
     });

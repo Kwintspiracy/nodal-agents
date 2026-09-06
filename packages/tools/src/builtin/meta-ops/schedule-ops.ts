@@ -212,6 +212,7 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
     'change an existing one instead of recreating it.',
   inputSchema: CreateScheduleInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
@@ -309,6 +310,7 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
     'name / notify / days. Fails if no schedule with that name exists.',
   inputSchema: UpdateScheduleInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const hasTimes = input.atTimes && input.atTimes.length > 0;
@@ -398,6 +400,7 @@ export const toggleScheduleTool: ToolDefinition<typeof ToggleScheduleInput, Sche
     'Pause (active=false) or resume (active=true) a schedule. Fails if it does not exist.',
   inputSchema: ToggleScheduleInput,
   riskLevel: 'write',
+  card: 'text',
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const [row] = await ctx.db

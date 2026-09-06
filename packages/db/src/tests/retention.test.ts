@@ -311,4 +311,50 @@ describe('pruneOldJobs', () => {
     expect(result.toolCallsDeleted).toBe(0);
     expect(result.deletedJobIds).toEqual([job!.id]);
   });
+
+  // T05 (migration 0090): a job_deliveries row that never made it past
+  // 'prepared'/'attempted' has no independent lifecycle — it rides the job's
+  // own retention. Purging an old terminal job must take its outbox row with
+  // it (ON DELETE CASCADE), not leave it orphaned.
+  it('purging an old terminal job cascades to its job_deliveries row (prepared, never confirmed)', async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+
+    const [job] = await freshDb
+      .insert(schema.agentJobs)
+      .values({
+        entityId: freshSeed.entityId,
+        agentId: freshSeed.agentId,
+        channel: 'api',
+        task: 'delivery-retention-job',
+        status: 'completed',
+        completedAt: oldDate,
+      })
+      .returning();
+    if (!job) throw new Error('seed job failed');
+
+    const [delivery] = await freshDb
+      .insert(schema.jobDeliveries)
+      .values({
+        jobId: job.id,
+        channel: 'telegram',
+        chatId: 'chat-retention',
+        payload: 'never confirmed',
+        outcome: 'prepared',
+        idempotencyKey: `retention-${Date.now()}`,
+      })
+      .returning();
+    if (!delivery) throw new Error('seed delivery failed');
+
+    const result = await pruneOldJobs(freshDb, 30);
+    expect(result.jobsDeleted).toBe(1);
+    expect(result.deletedJobIds).toEqual([job.id]);
+
+    const goneDelivery = await freshDb
+      .select()
+      .from(schema.jobDeliveries)
+      .where(eq(schema.jobDeliveries.id, delivery.id));
+    expect(goneDelivery.length).toBe(0);
+  });
 });

@@ -301,6 +301,9 @@ export async function runScheduleTick(
         triggerContext: {
           type: 'cron',
           scheduleName: sched.name,
+          // L'id dans la provenance aussi : `schedule_id` ne survit pas à la
+          // suppression de l'automatisation, la provenance si (passe 26).
+          scheduleId: sched.id,
           prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
           notifyChannel: (sched.notifyChannel as ChannelKind | null) ?? null,
         },

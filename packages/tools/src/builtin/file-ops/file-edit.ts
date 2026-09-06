@@ -12,6 +12,7 @@ import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { detailOf, failureText, writtenFile } from '../../presenters';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
@@ -61,7 +62,29 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     'untouched lines.',
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ input, output }) =>
+    output.ok
+      ? writtenFile(input.path, 'modified', {
+          bytes: output.bytes,
+          detail: detailOf(output, ['edited', 'bytes']),
+        })
+      : failureText(output.reason),
   mutatesWorkspace: true,
+  // The ONE file this edit is about to change — same contract, same reasons
+  // as file_write's hook (declared target, resolved twice, empty on a
+  // resolution failure that execute() will report properly).
+  resolveMutationTargets: async (input, ctx) => {
+    try {
+      const path = await resolveAndCheckPath(ctx, input.path);
+      // Même règle que file_write : cet outil édite du TEXTE dans un dossier
+      // attaché, donc du projet. Aucune reconnaissance d'extension (v7-A) —
+      // rien dans un chemin ne distingue une donnée de test d'un livrable.
+      return [{ kind: 'file', path, deliverableType: 'code_project' }];
+    } catch {
+      return [];
+    }
+  },
   // D1: an edit always targets an EXISTING file (file_edit fails loud on a
   // missing one — see execute() below), so the only thing left to check is
   // whether that file lives in the shared workspace. Same gate as file_write.

@@ -10,33 +10,88 @@
 // of the final text VERBATIM (invariant #2).
 
 import {
+  cliRuns,
   cliSessions,
+  jobCheckpoints,
   toolCalls,
+  count,
   eq,
   and,
+  gte,
+  inArray,
   sql,
-  isConversationAllowed,
-  getBindingCredentials,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import {
-  getAdapter,
-  resolveTransportChannel,
-  listActiveChannelsForAgent,
-} from '@nodal-agents/delivery';
-import { buildSystemPrompt, type Agent } from '@nodal-agents/orchestration';
-import { assertCliBudget, recordCliRun, assertRuntimeSessionKey } from '@nodal-agents/tools';
+  buildSystemPrompt,
+  type Agent,
+  type ConversationContext,
+} from '@nodal-agents/orchestration';
+import {
+  assertCliBudget,
+  recordCliRun,
+  assertRuntimeSessionKey,
+  writeMutationIntent,
+  attachProductionToProject,
+} from '@nodal-agents/tools';
 import { acquireWorkspaceLocks, WorkspaceLockedError, type HeldLocks } from './workspace-locks.ts';
 import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { buildCliAuditRow } from './audit.ts';
-import { failJob, completeJob, touchJob } from '../job/state.ts';
+import { failJob, touchJob } from '../job/state.ts';
+import { loadConversationContext } from '../job/conversation-id.ts';
+// LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
+// Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
+import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
+import { finalizeJobSuccess } from '../job/finalize.ts';
+import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
+import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
+import { snapshot, headCheckpoint, checkpointsRoot } from '@nodal-agents/checkpoints';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
+
+/**
+ * Combien de temps un tour attend ses écritures d'audit encore en vol avant de
+ * lire les chemins écrits (revue Codex, passe 34). Une insertion `tool_calls`
+ * n'a ni `statement_timeout` (client.ts l'exclut) ni délai applicatif : une
+ * connexion figée par le réseau ne se règle jamais, et un tour DÉJÀ terminé
+ * resterait gelé avant sa finalisation. Au-delà de cette borne, on lit ce qui
+ * est là, en le disant par un code ; l'audit reste facultatif, jamais bloquant.
+ */
+export const AUDIT_WRITES_WAIT_MS = 5_000;
+
+/**
+ * Attend que les écritures d'audit du tour soient réglées — réussies ou
+ * échouées, peu importe (`allSettled`) — ou que la borne tombe. Ne lève jamais.
+ */
+async function settleAuditWrites(
+  writes: readonly Promise<unknown>[],
+  jobId: string,
+): Promise<void> {
+  if (writes.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), AUDIT_WRITES_WAIT_MS);
+  });
+  try {
+    const outcome = await Promise.race([
+      Promise.allSettled(writes).then(() => 'settled' as const),
+      bound,
+    ]);
+    if (outcome === 'timeout') {
+      console.error(
+        `[cli-runtime] CLI_AUDIT_WRITES_TIMEOUT job=${jobId} writes=${writes.length} ` +
+          `waited_ms=${AUDIT_WRITES_WAIT_MS}`,
+      );
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // A runtime agent is a full `Agent` PLUS its CLI settings — not a hand-picked
 // subset. It started as a subset (id/entityId/personality and the cli fields),
@@ -66,6 +121,8 @@ export interface CliRuntimeJobRow {
   channel: string | null;
   conversationId: string | null;
   task: string | null;
+  /** `agent_jobs.trigger_context` — un déclencheur cron/webhook peut imposer le canal de notification. */
+  triggerContext: unknown;
 }
 
 /**
@@ -98,6 +155,12 @@ export function buildCliRuntimeJobContext(args: {
    * le prompt et les outils ne voyaient pas les mêmes dossiers.
    */
   workspaces?: ReadonlyArray<{ label: string; path: string }>;
+  /**
+   * Le fil dont ce tour fait partie, et son projet courant (P6). Une session CLI
+   * est une conversation comme une autre : elle doit savoir dans quel dossier
+   * elle travaille, et depuis combien de tours.
+   */
+  conversation?: ConversationContext;
 }): Parameters<typeof buildSystemPrompt>[2] {
   return {
     origin: args.origin,
@@ -106,7 +169,149 @@ export function buildCliRuntimeJobContext(args: {
     ...(args.chatId ? { telegramChatId: args.chatId } : {}),
     ...(args.workspaceGit ? { workspaceGit: args.workspaceGit } : {}),
     ...(args.workspaces && args.workspaces.length > 0 ? { workspaces: args.workspaces } : {}),
+    ...(args.conversation ? { conversation: args.conversation } : {}),
   };
+}
+
+/**
+ * Les FICHIERS que le harnais a écrits pendant ce tour, en chemins absolus.
+ *
+ * Le seul signal disponible est l'audit : `tool_calls` reçoit une ligne par
+ * outil interne de la CLI (voir `onEvent` plus haut), et les outils d'édition y
+ * portent un nom connu ET le chemin édité dans `tool_input` — lu par la même
+ * fonction que l'onglet Code et le bloc Runtime (`scannedEditPath`,
+ * `resolveScannedPath`), pour qu'un tour situe ses écritures là où l'écran
+ * les montre. On borne au tour courant par `created_at` — une écriture d'un
+ * tour PRÉCÉDENT du même job ne dit rien de celui-ci.
+ *
+ * P5b : ce sont ces chemins qui servent de cibles au registre des projets,
+ * parce qu'un dossier attaché SANS manifeste n'est pas un projet mais que
+ * l'enfant où le harnais vient d'écrire peut l'être — avec le terrain entier
+ * pour cible, le registre ne saurait pas lequel.
+ *
+ * Pourquoi pas `cli_runs` : il n'a aucun champ de fichiers changés (vérifié
+ * dans packages/db/src/schema/cli-runs.ts). Pourquoi pas le disque : le
+ * comparer avant/après coûterait un inventaire complet du terrain à chaque
+ * tour, pour une question à laquelle l'audit répond déjà.
+ */
+async function harnessEdits(
+  db: AnyDrizzleDb,
+  jobId: string,
+  since: Date,
+  workspaces: ReadonlyArray<{ label: string; path: string }>,
+): Promise<string[]> {
+  try {
+    const rows = await db
+      .select({ toolInput: toolCalls.toolInput, toolOutput: toolCalls.toolOutput })
+      .from(toolCalls)
+      .where(
+        and(
+          eq(toolCalls.jobId, jobId),
+          inArray(toolCalls.toolName, EDIT_TOOLS),
+          gte(toolCalls.createdAt, since),
+        ),
+      );
+    const author = workspaces.map((w) => ({ label: w.label, path: w.path }));
+    const roots = workspaces.map((w) => w.path);
+    const out = new Set<string>();
+    for (const row of rows) {
+      const p = scannedEditPath(row);
+      if (!p) continue;
+      // SANS le disque (revue Codex, passe 32) : un chemin relatif du harnais
+      // est relatif à son `cwd`, qui est le PREMIER dossier attaché (voir
+      // `cwd` plus bas) — et c'est le premier candidat que `resolveScannedPath`
+      // rend quand aucun label ne tranche. Consulter l'existence, comme le fait
+      // l'onglet Code, aurait perdu un fichier écrit puis supprimé dans le
+      // même tour : une production réelle, jamais déclarée.
+      const abs = resolveScannedPath(p, author, roots, () => true);
+      if (abs) out.add(abs);
+    }
+    return [...out];
+  } catch (err) {
+    // Une panne de lecture ne doit pas tuer un tour déjà terminé. Elle est DITE
+    // par un code, et on retombe sur « rien écrit » : ne pas rattacher est
+    // réparable au tour suivant, rattacher à tort ne l'est pas (le registre
+    // pose `project_id` une seule fois, le premier gagne).
+    console.error(
+      `[cli-runtime] CLI_WROTE_PROBE_FAILED job=${jobId} ` +
+        `error=${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+}
+
+/**
+ * L'instantané du tour, pour le chemin CLI — P11.
+ *
+ * Le harnais de code écrivait SANS FILET : `executeTool` ne le voit jamais
+ * (voir l'intention de mutation, même raison), donc `takeCheckpointForTurn` ne
+ * s'y déclenche pas. L'agent qui EST une CLI de code — celui qui écrit le plus,
+ * et le plus vite — était le seul à travailler sans état d'avant. Ni retour
+ * arrière, ni diff dans le fil.
+ *
+ * LE NUMÉRO DE TOUR. Un job CLI n'a pas de compteur `turn` : il n'y a pas de
+ * boucle d'outils Nodal pour l'avancer. Le seul compteur qui existe est le
+ * nombre de tours DÉJÀ joués, et il est déjà tenu — une ligne `cli_runs` par
+ * tour, réussi ou non. Le tour courant est donc `1 + ce compte`, lu AVANT de
+ * lancer la CLI (la ligne de ce tour-ci n'est écrite qu'après `binding.run`).
+ * C'est le même numéro que la ligne `tool_calls` du tour portera, ce qui est
+ * précisément ce dont le diff a besoin pour retrouver l'état d'avant.
+ *
+ * ÉCHOUER REFUSE LE TOUR — même contrat que le seam : un filet qui n'est pas là
+ * est pire que pas de filet, parce que c'est celui que le propriétaire croyait
+ * avoir. Levé avec un CODE (`checkpoint_failed:<cause>`), sous le même filet que
+ * l'intention de mutation, donc les verrous sont rendus.
+ *
+ * La LIGNE, elle, ne refuse rien : c'est un confort de lecture (le fil montrera
+ * le diff), pas le filet. Une panne se dit par `CHECKPOINT_ROW_FAILED`.
+ */
+export async function resolveCliTurn(db: AnyDrizzleDb, jobId: string): Promise<number> {
+  const [played] = await db.select({ n: count() }).from(cliRuns).where(eq(cliRuns.jobId, jobId));
+  return 1 + Number(played?.n ?? 0);
+}
+
+/**
+ * `turn` est CALCULÉ UNE FOIS par le tour (`resolveCliTurn`) et posé ici ET sur
+ * chaque ligne `tool_calls` que l'enregistreur d'événements insère (revue Codex,
+ * passe 42) : la route du diff retrouve l'état d'avant par
+ * `(job, tool_calls.turn, dossier)` — une ligne d'audit sans `turn` rendait
+ * `no_checkpoint` pour TOUT fichier écrit par le harnais, l'instantané ayant
+ * pourtant été pris.
+ */
+export async function takeCliTurnCheckpoints(
+  db: AnyDrizzleDb,
+  jobId: string,
+  workspaces: ReadonlyArray<{ label: string; path: string }>,
+  turn: number,
+): Promise<void> {
+  const store = checkpointsRoot();
+
+  for (const w of workspaces) {
+    let sha: string | null;
+    try {
+      const cp = await snapshot(store, w.path, `before cli turn (job ${jobId})`);
+      // `null` = l'arbre n'a pas bougé depuis la dernière photo : l'état d'avant
+      // de ce tour EST ce commit-là.
+      sha = cp?.sha ?? (await headCheckpoint(store, w.path));
+    } catch (err) {
+      const cause = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      throw new Error(`checkpoint_failed:${cause}`.slice(0, 300));
+    }
+    if (!sha) continue;
+    try {
+      await db
+        .insert(jobCheckpoints)
+        .values({ jobId, turn, workspace: w.path, sha })
+        .onConflictDoNothing({
+          target: [jobCheckpoints.jobId, jobCheckpoints.turn, jobCheckpoints.workspace],
+        });
+    } catch (err) {
+      console.error(
+        `[cli-runtime] CHECKPOINT_ROW_FAILED job=${jobId} turn=${turn} workspace=${w.path} ` +
+          `error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }
 
 export async function runCliRuntimeJob(args: {
@@ -194,7 +399,18 @@ export async function runCliRuntimeJob(args: {
   // event becomes a tool_calls row as it happens, so the existing Runs page
   // shows the session working in real time. Rows pair tool_use → tool_result
   // by the CLI's own tool_use id.
+  // Le numéro de CE tour — le même pour l'instantané et pour chaque ligne
+  // d'audit (voir takeCliTurnCheckpoints).
+  const cliTurn = await resolveCliTurn(db, jobId);
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
+  // Les écritures d'audit ENCORE EN VOL à la fin du tour (revue Codex, passe
+  // 33) : chaque insertion part sans être attendue — l'audit ne doit jamais
+  // ralentir la CLI — mais `harnessEdits` les LIT juste après `binding.run`.
+  // Le dernier événement d'un tour est précisément une écriture, et son
+  // insertion pouvait être encore en route : chemins vides, projet jamais
+  // déclaré. Elles sont donc gardées ici et attendues (jamais relancées, jamais
+  // bloquantes pour le travail : `allSettled`) avant la lecture.
+  const auditWrites: Promise<unknown>[] = [];
   const onEvent = (evt: ClaudeTurnEvent): void => {
     if (evt.kind === 'tool_use' && evt.toolUseId && evt.toolName) {
       pending.set(evt.toolUseId, {
@@ -208,11 +424,12 @@ export async function runCliRuntimeJob(args: {
       const started = pending.get(evt.toolUseId);
       if (!started) return;
       pending.delete(evt.toolUseId);
-      void db
+      const write = db
         .insert(toolCalls)
         .values({
           entityId: job.entityId,
           jobId,
+          turn: cliTurn,
           // Le masquage et le préfixe vivent dans audit.ts, partagés avec le
           // chemin chat — voir ce fichier pour ce qui est masqué et pourquoi.
           ...buildCliAuditRow({
@@ -227,6 +444,7 @@ export async function runCliRuntimeJob(args: {
         .catch((err: unknown) => {
           console.warn(`[cli-runtime] tool_calls insert failed (job=${jobId}):`, err);
         });
+      auditWrites.push(write);
     }
   };
 
@@ -279,9 +497,55 @@ export async function runCliRuntimeJob(args: {
   // s'y produisait après la prise des verrous et avant le `try` — les dossiers,
   // le PARTAGÉ compris, restaient bloqués une demi-heure pour tout le monde,
   // jusqu'à la reprise du verrou périmé.
+  //
+  // ── L'intention de mutation — la CINQUIÈME surface, hors registre d'outils
+  // (plan « Vérifier & Corriger », T17 / D8). Un runtime CLI écrit sans jamais
+  // traverser executeTool : le seam unique des outils ne le voit pas, donc
+  // l'intention se pose dans le try ci-dessous, entre la prise des verrous et
+  // le spawn — le projet est sale AVANT que la CLI touche au disque. Même
+  // prédicat que les verrous (mode write), même périmètre (TOUS les dossiers
+  // attachés : `cwd` n'est que le premier, le reste part en extraWriteDirs).
+  // Sous le même filet que l'assemblage du prompt : un refus relâche les
+  // verrous. `failed` ET `already_terminal` interdisent le spawn — un job
+  // annulé qui laisse partir une CLI n'est pas annulé. Levé avec un CODE :
+  // run-job ne marque pas le job lui-même, l'appelant décide.
   let systemPrompt: string;
   try {
+    if (mode === 'write') {
+      const intent = await writeMutationIntent(
+        { db, entityId: job.entityId ?? '', jobId, workspaces: args.workspaces },
+        {
+          surface: 'cliRuntime',
+          // Un harnais de code travaille sur le PROJET (v7-A).
+          targets: args.workspaces.map((w) => ({
+            kind: 'dir' as const,
+            path: w.path,
+            deliverableType: 'code_project' as const,
+          })),
+        },
+      );
+      if (intent.kind === 'failed') {
+        throw new Error(`verification_intent_failed:${intent.code}`);
+      }
+      if (intent.kind === 'already_terminal') {
+        throw new Error('verification_intent_failed:intent_already_terminal');
+      }
+
+      // P11 — l'état d'avant du tour, AVANT que la CLI touche au disque. Même
+      // place et même filet que l'intention ci-dessus : un échec relâche les
+      // verrous et refuse le tour. Voir takeCliTurnCheckpoints.
+      await takeCliTurnCheckpoints(db, jobId, args.workspaces, cliTurn);
+    }
+
     const workspaceGit = await probeWorkspaceGit(cwd);
+    // Le fil et son projet courant (P6) — `null` pour un job hors conversation,
+    // ou dont l'uuid date d'avant P6 et ne pointe aucune ligne.
+    const conversation = job.conversationId
+      ? await loadConversationContext(db, job.conversationId, {
+          excludeJobId: jobId,
+          task: job.task,
+        })
+      : null;
     systemPrompt = await buildSystemPrompt(
       agentRow,
       db,
@@ -291,6 +555,7 @@ export async function runCliRuntimeJob(args: {
         chatId: job.chatId,
         workspaceGit,
         workspaces: args.workspaces,
+        ...(conversation ? { conversation } : {}),
       }),
     );
   } catch (err) {
@@ -302,6 +567,10 @@ export async function runCliRuntimeJob(args: {
   const heartbeat = setInterval(() => {
     void touchJob(db, jobId).catch(() => {});
   }, 60_000);
+
+  // L'instant où le tour commence — borne basse pour reconnaître les écritures
+  // que CE tour a produites (voir `harnessEdits` plus haut).
+  const turnStartedAt = new Date();
 
   let turn: CliTurnResult;
   try {
@@ -382,6 +651,63 @@ export async function runCliRuntimeJob(args: {
       });
   }
 
+  // ── Le REGISTRE des projets (P5), APRÈS le tour ───────────────────────────
+  //
+  // Sur les MÊMES cibles que l'intention (les dossiers attachés, le terrain
+  // entier) : un harnais de code qui a travaillé dans un projet enregistré EST
+  // une production dans ce projet, même sans traverser aucun outil. Posé après
+  // `binding.run` et plus avant le spawn (revue Codex passe 27) : une CLI qui
+  // n'a pas démarré n'a rien produit, et le registre ne doit pas dire le
+  // contraire.
+  //
+  // MAIS un tour EN ERREUR peut avoir écrit (revue Codex passe 28) : une CLI
+  // qui modifie dix fichiers puis sort en rouge parce que les tests échouent a
+  // bel et bien produit dans ce projet. Le succès, lui, ne prouve rien non plus
+  // — d'où la condition en deux branches. Le signal d'écriture est
+  // `tool_calls` : les lignes de CE job, portant un outil d'édition, créées
+  // depuis le début du tour. (`cli_runs.files_changed` n'existe pas — vérifié
+  // dans le schéma, pas supposé.)
+  //
+  // Registre, pas garde — son issue n'interdit rien, et elle est posée AVANT le
+  // retour d'erreur pour que le rattachement survive à ce retour.
+  if (mode === 'write') {
+    const turnSucceeded = !turn.isError && turn.finalText !== '';
+    // Toutes les lignes d'audit du tour sont posées avant de les lire — voir
+    // `auditWrites`. Une insertion qui a échoué est déjà journalisée ; elle ne
+    // fait pas échouer le tour ; une insertion qui ne se règle pas est
+    // abandonnée à la borne (`AUDIT_WRITES_WAIT_MS`).
+    await settleAuditWrites(auditWrites, jobId);
+    const edits = await harnessEdits(db, jobId, turnStartedAt, args.workspaces);
+    if (turnSucceeded || edits.length > 0) {
+      await attachProductionToProject(
+        {
+          db,
+          entityId: job.entityId ?? '',
+          jobId,
+          conversationId: job.conversationId ?? null,
+          agentId: agentRow.id,
+          workspaces: args.workspaces,
+        },
+        // Les FICHIERS écrits quand l'audit les connaît (P5b : c'est ainsi
+        // qu'un enfant à manifeste du terrain se déclare), sinon les dossiers
+        // attachés — un tour réussi sans ligne d'édition se RATTACHE à un
+        // projet déjà déclaré, mais n'en déclare aucun (revue Codex, passe 32 :
+        // seules les cibles fichier déclarent).
+        edits.length > 0
+          ? edits.map((path) => ({
+              kind: 'file' as const,
+              path,
+              deliverableType: 'code_project' as const,
+            }))
+          : args.workspaces.map((w) => ({
+              kind: 'dir' as const,
+              path: w.path,
+              deliverableType: 'code_project' as const,
+            })),
+      );
+    }
+  }
+
   if (turn.isError || turn.finalText === '') {
     // An exhausted subscription window must read as exactly that (D0/risques)
     // — as a machine CODE + data, never runner-authored prose (invariant #2:
@@ -397,35 +723,61 @@ export async function runCliRuntimeJob(args: {
     return fail(code.slice(0, 400));
   }
 
-  await completeJob(db, jobId, turn.finalText, [binding.toolLabel]);
-
-  // Channel delivery — the CLI's text VERBATIM (invariant #2: the LLM speaks,
-  // Nodal relays; no synthesis). Same guardrails as deliverCompletedRoots.
+  // ── La porte terminale (V&C, T11) ─────────────────────────────────────────
+  //
+  // La cible de livraison est résolue AVANT la décision terminale et figée
+  // avec elle : la ligne `job_deliveries` en `prepared` est commise DANS la
+  // transaction qui pose le statut, puis le drain immédiat l'envoie — hors de
+  // toute transaction, après que les verrous sont rendus. Un crash entre le
+  // commit et l'envoi ne perd plus le message : le tick le reprend.
+  //
+  // Le texte du CLI part VERBATIM (invariant #2 : le LLM parle, Nodal relaie).
+  // L'allowlist et les credentials se revérifient AU DRAIN, jamais ici.
+  let delivery: { channel: string; chatId: string; payload: string } | undefined;
   if (job.chatId && turn.finalText.trim()) {
-    try {
-      const activeChannels = await listActiveChannelsForAgent(db, agentRow.id);
-      const channel = resolveTransportChannel(job.channel ?? undefined, activeChannels);
-      const allowed =
-        job.entityId !== null &&
-        (await isConversationAllowed(db, {
-          entityId: job.entityId,
-          agentId: agentRow.id,
-          channel,
-          conversationId: job.chatId,
-        }));
-      if (allowed) {
-        const creds = await getBindingCredentials(db, agentRow.id, channel);
-        if (creds) {
-          await getAdapter(channel).sendText(creds, job.chatId, turn.finalText);
-        }
-      } else {
-        console.error(
-          `[cli-runtime] refusing delivery for job ${jobId} — chatId not in the channel allowlist`,
-        );
-      }
-    } catch (err) {
-      console.error(`[cli-runtime] channel delivery failed for job ${jobId}:`, err);
+    const target = await resolveDeliveryTarget(db, {
+      chatId: job.chatId,
+      agentId: agentRow.id,
+      channel: job.channel,
+      triggerContext: job.triggerContext,
+    });
+    if (isDeliveryRefusal(target)) {
+      console.error(`[cli-runtime] DELIVERY_TARGET_REFUSED job=${jobId} reason=${target.refused}`);
+    } else {
+      delivery = { channel: target.channel, chatId: target.chatId, payload: turn.finalText };
     }
+  }
+
+  const outcome = await finalizeJobSuccess(
+    db,
+    { jobId, result: turn.finalText, toolsUsed: [binding.toolLabel], delivery },
+    {
+      prepareDelivery: async (tx, input) => {
+        await prepareDelivery(tx, {
+          jobId: input.jobId,
+          channel: input.channel as Parameters<typeof prepareDelivery>[1]['channel'],
+          chatId: input.chatId,
+          payload: input.payload,
+        });
+      },
+    },
+  );
+
+  if (outcome.kind === 'already_terminal') {
+    // Course perdue : un autre chemin a fini ce job pendant le tour. Rien n'a
+    // été écrit, rien ne part — l'ancien code envoyait quand même.
+    return { status: 'failed', error: 'already_handled' };
+  }
+
+  // Drain immédiat — la latence d'aujourd'hui (un envoi dans la seconde, pas
+  // au prochain tick). Une panne ICI ne défait pas un job déjà commis : elle
+  // est dite, et la ligne `prepared` sera reprise au tick.
+  try {
+    await drainDeliveries(db, { jobId });
+  } catch (err) {
+    console.error(
+      `[cli-runtime] DELIVERY_DRAIN_FAILED job=${jobId} error=${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return { status: 'completed', result: turn.finalText };

@@ -7,7 +7,11 @@
 // du flux (run-job.ts). Cette asymétrie est ce que ce fichier verrouille.
 
 import { describe, it, expect } from 'vitest';
-import { parseLiveToolEvent, makeEssentialCapture } from '../builtin/code-task/live-events';
+import {
+  parseLiveToolEvent,
+  makeEssentialCapture,
+  cliToolCard,
+} from '../builtin/code-task/live-events';
 import {
   buildProviderArgs,
   parseClaudeOutput,
@@ -220,5 +224,48 @@ describe("l'épinglage ne devient pas une fuite", () => {
     expect(occurrences, `${occurrences} ouvertures retenues au lieu d'une`).toBe(1);
     // Et c'est bien la PREMIÈRE — celle qui porte le vrai fil.
     expect(parseCodexOutput(t).sessionId).toBe('th_0');
+  });
+});
+
+describe("cliToolCard — la carte d'un outil interne du CLI (P1)", () => {
+  it('claude : les noms que le flux stream-json porte dans tool_use.name', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: 'a.ts' } }],
+      },
+    });
+    const r = parseLiveToolEvent('claude', line);
+    expect(r?.kind).toBe('use');
+    expect(cliToolCard(r!.event.name)).toBe('read');
+    expect(cliToolCard('Edit')).toBe('files');
+    expect(cliToolCard('Bash')).toBe('terminal');
+    expect(cliToolCard('Grep')).toBe('search');
+    expect(cliToolCard('Task')).toBe('delegation');
+  });
+
+  it("codex : les DEUX types d'item que le parseur laisse passer — vérifiés en le traversant, pas en le supposant", () => {
+    // Revue passe 14 : la première table nommait shell/apply_patch, que le flux
+    // n'émet jamais ; une commande Codex tombait en `generic`.
+    const cmd = parseLiveToolEvent(
+      'codex',
+      JSON.stringify({
+        type: 'item.started',
+        item: { id: 'it_1', type: 'command_execution', command: 'pnpm test' },
+      }),
+    );
+    const file = parseLiveToolEvent(
+      'codex',
+      JSON.stringify({ type: 'item.started', item: { id: 'it_2', type: 'file_change' } }),
+    );
+    expect(cmd?.kind).toBe('use');
+    expect(file?.kind).toBe('use');
+    expect(cliToolCard(cmd!.event.name)).toBe('terminal');
+    expect(cliToolCard(file!.event.name)).toBe('files');
+  });
+
+  it("un nom inconnu rend generic — l'aveu, pas une devinette", () => {
+    expect(cliToolCard('SomethingNew')).toBe('generic');
+    expect(cliToolCard('shell')).toBe('generic'); // n'existe pas dans le flux codex --json
   });
 });

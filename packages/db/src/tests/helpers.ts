@@ -68,7 +68,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       memory_curation_enabled boolean NOT NULL DEFAULT true,
       skill_assignment_mode text NOT NULL DEFAULT 'approval',
       auto_run_paused boolean NOT NULL DEFAULT false,
-      mcp_server_enabled boolean NOT NULL DEFAULT false
+      mcp_server_enabled boolean NOT NULL DEFAULT false,
+      -- mirrors migration 0091
+      verification_surfaces jsonb NOT NULL DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
@@ -181,6 +183,13 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       delegation_depth integer DEFAULT 0,
       last_failed_delegation_slug text,
       pending_delegation jsonb,
+      finalizing_at timestamptz,
+      -- mirrors migration 0091
+      verification_skipped_surfaces jsonb NOT NULL DEFAULT '[]',
+      -- project_id (0093) references code_projects, created further below — la
+      -- FK est ajoutée par un ALTER TABLE juste après cette table, comme pour
+      -- schedule_id ci-dessus.
+      project_id uuid,
       completed_at timestamptz,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
@@ -268,6 +277,13 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       duration_ms integer,
       turn integer,
       tool_call_id text,
+      -- 0092 (P1) : la carte déclarée par l'outil et la charge utile présentée.
+      card text,
+      presented jsonb,
+      presentation_error text,
+      -- 0095 (P7) : le niveau de risque declare par l'outil. NULL sur les
+      -- lignes d'avant et sur les lignes cli:*, ecrites hors registre.
+      risk_level text CHECK (risk_level IS NULL OR risk_level IN ('read','write','destructive')),
       created_at timestamptz DEFAULT now()
     );
 
@@ -279,6 +295,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_name text NOT NULL,
       tool_input jsonb NOT NULL,
       tool_call_id text,
+      kind text NOT NULL DEFAULT 'approval' CHECK (kind IN ('approval','question')),
+      answer text,
       status text DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
       requested_at timestamptz DEFAULT now(),
       resolved_at timestamptz,
@@ -476,18 +494,59 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       UNIQUE (entity_id, slug)
     );
 
-    -- 0086 — les deux gestes du propriétaire sur les projets de l'onglet Code
-    -- (renommer, masquer). Les projets eux-mêmes sont dérivés, jamais stockés.
+    -- code_projects — mirrors migration 0088 (post-migration shape: 0086's
+    -- two owner gestures, plus project_key identity + verify_* proof config).
+    -- Les deux gestes du propriétaire sur les projets de l'onglet Code
+    -- (renommer, masquer) ; les projets eux-mêmes sont dérivés, jamais
+    -- stockés. project_key porte l'identité (revue Codex 26/08 : l'ancienne
+    -- unicité sur project_path texte laissait deux casses Windows créer deux
+    -- lignes) ; verify_* est la configuration de preuve v5-A/D1.
     CREATE TABLE IF NOT EXISTS code_projects (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       project_path text NOT NULL,
+      project_key text NOT NULL,
       display_name text,
       hidden boolean NOT NULL DEFAULT false,
+      verify_commands jsonb
+        CHECK (verify_commands IS NULL OR (jsonb_typeof(verify_commands) = 'array' AND jsonb_array_length(verify_commands) BETWEEN 1 AND 5)),
+      verification_epoch integer NOT NULL DEFAULT 0,
+      verify_approved_manifest_hash text,
+      verify_approved_at timestamptz,
+      verify_approved_by uuid REFERENCES users(id) ON DELETE SET NULL,
+      -- mirrors migration 0093 — le REGISTRE : registered_at NULL = ligne de
+      -- comptabilité, NOT NULL = projet déclaré.
+      kind text NOT NULL DEFAULT 'code' CHECK (kind IN ('code','documents')),
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      registered_at timestamptz,
+      registered_from text CHECK (registered_from IS NULL OR registered_from IN ('spaces','conversation')),
+      registered_job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (entity_id, project_path)
+      UNIQUE (entity_id, project_key)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_code_projects_registered
+      ON code_projects(entity_id) WHERE registered_at IS NOT NULL;
+
+    -- FK agent_jobs.project_id → code_projects.id (posée une fois la table
+    -- créée : agent_jobs est déclarée bien plus haut dans ce fichier).
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'agent_jobs_project_id_fkey'
+          AND table_name = 'agent_jobs'
+      ) THEN
+        ALTER TABLE agent_jobs
+          ADD CONSTRAINT agent_jobs_project_id_fkey
+          FOREIGN KEY (project_id) REFERENCES code_projects(id) ON DELETE SET NULL;
+      END IF;
+    END;
+    $$;
+
+    CREATE INDEX IF NOT EXISTS idx_agent_jobs_project
+      ON agent_jobs(project_id) WHERE project_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS agent_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -519,10 +578,20 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       title text NOT NULL DEFAULT '',
       -- origin (migration 0065): 'onboarding' rows are excluded from the
       -- dashboard's Chats list — see chat-messages.ts schema comment.
-      origin text NOT NULL DEFAULT 'user' CHECK (origin IN ('user','onboarding')),
+      origin text NOT NULL DEFAULT 'user' CHECK (origin IN ('user','onboarding','project')),
+      -- mirrors migration 0094 (P6) — conversations porte TOUS les canaux, et
+      -- le projet courant du fil. Pas de FK depuis agent_jobs.conversation_id :
+      -- voir le commentaire de la colonne dans jobs.ts.
+      channel text NOT NULL DEFAULT 'dashboard'
+        CHECK (channel IN ('dashboard','telegram','slack','discord','whatsapp')),
+      chat_id text,
+      current_project_id uuid REFERENCES code_projects(id) ON DELETE SET NULL,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
+
+    CREATE INDEX IF NOT EXISTS idx_conversations_thread
+      ON conversations(entity_id, agent_id, channel, chat_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS chat_messages (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -739,6 +808,97 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       error text,
       created_at timestamptz DEFAULT now()
     );
+
+    -- job_deliverable_verification_state + verification_runs (migration 0089)
+    -- — mirrors migration 0089. Table d'état lisible d'un livrable de job, et
+    -- trace d'une commande de preuve. TOUS les CHECK recopiés.
+    CREATE TABLE IF NOT EXISTS job_deliverable_verification_state (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      deliverable_type text NOT NULL
+        CHECK (deliverable_type IN ('code_project','office_file','document','outbound_action','other')),
+      canonical_key text NOT NULL,
+      outcome text
+        CHECK (outcome IS NULL OR outcome IN ('prepared','attempted','confirmed','rejected','outcome_unknown')),
+      idempotency_key text,
+      display_path_snapshot text,
+      dirty_generation integer,
+      verified_generation integer,
+      decision_status text NOT NULL
+        CHECK (decision_status IN ('dirty','green','red','pending_approval','not_configured','infra_error')),
+      command_hash_snapshot text,
+      red_streak integer NOT NULL DEFAULT 0,
+      repair_attempts integer NOT NULL DEFAULT 0,
+      tested_epoch integer,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (job_id, deliverable_type, canonical_key),
+      CONSTRAINT job_deliverable_verification_state_generation_check
+        CHECK (verified_generation IS NULL OR verified_generation <= dirty_generation),
+      CONSTRAINT job_deliverable_verification_state_family_check
+        CHECK (
+          (deliverable_type = 'outbound_action' AND dirty_generation IS NULL AND verified_generation IS NULL AND outcome IS NOT NULL)
+          OR
+          (deliverable_type <> 'outbound_action' AND outcome IS NULL AND dirty_generation IS NOT NULL)
+        )
+    );
+
+    CREATE TABLE IF NOT EXISTS verification_runs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      deliverable_type text NOT NULL,
+      canonical_key text NOT NULL,
+      manifest_hash text,
+      sequence_id uuid NOT NULL,
+      command_rank integer NOT NULL,
+      command text NOT NULL,
+      exit_code integer,
+      outcome_kind text NOT NULL CHECK (outcome_kind IN ('exit','timeout','spawn_error')),
+      stdout_tail text,
+      stderr_tail text,
+      duration_ms integer,
+      verdict text NOT NULL CHECK (verdict IN ('green','red','infra_error')),
+      tested_generation integer,
+      tested_epoch integer,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_verification_runs_job_created
+      ON verification_runs (job_id, created_at);
+
+    -- job_deliveries (migration 0090) — mirrors migration 0090. L'outbox de la
+    -- livraison : la finalisation du job pose 'prepared' dans SA transaction,
+    -- drainDeliveries réclame et envoie hors transaction.
+    CREATE TABLE IF NOT EXISTS job_deliveries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      channel text NOT NULL CHECK (channel IN ('telegram','discord','slack','whatsapp')),
+      chat_id text NOT NULL,
+      payload text NOT NULL,
+      outcome text NOT NULL CHECK (outcome IN ('prepared','attempted','confirmed','rejected')),
+      idempotency_key text NOT NULL UNIQUE,
+      receipt jsonb,
+      attempts integer NOT NULL DEFAULT 0 CHECK (attempts <= 3),
+      claimed_by text,
+      claimed_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_deliveries_open
+      ON job_deliveries (outcome, claimed_at) WHERE outcome IN ('prepared','attempted');
+
+    -- job_checkpoints (migration 0099) — l etat d AVANT d un tour : le sha de
+    -- l instantane pris par le filet, relie au travail et au tour. Une ligne
+    -- par (travail, tour, dossier) ; c est ce que le diff du fil relit.
+    CREATE TABLE IF NOT EXISTS job_checkpoints (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      turn integer NOT NULL,
+      workspace text NOT NULL,
+      sha text NOT NULL,
+      taken_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT job_checkpoints_job_turn_workspace_unique UNIQUE (job_id, turn, workspace)
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_checkpoints_job ON job_checkpoints (job_id);
   `);
 
   const db = drizzle(pg, { schema });

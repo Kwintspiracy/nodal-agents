@@ -56,6 +56,8 @@ const ZERO_RESULT: CronTickResult = {
   tasksExecuted: 0,
   schedulesFired: 0,
   rootsDelivered: 0,
+  deliveriesSent: 0,
+  deliveriesRejected: 0,
   curatorStaled: 0,
   curatorArchived: 0,
   curatorReactivated: 0,

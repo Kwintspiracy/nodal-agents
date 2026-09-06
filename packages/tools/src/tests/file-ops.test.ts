@@ -14,7 +14,9 @@ import {
   fileListTool,
   fileSearchTool,
 } from '../builtin/file-ops';
-import type { ToolContext } from '../types';
+import type { ToolContext, ToolDefinition } from '../types';
+import { presentToolResult } from '../cards';
+import type { z } from 'zod';
 
 let WORKSPACE: string;
 let WORKSPACE2: string;
@@ -512,5 +514,65 @@ describe('file_search', () => {
     if (!r.ok) throw new Error('expected ok');
     // Should find matches in both workspaces
     expect(r.matches.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── P1 : la charge utile des cartes, sur de VRAIES sorties ─────────────────
+
+type AnyTool = ToolDefinition<z.ZodTypeAny, unknown>;
+const asAny = (t: unknown): AnyTool => t as AnyTool;
+
+describe('présentation (P1) — file_write, file_read, file_list, file_search', () => {
+  it('chaque sortie réelle remplit la carte déclarée ; un échec rend text sous la carte déclarée', async () => {
+    const c = ctxWith(WORKSPACE);
+    const wIn = { path: 'sub/a.md', content: 'bonjour\nmonde', create_dirs: true, purpose: 'test' };
+    const w = await fileWriteTool.execute(wIn, c);
+    expect(w.ok).toBe(true);
+    const pw = presentToolResult(asAny(fileWriteTool), wIn, w);
+    expect(pw).toMatchObject({ card: 'files', total: 1, truncated: false });
+    expect(pw.card === 'files' && pw.files[0]).toMatchObject({ action: 'written', bytes: 13 });
+    expect(pw.card === 'files' && pw.files[0]?.path).toMatch(/a\.md$/);
+
+    const rIn = { path: 'sub/a.md' };
+    const r = await fileReadTool.execute(rIn, c);
+    expect(presentToolResult(asAny(fileReadTool), rIn, r)).toEqual({
+      card: 'read',
+      path: 'sub/a.md',
+      excerpt: 'bonjour\nmonde',
+      chars: 13,
+      truncated: false,
+      sections: 2,
+    });
+
+    const lIn = { path: 'sub', recursive: false };
+    const l = await fileListTool.execute(lIn, c);
+    expect(presentToolResult(asAny(fileListTool), lIn, l)).toMatchObject({
+      card: 'files',
+      total: 1,
+      truncated: false,
+      files: [{ path: 'a.md', action: 'listed', detail: 'file', bytes: 13 }],
+    });
+
+    const sIn = {
+      pattern: 'monde',
+      target: 'content' as const,
+      case_sensitive: false,
+      max_results: 100,
+    };
+    const sr = await fileSearchTool.execute(sIn, c);
+    const ps = presentToolResult(asAny(fileSearchTool), sIn, sr);
+    expect(ps).toMatchObject({ card: 'search', query: 'monde', total: 1, truncated: false });
+    expect(ps.card === 'search' && ps.hits[0]).toMatchObject({
+      ref: expect.stringMatching(/a\.md:2$/),
+      snippet: expect.stringContaining('monde'),
+    });
+
+    // Un échec : la carte DÉCLARÉE reste `read`, la charge dit pourquoi.
+    const bad = await fileReadTool.execute({ path: 'sub/absent.md' }, c);
+    expect(bad.ok).toBe(false);
+    const pb = presentToolResult(asAny(fileReadTool), { path: 'sub/absent.md' }, bad);
+    expect(pb.card).toBe('text');
+    expect(pb.card === 'text' && pb.failure).toBe(true); // un échec, pas un succès en texte
+    expect(pb.card === 'text' && pb.text).toMatch(/absent\.md/);
   });
 });

@@ -258,6 +258,12 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
     case 'skill_file_write':
       effect = 'write';
       break;
+    case 'register_project':
+      // Une écriture (un dossier, une ligne au registre), ciblée sur le
+      // dossier demandé — voir computeApprovalImpactLine (passe 44).
+      effect = 'write';
+      target = typeof input['path'] === 'string' ? input['path'] : null;
+      break;
     // Les outils de LECTURE peuvent être gatés par une RÈGLE utilisateur — le
     // défaut « write » faisait alors annoncer « ⚠️ Écriture » pour une simple
     // recherche (constat live Quentin 25/08 : « depuis quand une search ça

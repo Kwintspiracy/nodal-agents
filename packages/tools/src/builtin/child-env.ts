@@ -8,6 +8,13 @@
 // build a minimal, ALLOWLISTED env — only the OS/shell plumbing a command or
 // script actually needs to resolve and run normally — instead of inheriting
 // the whole parent env.
+//
+// VERSIONNÉE : ENV_ALLOWLIST_VERSION (@nodal-agents/shared) entre dans le hash
+// du manifeste d'une commande de preuve (plan « Vérifier & Corriger », D1).
+// Élargir cette liste expose davantage au code du dépôt — c'est une nouvelle
+// version, donc une nouvelle approbation. Un test-snapshot (child-env.test.ts)
+// épingle l'empreinte de la liste par version : la modifier sans bumper
+// rougit.
 
 /**
  * Variable names safe to hand to a child process: OS/shell plumbing only,
@@ -64,6 +71,14 @@ const SAFE_ENV_ALLOWLIST = new Set(
 
 /** LC_* (locale) is a whole family of variables — allow the prefix, not just LC_ALL. */
 const SAFE_ENV_PREFIXES = ['LC_'];
+
+/**
+ * La liste EXACTE, triée, de ce que l'allowlist laisse passer (noms + préfixes)
+ * — pour le test-snapshot qui l'épingle à ENV_ALLOWLIST_VERSION. Lecture seule.
+ */
+export function safeEnvAllowlistSnapshot(): readonly string[] {
+  return [...[...SAFE_ENV_ALLOWLIST].sort(), ...SAFE_ENV_PREFIXES.map((p) => `${p}*`).sort()];
+}
 
 /**
  * Belt-and-braces denylist ON TOP of the allowlist above: any variable whose

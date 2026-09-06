@@ -5,6 +5,7 @@ import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
+import { failureText, writtenFile } from '../../presenters';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
@@ -50,7 +51,35 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     'lines you do not touch. Max 1 MiB per write.',
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
+  card: 'files',
+  present: ({ output }) =>
+    output.ok
+      ? writtenFile(output.path, 'written', { bytes: output.bytes })
+      : failureText(output.reason),
   mutatesWorkspace: true,
+  // The ONE file this call is about to write — the same resolution execute()
+  // does below, run again here rather than guessed at the seam. Resolving
+  // twice is already the accepted pattern in this file (computeApproval does
+  // it too): the cost is a path join, and the alternative is a verification
+  // layer that has to re-implement every tool's addressing.
+  //
+  // A resolution failure yields NO target, exactly like computeApproval's
+  // catch: no write will leave this call anyway — execute() fails loud on the
+  // same error a few lines down, with the message the agent can act on.
+  resolveMutationTargets: async (input, ctx) => {
+    try {
+      const path = await resolveAndCheckPath(ctx, input.path);
+      // Cet outil écrit du TEXTE dans un dossier attaché : ce qu'il produit
+      // fait partie du projet, et le projet doit se reprouver. Aucune
+      // reconnaissance d'extension ici (v7-A) — `data/fixtures/x.csv` est du
+      // code, `rapport.csv` n'en est pas, et rien dans le chemin ne les
+      // distingue. Les outils Office, eux, produisent des DOCUMENTS sans
+      // ambiguïté : c'est leur hook qui déclare `office_file`.
+      return [{ kind: 'file', path, deliverableType: 'code_project' }];
+    } catch {
+      return [];
+    }
+  },
   // D1: gate ONLY the destructive case — overwriting a file that already
   // exists in the entity-wide SHARED workspace. A brand-new file, or a write
   // into an attached/private workspace, never gates (see computeSharedOverwriteApproval).

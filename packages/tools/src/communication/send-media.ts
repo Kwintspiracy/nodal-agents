@@ -22,6 +22,7 @@ import {
   fetchBoundedUrl,
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
+import { sentCard } from '../presenters';
 
 const MB = 1024 * 1024;
 
@@ -75,6 +76,22 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
     description: spec.description,
     inputSchema: MediaInput,
     riskLevel: 'write',
+    // Les trois outils média (vidéo, audio, voix) sortent de cette fabrique :
+    // une seule déclaration, quelque chose est parti vers le canal.
+    card: 'sent',
+    present: ({ input, output }) =>
+      sentCard({
+        channel: input.channel ?? 'telegram',
+        kind:
+          spec.mediaKind === 'photo'
+            ? 'image'
+            : spec.mediaKind === 'document'
+              ? 'file'
+              : spec.mediaKind,
+        filename: output.filename,
+        bytes: output.bytes,
+        ...(input.chatId ? { target: input.chatId } : {}),
+      }),
     async execute(input: MediaInput, ctx: ToolContext): Promise<MediaOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved
       // unless it's the job's own origin chat), then job origin chat (F1).
