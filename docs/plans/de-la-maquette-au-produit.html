@@ -370,13 +370,13 @@
     se lit sur les cartes, jamais sur un nom d'outil.
   </p>
   <p>
-    <b>Une question ouverte, à trancher par Quentin : l'agent de recherche.</b> Il a cité « utilise
-    l'agent de recherche et ne fait pas la recherche lui-même » comme une production, puis posé
-    qu'un sous-agent qui n'a fait que parler reste du chat. Deux lectures, le plan n'en choisit
-    aucune : (a) confier le travail à un agent spécialisé est en soi une production, quel que soit
-    ce qu'il rend ; (b) la règle est récursive, un agent de recherche qui a seulement répondu reste
-    du chat, celui qui a produit un document est un travail. La garde de P7 a une variante par
-    lecture.
+    <b>L'agent de recherche, tranché par Quentin le 6 septembre au moment du go.</b> Il avait cité «
+    utilise l'agent de recherche et ne fait pas la recherche lui-même » comme une production, puis
+    posé qu'un sous-agent qui n'a fait que parler reste du chat. En donnant le go il a confirmé la
+    seconde lecture : « si un sous-agent est utilisé, ça ne correspond pas forcément à un projet ;
+    s'il ne fait que répondre à un message dans le chat, ce n'est pas un projet ». La règle est donc
+    <b>récursive</b> : un agent de recherche qui a seulement répondu reste du chat ; celui qui a
+    produit un document est un travail, et l'encart remonte au tour parent.
   </p>
   <p>
     <b>Chat accueille toutes les conversations</b>, dashboard et Telegram, Slack, Discord. Tout y
@@ -438,7 +438,12 @@
             Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les
             automatisations ont leur page.
           </td>
-          <td><span class="etat attend">plan réécrit le 06/09 · attend le go</span></td>
+          <td>
+            <span class="etat">LOT 2 CODÉ le 06/09</span> — go de Quentin le 06/09 ; P5, P6, P7, P8,
+            P9 livrés par des agents Opus, relus, passes Codex 26 à 29 traitées, passe 30 en cours ;
+            la CI, rouge depuis le lot 1, est réparée. Reste l'œil de Quentin sur /chat, /spaces et
+            /scheduled, et six arbitrages (voir chaque pierre).
+          </td>
         </tr>
         <tr>
           <td class="k">3 · L'agent qui demande et montre</td>
@@ -840,6 +845,19 @@
         jamais devinée.</span
       >
     </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>fd2293c3</code>, passe Codex 27). Le registre est
+        <code>code_projects</code> étendu (<code>registered_at</code> NULL = ligne de comptabilité,
+        NOT NULL = projet ; <code>kind</code>, <code>agent_id</code>, <code>registered_from</code>)
+        et <code>agent_jobs.project_id</code>. Le rattachement lit les cibles de l'intention de
+        mutation (contenance, le plus niché gagne, le premier projet du job gagne) et se pose
+        <b>après</b> l'exécution réussie. <b>À valider par Quentin</b> : le terrain lui-même peut
+        être le projet (sous-dossier vide) — un terrain-projet englobe alors tout ce que l'agent y
+        écrit, <code>terrain/vrac</code> compris.</span
+      >
+    </div>
   </div>
 
   <div class="pierre">
@@ -883,6 +901,21 @@
         conversation » en ouvre une autre, la précédente reste lisible ; une production dans un
         projet pose le projet courant et le tour suivant le voit dans son prompt ; la relecture
         reste sous le budget quelle que soit la longueur du fil.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>ea984c1b</code> + <code>8ab609f1</code>, passe Codex 28).
+        <code>conversations</code> est la table de tous les canaux (migration 0094 : canal, chat,
+        projet courant, une ligne par conversation de canal existante — 54 sur la base de Quentin) ;
+        pas de clé étrangère depuis les jobs (95 jobs portent l'uuid d'une conversation supprimée).
+        La commande est <code>/new</code> (analysée avant le préfixe de groupe, sur les quatre
+        canaux ; un <code>/new</code> nu reste <code>/new</code> et le prompt le dit). La relecture
+        lit les tours de tête de la conversation sous budget ; le silence de 4 h a disparu. Le bloc
+        <code>## Conversation</code> dit les tours précédents et le projet courant. WhatsApp, oublié
+        de la relecture depuis l'origine, y est. La première conversation d'un fil est sérialisée
+        par un verrou.</span
       >
     </div>
   </div>
@@ -937,15 +970,11 @@
       >
     </div>
     <div class="ligne">
-      <span class="l">à trancher</span
+      <span class="l">tranché</span
       ><span class="v"
-        ><b>L'agent de recherche.</b> À 02:15 Quentin l'a cité comme une production (« utilise
-        l'agent de recherche et ne fait pas la recherche lui-même ») ; à 02:20 il a posé qu'un
-        sous-agent qui n'a fait que parler reste du chat. Le plan ne choisit pas : lecture (a),
-        confier le travail à un agent spécialisé est en soi une production ; lecture (b), la règle
-        est récursive, seul ce que le sous-agent a produit compte. La garde « un sous-agent qui n'a
-        fait que parler : sans encart » vaut pour (b) ; pour (a) elle devient « une délégation à un
-        agent de recherche : encart ».</span
+        ><b>L'agent de recherche</b> suit la règle récursive (Quentin, 06/09, au go du lot 2) : seul
+        ce que le sous-agent a produit compte. « S'il ne fait que répondre à un message dans le
+        chat, ce n'est pas un projet. » Déléguer n'est jamais en soi une production.</span
       >
     </div>
     <div class="ligne">
@@ -958,6 +987,22 @@
         actions par leur job) — à vérifier dans le code du chat avant de découper P7. Et répondre
         depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi
         permet aujourd'hui.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>55ec67eb</code> + <code>717a28da</code>, passe Codex 29).
+        <code>/chat</code> liste toutes les conversations (origine, agent, titre sans le préfixe de
+        groupe, projet courant, tours, activité) ; <code>/chat/[id]</code> rend le fil de P2 sur
+        toute la conversation (les jobs de tête d'un canal, ou les tours du dashboard avec le
+        travail escaladé sous chacun), la preuve et le coût de tout le fil, la saisie en bas pour le
+        dashboard — envoyée à l'agent <b>de la conversation</b>, plus au ROOT courant. La frontière
+        chat / travail se lit sur les cartes et sur l'issue de l'appel (un refus ne produit rien) ;
+        <code>tool_calls.risk_level</code> (migration 0095) tranche les outils tiers ; les lignes
+        d'avant les cartes sont dites « non classées ». L'encart « Produced » nomme les fichiers, le
+        projet, et renvoie à sa page. Le chat à deux volets a disparu. <b>Limite</b> : répondre
+        depuis le web dans un fil venu d'un canal reste hors périmètre, le fil le dit.</span
       >
     </div>
   </div>
@@ -1001,6 +1046,22 @@
         les conversations du projet.</span
       >
     </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>d01585a3</code>, passe Codex 30 en cours). <code>/spaces</code> liste les
+        projets enregistrés (sorte, agent, dossier, travaux, dernier verdict de preuve) ; « New
+        project » ouvre une modale (agent → terrain → sous-dossier avec aperçu du chemin, sorte).
+        <code>/spaces/[id]</code> : l'étagère (dossier, fichiers sur un niveau, preuve), les
+        conversations du projet, le fil de la conversation du projet et la saisie en bas — le
+        premier envoi crée cette conversation, ancrée au projet. Le fil d'un run a déménagé vers
+        <code>/scheduled/[id]</code>. <b>Arbitrages pour Quentin</b> : le lien d'une délégation
+        pointe vers <code>/scheduled/&lt;jobId&gt;</code> faute de route neutre ; la configuration
+        de la preuve n'a pas d'URL propre ; la conversation du projet est la plus récente ancrée,
+        pas forcément celle créée depuis la page ; elle naît avec le ROOT, pas avec l'agent
+        responsable du projet.</span
+      >
+    </div>
   </div>
 
   <div class="pierre">
@@ -1028,6 +1089,19 @@
     <div class="ligne">
       <span class="l">garde</span
       ><span class="v">Aucun run cron dans Spaces ni dans Chat ; un run ouvre son fil.</span>
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        >Le 06/09 (<code>b9ff0f1b</code>, passe Codex 26 → <code>0cb5889b</code>). Entrée «
+        Scheduled », page <code>/scheduled</code> (13 automatisations, 261 runs sur la base de
+        Quentin), Spaces sans cron. La passe 26 a fait remonter deux dettes du lot 1, corrigées :
+        l'id d'une automatisation supprimée survit dans la provenance du job (deux homonymes
+        supprimées restaient une seule ligne) ; les trois boutons bruts de la barre d'état sont
+        passés par le design system. <b>À valider par Quentin</b> : le contrat de
+        <code>TextButton</code> a été élargi à la disclosure inline plutôt que de créer un composant
+        DS de plus.</span
+      >
     </div>
   </div>
 
