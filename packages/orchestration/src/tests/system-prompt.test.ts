@@ -1079,6 +1079,10 @@ describe('buildSystemPrompt — le bloc ## Conversation (P6)', () => {
     // La consigne : demander AVANT d'écrire un document, et jamais pour du code.
     expect(bloc).toContain('Before writing a DOCUMENT');
     expect(bloc).toContain('`ask_user`');
+    // Plafond de la QUESTION, distinct du plafond de l'inventaire : `ask_user`
+    // n'accepte que six options, et le bloc listait jusqu'à douze projets — le
+    // modèle construisait un appel que le schéma refuse (revue Codex, passe 39).
+    expect(bloc).toContain('offer up to five relevant registered projects by name');
     expect(bloc).toContain('"New project: <name you propose>"');
     expect(bloc).toContain('`register_project`');
     expect(bloc).toContain('declares its own project: never ask for it');

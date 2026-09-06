@@ -14,13 +14,14 @@
 // Spaces montre le projet, son fichier et sa conversation.
 //
 // CE QUI TIENT LA RÈGLE « rien en silence » : `computeApproval` ci-dessous. Il
-// ne suffit pas que l'outil existe — sans question répondue dans ce job, la
-// création passe par la carte d'approbation ordinaire.
+// ne suffit pas qu'une question ait été répondue dans ce job — il faut que
+// l'option CHOISIE nomme CE projet. Sinon, la création passe par la carte
+// d'approbation ordinaire.
 //
 // INVARIANT #2 : rien ici ne fabrique de phrase pour l'utilisateur. La sortie
 // est une ligne de données ; c'est le LLM qui la raconte.
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rmdir, stat } from 'node:fs/promises';
 import { basename } from 'node:path/posix';
 import { z } from 'zod';
 import { and, eq, approvalRequests, codeProjects } from '@nodal-agents/db';
@@ -74,22 +75,74 @@ export type RegisterProjectOutput =
     }
   | { ok: false; reason: string };
 
+/** Combien de questions répondues du job la garde examine au plus. */
+const ANSWERED_QUESTIONS_SCANNED = 50;
+
 /**
- * Une question a-t-elle été posée ET répondue dans CE job ?
+ * Le repli de comparaison : diacritiques retirés, minuscules, espaces rognés.
  *
- * Portée au JOB, pas à l'appel : la question est posée par `ask_user`, avec son
- * propre `tool_call_id`, et c'est un appel DIFFÉRENT de celui-ci. Les lier par
- * l'id d'appel — ce que fait le plancher `asksUser` d'execute.ts — ne
- * trouverait jamais rien ici.
- *
- * `approved` seulement : une question DÉCLINÉE n'est pas une réponse, et
- * laisser passer la création sur un refus serait exactement le silence que la
- * règle interdit.
+ * `NFKD` sépare la lettre de son accent, la plage `\u0300-\u036f` retire les
+ * accents ainsi détachés. « Été 2026 » et « ete 2026 » deviennent le même
+ * texte, ce qui compte parce que l'agent écrit le libellé de l'option d'un
+ * côté et le nom du projet de l'autre, à deux appels d'écart.
  */
-async function jobHasAnsweredQuestion(db: ToolContext['db'], jobId: string): Promise<boolean> {
+function fold(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+/** Le dernier segment d'un chemin d'entrée — le nom du dossier demandé. */
+function lastSegment(path: string): string {
+  const parts = path.split(/[\\/]/).filter((s) => s !== '');
+  return parts[parts.length - 1] ?? '';
+}
+
+/**
+ * L'utilisateur a-t-il, dans CE job, choisi une option qui NOMME ce projet ?
+ *
+ * POURQUOI CETTE RÈGLE, et pas « une question a été répondue » (revue Codex,
+ * passe 39, constat bloquant). L'ancienne version se contentait d'une ligne
+ * `kind = 'question'` approuvée dans le job : « Quelle couleur ? » → « Bleu »
+ * suffisait alors à créer `comptabilite` sans que personne n'ait rien dit de
+ * cette destination. « Le propriétaire a été consulté » n'est pas
+ * « le propriétaire a autorisé CE projet ».
+ *
+ * POURQUOI PAS une table d'autorisations. Codex proposait qu'`ask_user` porte
+ * les effets de chaque option, ou qu'une ligne
+ * `project_registration_authorizations` soit produite à la résolution et
+ * consommée ici. Les deux demandent une migration et une notion de capacité
+ * consommable que rien d'autre du produit n'utilise. La liaison existe déjà,
+ * sans rien ajouter : c'est l'AGENT qui écrit le libellé de l'option
+ * (« New project: veille-ia ») et l'AGENT qui écrit ensuite le `name`/`path`.
+ * Exiger que le libellé CHOISI contienne l'un des deux lie la réponse à la
+ * destination sans lire la prose de la question, et sans qu'un texte libre
+ * puisse s'y substituer : le libellé n'est pas saisi par l'utilisateur, il est
+ * choisi parmi ceux que l'agent a proposés (la résolution refuse toute réponse
+ * hors options, voir `ask-user.ts`).
+ *
+ * `approved` seulement : une question DÉCLINÉE n'est pas une réponse.
+ *
+ * Aucune correspondance ⇒ la carte d'approbation ORDINAIRE, jamais un refus :
+ * l'agent a peut-être raison, c'est au propriétaire de trancher.
+ */
+async function jobAnsweredForProject(
+  db: ToolContext['db'],
+  jobId: string,
+  wanted: { name?: string | undefined; folder: string },
+): Promise<boolean> {
   if (!jobId) return false;
-  const [row] = await db
-    .select({ id: approvalRequests.id })
+  // Les aiguilles vides sont écartées : `''.includes` serait toujours vrai, et
+  // rendrait la garde inopérante sur un `name` blanc.
+  const needles = [wanted.name, wanted.folder]
+    .map((v) => (v === undefined ? '' : fold(v)))
+    .filter((v) => v !== '');
+  if (needles.length === 0) return false;
+
+  const rows = await db
+    .select({ answer: approvalRequests.answer })
     .from(approvalRequests)
     .where(
       and(
@@ -98,8 +151,13 @@ async function jobHasAnsweredQuestion(db: ToolContext['db'], jobId: string): Pro
         eq(approvalRequests.status, 'approved'),
       ),
     )
-    .limit(1);
-  return row !== undefined;
+    .limit(ANSWERED_QUESTIONS_SCANNED);
+
+  return rows.some((r) => {
+    if (!r.answer) return false;
+    const answer = fold(r.answer);
+    return needles.some((n) => answer.includes(n));
+  });
 }
 
 export const registerProjectTool: ToolDefinition<
@@ -116,7 +174,11 @@ export const registerProjectTool: ToolDefinition<
     'pyproject.toml, …): that folder registers itself as a project the moment you write in ' +
     'it, so just write. Do NOT use it for a folder that is already a registered project ' +
     'either — writing into it is enough, and it stays attached to this conversation. ' +
-    'After this call, write your files under the returned `path`.',
+    'After this call, write your files under the returned `path`. ' +
+    'One rule to know: this runs without a second prompt only when the option the person ' +
+    'picked in your question names this very project — its `name` or its folder. That is ' +
+    'what a "New project: veille-ia" option does. Ask with that label, then reuse it here; ' +
+    'otherwise the owner is asked to confirm the folder before anything is created.',
   inputSchema: RegisterProjectInputSchema,
   riskLevel: 'write',
   // Carte `text` : la sortie est une ligne de DONNÉES (un id, un chemin, un
@@ -142,10 +204,12 @@ export const registerProjectTool: ToolDefinition<
   /**
    * LA GARDE « rien ne se crée en silence ».
    *
-   * Sans question répondue dans ce job, créer un projet passe par la carte
-   * d'approbation ORDINAIRE : le propriétaire voit le dossier proposé et
-   * tranche. Avec une question répondue, il a DÉJÀ tranché — redemander
-   * transformerait sa réponse en deux clics pour une seule décision.
+   * Sans réponse qui NOMME ce projet dans ce job, créer un projet passe par la
+   * carte d'approbation ORDINAIRE : le propriétaire voit le dossier proposé et
+   * tranche. Avec une telle réponse, il a DÉJÀ tranché sur CETTE destination —
+   * redemander transformerait son choix en deux clics pour une seule décision.
+   * La règle exacte, et pourquoi elle ne lit pas la prose de la question, est
+   * dans `jobAnsweredForProject`.
    *
    * Pas de `defaultApproval` : une règle explicite du propriétaire (un
    * `auto_approve` posé sur cet outil, ou un `block`) garde la précédence,
@@ -153,8 +217,13 @@ export const registerProjectTool: ToolDefinition<
    * appelé — c'est le choix explicite du propriétaire, la même mécanique que
    * l'écrasement gaté de `file_write`, pas un contournement.
    */
-  computeApproval: async (_input, ctx) =>
-    (await jobHasAnsweredQuestion(ctx.db, ctx.jobId)) ? undefined : 'require_approval',
+  computeApproval: async (input, ctx) =>
+    (await jobAnsweredForProject(ctx.db, ctx.jobId, {
+      name: input.name,
+      folder: lastSegment(input.path),
+    }))
+      ? undefined
+      : 'require_approval',
   execute: async (input, ctx): Promise<RegisterProjectOutput> => {
     let abs: string;
     try {
@@ -182,6 +251,15 @@ export const registerProjectTool: ToolDefinition<
     if (!isSafeSubfolder(input.path)) {
       return { ok: false, reason: 'unsafe_path' };
     }
+
+    // Le dossier existait-il AVANT cet appel ? Seule réponse qui autorise à le
+    // reprendre en cas d'échec plus bas : un dossier que le propriétaire avait
+    // déjà ne s'efface pas parce qu'un rattachement a raté (revue Codex,
+    // passe 39, constat hors demande).
+    const existedBefore = await stat(abs).then(
+      (st) => st.isDirectory(),
+      () => false,
+    );
 
     try {
       await mkdir(abs, { recursive: true });
@@ -240,6 +318,26 @@ export const registerProjectTool: ToolDefinition<
       [{ kind: 'dir', path: abs, deliverableType: 'office_file' }],
     );
     if (outcome.kind === 'failed') {
+      // DÉFAIRE ce que CET appel a fait, et rien d'autre (revue Codex, passe 39).
+      // Sans ce nettoyage, un rattachement raté laissait le projet dans Spaces
+      // et le dossier sur le disque, alors que l'appel annonce un échec et que
+      // la conversation reste sans projet courant — le pire des deux états.
+      //
+      // Le dossier ne peut pas entrer dans la transaction SQL : on le retire
+      // donc à la main, et seulement si cet appel l'a créé ET qu'il est resté
+      // VIDE (`rmdir` échoue sur un dossier peuplé, et c'est la garde qu'on
+      // veut : quelque chose y a été écrit entre-temps).
+      if (declared.length > 0) {
+        await ctx.db
+          .delete(codeProjects)
+          .where(eq(codeProjects.id, row.id))
+          .catch((err: unknown) => {
+            console.error(`[projects] PROJECT_ROLLBACK_FAILED id=${row.id}`, err);
+          });
+      }
+      if (!existedBefore) {
+        await rmdir(abs).catch(() => undefined);
+      }
       return { ok: false, reason: `attach_failed:${outcome.code}` };
     }
 

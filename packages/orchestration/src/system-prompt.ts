@@ -451,16 +451,21 @@ function buildConversationBlock(conv: ConversationContext): string {
       '- Current project: none yet. Nothing produced in this conversation has landed ' +
         'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
         'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
-        '`ask_user`: offer the registered projects by name and one "New project: <name you ' +
-        'propose>" option, then call `register_project` for a new one, then write. Code that ' +
+        '`ask_user`: offer up to five relevant registered projects by name and one ' +
+        '"New project: <name you propose>" option, then call `register_project` for a new ' +
+        'one with that same name, then write. Code that ' +
         'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
         'its own project: never ask for it.',
     );
     const registered = conv.registeredProjects ?? [];
     if (registered.length > 0) {
-      // Les OPTIONS de cette question. Plafonnées à 12 : au-delà, la liste
-      // coûte plus de contexte qu'elle n'aide, et `ask_user` n'accepte de
-      // toute façon que six options.
+      // L'INVENTAIRE dans lequel l'agent puise ses options, plafonné à 12 :
+      // au-delà, la liste coûte plus de contexte qu'elle n'aide.
+      //
+      // Ce n'est PAS la question. `ask_user` n'accepte que six options, et la
+      // consigne ci-dessus en demande cinq au plus, plus « New project » : sans
+      // cette distinction, un espace à douze projets faisait construire au
+      // modèle un appel que le schéma refuse (revue Codex, passe 39, P2).
       //
       // Neutralisation identique aux projets du bloc Runtime : ces noms
       // viennent de la base et du disque, et un saut de ligne dans l'un d'eux

@@ -8,7 +8,7 @@
 // `conversations`, `approval_requests`), jamais sur des compteurs d'appels.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,18 +82,27 @@ async function conversationNeuve(chatId: string): Promise<string> {
   return row.id;
 }
 
-/** La question `ask_user` de ce job, RÉPONDUE — ce que le clic de l'utilisateur laisse. */
-async function questionRepondue(jobId: string): Promise<void> {
+/**
+ * La question `ask_user` de ce job, RÉPONDUE — ce que le clic laisse en base.
+ *
+ * Le LIBELLÉ choisi est le paramètre : depuis la passe 39, c'est lui qui doit
+ * nommer le projet pour que la création passe sans second clic.
+ */
+async function questionRepondue(
+  jobId: string,
+  answer = 'New project: veille-ia',
+  question = 'Où ranger cette synthèse ?',
+): Promise<void> {
   await db.insert(approvalRequests).values({
     entityId: seed.entityId,
     agentId: seed.agentId,
     jobId,
-    toolCallId: `call-ask-${jobId}`,
+    toolCallId: `call-ask-${jobId}-${answer}`,
     toolName: 'ask_user',
-    toolInput: { question: 'Où ranger cette synthèse ?', options: ['New project: veille-ia'] },
+    toolInput: { question, options: [answer, 'Something else'] },
     kind: 'question',
     status: 'approved',
-    answer: 'New project: veille-ia',
+    answer,
     resolvedAt: new Date(),
   });
 }
@@ -211,13 +220,13 @@ describe('register_project — la création', () => {
   it('un second appel ne redéclare rien : `created: false`, une seule ligne, le nom intact', async () => {
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-b');
-    await questionRepondue(jobId);
+    await questionRepondue(jobId, 'New project: notes');
 
     const premier = await appel({ path: 'notes', name: 'Mes notes' }, jobId, conversationId);
     expect(premier.outcome).toBe('success');
 
     const jobDeux = await jobNeuf();
-    await questionRepondue(jobDeux);
+    await questionRepondue(jobDeux, 'New project: notes');
     const second = await appel({ path: 'notes', name: 'Autre nom' }, jobDeux, conversationId);
     expect(second.outcome).toBe('success');
     if (second.outcome !== 'success') return;
@@ -236,7 +245,7 @@ describe('register_project — la création', () => {
 
   it('un chemin hors terrain est refusé, et rien n’est créé', async () => {
     const jobId = await jobNeuf();
-    await questionRepondue(jobId);
+    await questionRepondue(jobId, 'New project: hors');
 
     const res = await appel({ path: '../hors' }, jobId, null);
     expect(res.outcome).toBe('success');
@@ -266,7 +275,7 @@ describe('register_project — la création', () => {
 
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-c');
-    await questionRepondue(jobId);
+    await questionRepondue(jobId, 'New project: déjà');
     const res = await appel({ path: 'déjà', name: 'Nom de l’agent' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
@@ -295,7 +304,7 @@ describe('register_project — la création', () => {
 
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-c2');
-    await questionRepondue(jobId);
+    await questionRepondue(jobId, 'New project: renommé');
     const res = await appel({ path: 'renommé', name: 'Nom de l’agent' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
@@ -308,6 +317,69 @@ describe('register_project — la création', () => {
     expect(row?.displayName).toBe('Le nom de Quentin');
     expect(row?.registeredAt).not.toBeNull();
     expect(row?.registeredFrom).toBe('conversation');
+  });
+});
+
+describe('register_project — le rattachement rate : rien ne reste (revue Codex, passe 39)', () => {
+  /**
+   * Un rattachement qui ÉCHOUE pour de vrai, sans truquer l'outil.
+   *
+   * Un `jobId` inexistant ne convient pas : `registered_job_id` porte une clé
+   * étrangère vers `agent_jobs`, donc l'upsert casserait AVANT le rattachement
+   * et le test ne prouverait rien du nettoyage. Un id de conversation qui n'est
+   * pas un uuid, lui, ne gêne pas l'upsert et fait lever l'UPDATE de la
+   * conversation à l'intérieur de la transaction : `attach_write_failed`.
+   * C'est un cas réel — les uuid orphelins d'avant P6 que l'absence de clé
+   * étrangère conserve délibérément.
+   */
+  function ctxRattachementCasse(jobId: string): ToolContext {
+    return { ...ctx(jobId, 'pas-un-uuid') } as ToolContext;
+  }
+
+  it('la ligne déclarée par CET appel est retirée, et le dossier qu’il a créé aussi', async () => {
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'New project: fantome');
+
+    const res = await executeTool(
+      outil(),
+      { path: 'fantome' },
+      ctxRattachementCasse(jobId),
+      options(),
+    );
+    expect(res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    const out = res.output as { ok: boolean; reason: string };
+    expect(out.ok).toBe(false);
+    expect(out.reason.startsWith('attach_failed:')).toBe(true);
+
+    // Rien dans Spaces, rien sur le disque : l'échec est un vrai échec.
+    expect(await toutesLesLignes(`${terrain}/fantome`)).toHaveLength(0);
+    await expect(stat(`${terrain}/fantome`)).rejects.toThrow();
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('un dossier VIDE qui existait AVANT l’appel n’est pas effacé', async () => {
+    // Vide exprès : `rmdir` réussirait dessus. Ce qui le sauve n'est donc pas
+    // le hasard d'un dossier peuplé, c'est le drapeau `existedBefore`.
+    const abs = `${terrain}/deja-la`;
+    await mkdir(abs, { recursive: true });
+
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'New project: deja-la');
+
+    const res = await executeTool(
+      outil(),
+      { path: 'deja-la' },
+      ctxRattachementCasse(jobId),
+      options(),
+    );
+    expect(res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect((res.output as { ok: boolean }).ok).toBe(false);
+
+    // La ligne déclarée par cet appel part ; le dossier du propriétaire reste.
+    expect(await toutesLesLignes(abs)).toHaveLength(0);
+    expect((await stat(abs)).isDirectory()).toBe(true);
   });
 });
 
@@ -364,7 +436,7 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
 
   it('une question répondue dans un AUTRE job ne déverrouille pas celui-ci', async () => {
     const autreJob = await jobNeuf();
-    await questionRepondue(autreJob);
+    await questionRepondue(autreJob, 'New project: voisin');
     const jobId = await jobNeuf();
 
     const res = await executeTool(
@@ -375,6 +447,80 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
     );
     expect(res.outcome).toBe('awaiting_approval');
     await expect(stat(`${terrain}/voisin`)).rejects.toThrow();
+  });
+
+  it('une question répondue sur AUTRE CHOSE ne crée pas ce projet (revue Codex, passe 39)', async () => {
+    // Le scénario exact du constat bloquant : « Quelle couleur ? » → « Bleu ».
+    // La question a bien été posée et répondue dans ce job, mais rien dans ce
+    // qui a été choisi ne parle de `comptabilite`.
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'Bleu', 'Quelle couleur utiliser ?');
+
+    const res = await executeTool(
+      outil(),
+      { path: 'comptabilite' },
+      { ...ctx(jobId, null), toolCallId: 'call-reg-couleur' } as ToolContext,
+      options(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+    await expect(stat(`${terrain}/comptabilite`)).rejects.toThrow();
+    expect(await toutesLesLignes(`${terrain}/comptabilite`)).toHaveLength(0);
+  });
+
+  it('le libellé choisi nomme le DOSSIER : la création passe', async () => {
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-lien-dossier');
+    await questionRepondue(jobId, 'New project: veille-ia');
+
+    const res = await appel({ path: 'veille-ia' }, jobId, conversationId);
+    expect(res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
+      ok: true,
+      created: true,
+    });
+  });
+
+  it('le libellé choisi nomme le NOM affiché, écrit autrement que le dossier : la création passe', async () => {
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-lien-nom');
+    await questionRepondue(jobId, 'New project: Veille IA');
+
+    const res = await appel({ path: 'veille-ia', name: 'Veille IA' }, jobId, conversationId);
+    expect(res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
+      ok: true,
+      created: true,
+    });
+  });
+
+  it('accents et casse : c’est le NOM qui lie, pas le dossier tréma-libre', async () => {
+    // « Nouveau projet : Été 2026 » replié donne « nouveau projet : ete 2026 ».
+    // Le dernier segment du chemin, `ete-2026`, n'y est PAS contenu — le tiret
+    // n'est pas un espace. C'est donc le `name` (« Été 2026 ») qui doit être
+    // passé, et lui matche : le repli retire les diacritiques et la casse.
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-accents');
+    // Le libellé est écrit en capitales, le nom du projet ne l'est pas : seul
+    // le repli (NFKD + minuscules) les rapproche.
+    await questionRepondue(jobId, 'Nouveau projet : ÉTÉ 2026');
+
+    const sansNom = await executeTool(
+      outil(),
+      { path: 'ete-2026' },
+      { ...ctx(jobId, null), toolCallId: 'call-reg-accent-1' } as ToolContext,
+      options(),
+    );
+    expect(sansNom.outcome).toBe('awaiting_approval');
+
+    const avecNom = await appel({ path: 'ete-2026', name: 'Été 2026' }, jobId, conversationId);
+    expect(avecNom.outcome).toBe('success');
+    if (avecNom.outcome !== 'success') return;
+    expect(avecNom.output as { ok: boolean; created: boolean }).toMatchObject({
+      ok: true,
+      created: true,
+    });
   });
 
   it('sous `fully_autonomous`, le propriétaire a déjà tranché : la création passe sans question', async () => {
