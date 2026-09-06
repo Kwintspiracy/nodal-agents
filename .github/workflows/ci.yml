@@ -22,7 +22,11 @@ jobs:
     # 15 → 20 (2026-08-19): the job crept up to 14-15 min as the codebase grew
     # (code_task + runtime agents + Code tab) and a slow runner tipped the
     # Build step over the cap with every check already green.
-    timeout-minutes: 20
+    # 25, pas 20 : le 06/09 le job a fini son Build puis a été coupé trois
+    # secondes plus tard par le délai — le dernier run vert prenait déjà
+    # 19 min 45. Le poste qui grossit est la suite de tests (turbo à 3) ;
+    # le délai suit, le budget des suites se surveille à part.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
