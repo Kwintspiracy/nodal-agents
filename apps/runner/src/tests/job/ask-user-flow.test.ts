@@ -284,6 +284,70 @@ describe('ask_user — la boucle complète dans le runner', () => {
     });
   });
 
+  it('DEUX questions dans le même tour : une seule suspend, l’autre est différée — jamais deux lignes (passe 37)', async () => {
+    // Sans garde, deux `ask_user` d'un tour (deux outils `read`, aucune règle)
+    // partaient dans le pré-passage PARALLÈLE : deux lignes en attente, deux
+    // cartes, et à la reprise — qui retrouve le marqueur par nom d'outil — la
+    // première réponse attribuée au mauvais appel. Un outil qui pose une
+    // question suspend toujours ; la seconde est différée comme toute action
+    // après une suspension.
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-q-a',
+            toolName: 'ask_user',
+            args: { question: QUESTION, options: OPTIONS },
+          },
+          {
+            toolCallId: 'tc-q-b',
+            toolName: 'ask_user',
+            args: { question: 'And the second thing?', options: ['Yes', 'No'] },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const suspended = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(suspended.status).toBe('awaiting_approval');
+
+    const rows = await db
+      .select({ toolCallId: approvalRequests.toolCallId, status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.kind, 'question')));
+    expect(rows, 'deux questions ont été posées en même temps').toEqual([
+      { toolCallId: 'tc-q-a', status: 'pending' },
+    ]);
+    const texts = await toolResultTexts(job.id);
+    expect(texts.filter((t) => t.includes('[AWAITING_APPROVAL]'))).toHaveLength(1);
+    expect(texts.filter((t) => t.includes('[DEFERRED]'))).toHaveLength(1);
+
+    // La réponse va à la BONNE question, et le travail finit.
+    await db.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, job.id));
+    const [pending] = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, job.id), eq(approvalRequests.toolCallId, 'tc-q-a')));
+    const resolved = await resolveApprovalDecision(makeDeps(llmClient), testEnv, {
+      approvalRequestId: pending!.id,
+      decision: 'approve',
+      answer: OPTIONS[0]!,
+      resolvedBy: 'api',
+    });
+    expect(resolved.ok).toBe(true);
+    const resumed = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(resumed.status).toBe('completed');
+    const after = await toolResultTexts(job.id);
+    expect(after.some((t) => t.includes(OPTIONS[0]!) && t.includes('option_index'))).toBe(true);
+    expect(after.some((t) => t.includes('[AWAITING_APPROVAL]'))).toBe(false);
+  });
+
   it('une question DÉCLINÉE reprend le travail sur le marqueur [REJECTED], sans réponse inventée', async () => {
     const job = await createJob();
     const llmClient = makeMockLlmClient([

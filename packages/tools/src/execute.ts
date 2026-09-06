@@ -372,6 +372,23 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // synthetic `resume-bypass` auto_approve rule the runner passes would not, on
   // its own, get past this floor.
   if (tool.asksUser && effectiveAction !== 'block') {
+    if (!ctx.toolCallId) {
+      // SANS id d'appel, une question ne peut être ni suspendue ni reprise
+      // (revue Codex, passe 37) : la ligne serait créée sans `tool_call_id`, la
+      // reprise la rejouerait sans id, `hasAnsweredQuestion` ne la retrouverait
+      // jamais, et la porte reposerait la question — à l'infini. Un appel sans
+      // id est un appelant qui ne sait pas reprendre : dit par un code, jamais
+      // suspendu.
+      const result: ToolExecutionResult = { outcome: 'error', error: 'question_without_call_id' };
+      await _writeToolCall(
+        ctx,
+        auditTool,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
     effectiveAction = (await hasAnsweredQuestion(ctx, tool.name))
       ? 'auto_approve'
       : 'require_approval';

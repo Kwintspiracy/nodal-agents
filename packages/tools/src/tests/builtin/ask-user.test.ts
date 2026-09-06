@@ -7,7 +7,7 @@
 // et sur la sortie réelle de l'outil, jamais sur des compteurs d'appels.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { and, eq, desc } from '@nodal-agents/db';
+import { and, eq, desc, isNull } from '@nodal-agents/db';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -123,9 +123,11 @@ describe('ask_user — la porte', () => {
     expect(calls[0]?.card).toBe('question');
   });
 
-  it('sans toolCallId, redemande plutôt que de répondre au hasard', async () => {
+  it("sans toolCallId, refuse par un code — ni réponse au hasard, ni question qu'on ne saurait reprendre", async () => {
     // Une ligne répondue existe pour le job — mais pour un AUTRE appel. Sans id
-    // d'appel, rien ne permet de dire qu'elle répond à celle-ci.
+    // d'appel, rien ne permet de dire qu'elle répond à celle-ci ; et suspendre
+    // créerait une ligne SANS id que la reprise ne retrouverait jamais — la
+    // question serait reposée à l'infini (revue Codex, passe 37).
     await db.insert(approvalRequests).values({
       entityId: seed.entityId,
       jobId: seed.jobId,
@@ -145,7 +147,13 @@ describe('ask_user — la porte', () => {
       makeOpts([resumeBypassRule()], 'fully_autonomous'),
     );
 
-    expect(result.outcome).toBe('awaiting_approval');
+    expect(result).toEqual({ outcome: 'error', error: 'question_without_call_id' });
+    // Aucune ligne sans id n'a été créée : rien à reprendre, rien à reposer.
+    const sansId = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, seed.jobId), isNull(approvalRequests.toolCallId)));
+    expect(sansId).toEqual([]);
   });
 
   it("une règle `block` est honorée : bloqué, et AUCUNE ligne d'approbation", async () => {

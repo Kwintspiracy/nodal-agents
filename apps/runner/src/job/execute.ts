@@ -2007,7 +2007,9 @@ async function runJob(
       // whose toolName equals req.toolName and whose output text contains
       // [AWAITING_APPROVAL]). Using toolName for matching is safe because there
       // is at most one pending approval per tool per turn in this design
-      // (one approval at a time; siblings are deferred).
+      // (one approval at a time; siblings are deferred) — including a tool
+      // that asks the user (`asksUser`), which `wouldRequireApproval` keeps
+      // out of the parallel pre-pass for exactly this reason.
       msgs = msgs.map((msg) => {
         if (typeof msg !== 'object' || msg === null || (msg as { role: string }).role !== 'tool') {
           return msg;
@@ -3112,6 +3114,15 @@ async function runJob(
       const wouldRequireApproval = (name: string): boolean => {
         const def = toolMap.get(name);
         if (!def) return false;
+        // Un outil qui POSE UNE QUESTION (P10a, `asksUser`) suspend toujours :
+        // il ne doit jamais entrer dans le pré-passage parallèle (revue Codex,
+        // passe 37). Deux `ask_user` d'un même tour y créaient deux lignes en
+        // attente et deux cartes, puis la reprise — qui retrouve le marqueur
+        // par nom d'outil — attribuait la première réponse au mauvais appel.
+        // Dans la boucle sérielle, la première question suspend et les
+        // suivantes sont différées : une seule ligne par tour, comme pour
+        // toute approbation.
+        if (def.asksUser === true) return true;
         const rule = matchApprovalRule(approvalRuleList, name, agentRow.id, job.entityId ?? '');
         return (rule?.action ?? def.defaultApproval) === 'require_approval';
       };
