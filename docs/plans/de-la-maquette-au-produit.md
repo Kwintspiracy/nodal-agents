@@ -285,7 +285,7 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 
 **Ce que ça pose.** La page Chat liste **toutes** les conversations, tous canaux, avec leur origine. En ouvrir une rend le fil de P2, le même code. Au tour où quelque chose est sorti du chat, un **encart** dit ce qui a été produit, le projet où il vit (nom, dossier) et le lien vers sa page. Répondre depuis le web dans une conversation venue d'un canal passe par l'outil d'envoi de ce canal.
 
-**La frontière.** Chat : lire, chercher, consulter **et noter** la mémoire, répondre en texte sur n'importe quel canal de la conversation (le canal est transparent), déléguer à un agent qui n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, un email ou tout envoi vers un destinataire qui n'est pas un canal de la conversation, le harnais de code. **Récursif** sur les descendants. Se lit sur les cartes de P1 ; les outils tiers (`generic`) exigent de persister leur niveau de risque sur `tool_calls`, une colonne de plus.
+**La frontière.** Chat : lire, chercher, consulter **et noter** la mémoire, répondre en texte sur n'importe quel canal de la conversation (le canal est transparent), déléguer à un agent qui n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, un email ou tout envoi vers un destinataire qui n'est pas un canal de la conversation, le harnais de code. **Récursif** sur les descendants. Se lit sur les cartes de P1 ; les outils tiers (`generic`) exigent de persister leur niveau de risque sur `tool_calls`, une colonne de plus. Les outils natifs se classent par leur **carte**, jamais par leur niveau de risque : `save_memory` est `write` pour la garde d'exécution mais `text` pour la carte, donc chat ; le niveau de risque ne sert qu'aux outils tiers, qui n'ont que `generic`.
 
 **Hors périmètre.** La page Runs et son classificateur `classifyJob` (qui compte une recherche web comme une tâche) restent tels quels.
 
@@ -327,11 +327,11 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 
 **Ce que ça pose.** La carte « 12 fichiers » : la liste cliquable, le diff de la sélection.
 
-**Sur quoi ça s'appuie.** Pour `file_write` / `file_edit`, `tool_input` porte déjà l'ancien et le nouveau texte. Pour le harnais de code, il faut le sha de l'instantané : **il n'est pas en base.** Deux pièces : persister `(job_id, turn, sha, workspace)` quand `takeCheckpointForTurn` le calcule, puis `git diff` dans le dépôt des instantanés.
+**Sur quoi ça s'appuie.** Pour `file_edit`, `tool_input` porte l'ancien fragment (`old_string`) et le nouveau : le diff se rend directement. Pour `file_write`, l'entrée ne porte que le chemin et le **nouveau** contenu (vérifié le 06/09, `file-write.ts`) : l'état antérieur doit venir de l'instantané du tour. Pour le harnais de code comme pour `file_write`, il faut donc le sha de l'instantané : **il n'est pas en base.** Deux pièces : persister `(job_id, turn, sha, workspace)` quand `takeCheckpointForTurn` le calcule (aujourd'hui seulement journalisé), puis `git diff` dans le dépôt des instantanés.
 
-**Limite.** Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit. La carte dit alors « fichiers écrits, sans diff ».
+**Limite.** Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit ni pour un `file_write` qui écrase : la carte dit alors « fichiers écrits, sans diff ». Seul `file_edit` rend son diff partout.
 
-**Garde.** Un `file_edit` semé rend son diff exact ; un instantané semé puis un second rendent le diff git attendu ; un dossier sans git rend l'état « sans diff » et pas une erreur.
+**Garde.** Un `file_edit` semé rend son diff exact ; un instantané semé puis un second rendent le diff git attendu ; un `file_write` qui écrase dans un dossier sans git rend l'état « sans diff » et pas une erreur.
 
 ### P12 · Le tableur rendu — S
 

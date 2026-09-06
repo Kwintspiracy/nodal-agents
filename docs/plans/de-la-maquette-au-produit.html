@@ -909,7 +909,11 @@
         une base externe, une pièce jointe envoyée, un email ou tout envoi vers un destinataire qui
         n'est pas un canal de la conversation, le harnais de code. <b>Récursif</b> sur les
         descendants. Se lit sur les cartes de P1 ; les outils tiers (<code>generic</code>) exigent
-        de persister leur niveau de risque sur <code>tool_calls</code>, une colonne de plus.</span
+        de persister leur niveau de risque sur <code>tool_calls</code>, une colonne de plus. Les
+        outils natifs se classent par leur <b>carte</b>, jamais par leur niveau de risque :
+        <code>save_memory</code> est <code>write</code> pour la garde d'exécution mais
+        <code>text</code> pour la carte, donc chat ; le niveau de risque ne sert qu'aux outils
+        tiers, qui n'ont que <code>generic</code>.</span
       >
     </div>
     <div class="ligne">
@@ -1071,26 +1075,31 @@
     <div class="ligne">
       <span class="l">s&#x27;appuie sur</span
       ><span class="v"
-        >Pour <code>file_write</code> / <code>file_edit</code>, <code>tool_input</code> porte déjà
-        l'ancien et le nouveau texte. Pour le harnais de code, il faut le sha de l'instantané :
-        <b>il n'est pas en base.</b> Deux pièces : persister
+        >Pour <code>file_edit</code>, <code>tool_input</code> porte l'ancien fragment
+        (<code>old_string</code>) et le nouveau : le diff se rend directement. Pour
+        <code>file_write</code>, l'entrée ne porte que le chemin et le <b>nouveau</b> contenu
+        (vérifié le 06/09, <code>file-write.ts</code>) : l'état antérieur doit venir de l'instantané
+        du tour. Pour le harnais de code comme pour <code>file_write</code>, il faut donc le sha de
+        l'instantané : <b>il n'est pas en base.</b> Deux pièces : persister
         <code>(job_id, turn, sha, workspace)</code> quand <code>takeCheckpointForTurn</code> le
-        calcule, puis <code>git diff</code> dans le dépôt des instantanés.</span
+        calcule (aujourd'hui seulement journalisé), puis <code>git diff</code> dans le dépôt des
+        instantanés.</span
       >
     </div>
     <div class="ligne">
       <span class="l">limite</span
       ><span class="v"
-        >Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit. La carte dit alors
-        « fichiers écrits, sans diff ».</span
+        >Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit ni pour un
+        <code>file_write</code> qui écrase : la carte dit alors « fichiers écrits, sans diff ». Seul
+        <code>file_edit</code> rend son diff partout.</span
       >
     </div>
     <div class="ligne">
       <span class="l">garde</span
       ><span class="v"
         >Un <code>file_edit</code> semé rend son diff exact ; un instantané semé puis un second
-        rendent le diff git attendu ; un dossier sans git rend l'état « sans diff » et pas une
-        erreur.</span
+        rendent le diff git attendu ; un <code>file_write</code> qui écrase dans un dossier sans git
+        rend l'état « sans diff » et pas une erreur.</span
       >
     </div>
   </div>
@@ -1179,7 +1188,7 @@
     <li>L'aperçu vivant peut ne jamais ressembler au dessin.</li>
     <li>
       La maquette est une intention, pas une spécification au pixel : chaque pierre sera validée à
-      l'écran avant d'être dite finie.
+      l'écran, par Playwright, avant d'être dite finie.
     </li>
     <li>
       La frontière chat / travail dépend du niveau de risque que les outils tiers déclarent : un
