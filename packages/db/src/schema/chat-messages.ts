@@ -34,6 +34,12 @@ export const conversations = pgTable(
     // Stamped at CREATION time (never rewritten later) so the onboarding
     // interview conversation never leaks into the dashboard's Chats list —
     // whether the operator skips it or finishes it (migration 0065).
+    //
+    // `project` (0097) : ouverte DEPUIS la page d'un projet. C'est ce fil-là
+    // que la saisie du bas de cette page prolonge — la récence ne suffisait
+    // pas, une conversation simplement ancrée par une production finissait par
+    // évincer celle qu'on avait ouverte exprès. Elle reste une conversation de
+    // l'utilisateur partout ailleurs ; seul `onboarding` est tenu hors listes.
     origin: text('origin').notNull().default('user'),
     /**
      * Le canal du fil (0094). `dashboard` par DÉFAUT — c'est ce qui laisse
@@ -74,7 +80,7 @@ export const conversations = pgTable(
       table.chatId,
       table.createdAt,
     ),
-    check('conversations_origin_check', sql`${table.origin} IN ('user','onboarding')`),
+    check('conversations_origin_check', sql`${table.origin} IN ('user','onboarding','project')`),
     check(
       'conversations_channel_check',
       sql`${table.channel} IN ('dashboard','telegram','slack','discord','whatsapp')`,

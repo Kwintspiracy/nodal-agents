@@ -18,11 +18,23 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
 import type { VerificationUnconfiguredView } from '@/lib/verification-runs-view.ts';
-import type { ProjectPageView } from '@/lib/project-actions.ts';
+import type { ProjectFilesView, ProjectPageView } from '@/lib/project-actions.ts';
 import { relativeTime } from '@/lib/format-time';
 
 /** Au-delà, la liste se replie : une étagère se survole, elle ne se lit pas. */
 const FOLDED_AT = 20;
+
+/**
+ * Ce qu'on dit quand le dossier n'a pas pu être lu. Une phrase par CAUSE
+ * (revue passe 30, constat 3) : annoncer une suppression là où il n'y a qu'un
+ * refus de permission envoie chercher un dossier qui est toujours là.
+ */
+const UNREADABLE_TEXT: Record<NonNullable<ProjectFilesView['unreadable']>, string> = {
+  absent: 'This folder is not there any more.',
+  not_a_directory: 'This path is not a folder.',
+  permission: 'This folder cannot be read (permission).',
+  error: 'This folder cannot be read.',
+};
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -64,18 +76,18 @@ export default function ProjectShelf({
       <section className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
         <div className="flex flex-wrap items-center gap-2 border-b border-rule-2 bg-sidebar px-4 py-2.5">
           <span className="text-medium-13 text-ink">Files</span>
-          {!files.missing && (
+          {files.unreadable === null && (
             <span className="text-mono-11 text-ink-4">
               {files.entries.length + files.more} at the top level
               {files.ignored > 0 ? ` · ${files.ignored} ignored` : ''}
             </span>
           )}
         </div>
-        {files.missing ? (
-          // Un dossier absent est DIT (inv. #4) : un projet vide et un projet
-          // dont le dossier a disparu ne se ressemblent pas.
+        {files.unreadable !== null ? (
+          // Un dossier illisible est DIT (inv. #4) : un projet vide et un
+          // projet dont le dossier a disparu ne se ressemblent pas.
           <p className="px-4 py-3 text-body-13 text-warn">
-            This folder is not there any more. Nothing was read.
+            {UNREADABLE_TEXT[files.unreadable]} Nothing was read.
           </p>
         ) : files.entries.length === 0 ? (
           <p className="px-4 py-3 text-body-13 text-ink-4">Nothing in here yet.</p>
@@ -88,7 +100,13 @@ export default function ProjectShelf({
                   className="flex items-center gap-3 px-4 py-1.5 text-mono-12 text-ink-2"
                 >
                   <span className="min-w-0 flex-1 truncate">
-                    {e.kind === 'dir' ? `${e.name}/` : e.name}
+                    {/* Un lien porte sa flèche : l'étagère ne le fait pas
+                        passer pour un fichier du projet. */}
+                    {e.kind === 'dir'
+                      ? `${e.name}/`
+                      : e.kind === 'symlink'
+                        ? `${e.name} →`
+                        : e.name}
                   </span>
                   <span className="text-ink-4">{e.bytes === null ? '' : formatBytes(e.bytes)}</span>
                 </li>

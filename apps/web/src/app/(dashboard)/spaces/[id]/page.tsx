@@ -15,10 +15,9 @@ import EmptyState from '@/components/ui/EmptyState';
 import { getProjectPageAction } from '@/lib/project-actions.ts';
 import { getConversationThreadAction } from '@/lib/conversation-actions.ts';
 import type { VerificationUnconfiguredView } from '@/lib/verification-runs-view.ts';
-import ConversationFeedView from '../ConversationFeedView.tsx';
 import ProjectShelf from '../ProjectShelf.tsx';
 import ProjectConversations from '../ProjectConversations.tsx';
-import ProjectComposer from '../ProjectComposer.tsx';
+import ProjectThread from '../ProjectThread.tsx';
 import NewProjectConversationButton from '../NewProjectConversationButton.tsx';
 
 // Force dynamic — le projet, son dossier et son fil sont relus à chaque requête.
@@ -109,17 +108,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         )}
       </div>
 
-      <div className="mt-8">
-        {thread !== null && thread.ok ? (
-          <ConversationFeedView feed={thread.data.feed} />
-        ) : (
-          <div className="mx-auto max-w-[840px]">
-            <EmptyState title="Nothing said here yet" compact />
-          </div>
-        )}
-      </div>
-
-      <ProjectComposer projectId={project.id} conversationId={projectConversationId} />
+      {/* Le fil et la saisie : un échec de lecture y est DIT, et retire la
+          saisie (revue passe 30, constat 1). */}
+      <ProjectThread
+        projectId={project.id}
+        conversationId={projectConversationId}
+        thread={thread}
+      />
     </PageShell>
   );
 }

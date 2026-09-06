@@ -576,7 +576,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       title text NOT NULL DEFAULT '',
       -- origin (migration 0065): 'onboarding' rows are excluded from the
       -- dashboard's Chats list — see chat-messages.ts schema comment.
-      origin text NOT NULL DEFAULT 'user' CHECK (origin IN ('user','onboarding')),
+      origin text NOT NULL DEFAULT 'user' CHECK (origin IN ('user','onboarding','project')),
       -- mirrors migration 0094 (P6) — conversations porte TOUS les canaux, et
       -- le projet courant du fil. Pas de FK depuis agent_jobs.conversation_id :
       -- voir le commentaire de la colonne dans jobs.ts.

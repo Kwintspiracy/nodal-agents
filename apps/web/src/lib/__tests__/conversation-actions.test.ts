@@ -36,6 +36,10 @@ const voisin = { entityId: '', agentId: '', conversationId: '' };
 const auditConv = { id: '' };
 const longueConv = { id: '' };
 const bavardeConv = { id: '' };
+/** Un fil EXACTEMENT au plafond : ni un de plus, ni un de moins. */
+const pileConv = { id: '' };
+/** Un fil OUVERT DEPUIS UN PROJET (`origin = 'project'`, 0097). */
+const projetConv = { id: '' };
 const groupeConv = { id: '' };
 
 vi.mock('@/lib/server.ts', () => ({
@@ -374,6 +378,33 @@ beforeAll(async () => {
     })),
   );
 
+  // ── Un fil EXACTEMENT au plafond (500 messages) ───────────────────────────
+  // Le cas que la lecture N+1 règle : un plafond ATTEINT n'est pas un plafond
+  // MORDU. Avant, ce fil annonçait un début manquant qui n'existait pas.
+  const [convPile] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Fil pile au plafond',
+      origin: 'user',
+      channel: 'dashboard',
+      createdAt: new Date('2026-09-05T10:00:00Z'),
+      updatedAt: new Date('2026-09-05T11:00:00Z'),
+    })
+    .returning({ id: conversations.id });
+  pileConv.id = convPile!.id;
+  await testDb.insert(chatMessages).values(
+    Array.from({ length: 500 }, (_, i) => ({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: pileConv.id,
+      role: 'user' as const,
+      content: `p${i + 1}`,
+      createdAt: new Date(Date.UTC(2026, 8, 5, 10, 0, i)),
+    })),
+  );
+
   // ── Un fil de GROUPE : la tache porte le prefixe de l'expediteur ──────────
   const [convGroupe] = await testDb
     .insert(conversations)
@@ -412,6 +443,22 @@ beforeAll(async () => {
     origin: 'onboarding',
     channel: 'dashboard',
   });
+
+  // Une conversation OUVERTE DEPUIS UN PROJET (0097). Elle reste une
+  // conversation de l'utilisateur : elle appartient à la liste de Chat.
+  const [convProjet] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Depuis un projet',
+      origin: 'project',
+      channel: 'dashboard',
+      createdAt: new Date('2026-09-05T12:00:00Z'),
+      updatedAt: new Date('2026-09-05T12:30:00Z'),
+    })
+    .returning({ id: conversations.id });
+  projetConv.id = convProjet!.id;
 
   // ── L'espace d'à côté : jamais celui de la session ─────────────────────────
   const [autreUser] = await testDb
@@ -622,12 +669,46 @@ describe('getConversationThreadAction — les plafonds gardent la FIN du fil', (
     expect(demandes.at(-1)).toBe('m502');
   });
 
+  it('EXACTEMENT 500 messages : rien ne manque, et le fil ne prétend pas le contraire', async () => {
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(pileConv.id);
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+
+    // Le plafond est ATTEINT, pas MORDU : la lecture N + 1 fait la différence.
+    expect(r.data.truncated.messages).toBe(false);
+    expect(r.data.feed.items[0]?.kind).toBe('request');
+    const demandes = r.data.feed.items
+      .filter((i) => i.kind === 'request')
+      .map((i) => (i.kind === 'request' ? i.text : ''));
+    // Les 500 sont là, du premier au dernier : rien n'a été coupé.
+    expect(demandes).toHaveLength(500);
+    expect(demandes[0]).toBe('p1');
+    expect(demandes.at(-1)).toBe('p500');
+    expect(r.data.feed.items.some((i) => i.kind === 'note')).toBe(false);
+  });
+
   it('un fil court ne parle jamais de coupe', async () => {
     const { getConversationThreadAction } = await actions();
     const r = await getConversationThreadAction(telegramConv.id);
     if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
     expect(r.data.truncated).toEqual({ messages: false, jobs: false });
     expect(r.data.feed.items[0]?.kind).toBe('request');
+  });
+});
+
+describe('listAllConversationsAction — quelles origines entrent dans la liste', () => {
+  it('une conversation ouverte depuis un projet est dans la liste, l’accueil non', async () => {
+    const { listAllConversationsAction } = await actions();
+    const r = await listAllConversationsAction();
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+
+    const ids = r.data.map((c) => c.id);
+    // Une conversation de projet est une conversation de l'utilisateur : son
+    // origine sert à désigner le fil que la page du projet prolonge, rien de
+    // plus. La cacher de Chat la rendrait introuvable.
+    expect(ids).toContain(projetConv.id);
+    // L'entretien d'accueil, lui, reste dehors.
+    expect(r.data.map((c) => c.title)).not.toContain('Onboarding');
   });
 });
 

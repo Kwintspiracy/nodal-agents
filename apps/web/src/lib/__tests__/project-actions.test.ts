@@ -401,20 +401,27 @@ async function enregistre(opts: {
   return row!.id;
 }
 
-/** Une commande de preuve, telle que le moteur l'écrit. */
-async function preuve(cle: string, verdict: 'green' | 'red', at: Date): Promise<void> {
+/** Une commande de preuve, telle que le moteur l'écrit. Rend son `sequence_id`. */
+async function preuve(
+  cle: string,
+  verdict: 'green' | 'red',
+  at: Date,
+  command = 'pnpm test',
+): Promise<string> {
+  const sequenceId = randomUUID();
   await testDb.insert(verificationRuns).values({
     entityId: seed.entityId,
     deliverableType: 'code_project',
     canonicalKey: cle,
-    sequenceId: randomUUID(),
+    sequenceId,
     commandRank: 0,
-    command: 'pnpm test',
+    command,
     exitCode: verdict === 'green' ? 0 : 1,
     outcomeKind: 'exit',
     verdict,
     createdAt: at,
   });
+  return sequenceId;
 }
 
 describe('listProjectsAction — l’état de la preuve', () => {
@@ -456,17 +463,20 @@ describe('getProjectPageAction', () => {
     await writeFile(join(chemin, 'b.md'), 'bbbbb'); // 5 octets
     await writeFile(join(chemin, 'a.txt'), 'aaa'); // 3 octets
     await writeFile(join(chemin, '.env.example'), 'K=1'); // caché, mais pas ignoré
+    // Une JONCTION vers un dossier : ni un dossier du projet, ni un fichier.
+    await symlink(join(chemin, 'alpha-dossier'), join(chemin, 'lien-dossier'), 'junction');
     const id = await enregistre({ path: chemin, name: 'Étagère' });
 
     const result = await getProjectPageAction(id);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(result.data.files.missing).toBe(false);
-    // Les dossiers d'abord, puis les fichiers, chacun par nom.
+    expect(result.data.files.unreadable).toBeNull();
+    // Les dossiers d'abord, puis les liens, puis les fichiers, chacun par nom.
     expect(result.data.files.entries.map((e) => e.name)).toEqual([
       'alpha-dossier',
       'zeta-dossier',
+      'lien-dossier',
       '.env.example',
       'a.txt',
       'b.md',
@@ -474,6 +484,7 @@ describe('getProjectPageAction', () => {
     expect(result.data.files.entries.map((e) => e.kind)).toEqual([
       'dir',
       'dir',
+      'symlink',
       'file',
       'file',
       'file',
@@ -483,6 +494,9 @@ describe('getProjectPageAction', () => {
     expect(parNom.get('a.txt')).toBe(3);
     expect(parNom.get('b.md')).toBe(5);
     expect(parNom.get('alpha-dossier')).toBeNull();
+    // Un lien n'est JAMAIS mesuré : `stat` le suivrait et rendrait la taille de
+    // sa cible, qui peut vivre hors du projet.
+    expect(parNom.get('lien-dossier')).toBeNull();
     // `.git` et `node_modules` : comptés, pas escamotés.
     expect(result.data.files.ignored).toBe(2);
     expect(result.data.files.more).toBe(0);
@@ -516,7 +530,21 @@ describe('getProjectPageAction', () => {
     const result = await getProjectPageAction(id);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.data.files.missing).toBe(true);
+    expect(result.data.files.unreadable).toBe('absent');
+    expect(result.data.files.entries).toEqual([]);
+  });
+
+  it('un chemin qui est un FICHIER ne se confond pas avec un dossier supprimé', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${racine.replace(/\\/g, '/')}/pas-un-dossier`;
+    await writeFile(chemin, 'je suis un fichier');
+    const id = await enregistre({ path: chemin, name: 'Pas un dossier' });
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // La CAUSE, pas un « missing » qui ferait chercher une suppression.
+    expect(result.data.files.unreadable).toBe('not_a_directory');
     expect(result.data.files.entries).toEqual([]);
   });
 
@@ -542,6 +570,78 @@ describe('getProjectPageAction', () => {
     expect(result.data.proof.sequences).toHaveLength(1);
     expect(result.data.proof.sequences[0]!.verdict).toBe('red');
     expect(result.data.proof.sequences[0]!.runs[0]!.command).toBe('pnpm test');
+  });
+
+  it('six séquences en base, TROIS rendues : les trois dernières à AVOIR TOURNÉ', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/projet-historique`;
+    const id = await enregistre({ path: chemin, name: 'Projet historique' });
+    const cle = projectKey(chemin);
+
+    // Cinq séquences d'une commande, insérées dans le DÉSORDRE : un tri absent
+    // ne doit pas pouvoir passer par chance.
+    const sequences: Array<{ jour: number; sequenceId: string }> = [];
+    for (const jour of [1, 5, 3, 2, 4]) {
+      const sequenceId = await preuve(
+        cle,
+        'green',
+        new Date(`2026-09-0${jour}T10:00:00.000Z`),
+        `commande-jour-${jour}`,
+      );
+      sequences.push({ jour, sequenceId });
+    }
+
+    // Et une séquence LONGUE : commencée avant toutes les autres, finie après.
+    // C'est elle qui sépare « les trois dernières à avoir tourné » (la requête
+    // bornée, qui trie sur la DERNIÈRE commande) de « les trois dernières
+    // commencées » (ce que donnait le découpage après coup).
+    const longue = randomUUID();
+    await testDb.insert(verificationRuns).values([
+      {
+        entityId: seed.entityId,
+        deliverableType: 'code_project',
+        canonicalKey: cle,
+        sequenceId: longue,
+        commandRank: 0,
+        command: 'commande-longue-debut',
+        exitCode: 0,
+        outcomeKind: 'exit',
+        verdict: 'green',
+        createdAt: new Date('2026-08-30T10:00:00.000Z'),
+      },
+      {
+        entityId: seed.entityId,
+        deliverableType: 'code_project',
+        canonicalKey: cle,
+        sequenceId: longue,
+        commandRank: 1,
+        command: 'commande-longue-fin',
+        exitCode: 0,
+        outcomeKind: 'exit',
+        verdict: 'green',
+        createdAt: new Date('2026-09-06T10:00:00.000Z'),
+      },
+    ]);
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.proof.sequences).toHaveLength(3);
+    const rendues = new Set(result.data.proof.sequences.map((s) => s.sequenceId));
+    // La longue est DEDANS : sa dernière commande est la plus récente de toutes.
+    expect(rendues.has(longue), 'la séquence longue a tourné en dernier').toBe(true);
+    // Les jours 4 et 5 aussi ; les jours 1, 2 et 3 sont dehors.
+    for (const jour of [4, 5]) {
+      expect(rendues.has(sequences.find((x) => x.jour === jour)!.sequenceId), `jour ${jour}`).toBe(
+        true,
+      );
+    }
+    for (const jour of [1, 2, 3]) {
+      expect(rendues.has(sequences.find((x) => x.jour === jour)!.sequenceId), `jour ${jour}`).toBe(
+        false,
+      );
+    }
   });
 
   it('les conversations du projet : celles de ses travaux, et celles qui y sont ancrées', async () => {
@@ -625,13 +725,58 @@ describe('getProjectPageAction', () => {
     // Les plus récentes d'abord.
     expect(ids[0]).toBe(recenteAncree!.id);
 
-    // La conversation DU projet : la plus récente ancrée du dashboard.
-    expect(result.data.projectConversationId).toBe(recenteAncree!.id);
+    // Ancrées, mais aucune n'a été OUVERTE depuis le projet : la saisie du bas
+    // n'a rien à prolonger, et le premier envoi créera le fil.
+    expect(result.data.projectConversationId).toBeNull();
 
     // Et les travaux comptés au passage.
     expect(result.data.project.jobsCount).toBe(1);
     expect(result.data.project.name).toBe('Projet conv');
     expect(result.data.project.agentName).toBe('Test Agent');
+  });
+
+  it('la conversation DU projet est celle qu’on a ouverte depuis lui, pas la plus récente ancrée', async () => {
+    const { getProjectPageAction } = await import('../project-actions.ts');
+    const chemin = `${terrain.path}/projet-origine`;
+    const id = await enregistre({ path: chemin, name: 'Projet origine' });
+
+    // Ouverte depuis la page du projet, il y a longtemps.
+    const [ouverteDepuisLeProjet] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        origin: 'project',
+        title: 'Projet origine',
+        currentProjectId: id,
+        updatedAt: new Date('2026-09-01T10:00:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+
+    // Ancrée bien PLUS TARD, parce qu'une production y a atterri. Sous
+    // l'ancienne règle (la plus récente ancrée), c'est elle qui gagnait, et la
+    // saisie du bas changeait de fil toute seule.
+    const [ancreeParUneProduction] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        origin: 'user',
+        title: 'Ailleurs, puis ici',
+        currentProjectId: id,
+        updatedAt: new Date('2026-09-06T10:00:00.000Z'),
+      })
+      .returning({ id: conversations.id });
+
+    const result = await getProjectPageAction(id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.projectConversationId).toBe(ouverteDepuisLeProjet!.id);
+    // L'autre reste listée sur la page : elle parle bien de ce projet.
+    expect(result.data.conversations.map((c) => c.id)).toContain(ancreeParUneProduction!.id);
   });
 
   it('le projet d’une AUTRE entité n’existe pas ici', async () => {
@@ -698,7 +843,8 @@ describe('createProjectConversationAction', () => {
       .where(eq(conversations.id, result.data.id));
     expect(ligne).toBeDefined();
     expect(ligne!.channel).toBe('dashboard');
-    expect(ligne!.origin).toBe('user');
+    // `project` : c'est cette origine qui désigne le fil que la page prolonge.
+    expect(ligne!.origin).toBe('project');
     expect(ligne!.currentProjectId).toBe(id);
     expect(ligne!.title).toBe('Avec root');
     expect(ligne!.agentId).toBe(seed.agentId);

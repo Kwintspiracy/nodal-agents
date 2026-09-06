@@ -187,7 +187,9 @@ function projectOf(row: {
  * Toutes les conversations de l'entité, la plus récente d'abord — tous canaux,
  * tous agents. L'entretien d'accueil (`origin = 'onboarding'`) reste dehors :
  * il est estampillé à la création et n'a jamais été une conversation que
- * l'utilisateur a ouverte.
+ * l'utilisateur a ouverte. Celle qu'on ouvre depuis un projet (`project`,
+ * 0097) est DEDANS : c'est une conversation de l'utilisateur comme une autre,
+ * son origine ne sert qu'à désigner le fil que la page du projet prolonge.
  *
  * Trois requêtes, jamais une par conversation : la liste, puis les agrégats
  * des deux formes de tour (les messages du dashboard, les jobs de tête d'un
@@ -219,7 +221,12 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
       .from(conversations)
       .leftJoin(agents, eq(agents.id, conversations.agentId))
       .leftJoin(codeProjects, eq(codeProjects.id, conversations.currentProjectId))
-      .where(and(eq(conversations.entityId, session.entityId), eq(conversations.origin, 'user')))
+      .where(
+        and(
+          eq(conversations.entityId, session.entityId),
+          inArray(conversations.origin, ['user', 'project']),
+        ),
+      )
       .orderBy(desc(conversations.updatedAt))
       .limit(LIST_MAX);
     if (rows.length === 0) return ok([]);
@@ -357,7 +364,8 @@ export async function getConversationThreadAction(
         .from(chatMessages)
         .where(eq(chatMessages.conversationId, id))
         .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id))
-        .limit(MESSAGES_MAX),
+        // N + 1 : la ligne en trop ne sert qu'à SAVOIR s'il y en avait plus.
+        .limit(MESSAGES_MAX + 1),
       db
         .select({ job: agentJobs, agentName: agents.name, agentSlug: agents.slug })
         .from(agentJobs)
@@ -370,18 +378,18 @@ export async function getConversationThreadAction(
           ),
         )
         .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
-        .limit(HEAD_JOBS_MAX),
+        .limit(HEAD_JOBS_MAX + 1),
     ]);
-    // Le plafond ATTEINT ne prouve pas qu'il a mordu (il peut y avoir
-    // exactement N tours), mais c'est le seul signal disponible sans une
-    // requête de comptage de plus ; dire « il y en a peut-être d'autres » vaut
-    // mieux que laisser croire que le fil commence là.
+    // On a lu N + 1 pour n'en garder que N : la ligne en trop PROUVE la
+    // troncature, sans requête de comptage. Le plafond atteint tout juste ne
+    // ment plus — un fil de exactement 500 tours n'annonce plus un début
+    // manquant qui n'existe pas (revue passe 30, doute 5).
     const truncated = {
-      messages: recentMessages.length === MESSAGES_MAX,
-      jobs: recentHeads.length === HEAD_JOBS_MAX,
+      messages: recentMessages.length > MESSAGES_MAX,
+      jobs: recentHeads.length > HEAD_JOBS_MAX,
     };
-    const messageRows = [...recentMessages].reverse();
-    const headRows = [...recentHeads].reverse();
+    const messageRows = [...recentMessages.slice(0, MESSAGES_MAX)].reverse();
+    const headRows = [...recentHeads.slice(0, HEAD_JOBS_MAX)].reverse();
 
     const headIds = headRows.map((r) => r.job.id);
     const descendants =

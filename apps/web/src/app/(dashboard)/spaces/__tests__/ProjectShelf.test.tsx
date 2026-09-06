@@ -36,11 +36,12 @@ describe('ProjectShelf', () => {
         files={{
           entries: [
             { name: 'apps', kind: 'dir', bytes: null },
+            { name: 'vendor', kind: 'symlink', bytes: null },
             { name: 'README.md', kind: 'file', bytes: 2048 },
           ],
           more: 5,
           ignored: 2,
-          missing: false,
+          unreadable: null,
         }}
         proof={proofNonConfiguree}
         unconfigured={[
@@ -55,6 +56,8 @@ describe('ProjectShelf', () => {
     );
     expect(html).toContain('apps/');
     expect(html).toContain('README.md');
+    // Un lien porte sa flèche : il ne passe pas pour un fichier du projet.
+    expect(html).toContain('vendor →');
     expect(html).toContain('2 KB');
     expect(html).toContain('2 ignored');
     // Le reste est COMPTÉ, jamais escamoté.
@@ -69,7 +72,7 @@ describe('ProjectShelf', () => {
     const html = renderToStaticMarkup(
       <ProjectShelf
         project={project}
-        files={{ entries: [], more: 0, ignored: 0, missing: true }}
+        files={{ entries: [], more: 0, ignored: 0, unreadable: 'absent' }}
         proof={proofNonConfiguree}
         unconfigured={[]}
       />,
@@ -78,11 +81,31 @@ describe('ProjectShelf', () => {
     expect(html).not.toContain('Nothing in here yet.');
   });
 
+  it('chaque CAUSE d’illisibilité a sa phrase — jamais « supprimé » par défaut', () => {
+    const dire = (unreadable: 'not_a_directory' | 'permission' | 'error') =>
+      renderToStaticMarkup(
+        <ProjectShelf
+          project={project}
+          files={{ entries: [], more: 0, ignored: 0, unreadable }}
+          proof={proofNonConfiguree}
+          unconfigured={[]}
+        />,
+      );
+    expect(dire('not_a_directory')).toContain('This path is not a folder.');
+    expect(dire('permission')).toContain('This folder cannot be read (permission).');
+    expect(dire('error')).toContain('This folder cannot be read.');
+    // Aucune ne dit la suppression : ce serait envoyer chercher un dossier qui
+    // est toujours là.
+    for (const cause of ['not_a_directory', 'permission', 'error'] as const) {
+      expect(dire(cause)).not.toContain('not there any more');
+    }
+  });
+
   it('la configuration de preuve approuvée est résumée en une ligne', () => {
     const html = renderToStaticMarkup(
       <ProjectShelf
         project={project}
-        files={{ entries: [], more: 0, ignored: 0, missing: false }}
+        files={{ entries: [], more: 0, ignored: 0, unreadable: null }}
         proof={{
           configured: true,
           commands: [

@@ -88,10 +88,26 @@ export type ProjectListRow = {
 /** Une entrée du dossier, telle que l'étagère la montre. */
 export type ProjectFileEntry = {
   name: string;
-  kind: 'dir' | 'file';
-  /** La taille d'un fichier, relue sur le disque. `null` pour un dossier. */
+  /**
+   * `symlink` est une sorte À PART, jamais fondue dans `file` : un lien vers un
+   * dossier affiché comme fichier, avec la taille de sa cible, fait mentir
+   * l'étagère sur ce qu'il y a dans le projet — et divulgue au passage la
+   * taille d'un fichier qui est peut-être ailleurs (revue passe 30, doute 4).
+   */
+  kind: 'dir' | 'file' | 'symlink';
+  /** La taille d'un fichier, relue sur le disque. `null` pour un dossier ou un lien. */
   bytes: number | null;
 };
+
+/**
+ * Pourquoi le dossier n'a pas pu être lu. `null` = il l'a été.
+ *
+ * Une seule valeur « missing » confondait quatre situations qui n'appellent
+ * pas la même réaction : un dossier supprimé, un chemin devenu fichier, un
+ * refus de permission, et tout le reste. L'écran doit pouvoir dire laquelle
+ * (revue passe 30, constat 3).
+ */
+export type ProjectFilesUnreadable = 'absent' | 'not_a_directory' | 'permission' | 'error';
 
 export type ProjectFilesView = {
   entries: ProjectFileEntry[];
@@ -99,8 +115,8 @@ export type ProjectFilesView = {
   more: number;
   /** `.git` et `node_modules` : comptés, pas escamotés. */
   ignored: number;
-  /** Le dossier n'est pas lisible (absent, ou ce n'est pas un dossier). */
-  missing: boolean;
+  /** `null` quand le dossier a été lu ; la CAUSE sinon. */
+  unreadable: ProjectFilesUnreadable | null;
 };
 
 export type ProjectProofView = {
@@ -515,6 +531,9 @@ export async function createProjectAction(
 /** Le plafond de l'étagère : au-delà, la page n'est plus une étagère. */
 const FILES_MAX = 200;
 
+/** Ce que la page montre de la preuve — et donc ce que la requête lit. */
+const PROOF_SEQUENCES_MAX = 3;
+
 /**
  * Les deux dossiers qu'on ne montre pas comme des dossiers du projet — mais
  * qu'on COMPTE. Escamoter en silence ferait mentir « voici ce qu'il y a
@@ -532,36 +551,64 @@ const IGNORED_ENTRIES = new Set(['.git', 'node_modules']);
  * pas du runner (dependency-cruiser l'interdit), et ce dont l'écran a besoin —
  * un nom, une sorte, une taille — est plus court que l'inventaire du runner.
  */
+/** Le code d'erreur POSIX rendu par Node, quand il y en a un. */
+function errnoOf(err: unknown): string | null {
+  return err !== null && typeof err === 'object' && 'code' in err
+    ? String((err as { code: unknown }).code)
+    : null;
+}
+
+/** La CAUSE d'un échec de listage, telle que l'écran la dira. */
+function unreadableCause(err: unknown): ProjectFilesUnreadable {
+  switch (errnoOf(err)) {
+    case 'ENOENT':
+      return 'absent';
+    case 'ENOTDIR':
+      return 'not_a_directory';
+    case 'EACCES':
+    case 'EPERM':
+      return 'permission';
+    default:
+      return 'error';
+  }
+}
+
+/** L'ordre d'un explorateur de fichiers : dossiers, liens, fichiers, par nom. */
+const KIND_RANK: Record<ProjectFileEntry['kind'], number> = { dir: 0, symlink: 1, file: 2 };
+
 async function readProjectFolder(path: string): Promise<ProjectFilesView> {
   let dirents: Dirent[];
   try {
     dirents = await readdir(path, { withFileTypes: true });
-  } catch {
-    // Absent, illisible, ou ce n'est pas un dossier : dans les trois cas
-    // l'écran n'a rien à montrer, et il le DIT (inv. #4) au lieu de dessiner
-    // un dossier vide qui ressemblerait à un projet neuf.
-    return { entries: [], more: 0, ignored: 0, missing: true };
+  } catch (err) {
+    // L'écran n'a rien à montrer, et il DIT pourquoi (inv. #4) au lieu de
+    // dessiner un dossier vide qui ressemblerait à un projet neuf — ou
+    // d'annoncer une suppression là où il n'y a qu'un refus de permission.
+    return { entries: [], more: 0, ignored: 0, unreadable: unreadableCause(err) };
   }
 
   let ignored = 0;
-  const kept: Array<{ name: string; kind: 'dir' | 'file' }> = [];
+  const kept: Array<{ name: string; kind: ProjectFileEntry['kind'] }> = [];
   for (const d of dirents) {
     if (IGNORED_ENTRIES.has(d.name)) {
       ignored += 1;
       continue;
     }
-    kept.push({ name: d.name, kind: d.isDirectory() ? 'dir' : 'file' });
+    // Le lien AVANT le dossier : `isDirectory()` est faux sur un lien, et le
+    // classer en `file` puis le mesurer suivrait le lien jusqu'à sa cible.
+    const kind = d.isSymbolicLink() ? 'symlink' : d.isDirectory() ? 'dir' : 'file';
+    kept.push({ name: d.name, kind });
   }
-  // Les dossiers d'abord, puis le nom : c'est l'ordre d'un explorateur de
-  // fichiers, celui que l'œil attend.
   kept.sort((a, b) =>
-    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1,
+    a.kind === b.kind ? a.name.localeCompare(b.name) : KIND_RANK[a.kind] - KIND_RANK[b.kind],
   );
 
   const shown = kept.slice(0, FILES_MAX);
   const entries = await Promise.all(
     shown.map(async (e): Promise<ProjectFileEntry> => {
-      if (e.kind === 'dir') return { ...e, bytes: null };
+      // Un lien n'est JAMAIS mesuré : `stat` le suivrait, et la taille rendue
+      // serait celle d'une cible qui peut vivre hors du projet.
+      if (e.kind !== 'file') return { ...e, bytes: null };
       try {
         const s = await stat(`${path}/${e.name}`);
         return { ...e, bytes: s.size };
@@ -572,7 +619,7 @@ async function readProjectFolder(path: string): Promise<ProjectFilesView> {
       }
     }),
   );
-  return { entries, more: kept.length - shown.length, ignored, missing: false };
+  return { entries, more: kept.length - shown.length, ignored, unreadable: null };
 }
 
 /**
@@ -635,6 +682,23 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
         ),
       );
 
+    // Les 3 DERNIÈRES séquences de preuve, choisies en SQL. La page n'en montre
+    // que trois : charger tout l'historique de la clé pour en jeter presque
+    // tout faisait grandir le coût de la page avec l'âge du projet (revue
+    // passe 30, constat 2). Une sous-requête, pas un aller-retour de plus.
+    const lastSequenceIds = db
+      .select({ id: verificationRuns.sequenceId })
+      .from(verificationRuns)
+      .where(
+        and(
+          eq(verificationRuns.entityId, session.entityId),
+          eq(verificationRuns.canonicalKey, key),
+        ),
+      )
+      .groupBy(verificationRuns.sequenceId)
+      .orderBy(sql`max(${verificationRuns.createdAt}) desc`)
+      .limit(PROOF_SEQUENCES_MAX);
+
     const [jobsRows, proofRows, conversationRows, anchoredRows] = await Promise.all([
       db
         .select({
@@ -664,6 +728,7 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
           and(
             eq(verificationRuns.entityId, session.entityId),
             eq(verificationRuns.canonicalKey, key),
+            inArray(verificationRuns.sequenceId, lastSequenceIds),
           ),
         ),
       db
@@ -689,8 +754,13 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
         )
         .orderBy(sql`${conversations.updatedAt} desc nulls last`)
         .limit(50),
-      // La conversation DU projet, cherchée à part : la liste est plafonnée, et
-      // ce que la saisie du bas prolonge ne doit pas dépendre de ce plafond.
+      // La conversation DU projet : celle qui a été OUVERTE depuis lui
+      // (`origin = 'project'`), pas la plus récemment ancrée. Une conversation
+      // ancrée par une production qui a atterri dans le dossier finissait par
+      // évincer celle qu'on avait ouverte exprès, dès que son `updated_at`
+      // passait devant — la saisie changeait de fil toute seule (revue passe
+      // 30, doute 1). Le canal est implicite : `createProjectConversationAction`
+      // est le seul écrivain de cette origine, et il écrit `dashboard`.
       db
         .select({ id: conversations.id })
         .from(conversations)
@@ -698,7 +768,7 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
           and(
             eq(conversations.entityId, session.entityId),
             eq(conversations.currentProjectId, id),
-            eq(conversations.channel, 'dashboard'),
+            eq(conversations.origin, 'project'),
           ),
         )
         .orderBy(sql`${conversations.updatedAt} desc nulls last`)
@@ -707,8 +777,9 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
 
     const files = await readProjectFolder(path);
 
-    // La preuve : les 3 dernières séquences (`groupVerificationRuns` les rend
-    // dans l'ordre chronologique, la plus récente en dernier).
+    // La preuve : au plus 3 séquences, la requête s'en est chargée
+    // (`groupVerificationRuns` les rend dans l'ordre chronologique, la plus
+    // récente en dernier).
     const sequences = groupVerificationRuns(proofRows);
     const commands = row.verifyCommands ?? null;
 
@@ -736,7 +807,7 @@ export async function getProjectPageAction(id: string): Promise<ActionResult<Pro
           verifyCommands: commands,
           verifyApprovedManifestHash: row.verifyApprovedManifestHash,
         }),
-        sequences: sequences.slice(-3),
+        sequences,
       },
       conversations: conversationRows.map(
         (c): ProjectConversationRow => ({
@@ -812,7 +883,9 @@ export async function createProjectConversationAction(
         entityId: session.entityId,
         agentId: rootAgentId,
         title: project.displayName ?? basenameOf(project.path),
-        origin: 'user',
+        // `project`, pas `user` (0097) : c'est cette ORIGINE qui désigne « la
+        // conversation du projet », celle que la saisie du bas prolonge.
+        origin: 'project',
         channel: 'dashboard',
         currentProjectId: project.id,
       })
