@@ -18,47 +18,70 @@ prépare pas et ne la présuppose pas.
 **L'effort porte sur le déroulé du chat**, dans ce nouvel espace. Les écrans
 existants (Runs, Code, Chat) ne sont pas touchés par les lots 1 à 3.
 
+**Mis à jour le 06/09 :** Quentin a décidé de faire évoluer la page Chat et
+d'ajouter une entrée « Scheduled » (voir la section suivante). Le reste de ce
+périmètre tient.
+
 **De la maquette, on garde le fil de conversation. Rien d'autre.** La barre
 latérale, le header, le design system et les pages existantes ne changent pas.
 La maquette est une intention ; là où elle diverge de l'existant, l'existant
 gagne.
 
-## Ce qui arrive par Telegram — rappel de Quentin, 05/09
+## Ce qui a été décidé le 06/09 — le cadre du lot 2
 
-Le dessin montre l'espace comme si tout se passait sur le web. Or la plupart des
-demandes arrivent par Telegram. Trois choses que le plan doit tenir, et que la
-maquette ne montre pas.
+Après avoir vu le lot 1, Quentin a tranché ce que la maquette laissait ouvert.
+Ce cadre remplace la section « Ce qui arrive par Telegram » du 05/09 et ses
+alternatives.
 
-**1. Où atterrit une demande venue d'un canal.** Aujourd'hui elle devient un job
-(`channel: 'telegram'`, `chat_id`, `conversation_id`). Pour qu'elle apparaisse
-dans un espace, il faut la rattacher. Règle proposée pour P6 : l'espace d'une
-tâche venue d'un canal se déduit de **là où ses livrables ont atterri** — les
-clés canoniques des intentions de mutation, déjà écrites avant chaque écriture.
-Aucune commande à taper. Une tâche sans livrable dans le dossier d'un espace
-reste dans le fil général. **À trancher avant P6** ; l'alternative est un espace
-par conversation Telegram, plus simple et plus bête.
+**Trois objets.** Le **dossier attribué à un agent** est son terrain : ce qu'il a
+le droit de toucher, pas un espace. Un **projet** est un sous-dossier de ce
+terrain, identifié comme tel — créé depuis Spaces, ou déclaré par une
+conversation qui y a produit ; un espace *est* un projet, et Spaces liste des
+projets, pas des jobs. Une **conversation** est un fil continu, dans le dashboard
+ou dans un canal, qui porte son projet courant dès qu'elle a créé ou touché un
+projet.
 
-**2. Ce que Telegram reçoit en retour.** Chaque tour de l'agent est miroité dans
-le canal : sa prose telle quelle, ses questions en boutons (P7 réutilise
-`approvals/notify.ts`), ses livrables en carte (`job_deliveries` existe).
-L'espace web et Telegram montrent la **même** conversation ; ce qui est répondu
-d'un côté apparaît de l'autre. P2 affiche l'origine de chaque message — la
-maquette le faisait pour les messages de Quentin (« depuis Telegram »), pas pour
-ce que Nodal a envoyé.
+**La frontière entre un chat et un travail : « quelque chose est sorti du
+chat ».** Lire, chercher, consulter et noter la mémoire, répondre en texte sur
+n'importe quel canal — le canal est transparent, un sous-agent qui n'a fait que
+parler aussi — c'est du chat. Un fichier, un document, un projet de code, une
+écriture dans une base externe, une pièce jointe envoyée, le harnais de code :
+c'est un travail. La règle est récursive sur les agents à qui on a passé la main.
+Elle se lit sur les cartes de P1, jamais sur un nom d'outil ; pour les outils
+tiers il faut persister leur niveau de risque.
 
-**3. Ce que Telegram ne peut pas montrer.** Ni diff, ni tableau, ni groupe
-replié. Le canal reçoit la prose, le fichier joint, et un lien vers l'espace.
-« Le livrable est la page » se lit dans Telegram comme « le livrable est le
-fichier joint, et une ligne ».
+**Chat accueille toutes les conversations**, dashboard et Telegram, Slack,
+Discord. Tout y commence. Au tour où quelque chose sort du chat, un encart dit
+ce qui a été produit et renvoie au projet. La page Chat existante change de
+nature : décision de Quentin du 06/09, qui lève la consigne du 05/09 sur ce
+point.
+
+**Telegram : une conversation par chat**, jusqu'à ce que l'utilisateur en ouvre
+une autre. Plus de découpage par silences. Ce qu'on redonne à lire au modèle
+reste un budget.
+
+**Les runs d'automatisation ont leur propre entrée de menu, « Scheduled ».**
+Distincte d'Automations, qui reste la configuration.
+
+**La référence produit** est l'application Claude : un Chat où tout commence, un
+Code rangé par projets dont chacun est un dossier choisi par l'utilisateur. Les
+dossiers `~/.claude/projects` des outils en ligne de commande sont leur rangement
+interne, pas ce que l'utilisateur voit.
+
+Ce que Telegram impose, du 05/09, reste vrai : chaque tour de l'agent est
+miroité dans le canal (prose telle quelle, questions en boutons via P10,
+livrables en carte via `job_deliveries`) ; l'écran et Telegram montrent la
+**même** conversation ; le canal ne montre ni diff, ni tableau, ni groupe
+replié — il reçoit la prose, le fichier joint, et un lien vers le projet.
 
 ## Suivi
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
 | 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | ✅ **LOT 1 CLOS le 06/09** — P1 (passe 16), P2 (19), P3 (21), P4 (24-25 : « aucun constat neuf ») ; retours de Quentin traités (automatisations à part, fil nettoyé sur capture réelle, coût cache-aware) · ⚠️ à voir par Quentin dans son navigateur : /spaces et un fil récent |
-| 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
-| 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
-| 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
+| 2 | **Le projet et la conversation** | P5 registre des projets · P6 conversation continue et projet courant · P7 Chat pour toutes les conversations, encart · P8 Spaces = projets, nouveau projet, chat du projet · P9 Scheduled | Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les automatisations ont leur page | ⬜ plan réécrit le 06/09, **attend le go** |
+| 3 | **L'agent qui demande et montre** | P10 `ask_user` · P11 fichiers et diff · P12 le tableur rendu | « Où écrire ? » avec boutons dans le chat et dans Telegram ; diffs cliquables ; un classeur qui s'affiche | ⬜ |
+| 4 | **Ce qui reste cher** | P13 relecteurs (= PR④ de Vérifier & Corriger) · P14 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre du projet | ⬜ |
 
 ## Verdict de faisabilité — vérifié dans le code le 05/09
 
@@ -224,95 +247,111 @@ requested_at`.
 **Garde.** L'agrégat est comparé au centime à un jeu de lignes semé ; le cache
 lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rougit.
 
-### P5 · Fichiers et diff — M
+**Lot 2 · Le projet et la conversation**
 
-**Ce que ça pose.** La carte « 12 fichiers » : la liste cliquable, le diff de la
-sélection.
+### P5 · Le registre des projets — M
 
-**Sur quoi ça s'appuie.** Pour `file_write` / `file_edit`, `tool_input` porte
-déjà l'ancien et le nouveau texte. Pour le harnais de code, il faut le sha de
-l'instantané : **il n'est pas en base.** Deux pièces : (a) persister
-`(job_id, turn, sha, workspace)` au moment où `takeCheckpointForTurn` le calcule,
-(b) `git diff <sha> <sha suivant>` dans le dépôt des instantanés.
+**Ce que ça pose.** Une table des projets : nom, dossier racine, sorte (`code` ou `documents`), agent responsable, créé par toi depuis Spaces ou déclaré par une conversation qui y a produit. Le **dossier racine d'un projet est un sous-dossier du terrain d'un agent** (`agent_workspaces`) : le terrain est un droit, le projet est un objet. Un sous-dossier qui n'est pas au registre n'est pas un projet.
 
-**Limite, à écrire à l'écran.** Hors d'un dépôt git, il n'y a pas de diff pour ce
-que le harnais écrit. La carte dit alors « fichiers écrits, sans diff ».
+**La règle.** Une production qui atterrit dans un projet enregistré s'y rattache sans rien demander. Hors de tout projet, l'agent demande **où** avant d'écrire (P10) ; la réponse crée le projet. Rien ne se crée en silence.
 
-**Garde.** Un `file_edit` semé rend son diff exact ; un instantané semé puis un
-second rendent le diff git attendu ; un dossier sans git rend l'état « sans
-diff » et pas une erreur.
+**Sur quoi ça s'appuie.** `agent_workspaces` (libellé + chemin, déjà par agent), `code_projects` et `PROJECT_MARKERS` (Vérifier & Corriger) pour la sorte `code`, les intentions de mutation et leurs clés canoniques pour savoir où une production a atterri.
 
-### P6 · L'espace — M/L
+**Garde.** Un `file_write` dans `terrain/projet-x/` d'un projet enregistré rattache le job à ce projet ; le même écrit dans `terrain/vrac/` sans projet ne crée rien et déclenche la question ; un chemin hors terrain reste refusé, comme aujourd'hui.
 
-**Ce que ça pose.** L'objet durable de la vision : une table `espaces` (nom,
-dossier racine, sorte `code | documents`), `agent_jobs.espace_id`, la page de
-l'espace = l'étagère + la conversation concaténée de ses jobs, la proposition de
-créer un espace quand trois tâches atterrissent au même endroit. L'espace est
-atteint par l'entrée « Spaces » de la barre latérale ; l'onglet Code ne change
-pas.
+**À vérifier.** La sorte `documents` n'a pas de marqueur : créée à la main ou par la question, jamais devinée.
 
-**Sur quoi ça s'appuie.** `agent_workspaces` et `code_projects` en sont
-l'ancêtre ; la sorte se déduit des marques de code déjà listées
-(`PROJECT_MARKERS`).
+### P6 · La conversation continue et son projet courant — M
 
-**Ce qui change pour Vérifier & Corriger.** Les commandes de preuve deviennent
-un réglage de l'espace de sorte code. La table `code_projects` reste ; l'espace
-la référence.
+**Ce que ça pose.** Une conversation est un fil : un par chat Telegram, Slack ou Discord, un par conversation du dashboard. Il dure **jusqu'à ce que tu en ouvres une autre** (un bouton dans le dashboard, une commande dans le canal, à nommer). Elle porte un **projet courant**, posé quand une production atterrit dans un projet ou quand elle naît depuis la page d'un projet, et redit au modèle à chaque tour.
 
-**Rattachement d'une tâche venue d'un canal.** Voir « Ce qui arrive par
-Telegram » : par les livrables, sauf décision contraire de Quentin avant P6.
+**Ce qui change.** Le découpage par silences disparaît comme identité de conversation (décision du 06/09). Il reste un **budget de relecture** : ce qu'on redonne au modèle. La conversation peut avoir trois mois, le prompt non — deux choses différentes, l'identité du fil et la mémoire qu'on en relit.
 
-**Garde.** Une tâche lancée depuis un espace y reste (ne remonte pas dans le
-fil) ; une tâche Telegram dont le livrable atterrit dans le dossier d'un espace
-apparaît dans cet espace ; trois tâches dans le même dossier déclenchent la
-proposition, deux non.
+**Sur quoi ça s'appuie.** `conversations` + `chat_messages` (dashboard), `agent_jobs.conversation_id` (285 jobs Telegram sur 286 le portent, mesuré le 06/09), `resolveConversationId` et `thread-history.ts` pour la relecture.
 
-### P7 · `ask_user` — M
+**Garde.** Deux messages Telegram à une semaine d'écart sont dans la même conversation ; « nouvelle conversation » en ouvre une autre, la précédente reste lisible ; une production dans un projet pose le projet courant et le tour suivant le voit dans son prompt ; la relecture reste sous le budget quelle que soit la longueur du fil.
 
-**Ce que ça pose.** Un outil qui pose une question avec des options. Dans la
-conversation : la carte à boutons. Dans le canal d'origine : la même carte,
-via l'infrastructure des approbations (`notify.ts`, préfixe de rappel propre).
-La réponse reprend le job exactement comme une approbation le fait.
+### P7 · Chat, la maison de toutes les conversations — L
 
-**Ce que ça absorbe.** La seconde moitié de v7-C (approbation des commandes de
-preuve dans le canal) est un cas de `ask_user`. Une plomberie, deux usages.
+**Ce que ça pose.** La page Chat liste **toutes** les conversations, tous canaux, avec leur origine. En ouvrir une rend le fil de P2, le même code. Au tour où quelque chose est sorti du chat, un **encart** dit ce qui a été produit et où il vit, avec le lien vers le projet. Répondre depuis le web dans une conversation venue d'un canal passe par l'outil d'envoi de ce canal.
 
-**Garde.** Un `ask_user` suspend le job ; un clic dans le canal le reprend avec
-la réponse dans le transcript ; une réponse hors options est refusée.
+**La frontière.** Chat : lire, chercher, consulter **et noter** la mémoire, répondre en texte sur n'importe quel canal (le canal est transparent), déléguer à un agent qui n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, le harnais de code. **Récursif** sur les descendants. Se lit sur les cartes de P1 ; les outils tiers (`generic`) exigent de persister leur niveau de risque sur `tool_calls`, une colonne de plus.
 
-### P8 · Le tableur rendu — S
+**Hors périmètre.** La page Runs et son classificateur `classifyJob` (qui compte une recherche web comme une tâche) restent tels quels.
 
-**Ce que ça pose.** La carte `table` pour un `office_file` : les premières lignes
-de la feuille demandée, les contrôles v7-B en pied. Un tableau de valeurs, pas
-Excel : ni formules, ni fusion, ni mise en forme — dit tel quel.
+**Garde.** Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un `save_memory` : sans encart. Un `file_write` dans un projet : encart avec le lien. Un connecteur en écriture : encart ; en lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit : encart sur le tour parent.
 
-**Sur quoi ça s'appuie.** `xlsx_read` existe.
+**À vérifier.** Répondre depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi permet aujourd'hui.
 
-### P9 · Les relecteurs — L
+### P8 · Spaces : la liste des projets et la page du projet — L
 
-C'est la PR④ de Vérifier & Corriger, inchangée. Ici seulement sa carte : deux
-relecteurs, leur verdict, leur citation. Rien à planifier de neuf, une
-dépendance à nommer.
+**Ce que ça pose.** Spaces liste des **projets**, plus des jobs : nom, dossier, sorte, agent, dernière activité, état de la preuve. Un bouton **Nouveau projet** : nom, dossier sous un terrain, sorte. La page du projet : l'étagère (dossier, fichiers, preuve, le panneau existant), ses conversations, et **la saisie en bas**, une conversation dédiée au projet, comme le panneau de chat d'un IDE. Un job créé depuis là naît avec le projet courant.
 
-### P10 · L'aperçu vivant — XL
+**Ce qui change.** La page `/spaces/[id]` actuelle (le fil d'un job) devient le fil d'une conversation, lue depuis Chat ou depuis le projet. Rien du rendu ne se perd : P2 à P4 sont le fil, la preuve, la barre d'état.
 
-Lancer et tenir un serveur de développement par espace, l'afficher, gérer ports
-et arrêts. C'est le produit entier de Lovable. **Dernier, et sans promesse.**
-Tant qu'il n'existe pas, le centre de l'espace montre le dernier diff, et le
-bouton « L'application » ouvre l'URL locale dans un onglet.
+**Sur quoi ça s'appuie.** P2-P4 ; `ChatClient` et `sendChatMessageAction` pour la saisie ; P5 pour le registre ; P6 pour le projet courant.
+
+**Garde.** Créer un projet crée la ligne et son dossier ; parler depuis la page crée un job dont le prompt porte le projet ; un job venu de Telegram qui a produit dans ce dossier apparaît dans les conversations du projet.
+
+### P9 · Scheduled — S
+
+**Ce que ça pose.** Une entrée de menu **Scheduled** : les automatisations et leurs runs, une ligne par automatisation, repliée, ses runs dessous — ce que la section Scheduled de Spaces fait aujourd'hui, à sa place. Un lien vers Automations pour la configuration. Plus aucun run d'automatisation dans Spaces ni dans Chat.
+
+**Sur quoi ça s'appuie.** `listSpacesAction` (deux requêtes, deux limites), `groupSpaces`, `ScheduledSection` : le code existe, il change de page.
+
+**Garde.** Aucun run cron dans Spaces ni dans Chat ; un run ouvre son fil.
+
+**Lot 3 · L'agent qui demande et montre**
+
+### P10 · `ask_user` — M
+
+**Ce que ça pose.** Un outil qui pose une question avec des options. Dans la conversation : la carte à boutons. Dans le canal d'origine : la même carte, via l'infrastructure des approbations (`notify.ts`, préfixe de rappel propre). La réponse reprend le job exactement comme une approbation le fait. **Premier usage : « où écrire ? »** quand une production sort du chat hors de tout projet (P5).
+
+**Ce que ça absorbe.** La seconde moitié de v7-C (approbation des commandes de preuve dans le canal) est un cas de `ask_user`. Une plomberie, deux usages.
+
+**Garde.** Un `ask_user` suspend le job ; un clic dans le canal le reprend avec la réponse dans le transcript ; une réponse hors options est refusée ; la réponse à « où écrire ? » crée le projet et pose le projet courant.
+
+### P11 · Fichiers et diff — M
+
+**Ce que ça pose.** La carte « 12 fichiers » : la liste cliquable, le diff de la sélection.
+
+**Sur quoi ça s'appuie.** Pour `file_write` / `file_edit`, `tool_input` porte déjà l'ancien et le nouveau texte. Pour le harnais de code, il faut le sha de l'instantané : **il n'est pas en base.** Deux pièces : persister `(job_id, turn, sha, workspace)` quand `takeCheckpointForTurn` le calcule, puis `git diff` dans le dépôt des instantanés.
+
+**Limite.** Hors d'un dépôt git, il n'y a pas de diff pour ce que le harnais écrit. La carte dit alors « fichiers écrits, sans diff ».
+
+**Garde.** Un `file_edit` semé rend son diff exact ; un instantané semé puis un second rendent le diff git attendu ; un dossier sans git rend l'état « sans diff » et pas une erreur.
+
+### P12 · Le tableur rendu — S
+
+**Ce que ça pose.** La carte `table` pour un `office_file` : les premières lignes de la feuille demandée, les contrôles v7-B en pied. Un tableau de valeurs, pas Excel : ni formules, ni fusion, ni mise en forme, dit tel quel. La charge utile de P1 dit déjà si la première ligne est un en-tête (`header: 'unknown'` pour un classeur lu) : la carte le demande ou le dit, elle ne devine pas.
+
+**Sur quoi ça s'appuie.** `xlsx_read` et sa carte `table` (P1).
+
+**Lot 4 · Ce qui reste cher**
+
+### P13 · Les relecteurs — L
+
+**Ce que ça pose.** C'est la PR④ de Vérifier & Corriger, inchangée. Ici seulement sa carte : deux relecteurs, leur verdict, leur citation. Rien à planifier de neuf, une dépendance à nommer.
+
+### P14 · L'aperçu vivant — XL
+
+**Ce que ça pose.** Lancer et tenir un serveur de développement par projet, l'afficher, gérer ports et arrêts. C'est le produit entier de Lovable. **Dernier, et sans promesse.** Tant qu'il n'existe pas, le centre du projet montre le dernier diff, et le bouton « L'application » ouvre l'URL locale dans un onglet.
 
 ## Ce que ça fait aux seize onglets
 
-Une entrée de plus, « Spaces ». Rien d'autre. Runs, Code et Chat restent tels
-qu'ils sont. Les fusionner un jour est une décision de Quentin, pas une
-conséquence de ce plan.
+Deux entrées de plus, « Spaces » et « Scheduled ». Et une page qui change de
+nature : **Chat**, qui accueille désormais toutes les conversations — décision
+de Quentin du 06/09. Runs et Code restent tels qu'ils sont ; les fusionner un
+jour est une décision de Quentin, pas une conséquence de ce plan.
 
 ## Ce que ça fait au plan Vérifier & Corriger
 
 Il continue. Ce plan est la **surface** ; l'autre est le **moteur**. Les points
-de contact : v7-B nourrit la carte du tableur (P8) ; la seconde moitié de v7-C
-est absorbée par P7 ; v7-D nourrira une carte « critères » plus tard ; PR④ est
-P9. L'observation, la garde et le runtime CLI ne bougent pas.
+de contact : v7-B nourrit la carte du tableur (P12) ; la seconde moitié de v7-C
+est absorbée par P10 ; les intentions de mutation disent où une production a
+atterri (P5) ; le niveau de risque déclaré par les outils, persisté sur
+`tool_calls`, sert la frontière chat / travail (P7) ; PR④ est P13.
+L'observation, la garde et le runtime CLI ne bougent pas.
 
 ## Les limites, dites avant de commencer
 
@@ -323,3 +362,8 @@ P9. L'observation, la garde et le runtime CLI ne bougent pas.
 - L'aperçu vivant peut ne jamais ressembler au dessin.
 - La maquette est une intention, pas une spécification au pixel : chaque pierre
   sera validée à l'écran, par Playwright, avant d'être dite finie.
+- La frontière chat / travail dépend du niveau de risque que les outils tiers
+  déclarent : un connecteur qui se déclare mal se classe mal — et l'écran dira
+  d'où vient la classification.
+- Répondre depuis le web dans un fil venu d'un canal dépend de l'outil d'envoi
+  de ce canal ; à vérifier canal par canal avant de le promettre.
