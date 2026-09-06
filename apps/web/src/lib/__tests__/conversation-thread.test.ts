@@ -6,7 +6,12 @@
 // consigne repliée — l'utilisateur a déjà écrit sa phrase au-dessus.
 
 import { describe, it, expect } from 'vitest';
-import { buildConversationThread, JOB_GONE_NOTE } from '../conversation-thread.ts';
+import {
+  buildConversationThread,
+  JOB_GONE_NOTE,
+  UNCLASSIFIED_NOTE,
+  olderTurnsNote,
+} from '../conversation-thread.ts';
 import type { ThreadJob } from '../conversation-thread.ts';
 import type { ConversationFeed, FeedItem, FeedTotals } from '../conversation-feed.ts';
 import type { ProductionVerdict } from '../chat-or-work.ts';
@@ -24,12 +29,28 @@ const totals = (over: Partial<FeedTotals> = {}): FeedTotals => ({
   ...over,
 });
 
-const chat: ProductionVerdict = { isWork: false, items: [], uncertain: 0, more: 0 };
+const chat: ProductionVerdict = {
+  isWork: false,
+  items: [],
+  uncertain: 0,
+  more: 0,
+  unclassified: 0,
+};
 const travail: ProductionVerdict = {
   isWork: true,
   items: [{ kind: 'file', label: 'out/bilan.md', path: 'out/bilan.md' }],
   uncertain: 0,
   more: 0,
+  unclassified: 0,
+};
+
+/** Un tour dont les lignes sont d'avant les cartes : on ne sait pas. */
+const inconnu: ProductionVerdict = {
+  isWork: false,
+  items: [],
+  uncertain: 0,
+  more: 0,
+  unclassified: 3,
 };
 
 const tour = (text: string): FeedItem => ({
@@ -216,5 +237,73 @@ describe('buildConversationThread — une conversation du dashboard', () => {
     });
     expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'note']);
     expect(items[2]).toEqual({ kind: 'note', text: JOB_GONE_NOTE });
+  });
+});
+
+describe('buildConversationThread — ce que le fil ne peut pas dire', () => {
+  const dashboard = { ...conversation, channel: 'dashboard', chatId: null };
+
+  it("un tour d'avant les cartes est dit non classable — jamais un encart", () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: inconnu })],
+    });
+    expect(items.some((i) => i.kind === 'produced')).toBe(false);
+    const note = items.find((i) => i.kind === 'note');
+    expect(note).toEqual({ kind: 'note', text: UNCLASSIFIED_NOTE });
+  });
+
+  it('un tour qui a produit ET porte des lignes anciennes garde son encart, sans note', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1', verdict: { ...travail, unclassified: 2 } })],
+    });
+    expect(items.filter((i) => i.kind === 'produced')).toHaveLength(1);
+    expect(items.some((i) => i.kind === 'note' && i.text === UNCLASSIFIED_NOTE)).toBe(false);
+  });
+
+  it('un tour ordinaire ne dit rien du tout', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1' })],
+    });
+    expect(items.some((i) => i.kind === 'note')).toBe(false);
+  });
+
+  it('une conversation de canal coupée le DIT en tête, avant tout item', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1' }), job({ jobId: 'j2' })],
+      truncated: { messages: false, jobs: true },
+    });
+    expect(items[0]).toEqual({ kind: 'note', text: olderTurnsNote(2) });
+    expect(items[1]?.kind).toBe('request');
+  });
+
+  it('une conversation du dashboard coupée compte ses MESSAGES', () => {
+    const { items } = buildConversationThread({
+      conversation: dashboard,
+      messages: [
+        { id: 'm1', role: 'user', content: 'a', jobId: null, createdAt: null },
+        { id: 'm2', role: 'assistant', content: 'b', jobId: null, createdAt: null },
+      ],
+      jobs: [],
+      truncated: { messages: true, jobs: false },
+    });
+    expect(items[0]).toEqual({ kind: 'note', text: olderTurnsNote(2) });
+  });
+
+  it('un fil entier ne parle pas de coupe', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ jobId: 'j1' })],
+      truncated: { messages: false, jobs: false },
+    });
+    expect(items.some((i) => i.kind === 'note')).toBe(false);
   });
 });

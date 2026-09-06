@@ -247,6 +247,9 @@ export async function runChatTurn(opts: {
     .select({
       id: conversations.id,
       title: conversations.title,
+      // L'agent DU fil : un tour ne s'écrit que dans la conversation de son
+      // propre agent (revue Codex, passe 29).
+      agentId: conversations.agentId,
       // Le projet courant du fil (P6) : il suit le job qu'une escalade `run_task`
       // crée, pour que le travail naisse déjà dans le bon dossier.
       currentProjectId: conversations.currentProjectId,
@@ -255,6 +258,15 @@ export async function runChatTurn(opts: {
     .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
     .limit(1);
   if (!conv) return { ok: false, error: 'conversation_not_found' };
+
+  // 1a-bis. L'agent demandé DOIT être celui de la conversation.
+  //
+  // Vérifier l'entité ne suffisait pas : l'appelant web résolvait le ROOT
+  // COURANT, si bien qu'après un changement de ROOT, répondre dans l'ancien
+  // fil de A écrivait des messages de B et exécutait B avec l'historique de A.
+  // L'appelant est corrigé, mais la garde vit ICI aussi — et AVANT le moindre
+  // insert : un tour mal adressé ne doit laisser aucune trace (invariant #4).
+  if (conv.agentId !== agentId) return { ok: false, error: 'conversation_agent_mismatch' };
 
   // 1b. Persist the user turn IMMEDIATELY — before the (slower) LLM resolution +
   // system-prompt build — so it's visible the instant the user navigates back to

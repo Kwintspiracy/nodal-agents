@@ -4271,20 +4271,58 @@ describe('sendChatMessageAction', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('fails (no runner call) when no ROOT agent is designated', async () => {
-    currentDb = makeDbMixed({ select: [{ rootAgentId: null }] }) as typeof currentDb;
+  it('fails (no runner call) when the conversation is missing or belongs elsewhere', async () => {
+    currentDb = makeDbMixed({ select: [] }) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const { sendChatMessageAction } = await import('../src/lib/actions.ts');
     const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'hello' });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('no_root_agent');
+    if (!r.ok) expect(r.code).toBe('conversation_not_found');
     expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("fails (no runner call) when the conversation's agent is disabled", async () => {
+    currentDb = makeDbMixed({
+      select: [{ agentId: 'aaaaaaaa-0000-0000-0000-000000000305', agentActive: false }],
+    }) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'hello' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('agent_inactive');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("sends the CONVERSATION's agent, never the current ROOT (revue Codex, passe 29)", async () => {
+    // La conversation appartient à l'agent A. Que le ROOT ait changé pour B
+    // depuis ne doit RIEN y faire : répondre ici, c'est répondre à A.
+    const agentDuFil = 'aaaaaaaa-0000-0000-0000-000000000A11';
+    const rootCourant = 'aaaaaaaa-0000-0000-0000-000000000B22';
+    currentDb = makeDbMixed({
+      select: [{ agentId: agentDuFil, agentActive: true }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ reply: 'ok' }), { status: 200 }));
+
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'coucou' });
+    expect(r.ok).toBe(true);
+
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body['agentId']).toBe(agentDuFil);
+    expect(body['agentId']).not.toBe(rootCourant);
     fetchSpy.mockRestore();
   });
 
   it('calls the runner /api/chat (no job created) and returns the reply', async () => {
     const rootId = 'aaaaaaaa-0000-0000-0000-000000000301';
-    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [{ agentId: rootId, agentActive: true }],
+    }) as typeof currentDb;
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(
@@ -4320,7 +4358,9 @@ describe('sendChatMessageAction', () => {
 
   it('treats an empty reply (agent escalated without ack text) as success, not failure', async () => {
     const rootId = 'aaaaaaaa-0000-0000-0000-000000000302';
-    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [{ agentId: rootId, agentActive: true }],
+    }) as typeof currentDb;
     // HTTP 200 with an empty reply — the agent escalated via run_task and wrote
     // no acknowledgment; the dispatch card + refetch carry the info.
     const fetchSpy = vi
@@ -4336,7 +4376,9 @@ describe('sendChatMessageAction', () => {
 
   it('fails when the runner returns an HTTP error (e.g. empty_reply glitch → 400)', async () => {
     const rootId = 'aaaaaaaa-0000-0000-0000-000000000303';
-    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [{ agentId: rootId, agentActive: true }],
+    }) as typeof currentDb;
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ error: 'empty_reply' }), { status: 400 }));

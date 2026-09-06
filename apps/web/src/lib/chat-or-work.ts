@@ -20,6 +20,12 @@
 // DÉCLARÉ (0095) le tranche ; quand il manque, la réponse est INCERTAINE et
 // l'écran le dit — il n'invente pas un verdict (invariant #4).
 //
+// Deux choses ne sont JAMAIS une production, quelle que soit la carte : un
+// appel dont l'issue n'est pas `success` (refusé, bloqué, en attente
+// d'approbation, en erreur — la ligne existe quand même, avec la carte qu'il
+// aurait remplie), et une ligne sans carte, d'avant P1. La première est du
+// chat ; la seconde est INCONNUE, et se dit telle quelle (`unclassified`).
+//
 // Récursif sur les descendants : les lignes passées ici sont celles du job ET
 // de toute sa descendance, à plat. Un sous-agent qui a écrit fait donc un
 // encart sur le tour PARENT ; un sous-agent qui n'a fait que parler n'en fait
@@ -27,7 +33,7 @@
 // produire — et `checks` non plus : la preuve est faite PAR le runner, sur ce
 // qui a déjà été produit.
 
-import { parsePresented } from './tool-card-payload.ts';
+import { parsePresented, outcomeOfToolOutput } from './tool-card-payload.ts';
 
 /** Une ligne `tool_calls`, réduite à ce que le classement lit. */
 export type ClassifiableRow = {
@@ -39,6 +45,13 @@ export type ClassifiableRow = {
   /** 0095 — le niveau déclaré par l'outil. null : ligne d'avant, ou ligne `cli:*`. */
   riskLevel: string | null;
   toolInput: unknown;
+  /**
+   * La sortie brute, d'où se lit l'ISSUE de l'appel. Sans elle, un refus
+   * d'approbation ou une erreur passait pour une production (revue Codex,
+   * passe 29) : `executeTool` écrit la ligne dans TOUS les cas, y compris
+   * quand rien n'est sorti.
+   */
+  toolOutput: string | null;
 };
 
 export type ProducedItem =
@@ -55,6 +68,13 @@ export type ProductionVerdict = {
   uncertain: number;
   /** Combien de fichiers l'encart ne nomme pas (plafond). */
   more: number;
+  /**
+   * Les lignes SANS carte, hors `cli:*` : celles d'avant P1. L'absence de
+   * carte ne prouve pas « chat » — elle prouve qu'on ne sait pas. L'écran le
+   * dit d'un mot neutre, et ne fabrique jamais d'encart avec (revue Codex,
+   * passe 29, doute 5).
+   */
+  unclassified: number;
 };
 
 /** Le plafond de fichiers nommés dans un encart — au-delà, il compte. */
@@ -142,16 +162,49 @@ export function classifyProduction(input: {
   const items: ProducedItem[] = [];
   const harnessSeen = new Set<string>();
   let uncertain = 0;
+  let unclassified = 0;
   let files = 0;
   let more = 0;
 
+  /** Un fichier de plus, ou un de plus à compter quand le plafond est atteint. */
+  const pushFile = (label: string, path: string | null): void => {
+    if (files >= PRODUCED_FILES_MAX) {
+      more += 1;
+      return;
+    }
+    files += 1;
+    items.push({ kind: 'file', label, path });
+  };
+
   for (const row of input.rows) {
     if (row.toolName.startsWith('cli:')) {
+      // Le harnais compte même si SON appel a échoué : l'enregistreur vivant
+      // écrit une ligne par outil INTERNE déjà exécuté, et ce qu'ils ont
+      // touché est sur le disque quoi qu'il advienne du tour.
       const label = harnessLabel(row.toolName);
       if (!harnessSeen.has(label)) {
         harnessSeen.add(label);
         items.push({ kind: 'harness', label });
       }
+      continue;
+    }
+
+    // L'ISSUE avant tout le reste. Un appel refusé, bloqué ou en attente
+    // d'approbation n'a RIEN produit — sa ligne existe, et sa carte est celle
+    // qu'il AURAIT remplie. La classer afficherait « Produced » pour une
+    // écriture que le propriétaire vient justement de refuser.
+    const outcome = outcomeOfToolOutput(row.toolOutput);
+    if (outcome !== 'success') {
+      // Une issue INCONNUE (aucune sortie enregistrée) ne prouve pas l'échec
+      // non plus : elle est comptée comme non classable, jamais comme
+      // production — même règle que les lignes sans carte.
+      if (outcome === 'unknown') unclassified += 1;
+      continue;
+    }
+
+    if (row.card === null) {
+      // Une ligne d'avant P1 : ni carte ni charge. On ne sait pas.
+      unclassified += 1;
       continue;
     }
 
@@ -163,18 +216,11 @@ export function classifyProduction(input: {
       // compte l'écriture sans savoir laquelle. Une charge PRÉSENTE qui dit
       // zéro fichier, elle, tranche : rien n'est sorti.
       if (payload === null || payload.card !== 'files') {
-        items.push({ kind: 'file', label: row.toolName, path: null });
+        pushFile(row.toolName, null);
         continue;
       }
       if (payload.total === 0) continue;
-      for (const f of payload.files) {
-        if (files >= PRODUCED_FILES_MAX) {
-          more += 1;
-          continue;
-        }
-        files += 1;
-        items.push({ kind: 'file', label: f.path, path: f.path });
-      }
+      for (const f of payload.files) pushFile(f.path, f.path);
       // Le présentateur plafonne sa propre liste (`truncated`) : les fichiers
       // qu'il n'a pas nommés restent comptés.
       const named = payload.files.length;
@@ -215,12 +261,12 @@ export function classifyProduction(input: {
       continue;
     }
 
-    // `text`, `read`, `search`, `table`, `checks`, `delegation`, `question`,
-    // et toute ligne sans carte : du chat.
+    // `text`, `read`, `search`, `table`, `checks`, `delegation`, `question` :
+    // du chat.
   }
 
   // Un classement incertain ne DÉCIDE jamais qu'il y a eu travail — il n'est
   // dit que lorsque autre chose l'a déjà décidé.
   const isWork = items.some((i) => i.kind !== 'external' || i.certain);
-  return { isWork, items, uncertain, more };
+  return { isWork, items, uncertain, more, unclassified };
 }

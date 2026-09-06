@@ -27,7 +27,7 @@
 import { TOOL_CARDS } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 import { blocksFromContent } from '@/components/JobMessages.tsx';
-import { parsePresented } from './tool-card-payload.ts';
+import { parsePresented, outcomeOfToolOutput } from './tool-card-payload.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
 
 // ─── Entrées ──────────────────────────────────────────────────────────────────
@@ -99,8 +99,10 @@ export type Origin = {
   chatId: string | null;
 };
 
-/** Ce qu'une action a donné, lu depuis la ligne d'audit — jamais deviné. */
-export type StepOutcome = 'success' | 'error' | 'awaiting_approval' | 'blocked' | 'unknown';
+// `StepOutcome` et sa lecture vivent dans `tool-card-payload.ts` : la frontière
+// chat/travail (P7) lit la MÊME colonne, et deux lectures auraient divergé.
+export type { StepOutcome } from './tool-card-payload.ts';
+import type { StepOutcome } from './tool-card-payload.ts';
 
 export type Step =
   | {
@@ -249,26 +251,6 @@ export function showsAlone(step: Extract<Step, { kind: 'tool' }>): boolean {
 
 function isToolCard(value: string | null): value is ToolCard {
   return value !== null && (TOOL_CARDS as readonly string[]).includes(value);
-}
-
-/**
- * Le sort d'un appel, lu depuis ce que executeTool a écrit : une ligne
- * d'échec porte `{ outcome: 'error' | 'blocked' | 'awaiting_approval' }`, une
- * ligne de succès porte la sortie brute de l'outil.
- */
-function outcomeOf(row: FeedToolCallRow | undefined): StepOutcome {
-  if (!row || row.toolOutput === null) return 'unknown';
-  try {
-    const parsed = JSON.parse(row.toolOutput) as unknown;
-    if (parsed && typeof parsed === 'object' && 'outcome' in parsed) {
-      const o = (parsed as { outcome: unknown }).outcome;
-      if (o === 'error' || o === 'blocked' || o === 'awaiting_approval') return o;
-      if (o === 'success') return 'success';
-    }
-  } catch {
-    // sortie non JSON : une chaîne brute, donc un succès textuel
-  }
-  return 'success';
 }
 
 type ReasoningPart = { type: 'reasoning'; text: string };
@@ -457,7 +439,7 @@ export function buildConversationFeed(
           presented: row ? parsePresented(row.presented) : null,
           input: b.payload,
           outputText: row?.toolOutput ?? null,
-          outcome: outcomeOf(row),
+          outcome: outcomeOfToolOutput(row?.toolOutput),
           durationMs: row?.durationMs ?? null,
         };
         if (showsAlone(step)) {

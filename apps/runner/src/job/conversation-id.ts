@@ -25,6 +25,7 @@
 import { basename } from 'node:path/posix';
 import { eq, and, sql, desc, count, isNull, ne } from '@nodal-agents/db';
 import { agentJobs, conversations, chatMessages, codeProjects } from '@nodal-agents/db';
+import { stripGroupPrefix } from '@nodal-agents/shared';
 import type { ConversationContext } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -161,13 +162,18 @@ export async function openNewConversation(k: ThreadKey): Promise<ConversationRef
  * chat du dashboard. Posé UNE SEULE FOIS : le `CASE` le fait en une instruction,
  * pour que deux messages arrivés ensemble ne se disputent pas le nom (une
  * lecture puis une écriture laisserait le second écraser le premier).
+ *
+ * Le préfixe de groupe (`[Message from Untel]: `) est retiré ICI, au titrage
+ * seulement : la TÂCHE le garde — le modèle doit savoir qui parle — mais un
+ * titre qui commence par les mêmes crochets pour tout un salon ne nomme plus
+ * rien (revue Codex, passe 29, doute 1).
  */
 export async function touchConversation(
   db: RunnerDeps['db'],
   id: string,
   firstTask: string,
 ): Promise<void> {
-  const firstLine = (firstTask.split('\n')[0] ?? '').trim();
+  const firstLine = stripGroupPrefix((firstTask.split('\n')[0] ?? '').trim());
   const title = firstLine.slice(0, TITLE_MAX) + (firstLine.length > TITLE_MAX ? '…' : '');
   await db
     .update(conversations)

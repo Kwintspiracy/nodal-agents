@@ -38,6 +38,7 @@ export * from './redact-transcript';
 export * from './agent-slug';
 export * from './catastrophic-command';
 export * from './project-key';
+export * from './group-prefix';
 export * from './project-roots';
 export * from './verify-command-discovery';
 export * from './types/verification';

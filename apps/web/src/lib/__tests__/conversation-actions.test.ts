@@ -33,6 +33,10 @@ const telegramConv = { id: '', jobA: '', jobB: '' };
 const dashboardConv = { id: '' };
 const projet = { id: '', path: '', name: 'Bilans mensuels' };
 const voisin = { entityId: '', agentId: '', conversationId: '' };
+const auditConv = { id: '' };
+const longueConv = { id: '' };
+const bavardeConv = { id: '' };
+const groupeConv = { id: '' };
 
 vi.mock('@/lib/server.ts', () => ({
   getDb: () => testDb,
@@ -231,6 +235,175 @@ beforeAll(async () => {
     },
   ]);
 
+  // ── Deux jobs de tête, chacun avec SA ligne d'audit ───────────────────────
+  // Les fils sont assemblés en trois requêtes groupées : ce fil prouve que la
+  // répartition en mémoire ne mélange pas les lignes de deux travaux.
+  const [convAudit] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Deux travaux',
+      origin: 'user',
+      channel: 'telegram',
+      chatId: '77',
+      createdAt: new Date('2026-09-03T10:00:00Z'),
+      updatedAt: new Date('2026-09-03T11:00:00Z'),
+    })
+    .returning({ id: conversations.id });
+  auditConv.id = convAudit!.id;
+
+  // Les lignes d'audit SANS `tool_call_id` : c'est la forme des lignes
+  // anciennes, et la seule où le rattachement se fait par NOM, dans l'ordre.
+  // C'est donc la seule qui rend le regroupement OBSERVABLE : si les lignes
+  // des deux travaux étaient mises en commun, le premier prendrait celle du
+  // second (elle est plus ancienne) et l'écran mentirait.
+  const bloc = (n: number) => ({
+    role: 'assistant',
+    content: Array.from({ length: n }, () => ({
+      type: 'tool-call',
+      toolName: 'run_command',
+      input: {},
+    })),
+  });
+  const travaux = [
+    { rang: 'premier', commandes: ['echo un'], creeA: '2026-09-03T10:10:00Z', audit: 40 },
+    {
+      rang: 'second',
+      commandes: ['echo deux', 'echo trois'],
+      creeA: '2026-09-03T10:20:00Z',
+      audit: 10,
+    },
+  ] as const;
+  for (const t of travaux) {
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '77',
+        conversationId: auditConv.id,
+        task: `travail ${t.rang}`,
+        status: 'completed',
+        result: `fini ${t.rang}`,
+        messages: [{ role: 'user', content: `travail ${t.rang}` }, bloc(t.commandes.length)],
+        createdAt: new Date(t.creeA),
+        completedAt: new Date('2026-09-03T10:30:00Z'),
+      })
+      .returning({ id: agentJobs.id });
+    await testDb.insert(toolCalls).values(
+      t.commandes.map((commande, k) => ({
+        entityId: seed.entityId,
+        jobId: j!.id,
+        toolName: 'run_command',
+        card: 'terminal',
+        presented: {
+          card: 'terminal',
+          command: commande,
+          exitCode: 0,
+          timedOut: false,
+          stdoutTail: '',
+          stdoutTruncated: false,
+          stderrTail: '',
+          stderrTruncated: false,
+        },
+        riskLevel: 'write',
+        toolInput: {},
+        toolOutput: 'ok',
+        // Les lignes du SECOND sont les plus anciennes : mises en commun,
+        // c'est le premier travail qui les prendrait.
+        createdAt: new Date(Date.UTC(2026, 8, 3, 9, t.audit + k)),
+      })),
+    );
+  }
+
+  // ── Un fil de canal PLUS LONG que le plafond de jobs ──────────────────────
+  const [convLongue] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Fil tres long',
+      origin: 'user',
+      channel: 'telegram',
+      chatId: '88',
+      createdAt: new Date('2026-09-04T08:00:00Z'),
+      updatedAt: new Date('2026-09-04T09:00:00Z'),
+    })
+    .returning({ id: conversations.id });
+  longueConv.id = convLongue!.id;
+  await testDb.insert(agentJobs).values(
+    Array.from({ length: 101 }, (_, i) => ({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '88',
+      conversationId: longueConv.id,
+      task: `tour ${i + 1}`,
+      status: 'completed',
+      result: `fait ${i + 1}`,
+      messages: [{ role: 'user', content: `tour ${i + 1}` }],
+      createdAt: new Date(Date.UTC(2026, 8, 4, 8, i)),
+      completedAt: new Date(Date.UTC(2026, 8, 4, 8, i, 30)),
+    })),
+  );
+
+  // ── Un fil du dashboard PLUS LONG que le plafond de messages ──────────────
+  const [convBavarde] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      title: 'Fil bavard',
+      origin: 'user',
+      channel: 'dashboard',
+      createdAt: new Date('2026-09-05T08:00:00Z'),
+      updatedAt: new Date('2026-09-05T09:00:00Z'),
+    })
+    .returning({ id: conversations.id });
+  bavardeConv.id = convBavarde!.id;
+  await testDb.insert(chatMessages).values(
+    Array.from({ length: 502 }, (_, i) => ({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: bavardeConv.id,
+      role: 'user' as const,
+      content: `m${i + 1}`,
+      createdAt: new Date(Date.UTC(2026, 8, 5, 8, 0, i)),
+    })),
+  );
+
+  // ── Un fil de GROUPE : la tache porte le prefixe de l'expediteur ──────────
+  const [convGroupe] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      // Titre VIDE : c'est le repli sur la premiere demande qui est en jeu.
+      title: '',
+      origin: 'user',
+      channel: 'slack',
+      chatId: 'C42',
+      createdAt: new Date('2026-09-06T08:00:00Z'),
+      updatedAt: new Date('2026-09-06T08:30:00Z'),
+    })
+    .returning({ id: conversations.id });
+  groupeConv.id = convGroupe!.id;
+  await testDb.insert(agentJobs).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    channel: 'slack',
+    chatId: 'C42',
+    conversationId: groupeConv.id,
+    task: '[Message from Paul (@paul)]: redige le bilan de septembre',
+    status: 'completed',
+    result: 'fait',
+    messages: [],
+    createdAt: new Date('2026-09-06T08:10:00Z'),
+    completedAt: new Date('2026-09-06T08:20:00Z'),
+  });
+
   // L'entretien d'accueil — estampillé à la création, jamais dans la liste.
   await testDb.insert(conversations).values({
     entityId: seed.entityId,
@@ -385,5 +558,85 @@ describe('getConversationThreadAction — les bornes', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('getConversationThreadAction — les fils assembles ensemble', () => {
+  it('chaque travail ne porte QUE ses propres lignes d’audit', async () => {
+    // Les enfants, les tool_calls et les llm_calls sont charges en trois
+    // requetes pour TOUS les jobs de tete, puis repartis en memoire (revue
+    // Codex, passe 29, doute 2) : une repartition fautive melangerait les deux.
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(auditConv.id);
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+
+    const commandes = r.data.feed.items.flatMap((i) =>
+      i.kind === 'turn'
+        ? i.blocks.flatMap((b) =>
+            b.kind === 'card' && b.step.presented?.card === 'terminal'
+              ? [b.step.presented.command]
+              : [],
+          )
+        : [],
+    );
+    expect(commandes).toEqual(['echo un', 'echo deux', 'echo trois']);
+    expect(r.data.feed.items.filter((i) => i.kind === 'produced')).toHaveLength(2);
+  });
+});
+
+describe('getConversationThreadAction — les plafonds gardent la FIN du fil', () => {
+  it('101 travaux : les 100 DERNIERS, et le fil dit que le debut manque', async () => {
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(longueConv.id);
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+
+    expect(r.data.truncated.jobs).toBe(true);
+    expect(r.data.feed.items[0]).toEqual({
+      kind: 'note',
+      text: 'Older turns are not shown (100 shown).',
+    });
+    const demandes = r.data.feed.items
+      .filter((i) => i.kind === 'request')
+      .map((i) => (i.kind === 'request' ? i.text : ''));
+    expect(demandes).toHaveLength(100);
+    // Le tour 1 est tombe ; le 2 ouvre le fil, le 101 le ferme.
+    expect(demandes[0]).toBe('tour 2');
+    expect(demandes.at(-1)).toBe('tour 101');
+  });
+
+  it('502 messages : les 500 DERNIERS, dans l’ordre', async () => {
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(bavardeConv.id);
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+
+    expect(r.data.truncated.messages).toBe(true);
+    expect(r.data.feed.items[0]).toEqual({
+      kind: 'note',
+      text: 'Older turns are not shown (500 shown).',
+    });
+    const demandes = r.data.feed.items
+      .filter((i) => i.kind === 'request')
+      .map((i) => (i.kind === 'request' ? i.text : ''));
+    expect(demandes).toHaveLength(500);
+    expect(demandes[0]).toBe('m3');
+    expect(demandes.at(-1)).toBe('m502');
+  });
+
+  it('un fil court ne parle jamais de coupe', async () => {
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(telegramConv.id);
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+    expect(r.data.truncated).toEqual({ messages: false, jobs: false });
+    expect(r.data.feed.items[0]?.kind).toBe('request');
+  });
+});
+
+describe('listAllConversationsAction — le titre de repli', () => {
+  it('le prefixe de groupe ne devient PAS le nom du fil', async () => {
+    const { listAllConversationsAction } = await actions();
+    const r = await listAllConversationsAction();
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+    const groupe = r.data.find((c) => c.id === groupeConv.id);
+    expect(groupe?.title).toBe('redige le bilan de septembre');
   });
 });

@@ -66,7 +66,6 @@ import {
   eq,
   and,
   isNull,
-  ne,
   isNotNull,
   or,
   desc,
@@ -2317,42 +2316,10 @@ function toSpaceListRow(r: SpaceListDbRow): SpaceListRow {
   };
 }
 
-/**
- * Les CONVERSATIONS de TÊTE (sans parent) de l'entité, les plus récentes
- * d'abord. Les runs d'automatisation en sont exclus : ils ont leur propre
- * page (P9) et leur propre action, `listScheduledRunsAction`.
- *
- * La passe 22 avait séparé les deux mondes en deux REQUÊTES avec deux limites,
- * parce qu'une limite globale laissait 200 runs cron récents évincer toutes
- * les conversations. Deux ACTIONS règlent le même problème plus franchement :
- * chaque page lit ce qu'elle montre, et rien d'autre.
- */
-export async function listSpacesAction(
-  opts: { conversations?: number } = {},
-): Promise<ActionResult<SpaceListRow[]>> {
-  try {
-    const session = await getSession();
-    const db = getDb();
-    const conversationsLimit = Math.min(opts.conversations ?? 100, 500);
-    const rows = await db
-      .select(SPACE_LIST_SELECT)
-      .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(
-        and(
-          eq(agentJobs.entityId, session.entityId),
-          isNull(agentJobs.parentJobId),
-          ne(agentJobs.channel, 'cron'),
-        ),
-      )
-      .orderBy(desc(agentJobs.createdAt))
-      .limit(conversationsLimit);
-    return ok(rows.map(toSpaceListRow));
-  } catch (err) {
-    console.error('[listSpacesAction]', err);
-    return fail('db_error', 'Failed to load spaces');
-  }
-}
+// `listSpacesAction` (la liste des jobs de tête hors cron) est RETIRÉE par P8 :
+// /spaces liste des PROJETS, et la liste de toutes les conversations vit dans
+// `listAllConversationsAction` (P7, conversation-actions.ts). Un mode canonique
+// par feature — deux listes de « ce qui s'est passé » divergeaient forcément.
 
 /**
  * Les runs d'automatisation de TÊTE, les plus récents d'abord (P9 : les runs
@@ -2428,6 +2395,9 @@ export type SpaceConversationView = {
  * ses enfants — assemblés par `assembleJobFeed` (`job-feed.ts`), le MÊME
  * assemblage que le fil d'une conversation (P7). Les messages sont masqués à
  * l'affichage (SECRET-001), jamais à l'écriture.
+ *
+ * P8 : elle sert le fil d'UN RUN, sur /scheduled/[id]. Le nom reste — le
+ * renommer changerait des dizaines de lignes de tests pour rien.
  */
 export async function getSpaceConversationAction(
   id: string,
@@ -11212,8 +11182,28 @@ export async function sendChatMessageAction(
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-    const { rootAgentId } = await resolveRoot(db, session.entityId);
-    if (!rootAgentId) return fail('no_root_agent', 'Designate a ROOT agent in Settings first.');
+
+    // L'agent DE LA CONVERSATION, jamais le ROOT courant (revue Codex, passe
+    // 29). Une conversation appartient à l'agent avec qui elle a été menée :
+    // désigner un nouveau ROOT ne doit pas faire répondre B dans le fil de A,
+    // ni exécuter B avec l'historique de A. Le ROOT ne décide que de l'agent
+    // d'une conversation NEUVE (`createConversationAction`).
+    const [conv] = await db
+      .select({ agentId: conversations.agentId, agentActive: agents.active })
+      .from(conversations)
+      .leftJoin(agents, eq(agents.id, conversations.agentId))
+      .where(
+        and(
+          eq(conversations.id, parsed.data.conversationId),
+          eq(conversations.entityId, session.entityId),
+        ),
+      )
+      .limit(1);
+    if (!conv) return fail('conversation_not_found', 'Conversation not found');
+    if (conv.agentActive === false) {
+      return fail('agent_inactive', 'This conversation’s agent is disabled.');
+    }
+    const agentId = conv.agentId;
 
     if (!env.WORKER_SECRET) {
       console.error('[sendChatMessageAction] WORKER_SECRET missing — cannot reach runner');
@@ -11232,7 +11222,7 @@ export async function sendChatMessageAction(
         },
         body: JSON.stringify({
           entityId: session.entityId,
-          agentId: rootAgentId,
+          agentId,
           conversationId: parsed.data.conversationId,
           message: parsed.data.message,
         }),

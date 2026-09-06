@@ -305,6 +305,25 @@ describe('touchConversation', () => {
     expect((await relireConversation(ref.id))?.title).toBe('rédige le plan');
   });
 
+  it('le préfixe de GROUPE ne nomme pas le fil — il nomme un expéditeur', async () => {
+    // Dans un salon, chaque tâche est préfixée `[Message from Untel]: ` pour
+    // que le modèle sache qui parle. Le titre, lui, doit dire de quoi ça parle
+    // (revue Codex, passe 29, doute 1). La TÂCHE n'est pas touchée.
+    const ref = await resolveConversation(key('chat-titre-groupe'));
+    await touchConversation(
+      db,
+      ref.id,
+      '[Message from Paul (@paul)]: rédige le bilan de septembre',
+    );
+    expect((await relireConversation(ref.id))?.title).toBe('rédige le bilan de septembre');
+  });
+
+  it('un texte qui commence par des crochets SANS être un préfixe reste entier', async () => {
+    const ref = await resolveConversation(key('chat-titre-crochets'));
+    await touchConversation(db, ref.id, '[URGENT] la prod est tombée');
+    expect((await relireConversation(ref.id))?.title).toBe('[URGENT] la prod est tombée');
+  });
+
   it('fait bouger updated_at à chaque tour', async () => {
     const ref = await resolveConversation(key('chat-touch'));
     const vieux = new Date(Date.now() - 60 * 60_000);

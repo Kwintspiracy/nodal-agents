@@ -20,6 +20,7 @@ const travail: ProductionVerdict = {
   ],
   uncertain: 0,
   more: 0,
+  unclassified: 0,
 };
 
 describe('ProducedCard', () => {
@@ -55,6 +56,7 @@ describe('ProducedCard', () => {
           ],
           uncertain: 1,
           more: 0,
+          unclassified: 0,
         }}
         project={null}
       />,

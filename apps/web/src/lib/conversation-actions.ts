@@ -37,11 +37,11 @@ import {
   toolCalls,
   verificationRuns,
 } from '@nodal-agents/db';
-import { normalizePath } from '@nodal-agents/shared';
+import { normalizePath, stripGroupPrefix } from '@nodal-agents/shared';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
-import { assembleJobFeed, collectDescendants } from './job-feed.ts';
+import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
 import { buildConversationThread } from './conversation-thread.ts';
 import type { ThreadJob, ThreadProject } from './conversation-thread.ts';
 import { classifyProduction } from './chat-or-work.ts';
@@ -116,6 +116,12 @@ export type ConversationThreadView = {
   }>;
   /** Un travail du fil n'est pas terminé : l'écran se rafraîchit. */
   live: boolean;
+  /**
+   * Le fil ne montre que sa FIN : les plafonds ont mordu. Le feed porte déjà
+   * la note qui le dit ; ce drapeau existe pour qu'un appelant puisse en faire
+   * autre chose (une pagination, un jour).
+   */
+  truncated: { messages: boolean; jobs: boolean };
   /**
    * Répondre depuis le web n'est câblé que pour le dashboard. Sur un canal, le
    * fil est en lecture seule et le DIT — répondre là-bas demanderait de
@@ -271,8 +277,12 @@ export async function listAllConversationsAction(): Promise<ActionResult<Convers
           channel: r.channel,
           chatId: r.chatId,
           // Le titre de la colonne d'abord ; sinon la première demande, qui est
-          // le seul titre honnête d'un fil que personne n'a nommé.
-          title: r.title !== '' ? r.title : firstLine(stats?.firstRequest ?? '', TITLE_MAX),
+          // le seul titre honnête d'un fil que personne n'a nommé — sans son
+          // préfixe de groupe, qui nomme l'expéditeur et pas le sujet.
+          title:
+            r.title !== ''
+              ? r.title
+              : firstLine(stripGroupPrefix(stats?.firstRequest ?? ''), TITLE_MAX),
           agentId: r.agentId,
           agentName: r.agentName,
           agentSlug: r.agentSlug,
@@ -331,7 +341,11 @@ export async function getConversationThreadAction(
       .limit(1);
     if (!conv) return fail('not_found', 'Conversation not found');
 
-    const [messageRows, headRows] = await Promise.all([
+    // LES PLUS RÉCENTS, puis remis dans l'ordre. Le plafond gardait le DÉBUT
+    // du fil : au 101e tour d'un canal, la page restait figée sur les cent
+    // premiers jobs et ne montrait plus la conversation en cours (revue Codex,
+    // passe 29). On lit donc la FIN, et on dit que le début manque.
+    const [recentMessages, recentHeads] = await Promise.all([
       db
         .select({
           id: chatMessages.id,
@@ -342,7 +356,7 @@ export async function getConversationThreadAction(
         })
         .from(chatMessages)
         .where(eq(chatMessages.conversationId, id))
-        .orderBy(chatMessages.createdAt)
+        .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id))
         .limit(MESSAGES_MAX),
       db
         .select({ job: agentJobs, agentName: agents.name, agentSlug: agents.slug })
@@ -355,9 +369,19 @@ export async function getConversationThreadAction(
             isNull(agentJobs.parentJobId),
           ),
         )
-        .orderBy(agentJobs.createdAt)
+        .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
         .limit(HEAD_JOBS_MAX),
     ]);
+    // Le plafond ATTEINT ne prouve pas qu'il a mordu (il peut y avoir
+    // exactement N tours), mais c'est le seul signal disponible sans une
+    // requête de comptage de plus ; dire « il y en a peut-être d'autres » vaut
+    // mieux que laisser croire que le fil commence là.
+    const truncated = {
+      messages: recentMessages.length === MESSAGES_MAX,
+      jobs: recentHeads.length === HEAD_JOBS_MAX,
+    };
+    const messageRows = [...recentMessages].reverse();
+    const headRows = [...recentHeads].reverse();
 
     const headIds = headRows.map((r) => r.job.id);
     const descendants =
@@ -370,17 +394,14 @@ export async function getConversationThreadAction(
     // Le fil de chaque travail : un assemblage par job, celui de la page d'un
     // espace. Les lignes d'audit de TOUS les jobs (têtes et descendants) sont
     // relues à part, parce que la frontière chat/travail est récursive.
-    const [feeds, classifiableRows, projectRows] = await Promise.all([
-      Promise.all(
-        headRows.map(async (r) => ({
-          jobId: r.job.id,
-          job: r.job,
-          assembled: await assembleJobFeed(db, session.entityId, {
-            job: r.job,
-            agentName: r.agentName,
-            agentSlug: r.agentSlug,
-          }),
-        })),
+    const [assembled, classifiableRows, projectRows] = await Promise.all([
+      // Trois requêtes pour TOUS les jobs de tête, pas trois par job : au
+      // plafond de cent, l'ancienne version en lançait trois cents pour une
+      // seule page (revue Codex, passe 29, doute 2).
+      assembleJobFeeds(
+        db,
+        session.entityId,
+        headRows.map((r) => ({ job: r.job, agentName: r.agentName, agentSlug: r.agentSlug })),
       ),
       relevantIds.length > 0
         ? db
@@ -391,6 +412,9 @@ export async function getConversationThreadAction(
               presented: toolCalls.presented,
               riskLevel: toolCalls.riskLevel,
               toolInput: toolCalls.toolInput,
+              // L'ISSUE de l'appel : sans elle, un refus d'approbation passait
+              // pour une production (revue Codex, passe 29).
+              toolOutput: toolCalls.toolOutput,
             })
             .from(toolCalls)
             .where(
@@ -443,15 +467,15 @@ export async function getConversationThreadAction(
     }
 
     const conversationRef = { channel: conv.channel, chatId: conv.chatId };
-    const jobs: ThreadJob[] = feeds.map((f) => ({
-      jobId: f.jobId,
-      feed: f.assembled.feed,
-      createdAt: f.job.createdAt,
+    const jobs: ThreadJob[] = headRows.map((r, i) => ({
+      jobId: r.job.id,
+      feed: assembled[i]!.feed,
+      createdAt: r.job.createdAt,
       verdict: classifyProduction({
         conversation: conversationRef,
-        rows: rowsByRoot.get(f.jobId) ?? [],
+        rows: rowsByRoot.get(r.job.id) ?? [],
       }),
-      project: f.job.projectId !== null ? (projectById.get(f.job.projectId) ?? null) : null,
+      project: r.job.projectId !== null ? (projectById.get(r.job.projectId) ?? null) : null,
     }));
 
     const currentProject = projectOf(conv);
@@ -473,6 +497,7 @@ export async function getConversationThreadAction(
         createdAt: m.createdAt,
       })),
       jobs,
+      truncated,
     });
 
     // P3/P4 — la preuve, la file d'envoi et le coût de TOUT le fil : les jobs
@@ -612,6 +637,7 @@ export async function getConversationThreadAction(
       cost,
       deliveries: deliveryRows,
       live: !allTerminal,
+      truncated,
       canReply: conv.channel === 'dashboard',
     });
   } catch (err) {

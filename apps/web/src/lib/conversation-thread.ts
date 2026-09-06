@@ -8,8 +8,8 @@
 // un fil Telegram et un fil du dashboard se lisent avec le même code.
 //
 // Pur, comme P2 : des fils de jobs DÉJÀ construits et des lignes déjà lues,
-// aucune requête. Ce que ce module met en plus, c'est l'ORDRE et deux items
-// que le job seul ne peut pas connaître :
+// aucune requête. Ce que ce module met en plus, c'est l'ORDRE et des items que
+// le job seul ne peut pas connaître :
 //
 //   produced — ce qui est sorti du chat à ce tour, et le projet où il vit ; le
 //              verdict vient de `chat-or-work.ts`, sur les lignes du job ET de
@@ -19,6 +19,9 @@
 //              reformulation de l'agent la répéterait. Elle est gardée quand
 //              même, repliée, parce qu'elle dit ce que le travail a VRAIMENT
 //              reçu — c'est souvent là qu'un malentendu se voit.
+//   note     — ce que le fil ne peut PAS dire : des tours plus anciens que le
+//              plafond, ou une activité d'avant les cartes qui ne se classe
+//              pas. Dit, jamais tu.
 //
 // Ce qui est RETIRÉ, et pourquoi : les items `history` des jobs. Le runner
 // préfixe l'historique du fil au transcript pour que l'agent s'en souvienne
@@ -62,6 +65,20 @@ export type ThreadJob = {
 /** Ce que le fil dit quand le travail d'un tour n'existe plus en base. */
 export const JOB_GONE_NOTE = '(job no longer available)';
 
+/**
+ * Ce que le fil dit d'un tour dont les lignes d'audit sont d'avant les cartes
+ * (P1) : on ne peut RIEN affirmer de ce qu'il a produit. Un encart « Produced »
+ * serait une invention, un silence serait un « rien produit » tout aussi
+ * inventé (revue Codex, passe 29, doute 5).
+ */
+export const UNCLASSIFIED_NOTE =
+  'Older activity in this turn cannot be classified (recorded before cards existed).';
+
+/** Ce que le fil dit quand il ne montre que la FIN de la conversation. */
+export function olderTurnsNote(shown: number): string {
+  return `Older turns are not shown (${shown} shown).`;
+}
+
 function withoutHistory(items: readonly FeedItem[]): FeedItem[] {
   return items.filter((i) => i.kind !== 'history');
 }
@@ -78,14 +95,24 @@ function jobItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
   return items.map((i) => (i.kind === 'request' ? { kind: 'handoff' as const, text: i.text } : i));
 }
 
-function producedItem(job: ThreadJob): FeedItem | null {
-  if (!job.verdict.isWork) return null;
-  return {
-    kind: 'produced',
-    jobId: job.jobId,
-    verdict: job.verdict,
-    project: job.project,
-  };
+/**
+ * Ce qui suit les items d'un job : l'encart quand il a produit, sinon l'aveu
+ * d'ignorance quand ses lignes ne se classent pas. Jamais les deux — l'encart
+ * porte déjà son propre compte d'incertitude.
+ */
+function afterJobItems(job: ThreadJob): FeedItem[] {
+  if (job.verdict.isWork) {
+    return [
+      {
+        kind: 'produced',
+        jobId: job.jobId,
+        verdict: job.verdict,
+        project: job.project,
+      },
+    ];
+  }
+  if (job.verdict.unclassified > 0) return [{ kind: 'note', text: UNCLASSIFIED_NOTE }];
+  return [];
 }
 
 /** La somme des totaux des jobs — un tour de pure conversation n'en a pas. */
@@ -120,22 +147,42 @@ function sumTotals(jobs: readonly ThreadJob[]): FeedTotals {
   return totals;
 }
 
+/**
+ * Ce que les plafonds ont laissé de côté. L'appelant ne charge que la FIN d'un
+ * fil (les tours récents sont ceux qu'on vient lire) ; quand le plafond a
+ * mordu, le fil le DIT en tête plutôt que de faire croire qu'il commence là.
+ */
+export type ThreadTruncation = { messages: boolean; jobs: boolean };
+
 export function buildConversationThread(input: {
   conversation: ThreadConversation;
   /** Les tours du dashboard, chronologiques. `[]` pour une conversation de canal. */
   messages: readonly ThreadMessage[];
   /** Les jobs de TÊTE de la conversation, chronologiques. */
   jobs: readonly ThreadJob[];
+  /** Les plafonds atteints, s'il y en a. Absent = le fil est entier. */
+  truncated?: ThreadTruncation;
 }): ConversationFeed {
-  const { conversation, messages, jobs } = input;
+  const { conversation, messages, jobs, truncated } = input;
   const items: FeedItem[] = [];
+
+  // La coupe se dit EN TÊTE, avant tout item : c'est la première chose qu'un
+  // lecteur doit savoir d'un fil qui ne commence pas à son début. Ce qu'on
+  // COMPTE est ce qui fait un tour à l'écran — les messages sur le dashboard,
+  // les jobs sur un canal.
+  const isDashboard = conversation.channel === 'dashboard';
+  const cut = isDashboard
+    ? truncated?.messages === true || truncated?.jobs === true
+    : truncated?.jobs === true;
+  if (cut) {
+    items.push({ kind: 'note', text: olderTurnsNote(isDashboard ? messages.length : jobs.length) });
+  }
 
   if (conversation.channel !== 'dashboard') {
     // Un fil de canal n'a pas de `chat_messages` : ses tours SONT ses jobs.
     for (const job of jobs) {
       items.push(...jobItems(job, false));
-      const produced = producedItem(job);
-      if (produced) items.push(produced);
+      items.push(...afterJobItems(job));
     }
     return { items, totals: sumTotals(jobs) };
   }
@@ -179,8 +226,7 @@ export function buildConversationThread(input: {
       continue;
     }
     items.push(...jobItems(job, true));
-    const produced = producedItem(job);
-    if (produced) items.push(produced);
+    items.push(...afterJobItems(job));
   }
 
   return { items, totals: sumTotals(jobs) };

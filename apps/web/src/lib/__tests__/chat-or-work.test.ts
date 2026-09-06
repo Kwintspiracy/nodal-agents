@@ -22,8 +22,14 @@ const ligne = (over: Partial<ClassifiableRow>): ClassifiableRow => ({
   presented: null,
   riskLevel: null,
   toolInput: {},
+  // Une sortie NON-JSON : c'est ainsi qu'`executeTool` écrit un succès.
+  toolOutput: 'ok',
   ...over,
 });
+
+/** La sortie qu'`executeTool` écrit quand l'appel n'a PAS abouti. */
+const echec = (outcome: 'error' | 'blocked' | 'awaiting_approval') =>
+  JSON.stringify({ outcome, error: `${outcome}: rien n'est sorti` });
 
 const verdict = (
   rows: ClassifiableRow[],
@@ -33,7 +39,7 @@ const verdict = (
 describe('classifyProduction — ce qui reste du chat', () => {
   it('« bonjour » : aucune ligne, donc rien à montrer', () => {
     const v = verdict([]);
-    expect(v).toEqual({ isWork: false, items: [], uncertain: 0, more: 0 });
+    expect(v).toEqual({ isWork: false, items: [], uncertain: 0, more: 0, unclassified: 0 });
   });
 
   it('une recherche web est du chat', () => {
@@ -309,6 +315,100 @@ describe('classifyProduction — le connecteur tiers, tranché par son risque d�
   });
 });
 
+describe("classifyProduction — l'issue de l'appel", () => {
+  const cartes = [
+    {
+      nom: 'files',
+      ligne: {
+        toolName: 'file_write',
+        card: 'files',
+        presented: {
+          card: 'files',
+          files: [{ path: 'a.md', action: 'created' }],
+          total: 1,
+          truncated: false,
+        },
+      },
+    },
+    {
+      nom: 'sent',
+      ligne: {
+        toolName: 'send_email',
+        card: 'sent',
+        presented: { card: 'sent', channel: 'email', kind: 'message', target: 'paul@example.com' },
+      },
+    },
+    {
+      nom: 'terminal',
+      ligne: {
+        toolName: 'run_command',
+        card: 'terminal',
+        presented: {
+          card: 'terminal',
+          command: 'rm -rf out',
+          exitCode: 0,
+          timedOut: false,
+          stdoutTail: '',
+          stdoutTruncated: false,
+          stderrTail: '',
+          stderrTruncated: false,
+        },
+      },
+    },
+    {
+      nom: 'generic write',
+      ligne: { toolName: 'mcp_notion__create_page', card: 'generic', riskLevel: 'write' },
+    },
+  ] as const;
+
+  for (const { nom, ligne: base } of cartes) {
+    for (const issue of ['error', 'blocked', 'awaiting_approval'] as const) {
+      it(`une carte ${nom} en ${issue} ne produit RIEN`, () => {
+        const v = verdict([ligne({ ...base, toolOutput: echec(issue) })]);
+        expect(v.isWork).toBe(false);
+        expect(v.items).toEqual([]);
+        expect(v.more).toBe(0);
+      });
+    }
+  }
+
+  it('une carte `files` en échec ne fabrique pas un fichier sans nom', () => {
+    // L'échec n'a normalement PAS de charge utile : c'est exactement le cas où
+    // l'ancienne version poussait un item « fichier » portant le nom de l'outil.
+    const v = verdict([
+      ligne({
+        toolName: 'file_write',
+        card: 'files',
+        presented: null,
+        toolOutput: echec('awaiting_approval'),
+      }),
+    ]);
+    expect(v).toEqual({ isWork: false, items: [], uncertain: 0, more: 0, unclassified: 0 });
+  });
+
+  it('une sortie ABSENTE ne vaut ni succès ni échec : elle est dite non classable', () => {
+    const v = verdict([ligne({ toolName: 'file_write', card: 'files', toolOutput: null })]);
+    expect(v.isWork).toBe(false);
+    expect(v.items).toEqual([]);
+    expect(v.unclassified).toBe(1);
+  });
+});
+
+describe('classifyProduction — les lignes sans carte (avant P1)', () => {
+  it("une ligne sans carte n'est ni du chat ni du travail : elle est comptée", () => {
+    const v = verdict([ligne({ toolName: 'un_vieil_outil', card: null, presented: null })]);
+    expect(v.isWork).toBe(false);
+    expect(v.items).toEqual([]);
+    expect(v.unclassified).toBe(1);
+  });
+
+  it('elle ne fabrique jamais un encart à elle seule', () => {
+    const v = verdict([ligne({ toolName: 'a', card: null }), ligne({ toolName: 'b', card: null })]);
+    expect(v.isWork).toBe(false);
+    expect(v.unclassified).toBe(2);
+  });
+});
+
 describe('classifyProduction — le plafond', () => {
   it(`nomme ${PRODUCED_FILES_MAX} fichiers et compte les autres`, () => {
     const fichiers = Array.from({ length: 11 }, (_, i) => ({
@@ -343,6 +443,17 @@ describe('classifyProduction — le plafond', () => {
     ]);
     expect(v.items).toEqual([{ kind: 'file', label: 'a.ts', path: 'a.ts' }]);
     expect(v.more).toBe(39);
+  });
+
+  it('les fichiers ANONYMES (carte `files` sans charge) comptent dans le plafond', () => {
+    const v = verdict(
+      Array.from({ length: 10 }, () =>
+        ligne({ toolName: 'file_write', card: 'files', presented: null }),
+      ),
+    );
+    expect(v.isWork).toBe(true);
+    expect(v.items).toHaveLength(PRODUCED_FILES_MAX);
+    expect(v.more).toBe(2);
   });
 
   it('une carte `files` qui dit ZÉRO fichier ne produit rien', () => {
