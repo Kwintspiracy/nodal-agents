@@ -457,7 +457,8 @@
             un classeur qui s'affiche.
           </td>
           <td>
-            <span class="etat">go le 06/09 (soir)</span> — ✅ P5b CLOSE (<code>16d1f574</code> ;
+            <span class="etat">LOT 3 CLOS côté code le 07/09</span> — passes Codex 32 à 48 ; attend
+            l'œil de Quentin et les arbitrages ci-dessous — ✅ P5b CLOSE (<code>16d1f574</code> ;
             passes Codex 32-35 traitées dans <code>4491ae46</code>, <code>aefdcec3</code>,
             <code>934091d4</code>, <code>4f084c21</code>, <code>268f68ef</code> ; passe 36 : aucun
             constat bloquant, rien de neuf) · ✅ P10a <code>ask_user</code> (<code>5c7938a7</code> ;
@@ -473,7 +474,9 @@
             aucun constat bloquant) · ✅ P12 tableur rendu (<code>b4ac14b1</code> ; passe 46 : 3 P0
             + 2 P1 vrais, traités dans <code>f790a051</code> — la même clé de document pour
             l'intention et la carte, texte riche lisible, largeur bornée à 20 colonnes, état lu par
-            (job, clé), pied sans contradiction ; passe 47 lancée)
+            (job, clé), pied sans contradiction ; passe 47 : un P0 neuf, les cellules couvertes par
+            une fusion répétaient la valeur du maître, corrigé dans <code>e9393c54</code> ; passe 48
+            : aucun constat neuf — <b>P12 CLOSE</b>)
           </td>
         </tr>
         <tr>
@@ -1440,6 +1443,20 @@
         pour un <code>total</code> exact est accepté et dit dans le code.
         <i>Dégradation acceptée</i> : une carte <code>table</code> déjà persistée avec plus de 20
         colonnes ne passe plus le schéma à l'écran, qui montre alors la sortie brute.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">passes 47-48</span
+      ><span class="v"
+        ><b>Clôture</b> (<code>e9393c54</code>, 07/09). Un seul constat neuf en 47, vrai : une
+        cellule couverte par une fusion rend la valeur de son maître, et « Q1 » fusionné sur A1:C2
+        paraissait six fois — six valeurs là où le classeur n'en tient qu'une. La valeur paraît
+        maintenant une fois, au maître, les cellules couvertes restent vides (le maître est toujours
+        en haut à gauche de la plage : l'aperçu ne peut pas montrer une cellule couverte sans son
+        maître). Les sept autres questions de la passe 47 ont tenu (double rebasage idempotent,
+        racines normalisées, formule partagée traduite après sauvegarde, résultat 0 montré 0, la
+        carte lit le job de l'intention, lignes anciennes rendues brutes). Passe 48 : aucun constat
+        neuf — <b>P12 close, et avec elle le lot 3 côté code</b>.</span
       >
     </div>
   </div>
