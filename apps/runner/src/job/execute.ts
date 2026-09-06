@@ -30,7 +30,7 @@ import {
   parseRootGrants,
   modelContextWindow,
   modelCanSeeImages,
-  estimateModelCostUsd,
+  estimateCallCostUsd,
   isUntrustedTool,
   wrapUntrusted,
 } from '@nodal-agents/shared';
@@ -2685,12 +2685,12 @@ async function runJob(
       // for a model with no catalogued price yet.
       const callCostUsd =
         reportedCostUsd ??
-        estimateModelCostUsd(
-          llmClient.config.provider,
-          llmClient.config.model,
-          promptTok,
-          completionT,
-        );
+        estimateCallCostUsd(llmClient.config.provider, llmClient.config.model, {
+          inputTokens: promptTok,
+          outputTokens: completionT,
+          cachedTokens: Number.isFinite(cachedT) ? cachedT : 0,
+          cacheCreationTokens: cacheWriteT,
+        });
       totalCostUsd += callCostUsd;
       // Capture the upstream provider name (P0-B: served-upstream observability).
       // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
