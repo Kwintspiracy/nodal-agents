@@ -235,6 +235,13 @@ export type XlsxSheetPreview = {
  * (exceljs copies only the master's), while `cell.formula` translates it.
  */
 function previewCellValue(c: ExcelJS.Cell): string | number | null {
+  // A cell COVERED by a merge (not the master): exceljs hands back the
+  // master's value from every covered cell, so "Q1" merged over A1:C2 read as
+  // six "Q1" in the grid — six values where the workbook holds one (Codex
+  // review PR #46, pass 47). A spreadsheet draws a merge as one cell; this
+  // grid cannot, so the value appears once, at the master, and the covered
+  // cells stay blank.
+  if (c.type === ExcelJS.ValueType.Merge) return null;
   if (c.type === ExcelJS.ValueType.Formula) {
     const result: unknown = c.result;
     if (result === undefined || result === null) return `=${c.formula}`;

@@ -300,6 +300,30 @@ describe('P12 — la carte d’un classeur écrit porte l’aperçu de la feuill
     expect(JSON.stringify(card)).not.toContain('[object Object]');
   });
 
+  it('une plage FUSIONNÉE : la valeur paraît une fois, à la cellule maître — jamais répétée sur la plage', async () => {
+    // Revue passe 47 : exceljs rend la valeur du maître depuis chaque cellule
+    // couverte, et « Q1 » fusionné sur A1:C2 paraissait six fois — six valeurs
+    // là où le classeur n'en tient qu'une.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('M');
+    ws.getCell('A1').value = 'Q1';
+    ws.mergeCells('A1:C2');
+    ws.getCell('A3').value = 'sous';
+    await wb.xlsx.writeFile(join(WORKSPACE, 'fusion.xlsx'));
+
+    const card = await runAndReadCard(xlsxSetCellTool, {
+      path: 'fusion.xlsx',
+      sheet: 'M',
+      cell: 'D1',
+      value: 'x',
+    });
+    const rows = card.files[0]?.preview?.rows ?? [];
+    expect(rows[0]).toEqual(['Q1', null, null, 'x']);
+    expect(rows[1]).toEqual([null, null, null]);
+    expect(rows[2]).toEqual(['sous']);
+    expect(JSON.stringify(rows).match(/Q1/g)).toHaveLength(1);
+  });
+
   it('une feuille de 35 colonnes : l’aperçu en montre CARD_COLS_MAX et dit la largeur réelle', async () => {
     const WIDTH = CARD_COLS_MAX + 15;
     const wb = new ExcelJS.Workbook();
