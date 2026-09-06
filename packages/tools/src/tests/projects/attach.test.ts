@@ -15,7 +15,11 @@
 // Aucune assertion sur une issue seule : chaque cas relit `agent_jobs` ou
 // `conversations` en base.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
@@ -28,7 +32,7 @@ import {
   eq,
   and,
 } from '@nodal-agents/db';
-import { projectKey, type MutationTarget } from '@nodal-agents/shared';
+import { normalizePath, projectKey, type MutationTarget } from '@nodal-agents/shared';
 import { attachProductionToProject } from '../../projects/attach';
 
 let db: TestDb;
@@ -105,8 +109,20 @@ const fichier = (path: string): MutationTarget => ({
   deliverableType: 'code_project',
 });
 
+/**
+ * Sans dossier attaché (P5b) : rien ne peut être DÉCLARÉ, et les cas de ce
+ * bloc prouvent le rattachement seul — `TERRAIN` n'existe pas sur le disque,
+ * aucun manifeste ne s'y lit. La déclaration a son propre bloc plus bas.
+ */
 function ctx(jobId: string | null, conversationId: string | null = null) {
-  return { db, entityId: seed.entityId, jobId, conversationId };
+  return {
+    db,
+    entityId: seed.entityId,
+    jobId,
+    conversationId,
+    agentId: seed.agentId,
+    workspaces: [],
+  };
 }
 
 /** Une conversation de canal — celle qui portera le projet courant (P6). */
@@ -189,6 +205,7 @@ describe('attachProductionToProject', () => {
       job: 'attached',
       jobProjectId: projetId,
       conversation: 'no_conversation',
+      registered: [],
     });
     expect(await projetDuJob(jobId)).toBe(projetId);
   });
@@ -231,6 +248,7 @@ describe('attachProductionToProject', () => {
       job: 'attached',
       jobProjectId: projetA,
       conversation: 'no_conversation',
+      registered: [],
     });
 
     const second = await attachProductionToProject(ctx(jobId), [fichier(`${racine}/b/y.ts`)]);
@@ -243,6 +261,7 @@ describe('attachProductionToProject', () => {
       job: 'kept_existing',
       jobProjectId: projetA,
       conversation: 'no_conversation',
+      registered: [],
     });
     expect(await projetDuJob(jobId)).toBe(projetA);
   });
@@ -262,6 +281,7 @@ describe('attachProductionToProject', () => {
       job: 'already_attached',
       jobProjectId: projetId,
       conversation: 'no_conversation',
+      registered: [],
     });
     expect(await projetDuJob(jobId)).toBe(projetId);
   });
@@ -283,6 +303,7 @@ describe('attachProductionToProject', () => {
       job: 'attached',
       jobProjectId: projetUi,
       conversation: 'no_conversation',
+      registered: [],
     });
     expect(await projetDuJob(jobId)).toBe(projetUi);
   });
@@ -312,6 +333,7 @@ describe('attachProductionToProject', () => {
       job: 'attached',
       jobProjectId: projetId,
       conversation: 'no_conversation',
+      registered: [],
     });
     expect(await projetDuJob(jobCasse)).toBe(projetId);
 
@@ -362,6 +384,7 @@ describe('attachProductionToProject', () => {
       job: 'attached',
       jobProjectId: projetId,
       conversation: 'no_conversation',
+      registered: [],
     });
     expect(await projetDuJob(jobId)).toBe(projetId);
   });
@@ -385,6 +408,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       job: 'attached',
       jobProjectId: projetId,
       conversation: 'set',
+      registered: [],
     });
     expect(await projetDeLaConversation(conversationId)).toBe(projetId);
   });
@@ -412,6 +436,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       job: 'attached',
       jobProjectId: projetB,
       conversation: 'set',
+      registered: [],
     });
     expect(await projetDeLaConversation(conversationId)).toBe(projetB);
   });
@@ -435,6 +460,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       job: 'kept_existing',
       jobProjectId: projetA,
       conversation: 'set',
+      registered: [],
     });
     // Deux règles, deux lignes : le job reste sur A, la conversation passe à B.
     expect(await projetDuJob(jobId)).toBe(projetA);
@@ -457,6 +483,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       job: 'no_job',
       jobProjectId: null,
       conversation: 'set',
+      registered: [],
     });
     expect(await projetDeLaConversation(conversationId)).toBe(projetId);
   });
@@ -480,6 +507,7 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
       job: 'attached',
       jobProjectId: projetId,
       conversation: 'not_found',
+      registered: [],
     });
     // La conversation de l'entité voisine n'a pas bougé.
     expect(await projetDeLaConversation(voisine)).toBeNull();
@@ -512,5 +540,254 @@ describe('attachProductionToProject — le projet COURANT de la conversation (P6
     // « Rien trouvé » n'est pas « oublie où tu travaillais ».
     expect(issue).toEqual({ kind: 'no_project' });
     expect(await projetDeLaConversation(conversationId)).toBe(projetId);
+  });
+});
+
+// ─── P5b : le registre se remplit tout seul ──────────────────────────────────
+//
+// La décision de Quentin (06/09) : un dossier où une production de code a
+// atterri et qui porte un MANIFESTE est un projet, déclaré par la conversation
+// qui y a produit. Ces cas lisent le disque (un terrain temporaire réel) parce
+// que c'est le manifeste qui décide — et chacun relit la ligne `code_projects`.
+
+describe('attachProductionToProject — la déclaration au registre (P5b)', () => {
+  let terrain = '';
+
+  beforeEach(async () => {
+    // `realpath` : sur Windows, `tmpdir()` peut rendre la forme courte 8.3 ;
+    // le terrain est pris sous sa forme réelle, comme un dossier attaché.
+    terrain = normalizePath(
+      realpathSync.native(await mkdtemp(join(tmpdir(), 'nodal-attach-p5b-'))),
+    );
+  });
+
+  afterEach(async () => {
+    try {
+      await rm(terrain, { recursive: true, force: true });
+    } catch {
+      /* jetable */
+    }
+  });
+
+  /** Le contexte d'un agent dont le terrain est `terrain`. */
+  const ctxTerrain = (jobId: string | null, conversationId: string | null = null) => ({
+    db,
+    entityId: seed.entityId,
+    jobId,
+    conversationId,
+    agentId: seed.agentId,
+    workspaces: [{ path: terrain }],
+  });
+
+  const ligne = async (path: string) => {
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        projectPath: codeProjects.projectPath,
+        kind: codeProjects.kind,
+        agentId: codeProjects.agentId,
+        displayName: codeProjects.displayName,
+        hidden: codeProjects.hidden,
+        registeredAt: codeProjects.registeredAt,
+        registeredFrom: codeProjects.registeredFrom,
+        registeredJobId: codeProjects.registeredJobId,
+        verifyCommands: codeProjects.verifyCommands,
+        verificationEpoch: codeProjects.verificationEpoch,
+      })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.entityId, seed.entityId),
+          eq(codeProjects.projectKey, projectKey(path)),
+        ),
+      );
+    return row ?? null;
+  };
+
+  it('(a) un dossier à manifeste sans aucune ligne : DÉCLARÉ, le job rattaché, l’id dans `registered`', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const jobId = await jobNeuf();
+    const avant = new Date();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [fichier(`${app}/src/a.ts`)]);
+
+    const row = await ligne(app);
+    expect(row, 'aucune ligne code_projects pour app').not.toBeNull();
+    expect(issue).toEqual({
+      kind: 'attached',
+      projectId: row!.id,
+      projectPath: app,
+      job: 'attached',
+      jobProjectId: row!.id,
+      conversation: 'no_conversation',
+      registered: [row!.id],
+    });
+    expect(row).toMatchObject({
+      projectPath: app,
+      kind: 'code',
+      agentId: seed.agentId,
+      displayName: null,
+      hidden: false,
+      registeredFrom: 'conversation',
+      registeredJobId: jobId,
+    });
+    expect(row!.registeredAt!.getTime()).toBeGreaterThanOrEqual(avant.getTime() - 1000);
+    expect(await projetDuJob(jobId)).toBe(row!.id);
+  });
+
+  it('(b) une ligne de COMPTABILITÉ (preuve configurée) devient déclarée, sa preuve intacte', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const [compta] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: app,
+        projectKey: projectKey(app),
+        verifyCommands: [{ command: 'pnpm test' }] as never,
+        verificationEpoch: 3,
+      })
+      .returning({ id: codeProjects.id });
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [fichier(`${app}/src/a.ts`)]);
+
+    expect(issue).toMatchObject({
+      kind: 'attached',
+      projectId: compta!.id,
+      registered: [compta!.id],
+    });
+    const row = await ligne(app);
+    expect(row).toMatchObject({
+      id: compta!.id,
+      registeredFrom: 'conversation',
+      registeredJobId: jobId,
+      agentId: seed.agentId,
+      verificationEpoch: 3,
+    });
+    expect(row!.registeredAt).not.toBeNull();
+    expect(row!.verifyCommands).toEqual([{ command: 'pnpm test' }]);
+    // Une seule ligne pour ce dossier — pas une seconde créée à côté.
+    const toutes = await db
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(
+        and(eq(codeProjects.entityId, seed.entityId), eq(codeProjects.projectKey, projectKey(app))),
+      );
+    expect(toutes).toHaveLength(1);
+  });
+
+  it('(c) un dossier SANS manifeste : rien n’est déclaré, `no_project`', async () => {
+    const vrac = `${terrain}/vrac`;
+    await mkdir(vrac, { recursive: true });
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [fichier(`${vrac}/a.md`)]);
+
+    expect(issue).toEqual({ kind: 'no_project' });
+    expect(await ligne(vrac)).toBeNull();
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('(d) une ligne DÉJÀ déclarée n’est pas retouchée : `registered` vide, date d’origine gardée', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const origine = new Date('2026-08-01T10:00:00.000Z');
+    const [declaree] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: app,
+        projectKey: projectKey(app),
+        displayName: 'Mon app',
+        agentId: seed.agentId,
+        registeredAt: origine,
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [fichier(`${app}/src/a.ts`)]);
+
+    expect(issue).toMatchObject({ kind: 'attached', projectId: declaree!.id, registered: [] });
+    expect(await ligne(app)).toMatchObject({
+      id: declaree!.id,
+      displayName: 'Mon app',
+      registeredAt: origine,
+      registeredFrom: 'spaces',
+      registeredJobId: null,
+    });
+  });
+
+  it('(e) une ligne MASQUÉE se déclare en restant masquée', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const [rangee] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: app,
+        projectKey: projectKey(app),
+        hidden: true,
+      })
+      .returning({ id: codeProjects.id });
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [fichier(`${app}/src/a.ts`)]);
+
+    expect(issue).toMatchObject({
+      kind: 'attached',
+      projectId: rangee!.id,
+      registered: [rangee!.id],
+    });
+    expect(await ligne(app)).toMatchObject({ hidden: true, registeredFrom: 'conversation' });
+  });
+
+  it('(f) le terrain lui-même porte le manifeste : c’est LUI qui se déclare', async () => {
+    await mkdir(`${terrain}/src`, { recursive: true });
+    await writeFile(`${terrain}/package.json`, '{}');
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [
+      fichier(`${terrain}/src/x.ts`),
+    ]);
+
+    const row = await ligne(terrain);
+    expect(row).not.toBeNull();
+    expect(issue).toMatchObject({ kind: 'attached', projectId: row!.id, projectPath: terrain });
+    expect(await ligne(`${terrain}/src`)).toBeNull();
+  });
+
+  it('(g) un DOCUMENT dans un dossier à manifeste ne déclare rien : seul le code se reconnaît seul', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(app, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [
+      { kind: 'file', path: `${app}/rapport.xlsx`, deliverableType: 'office_file' },
+    ]);
+
+    expect(issue).toEqual({ kind: 'no_project' });
+    expect(await ligne(app)).toBeNull();
+  });
+
+  it('sans dossier attaché, un manifeste ne suffit pas : rien n’est déclaré', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject({ ...ctxTerrain(jobId), workspaces: [] }, [
+      fichier(`${app}/src/a.ts`),
+    ]);
+
+    expect(issue).toEqual({ kind: 'no_project' });
+    expect(await ligne(app)).toBeNull();
   });
 });

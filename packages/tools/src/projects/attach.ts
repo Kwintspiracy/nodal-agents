@@ -22,7 +22,6 @@
 // INVARIANT #2 : tout ce que ce module journalise est un CODE et des données,
 // jamais une phrase.
 
-import { realpathSync } from 'node:fs';
 import {
   agentJobs,
   codeProjects,
@@ -33,7 +32,14 @@ import {
   isNotNull,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { isWithinRoot, normalizePath, type MutationTarget } from '@nodal-agents/shared';
+import {
+  isWithinRoot,
+  normalizePath,
+  resolveProjectRoots,
+  type MutationTarget,
+} from '@nodal-agents/shared';
+import { hasMarker, realPathOf, rebaseOntoLexicalRoots } from './markers';
+import { registerCodeProjects } from './register';
 
 /**
  * Ce que le rattachement a fait. Type FERMÉ, comme l'issue de l'intention :
@@ -78,6 +84,13 @@ export type AttachOutcome =
        * annonçant le contraire.
        */
       readonly conversation: 'set' | 'no_conversation' | 'not_found';
+      /**
+       * Les projets que CET appel a DÉCLARÉS au registre (P5b) — les ids des
+       * racines à manifeste où une cible de code vient d'atterrir et qui
+       * n'étaient pas encore déclarées. Vide quand tout était déjà au registre,
+       * ou que rien ne portait de manifeste.
+       */
+      readonly registered: readonly string[];
     }
   /** Aucune cible ne tombe dans un projet ENREGISTRÉ — et ce n'est pas une panne. */
   | { readonly kind: 'no_project' }
@@ -95,6 +108,20 @@ export interface AttachContext {
    * trouvé, TOUJOURS écrasé : la dernière production décide.
    */
   readonly conversationId: string | null;
+  /**
+   * L'agent qui produit (P5b) — celui que le registre nomme responsable d'un
+   * projet qu'il déclare : son terrain contient la cible par construction.
+   * `null` quand l'appelant ne le connaît pas ; un projet déclaré sans agent
+   * reste déclaré.
+   */
+  readonly agentId: string | null;
+  /**
+   * Les dossiers attachés à l'agent (P5b) — les racines sous lesquelles une
+   * cible de code désigne un projet, par la MÊME règle que l'intention de
+   * mutation (`resolveProjectRoots`). Vide ⇒ rien ne peut être déclaré, et
+   * le rattachement ne cherche que parmi les projets déjà au registre.
+   */
+  readonly workspaces: ReadonlyArray<{ readonly path: string }>;
 }
 
 /** Un projet enregistré, réduit à ce que la règle d'appartenance demande. */
@@ -104,24 +131,6 @@ interface RegisteredProject {
   readonly path: string;
   /** Le chemin sur lequel on COMPARE (lexical d'abord, réel en second passage). */
   readonly matchPath: string;
-}
-
-/**
- * Le chemin RÉEL d'un dossier, normalisé — pour COMPARER, jamais pour nommer.
- *
- * Même précaution que `rebaseOntoLexicalRoots` (verification/intent.ts), et
- * pour la même panne : les cibles arrivent des outils par `resolveAndCheckPath`,
- * qui passe par `realpath`, tandis qu'un projet est enregistré avec le chemin
- * que le propriétaire a écrit. Une jonction, un lien, ou le `C:\Users\RUNNER~1`
- * d'un runner Windows suffisent à ce que les deux ne se ressemblent plus — et
- * le travail ne se rattacherait à aucun projet, en silence.
- */
-function realPathOf(p: string): string {
-  try {
-    return normalizePath(realpathSync.native(p));
-  } catch {
-    return normalizePath(p);
-  }
 }
 
 /**
@@ -190,6 +199,20 @@ export async function attachProductionToProject(
   if (targets.length === 0) return { kind: 'no_project' };
 
   try {
+    // ── P5b : le registre se remplit tout seul ──────────────────────────────
+    //
+    // AVANT de chercher un projet déclaré qui contient une cible : une racine
+    // de code (même règle que l'intention, `resolveProjectRoots`) qui porte un
+    // MANIFESTE est un projet, et cet appel le déclare si personne ne l'a
+    // encore fait. La recherche ci-dessous le trouve alors comme n'importe
+    // quel autre — le job s'y rattache, la conversation aussi.
+    //
+    // Une racine dérivée SANS manifeste (l'enfant de premier niveau d'un
+    // terrain, `terrain/vrac`) n'est pas un projet : elle attend la question
+    // « où écrire ? » (P10). C'est la ligne qui sépare « rien ne se crée en
+    // silence » (les dossiers de documents) d'un dépôt qui se reconnaît seul.
+    const registered = await registerManifestProjects(ctx, targets);
+
     const rows = await db
       .select({ id: codeProjects.id, path: codeProjects.projectPath })
       .from(codeProjects)
@@ -262,6 +285,7 @@ export async function attachProductionToProject(
       job: marked.job,
       jobProjectId: marked.jobProjectId,
       conversation: conversationOutcome,
+      registered,
     };
   } catch (err) {
     console.error(
@@ -271,6 +295,46 @@ export async function attachProductionToProject(
     );
     return { kind: 'failed', code: 'attach_write_failed' };
   }
+}
+
+/**
+ * Déclare au registre les racines de code À MANIFESTE où une cible atterrit,
+ * et rend les ids déclarés par cet appel (vide si rien de neuf).
+ *
+ * Les cibles de code passent par `rebaseOntoLexicalRoots` puis
+ * `resolveProjectRoots`, EXACTEMENT comme dans l'intention de mutation : la
+ * clé obtenue doit être celle que l'intention vient de poser en comptabilité,
+ * sinon le registre créerait une seconde ligne `code_projects` pour le même
+ * dossier — l'état sale d'un côté, la déclaration de l'autre.
+ *
+ * `hasMarker` sur la racine DÉRIVÉE, pas sur le dossier de la cible : un
+ * fichier dans `app/src/` appartient au projet `app`, et c'est `app` qui doit
+ * porter le manifeste.
+ */
+async function registerManifestProjects(
+  ctx: AttachContext,
+  targets: readonly MutationTarget[],
+): Promise<readonly string[]> {
+  const codeTargets = targets.filter((t) => t.deliverableType === 'code_project');
+  if (codeTargets.length === 0) return [];
+  const workspaceRoots = ctx.workspaces.map((w) => normalizePath(w.path)).filter((p) => p !== '');
+  if (workspaceRoots.length === 0) return [];
+
+  const roots = resolveProjectRoots({
+    targets: rebaseOntoLexicalRoots(codeTargets, workspaceRoots),
+    workspaceRoots,
+    hasMarker,
+  }).filter((root) => hasMarker(root.path));
+  if (roots.length === 0) return [];
+
+  const rows = await registerCodeProjects(ctx.db, {
+    entityId: ctx.entityId,
+    agentId: ctx.agentId,
+    registeredJobId: ctx.jobId,
+    registeredAt: new Date(),
+    roots,
+  });
+  return rows.map((r) => r.id);
 }
 
 /** Ce que la ligne `agent_jobs` porte après le passage de `markJob`. */

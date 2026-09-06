@@ -317,9 +317,14 @@ export async function runCliRuntimeChatTurn(args: {
   // ici (P6), et elle suffit. L'issue est `{ job: 'no_job', conversation: 'set' }`.
   // Après le tour, pas avant (revue Codex passe 27) : un tour en erreur n'a rien
   // produit, et le projet courant du fil ne doit pas bouger pour lui.
+  // Cibles = les DOSSIERS attachés, pas les fichiers écrits (contrairement à
+  // run-job.ts, P5b) : sans job, les lignes `cli:*` de l'audit n'ont pas de
+  // `job_id`, et rien ne dit lesquelles sont celles de CE tour. Un dossier
+  // attaché à manifeste se déclare donc ici aussi ; un enfant à manifeste d'un
+  // terrain sans manifeste attend un tour de JOB pour l'être.
   if (mode === 'write') {
     await attachProductionToProject(
-      { db, entityId, jobId: null, conversationId },
+      { db, entityId, jobId: null, conversationId, agentId: agentRow.id, workspaces: wsRows },
       wsRows.map((w) => ({
         kind: 'dir' as const,
         path: w.path,

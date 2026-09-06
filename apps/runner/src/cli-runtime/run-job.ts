@@ -17,7 +17,6 @@ import {
   gte,
   inArray,
   sql,
-  count,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
 import {
@@ -39,7 +38,8 @@ import { failJob, touchJob } from '../job/state.ts';
 import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
-import { EDIT_TOOLS } from '../job/code-projects.ts';
+import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
+import { existsSync } from 'node:fs';
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
@@ -132,22 +132,35 @@ export function buildCliRuntimeJobContext(args: {
 }
 
 /**
- * Le harnais a-t-il ÉCRIT pendant ce tour ?
+ * Les FICHIERS que le harnais a écrits pendant ce tour, en chemins absolus.
  *
  * Le seul signal disponible est l'audit : `tool_calls` reçoit une ligne par
  * outil interne de la CLI (voir `onEvent` plus haut), et les outils d'édition y
- * portent un nom connu. On borne au tour courant par `created_at` — une
- * écriture d'un tour PRÉCÉDENT du même job ne dit rien de celui-ci.
+ * portent un nom connu ET le chemin édité dans `tool_input` — lu par la même
+ * fonction que l'onglet Code et le bloc Runtime (`scannedEditPath`,
+ * `resolveScannedPath`), pour qu'un tour situe ses écritures là où l'écran
+ * les montre. On borne au tour courant par `created_at` — une écriture d'un
+ * tour PRÉCÉDENT du même job ne dit rien de celui-ci.
+ *
+ * P5b : ce sont ces chemins qui servent de cibles au registre des projets,
+ * parce qu'un dossier attaché SANS manifeste n'est pas un projet mais que
+ * l'enfant où le harnais vient d'écrire peut l'être — avec le terrain entier
+ * pour cible, le registre ne saurait pas lequel.
  *
  * Pourquoi pas `cli_runs` : il n'a aucun champ de fichiers changés (vérifié
  * dans packages/db/src/schema/cli-runs.ts). Pourquoi pas le disque : le
  * comparer avant/après coûterait un inventaire complet du terrain à chaque
  * tour, pour une question à laquelle l'audit répond déjà.
  */
-async function harnessWrote(db: AnyDrizzleDb, jobId: string, since: Date): Promise<boolean> {
+async function harnessEdits(
+  db: AnyDrizzleDb,
+  jobId: string,
+  since: Date,
+  workspaces: ReadonlyArray<{ label: string; path: string }>,
+): Promise<string[]> {
   try {
-    const [row] = await db
-      .select({ n: count() })
+    const rows = await db
+      .select({ toolInput: toolCalls.toolInput, toolOutput: toolCalls.toolOutput })
       .from(toolCalls)
       .where(
         and(
@@ -156,7 +169,16 @@ async function harnessWrote(db: AnyDrizzleDb, jobId: string, since: Date): Promi
           gte(toolCalls.createdAt, since),
         ),
       );
-    return Number(row?.n ?? 0) > 0;
+    const author = workspaces.map((w) => ({ label: w.label, path: w.path }));
+    const roots = workspaces.map((w) => w.path);
+    const out = new Set<string>();
+    for (const row of rows) {
+      const p = scannedEditPath(row);
+      if (!p) continue;
+      const abs = resolveScannedPath(p, author, roots, existsSync);
+      if (abs) out.add(abs);
+    }
+    return [...out];
   } catch (err) {
     // Une panne de lecture ne doit pas tuer un tour déjà terminé. Elle est DITE
     // par un code, et on retombe sur « rien écrit » : ne pas rattacher est
@@ -166,7 +188,7 @@ async function harnessWrote(db: AnyDrizzleDb, jobId: string, since: Date): Promi
       `[cli-runtime] CLI_WROTE_PROBE_FAILED job=${jobId} ` +
         `error=${err instanceof Error ? err.message : String(err)}`,
     );
-    return false;
+    return [];
   }
 }
 
@@ -407,7 +429,7 @@ export async function runCliRuntimeJob(args: {
   }, 60_000);
 
   // L'instant où le tour commence — borne basse pour reconnaître les écritures
-  // que CE tour a produites (voir `harnessWrote` plus bas).
+  // que CE tour a produites (voir `harnessEdits` plus haut).
   const turnStartedAt = new Date();
 
   let turn: CliTurnResult;
@@ -510,14 +532,32 @@ export async function runCliRuntimeJob(args: {
   // retour d'erreur pour que le rattachement survive à ce retour.
   if (mode === 'write') {
     const turnSucceeded = !turn.isError && turn.finalText !== '';
-    if (turnSucceeded || (await harnessWrote(db, jobId, turnStartedAt))) {
+    const edits = await harnessEdits(db, jobId, turnStartedAt, args.workspaces);
+    if (turnSucceeded || edits.length > 0) {
       await attachProductionToProject(
-        { db, entityId: job.entityId ?? '', jobId, conversationId: job.conversationId ?? null },
-        args.workspaces.map((w) => ({
-          kind: 'dir' as const,
-          path: w.path,
-          deliverableType: 'code_project' as const,
-        })),
+        {
+          db,
+          entityId: job.entityId ?? '',
+          jobId,
+          conversationId: job.conversationId ?? null,
+          agentId: agentRow.id,
+          workspaces: args.workspaces,
+        },
+        // Les FICHIERS écrits quand l'audit les connaît (P5b : c'est ainsi
+        // qu'un enfant à manifeste du terrain se déclare), sinon les dossiers
+        // attachés — un tour réussi sans ligne d'édition a produit quelque
+        // part dans son terrain, sans qu'on sache où.
+        edits.length > 0
+          ? edits.map((path) => ({
+              kind: 'file' as const,
+              path,
+              deliverableType: 'code_project' as const,
+            }))
+          : args.workspaces.map((w) => ({
+              kind: 'dir' as const,
+              path: w.path,
+              deliverableType: 'code_project' as const,
+            })),
       );
     }
   }

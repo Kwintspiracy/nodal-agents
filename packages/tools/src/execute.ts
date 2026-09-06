@@ -483,6 +483,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
           // P6 : la conversation aussi retient où le travail a atterri, et c'est
           // elle qui le redit au modèle au tour suivant.
           conversationId: ctx.conversationId ?? null,
+          // P5b : l'agent et ses dossiers, pour qu'une racine à manifeste où
+          // cette écriture atterrit soit DÉCLARÉE au registre par la même règle
+          // que l'intention l'a salie.
+          agentId: ctx.agentId,
+          workspaces: ctx.workspaces ?? [],
         },
         mutationTargets,
       );

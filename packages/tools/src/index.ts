@@ -61,6 +61,11 @@ export type {
 // écrit sans traverser executeTool.
 export { attachProductionToProject } from './projects/attach';
 export type { AttachOutcome, AttachContext } from './projects/attach';
+// P5b : la déclaration au registre et le manifeste, partagés avec le backfill
+// du runner pour qu'il déclare exactement ce que le rattachement déclarerait.
+export { registerCodeProjects } from './projects/register';
+export type { RegisterCodeProjectsInput, RegisteredCodeProject } from './projects/register';
+export { hasMarker } from './projects/markers';
 
 // RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';

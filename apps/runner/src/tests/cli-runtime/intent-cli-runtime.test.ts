@@ -412,3 +412,103 @@ describe('run-job : le REGISTRE des projets, APRÈS binding.run (revue passe 27)
     expect(await projetDuJob(jobId)).toBeNull();
   });
 });
+
+describe('run-job : le registre se remplit tout seul (P5b)', () => {
+  const ligneDeclaree = async (path: string) => {
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        registeredAt: codeProjects.registeredAt,
+        registeredFrom: codeProjects.registeredFrom,
+        registeredJobId: codeProjects.registeredJobId,
+        agentId: codeProjects.agentId,
+      })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, keyOf(path)));
+    return row && row.registeredAt ? row : null;
+  };
+  const projetDuJob = async (jobId: string): Promise<string | null> => {
+    const [row] = await db
+      .select({ projectId: agentJobs.projectId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return row?.projectId ?? null;
+  };
+  /** Ce que `onEvent` fait en vrai quand le harnais écrit un fichier. */
+  const ecritureDuHarnais = (jobId: string, filePath: string) =>
+    db.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId,
+      toolName: 'cli:Write',
+      toolInput: { file_path: filePath },
+      toolOutput: '{"ok":true}',
+    });
+
+  it('deux fichiers écrits dans alpha/src : `alpha` (manifeste) est DÉCLARÉ et le job rattaché — pas le terrain', async () => {
+    // Le terrain attaché est `root`, SANS manifeste : ses enfants sont les
+    // projets. Sans les chemins écrits, le registre ne saurait pas lequel.
+    const jobId = await newJob();
+    fakeRun.mockImplementationOnce(async () => {
+      await ecritureDuHarnais(jobId, `${alpha}/src/a.ts`);
+      await ecritureDuHarnais(jobId, `${alpha}/src/b.ts`);
+      return greenTurn();
+    });
+
+    const outcome = await runJob(jobId, 'write', [root]);
+
+    expect(outcome.status).toBe('completed');
+    const row = await ligneDeclaree(alpha);
+    expect(row, 'alpha n’a pas été déclaré').not.toBeNull();
+    expect(row).toMatchObject({
+      registeredFrom: 'conversation',
+      registeredJobId: jobId,
+      agentId: seed.agentId,
+    });
+    expect(await projetDuJob(jobId)).toBe(row!.id);
+    expect(await ligneDeclaree(root)).toBeNull();
+    // `beta`, salie par l'intention (enfant du terrain) mais jamais écrite :
+    // en comptabilité seulement.
+    expect(await ligneDeclaree(beta)).toBeNull();
+  });
+
+  it('un tour réussi SANS ligne d’édition dans un terrain à manifeste : le terrain se déclare', async () => {
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce(greenTurn());
+
+    await runJob(jobId, 'write', [alpha]);
+
+    const row = await ligneDeclaree(alpha);
+    expect(row).not.toBeNull();
+    expect(await projetDuJob(jobId)).toBe(row!.id);
+  });
+
+  it('un tour en erreur sans édition ne déclare rien', async () => {
+    const jobId = await newJob();
+    fakeRun.mockResolvedValueOnce({ ...greenTurn(), isError: true, errorDetail: 'stop' });
+
+    await runJob(jobId, 'write', [root]);
+
+    expect(await ligneDeclaree(alpha)).toBeNull();
+    expect(await ligneDeclaree(root)).toBeNull();
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('une écriture REFUSÉE par le harnais ne situe rien', async () => {
+    const jobId = await newJob();
+    fakeRun.mockImplementationOnce(async () => {
+      await db.insert(toolCalls).values({
+        entityId: seed.entityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: { file_path: `${alpha}/src/a.ts` },
+        toolOutput: '<tool_use_error>refused</tool_use_error>',
+      });
+      return { ...greenTurn(), isError: true, errorDetail: 'stop' };
+    });
+
+    await runJob(jobId, 'write', [root]);
+
+    expect(await ligneDeclaree(alpha)).toBeNull();
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+});

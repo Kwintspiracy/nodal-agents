@@ -22,7 +22,6 @@
 // INVARIANT #2. Tout ce que ce module journalise est un CODE et des données —
 // jamais une phrase. `scanForUserFacingStrings` tourne sur ce paquet.
 
-import { existsSync, realpathSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import {
   agentJobs,
@@ -35,7 +34,6 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import {
-  PROJECT_MARKERS,
   isTerminalJobStatus,
   normalizePath,
   projectKey,
@@ -46,6 +44,11 @@ import {
   type VerificationSurfaceKey,
 } from '@nodal-agents/shared';
 import type { ToolContext } from '../types';
+// Les deux gestes de disque de la règle d'appartenance vivent dans UN module
+// (projects/markers.ts) depuis P5b : le registre des projets en a besoin
+// autant que l'intention, et deux copies auraient fini par voir deux projets
+// différents pour la même écriture.
+import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
 
 /**
  * Le type de livrable que PR① sait canonicaliser. Les autres valeurs de
@@ -133,80 +136,6 @@ export interface WriteMutationIntentArgs {
 export type MutationIntentContext = Pick<ToolContext, 'db' | 'entityId' | 'workspaces'> & {
   readonly jobId: string | null;
 };
-
-/**
- * Le chemin RÉEL d'un dossier ou d'un fichier, normalisé — pour COMPARER,
- * jamais pour nommer (voir `rebaseOntoLexicalRoots`).
- */
-function realPathOf(p: string): string {
-  try {
-    return normalizePath(realpathSync.native(p));
-  } catch {
-    return normalizePath(p);
-  }
-}
-
-/**
- * Ramène chaque cible sous la racine attachée TELLE QUE L'OWNER L'A ÉCRITE.
- *
- * Les cibles arrivent des outils par `resolveAndCheckPath`, qui passe par
- * `realpath` ; les racines attachées arrivent lexicales. Sur un runner GitHub
- * Windows, `os.tmpdir()` rend la forme courte 8.3 (`C:\Users\RUNNER~1\…`)
- * alors que `realpath` rend la longue — une jonction ou un lien symbolique
- * font pareil partout. Comparées telles quelles, la cible n'était « dans »
- * aucune racine : aucun projet, aucune intention, et l'écriture partait sans
- * être vue (CI rouge de la PR #46, verte en local).
- *
- * La comparaison se fait donc sur les chemins RÉELS, mais l'identité rendue
- * est la LEXICALE : l'onglet Code dérive ses projets des racines telles
- * qu'elles sont enregistrées (apps/web/src/lib/code-projects.ts) et ne résout
- * ni lien ni jonction. Nommer le projet par sa forme réelle créerait deux
- * lignes `code_projects` pour un même dossier — l'état sale d'un côté, les
- * commandes approuvées de l'autre (revue Codex PR #46, passe 2). Une cible
- * hors de toute racine reste telle quelle : le résolveur la rejettera.
- */
-function rebaseOntoLexicalRoots(
-  targets: readonly MutationTarget[],
-  lexicalRoots: readonly string[],
-): readonly MutationTarget[] {
-  // La racine la plus SPÉCIFIQUE gagne — la plus longue en chemin réel. Deux
-  // racines peuvent se contenir (un lien vers un conteneur, et un projet du
-  // conteneur attaché à part) : l'outil a résolu la cible sous la plus
-  // profonde, et c'est sous celle-là que l'onglet Code la rattache. Prendre
-  // la première dans l'ordre de configuration nommerait le projet par
-  // l'autre racine (revue Codex PR #46, passe 3).
-  //
-  // UNE seule règle, sur les chemins RÉELS uniquement (revue passe 4) : un
-  // raccourci « déjà sous une racine lexicale » laissait une racine réelle
-  // parente court-circuiter une racine LIÉE plus spécifique. Ce que cette
-  // règle ne peut pas décider : deux racines qui recouvrent le même dossier
-  // physique donnent deux identités selon le LABEL que l'agent a employé —
-  // et l'onglet Code fait de même. C'est un choix de produit (interdire les
-  // racines qui se recouvrent, ou accepter deux identités), pas une règle de
-  // plus ici.
-  const roots = lexicalRoots
-    .map((lexical) => ({ lexical, real: realPathOf(lexical) }))
-    .sort((a, b) => b.real.length - a.real.length);
-  return targets.map((t) => {
-    const real = realPathOf(t.path);
-    for (const root of roots) {
-      if (real === root.real) return { ...t, path: root.lexical };
-      if (real.startsWith(`${root.real}/`)) {
-        return { ...t, path: `${root.lexical}${real.slice(root.real.length)}` };
-      }
-    }
-    return t;
-  });
-}
-
-/** Le manifeste d'un dossier, lu sur le disque (injecté dans le résolveur pur). */
-function hasMarker(dir: string): boolean {
-  try {
-    return PROJECT_MARKERS.some((m) => existsSync(`${dir}/${m}`));
-  } catch {
-    return false;
-  }
-}
 
 /**
  * « Tout un workspace » — le périmètre conservatif des surfaces shell.

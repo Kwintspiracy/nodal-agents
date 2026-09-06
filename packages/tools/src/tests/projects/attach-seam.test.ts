@@ -212,3 +212,77 @@ describe('le registre au seam d’exécution', () => {
     expect(await projetDuJob(jobId)).toBe(projetId);
   });
 });
+
+describe('le registre au seam d’exécution — la DÉCLARATION (P5b)', () => {
+  const ligneDeclaree = async (path: string) => {
+    const [row] = await db
+      .select({
+        id: codeProjects.id,
+        registeredAt: codeProjects.registeredAt,
+        registeredFrom: codeProjects.registeredFrom,
+        registeredJobId: codeProjects.registeredJobId,
+        agentId: codeProjects.agentId,
+      })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, projectKey(path)));
+    return row ?? null;
+  };
+
+  it('file_write dans un dossier À MANIFESTE que personne n’a déclaré : la ligne est DÉCLARÉE par ce job, qui s’y rattache', async () => {
+    const terrain = racine;
+    // Le terrain n'a PAS de manifeste ; `app` en a un : c'est `app` le projet.
+    const app = `${terrain}/app`;
+    await mkdir(app, { recursive: true });
+    await writeFile(join(app, 'package.json'), '{}');
+    const jobId = await jobNeuf();
+
+    const tool = registry.get('file_write');
+    if (!tool) throw new Error('file_write absent du registre');
+    const res = await executeTool(
+      tool,
+      { path: 'app/src/a.ts', content: 'export const a = 1;\n', create_dirs: true },
+      ctx(terrain, jobId),
+      options(),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect((res.output as { ok: boolean }).ok).toBe(true);
+
+    const row = await ligneDeclaree(app);
+    expect(row, 'app n’a pas été déclaré').not.toBeNull();
+    expect(row!.registeredAt).not.toBeNull();
+    expect(row).toMatchObject({
+      registeredFrom: 'conversation',
+      registeredJobId: jobId,
+      agentId: seed.agentId,
+    });
+    expect(await projetDuJob(jobId)).toBe(row!.id);
+    // Le terrain, sans manifeste, n'est pas un projet.
+    expect(await ligneDeclaree(terrain)).toBeNull();
+  });
+
+  it('une écriture qui ÉCHOUE dans un dossier à manifeste ne déclare rien', async () => {
+    const terrain = racine;
+    const app = `${terrain}/app`;
+    await mkdir(app, { recursive: true });
+    await writeFile(join(app, 'package.json'), '{}');
+    const jobId = await jobNeuf();
+
+    const tool = registry.get('file_write');
+    if (!tool) throw new Error('file_write absent du registre');
+    const res = await executeTool(
+      tool,
+      { path: 'app/gros.txt', content: 'x'.repeat(MAX_WRITE_BYTES + 1) },
+      ctx(terrain, jobId),
+      options(),
+    );
+    expect(res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect((res.output as { ok: boolean }).ok).toBe(false);
+
+    // L'intention a pu poser sa ligne de COMPTABILITÉ ; elle n'est pas déclarée.
+    const row = await ligneDeclaree(app);
+    expect(row?.registeredAt ?? null).toBeNull();
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+});

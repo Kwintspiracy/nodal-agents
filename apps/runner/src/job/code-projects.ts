@@ -29,7 +29,13 @@ import {
   toolCalls,
 } from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
-import { isAbsolutePath, isWindowsPath, normalizePath, projectKey } from '@nodal-agents/shared';
+import {
+  PROJECT_MARKERS,
+  isAbsolutePath,
+  isWindowsPath,
+  normalizePath,
+  projectKey,
+} from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 
 // La clé d'identité d'un projet (`projectKey`) vient de `@nodal-agents/shared`
@@ -66,19 +72,6 @@ export const EDIT_TOOLS = [
   'file_write',
 ];
 
-/** Marqueurs de racine de projet — mêmes conventions que l'onglet Code. */
-const PROJECT_MARKERS = [
-  '.git',
-  'package.json',
-  'pyproject.toml',
-  'requirements.txt',
-  'Cargo.toml',
-  'go.mod',
-  'composer.json',
-  'deno.json',
-  'index.html',
-];
-
 /** Plafond de projets injectés — le bloc Runtime doit rester un repère, pas un annuaire. */
 const MAX_PROJECTS = 12;
 /** Fenêtre de scan des éditions récentes. */
@@ -87,7 +80,14 @@ const SCAN_LIMIT = 1500;
 const norm = normalizePath;
 const isAbsolute = isAbsolutePath;
 
-function hasMarker(dir: string): boolean {
+/**
+ * Le manifeste d'un dossier — LA liste partagée (`PROJECT_MARKERS`,
+ * @nodal-agents/shared), lue sur le disque. Ce module en portait une copie
+ * jusqu'à P5b ; le backfill du registre la lit désormais ici, et une copie qui
+ * aurait divergé lui aurait fait déclarer des projets que l'onglet Code ne
+ * reconnaît pas.
+ */
+export function hasMarker(dir: string): boolean {
   try {
     return PROJECT_MARKERS.some((m) => existsSync(`${dir}/${m}`));
   } catch {
@@ -184,7 +184,7 @@ function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, strin
  *
  * Le disque n'est consulté qu'au cas 4, où il n'y a rien d'autre pour trancher.
  */
-function resolveScannedPath(
+export function resolveScannedPath(
   p: string,
   authorWorkspaces: Array<{ label: string; path: string }>,
   roots: string[],
@@ -227,9 +227,13 @@ function resolveScannedPath(
  * dossiers ne différant que par la casse prouverait deux choses opposées selon
  * qu'il tourne sur Windows (même dossier) ou sur la CI Linux (deux dossiers).
  */
-export function canonicalRoots(wsRows: ReadonlyArray<{ path: string; agentName: string }>): {
+export function canonicalRoots(
+  wsRows: ReadonlyArray<{ path: string; agentName: string; agentId?: string }>,
+): {
   roots: string[];
   ownersByRoot: Map<string, Set<string>>;
+  /** Les IDS des détenteurs, dans l'ordre des lignes — le premier est « le » détenteur (P5b). */
+  ownerIdsByRoot: Map<string, Set<string>>;
 } {
   const parCle = new Map<string, string>();
   for (const r of wsRows) {
@@ -239,22 +243,34 @@ export function canonicalRoots(wsRows: ReadonlyArray<{ path: string; agentName: 
   }
 
   const ownersByRoot = new Map<string, Set<string>>();
+  const ownerIdsByRoot = new Map<string, Set<string>>();
   for (const r of wsRows) {
     const affiche = parCle.get(projectKey(norm(r.path)));
     if (!affiche) continue;
     const set = ownersByRoot.get(affiche) ?? new Set<string>();
     set.add(r.agentName);
     ownersByRoot.set(affiche, set);
+    if (r.agentId) {
+      const ids = ownerIdsByRoot.get(affiche) ?? new Set<string>();
+      ids.add(r.agentId);
+      ownerIdsByRoot.set(affiche, ids);
+    }
   }
 
   // Plus longues d'abord : un workspace niché gagne sur son parent.
-  return { roots: Array.from(parCle.values()).sort((a, b) => b.length - a.length), ownersByRoot };
+  return {
+    roots: Array.from(parCle.values()).sort((a, b) => b.length - a.length),
+    ownersByRoot,
+    ownerIdsByRoot,
+  };
 }
 
 /** Une écriture retenue par le scan, déjà résolue jusqu'à son dossier de projet. */
 export interface ScannedWrite {
   projectPath: string;
   owners: readonly string[];
+  /** Les ids des détenteurs, même ordre que `owners` (P5b). Absent = inconnus. */
+  ownerIds?: readonly string[];
   /** ISO, ou `null` si la ligne n'a pas de date. */
   at: string | null;
 }
@@ -274,11 +290,20 @@ export interface ScannedWrite {
  * système de fichiers du testeur.
  */
 export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[] {
-  const byKey = new Map<string, { path: string; owners: Set<string>; at: string | null }>();
+  const byKey = new Map<
+    string,
+    { path: string; owners: Set<string>; ownerIds: Set<string>; at: string | null }
+  >();
   for (const w of writes) {
     const cle = projectKey(w.projectPath);
-    const entry = byKey.get(cle) ?? { path: w.projectPath, owners: new Set<string>(), at: w.at };
+    const entry = byKey.get(cle) ?? {
+      path: w.projectPath,
+      owners: new Set<string>(),
+      ownerIds: new Set<string>(),
+      at: w.at,
+    };
     for (const o of w.owners) entry.owners.add(o);
+    for (const id of w.ownerIds ?? []) entry.ownerIds.add(id);
     byKey.set(cle, entry);
   }
   // Trié par activité, JAMAIS tronqué ici : le plafond s'applique après le
@@ -289,6 +314,9 @@ export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[
     .map((v) => ({
       path: v.path,
       owners: Array.from(v.owners).sort(),
+      // Dans l'ordre de rencontre, PAS trié : le premier détenteur est celui
+      // que le backfill du registre nomme responsable (P5b).
+      ownerIds: Array.from(v.ownerIds),
       lastActivityAt: v.at,
     }));
 }
@@ -297,6 +325,8 @@ export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[
 export interface RawProject {
   path: string;
   owners: string[];
+  /** Les ids des détenteurs, premier rencontré en tête (P5b). */
+  ownerIds: string[];
   lastActivityAt: string | null;
 }
 
@@ -354,15 +384,7 @@ export async function listCodeProjectsForContext(
     // racine masquée laisserait un dossier PARENT visible ramasser ses
     // écritures. `/data` suivi, `/data/vault` masqué, et une note du coffre
     // ressortirait comme projet — le masquage contourné par le haut.
-    const hiddenWorkspaces = (
-      await db
-        .select({ path: agentWorkspaces.path })
-        .from(agentWorkspaces)
-        .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
-        .where(and(eq(agents.entityId, entityId), eq(agentWorkspaces.hiddenFromCode, true)))
-    )
-      .map((r) => norm(r.path))
-      .filter((p) => p !== '');
+    const hiddenWorkspaces = await listHiddenWorkspaceRoots(db, entityId);
     const sousDossierMasque = (p: string): boolean => hiddenWorkspaces.some((r) => within(p, r));
 
     // Les deux gestes du propriétaire, relus à CHAQUE appel. Le MASQUAGE porte
@@ -430,13 +452,62 @@ export async function listCodeProjectsForContext(
 }
 
 /**
+ * Les dossiers attachés que le propriétaire a MASQUÉS (`hidden_from_code`,
+ * 0087), normalisés. Le test d'appartenance est celui du SOUS-ARBRE
+ * (`within`) : c'est l'appelant qui l'applique, le contexte des agents comme
+ * le backfill du registre (P5b), pour qu'un dossier rangé le soit partout.
+ */
+export async function listHiddenWorkspaceRoots(
+  db: RunnerDeps['db'],
+  entityId: string,
+): Promise<string[]> {
+  return (
+    await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+      .where(and(eq(agents.entityId, entityId), eq(agentWorkspaces.hiddenFromCode, true)))
+  )
+    .map((r) => norm(r.path))
+    .filter((p) => p !== '');
+}
+
+/**
+ * Le chemin ÉDITÉ que porte une ligne `tool_calls` d'un outil d'édition, ou
+ * `null` : une écriture REFUSÉE n'a rien créé (même règle que l'onglet Code),
+ * et une ligne sans chemin lisible ne situe rien.
+ *
+ * Partagé avec le runtime CLI (P5b, run-job.ts) : les lignes `cli:*` de
+ * l'enregistreur d'événements portent leur chemin au même endroit que les
+ * lignes des outils Nodal, et c'est la même lecture qui doit les situer.
+ */
+export function scannedEditPath(row: {
+  toolInput: unknown;
+  toolOutput: string | null;
+}): string | null {
+  const head = (row.toolOutput ?? '').slice(0, 400);
+  if (head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head)) return null;
+  const input = (row.toolInput ?? {}) as Record<string, unknown>;
+  const raw =
+    typeof input['file_path'] === 'string'
+      ? input['file_path']
+      : typeof input['notebook_path'] === 'string'
+        ? input['notebook_path']
+        : typeof input['path'] === 'string'
+          ? input['path']
+          : null;
+  if (!raw || raw.trim() === '') return null;
+  return norm(raw.trim());
+}
+
+/**
  * Le SCAN : la partie chère, et la seule qui soit mise en cache.
  *
  * 1500 tool_calls relus, autant de vérifications d'existence sur le disque, et
  * une remontée de projet par fichier. Rien ici ne dépend des préférences du
  * propriétaire — c'est ce qui permet de les appliquer après coup, donc à jour.
  */
-async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<RawProject[]> {
+export async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<RawProject[]> {
   const cached = projectsCache.get(entityId);
   if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
 
@@ -467,7 +538,7 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
     // PARENT visible. `listCodeProjectsForContext` écarte ensuite tout projet
     // qui tombe sous une racine masquée — sous-arbre compris.
     //
-    const { roots, ownersByRoot } = canonicalRoots(wsRows);
+    const { roots, ownersByRoot, ownerIdsByRoot } = canonicalRoots(wsRows);
     if (roots.length === 0) return [];
 
     /** Les dossiers de CHAQUE agent — la clé de lecture de ses chemins relatifs. */
@@ -518,22 +589,8 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
 
     const writes: ScannedWrite[] = [];
     for (const row of rows) {
-      // Une écriture REFUSÉE n'a rien créé — même règle que l'onglet Code.
-      const head = (row.toolOutput ?? '').slice(0, 400);
-      if (head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head)) continue;
-
-      const input = (row.toolInput ?? {}) as Record<string, unknown>;
-      const raw =
-        typeof input['file_path'] === 'string'
-          ? input['file_path']
-          : typeof input['notebook_path'] === 'string'
-            ? input['notebook_path']
-            : typeof input['path'] === 'string'
-              ? input['path']
-              : null;
-      if (!raw) continue;
-
-      const p = norm(raw.trim());
+      const p = scannedEditPath(row);
+      if (!p) continue;
       const abs = resolveScannedPath(
         p,
         row.agentId ? (wsByAgent.get(row.agentId) ?? []) : [],
@@ -554,6 +611,7 @@ async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<Raw
       writes.push({
         projectPath,
         owners: Array.from(ownersByRoot.get(wsRoot) ?? []),
+        ownerIds: Array.from(ownerIdsByRoot.get(wsRoot) ?? []),
         at: row.createdAt ? row.createdAt.toISOString() : null,
       });
     }
