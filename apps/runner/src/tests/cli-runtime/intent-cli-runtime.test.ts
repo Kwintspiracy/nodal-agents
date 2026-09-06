@@ -50,7 +50,7 @@ vi.mock('@nodal-agents/orchestration', async (importOriginal) => {
   return { ...actual, buildSystemPrompt: async () => 'system prompt (test)' };
 });
 
-import { runCliRuntimeJob } from '../../cli-runtime/run-job.ts';
+import { runCliRuntimeJob, AUDIT_WRITES_WAIT_MS } from '../../cli-runtime/run-job.ts';
 import type { CliRuntimeAgentRow } from '../../cli-runtime/run-job.ts';
 import { runCliRuntimeChatTurn } from '../../cli-runtime/run-chat.ts';
 
@@ -527,11 +527,14 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
     return row && row.registeredAt ? row : null;
   };
 
-  it('une insertion d’audit encore en route quand la CLI se termine est vue par le registre', async () => {
-    // Une base dont les insertions dans `tool_calls` prennent 80 ms : c'est la
-    // course réelle — l'enregistreur d'événements lance chaque ligne sans
-    // l'attendre, et le dernier événement d'un tour est justement une écriture.
-    const slowDb = new Proxy(db, {
+  /**
+   * Une base dont les insertions dans `tool_calls` prennent `delayMs` (ou ne se
+   * règlent JAMAIS) : c'est la course réelle — l'enregistreur d'événements
+   * lance chaque ligne sans l'attendre, et le dernier événement d'un tour est
+   * justement une écriture.
+   */
+  const dbWithSlowAudit = (delayMs: number | 'never') =>
+    new Proxy(db, {
       get(target, prop, receiver) {
         if (prop !== 'insert') return Reflect.get(target, prop, receiver);
         return (table: unknown) => {
@@ -542,27 +545,17 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
           return {
             values: (v: unknown) =>
               new Promise((resolve, reject) => {
-                setTimeout(() => Promise.resolve(q.values(v)).then(resolve, reject), 80);
+                if (delayMs === 'never') return;
+                setTimeout(() => Promise.resolve(q.values(v)).then(resolve, reject), delayMs);
               }),
           };
         };
       },
     });
-    const jobId = await newJob();
-    fakeRun.mockImplementationOnce(async (opts: unknown) => {
-      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
-      onEvent({
-        kind: 'tool_use',
-        toolUseId: 'tu-1',
-        toolName: 'Write',
-        input: { file_path: `${alpha}/src/a.ts` },
-      });
-      onEvent({ kind: 'tool_result', toolUseId: 'tu-1', output: 'ok' });
-      return greenTurn();
-    });
 
-    const outcome = await runCliRuntimeJob({
-      db: slowDb as unknown as Parameters<typeof runCliRuntimeJob>[0]['db'],
+  const runWith = (dbLike: unknown, jobId: string) =>
+    runCliRuntimeJob({
+      db: dbLike as Parameters<typeof runCliRuntimeJob>[0]['db'],
       jobId,
       job: {
         entityId: seed.entityId,
@@ -576,8 +569,59 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
       workspaces: [{ label: 'ws0', path: root }],
     });
 
+  /** Le binding factice appelle le VRAI `onEvent` : une écriture du harnais. */
+  const ecritureParEvenement = () =>
+    fakeRun.mockImplementationOnce(async (opts: unknown) => {
+      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
+      onEvent({
+        kind: 'tool_use',
+        toolUseId: 'tu-1',
+        toolName: 'Write',
+        input: { file_path: `${alpha}/src/a.ts` },
+      });
+      onEvent({ kind: 'tool_result', toolUseId: 'tu-1', output: 'ok' });
+      return greenTurn();
+    });
+
+  it('une insertion d’audit encore en route quand la CLI se termine est vue par le registre', async () => {
+    // La preuve est TEMPORELLE, et elle le dit (revue Codex, passe 34) : sans
+    // l'attente, la lecture précède l'insertion sauf si tout ce que run-job
+    // fait entre le retour du binding et la lecture (une ligne cli_runs, la
+    // remise des verrous) dépasse `DELAI` — d'où une fenêtre large, et la
+    // seconde assertion : le tour a bien DURÉ au moins ce délai, c'est-à-dire
+    // qu'il a attendu.
+    const DELAI = 1_500;
+    const jobId = await newJob();
+    ecritureParEvenement();
+    const debut = Date.now();
+
+    const outcome = await runWith(dbWithSlowAudit(DELAI), jobId);
+
     expect(outcome.status).toBe('completed');
+    expect(Date.now() - debut, 'le tour n’a pas attendu l’écriture d’audit').toBeGreaterThanOrEqual(
+      DELAI - 50,
+    );
     const row = await ligneDeclaree(alpha);
     expect(row, 'la ligne d’audit en vol a été lue trop tôt : alpha non déclaré').not.toBeNull();
   });
+
+  it('une insertion d’audit qui ne se règle JAMAIS ne gèle pas le tour : borne, code, et le tour finit', async () => {
+    const jobId = await newJob();
+    ecritureParEvenement();
+    const erreurs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const debut = Date.now();
+    try {
+      const outcome = await runWith(dbWithSlowAudit('never'), jobId);
+      expect(outcome.status).toBe('completed');
+      const attendu = Date.now() - debut;
+      expect(attendu).toBeGreaterThanOrEqual(AUDIT_WRITES_WAIT_MS - 50);
+      expect(attendu).toBeLessThan(AUDIT_WRITES_WAIT_MS + 5_000);
+      const logged = erreurs.mock.calls.map((c) => c.map(String).join(' '));
+      expect(logged.some((l) => l.includes(`CLI_AUDIT_WRITES_TIMEOUT job=${jobId}`))).toBe(true);
+    } finally {
+      erreurs.mockRestore();
+    }
+    // Rien n'a été lu : la ligne n'a jamais été posée, alpha n'est pas déclaré.
+    expect(await ligneDeclaree(alpha)).toBeNull();
+  }, 20_000);
 });

@@ -50,6 +50,45 @@ import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.
 /** Per-turn wall clock budget — a runtime agent turn is a full CLI session run. */
 const RUNTIME_TURN_TIMEOUT_MS = 900_000;
 
+/**
+ * Combien de temps un tour attend ses écritures d'audit encore en vol avant de
+ * lire les chemins écrits (revue Codex, passe 34). Une insertion `tool_calls`
+ * n'a ni `statement_timeout` (client.ts l'exclut) ni délai applicatif : une
+ * connexion figée par le réseau ne se règle jamais, et un tour DÉJÀ terminé
+ * resterait gelé avant sa finalisation. Au-delà de cette borne, on lit ce qui
+ * est là, en le disant par un code ; l'audit reste facultatif, jamais bloquant.
+ */
+export const AUDIT_WRITES_WAIT_MS = 5_000;
+
+/**
+ * Attend que les écritures d'audit du tour soient réglées — réussies ou
+ * échouées, peu importe (`allSettled`) — ou que la borne tombe. Ne lève jamais.
+ */
+async function settleAuditWrites(
+  writes: readonly Promise<unknown>[],
+  jobId: string,
+): Promise<void> {
+  if (writes.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), AUDIT_WRITES_WAIT_MS);
+  });
+  try {
+    const outcome = await Promise.race([
+      Promise.allSettled(writes).then(() => 'settled' as const),
+      bound,
+    ]);
+    if (outcome === 'timeout') {
+      console.error(
+        `[cli-runtime] CLI_AUDIT_WRITES_TIMEOUT job=${jobId} writes=${writes.length} ` +
+          `waited_ms=${AUDIT_WRITES_WAIT_MS}`,
+      );
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // A runtime agent is a full `Agent` PLUS its CLI settings — not a hand-picked
 // subset. It started as a subset (id/entityId/personality and the cli fields),
 // which was enough while this path only forwarded `personality` verbatim. The
@@ -548,8 +587,9 @@ export async function runCliRuntimeJob(args: {
     const turnSucceeded = !turn.isError && turn.finalText !== '';
     // Toutes les lignes d'audit du tour sont posées avant de les lire — voir
     // `auditWrites`. Une insertion qui a échoué est déjà journalisée ; elle ne
-    // fait pas échouer le tour.
-    await Promise.allSettled(auditWrites);
+    // fait pas échouer le tour ; une insertion qui ne se règle pas est
+    // abandonnée à la borne (`AUDIT_WRITES_WAIT_MS`).
+    await settleAuditWrites(auditWrites, jobId);
     const edits = await harnessEdits(db, jobId, turnStartedAt, args.workspaces);
     if (turnSucceeded || edits.length > 0) {
       await attachProductionToProject(

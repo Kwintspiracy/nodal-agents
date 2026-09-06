@@ -42,14 +42,21 @@ export function realPathOf(p: string): string {
   } catch {
     // absent, ou alias d'un chemin absent : on remonte.
   }
+  // Un chemin UNC (`//serveur/partage/...`) : la remontée s'arrête au PARTAGE
+  // (revue Codex, passe 34). Sonder `//serveur` seul n'est pas une racine, et
+  // sous Windows c'est une résolution réseau synchrone qui peut attendre un
+  // serveur absent — le thread du runner avec elle.
+  const uncRoot = normalized.startsWith('//') ? normalized.split('/').slice(0, 4).join('/') : null;
   let current = normalized;
   const tail: string[] = [];
   for (;;) {
     const idx = current.lastIndexOf('/');
     // Plus d'ancêtre à essayer (racine POSIX, ou chemin sans séparateur).
     if (idx <= 0) return normalized;
+    const parent = current.slice(0, idx);
+    if (uncRoot !== null && parent.length < uncRoot.length) return normalized;
     tail.unshift(current.slice(idx + 1));
-    current = current.slice(0, idx);
+    current = parent;
     // `C:` seul désignerait le dossier courant du lecteur, pas sa racine.
     const probe = /^[a-z]:$/i.test(current) ? `${current}/` : current;
     try {
