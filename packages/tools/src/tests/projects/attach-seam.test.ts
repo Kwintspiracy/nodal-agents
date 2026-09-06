@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, approvalRequests, codeProjects, toolCalls, eq } from '@nodal-agents/db';
+import { agentJobs, codeProjects, toolCalls, eq } from '@nodal-agents/db';
 import { normalizePath, projectKey } from '@nodal-agents/shared';
 import { createToolRegistry } from '../../registry';
 import { registerBuiltins } from '../../builtin';
@@ -289,33 +289,32 @@ describe('le registre au seam d’exécution — la DÉCLARATION (P5b)', () => {
 
 // ─── P10b : « où écrire ? » de bout en bout ──────────────────────────────────
 //
-// Le geste complet, par le seam et rien d'autre : l'utilisateur a répondu à une
-// question, l'agent crée le projet, puis il écrit dedans. Trois traces relues —
-// le projet porté par le job, la ligne `tool_calls` du `file_write`, le fichier
-// sur le disque.
+// Le geste complet, par le seam et rien d'autre : le propriétaire a accordé la
+// règle permanente sur `register_project`, l'agent crée le projet, puis il écrit
+// dedans. Trois traces relues — le projet porté par le job, la ligne
+// `tool_calls` du `file_write`, le fichier sur le disque.
 describe('le registre au seam d’exécution — register_project puis file_write (P10b)', () => {
-  it('la réponse crée le projet, et l’écriture suivante y atterrit', async () => {
+  /** Le toggle du propriétaire sur cet outil — depuis la passe 41, ce qui laisse passer. */
+  function optionsAvecCreation(): ExecuteOptions {
+    const base = options();
+    return {
+      ...base,
+      approvalRules: [
+        ...(base.approvalRules ?? []),
+        {
+          id: 'rule-register-project',
+          toolName: 'register_project',
+          action: 'auto_approve',
+          agentId: seed.agentId,
+          entityId: seed.entityId,
+        },
+      ] as ExecuteOptions['approvalRules'],
+    };
+  }
+
+  it('la création pose le projet, et l’écriture suivante y atterrit', async () => {
     const terrain = racine;
     const jobId = await jobNeuf();
-
-    // Ce que le clic de l'utilisateur a laissé en base (P10a).
-    await db.insert(approvalRequests).values({
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      jobId,
-      toolCallId: `call-ask-${jobId}`,
-      toolName: 'ask_user',
-      // L'option EST le nom du projet, sans préfixe : c'est la question qui dit
-      // que celle-là serait créée (revue Codex, passe 40).
-      toolInput: {
-        question: 'Où ranger cette synthèse ? « veille-ia » serait créé.',
-        options: ['veille-ia', 'Something else'],
-      },
-      kind: 'question',
-      status: 'approved',
-      answer: 'veille-ia',
-      resolvedAt: new Date(),
-    });
 
     const reg = registry.get('register_project');
     if (!reg) throw new Error('register_project absent du registre');
@@ -323,7 +322,7 @@ describe('le registre au seam d’exécution — register_project puis file_writ
       reg,
       { path: 'veille-ia', name: 'Veille IA' },
       ctx(terrain, jobId),
-      options(),
+      optionsAvecCreation(),
     );
     expect(creation.outcome === 'error' ? creation.error : creation.outcome).toBe('success');
     if (creation.outcome !== 'success') return;

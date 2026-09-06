@@ -7,17 +7,17 @@
 // question ne porte plus que sur les DOCUMENTS — un rapport, une note, un
 // classeur — que rien ne permet de ranger.
 //
-// LE FLUX, en trois appels : `ask_user` (P10a) pose la question — les projets
-// déclarés en options, plus une option qui EST le nom du projet à créer, la
-// question disant que celle-là serait créée ; l'utilisateur choisit ; l'agent
-// appelle CET outil, qui crée le dossier, le déclare au
-// registre et y rattache le job ET la conversation ; puis il écrit dedans, et
-// Spaces montre le projet, son fichier et sa conversation.
+// LE FLUX : `ask_user` (P10a) demande où ranger — les projets déclarés en
+// options, plus une option pour le projet neuf que l'agent propose ;
+// l'utilisateur choisit ; l'agent appelle CET outil, le propriétaire confirme
+// le dossier sur la carte d'approbation, le dossier est créé, déclaré au
+// registre, et le job ET la conversation y sont rattachés ; puis l'agent écrit
+// dedans, et Spaces montre le projet, son fichier et sa conversation.
 //
-// CE QUI TIENT LA RÈGLE « rien en silence » : `computeApproval` ci-dessous. Il
-// ne suffit pas qu'une question ait été répondue dans ce job — il faut que
-// l'option CHOISIE soit EXACTEMENT le nom de ce projet ou de son dossier.
-// Sinon, la création passe par la carte d'approbation ordinaire.
+// CE QUI TIENT LA RÈGLE « rien en silence » : `defaultApproval` ci-dessous.
+// Trois tentatives de sauter cette confirmation en lisant la réponse de
+// l'utilisateur ont fuité (revues Codex 39, 40, 41) ; la note du champ raconte
+// les trois et pourquoi la forme elle-même était mauvaise.
 //
 // INVARIANT #2 : rien ici ne fabrique de phrase pour l'utilisateur. La sortie
 // est une ligne de données ; c'est le LLM qui la raconte.
@@ -25,9 +25,9 @@
 import { mkdir, rmdir, stat } from 'node:fs/promises';
 import { basename } from 'node:path/posix';
 import { z } from 'zod';
-import { and, desc, eq, approvalRequests, codeProjects } from '@nodal-agents/db';
+import { and, eq, codeProjects } from '@nodal-agents/db';
 import { isSafeSubfolder, projectKey } from '@nodal-agents/shared';
-import type { ToolDefinition, ToolContext } from '../types';
+import type { ToolDefinition } from '../types';
 import { textCard, failureText } from '../presenters';
 import { resolveAndCheckPath, WorkspaceError } from './file-ops/workspace';
 import { registerCodeProjects } from '../projects/register';
@@ -76,107 +76,6 @@ export type RegisterProjectOutput =
     }
   | { ok: false; reason: string };
 
-/** Combien de questions répondues du job la garde examine au plus. */
-const ANSWERED_QUESTIONS_SCANNED = 50;
-
-/**
- * Le repli de comparaison : diacritiques retirés, minuscules, espaces rognés.
- *
- * `NFKD` sépare la lettre de son accent, la plage `\u0300-\u036f` retire les
- * accents ainsi détachés. « Été 2026 » et « ete 2026 » deviennent le même
- * texte, ce qui compte parce que l'agent écrit le libellé de l'option d'un
- * côté et le nom du projet de l'autre, à deux appels d'écart.
- */
-function fold(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
-/** Le dernier segment d'un chemin d'entrée — le nom du dossier demandé. */
-function lastSegment(path: string): string {
-  const parts = path.split(/[\\/]/).filter((s) => s !== '');
-  return parts[parts.length - 1] ?? '';
-}
-
-/**
- * L'utilisateur a-t-il, dans CE job, choisi une option qui NOMME ce projet ?
- *
- * POURQUOI CETTE RÈGLE, et pas « une question a été répondue » (revue Codex,
- * passe 39, constat bloquant). L'ancienne version se contentait d'une ligne
- * `kind = 'question'` approuvée dans le job : « Quelle couleur ? » → « Bleu »
- * suffisait alors à créer `comptabilite` sans que personne n'ait rien dit de
- * cette destination. « Le propriétaire a été consulté » n'est pas
- * « le propriétaire a autorisé CE projet ».
- *
- * ÉGALITÉ, PAS SOUS-CHAÎNE (revue Codex, passe 40, constat bloquant). La
- * version précédente demandait que l'option CONTIENNE le nom ; « Add notes to
- * the README », choisi en réponse à « Que faire ensuite ? », autorisait alors
- * `register_project({ path: 'notes' })`. Un projet au nom court était
- * déverrouillé par n'importe quelle phrase où ce mot apparaît. L'option choisie
- * doit donc ÊTRE le nom du projet, ou le nom de son dossier.
- *
- * CONSÉQUENCE ASSUMÉE : l'option ne peut plus porter de préfixe. « New project:
- * veille-ia » ne déverrouille rien ; l'option est « veille-ia » tout court, et
- * c'est la QUESTION qui dit que celle-là serait créée. Coupler l'autorisation à
- * une formulation (retirer un préfixe connu) l'aurait rendue fragile : une
- * traduction, une majuscule ou un tiret de plus, et la garde tombe.
- *
- * POURQUOI PAS une table d'autorisations. Codex proposait qu'`ask_user` porte
- * les effets de chaque option, ou qu'une ligne
- * `project_registration_authorizations` soit produite à la résolution et
- * consommée ici. Les deux demandent une migration et une notion de capacité
- * consommable que rien d'autre du produit n'utilise. La liaison existe déjà,
- * sans rien ajouter : c'est l'AGENT qui écrit les options, et l'AGENT qui écrit
- * ensuite le `name`/`path`. L'utilisateur, lui, ne saisit rien — il CHOISIT
- * parmi ces options, et la résolution refuse toute réponse hors options (voir
- * `ask-user.ts`). Une égalité entre l'option choisie et la destination lie donc
- * bien la décision de l'humain à ce qui va être créé.
- *
- * `approved` seulement : une question DÉCLINÉE n'est pas une réponse.
- *
- * Aucune correspondance ⇒ la carte d'approbation ORDINAIRE, jamais un refus :
- * l'agent a peut-être raison, c'est au propriétaire de trancher.
- */
-async function jobAnsweredForProject(
-  db: ToolContext['db'],
-  jobId: string,
-  wanted: { name?: string | undefined; folder: string },
-): Promise<boolean> {
-  if (!jobId) return false;
-  // Les valeurs vides sont écartées : une option vide n'existe pas (`ask_user`
-  // borne ses libellés à 1 caractère), et laisser passer `''` rendrait la garde
-  // inopérante sur un `name` blanc.
-  const accepted = new Set(
-    [wanted.name, wanted.folder]
-      .map((v) => (v === undefined ? '' : fold(v)))
-      .filter((v) => v !== ''),
-  );
-  if (accepted.size === 0) return false;
-
-  const rows = await db
-    .select({ answer: approvalRequests.answer })
-    .from(approvalRequests)
-    .where(
-      and(
-        eq(approvalRequests.jobId, jobId),
-        eq(approvalRequests.kind, 'question'),
-        eq(approvalRequests.status, 'approved'),
-      ),
-    )
-    // Les plus RÉCENTES d'abord. Sans ordre, `limit` prend cinquante lignes
-    // qu'aucune règle ne désigne : au-delà de cinquante questions approuvées
-    // dans un job, la réponse qui autorise pouvait tomber hors du lot d'un
-    // appel à l'autre (revue Codex, passe 40, P2). L'échec restait sûr — une
-    // approbation de plus — mais il n'était pas reproductible.
-    .orderBy(desc(approvalRequests.resolvedAt))
-    .limit(ANSWERED_QUESTIONS_SCANNED);
-
-  return rows.some((r) => r.answer !== null && accepted.has(fold(r.answer)));
-}
-
 export const registerProjectTool: ToolDefinition<
   typeof RegisterProjectInputSchema,
   RegisterProjectOutput
@@ -192,12 +91,9 @@ export const registerProjectTool: ToolDefinition<
     'it, so just write. Do NOT use it for a folder that is already a registered project ' +
     'either — writing into it is enough, and it stays attached to this conversation. ' +
     'After this call, write your files under the returned `path`. ' +
-    'One rule to know: this runs without a second prompt only when the option the person ' +
-    'picked is EXACTLY the name or the folder of this project — the option is the bare ' +
-    'name ' +
-    '("veille-ia"), never a sentence around it, and it is your QUESTION that says this one ' +
-    'would be created. Reuse that exact word here as `name` or as the last segment of ' +
-    '`path`; otherwise the owner is asked to confirm the folder before anything is created.',
+    'Creating a project is confirmed by the owner (one approval), unless they granted a ' +
+    'standing rule; ask where first with `ask_user`, then call this — the confirmation card ' +
+    'shows the folder.',
   inputSchema: RegisterProjectInputSchema,
   riskLevel: 'write',
   // Carte `text` : la sortie est une ligne de DONNÉES (un id, un chemin, un
@@ -221,28 +117,42 @@ export const registerProjectTool: ToolDefinition<
         })
       : failureText(output.reason),
   /**
-   * LA GARDE « rien ne se crée en silence ».
+   * LA GARDE « rien ne se crée en silence » : le propriétaire CONFIRME, une fois.
    *
-   * Sans option choisie ÉGALE au nom de ce projet ou de son dossier dans ce
-   * job, créer un projet passe par la carte d'approbation ORDINAIRE : le propriétaire voit le dossier proposé et
-   * tranche. Avec une telle réponse, il a DÉJÀ tranché sur CETTE destination —
-   * redemander transformerait son choix en deux clics pour une seule décision.
-   * La règle exacte, et pourquoi elle ne lit pas la prose de la question, est
-   * dans `jobAnsweredForProject`.
+   * TROIS TENTATIVES DE LIAISON, TROIS FUITES (revues Codex 39, 40, 41). L'idée
+   * était de laisser passer l'appel quand l'utilisateur avait déjà répondu à
+   * une question qui désignait ce projet. Chaque forme a fuité :
+   *   - « une question a été répondue dans ce job » : « Quelle couleur ? » →
+   *     « Bleu » autorisait `comptabilite` ;
+   *   - « l'option choisie CONTIENT le nom » : « Add notes to the README »
+   *     autorisait `notes` ;
+   *   - « l'option choisie EST le nom » : un projet EXISTANT proposé sous le nom
+   *     « Notes » (dossier `existing-notes`), choisi, autorisait
+   *     `register_project({ path: 'new-notes', name: 'Notes' })` — les noms
+   *     d'affichage ne sont ni uniques ni liés au chemin (seule `project_key`
+   *     l'est, voir le schéma).
    *
-   * Pas de `defaultApproval` : une règle explicite du propriétaire (un
-   * `auto_approve` posé sur cet outil, ou un `block`) garde la précédence,
-   * comme pour `file_write`. Et sous `fully_autonomous` le hook n'est même pas
-   * appelé — c'est le choix explicite du propriétaire, la même mécanique que
-   * l'écrasement gaté de `file_write`, pas un contournement.
+   * Trois passes sur la même garde : ce n'est pas le réglage qui était mauvais,
+   * c'est la FORME. Un texte choisi dans une liste ne désigne pas un chemin. La
+   * seule liaison sûre serait une autorisation STRUCTURÉE — l'option porterait
+   * l'effet qu'elle autorise, et la résolution produirait une capacité que cet
+   * outil consommerait. C'est une migration et une notion neuve, hors de portée
+   * de cette pierre.
+   *
+   * Alors on paie le clic. Créer un projet demande TOUJOURS une confirmation :
+   * la carte d'approbation ordinaire montre le dossier, et le propriétaire
+   * tranche sur la destination réelle plutôt que sur ce qu'un libellé
+   * suggérait. Un clic pour un projet, ce n'est pas cher.
+   *
+   * CE QUI RELÂCHE LA GARDE, et c'est le propriétaire à chaque fois :
+   *   - une règle `auto_approve` EXPLICITE sur cet outil (le toggle par agent) ;
+   *   - `fully_autonomous` — cet outil n'est pas un outil d'exécution de code,
+   *     donc la relaxation s'applique ;
+   *   - `destructive_gate` — il est jugé sur son `riskLevel`, qui est `write`
+   *     et non `destructive` : il passe donc aussi (vérifié dans `execute.ts`).
+   * Dans les trois cas, quelqu'un a choisi ce régime en connaissance de cause.
    */
-  computeApproval: async (input, ctx) =>
-    (await jobAnsweredForProject(ctx.db, ctx.jobId, {
-      name: input.name,
-      folder: lastSegment(input.path),
-    }))
-      ? undefined
-      : 'require_approval',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx): Promise<RegisterProjectOutput> => {
     let abs: string;
     try {

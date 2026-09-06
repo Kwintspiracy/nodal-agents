@@ -1083,13 +1083,12 @@ describe('buildSystemPrompt — le bloc ## Conversation (P6)', () => {
     // n'accepte que six options, et le bloc listait jusqu'à douze projets — le
     // modèle construisait un appel que le schéma refuse (revue Codex, passe 39).
     expect(bloc).toContain('offer up to five relevant registered projects by name');
-    // L'option de création EST le nom, sans préfixe : la garde de
-    // `register_project` exige l'égalité, et un « New project: … » ne
-    // déverrouillerait plus rien (revue Codex, passe 40).
-    expect(bloc).toContain('EXACTLY the name of the new project you propose');
-    expect(bloc).toContain('no prefix, no sentence around it');
-    expect(bloc).toContain('say in the question itself that this one would be created');
-    expect(bloc).not.toContain('New project: <name you propose>');
+    expect(bloc).toContain('plus one option for the new project you propose');
+    // Le libellé de l'option n'autorise plus rien : la création se confirme,
+    // une fois, sur la carte d'approbation (revue Codex, passe 41). Le prompt
+    // le dit, sinon le modèle annonce une création qui n'a pas encore eu lieu.
+    expect(bloc).toContain('the owner confirms the folder once');
+    expect(bloc).not.toContain('EXACTLY the name of the new project');
     expect(bloc).toContain('`register_project`');
     expect(bloc).toContain('declares its own project: never ask for it');
     // Les OPTIONS de cette question, avec leur genre.

@@ -452,9 +452,8 @@ function buildConversationBlock(conv: ConversationContext): string {
         'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
         'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
         '`ask_user`: offer up to five relevant registered projects by name, plus one option ' +
-        'that is EXACTLY the name of the new project you propose — no prefix, no sentence ' +
-        'around it — and say in the question itself that this one would be created. Then ' +
-        'call `register_project` with that exact name, then write. Code that ' +
+        'for the new project you propose, then call `register_project` for a new one (the ' +
+        'owner confirms the folder once), then write. Code that ' +
         'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
         'its own project: never ask for it.',
     );

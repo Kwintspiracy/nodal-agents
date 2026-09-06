@@ -113,8 +113,9 @@ async function conversationNeuve(chatId: string): Promise<string> {
 /**
  * La question `ask_user` de ce job, RÉPONDUE — ce que le clic laisse en base.
  *
- * Le LIBELLÉ choisi est le paramètre. Depuis la passe 40 il doit être ÉGAL au
- * nom du projet ou à celui de son dossier — plus une phrase qui le contient.
+ * Elle n'autorise PLUS rien (passe 41) : elle sert à prouver exactement cela,
+ * dans le cas « SANS règle » ci-dessous. Trois formes de liaison par le texte
+ * de l'option ont fuité avant qu'on abandonne la liaison.
  */
 async function questionRepondue(
   jobId: string,
@@ -148,7 +149,35 @@ function ctx(jobId: string, conversationId: string | null): ToolContext {
   } as unknown as ToolContext;
 }
 
+/**
+ * La règle `auto_approve` EXPLICITE d'un propriétaire qui a tourné le toggle de
+ * cet outil pour cet agent. Depuis la passe 41, c'est elle — ou un niveau
+ * d'autonomie — qui laisse passer la création : le libellé de l'option
+ * n'autorise plus rien.
+ */
+function regleDuProprietaire(): ExecuteOptions['approvalRules'] {
+  return [
+    {
+      id: 'regle-register-project',
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      toolName: 'register_project',
+      action: 'auto_approve',
+    },
+  ] as ExecuteOptions['approvalRules'];
+}
+
+/** Un propriétaire qui a accordé la règle permanente. */
 function options(autonomy?: ExecuteOptions['autonomy']): ExecuteOptions {
+  return {
+    approvalRules: regleDuProprietaire(),
+    ...(autonomy === undefined ? {} : { autonomy }),
+    onApprovalRequired: async () => {},
+  };
+}
+
+/** Aucune règle : la posture par défaut de l'outil s'applique. */
+function optionsSansRegle(autonomy?: ExecuteOptions['autonomy']): ExecuteOptions {
   return {
     approvalRules: [] as ExecuteOptions['approvalRules'],
     ...(autonomy === undefined ? {} : { autonomy }),
@@ -205,7 +234,6 @@ describe('register_project — la création', () => {
   it('crée le dossier, déclare la ligne, rattache le job ET la conversation', async () => {
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-a');
-    await questionRepondue(jobId);
 
     const res = await appel({ path: 'veille-ia', name: 'Veille IA' }, jobId, conversationId);
     expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
@@ -248,13 +276,10 @@ describe('register_project — la création', () => {
   it('un second appel ne redéclare rien : `created: false`, une seule ligne, le nom intact', async () => {
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-b');
-    await questionRepondue(jobId, 'notes');
-
     const premier = await appel({ path: 'notes', name: 'Mes notes' }, jobId, conversationId);
     expect(premier.outcome).toBe('success');
 
     const jobDeux = await jobNeuf();
-    await questionRepondue(jobDeux, 'notes');
     const second = await appel({ path: 'notes', name: 'Autre nom' }, jobDeux, conversationId);
     expect(second.outcome).toBe('success');
     if (second.outcome !== 'success') return;
@@ -273,7 +298,6 @@ describe('register_project — la création', () => {
 
   it('un chemin hors terrain est refusé, et rien n’est créé', async () => {
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'hors');
 
     const res = await appel({ path: '../hors' }, jobId, null);
     expect(res.outcome).toBe('success');
@@ -303,7 +327,6 @@ describe('register_project — la création', () => {
 
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-c');
-    await questionRepondue(jobId, 'déjà');
     const res = await appel({ path: 'déjà', name: 'Nom de l’agent' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
@@ -332,7 +355,6 @@ describe('register_project — la création', () => {
 
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-c2');
-    await questionRepondue(jobId, 'renommé');
     const res = await appel({ path: 'renommé', name: 'Nom de l’agent' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
@@ -366,7 +388,6 @@ describe('register_project — le rattachement rate : rien ne reste (revue Codex
 
   it('la ligne déclarée par CET appel est retirée, et le dossier qu’il a créé aussi', async () => {
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'fantome');
 
     const res = await executeTool(
       outil(),
@@ -393,7 +414,6 @@ describe('register_project — le rattachement rate : rien ne reste (revue Codex
     await mkdir(abs, { recursive: true });
 
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'deja-la');
 
     const res = await executeTool(
       outil(),
@@ -427,7 +447,6 @@ describe('register_project — un rollback qui rate SE DIT (revue Codex, passe 4
     // Le dossier a été créé par cet appel, puis rempli avant le nettoyage. Le
     // laisser est le bon geste : la raison ne doit pas accuser le rollback.
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'rempli');
     rmdirLevera('ENOTEMPTY');
 
     const res = await executeTool(
@@ -451,7 +470,6 @@ describe('register_project — un rollback qui rate SE DIT (revue Codex, passe 4
     // `attach_failed`, un dossier vide de plus sur le disque, et personne pour
     // le dire.
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'interdit');
     rmdirLevera('EACCES');
 
     const erreurs = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -481,7 +499,6 @@ describe('register_project — un rollback qui rate SE DIT (revue Codex, passe 4
     // projet peut encore apparaître dans Spaces : l'agent croyait n'avoir rien
     // créé (revue Codex, passe 40, constat hors demande).
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'sourd');
 
     const dbQuiRefuseDeSupprimer = new Proxy(db as object, {
       get(cible, prop, recepteur) {
@@ -519,14 +536,20 @@ describe('register_project — un rollback qui rate SE DIT (revue Codex, passe 4
   });
 });
 
-describe('register_project — la garde « rien ne se crée en silence »', () => {
-  it('SANS question répondue : le travail suspend sur une approbation ordinaire, rien n’est créé', async () => {
+describe('register_project — la porte : le propriétaire confirme (revue Codex, passe 41)', () => {
+  it('SANS règle : suspend MÊME quand une question répondue nomme ce projet', async () => {
+    // Le cœur de la passe 41. Trois formes de liaison par le texte de l'option
+    // ont fuité ; on ne lit plus la réponse du tout. Une question répondue qui
+    // nomme exactement ce projet ne change donc rien : la carte d'approbation
+    // ordinaire montre le DOSSIER, et c'est sur lui qu'on tranche.
     const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'veille-ia');
+
     const res = await executeTool(
       outil(),
-      { path: 'silencieux' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-1' } as ToolContext,
-      options(),
+      { path: 'veille-ia', name: 'Veille IA' },
+      { ...ctx(jobId, null), toolCallId: 'call-reg-porte' } as ToolContext,
+      optionsSansRegle(),
     );
     expect(res.outcome).toBe('awaiting_approval');
 
@@ -537,216 +560,48 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
         and(eq(approvalRequests.jobId, jobId), eq(approvalRequests.toolName, 'register_project')),
       );
     expect(row).toBeDefined();
-    // `approval`, pas `question` : cet outil ne demande rien, il ATTEND une
-    // décision — c'est la carte d'approbation ordinaire.
+    // `approval`, pas `question` : cet outil ne demande rien, il attend une
+    // décision.
     expect(row?.kind).toBe('approval');
     expect(row?.status).toBe('pending');
+    expect(row?.toolInput).toMatchObject({ path: 'veille-ia', name: 'Veille IA' });
 
-    await expect(stat(`${terrain}/silencieux`)).rejects.toThrow();
-    expect(await toutesLesLignes(`${terrain}/silencieux`)).toHaveLength(0);
-  });
-
-  it("une question DÉCLINÉE n'est pas une réponse : la porte tient", async () => {
-    const jobId = await jobNeuf();
-    await db.insert(approvalRequests).values({
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      jobId,
-      toolCallId: `call-ask-refus-${jobId}`,
-      toolName: 'ask_user',
-      toolInput: { question: 'Où ?', options: ['a', 'b'] },
-      kind: 'question',
-      status: 'rejected',
-      resolvedAt: new Date(),
-    });
-
-    const res = await executeTool(
-      outil(),
-      { path: 'refuse' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-2' } as ToolContext,
-      options(),
-    );
-    expect(res.outcome).toBe('awaiting_approval');
-    await expect(stat(`${terrain}/refuse`)).rejects.toThrow();
-  });
-
-  it('une question répondue dans un AUTRE job ne déverrouille pas celui-ci', async () => {
-    const autreJob = await jobNeuf();
-    await questionRepondue(autreJob, 'voisin');
-    const jobId = await jobNeuf();
-
-    const res = await executeTool(
-      outil(),
-      { path: 'voisin' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-3' } as ToolContext,
-      options(),
-    );
-    expect(res.outcome).toBe('awaiting_approval');
-    await expect(stat(`${terrain}/voisin`)).rejects.toThrow();
-  });
-
-  it('une question répondue sur AUTRE CHOSE ne crée pas ce projet (revue Codex, passe 39)', async () => {
-    // Le scénario exact du constat bloquant : « Quelle couleur ? » → « Bleu ».
-    // La question a bien été posée et répondue dans ce job, mais rien dans ce
-    // qui a été choisi ne parle de `comptabilite`.
-    const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'Bleu', 'Quelle couleur utiliser ?');
-
-    const res = await executeTool(
-      outil(),
-      { path: 'comptabilite' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-couleur' } as ToolContext,
-      options(),
-    );
-    expect(res.outcome).toBe('awaiting_approval');
-    await expect(stat(`${terrain}/comptabilite`)).rejects.toThrow();
-    expect(await toutesLesLignes(`${terrain}/comptabilite`)).toHaveLength(0);
-  });
-
-  it('le libellé choisi EST le nom du DOSSIER : la création passe', async () => {
-    const jobId = await jobNeuf();
-    const conversationId = await conversationNeuve('chat-lien-dossier');
-    await questionRepondue(jobId, 'veille-ia');
-
-    const res = await appel({ path: 'veille-ia' }, jobId, conversationId);
-    expect(res.outcome).toBe('success');
-    if (res.outcome !== 'success') return;
-    expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
-      ok: true,
-      created: true,
-    });
-  });
-
-  it('le libellé choisi EST le NOM affiché, écrit autrement que le dossier : la création passe', async () => {
-    const jobId = await jobNeuf();
-    const conversationId = await conversationNeuve('chat-lien-nom');
-    await questionRepondue(jobId, 'Veille IA');
-
-    const res = await appel({ path: 'veille-ia', name: 'Veille IA' }, jobId, conversationId);
-    expect(res.outcome).toBe('success');
-    if (res.outcome !== 'success') return;
-    expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
-      ok: true,
-      created: true,
-    });
-  });
-
-  it('une option qui CONTIENT le nom sans l’être ne crée rien (revue Codex, passe 40)', async () => {
-    // Le scénario exact du constat bloquant : « Que faire ensuite ? » →
-    // « Add notes to the README ». Le mot `notes` apparaît dans la phrase, mais
-    // personne n'a choisi de créer un projet `notes`. La sous-chaîne suffisait
-    // jusqu'à la passe 40 ; l'égalité ne s'y laisse pas prendre.
-    const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'Add notes to the README', 'Que faire ensuite ?');
-
-    const res = await executeTool(
-      outil(),
-      { path: 'notes' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-sous-chaine' } as ToolContext,
-      options(),
-    );
-    expect(res.outcome).toBe('awaiting_approval');
-    await expect(stat(`${terrain}/notes`)).rejects.toThrow();
-    expect(await toutesLesLignes(`${terrain}/notes`)).toHaveLength(0);
-  });
-
-  it('un libellé PRÉFIXÉ ne déverrouille plus rien : le préfixe a quitté l’option', async () => {
-    // « New project: veille-ia » passait jusqu'à la passe 40. L'option porte
-    // désormais le nom NU, et c'est la question qui dit qu'il serait créé —
-    // sinon l'autorisation dépendrait d'une formulation.
-    const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'New project: veille-ia');
-
-    const res = await executeTool(
-      outil(),
-      { path: 'veille-ia' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-prefixe' } as ToolContext,
-      options(),
-    );
-    expect(res.outcome).toBe('awaiting_approval');
     await expect(stat(`${terrain}/veille-ia`)).rejects.toThrow();
+    expect(await toutesLesLignes(`${terrain}/veille-ia`)).toHaveLength(0);
   });
 
-  it('au-delà de la borne, ce sont les questions les plus RÉCENTES qui comptent', async () => {
-    // La lecture est plafonnée à cinquante questions approuvées. Sans ordre
-    // explicite, `limit` prend cinquante lignes qu'aucune règle ne désigne, et
-    // la réponse qui autorise pouvait tomber hors du lot d'un appel à l'autre
-    // (revue Codex, passe 40, P2). Avec « les plus récentes d'abord », la
-    // dernière décision de l'utilisateur est toujours celle qu'on lit.
+  it('avec une règle `auto_approve` explicite du propriétaire : la création passe', async () => {
     const jobId = await jobNeuf();
-    const conversationId = await conversationNeuve('chat-borne');
-    const debut = Date.now();
-    for (let i = 0; i < 60; i += 1) {
-      await db.insert(approvalRequests).values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        jobId,
-        toolCallId: `call-ask-vieux-${i}`,
-        toolName: 'ask_user',
-        toolInput: { question: 'Autre chose ?', options: [`option-${i}`, 'Something else'] },
-        kind: 'question',
-        status: 'approved',
-        answer: `option-${i}`,
-        resolvedAt: new Date(debut + i * 1000),
-      });
-    }
-    // Celle qui autorise est la PLUS RÉCENTE des soixante et une.
-    await db.insert(approvalRequests).values({
-      entityId: seed.entityId,
-      agentId: seed.agentId,
-      jobId,
-      toolCallId: 'call-ask-recent',
-      toolName: 'ask_user',
-      toolInput: { question: 'Où ranger cette synthèse ?', options: ['tardif', 'Something else'] },
-      kind: 'question',
-      status: 'approved',
-      answer: 'tardif',
-      resolvedAt: new Date(debut + 60 * 1000),
-    });
+    const conversationId = await conversationNeuve('chat-regle');
 
-    const res = await appel({ path: 'tardif' }, jobId, conversationId);
+    const res = await executeTool(
+      outil(),
+      { path: 'sur-regle' },
+      ctx(jobId, conversationId),
+      options(),
+    );
     expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
     expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
       ok: true,
       created: true,
     });
+    expect((await stat(`${terrain}/sur-regle`)).isDirectory()).toBe(true);
   });
 
-  it('accents et casse : c’est le NOM qui lie, pas le dossier tréma-libre', async () => {
-    // L'option est « ÉTÉ 2026 », repliée en « ete 2026 ». Le dernier segment du
-    // chemin, `ete-2026`, ne lui est PAS égal — le tiret n'est pas un espace.
-    // C'est donc le `name` (« Été 2026 ») qui doit être passé, et lui matche :
-    // le repli retire les diacritiques et la casse, rien d'autre.
+  it('sous `fully_autonomous`, sans aucune règle : la création passe', async () => {
+    // La relaxation s'applique parce que cet outil n'est pas un outil
+    // d'exécution de code (voir la note de `defaultApproval`).
     const jobId = await jobNeuf();
-    const conversationId = await conversationNeuve('chat-accents');
-    // Le libellé est écrit en capitales, le nom du projet ne l'est pas : seul
-    // le repli (NFKD + minuscules) les rend égaux.
-    await questionRepondue(jobId, 'ÉTÉ 2026');
+    const conversationId = await conversationNeuve('chat-yolo');
 
-    const sansNom = await executeTool(
+    const res = await executeTool(
       outil(),
-      { path: 'ete-2026' },
-      { ...ctx(jobId, null), toolCallId: 'call-reg-accent-1' } as ToolContext,
-      options(),
+      { path: 'yolo' },
+      ctx(jobId, conversationId),
+      optionsSansRegle('fully_autonomous'),
     );
-    expect(sansNom.outcome).toBe('awaiting_approval');
-
-    const avecNom = await appel({ path: 'ete-2026', name: 'Été 2026' }, jobId, conversationId);
-    expect(avecNom.outcome).toBe('success');
-    if (avecNom.outcome !== 'success') return;
-    expect(avecNom.output as { ok: boolean; created: boolean }).toMatchObject({
-      ok: true,
-      created: true,
-    });
-  });
-
-  it('sous `fully_autonomous`, le propriétaire a déjà tranché : la création passe sans question', async () => {
-    const jobId = await jobNeuf();
-    const conversationId = await conversationNeuve('chat-d');
-
-    const res = await appel({ path: 'yolo' }, jobId, conversationId, 'fully_autonomous');
-    expect(res.outcome).toBe('success');
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
     expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
       ok: true,
@@ -756,5 +611,48 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
     // Sans `name`, le nom affiché est celui du dossier.
     expect((await ligne(`${terrain}/yolo`))?.displayName).toBeNull();
     expect(await projetDeLaConversation(conversationId)).toBe((await ligne(`${terrain}/yolo`))?.id);
+  });
+
+  it('la REPRISE après approbation crée le projet, sans reposer la question', async () => {
+    // Ce que le runner passe une fois l'humain d'accord : une règle synthétique
+    // `resume-bypass` sur CET outil (apps/runner/src/job/execute.ts). Sans
+    // elle, `defaultApproval` re-gaterait l'appel que l'humain vient
+    // d'approuver — une boucle d'approbation infinie.
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-reprise');
+
+    const suspendu = await executeTool(
+      outil(),
+      { path: 'reprise', name: 'Reprise' },
+      { ...ctx(jobId, conversationId), toolCallId: 'call-reg-reprise' } as ToolContext,
+      optionsSansRegle(),
+    );
+    expect(suspendu.outcome).toBe('awaiting_approval');
+    await expect(stat(`${terrain}/reprise`)).rejects.toThrow();
+
+    const rejoue = await executeTool(
+      outil(),
+      { path: 'reprise', name: 'Reprise' },
+      { ...ctx(jobId, conversationId), toolCallId: 'call-reg-reprise' } as ToolContext,
+      {
+        approvalRules: [
+          {
+            id: 'resume-bypass',
+            entityId: seed.entityId,
+            agentId: null,
+            toolName: 'register_project',
+            action: 'auto_approve',
+          },
+        ] as ExecuteOptions['approvalRules'],
+        onApprovalRequired: async () => {},
+      },
+    );
+    expect(rejoue.outcome === 'error' ? rejoue.error : rejoue.outcome).toBe('success');
+    if (rejoue.outcome !== 'success') return;
+    const out = rejoue.output as { ok: boolean; project_id: string; created: boolean };
+    expect(out).toMatchObject({ ok: true, created: true });
+    expect((await stat(`${terrain}/reprise`)).isDirectory()).toBe(true);
+    expect(await projetDuJob(jobId)).toBe(out.project_id);
+    expect(await projetDeLaConversation(conversationId)).toBe(out.project_id);
   });
 });
