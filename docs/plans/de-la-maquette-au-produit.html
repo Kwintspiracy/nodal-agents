@@ -458,9 +458,10 @@
           </td>
           <td>
             <span class="etat">go le 06/09 (soir)</span> — ✅ P5b (<code>16d1f574</code> ; passes
-            Codex 32-34 traitées dans <code>4491ae46</code>, <code>aefdcec3</code>,
-            <code>934091d4</code>, <code>4f084c21</code> ; passe 35 lancée) · 🔄 P10a
-            <code>ask_user</code> (Opus en cours) · ⬜ P10b « où écrire ? » · ⬜ P11 · ⬜ P12
+            Codex 32-35 traitées dans <code>4491ae46</code>, <code>aefdcec3</code>,
+            <code>934091d4</code>, <code>4f084c21</code>, <code>268f68ef</code> ; passe 36 lancée) ·
+            🔄 P10a <code>ask_user</code> (Opus en cours) · ⬜ P10b « où écrire ? » · ⬜ P11 · ⬜
+            P12
           </td>
         </tr>
         <tr>
@@ -1197,13 +1198,23 @@
         <b>Passe 34</b> : un P0 vrai — l'attente des écritures d'audit n'avait pas de borne, une
         connexion figée gelait un tour déjà terminé ; bornée à 5 s, dite par un code ; le test de la
         course est dit temporel (fenêtre 1,5 s et preuve que le tour a attendu) ; la remontée de
-        <code>realPathOf</code> s'arrête au partage d'un chemin UNC, jamais le serveur seul.</span
+        <code>realPathOf</code> s'arrête au partage d'un chemin UNC, jamais le serveur seul.
+        <b>Passe 35</b> : le test de la course est refait SANS horloge (<code>268f68ef</code>) ; le
+        P0 restant — une insertion figée n'est pas annulée à la borne et garde sa connexion — n'est
+        pas propre à P5b : c'est la robustesse du client de base (<code>statement_timeout</code>
+        exclu à dessein, keepalive TCP 60 s, <code>lock_timeout</code> 30 s), la même exposition
+        pour toute requête du runner et pour les insertions d'audit d'avant P5b. Arbitrage
+        ci-dessous.</span
       >
     </div>
     <div class="ligne">
       <span class="l">arbitrages</span
       ><span class="v"
-        ><i>Jonctions</i> : deux dossiers attachés qui pointent vers le même dépôt physique donnent
+        ><i>Connexions figées</i> : Codex (passe 35) pointe qu'une requête sur une connexion morte
+        sans RST tient sa connexion du pool jusqu'aux sondes keepalive de l'OS ; ce n'est pas P5b,
+        c'est le client — poser un <code>statement_timeout</code> par session (sauf backfills), ou
+        un délai de lecture socket, est une décision d'infrastructure à prendre à part.
+        <i>Jonctions</i> : deux dossiers attachés qui pointent vers le même dépôt physique donnent
         deux projets (D10 de « Vérifier &amp; Corriger », toujours ouvert) — interdire les racines
         qui se recouvrent, ou accepter deux identités. <i>Historique borné</i> : le rattachement des
         jobs passés lit la fenêtre du scan (1 500 dernières écritures).
