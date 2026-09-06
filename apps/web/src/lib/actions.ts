@@ -2230,6 +2230,88 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
 
 // ─── Spaces (P2, plan « De la maquette au produit ») ─────────────────────────
 
+export type SpaceListRow = {
+  id: string;
+  agentName: string;
+  agentSlug: string | null;
+  agentAvatarUrl: string | null;
+  channel: string;
+  task: string;
+  status: string | null;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  createdAt: Date | null;
+  completedAt: Date | null;
+  conversationId: string | null;
+  scheduleId: string | null;
+  scheduleName: string | null;
+};
+
+/**
+ * Les tâches de TÊTE (sans parent) de l'entité, les plus récentes d'abord,
+ * avec leur automatisation quand elles en viennent — la page /spaces les
+ * sépare : les conversations d'un côté, les automatisations groupées de
+ * l'autre (retour de Quentin, 06/09 : « la liste est noyée par les cron »).
+ */
+export async function listSpacesAction(
+  opts: { limit?: number } = {},
+): Promise<ActionResult<SpaceListRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const limit = Math.min(opts.limit ?? 200, 500);
+    const rows = await db
+      .select({
+        id: agentJobs.id,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
+        channel: agentJobs.channel,
+        task: agentJobs.task,
+        status: agentJobs.status,
+        costUsd: agentJobs.totalCostUsd,
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        createdAt: agentJobs.createdAt,
+        completedAt: agentJobs.completedAt,
+        conversationId: agentJobs.conversationId,
+        scheduleId: agentJobs.scheduleId,
+        triggerContext: agentJobs.triggerContext,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(and(eq(agentJobs.entityId, session.entityId), isNull(agentJobs.parentJobId)))
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(limit);
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        agentName: r.agentName ?? '—',
+        agentSlug: r.agentSlug,
+        agentAvatarUrl: r.agentAvatarUrl,
+        channel: r.channel,
+        task: r.task,
+        status: r.status,
+        costUsd: r.costUsd ?? 0,
+        inputTokens: r.inputTokens ?? 0,
+        outputTokens: r.outputTokens ?? 0,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+        conversationId: r.conversationId,
+        scheduleId: r.scheduleId,
+        scheduleName:
+          r.channel === 'cron' && r.triggerContext?.type === 'cron'
+            ? r.triggerContext.scheduleName
+            : null,
+      })),
+    );
+  } catch (err) {
+    console.error('[listSpacesAction]', err);
+    return fail('db_error', 'Failed to load spaces');
+  }
+}
+
 export type SpaceConversationView = {
   job: {
     id: string;

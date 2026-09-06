@@ -179,7 +179,7 @@ describe('ConversationFeedView', () => {
     const summary = summarizeSteps(
       feed.items[2]!.kind === 'turn' ? (feed.items[2].blocks[1] as { steps: Step[] }).steps : [],
     );
-    expect(summary).toBe('reasoning · 1 table · 1 raw result');
+    expect(summary).toBe('reasoning · 1 table · fetch'); // le brut est nommé, pas compté
     expect(html).toContain(summary);
     expect(html).toContain('3 steps');
     // Replié par défaut : le détail des étapes n'est pas dans le HTML initial.
@@ -223,7 +223,7 @@ describe('ConversationFeedView', () => {
   });
 
   it('le rappel du runner est dit comme tel, et la réponse finale ferme le fil', () => {
-    expect(html).toContain('Nodal reminded the agent: Tu es sur Telegram.');
+    expect(html).toContain('Nodal reminded the agent · Tu es sur Telegram.');
     expect(html).toContain('La revue d’août est prête et envoyée.');
     expect(html.lastIndexOf('Answer')).toBeGreaterThan(html.indexOf('Sent to telegram'));
   });

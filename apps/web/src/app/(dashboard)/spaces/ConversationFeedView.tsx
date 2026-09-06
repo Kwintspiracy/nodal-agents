@@ -5,6 +5,9 @@
 
 import Link from 'next/link';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import Disc from '@/components/ui/Disc';
+import { User } from '@phosphor-icons/react/dist/ssr';
+import ClampedText from './ClampedText.tsx';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -39,15 +42,21 @@ function FeedItemView({ item }: { item: FeedItem }) {
   switch (item.kind) {
     case 'request':
       return (
-        <Turn avatar={<AgentAvatar name="You" size="md" shape="square" />}>
+        <Turn
+          avatar={
+            <Disc variant="ink" size="sm" shape="square" aria-hidden>
+              <User weight="bold" />
+            </Disc>
+          }
+        >
           <Who name="You" meta={originLabel(item.origin)} />
-          <p className="max-w-[68ch] whitespace-pre-wrap text-body-15 text-ink">{item.text}</p>
+          <ClampedText text={item.text} className="max-w-[68ch] text-body-15 text-ink" />
         </Turn>
       );
     case 'note':
       return (
-        <p className="mt-4 pl-[44px] text-body-12 italic text-ink-4">
-          Nodal reminded the agent: {item.text}
+        <p className="mt-3 truncate pl-[44px] text-mono-11 text-ink-4" title={item.text}>
+          Nodal reminded the agent · {item.text}
         </p>
       );
     case 'turn':
@@ -244,7 +253,7 @@ function TableCard({ payload, aside }: { payload: CardPayloadFor<'table'>; aside
                       <Td
                         key={ci}
                         align={typeof cell === 'number' ? 'right' : 'left'}
-                        className="text-mono-12 text-ink-2 whitespace-nowrap"
+                        className="max-w-[40ch] truncate text-mono-12 text-ink-2 whitespace-nowrap"
                       >
                         {cell === null ? '' : String(cell)}
                       </Td>

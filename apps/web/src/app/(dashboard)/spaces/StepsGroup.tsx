@@ -9,7 +9,7 @@ import { useState } from 'react';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { Step } from '@/lib/conversation-feed.ts';
-import { formatMs, summarizeSteps } from './format.ts';
+import { formatMs, shortToolName, summarizeSteps } from './format.ts';
 
 export default function StepsGroup({ steps }: { steps: Step[] }) {
   const [open, setOpen] = useState(false);
@@ -41,8 +41,11 @@ export default function StepsGroup({ steps }: { steps: Step[] }) {
                 </>
               ) : (
                 <>
-                  <span className="w-[158px] shrink-0 truncate text-mono-11 text-ink-2">
-                    {s.toolName}
+                  <span
+                    className="w-[158px] shrink-0 truncate text-mono-11 text-ink-2"
+                    title={s.toolName}
+                  >
+                    {shortToolName(s.toolName)}
                   </span>
                   <span className="min-w-0 flex-1 break-words">
                     <StepLine step={s} />
@@ -74,14 +77,13 @@ function StepLine({ step }: { step: Extract<Step, { kind: 'tool' }> }) {
   }
   const p = step.presented;
   if (p === null) {
+    // Pas de charge utile : ce qu'on a de plus vrai, c'est la sortie brute,
+    // sinon l'entrée (un `return_result` n'a pas de ligne d'audit : son texte
+    // est dans l'appel).
     return (
       <>
-        {step.card === null ? (
-          <MonoMicroTag tone="ink">no card recorded</MonoMicroTag>
-        ) : (
-          <MonoMicroTag tone="ink">{step.card} · raw</MonoMicroTag>
-        )}{' '}
-        <RawExcerpt text={step.outputText} />
+        {step.card !== null && <MonoMicroTag tone="ink">{step.card}</MonoMicroTag>}{' '}
+        <RawExcerpt text={step.outputText ?? excerptOfInput(step.input)} />
       </>
     );
   }
@@ -131,6 +133,22 @@ function StepLine({ step }: { step: Extract<Step, { kind: 'tool' }> }) {
     default:
       return <MonoMicroTag tone="ink">{p.card}</MonoMicroTag>;
   }
+}
+
+/** L'entrée d'un appel, en une ligne : la valeur si elle n'a qu'un champ texte, sinon le JSON. */
+function excerptOfInput(input: unknown): string | null {
+  if (input === null || input === undefined) return null;
+  if (typeof input === 'string') return input;
+  if (typeof input === 'object') {
+    const values = Object.values(input as Record<string, unknown>);
+    if (values.length === 1 && typeof values[0] === 'string') return values[0];
+    try {
+      return JSON.stringify(input);
+    } catch {
+      return null;
+    }
+  }
+  return String(input);
 }
 
 function RawExcerpt({ text }: { text: string | null }) {

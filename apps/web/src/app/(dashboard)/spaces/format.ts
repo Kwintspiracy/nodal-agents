@@ -52,12 +52,25 @@ const CARD_WORDS: Record<ToolCard, [string, string]> = {
 };
 
 /**
+ * Le nom d'un outil tel qu'un humain le lit : sans le préfixe de serveur MCP
+ * (`mcp_fetch__fetch_markdown` → `fetch_markdown`), sans le `cli:` du harnais.
+ */
+export function shortToolName(name: string): string {
+  const mcp = /^mcp_[^_]+(?:_[^_]+)*__(.+)$/.exec(name);
+  if (mcp?.[1]) return mcp[1];
+  if (name.startsWith('cli:')) return name.slice(4);
+  return name;
+}
+
+/**
  * Le titre d'un groupe replié, déduit de ses cartes : « reasoning · 2 reads ·
- * 1 search ». Un appel sans carte compte comme « call » ; un échec comme
- * « failed ». Jamais un nom d'outil.
+ * 1 search ». Quand la carte ne dit rien (`generic`, ou pas de carte), le nom
+ * court de l'outil prend sa place — c'est la seule information honnête ; un
+ * échec compte comme « failed ».
  */
 export function summarizeSteps(steps: readonly Step[]): string {
   const counts = new Map<string, number>();
+  const named = new Set<string>();
   let reasoning = 0;
   let failed = 0;
   for (const s of steps) {
@@ -69,19 +82,21 @@ export function summarizeSteps(steps: readonly Step[]): string {
       failed += 1;
       continue;
     }
-    const key = s.card ?? 'call';
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    // Une carte qui ne dit rien (`generic`, ou pas de carte) : le NOM de
+    // l'outil est la seule information honnête — « 1 raw result » n'en est pas.
+    if (s.card === null || s.card === 'generic') {
+      named.add(shortToolName(s.toolName));
+      continue;
+    }
+    counts.set(s.card, (counts.get(s.card) ?? 0) + 1);
   }
   const parts: string[] = [];
   if (reasoning > 0) parts.push('reasoning');
   for (const [key, n] of counts) {
-    if (key === 'call') {
-      parts.push(`${n} ${n === 1 ? 'call' : 'calls'}`);
-      continue;
-    }
     const words = CARD_WORDS[key as ToolCard];
     parts.push(`${n} ${n === 1 ? words[0] : words[1]}`);
   }
+  for (const name of named) parts.push(name);
   if (failed > 0) parts.push(`${failed} failed`);
   return parts.length > 0 ? parts.join(' · ') : 'no action';
 }

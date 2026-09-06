@@ -78,7 +78,9 @@ const productTools: AnyTool[] = [...registry.list(), ...capabilityTools];
  *   search     — des correspondances
  *   files      — des fichiers écrits, modifiés ou listés
  *   table      — des lignes à colonnes stables ; la charge utile EST le tableau
- *                (`tables[]`), quelle que soit la forme de sortie de l'outil
+ *                (`tables[]`), quelle que soit la forme de sortie de l'outil.
+ *                Une RECHERCHE de souvenirs (`query_memory`) n'en est pas une :
+ *                ce sont des correspondances, repliées à l'écran (06/09).
  *   terminal   — une commande, sa sortie, son code de sortie
  *   sent       — quelque chose est parti vers un canal
  *   checks     — un verdict de vérification
@@ -118,7 +120,7 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   pptx_create: 'files',
   pptx_read: 'read',
   pptx_replace_text: 'files',
-  query_memory: 'table',
+  query_memory: 'search',
   return_result: 'text',
   review_verdict: 'checks',
   run_command: 'terminal',
