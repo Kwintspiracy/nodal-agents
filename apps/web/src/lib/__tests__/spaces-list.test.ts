@@ -122,3 +122,25 @@ describe('groupSpaces — le prérequis d’ordre', () => {
     expect(groupSpaces([...rows].reverse()).scheduled[0]?.lastRun.id).toBe('ancien');
   });
 });
+
+describe('groupSpaces — deux automatisations homonymes (revue passe 26)', () => {
+  it('restent DEUX lignes dès qu’elles ont un id, même supprimées (l’id vient alors de la provenance)', () => {
+    const rows = [
+      row({ id: 'a1', channel: 'cron', scheduleId: 'digest-a', scheduleName: 'Digest' }),
+      row({ id: 'b1', channel: 'cron', scheduleId: 'digest-b', scheduleName: 'Digest' }),
+    ];
+    const groups = groupSpaces(rows).scheduled;
+    expect(groups.map((g) => g.key).sort()).toEqual(['digest-a', 'digest-b']);
+    expect(groups.every((g) => g.name === 'Digest' && g.runs.length === 1)).toBe(true);
+  });
+
+  it('se fondent en une ligne SEULEMENT sans aucun id — les runs d’avant la provenance, dit tel quel', () => {
+    const rows = [
+      row({ id: 'a1', channel: 'cron', scheduleId: null, scheduleName: 'Digest' }),
+      row({ id: 'b1', channel: 'cron', scheduleId: null, scheduleName: 'Digest' }),
+    ];
+    const groups = groupSpaces(rows).scheduled;
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.runs.map((r) => r.id)).toEqual(['a1', 'b1']);
+  });
+});

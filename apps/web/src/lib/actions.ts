@@ -2302,7 +2302,16 @@ function toSpaceListRow(r: SpaceListDbRow): SpaceListRow {
     createdAt: r.createdAt,
     completedAt: r.completedAt,
     conversationId: r.conversationId,
-    scheduleId: r.scheduleId,
+    // La colonne d'abord, la provenance ensuite : `schedule_id` est SET NULL
+    // quand l'automatisation est supprimée, et sans l'id gardé dans la
+    // provenance deux automatisations supprimées puis recréées sous le même
+    // nom se fondaient en une ligne (revue passe 26). Les jobs antérieurs à
+    // cet id retombent sur le nom — `groupSpaces` le dit.
+    scheduleId:
+      r.scheduleId ??
+      (r.channel === 'cron' && r.triggerContext?.type === 'cron'
+        ? (r.triggerContext.scheduleId ?? null)
+        : null),
     scheduleName:
       r.channel === 'cron' && r.triggerContext?.type === 'cron'
         ? r.triggerContext.scheduleName

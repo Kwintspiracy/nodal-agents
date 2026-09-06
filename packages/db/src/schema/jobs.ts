@@ -36,6 +36,14 @@ export type JobTriggerContext =
       scheduleName: string;
       prevRunAt: string | null;
       /**
+       * L'id de l'automatisation, porté par la PROVENANCE (revue passe 26) :
+       * `agent_jobs.schedule_id` est SET NULL quand l'automatisation est
+       * supprimée, et deux automatisations supprimées puis recréées sous le
+       * même nom fusionnaient en une seule ligne de la page Scheduled. Absent
+       * sur les jobs antérieurs — la page retombe alors sur le nom, et le dit.
+       */
+      scheduleId?: string;
+      /**
        * The schedule's EXPLICITLY chosen notify channel (agent_schedules.notify_channel),
        * carried onto the job so both delivery paths (delivery-guard's send tools
        * AND deliver-results.ts's adapter-direct return) honor the SAME channel the

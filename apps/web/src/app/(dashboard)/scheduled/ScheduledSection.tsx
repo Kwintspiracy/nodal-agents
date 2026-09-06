@@ -5,7 +5,7 @@
 // dessous quand on l'ouvre. Comme la section « scheduled » de Claude Code : ce
 // qui tourne tout seul ne doit pas noyer ce qu'on a demandé soi-même.
 //
-// P9 : c'est le CORPS de la page /scheduled, plus une section en bas de
+// P9 : c'est le CORPS de la page /scheduled — il n'est PLUS rendu sous
 // /spaces. D'où le titre « Scheduled » retiré (il fait doublon avec le titre
 // de page) et la marge haute laissée à la page. Le compteur reste : il dit
 // d'un coup d'œil combien d'automatisations tournent et combien de runs sont

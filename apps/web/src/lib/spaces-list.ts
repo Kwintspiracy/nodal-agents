@@ -9,9 +9,16 @@
 //
 // P9 : les deux mondes ont désormais chacun LEUR page et LEUR action de
 // lecture. /scheduled n'utilise que `scheduled` (elle ne lit que des runs
-// cron) ; /spaces n'appelle plus cette fonction du tout. Le tri `conversations`
-// reste pour que la fonction demeure totale — une ligne non-cron passée ici
-// n'est pas perdue en silence (invariant #4).
+// cron) ; /spaces n'appelle plus cette fonction du tout. La sortie
+// `conversations` reste pour que la fonction demeure totale — une ligne
+// non-cron passée ici est CONSERVÉE (dans son ordre d'entrée, rien n'est trié
+// ici), jamais perdue en silence (invariant #4).
+//
+// La clé d'un groupe est l'id de l'automatisation — la colonne `schedule_id`,
+// ou l'id gardé dans la provenance quand l'automatisation a été supprimée
+// (revue passe 26). Sans aucun id (jobs antérieurs à cette provenance), le
+// nom sert de clé : deux automatisations homonymes d'avant se fondent alors en
+// une ligne — connu, dit ici, et borné aux anciens runs.
 
 import type { SpaceListRow } from './actions.ts';
 

@@ -71,7 +71,35 @@ beforeAll(async () => {
       task: 'Goal: detect new CHANGELOG entries',
       status: i === 2 ? 'failed' : 'completed',
       createdAt: at(1 + i),
-      triggerContext: { type: 'cron', scheduleId: 'sched-1', scheduleName: 'Changelog' } as never,
+      // La provenance porte l'id de l'automatisation (passe 26) ; ici la
+      // colonne `schedule_id` reste NULL, comme après la suppression de
+      // l'automatisation : c'est la provenance seule qui regroupe.
+      triggerContext: {
+        type: 'cron' as const,
+        scheduleId: 'sched-1',
+        scheduleName: 'Changelog',
+        prevRunAt: null,
+      },
+    })),
+  );
+  // Deux automatisations SUPPRIMÉES, homonymes (« Digest »), plus anciennes que
+  // les 300 runs ci-dessus : `schedule_id` est NULL pour les deux, seule la
+  // provenance garde leur id distinct. Avant la passe 26 elles se fondaient en
+  // une ligne.
+  await testDb.insert(agentJobs).values(
+    (['digest-a', 'digest-b'] as const).map((id, i) => ({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'cron',
+      task: 'Goal: send the daily digest',
+      status: 'completed',
+      createdAt: at(400 + i),
+      triggerContext: {
+        type: 'cron' as const,
+        scheduleId: id,
+        scheduleName: 'Digest',
+        prevRunAt: null,
+      },
     })),
   );
   // Une délégation (enfant) : jamais une ligne de la liste.
@@ -131,5 +159,21 @@ describe('listScheduledRunsAction', () => {
     expect(r.data).toHaveLength(3);
     // Les trois plus récents : 1, 2 et 3 minutes avant maintenant.
     expect(r.data.every((x) => x.channel === 'cron')).toBe(true);
+  });
+
+  it('garde l’id de l’automatisation depuis la provenance quand schedule_id est NULL (deux homonymes supprimées restent deux lignes)', async () => {
+    const { listScheduledRunsAction } = await actions();
+    const { groupSpaces } = await import('../spaces-list.ts');
+    const r = await listScheduledRunsAction({ limit: 302 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const digests = r.data.filter((x) => x.scheduleName === 'Digest');
+    expect(digests).toHaveLength(2);
+    // La colonne est NULL (automatisation supprimée) : l'id vient de la provenance.
+    expect(digests.map((x) => x.scheduleId).sort()).toEqual(['digest-a', 'digest-b']);
+    // Et la page les montre comme DEUX automatisations, pas une.
+    const groups = groupSpaces(r.data).scheduled;
+    expect(groups.filter((g) => g.name === 'Digest')).toHaveLength(2);
+    expect(groups.find((g) => g.name === 'Changelog')?.runs).toHaveLength(300);
   });
 });

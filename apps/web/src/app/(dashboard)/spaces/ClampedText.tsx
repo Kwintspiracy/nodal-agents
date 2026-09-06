@@ -25,6 +25,7 @@ export default function ClampedText({
       {long && (
         <TextButton
           onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
           className="mt-1 text-body-12 text-ink-3 hover:text-ink"
         >
           {open ? 'Show less' : 'Show more'}

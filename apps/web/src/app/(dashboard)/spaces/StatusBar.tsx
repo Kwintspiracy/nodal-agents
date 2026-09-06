@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import TextButton from '@/components/ui/TextButton';
+import RowActionButton from '@/components/ui/RowActionButton';
 import type { SpaceCostView } from '@/lib/actions.ts';
 import { formatCost, formatMs, formatTokens } from './format.ts';
 
@@ -107,7 +108,12 @@ function Seg({
   } ${onClick ? 'cursor-pointer hover:bg-hover' : ''}`;
   if (onClick) {
     return (
-      <TextButton onClick={onClick} className={cls} aria-pressed={active}>
+      <TextButton
+        onClick={onClick}
+        className={cls}
+        aria-expanded={active}
+        aria-controls="space-cost-panel"
+      >
         {children}
       </TextButton>
     );
@@ -151,16 +157,15 @@ function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () => void
   const t = cost.totals;
   const fresh = Math.max(0, t.inputTokens - t.cachedTokens - t.cacheCreationTokens);
   return (
-    <div className="mx-auto mt-8 max-w-[840px]">
+    <div id="space-cost-panel" className="mx-auto mt-8 max-w-[840px]">
       <div className="mb-3 flex items-baseline gap-3">
         <h2 className="text-medium-15 text-ink">What this work cost</h2>
         <span className="text-mono-11 text-ink-4">updated every turn · nothing is final</span>
-        <TextButton
-          onClick={onClose}
-          className="ml-auto rounded-[8px] border border-rule-2 bg-paper px-2.5 py-1 text-body-12 text-ink-2 hover:bg-hover"
-        >
+        {/* Une action secondaire, dessinée comme un bouton : le contrôle de
+            ligne libellé du DS, pas un lien texte (revue passe 26). */}
+        <RowActionButton onClick={onClose} className="ml-auto">
           Back to the conversation
-        </TextButton>
+        </RowActionButton>
       </div>
       {sentences(cost).map((s, i) => (
         <p key={i} className="mb-3 max-w-[66ch] text-body-14 text-ink-2">
