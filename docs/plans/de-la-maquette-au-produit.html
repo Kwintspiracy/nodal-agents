@@ -333,7 +333,8 @@
   </p>
   <p>
     <b>L'effort porte sur le déroulé du chat</b>, dans ce nouvel espace. Les écrans existants ne
-    sont pas touchés par les lots 1 à 3.
+    sont pas touchés par le lot 1. Chat évolue au lot 2, sur décision de Quentin du 6 septembre
+    (section suivante).
   </p>
 
   <p>
@@ -363,15 +364,22 @@
     <b>La frontière entre un chat et un travail : « quelque chose est sorti du chat ».</b> Lire,
     chercher, consulter et noter la mémoire, répondre en texte sur n'importe quel canal (le canal
     est transparent, un sous-agent qui n'a fait que parler aussi) : c'est du chat. Un fichier, un
-    document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, le
-    harnais de code : c'est un travail. La règle est récursive sur les agents à qui on a passé la
-    main. Elle se lit sur les cartes, jamais sur un nom d'outil.
+    document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, un
+    email ou tout envoi vers un destinataire qui n'est pas un canal de la conversation, le harnais
+    de code : c'est un travail. La règle est récursive sur les agents à qui on a passé la main. Elle
+    se lit sur les cartes, jamais sur un nom d'outil.
+  </p>
+  <p>
+    <b>À confirmer par Quentin.</b> Il a cité « utilise l'agent de recherche et ne fait pas la
+    recherche lui-même » comme une production, puis posé qu'un sous-agent qui n'a fait que parler
+    reste du chat. Le plan retient la seconde règle, récursive : un agent de recherche qui a produit
+    un document est un travail, un qui a seulement répondu ne l'est pas.
   </p>
   <p>
     <b>Chat accueille toutes les conversations</b>, dashboard et Telegram, Slack, Discord. Tout y
-    commence. Au tour où quelque chose sort du chat, un encart dit ce qui a été produit et renvoie
-    au projet. La page Chat change de nature : décision du 6 septembre, qui lève la consigne du 5
-    sur ce point.
+    commence. Au tour où quelque chose sort du chat, un encart dit ce qui a été produit, le projet
+    où il vit (nom, dossier) et renvoie à sa page. La page Chat change de nature : décision du 6
+    septembre, qui lève la consigne du 5 sur ce point.
   </p>
   <p>
     <b>Telegram : une conversation par chat</b>, jusqu'à ce que l'utilisateur en ouvre une autre.
@@ -604,7 +612,10 @@
         </tr>
         <tr>
           <td class="k">On ne touche pas</td>
-          <td>Les écrans Runs, Code et Chat, et la barre latérale</td>
+          <td>
+            Les écrans Runs et Code, et la barre latérale. <b>Mis à jour le 6 septembre :</b> Chat
+            évolue au lot 2 (P7) ; la barre gagne « Scheduled » (P9)
+          </td>
           <td>
             Décision de Quentin : le nouvel espace vit à côté, derrière une entrée de plus. Le
             lecteur de messages de <code>JobMessages</code> est réutilisé.
@@ -884,20 +895,21 @@
       ><span class="v"
         >La page Chat liste <b>toutes</b> les conversations, tous canaux, avec leur origine. En
         ouvrir une rend le fil de P2, le même code. Au tour où quelque chose est sorti du chat, un
-        <b>encart</b> dit ce qui a été produit et où il vit, avec le lien vers le projet. Répondre
-        depuis le web dans une conversation venue d'un canal passe par l'outil d'envoi de ce
-        canal.</span
+        <b>encart</b> dit ce qui a été produit, le projet où il vit (nom, dossier) et le lien vers
+        sa page. Répondre depuis le web dans une conversation venue d'un canal passe par l'outil
+        d'envoi de ce canal.</span
       >
     </div>
     <div class="ligne">
       <span class="l">la frontière</span
       ><span class="v"
         >Chat : lire, chercher, consulter <b>et noter</b> la mémoire, répondre en texte sur
-        n'importe quel canal (le canal est transparent), déléguer à un agent qui n'a fait que
-        parler. Travail : un fichier, un document, un projet de code, une écriture dans une base
-        externe, une pièce jointe envoyée, le harnais de code. <b>Récursif</b> sur les descendants.
-        Se lit sur les cartes de P1 ; les outils tiers (<code>generic</code>) exigent de persister
-        leur niveau de risque sur <code>tool_calls</code>, une colonne de plus.</span
+        n'importe quel canal de la conversation (le canal est transparent), déléguer à un agent qui
+        n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans
+        une base externe, une pièce jointe envoyée, un email ou tout envoi vers un destinataire qui
+        n'est pas un canal de la conversation, le harnais de code. <b>Récursif</b> sur les
+        descendants. Se lit sur les cartes de P1 ; les outils tiers (<code>generic</code>) exigent
+        de persister leur niveau de risque sur <code>tool_calls</code>, une colonne de plus.</span
       >
     </div>
     <div class="ligne">
@@ -912,15 +924,31 @@
       ><span class="v"
         >Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un
         <code>save_memory</code> : sans encart. Un <code>file_write</code> dans un projet : encart
-        avec le lien. Un connecteur en écriture : encart ; en lecture : sans. Un sous-agent qui n'a
-        fait que parler : sans ; un sous-agent qui a écrit : encart sur le tour parent.</span
+        avec le lien. Un email avec les résultats : encart. Un connecteur en écriture : encart ; en
+        lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit :
+        encart sur le tour parent.</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">à confirmer</span
+      ><span class="v"
+        ><b>L'agent de recherche.</b> À 02:15 Quentin l'a cité comme une production (« utilise
+        l'agent de recherche et ne fait pas la recherche lui-même ») ; à 02:20 il a posé qu'un
+        sous-agent qui n'a fait que parler reste du chat. Le plan retient la règle du 02:20,
+        récursive : un agent de recherche qui a produit un document est un travail, un qui a
+        seulement répondu ne l'est pas. À trancher par Quentin si ce n'est pas ça.</span
       >
     </div>
     <div class="ligne">
       <span class="l">à vérifier</span
       ><span class="v"
-        >Répondre depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que
-        l'outil d'envoi permet aujourd'hui.</span
+        ><b>Deux sources pour un fil.</b> Une conversation du dashboard vit dans
+        <code>conversations</code> + <code>chat_messages</code> ; le contrat du schéma dit qu'un
+        tour pur ne crée pas de job et qu'un tour devenu action porte <code>jobId</code>. Le fil de
+        P2 lit un job : P7 doit lire les deux (les tours dans <code>chat_messages</code>, les
+        actions par leur job) — à vérifier dans le code du chat avant de découper P7. Et répondre
+        depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi
+        permet aujourd'hui.</span
       >
     </div>
   </div>

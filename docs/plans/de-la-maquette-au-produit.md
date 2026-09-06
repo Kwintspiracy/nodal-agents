@@ -16,7 +16,8 @@ Runs et Code est une décision ultérieure, peut-être jamais prise : ce plan ne
 prépare pas et ne la présuppose pas.
 
 **L'effort porte sur le déroulé du chat**, dans ce nouvel espace. Les écrans
-existants (Runs, Code, Chat) ne sont pas touchés par les lots 1 à 3.
+existants (Runs, Code, Chat) ne sont pas touchés par le lot 1. Chat évolue au
+lot 2, sur décision de Quentin du 06/09 (section suivante).
 
 **Mis à jour le 06/09 :** Quentin a décidé de faire évoluer la page Chat et
 d'ajouter une entrée « Scheduled » (voir la section suivante). Le reste de ce
@@ -45,14 +46,22 @@ projet.
 chat ».** Lire, chercher, consulter et noter la mémoire, répondre en texte sur
 n'importe quel canal — le canal est transparent, un sous-agent qui n'a fait que
 parler aussi — c'est du chat. Un fichier, un document, un projet de code, une
-écriture dans une base externe, une pièce jointe envoyée, le harnais de code :
-c'est un travail. La règle est récursive sur les agents à qui on a passé la main.
+écriture dans une base externe, une pièce jointe envoyée, un email ou tout envoi
+vers un destinataire qui n'est pas un canal de la conversation, le harnais de
+code : c'est un travail. La règle est récursive sur les agents à qui on a passé la main.
 Elle se lit sur les cartes de P1, jamais sur un nom d'outil ; pour les outils
 tiers il faut persister leur niveau de risque.
 
+**À confirmer par Quentin.** À 02:15 il a cité « utilise l'agent de recherche et
+ne fait pas la recherche lui-même » comme une production ; à 02:20 il a posé
+qu'un sous-agent qui n'a fait que parler reste du chat. Le plan retient la
+règle du 02:20, récursive : un agent de recherche qui a produit un document est
+un travail, un qui a seulement répondu ne l'est pas.
+
+
 **Chat accueille toutes les conversations**, dashboard et Telegram, Slack,
 Discord. Tout y commence. Au tour où quelque chose sort du chat, un encart dit
-ce qui a été produit et renvoie au projet. La page Chat existante change de
+ce qui a été produit, le projet où il vit (nom, dossier) et renvoie à sa page. La page Chat existante change de
 nature : décision de Quentin du 06/09, qui lève la consigne du 05/09 sur ce
 point.
 
@@ -99,10 +108,10 @@ Chaque ligne du dessin, et d'où vient sa donnée. Rien n'est supposé.
 | Preuve rouge / verte, extrait, durées | `verification_runs` + `job_deliverable_verification_state` — PR① | oui, livré cette semaine |
 | Les commandes de preuve proposées | `discoverVerifyCommands` — v7-C, livré le 05/09 | oui |
 | Envois partis / en attente | `job_deliveries` — PR① | oui |
-| **Le diff des fichiers écrits par le harnais** | le sha de l'instantané est calculé (`checkpoints.ts:199`) mais **pas persisté** ; il vit dans le dépôt git des instantanés, étiqueté | **trou à combler** (P5) |
-| L'agent pose une question avec des options | aucun outil — `ask_user` n'existe pas | **à construire** (P7) |
-| Deux relecteurs cités | protocole non construit — PR④ du plan Vérifier & Corriger | **à construire** (P9) |
-| L'application qui tourne | rien | **à construire, en dernier** (P10) |
+| **Le diff des fichiers écrits par le harnais** | le sha de l'instantané est calculé (`checkpoints.ts:199`) mais **pas persisté** ; il vit dans le dépôt git des instantanés, étiqueté | **trou à combler** (P11) |
+| L'agent pose une question avec des options | aucun outil — `ask_user` n'existe pas | **à construire** (P10) |
+| Deux relecteurs cités | protocole non construit — PR④ du plan Vérifier & Corriger | **à construire** (P13) |
+| L'application qui tourne | rien | **à construire, en dernier** (P14) |
 
 **Conclusion.** Trois lots sur quatre sont une couche d'affichage sur des lignes
 qui existent. Le quatrième est cher et peut se faire attendre sans que le reste
@@ -117,7 +126,7 @@ perde son sens.
 | **On garde** | v7-C : la découverte des commandes | C'est le contenu du panneau « Vérifié » de l'étagère |
 | **On garde** | Les primitives du design system : `Table`, `MonoMicroTag`, `PrimaryButton`, `Banner`, `EdRow` | La maquette les reprend au pixel |
 | **On garde** | `JobMessages.blocksFromContent` (le lecteur des trois formats de messages) | Il sait déjà lire les parties ; on change ce qu'on en fait |
-| **On ne touche pas** | Les écrans Runs, Code et Chat, et la barre latérale | Décision de Quentin le 05/09 : le nouvel espace vit à côté, derrière une entrée de plus. `JobMessages` reste en place ; son lecteur de messages est réutilisé par la conversation |
+| **On ne touche pas** | Les écrans Runs et Code, et la barre latérale. **Mis à jour le 06/09** : Chat évolue au lot 2 (P7) ; la barre gagne « Scheduled » (P9) | Décision de Quentin le 05/09 : le nouvel espace vit à côté, derrière une entrée de plus. `JobMessages` reste en place ; son lecteur de messages est réutilisé par la conversation |
 | **On jette** | Rien | Aucun travail livré n'est contredit par le dessin |
 
 ## Les pierres
@@ -176,16 +185,17 @@ une pierre à part.
 
 ### P2 · La conversation — L
 
-> **État au 06/09** : codée — `apps/web/src/lib/conversation-feed.ts` (le
-> modèle, pur), `app/(dashboard)/spaces/` (liste + fil), action
-> `getSpaceConversationAction`, entrée « Spaces » dans la barre latérale (la
-> seule touche à l'existant). Repli/carte décidé sur la carte persistée ET sur
-> ce que la charge a à dessiner (`showsAlone`). Les messages `user` après la
-> demande sont lus comme des rappels du runner — **à vérifier contre
-> `thread-history.ts`** (historique préfixé d'une conversation Telegram),
-> question posée à la passe 17. Vérification visuelle : la base de Quentin
-> est en `local-auth`, je n'ai pas le mot de passe — la page est prouvée par
-> `tsc`, le rendu HTML statique et l'action sur pglite, pas par Playwright.
+> **État au 06/09 : close (passe 19).** `conversation-feed.ts` (le modèle,
+> pur), `app/(dashboard)/spaces/` (liste + fil), `getSpaceConversationAction`,
+> entrée « Spaces » dans la barre latérale. Repli/carte décidé sur la carte
+> persistée ET sur ce que la charge a à dessiner (`showsAlone`). La question de
+> la passe 17 est tranchée : la frontière du fil est le DERNIER message `user`
+> égal à `job.task` ; ce qui précède (l'historique Telegram préfixé par
+> `thread-history.ts`) se rend comme des messages ordinaires, ce qui suit
+> comme des rappels du runner. Vérification visuelle sans mot de passe : CSS
+> compilé récupéré sur le serveur, rendu statique d'un vrai job, capture
+> Playwright ; les retours de Quentin sur le fil ont été traités sur cette
+> capture.
 
 **Ce que ça pose.** La page du nouvel espace rend la conversation dessinée : les
 messages de l'utilisateur, la prose de l'agent, les groupes d'actions repliés
@@ -209,8 +219,8 @@ l'agent forme un groupe. Le titre du groupe est déduit des cartes qu'il contien
 sorte de carte ; aucune partie connue ne retombe sur `generic`. Mutation :
 retirer une carte du dispatch fait rougir le test sur la partie correspondante.
 
-**Ce qui reste hors de P2.** Le diff cliquable (P5), le tableur rendu (P8), la
-question à boutons (P7) : leurs cartes affichent un état « pas encore rendu »
+**Ce qui reste hors de P2.** Le diff cliquable (P11), le tableur rendu (P12), la
+question à boutons (P10) : leurs cartes affichent un état « pas encore rendu »
 honnête en attendant.
 
 ### P3 · Les cartes de preuve et d'envoi — S
@@ -231,7 +241,7 @@ un `verification_runs` rouge rend l'extrait, un vert ne le rend pas.
 
 > **État au 06/09 : close (passes 24-25).** P4a : `ModelPricing.cacheReadPerMillionUsd` / `cacheWritePerMillionUsd` par modèle (source OpenRouter `GET /api/v1/models`, relevé le 06/09 — le rapport n'est pas universel : Anthropic 0,1×/1,25×, DeepSeek 0,5×, Kimi ≈ 0,17×), `estimateCallCostUsd` cache-aware dans `call-sink` et `execute.ts`, dix prix in/out rafraîchis ; un modèle sans prix de cache est facturé plein et le dit (`hasCachePricing`). P4b : `aggregateSpaceCost` (par agent, attente humaine, temps de preuve), `StatusBar` permanente + panneau « What this work cost ». La garde « au dixième / 1,25× » tient pour Anthropic ; pour les autres vendeurs c'est LEUR prix, pas un facteur.
 >
-> **Dépendance découverte le 06/09** : la garde (« cache lu au dixième, cache écrit 1,25× ») suppose un estimateur cache-aware. Or `estimateModelCostUsd` (`packages/shared/src/model-catalog.ts`) calcule `input × prix + output × prix` et ignore `cachedTokens` / `cacheCreationTokens` ; seul OpenRouter rapporte un coût déjà cache-aware. P4 se scinde donc : (a) la barre d'état depuis `llm_calls` tel quel (jetons, part de cache, coût rapporté, durée, envois en attente) ; (b) l'estimateur cache-aware, travail moteur à part (backlog « cache-aware »), sans lequel le coût des fournisseurs natifs reste surestimé.
+> **Dépendance découverte le 06/09, résolue par P4a** : la garde (« cache lu au dixième, cache écrit 1,25× ») suppose un estimateur cache-aware. Or `estimateModelCostUsd` (`packages/shared/src/model-catalog.ts`) calcule `input × prix + output × prix` et ignore `cachedTokens` / `cacheCreationTokens` ; seul OpenRouter rapporte un coût déjà cache-aware. P4 se scinde donc : (a) la barre d'état depuis `llm_calls` tel quel (jetons, part de cache, coût rapporté, durée, envois en attente) ; (b) l'estimateur cache-aware, travail moteur à part (backlog « cache-aware »), sans lequel le coût des fournisseurs natifs reste surestimé.
 
 **Ce que ça pose.** La barre du bas, permanente : preuve, modèle actif, agents,
 jetons avec part de cache, coût, durée, envois en attente. Le panneau « Ce que
@@ -273,15 +283,17 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 
 ### P7 · Chat, la maison de toutes les conversations — L
 
-**Ce que ça pose.** La page Chat liste **toutes** les conversations, tous canaux, avec leur origine. En ouvrir une rend le fil de P2, le même code. Au tour où quelque chose est sorti du chat, un **encart** dit ce qui a été produit et où il vit, avec le lien vers le projet. Répondre depuis le web dans une conversation venue d'un canal passe par l'outil d'envoi de ce canal.
+**Ce que ça pose.** La page Chat liste **toutes** les conversations, tous canaux, avec leur origine. En ouvrir une rend le fil de P2, le même code. Au tour où quelque chose est sorti du chat, un **encart** dit ce qui a été produit, le projet où il vit (nom, dossier) et le lien vers sa page. Répondre depuis le web dans une conversation venue d'un canal passe par l'outil d'envoi de ce canal.
 
-**La frontière.** Chat : lire, chercher, consulter **et noter** la mémoire, répondre en texte sur n'importe quel canal (le canal est transparent), déléguer à un agent qui n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, le harnais de code. **Récursif** sur les descendants. Se lit sur les cartes de P1 ; les outils tiers (`generic`) exigent de persister leur niveau de risque sur `tool_calls`, une colonne de plus.
+**La frontière.** Chat : lire, chercher, consulter **et noter** la mémoire, répondre en texte sur n'importe quel canal de la conversation (le canal est transparent), déléguer à un agent qui n'a fait que parler. Travail : un fichier, un document, un projet de code, une écriture dans une base externe, une pièce jointe envoyée, un email ou tout envoi vers un destinataire qui n'est pas un canal de la conversation, le harnais de code. **Récursif** sur les descendants. Se lit sur les cartes de P1 ; les outils tiers (`generic`) exigent de persister leur niveau de risque sur `tool_calls`, une colonne de plus.
 
 **Hors périmètre.** La page Runs et son classificateur `classifyJob` (qui compte une recherche web comme une tâche) restent tels quels.
 
-**Garde.** Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un `save_memory` : sans encart. Un `file_write` dans un projet : encart avec le lien. Un connecteur en écriture : encart ; en lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit : encart sur le tour parent.
+**Garde.** Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un `save_memory` : sans encart. Un `file_write` dans un projet : encart avec le lien. Un email avec les résultats : encart. Un connecteur en écriture : encart ; en lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit : encart sur le tour parent.
 
-**À vérifier.** Répondre depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi permet aujourd'hui.
+**À confirmer.** **L'agent de recherche.** À 02:15 Quentin l'a cité comme une production (« utilise l'agent de recherche et ne fait pas la recherche lui-même ») ; à 02:20 il a posé qu'un sous-agent qui n'a fait que parler reste du chat. Le plan retient la règle du 02:20, récursive : un agent de recherche qui a produit un document est un travail, un qui a seulement répondu ne l'est pas. À trancher par Quentin si ce n'est pas ça.
+
+**À vérifier.** **Deux sources pour un fil.** Une conversation du dashboard vit dans `conversations` + `chat_messages` ; le contrat du schéma dit qu'un tour pur ne crée pas de job et qu'un tour devenu action porte `jobId`. Le fil de P2 lit un job : P7 doit lire les deux (les tours dans `chat_messages`, les actions par leur job) — à vérifier dans le code du chat avant de découper P7. Et répondre depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi permet aujourd'hui.
 
 ### P8 · Spaces : la liste des projets et la page du projet — L
 
