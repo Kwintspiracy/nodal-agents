@@ -470,7 +470,10 @@
               >e6713458</code
             >
             ; passes 42-43 traitées dans <code>ea6170ec</code>, <code>80ee7a8d</code> ; passe 45 :
-            aucun constat bloquant) · ✅ P12 tableur rendu (<code>b4ac14b1</code>, passe 46 lancée)
+            aucun constat bloquant) · ✅ P12 tableur rendu (<code>b4ac14b1</code> ; passe 46 : 3 P0
+            + 2 P1 vrais, traités dans <code>f790a051</code> — la même clé de document pour
+            l'intention et la carte, texte riche lisible, largeur bornée à 20 colonnes, état lu par
+            (job, clé), pied sans contradiction ; passe 47 lancée)
           </td>
         </tr>
         <tr>
@@ -1405,9 +1408,38 @@
         pas ; jamais un vert inventé. Un bug de <code>tableCard</code> corrigé au passage (<code
           >truncated</code
         >
-        ignorait <code>total</code>). <i>Limite dite</i> : sur une racine attachée par jonction, la
-        clé de l'outil (chemin réel) et celle de l'intention (chemin lexical) diffèrent, le pied ne
-        s'affiche pas.</span
+        ignorait <code>total</code>).</span
+      >
+    </div>
+    <div class="ligne">
+      <span class="l">passe 46</span
+      ><span class="v"
+        ><b>Ce que la revue a corrigé dans la pierre</b> (<code>f790a051</code>, 07/09). Cinq
+        constats, tous vérifiés vrais à la source. (1) La « limite dite » de la version précédente
+        n'était pas une limite mais un défaut : la clé de la carte (chemin réel) et celle de
+        l'intention (chemin lexical) sont maintenant calculées par <b>une seule fonction</b>
+        (<code>office-file-key.ts</code>), appelée des deux côtés — sous une jonction, la carte
+        retrouve sa ligne d'état. C'était aussi la cause de la CI Windows rouge sur
+        <code>9dd89c2a</code> : le dossier temporaire y est en forme courte 8.3, la clé réelle ne le
+        valait pas. (2) Le texte riche, un hyperlien riche et une formule partagée sans résultat
+        s'affichaient « [object Object] » : la cellule se lit par <code>formula</code>/<code
+          >result</code
+        >
+        (formule partagée traduite), le texte riche se joint, le repli épelle l'objet. (3) Le pied
+        disait « values only: no formulas » sous une formule montrée telle qu'écrite : il dit
+        maintenant « no formatting or merged cells; uncomputed formulas shown as written ». (4) La
+        carte n'était bornée qu'en lignes : <code>CARD_COLS_MAX</code> (20) au schéma, au
+        présentateur et à l'aperçu, et « showing 20 of 35 columns » quand il y a plus. (5) L'état
+        d'un document était « le plus récent du fil, tous jobs confondus » : un job qui finit de
+        vérifier SA génération après qu'un autre a réécrit le fichier posait « Verified » sur la
+        mauvaise carte. L'état se lit par <b>(job, clé)</b> — la carte d'une écriture porte l'état
+        du job qui l'a faite, une ligne par la contrainte d'unicité, rien à départager.
+        <i>Ce que ça ne dit pas encore</i> : un job qui écrit deux fois le même fichier a deux
+        cartes sur une seule ligne d'état ; dater chaque carte d'une génération est l'affaire du
+        vérificateur de documents (v7-B), pas de cette pierre. Le parcours complet de la feuille
+        pour un <code>total</code> exact est accepté et dit dans le code.
+        <i>Dégradation acceptée</i> : une carte <code>table</code> déjà persistée avec plus de 20
+        colonnes ne passe plus le schéma à l'écran, qui montre alors la sortie brute.</span
       >
     </div>
   </div>
