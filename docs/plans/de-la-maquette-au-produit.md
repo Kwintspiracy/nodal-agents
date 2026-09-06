@@ -52,11 +52,14 @@ code : c'est un travail. La règle est récursive sur les agents à qui on a pas
 Elle se lit sur les cartes de P1, jamais sur un nom d'outil ; pour les outils
 tiers il faut persister leur niveau de risque.
 
-**À confirmer par Quentin.** À 02:15 il a cité « utilise l'agent de recherche et
-ne fait pas la recherche lui-même » comme une production ; à 02:20 il a posé
-qu'un sous-agent qui n'a fait que parler reste du chat. Le plan retient la
-règle du 02:20, récursive : un agent de recherche qui a produit un document est
-un travail, un qui a seulement répondu ne l'est pas.
+**Une question ouverte, à trancher par Quentin : l'agent de recherche.** À
+02:15 il a cité « utilise l'agent de recherche et ne fait pas la recherche
+lui-même » comme une production. À 02:20 il a posé qu'un sous-agent qui n'a fait
+que parler reste du chat. Deux lectures possibles, le plan n'en choisit aucune :
+(a) confier le travail à un agent spécialisé est en soi une production, quel que
+soit ce qu'il rend ; (b) la règle est récursive et un agent de recherche qui a
+seulement répondu reste du chat, celui qui a produit un document est un travail.
+La garde de P7 a une variante par lecture.
 
 
 **Chat accueille toutes les conversations**, dashboard et Telegram, Slack,
@@ -291,7 +294,7 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 
 **Garde.** Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un `save_memory` : sans encart. Un `file_write` dans un projet : encart avec le lien. Un email avec les résultats : encart. Un connecteur en écriture : encart ; en lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit : encart sur le tour parent.
 
-**À confirmer.** **L'agent de recherche.** À 02:15 Quentin l'a cité comme une production (« utilise l'agent de recherche et ne fait pas la recherche lui-même ») ; à 02:20 il a posé qu'un sous-agent qui n'a fait que parler reste du chat. Le plan retient la règle du 02:20, récursive : un agent de recherche qui a produit un document est un travail, un qui a seulement répondu ne l'est pas. À trancher par Quentin si ce n'est pas ça.
+**À trancher par Quentin.** **L'agent de recherche.** À 02:15 il l'a cité comme une production (« utilise l'agent de recherche et ne fait pas la recherche lui-même ») ; à 02:20 il a posé qu'un sous-agent qui n'a fait que parler reste du chat. Le plan ne choisit pas : lecture (a), confier le travail à un agent spécialisé est en soi une production ; lecture (b), la règle est récursive, seul ce que le sous-agent a produit compte. La garde « un sous-agent qui n'a fait que parler : sans encart » vaut pour (b) ; pour (a) elle devient « une délégation à un agent de recherche : encart ».
 
 **À vérifier.** **Deux sources pour un fil.** Une conversation du dashboard vit dans `conversations` + `chat_messages` ; le contrat du schéma dit qu'un tour pur ne crée pas de job et qu'un tour devenu action porte `jobId`. Le fil de P2 lit un job : P7 doit lire les deux (les tours dans `chat_messages`, les actions par leur job) — à vérifier dans le code du chat avant de découper P7. Et répondre depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi permet aujourd'hui.
 
