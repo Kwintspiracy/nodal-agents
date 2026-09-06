@@ -470,7 +470,7 @@
               >e6713458</code
             >
             ; passes 42-43 traitées dans <code>ea6170ec</code>, <code>80ee7a8d</code> ; passe 45 :
-            aucun constat bloquant) · 🔄 P12 tableur (Opus en cours)
+            aucun constat bloquant) · ✅ P12 tableur rendu (<code>b4ac14b1</code>, passe 46 lancée)
           </td>
         </tr>
         <tr>
@@ -1390,6 +1390,25 @@
     <div class="ligne">
       <span class="l">s&#x27;appuie sur</span
       ><span class="v"><code>xlsx_read</code> et sa carte <code>table</code> (P1).</span>
+    </div>
+    <div class="ligne">
+      <span class="l">livré</span
+      ><span class="v"
+        ><b>Le 06/09</b> (<code>b4ac14b1</code>, par opus-p12 sur spec, relue, 5 mutations rouges ;
+        passe Codex 46 lancée). Une entrée de la carte <code>files</code> peut porter un aperçu (la
+        même forme qu'une table) et la clé canonique du document ; les 14 outils d'écriture xlsx
+        relisent la feuille touchée dans le classeur qu'ils ont en mémoire (valeurs brutes ; une
+        formule fraîche se montre comme formule, exceljs ne calcule pas) ; la carte montre les
+        premières lignes sous le fichier, dit « values only » et l'en-tête inconnu, et en pied
+        l'état de vérification du document lu par sa clé — <code>not_configured</code> → « Not
+        verified: no checks exist for documents yet », le cas d'aujourd'hui puisque v7-B n'existe
+        pas ; jamais un vert inventé. Un bug de <code>tableCard</code> corrigé au passage (<code
+          >truncated</code
+        >
+        ignorait <code>total</code>). <i>Limite dite</i> : sur une racine attachée par jonction, la
+        clé de l'outil (chemin réel) et celle de l'intention (chemin lexical) diffèrent, le pied ne
+        s'affiche pas.</span
+      >
     </div>
   </div>
 
