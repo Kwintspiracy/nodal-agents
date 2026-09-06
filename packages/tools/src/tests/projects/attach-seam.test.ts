@@ -305,10 +305,15 @@ describe('le registre au seam d’exécution — register_project puis file_writ
       jobId,
       toolCallId: `call-ask-${jobId}`,
       toolName: 'ask_user',
-      toolInput: { question: 'Où ranger cette synthèse ?', options: ['New project: veille-ia'] },
+      // L'option EST le nom du projet, sans préfixe : c'est la question qui dit
+      // que celle-là serait créée (revue Codex, passe 40).
+      toolInput: {
+        question: 'Où ranger cette synthèse ? « veille-ia » serait créé.',
+        options: ['veille-ia', 'Something else'],
+      },
       kind: 'question',
       status: 'approved',
-      answer: 'New project: veille-ia',
+      answer: 'veille-ia',
       resolvedAt: new Date(),
     });
 

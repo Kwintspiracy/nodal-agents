@@ -7,8 +7,9 @@
 // disque et sur les LIGNES relues (`code_projects`, `agent_jobs`,
 // `conversations`, `approval_requests`), jamais sur des compteurs d'appels.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import type * as fsPromises from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +28,32 @@ import { createToolRegistry } from '../../registry';
 import { registerBuiltins } from '../../builtin';
 import { executeTool } from '../../execute';
 import type { ExecuteOptions, ToolContext } from '../../types';
+
+/**
+ * Le seul truquage de ce fichier, et il est ciblé : `rmdir`.
+ *
+ * La branche de nettoyage distingue un échec BÉNIN (`ENOTEMPTY` — le dossier a
+ * été rempli entre-temps, `ENOENT` — il a déjà disparu) d'un échec qui laisse
+ * un dossier orphelin (`EACCES`, `EPERM`, une erreur d'E/S). Ces codes ne sont
+ * pas provoquables depuis l'extérieur : entre le `mkdir` de l'outil et son
+ * `rmdir`, rien d'observable ne s'intercale. `mkdir` et `stat` restent RÉELS —
+ * le dossier est vraiment créé, et les autres cas le vérifient sur le disque.
+ */
+const fsHooks = vi.hoisted(() => ({ rmdirError: null as NodeJS.ErrnoException | null }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const reel = await importOriginal<typeof fsPromises>();
+  return {
+    ...reel,
+    rmdir: async (path: Parameters<typeof reel.rmdir>[0]) => {
+      const attendue = fsHooks.rmdirError;
+      if (attendue) {
+        fsHooks.rmdirError = null;
+        throw attendue;
+      }
+      return reel.rmdir(path);
+    },
+  };
+});
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -48,6 +75,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  fsHooks.rmdirError = null;
   await rm(terrain, { recursive: true, force: true }).catch(() => undefined);
 });
 
@@ -85,12 +113,12 @@ async function conversationNeuve(chatId: string): Promise<string> {
 /**
  * La question `ask_user` de ce job, RÉPONDUE — ce que le clic laisse en base.
  *
- * Le LIBELLÉ choisi est le paramètre : depuis la passe 39, c'est lui qui doit
- * nommer le projet pour que la création passe sans second clic.
+ * Le LIBELLÉ choisi est le paramètre. Depuis la passe 40 il doit être ÉGAL au
+ * nom du projet ou à celui de son dossier — plus une phrase qui le contient.
  */
 async function questionRepondue(
   jobId: string,
-  answer = 'New project: veille-ia',
+  answer = 'veille-ia',
   question = 'Où ranger cette synthèse ?',
 ): Promise<void> {
   await db.insert(approvalRequests).values({
@@ -220,13 +248,13 @@ describe('register_project — la création', () => {
   it('un second appel ne redéclare rien : `created: false`, une seule ligne, le nom intact', async () => {
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-b');
-    await questionRepondue(jobId, 'New project: notes');
+    await questionRepondue(jobId, 'notes');
 
     const premier = await appel({ path: 'notes', name: 'Mes notes' }, jobId, conversationId);
     expect(premier.outcome).toBe('success');
 
     const jobDeux = await jobNeuf();
-    await questionRepondue(jobDeux, 'New project: notes');
+    await questionRepondue(jobDeux, 'notes');
     const second = await appel({ path: 'notes', name: 'Autre nom' }, jobDeux, conversationId);
     expect(second.outcome).toBe('success');
     if (second.outcome !== 'success') return;
@@ -245,7 +273,7 @@ describe('register_project — la création', () => {
 
   it('un chemin hors terrain est refusé, et rien n’est créé', async () => {
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'New project: hors');
+    await questionRepondue(jobId, 'hors');
 
     const res = await appel({ path: '../hors' }, jobId, null);
     expect(res.outcome).toBe('success');
@@ -275,7 +303,7 @@ describe('register_project — la création', () => {
 
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-c');
-    await questionRepondue(jobId, 'New project: déjà');
+    await questionRepondue(jobId, 'déjà');
     const res = await appel({ path: 'déjà', name: 'Nom de l’agent' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
@@ -304,7 +332,7 @@ describe('register_project — la création', () => {
 
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-c2');
-    await questionRepondue(jobId, 'New project: renommé');
+    await questionRepondue(jobId, 'renommé');
     const res = await appel({ path: 'renommé', name: 'Nom de l’agent' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
     if (res.outcome !== 'success') return;
@@ -338,7 +366,7 @@ describe('register_project — le rattachement rate : rien ne reste (revue Codex
 
   it('la ligne déclarée par CET appel est retirée, et le dossier qu’il a créé aussi', async () => {
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'New project: fantome');
+    await questionRepondue(jobId, 'fantome');
 
     const res = await executeTool(
       outil(),
@@ -365,7 +393,7 @@ describe('register_project — le rattachement rate : rien ne reste (revue Codex
     await mkdir(abs, { recursive: true });
 
     const jobId = await jobNeuf();
-    await questionRepondue(jobId, 'New project: deja-la');
+    await questionRepondue(jobId, 'deja-la');
 
     const res = await executeTool(
       outil(),
@@ -380,6 +408,114 @@ describe('register_project — le rattachement rate : rien ne reste (revue Codex
     // La ligne déclarée par cet appel part ; le dossier du propriétaire reste.
     expect(await toutesLesLignes(abs)).toHaveLength(0);
     expect((await stat(abs)).isDirectory()).toBe(true);
+  });
+});
+
+describe('register_project — un rollback qui rate SE DIT (revue Codex, passe 40)', () => {
+  function ctxRattachementCasse(jobId: string, db2?: ToolContext['db']): ToolContext {
+    return { ...ctx(jobId, 'pas-un-uuid'), ...(db2 ? { db: db2 } : {}) } as ToolContext;
+  }
+
+  /** L'erreur que `rmdir` doit lever au prochain appel, ou `null` pour le vrai `rmdir`. */
+  function rmdirLevera(code: string): void {
+    const err: NodeJS.ErrnoException = new Error(`rmdir ${code}`);
+    err.code = code;
+    fsHooks.rmdirError = err;
+  }
+
+  it('ENOTEMPTY : quelque chose a été écrit dans le dossier, ce n’est PAS un échec de rollback', async () => {
+    // Le dossier a été créé par cet appel, puis rempli avant le nettoyage. Le
+    // laisser est le bon geste : la raison ne doit pas accuser le rollback.
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'rempli');
+    rmdirLevera('ENOTEMPTY');
+
+    const res = await executeTool(
+      outil(),
+      { path: 'rempli' },
+      ctxRattachementCasse(jobId),
+      options(),
+    );
+    expect(res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    const out = res.output as { ok: boolean; reason: string };
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('attach_failed:attach_write_failed');
+    // La ligne, elle, a bien été reprise : seul le dossier reste.
+    expect(await toutesLesLignes(`${terrain}/rempli`)).toHaveLength(0);
+  });
+
+  it('EACCES : un dossier que l’appel a créé et n’a pas pu reprendre se dit', async () => {
+    // Le `.catch(() => undefined)` d'avant la passe 40 avalait aussi les
+    // permissions et les erreurs d'E/S : l'outil annonçait un simple
+    // `attach_failed`, un dossier vide de plus sur le disque, et personne pour
+    // le dire.
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'interdit');
+    rmdirLevera('EACCES');
+
+    const erreurs = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const res = await executeTool(
+        outil(),
+        { path: 'interdit' },
+        ctxRattachementCasse(jobId),
+        options(),
+      );
+      expect(res.outcome).toBe('success');
+      if (res.outcome !== 'success') return;
+      const out = res.output as { ok: boolean; reason: string };
+      expect(out.ok).toBe(false);
+      expect(out.reason).toBe('attach_failed:attach_write_failed;rollback_failed');
+
+      const journal = erreurs.mock.calls.map((c) => String(c[0])).join(' | ');
+      expect(journal).toContain('PROJECT_ROLLBACK_DIR_FAILED');
+      expect(journal).toContain('code=EACCES');
+    } finally {
+      erreurs.mockRestore();
+    }
+  });
+
+  it('la suppression de la ligne qui LÈVE se dit dans la raison ET dans les logs', async () => {
+    // Sans ce signal, l'outil annonçait le seul échec initial alors que le
+    // projet peut encore apparaître dans Spaces : l'agent croyait n'avoir rien
+    // créé (revue Codex, passe 40, constat hors demande).
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'sourd');
+
+    const dbQuiRefuseDeSupprimer = new Proxy(db as object, {
+      get(cible, prop, recepteur) {
+        if (prop === 'delete') {
+          return () => {
+            throw new Error('delete refusé');
+          };
+        }
+        return Reflect.get(cible, prop, recepteur) as unknown;
+      },
+    }) as unknown as ToolContext['db'];
+
+    const erreurs = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const res = await executeTool(
+        outil(),
+        { path: 'sourd' },
+        ctxRattachementCasse(jobId, dbQuiRefuseDeSupprimer),
+        options(),
+      );
+      expect(res.outcome).toBe('success');
+      if (res.outcome !== 'success') return;
+      const out = res.output as { ok: boolean; reason: string };
+      expect(out.ok).toBe(false);
+      expect(out.reason).toBe('attach_failed:attach_write_failed;rollback_failed');
+
+      const journal = erreurs.mock.calls.map((c) => String(c[0])).join(' | ');
+      expect(journal).toContain('PROJECT_ROLLBACK_ROW_FAILED');
+    } finally {
+      erreurs.mockRestore();
+    }
+
+    // La ligne est TOUJOURS là — c'est précisément ce que la raison annonce.
+    expect(await toutesLesLignes(`${terrain}/sourd`)).toHaveLength(1);
   });
 });
 
@@ -436,7 +572,7 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
 
   it('une question répondue dans un AUTRE job ne déverrouille pas celui-ci', async () => {
     const autreJob = await jobNeuf();
-    await questionRepondue(autreJob, 'New project: voisin');
+    await questionRepondue(autreJob, 'voisin');
     const jobId = await jobNeuf();
 
     const res = await executeTool(
@@ -467,10 +603,10 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
     expect(await toutesLesLignes(`${terrain}/comptabilite`)).toHaveLength(0);
   });
 
-  it('le libellé choisi nomme le DOSSIER : la création passe', async () => {
+  it('le libellé choisi EST le nom du DOSSIER : la création passe', async () => {
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-lien-dossier');
-    await questionRepondue(jobId, 'New project: veille-ia');
+    await questionRepondue(jobId, 'veille-ia');
 
     const res = await appel({ path: 'veille-ia' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
@@ -481,10 +617,10 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
     });
   });
 
-  it('le libellé choisi nomme le NOM affiché, écrit autrement que le dossier : la création passe', async () => {
+  it('le libellé choisi EST le NOM affiché, écrit autrement que le dossier : la création passe', async () => {
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-lien-nom');
-    await questionRepondue(jobId, 'New project: Veille IA');
+    await questionRepondue(jobId, 'Veille IA');
 
     const res = await appel({ path: 'veille-ia', name: 'Veille IA' }, jobId, conversationId);
     expect(res.outcome).toBe('success');
@@ -495,16 +631,98 @@ describe('register_project — la garde « rien ne se crée en silence »', () =
     });
   });
 
+  it('une option qui CONTIENT le nom sans l’être ne crée rien (revue Codex, passe 40)', async () => {
+    // Le scénario exact du constat bloquant : « Que faire ensuite ? » →
+    // « Add notes to the README ». Le mot `notes` apparaît dans la phrase, mais
+    // personne n'a choisi de créer un projet `notes`. La sous-chaîne suffisait
+    // jusqu'à la passe 40 ; l'égalité ne s'y laisse pas prendre.
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'Add notes to the README', 'Que faire ensuite ?');
+
+    const res = await executeTool(
+      outil(),
+      { path: 'notes' },
+      { ...ctx(jobId, null), toolCallId: 'call-reg-sous-chaine' } as ToolContext,
+      options(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+    await expect(stat(`${terrain}/notes`)).rejects.toThrow();
+    expect(await toutesLesLignes(`${terrain}/notes`)).toHaveLength(0);
+  });
+
+  it('un libellé PRÉFIXÉ ne déverrouille plus rien : le préfixe a quitté l’option', async () => {
+    // « New project: veille-ia » passait jusqu'à la passe 40. L'option porte
+    // désormais le nom NU, et c'est la question qui dit qu'il serait créé —
+    // sinon l'autorisation dépendrait d'une formulation.
+    const jobId = await jobNeuf();
+    await questionRepondue(jobId, 'New project: veille-ia');
+
+    const res = await executeTool(
+      outil(),
+      { path: 'veille-ia' },
+      { ...ctx(jobId, null), toolCallId: 'call-reg-prefixe' } as ToolContext,
+      options(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+    await expect(stat(`${terrain}/veille-ia`)).rejects.toThrow();
+  });
+
+  it('au-delà de la borne, ce sont les questions les plus RÉCENTES qui comptent', async () => {
+    // La lecture est plafonnée à cinquante questions approuvées. Sans ordre
+    // explicite, `limit` prend cinquante lignes qu'aucune règle ne désigne, et
+    // la réponse qui autorise pouvait tomber hors du lot d'un appel à l'autre
+    // (revue Codex, passe 40, P2). Avec « les plus récentes d'abord », la
+    // dernière décision de l'utilisateur est toujours celle qu'on lit.
+    const jobId = await jobNeuf();
+    const conversationId = await conversationNeuve('chat-borne');
+    const debut = Date.now();
+    for (let i = 0; i < 60; i += 1) {
+      await db.insert(approvalRequests).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        jobId,
+        toolCallId: `call-ask-vieux-${i}`,
+        toolName: 'ask_user',
+        toolInput: { question: 'Autre chose ?', options: [`option-${i}`, 'Something else'] },
+        kind: 'question',
+        status: 'approved',
+        answer: `option-${i}`,
+        resolvedAt: new Date(debut + i * 1000),
+      });
+    }
+    // Celle qui autorise est la PLUS RÉCENTE des soixante et une.
+    await db.insert(approvalRequests).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      jobId,
+      toolCallId: 'call-ask-recent',
+      toolName: 'ask_user',
+      toolInput: { question: 'Où ranger cette synthèse ?', options: ['tardif', 'Something else'] },
+      kind: 'question',
+      status: 'approved',
+      answer: 'tardif',
+      resolvedAt: new Date(debut + 60 * 1000),
+    });
+
+    const res = await appel({ path: 'tardif' }, jobId, conversationId);
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    if (res.outcome !== 'success') return;
+    expect(res.output as { ok: boolean; created: boolean }).toMatchObject({
+      ok: true,
+      created: true,
+    });
+  });
+
   it('accents et casse : c’est le NOM qui lie, pas le dossier tréma-libre', async () => {
-    // « Nouveau projet : Été 2026 » replié donne « nouveau projet : ete 2026 ».
-    // Le dernier segment du chemin, `ete-2026`, n'y est PAS contenu — le tiret
-    // n'est pas un espace. C'est donc le `name` (« Été 2026 ») qui doit être
-    // passé, et lui matche : le repli retire les diacritiques et la casse.
+    // L'option est « ÉTÉ 2026 », repliée en « ete 2026 ». Le dernier segment du
+    // chemin, `ete-2026`, ne lui est PAS égal — le tiret n'est pas un espace.
+    // C'est donc le `name` (« Été 2026 ») qui doit être passé, et lui matche :
+    // le repli retire les diacritiques et la casse, rien d'autre.
     const jobId = await jobNeuf();
     const conversationId = await conversationNeuve('chat-accents');
     // Le libellé est écrit en capitales, le nom du projet ne l'est pas : seul
-    // le repli (NFKD + minuscules) les rapproche.
-    await questionRepondue(jobId, 'Nouveau projet : ÉTÉ 2026');
+    // le repli (NFKD + minuscules) les rend égaux.
+    await questionRepondue(jobId, 'ÉTÉ 2026');
 
     const sansNom = await executeTool(
       outil(),

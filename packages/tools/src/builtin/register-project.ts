@@ -7,16 +7,17 @@
 // question ne porte plus que sur les DOCUMENTS — un rapport, une note, un
 // classeur — que rien ne permet de ranger.
 //
-// LE FLUX, en trois appels : `ask_user` (P10a) pose la question avec les
-// projets déclarés en options et un « New project: <nom> » ; l'utilisateur
-// choisit ; l'agent appelle CET outil, qui crée le dossier, le déclare au
+// LE FLUX, en trois appels : `ask_user` (P10a) pose la question — les projets
+// déclarés en options, plus une option qui EST le nom du projet à créer, la
+// question disant que celle-là serait créée ; l'utilisateur choisit ; l'agent
+// appelle CET outil, qui crée le dossier, le déclare au
 // registre et y rattache le job ET la conversation ; puis il écrit dedans, et
 // Spaces montre le projet, son fichier et sa conversation.
 //
 // CE QUI TIENT LA RÈGLE « rien en silence » : `computeApproval` ci-dessous. Il
 // ne suffit pas qu'une question ait été répondue dans ce job — il faut que
-// l'option CHOISIE nomme CE projet. Sinon, la création passe par la carte
-// d'approbation ordinaire.
+// l'option CHOISIE soit EXACTEMENT le nom de ce projet ou de son dossier.
+// Sinon, la création passe par la carte d'approbation ordinaire.
 //
 // INVARIANT #2 : rien ici ne fabrique de phrase pour l'utilisateur. La sortie
 // est une ligne de données ; c'est le LLM qui la raconte.
@@ -24,7 +25,7 @@
 import { mkdir, rmdir, stat } from 'node:fs/promises';
 import { basename } from 'node:path/posix';
 import { z } from 'zod';
-import { and, eq, approvalRequests, codeProjects } from '@nodal-agents/db';
+import { and, desc, eq, approvalRequests, codeProjects } from '@nodal-agents/db';
 import { isSafeSubfolder, projectKey } from '@nodal-agents/shared';
 import type { ToolDefinition, ToolContext } from '../types';
 import { textCard, failureText } from '../presenters';
@@ -110,18 +111,29 @@ function lastSegment(path: string): string {
  * cette destination. « Le propriétaire a été consulté » n'est pas
  * « le propriétaire a autorisé CE projet ».
  *
+ * ÉGALITÉ, PAS SOUS-CHAÎNE (revue Codex, passe 40, constat bloquant). La
+ * version précédente demandait que l'option CONTIENNE le nom ; « Add notes to
+ * the README », choisi en réponse à « Que faire ensuite ? », autorisait alors
+ * `register_project({ path: 'notes' })`. Un projet au nom court était
+ * déverrouillé par n'importe quelle phrase où ce mot apparaît. L'option choisie
+ * doit donc ÊTRE le nom du projet, ou le nom de son dossier.
+ *
+ * CONSÉQUENCE ASSUMÉE : l'option ne peut plus porter de préfixe. « New project:
+ * veille-ia » ne déverrouille rien ; l'option est « veille-ia » tout court, et
+ * c'est la QUESTION qui dit que celle-là serait créée. Coupler l'autorisation à
+ * une formulation (retirer un préfixe connu) l'aurait rendue fragile : une
+ * traduction, une majuscule ou un tiret de plus, et la garde tombe.
+ *
  * POURQUOI PAS une table d'autorisations. Codex proposait qu'`ask_user` porte
  * les effets de chaque option, ou qu'une ligne
  * `project_registration_authorizations` soit produite à la résolution et
  * consommée ici. Les deux demandent une migration et une notion de capacité
  * consommable que rien d'autre du produit n'utilise. La liaison existe déjà,
- * sans rien ajouter : c'est l'AGENT qui écrit le libellé de l'option
- * (« New project: veille-ia ») et l'AGENT qui écrit ensuite le `name`/`path`.
- * Exiger que le libellé CHOISI contienne l'un des deux lie la réponse à la
- * destination sans lire la prose de la question, et sans qu'un texte libre
- * puisse s'y substituer : le libellé n'est pas saisi par l'utilisateur, il est
- * choisi parmi ceux que l'agent a proposés (la résolution refuse toute réponse
- * hors options, voir `ask-user.ts`).
+ * sans rien ajouter : c'est l'AGENT qui écrit les options, et l'AGENT qui écrit
+ * ensuite le `name`/`path`. L'utilisateur, lui, ne saisit rien — il CHOISIT
+ * parmi ces options, et la résolution refuse toute réponse hors options (voir
+ * `ask-user.ts`). Une égalité entre l'option choisie et la destination lie donc
+ * bien la décision de l'humain à ce qui va être créé.
  *
  * `approved` seulement : une question DÉCLINÉE n'est pas une réponse.
  *
@@ -134,12 +146,15 @@ async function jobAnsweredForProject(
   wanted: { name?: string | undefined; folder: string },
 ): Promise<boolean> {
   if (!jobId) return false;
-  // Les aiguilles vides sont écartées : `''.includes` serait toujours vrai, et
-  // rendrait la garde inopérante sur un `name` blanc.
-  const needles = [wanted.name, wanted.folder]
-    .map((v) => (v === undefined ? '' : fold(v)))
-    .filter((v) => v !== '');
-  if (needles.length === 0) return false;
+  // Les valeurs vides sont écartées : une option vide n'existe pas (`ask_user`
+  // borne ses libellés à 1 caractère), et laisser passer `''` rendrait la garde
+  // inopérante sur un `name` blanc.
+  const accepted = new Set(
+    [wanted.name, wanted.folder]
+      .map((v) => (v === undefined ? '' : fold(v)))
+      .filter((v) => v !== ''),
+  );
+  if (accepted.size === 0) return false;
 
   const rows = await db
     .select({ answer: approvalRequests.answer })
@@ -151,13 +166,15 @@ async function jobAnsweredForProject(
         eq(approvalRequests.status, 'approved'),
       ),
     )
+    // Les plus RÉCENTES d'abord. Sans ordre, `limit` prend cinquante lignes
+    // qu'aucune règle ne désigne : au-delà de cinquante questions approuvées
+    // dans un job, la réponse qui autorise pouvait tomber hors du lot d'un
+    // appel à l'autre (revue Codex, passe 40, P2). L'échec restait sûr — une
+    // approbation de plus — mais il n'était pas reproductible.
+    .orderBy(desc(approvalRequests.resolvedAt))
     .limit(ANSWERED_QUESTIONS_SCANNED);
 
-  return rows.some((r) => {
-    if (!r.answer) return false;
-    const answer = fold(r.answer);
-    return needles.some((n) => answer.includes(n));
-  });
+  return rows.some((r) => r.answer !== null && accepted.has(fold(r.answer)));
 }
 
 export const registerProjectTool: ToolDefinition<
@@ -176,9 +193,11 @@ export const registerProjectTool: ToolDefinition<
     'either — writing into it is enough, and it stays attached to this conversation. ' +
     'After this call, write your files under the returned `path`. ' +
     'One rule to know: this runs without a second prompt only when the option the person ' +
-    'picked in your question names this very project — its `name` or its folder. That is ' +
-    'what a "New project: veille-ia" option does. Ask with that label, then reuse it here; ' +
-    'otherwise the owner is asked to confirm the folder before anything is created.',
+    'picked is EXACTLY the name or the folder of this project — the option is the bare ' +
+    'name ' +
+    '("veille-ia"), never a sentence around it, and it is your QUESTION that says this one ' +
+    'would be created. Reuse that exact word here as `name` or as the last segment of ' +
+    '`path`; otherwise the owner is asked to confirm the folder before anything is created.',
   inputSchema: RegisterProjectInputSchema,
   riskLevel: 'write',
   // Carte `text` : la sortie est une ligne de DONNÉES (un id, un chemin, un
@@ -204,8 +223,8 @@ export const registerProjectTool: ToolDefinition<
   /**
    * LA GARDE « rien ne se crée en silence ».
    *
-   * Sans réponse qui NOMME ce projet dans ce job, créer un projet passe par la
-   * carte d'approbation ORDINAIRE : le propriétaire voit le dossier proposé et
+   * Sans option choisie ÉGALE au nom de ce projet ou de son dossier dans ce
+   * job, créer un projet passe par la carte d'approbation ORDINAIRE : le propriétaire voit le dossier proposé et
    * tranche. Avec une telle réponse, il a DÉJÀ tranché sur CETTE destination —
    * redemander transformerait son choix en deux clics pour une seule décision.
    * La règle exacte, et pourquoi elle ne lit pas la prose de la question, est
@@ -327,18 +346,50 @@ export const registerProjectTool: ToolDefinition<
       // donc à la main, et seulement si cet appel l'a créé ET qu'il est resté
       // VIDE (`rmdir` échoue sur un dossier peuplé, et c'est la garde qu'on
       // veut : quelque chose y a été écrit entre-temps).
+
+      //
+      // ET IL SE DIT (revue Codex, passe 40). Un nettoyage qui échoue en
+      // silence laissait l'outil annoncer le seul échec initial, alors que le
+      // projet peut encore apparaître dans Spaces : l'agent croyait n'avoir
+      // rien créé. La raison rendue distingue donc les deux états.
+      let rollbackFailed = false;
       if (declared.length > 0) {
-        await ctx.db
-          .delete(codeProjects)
-          .where(eq(codeProjects.id, row.id))
-          .catch((err: unknown) => {
-            console.error(`[projects] PROJECT_ROLLBACK_FAILED id=${row.id}`, err);
-          });
+        try {
+          await ctx.db.delete(codeProjects).where(eq(codeProjects.id, row.id));
+        } catch (err) {
+          rollbackFailed = true;
+          console.error(
+            `[projects] PROJECT_ROLLBACK_ROW_FAILED id=${row.id} key=${key} ` +
+              `code=${(err as NodeJS.ErrnoException)?.code ?? 'unknown'}`,
+            err,
+          );
+        }
       }
       if (!existedBefore) {
-        await rmdir(abs).catch(() => undefined);
+        try {
+          await rmdir(abs);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          // `ENOTEMPTY` : quelque chose a été écrit dans le dossier entre-temps
+          // — le laisser est le bon geste, pas un échec. `ENOENT` : il a déjà
+          // disparu, l'état voulu est atteint. Tout le reste (`EACCES`,
+          // `EPERM`, une erreur d'E/S) laisse un dossier que cet appel a créé
+          // et n'a pas repris : ça se dit (invariant #4).
+          if (code !== 'ENOTEMPTY' && code !== 'ENOENT') {
+            rollbackFailed = true;
+            console.error(
+              `[projects] PROJECT_ROLLBACK_DIR_FAILED key=${key} code=${code ?? 'unknown'}`,
+              err,
+            );
+          }
+        }
       }
-      return { ok: false, reason: `attach_failed:${outcome.code}` };
+      return {
+        ok: false,
+        reason: rollbackFailed
+          ? `attach_failed:${outcome.code};rollback_failed`
+          : `attach_failed:${outcome.code}`,
+      };
     }
 
     return {

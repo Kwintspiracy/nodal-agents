@@ -451,9 +451,10 @@ function buildConversationBlock(conv: ConversationContext): string {
       '- Current project: none yet. Nothing produced in this conversation has landed ' +
         'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
         'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
-        '`ask_user`: offer up to five relevant registered projects by name and one ' +
-        '"New project: <name you propose>" option, then call `register_project` for a new ' +
-        'one with that same name, then write. Code that ' +
+        '`ask_user`: offer up to five relevant registered projects by name, plus one option ' +
+        'that is EXACTLY the name of the new project you propose — no prefix, no sentence ' +
+        'around it — and say in the question itself that this one would be created. Then ' +
+        'call `register_project` with that exact name, then write. Code that ' +
         'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
         'its own project: never ask for it.',
     );
