@@ -39,7 +39,6 @@ import { loadConversationContext } from '../job/conversation-id.ts';
 // LA liste des outils d'édition — la même que l'onglet Code et le bloc Runtime.
 // Recopiée nulle part : une seconde copie aurait divergé au premier ajout.
 import { EDIT_TOOLS, resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
-import { existsSync } from 'node:fs';
 import { finalizeJobSuccess } from '../job/finalize.ts';
 import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
@@ -175,7 +174,13 @@ async function harnessEdits(
     for (const row of rows) {
       const p = scannedEditPath(row);
       if (!p) continue;
-      const abs = resolveScannedPath(p, author, roots, existsSync);
+      // SANS le disque (revue Codex, passe 32) : un chemin relatif du harnais
+      // est relatif à son `cwd`, qui est le PREMIER dossier attaché (voir
+      // `cwd` plus bas) — et c'est le premier candidat que `resolveScannedPath`
+      // rend quand aucun label ne tranche. Consulter l'existence, comme le fait
+      // l'onglet Code, aurait perdu un fichier écrit puis supprimé dans le
+      // même tour : une production réelle, jamais déclarée.
+      const abs = resolveScannedPath(p, author, roots, () => true);
       if (abs) out.add(abs);
     }
     return [...out];
@@ -545,8 +550,9 @@ export async function runCliRuntimeJob(args: {
         },
         // Les FICHIERS écrits quand l'audit les connaît (P5b : c'est ainsi
         // qu'un enfant à manifeste du terrain se déclare), sinon les dossiers
-        // attachés — un tour réussi sans ligne d'édition a produit quelque
-        // part dans son terrain, sans qu'on sache où.
+        // attachés — un tour réussi sans ligne d'édition se RATTACHE à un
+        // projet déjà déclaré, mais n'en déclare aucun (revue Codex, passe 32 :
+        // seules les cibles fichier déclarent).
         edits.length > 0
           ? edits.map((path) => ({
               kind: 'file' as const,

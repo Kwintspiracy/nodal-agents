@@ -319,9 +319,10 @@ export async function runCliRuntimeChatTurn(args: {
   // produit, et le projet courant du fil ne doit pas bouger pour lui.
   // Cibles = les DOSSIERS attachés, pas les fichiers écrits (contrairement à
   // run-job.ts, P5b) : sans job, les lignes `cli:*` de l'audit n'ont pas de
-  // `job_id`, et rien ne dit lesquelles sont celles de CE tour. Un dossier
-  // attaché à manifeste se déclare donc ici aussi ; un enfant à manifeste d'un
-  // terrain sans manifeste attend un tour de JOB pour l'être.
+  // `job_id`, et rien ne dit lesquelles sont celles de CE tour. Un tour de
+  // chat ne DÉCLARE donc jamais de projet (seules les cibles fichier
+  // déclarent — revue Codex, passe 32) ; il se rattache à un projet déjà
+  // déclaré, et un dossier à manifeste attend un tour de JOB pour l'être.
   if (mode === 'write') {
     await attachProductionToProject(
       { db, entityId, jobId: null, conversationId, agentId: agentRow.id, workspaces: wsRows },

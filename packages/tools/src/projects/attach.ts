@@ -173,6 +173,17 @@ function firstMatch(
 }
 
 /**
+ * Le signal interne qui ANNULE la transaction du rattachement en portant son
+ * code : levé à l'intérieur de `db.transaction`, rattrapé par le `catch` de
+ * `attachProductionToProject`, jamais propagé à l'appelant.
+ */
+class AttachRollback extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
+}
+
+/**
  * Note à quel projet enregistré ce job s'est rattaché.
  *
  * Les projets MASQUÉS comptent : masquer est un choix d'affichage, pas une
@@ -199,95 +210,129 @@ export async function attachProductionToProject(
   if (targets.length === 0) return { kind: 'no_project' };
 
   try {
-    // ── P5b : le registre se remplit tout seul ──────────────────────────────
-    //
-    // AVANT de chercher un projet déclaré qui contient une cible : une racine
-    // de code (même règle que l'intention, `resolveProjectRoots`) qui porte un
-    // MANIFESTE est un projet, et cet appel le déclare si personne ne l'a
-    // encore fait. La recherche ci-dessous le trouve alors comme n'importe
-    // quel autre — le job s'y rattache, la conversation aussi.
-    //
-    // Une racine dérivée SANS manifeste (l'enfant de premier niveau d'un
-    // terrain, `terrain/vrac`) n'est pas un projet : elle attend la question
-    // « où écrire ? » (P10). C'est la ligne qui sépare « rien ne se crée en
-    // silence » (les dossiers de documents) d'un dépôt qui se reconnaît seul.
-    const registered = await registerManifestProjects(ctx, targets);
+    // UNE transaction pour la déclaration ET le rattachement (revue Codex,
+    // passe 32) : déclarer un projet puis échouer à marquer le job — ou ne
+    // trouver ni job ni conversation à marquer — laissait une ligne
+    // `registered_from = 'conversation'` sans conversation qui ait produit
+    // quoi que ce soit. Deux racines déclarées par un même appel tombent ou
+    // restent ensemble, pour la même raison.
+    return await db.transaction(async (tx) => {
+      // ── P5b : le registre se remplit tout seul ────────────────────────────
+      //
+      // AVANT de chercher un projet déclaré qui contient une cible : une racine
+      // de code (même règle que l'intention, `resolveProjectRoots`) qui porte
+      // un MANIFESTE est un projet, et cet appel le déclare si personne ne l'a
+      // encore fait. La recherche ci-dessous le trouve alors comme n'importe
+      // quel autre — le job s'y rattache, la conversation aussi.
+      //
+      // Une racine dérivée SANS manifeste (l'enfant de premier niveau d'un
+      // terrain, `terrain/vrac`) n'est pas un projet : elle attend la question
+      // « où écrire ? » (P10). C'est la ligne qui sépare « rien ne se crée en
+      // silence » (les dossiers de documents) d'un dépôt qui se reconnaît seul.
+      const registered = await registerManifestProjects({ ...ctx, db: tx }, targets);
 
-    const rows = await db
-      .select({ id: codeProjects.id, path: codeProjects.projectPath })
-      .from(codeProjects)
-      .where(and(eq(codeProjects.entityId, entityId), isNotNull(codeProjects.registeredAt)));
+      const rows = await tx
+        .select({ id: codeProjects.id, path: codeProjects.projectPath })
+        .from(codeProjects)
+        .where(and(eq(codeProjects.entityId, entityId), isNotNull(codeProjects.registeredAt)));
 
-    // `registered_at IS NULL` = comptabilité : une ligne née d'un renommage,
-    // d'un masquage ou de l'intention de mutation n'est pas un projet, et un
-    // travail ne se rattache pas à elle.
-    const projects: RegisteredProject[] = rows
-      .map((r) => {
-        const path = normalizePath(r.path);
-        return { id: r.id, path, matchPath: path };
-      })
-      .filter((p) => p.path !== '');
-    if (projects.length === 0) return { kind: 'no_project' };
+      // `registered_at IS NULL` = comptabilité : une ligne née d'un renommage,
+      // d'un masquage ou de l'intention de mutation n'est pas un projet, et un
+      // travail ne se rattache pas à elle.
+      const projects: RegisteredProject[] = rows
+        .map((r) => {
+          const path = normalizePath(r.path);
+          return { id: r.id, path, matchPath: path };
+        })
+        .filter((p) => p.path !== '');
+      // Rien de déclaré et rien à rattacher : sortir sans rien avoir écrit.
+      // (Une déclaration sans rattachement possible n'existe pas : la racine
+      // déclarée contient la cible par construction.)
+      if (projects.length === 0) return { kind: 'no_project' as const };
 
-    let chosen = firstMatch(targets, byDepth(projects));
-    // Aucun rattachement LEXICAL : on retente sur les chemins RÉELS avant de
-    // conclure. Le disque n'est touché que dans ce second passage — sur une
-    // machine sans lien ni jonction, il n'a jamais lieu.
-    if (!chosen) {
-      const reels = byDepth(
-        projects.map((p) => ({ id: p.id, path: p.path, matchPath: realPathOf(p.path) })),
-      );
-      chosen = firstMatch(
-        targets.map((t) => ({ ...t, path: realPathOf(t.path) })),
-        reels,
-      );
-    }
-    if (!chosen) return { kind: 'no_project' };
-
-    const marked = jobId
-      ? await markJob(db, jobId, chosen.id)
-      : ({ job: 'no_job', jobProjectId: null } as const);
-    if ('kind' in marked) return marked;
-
-    // Le PROJET COURANT de la conversation (P6). TOUJOURS écrasé : la dernière
-    // production décide. C'est l'inverse de la règle du job (« le premier
-    // gagne »), et c'est voulu — un job est un travail, il a produit là où il a
-    // produit ; une conversation dure, et son dossier est celui où l'on
-    // travaille MAINTENANT. `entity_id` dans le WHERE : un id de conversation
-    // qui arriverait d'ailleurs ne doit pas déplacer le projet d'une entité
-    // voisine.
-    let conversationOutcome: 'set' | 'no_conversation' | 'not_found' = 'no_conversation';
-    if (conversationId) {
-      // `.returning()` : sans lui, une conversation absente ou d'une autre
-      // entité ne changeait rien ET s'annonçait `set` (revue Codex, passe 28).
-      // Le cas est réel — les uuid orphelins d'avant P6 que l'absence de clé
-      // étrangère conserve délibérément.
-      const touched = await db
-        .update(conversations)
-        .set({ currentProjectId: chosen.id, updatedAt: new Date() })
-        .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
-        .returning({ id: conversations.id });
-      if (touched.length > 0) {
-        conversationOutcome = 'set';
-      } else {
-        conversationOutcome = 'not_found';
-        console.error(
-          `[projects] PROJECT_ATTACH_CONVERSATION_NOT_FOUND conversation=${conversationId} ` +
-            `entity=${entityId} project=${chosen.id}`,
+      let chosen = firstMatch(targets, byDepth(projects));
+      // Aucun rattachement LEXICAL : on retente sur les chemins RÉELS avant de
+      // conclure. Le disque n'est touché que dans ce second passage — sur une
+      // machine sans lien ni jonction, il n'a jamais lieu.
+      if (!chosen) {
+        const reels = byDepth(
+          projects.map((p) => ({ id: p.id, path: p.path, matchPath: realPathOf(p.path) })),
+        );
+        chosen = firstMatch(
+          targets.map((t) => ({ ...t, path: realPathOf(t.path) })),
+          reels,
         );
       }
-    }
+      if (!chosen) {
+        // Une racine vient d'être déclarée mais ne contient aucune cible : une
+        // incohérence entre `resolveProjectRoots` et `isWithinRoot`, pas un cas.
+        // Dite, et annulée avec la transaction.
+        if (registered.length > 0) throw new AttachRollback('attach_registered_not_matched');
+        return { kind: 'no_project' as const };
+      }
 
-    return {
-      kind: 'attached',
-      projectId: chosen.id,
-      projectPath: chosen.path,
-      job: marked.job,
-      jobProjectId: marked.jobProjectId,
-      conversation: conversationOutcome,
-      registered,
-    };
+      const marked = jobId
+        ? await markJob(tx, jobId, chosen.id)
+        : ({ job: 'no_job', jobProjectId: null } as const);
+      // Le job n'a pas pu être marqué : la déclaration de ce tour part avec
+      // lui (rollback) — la panne est déjà journalisée par `markJob`.
+      if ('kind' in marked) throw new AttachRollback(marked.code);
+
+      // Le PROJET COURANT de la conversation (P6). TOUJOURS écrasé : la dernière
+      // production décide. C'est l'inverse de la règle du job (« le premier
+      // gagne »), et c'est voulu — un job est un travail, il a produit là où il a
+      // produit ; une conversation dure, et son dossier est celui où l'on
+      // travaille MAINTENANT. `entity_id` dans le WHERE : un id de conversation
+      // qui arriverait d'ailleurs ne doit pas déplacer le projet d'une entité
+      // voisine.
+      let conversationOutcome: 'set' | 'no_conversation' | 'not_found' = 'no_conversation';
+      if (conversationId) {
+        // `.returning()` : sans lui, une conversation absente ou d'une autre
+        // entité ne changeait rien ET s'annonçait `set` (revue Codex, passe 28).
+        // Le cas est réel — les uuid orphelins d'avant P6 que l'absence de clé
+        // étrangère conserve délibérément.
+        const touched = await tx
+          .update(conversations)
+          .set({ currentProjectId: chosen.id, updatedAt: new Date() })
+          .where(and(eq(conversations.id, conversationId), eq(conversations.entityId, entityId)))
+          .returning({ id: conversations.id });
+        if (touched.length > 0) {
+          conversationOutcome = 'set';
+        } else {
+          conversationOutcome = 'not_found';
+          console.error(
+            `[projects] PROJECT_ATTACH_CONVERSATION_NOT_FOUND conversation=${conversationId} ` +
+              `entity=${entityId} project=${chosen.id}`,
+          );
+        }
+      }
+
+      // Sans job, la conversation était la seule ancre ; si elle n'existe pas,
+      // personne n'a « produit » dans le projet que ce tour vient de déclarer
+      // (revue Codex, passe 32). La déclaration part avec la transaction ; le
+      // rattachement, lui, n'avait de toute façon rien marqué.
+      if (registered.length > 0 && marked.job === 'no_job' && conversationOutcome === 'not_found') {
+        throw new AttachRollback('attach_registered_without_anchor');
+      }
+
+      return {
+        kind: 'attached' as const,
+        projectId: chosen.id,
+        projectPath: chosen.path,
+        job: marked.job,
+        jobProjectId: marked.jobProjectId,
+        conversation: conversationOutcome,
+        registered,
+      };
+    });
   } catch (err) {
+    if (err instanceof AttachRollback) {
+      console.error(
+        `[projects] PROJECT_ATTACH_FAILED code=${err.code} job=${jobId ?? '-'} ` +
+          `conversation=${conversationId ?? '-'}`,
+      );
+      return { kind: 'failed', code: err.code };
+    }
     console.error(
       `[projects] PROJECT_ATTACH_FAILED code=attach_write_failed job=${jobId ?? '-'} ` +
         `conversation=${conversationId ?? '-'} ` +
@@ -310,12 +355,23 @@ export async function attachProductionToProject(
  * `hasMarker` sur la racine DÉRIVÉE, pas sur le dossier de la cible : un
  * fichier dans `app/src/` appartient au projet `app`, et c'est `app` qui doit
  * porter le manifeste.
+ *
+ * Les cibles FICHIER seulement (revue Codex, passe 32). Une cible `dir` est un
+ * PÉRIMÈTRE conservatif — le terrain entier d'une commande shell, ou d'un tour
+ * de harnais dont l'audit ne connaît aucune écriture : elle dit où quelque
+ * chose a PU se passer, pas qu'une production a atterri. Déclarer un projet
+ * sur cette base, c'est déclarer un dépôt parce qu'un agent a répondu « je
+ * vais d'abord analyser » en mode écriture. Le rattachement, lui, garde les
+ * dossiers : rattacher à un projet DÉJÀ déclaré est réversible et bon marché ;
+ * une déclaration ne l'est pas.
  */
 async function registerManifestProjects(
   ctx: AttachContext,
   targets: readonly MutationTarget[],
 ): Promise<readonly string[]> {
-  const codeTargets = targets.filter((t) => t.deliverableType === 'code_project');
+  const codeTargets = targets.filter(
+    (t) => t.deliverableType === 'code_project' && t.kind === 'file',
+  );
   if (codeTargets.length === 0) return [];
   const workspaceRoots = ctx.workspaces.map((w) => normalizePath(w.path)).filter((p) => p !== '');
   if (workspaceRoots.length === 0) return [];

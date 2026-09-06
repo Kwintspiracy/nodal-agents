@@ -271,6 +271,8 @@ export interface ScannedWrite {
   owners: readonly string[];
   /** Les ids des détenteurs, même ordre que `owners` (P5b). Absent = inconnus. */
   ownerIds?: readonly string[];
+  /** Le job qui a écrit, s'il y en a un (P5b : le backfill rattache l'historique). */
+  jobId?: string | null;
   /** ISO, ou `null` si la ligne n'a pas de date. */
   at: string | null;
 }
@@ -292,7 +294,13 @@ export interface ScannedWrite {
 export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[] {
   const byKey = new Map<
     string,
-    { path: string; owners: Set<string>; ownerIds: Set<string>; at: string | null }
+    {
+      path: string;
+      owners: Set<string>;
+      ownerIds: Set<string>;
+      jobIds: Set<string>;
+      at: string | null;
+    }
   >();
   for (const w of writes) {
     const cle = projectKey(w.projectPath);
@@ -300,10 +308,12 @@ export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[
       path: w.projectPath,
       owners: new Set<string>(),
       ownerIds: new Set<string>(),
+      jobIds: new Set<string>(),
       at: w.at,
     };
     for (const o of w.owners) entry.owners.add(o);
     for (const id of w.ownerIds ?? []) entry.ownerIds.add(id);
+    if (w.jobId) entry.jobIds.add(w.jobId);
     byKey.set(cle, entry);
   }
   // Trié par activité, JAMAIS tronqué ici : le plafond s'applique après le
@@ -317,6 +327,7 @@ export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[
       // Dans l'ordre de rencontre, PAS trié : le premier détenteur est celui
       // que le backfill du registre nomme responsable (P5b).
       ownerIds: Array.from(v.ownerIds),
+      jobIds: Array.from(v.jobIds),
       lastActivityAt: v.at,
     }));
 }
@@ -325,8 +336,10 @@ export function groupScannedWrites(writes: readonly ScannedWrite[]): RawProject[
 export interface RawProject {
   path: string;
   owners: string[];
-  /** Les ids des détenteurs, premier rencontré en tête (P5b). */
+  /** Les ids des détenteurs (P5b). Plusieurs = personne n'est « le » responsable. */
   ownerIds: string[];
+  /** Les jobs qui ont écrit dans ce projet, dans la fenêtre du scan (P5b : l'historique à rattacher). */
+  jobIds: string[];
   lastActivityAt: string | null;
 }
 
@@ -565,6 +578,7 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
         toolOutput: toolCalls.toolOutput,
         createdAt: toolCalls.createdAt,
         agentId: agentJobs.agentId,
+        jobId: toolCalls.jobId,
       })
       .from(toolCalls)
       .leftJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
@@ -612,6 +626,7 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
         projectPath,
         owners: Array.from(ownersByRoot.get(wsRoot) ?? []),
         ownerIds: Array.from(ownerIdsByRoot.get(wsRoot) ?? []),
+        jobId: row.jobId,
         at: row.createdAt ? row.createdAt.toISOString() : null,
       });
     }

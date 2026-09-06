@@ -471,15 +471,19 @@ describe('run-job : le registre se remplit tout seul (P5b)', () => {
     expect(await ligneDeclaree(beta)).toBeNull();
   });
 
-  it('un tour réussi SANS ligne d’édition dans un terrain à manifeste : le terrain se déclare', async () => {
+  it('un tour réussi SANS ligne d’édition dans un terrain à manifeste ne déclare RIEN (passe 32)', async () => {
+    // « Je vais d'abord analyser la demande », en mode écriture, sans un seul
+    // outil d'édition : le repli sur les dossiers attachés RATTACHE (à un
+    // projet déjà déclaré), il ne déclare pas — seules les cibles fichier
+    // déclarent.
     const jobId = await newJob();
     fakeRun.mockResolvedValueOnce(greenTurn());
 
-    await runJob(jobId, 'write', [alpha]);
+    const outcome = await runJob(jobId, 'write', [alpha]);
 
-    const row = await ligneDeclaree(alpha);
-    expect(row).not.toBeNull();
-    expect(await projetDuJob(jobId)).toBe(row!.id);
+    expect(outcome.status).toBe('completed');
+    expect(await ligneDeclaree(alpha)).toBeNull();
+    expect(await projetDuJob(jobId)).toBeNull();
   });
 
   it('un tour en erreur sans édition ne déclare rien', async () => {

@@ -791,3 +791,124 @@ describe('attachProductionToProject — la déclaration au registre (P5b)', () =
     expect(await ligne(app)).toBeNull();
   });
 });
+
+// ─── Passe Codex 32 ──────────────────────────────────────────────────────────
+
+describe('attachProductionToProject — ce qui ne DÉCLARE pas (passe 32)', () => {
+  let terrain = '';
+
+  beforeEach(async () => {
+    terrain = normalizePath(
+      realpathSync.native(await mkdtemp(join(tmpdir(), 'nodal-attach-p32-'))),
+    );
+  });
+
+  afterEach(async () => {
+    try {
+      await rm(terrain, { recursive: true, force: true });
+    } catch {
+      /* jetable */
+    }
+  });
+
+  const ctxTerrain = (jobId: string | null, conversationId: string | null = null) => ({
+    db,
+    entityId: seed.entityId,
+    jobId,
+    conversationId,
+    agentId: seed.agentId,
+    workspaces: [{ path: terrain }],
+  });
+
+  const declaree = async (path: string) => {
+    const [row] = await db
+      .select({ id: codeProjects.id, registeredAt: codeProjects.registeredAt })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.entityId, seed.entityId),
+          eq(codeProjects.projectKey, projectKey(path)),
+        ),
+      );
+    return row && row.registeredAt ? row : null;
+  };
+
+  it('(h) une cible DOSSIER ne déclare rien : un périmètre n’est pas une production', async () => {
+    // Le terrain porte un manifeste ; un tour sans écriture connue passe le
+    // terrain entier en cible `dir` (run-job.ts, run-chat.ts, une commande
+    // shell). Déclarer là-dessus, c'est déclarer un dépôt parce qu'un agent a
+    // répondu « je vais d'abord analyser » en mode écriture.
+    await writeFile(`${terrain}/package.json`, '{}');
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [
+      { kind: 'dir', path: terrain, deliverableType: 'code_project' },
+    ]);
+
+    expect(issue).toEqual({ kind: 'no_project' });
+    expect(await declaree(terrain)).toBeNull();
+    expect(await projetDuJob(jobId)).toBeNull();
+  });
+
+  it('(h bis) la même cible dossier se RATTACHE à un projet déjà déclaré', async () => {
+    await writeFile(`${terrain}/package.json`, '{}');
+    const projetId = await projetEnregistre(terrain);
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [
+      { kind: 'dir', path: terrain, deliverableType: 'code_project' },
+    ]);
+
+    expect(issue).toMatchObject({ kind: 'attached', projectId: projetId, registered: [] });
+    expect(await projetDuJob(jobId)).toBe(projetId);
+  });
+
+  it('(i) sans job, une conversation INEXISTANTE annule la déclaration : rien en base', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+
+    const issue = await attachProductionToProject(
+      ctxTerrain(null, '00000000-0000-0000-0000-000000000000'),
+      [fichier(`${app}/src/a.ts`)],
+    );
+
+    expect(issue).toEqual({ kind: 'failed', code: 'attach_registered_without_anchor' });
+    // La transaction a tout repris : ni déclaration, ni ligne de comptabilité.
+    expect(await declaree(app)).toBeNull();
+  });
+
+  it('(i bis) avec un job, la même conversation inexistante n’empêche rien : le job est l’ancre', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(
+      ctxTerrain(jobId, '00000000-0000-0000-0000-000000000000'),
+      [fichier(`${app}/src/a.ts`)],
+    );
+
+    expect(issue).toMatchObject({ kind: 'attached', job: 'attached', conversation: 'not_found' });
+    const row = await declaree(app);
+    expect(row).not.toBeNull();
+    expect(await projetDuJob(jobId)).toBe(row!.id);
+  });
+
+  it('(j) un job INEXISTANT annule la déclaration', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+
+    const issue = await attachProductionToProject(
+      ctxTerrain('00000000-0000-0000-0000-000000000000'),
+      [fichier(`${app}/src/a.ts`)],
+    );
+
+    // La clé étrangère `registered_job_id → agent_jobs` refuse l'INSERT avant
+    // même que `markJob` ne cherche le job : le code est celui de la panne
+    // d'écriture. Ce qui compte : c'est une panne DITE, et rien n'est resté.
+    expect(issue.kind).toBe('failed');
+    expect(await declaree(app)).toBeNull();
+  });
+});
