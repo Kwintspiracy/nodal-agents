@@ -20,6 +20,7 @@ import {
   codeProjects,
   conversations,
   entities,
+  jobDeliverableVerificationState,
   toolCalls,
   users,
 } from '@nodal-agents/db';
@@ -719,5 +720,69 @@ describe('listAllConversationsAction — le titre de repli', () => {
     if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
     const groupe = r.data.find((c) => c.id === groupeConv.id);
     expect(groupe?.title).toBe('redige le bilan de septembre');
+  });
+});
+
+// ─── P12 — l'état de vérification des DOCUMENTS du fil ────────────────────────
+
+describe('getConversationThreadAction — l’état des documents (P12)', () => {
+  it('charge TOUS les livrables office_file, `dirty` compris, rangés par clé', async () => {
+    const cleDirty = projectKey('/terrain/bilans/septembre.xlsx');
+    const cleVerte = projectKey('/terrain/bilans/aout.xlsx');
+    const cleNonConfig = projectKey('/terrain/bilans/juillet.xlsx');
+    await testDb.insert(jobDeliverableVerificationState).values([
+      {
+        jobId: telegramConv.jobA,
+        deliverableType: 'office_file',
+        canonicalKey: cleDirty,
+        displayPathSnapshot: 'bilans/septembre.xlsx',
+        dirtyGeneration: 3,
+        verifiedGeneration: 1,
+        decisionStatus: 'dirty',
+      },
+      {
+        jobId: telegramConv.jobB,
+        deliverableType: 'office_file',
+        canonicalKey: cleVerte,
+        displayPathSnapshot: 'bilans/aout.xlsx',
+        dirtyGeneration: 2,
+        verifiedGeneration: 2,
+        decisionStatus: 'green',
+      },
+      {
+        jobId: telegramConv.jobB,
+        deliverableType: 'office_file',
+        canonicalKey: cleNonConfig,
+        displayPathSnapshot: 'bilans/juillet.xlsx',
+        dirtyGeneration: 1,
+        decisionStatus: 'not_configured',
+      },
+      // Un PROJET DE CODE du même fil : il n'est pas un document, il n'a rien
+      // à faire sur la carte d'un classeur.
+      {
+        jobId: telegramConv.jobB,
+        deliverableType: 'code_project',
+        canonicalKey: projectKey('/terrain/bilans'),
+        displayPathSnapshot: '/terrain/bilans',
+        dirtyGeneration: 5,
+        decisionStatus: 'dirty',
+      },
+    ]);
+
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(telegramConv.id);
+    if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
+
+    // Les TROIS états sont là — `dirty` et `green` aussi, alors que la section
+    // de preuve (P3) ne s'intéresse qu'aux livrables non configurés.
+    expect(r.data.verification.deliverables).toEqual([
+      { canonicalKey: cleVerte, status: 'green' },
+      { canonicalKey: cleNonConfig, status: 'not_configured' },
+      { canonicalKey: cleDirty, status: 'dirty' },
+    ]);
+
+    // Et la section de preuve, elle, ne voit toujours QUE le non configuré :
+    // un document `dirty` n'est pas un trou de configuration.
+    expect(r.data.verification.unconfigured.map((u) => u.canonicalKey)).toEqual([cleNonConfig]);
   });
 });

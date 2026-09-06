@@ -75,6 +75,32 @@ export const SearchCardSchema = z.object({
   truncated: z.boolean(),
 });
 
+/**
+ * UNE table — des lignes à colonnes stables. Nommée à part parce que deux
+ * cartes la portent : `table` (une par feuille d'un classeur lu) et l'APERÇU
+ * d'un fichier écrit sur la carte `files` (P12). Une seule forme, donc un seul
+ * rendu : l'écran dessine un aperçu avec le composant qui dessine déjà une
+ * table, au lieu d'un second tableau qui divergerait au premier correctif.
+ */
+export const TableEntrySchema = z.object({
+  name: text(CARD_LABEL_MAX).optional(),
+  columns: z.array(text(CARD_CELL_MAX)),
+  /**
+   * `columns` : les colonnes ci-dessus SONT l'en-tête. `unknown` :
+   * personne ne sait si la première ligne est un en-tête (un classeur lu
+   * tel quel) — le rendu ne le devine pas, il le dit ou le demande (P8).
+   */
+  header: z.enum(['columns', 'unknown']),
+  rows: z.array(z.array(z.union([text(CARD_CELL_MAX), z.number(), z.null()]))).max(CARD_ROWS_MAX),
+  /** Nombre de lignes réel — `rows` en montre au plus CARD_ROWS_MAX. */
+  total: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  /** Au moins une cellule a été coupée au plafond CARD_CELL_MAX. */
+  clipped: z.boolean(),
+});
+
+export type TableEntry = z.infer<typeof TableEntrySchema>;
+
 /** Des fichiers écrits, modifiés ou listés. */
 export const FilesCardSchema = z.object({
   card: z.literal('files'),
@@ -86,6 +112,23 @@ export const FilesCardSchema = z.object({
         bytes: z.number().int().nonnegative().optional(),
         /** Ce que l'outil dit de ce fichier (« 3 lignes ajoutées · feuille Data »). */
         detail: text(CARD_LABEL_MAX).optional(),
+        /**
+         * P12 — ce que le fichier CONTIENT maintenant, quand l'outil le sait :
+         * les premières lignes de la feuille qu'il vient d'écrire. Même forme
+         * qu'une table, donc mêmes plafonds et même rendu. Absent partout où
+         * l'outil n'a pas de tableau à montrer (un `.docx`, une liste de
+         * fichiers) — l'écran ne le fabrique jamais.
+         */
+        preview: TableEntrySchema.optional(),
+        /**
+         * P12 — la clé canonique du livrable que ce fichier EST :
+         * `projectKey(chemin absolu)`, exactement ce qu'indexe
+         * `job_deliverable_verification_state`. Écrite par l'outil, qui seul
+         * sait où il a écrit ; l'écran s'en sert pour retrouver l'état de
+         * vérification du document, jamais pour l'afficher. Absente ⇒ l'écran
+         * ne dit rien de la vérification, il n'en invente pas (invariant #4).
+         */
+        deliverableKey: text(CARD_LABEL_MAX).optional(),
       }),
     )
     .max(CARD_ITEMS_MAX),
@@ -96,28 +139,7 @@ export const FilesCardSchema = z.object({
 /** Des lignes à colonnes stables — une ou plusieurs tables (un classeur a des feuilles). */
 export const TableCardSchema = z.object({
   card: z.literal('table'),
-  tables: z
-    .array(
-      z.object({
-        name: text(CARD_LABEL_MAX).optional(),
-        columns: z.array(text(CARD_CELL_MAX)),
-        /**
-         * `columns` : les colonnes ci-dessus SONT l'en-tête. `unknown` :
-         * personne ne sait si la première ligne est un en-tête (un classeur lu
-         * tel quel) — le rendu ne le devine pas, il le dit ou le demande (P8).
-         */
-        header: z.enum(['columns', 'unknown']),
-        rows: z
-          .array(z.array(z.union([text(CARD_CELL_MAX), z.number(), z.null()])))
-          .max(CARD_ROWS_MAX),
-        /** Nombre de lignes réel — `rows` en montre au plus CARD_ROWS_MAX. */
-        total: z.number().int().nonnegative(),
-        truncated: z.boolean(),
-        /** Au moins une cellule a été coupée au plafond CARD_CELL_MAX. */
-        clipped: z.boolean(),
-      }),
-    )
-    .min(1),
+  tables: z.array(TableEntrySchema).min(1),
 });
 
 /** Une commande, sa sortie, son code de sortie. */

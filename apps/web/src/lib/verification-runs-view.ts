@@ -55,6 +55,45 @@ export type VerificationUnconfiguredView = {
   reason: 'not_configured' | 'pending_approval';
 };
 
+/**
+ * L'état de vérification d'un DOCUMENT du fil, rangé par la clé qui
+ * l'identifie (P12). `status` est la valeur brute de `decision_status`, telle
+ * que la base la porte : l'écran la traduit en une phrase, il n'en fabrique
+ * jamais une qui n'y est pas.
+ */
+export type DeliverableStatusView = { canonicalKey: string; status: string };
+
+/**
+ * Les états des documents, un par clé.
+ *
+ * Un même document peut avoir un état par JOB du fil. C'est le plus RÉCENT
+ * qui vaut — un fait (`updated_at`), pas un arbitrage entre statuts : classer
+ * les statuts par gravité reviendrait à décider, à la place de la base, ce
+ * qu'est « le vrai » état du fichier.
+ */
+export function deliverableStatuses(
+  rows: ReadonlyArray<{
+    deliverableType: string;
+    canonicalKey: string;
+    decisionStatus: string;
+    updatedAt: Date;
+  }>,
+): DeliverableStatusView[] {
+  const latest = new Map<string, { status: string; at: Date }>();
+  for (const r of rows) {
+    if (r.deliverableType !== 'office_file') continue;
+    const seen = latest.get(r.canonicalKey);
+    if (seen === undefined || r.updatedAt >= seen.at) {
+      latest.set(r.canonicalKey, { status: r.decisionStatus, at: r.updatedAt });
+    }
+  }
+  return [...latest.entries()]
+    .map(([canonicalKey, v]) => ({ canonicalKey, status: v.status }))
+    .sort((a, b) =>
+      a.canonicalKey < b.canonicalKey ? -1 : a.canonicalKey > b.canonicalKey ? 1 : 0,
+    );
+}
+
 /** La ligne brute telle que l'action la lit — un sous-ensemble de VerificationRunRow. */
 export type VerificationRunSource = {
   jobId: string | null;

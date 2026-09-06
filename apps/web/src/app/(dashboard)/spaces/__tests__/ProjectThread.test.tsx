@@ -31,6 +31,9 @@ const filLu = {
       ],
       totals: { turns: 1, inputTokens: 0, outputTokens: 0, costUsd: null },
     },
+    // P12 — le fil passe l'état des documents au rendu des cartes. Aucun ici :
+    // ce fixture n'a pas de fichier écrit.
+    verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
   } as unknown as ConversationThreadView,
 };
 

@@ -21,6 +21,7 @@ import { z } from 'zod';
 import {
   eq,
   and,
+  or,
   desc,
   isNull,
   inArray,
@@ -48,8 +49,10 @@ import { classifyProduction } from './chat-or-work.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
+  deliverableStatuses,
   groupVerificationRuns,
   mergeSkippedSurfaces,
+  type DeliverableStatusView,
   type VerificationSequenceView,
   type VerificationUnconfiguredView,
 } from './verification-runs-view.ts';
@@ -104,6 +107,8 @@ export type ConversationThreadView = {
     sequences: VerificationSequenceView[];
     skippedSurfaces: string[];
     unconfigured: VerificationUnconfiguredView[];
+    /** P12 — l'état de chaque DOCUMENT du fil, pour la carte du fichier écrit. */
+    deliverables: DeliverableStatusView[];
   };
   cost: SpaceCostView;
   deliveries: Array<{
@@ -543,15 +548,25 @@ export async function getConversationThreadAction(
                 canonicalKey: jobDeliverableVerificationState.canonicalKey,
                 displayPath: jobDeliverableVerificationState.displayPathSnapshot,
                 decisionStatus: jobDeliverableVerificationState.decisionStatus,
+                updatedAt: jobDeliverableVerificationState.updatedAt,
               })
               .from(jobDeliverableVerificationState)
               .where(
                 and(
                   inArray(jobDeliverableVerificationState.jobId, relevantIds),
-                  inArray(jobDeliverableVerificationState.decisionStatus, [
-                    'not_configured',
-                    'pending_approval',
-                  ]),
+                  // Deux lectures dans une seule requête. La section de preuve
+                  // (P3) ne veut que les livrables NON configurés ; la carte
+                  // d'un classeur écrit (P12) veut l'état de TOUS les
+                  // documents du fil, `dirty` et `green` compris — sans quoi
+                  // elle ne saurait dire que « pas de vérification », même
+                  // quand la base sait mieux.
+                  or(
+                    inArray(jobDeliverableVerificationState.decisionStatus, [
+                      'not_configured',
+                      'pending_approval',
+                    ]),
+                    eq(jobDeliverableVerificationState.deliverableType, 'office_file'),
+                  ),
                 ),
               ),
             db
@@ -633,14 +648,26 @@ export async function getConversationThreadAction(
           ...headRows.map((r) => r.job.verificationSkippedSurfaces),
           ...descendants.map((d) => d.verificationSkippedSurfaces),
         ]),
-        unconfigured: unconfiguredRows.map(
-          (r): VerificationUnconfiguredView => ({
-            deliverableType: r.deliverableType,
-            canonicalKey: r.canonicalKey,
-            displayPath: r.displayPath,
-            reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
-          }),
-        ),
+        // La requête ci-dessus ramène DEUX choses ; la section de preuve ne
+        // garde que les livrables réellement non configurés — un document
+        // `dirty` ou `green` n'est pas un trou de configuration.
+        unconfigured: unconfiguredRows
+          .filter(
+            (r) => r.decisionStatus === 'not_configured' || r.decisionStatus === 'pending_approval',
+          )
+          .map(
+            (r): VerificationUnconfiguredView => ({
+              deliverableType: r.deliverableType,
+              canonicalKey: r.canonicalKey,
+              displayPath: r.displayPath,
+              reason:
+                r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
+            }),
+          ),
+        // P12 — l'état de vérification de chaque DOCUMENT du fil, rangé par sa
+        // clé canonique, tel que la base le porte. La carte d'un classeur écrit
+        // le lit ; une clé absente ne dit rien du tout (invariant #4).
+        deliverables: deliverableStatuses(unconfiguredRows),
       },
       cost,
       deliveries: deliveryRows,

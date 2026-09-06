@@ -11,8 +11,9 @@ import ClampedText from './ClampedText.tsx';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
-import type { CardPayloadFor } from '@nodal-agents/shared';
+import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 import { readQuestionToolInput } from '@nodal-agents/shared';
+import type { DeliverableStatusView } from '@/lib/verification-runs-view.ts';
 import type {
   ConversationFeed,
   FeedChildJob,
@@ -29,20 +30,34 @@ import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
 
-export default function ConversationFeedView({ feed }: { feed: ConversationFeed }) {
+/**
+ * P12 — l'état de vérification des documents du fil, rangé par clé canonique.
+ * Vide par défaut : un appelant qui ne le passe pas obtient des cartes SANS
+ * ligne de vérification, jamais une ligne inventée.
+ */
+type Deliverables = ReadonlyMap<string, string>;
+
+export default function ConversationFeedView({
+  feed,
+  deliverables = [],
+}: {
+  feed: ConversationFeed;
+  deliverables?: ReadonlyArray<DeliverableStatusView>;
+}) {
   if (feed.items.length === 0) {
     return <p className="text-body-13 text-ink-4">Nothing recorded yet.</p>;
   }
+  const byKey: Deliverables = new Map(deliverables.map((d) => [d.canonicalKey, d.status]));
   return (
     <div className="mx-auto max-w-[840px]">
       {feed.items.map((item, i) => (
-        <FeedItemView key={i} item={item} />
+        <FeedItemView key={i} item={item} deliverables={byKey} />
       ))}
     </div>
   );
 }
 
-function FeedItemView({ item }: { item: FeedItem }) {
+function FeedItemView({ item, deliverables }: { item: FeedItem; deliverables: Deliverables }) {
   switch (item.kind) {
     case 'request':
       return (
@@ -80,7 +95,7 @@ function FeedItemView({ item }: { item: FeedItem }) {
               .join(' · ')}
           />
           {item.blocks.map((b, i) => (
-            <Block key={i} block={b} />
+            <Block key={i} block={b} deliverables={deliverables} />
           ))}
           {item.blocks.length === 0 && (
             <p className="text-body-12 italic text-ink-4">No visible action this turn.</p>
@@ -138,7 +153,7 @@ function Who({ name, meta }: { name: string; meta: string }) {
   );
 }
 
-function Block({ block }: { block: TurnBlock }) {
+function Block({ block, deliverables }: { block: TurnBlock; deliverables: Deliverables }) {
   switch (block.kind) {
     case 'prose':
       return (
@@ -155,7 +170,7 @@ function Block({ block }: { block: TurnBlock }) {
     case 'card':
       return (
         <div className="mb-4">
-          <ResultCard step={block.step} />
+          <ResultCard step={block.step} deliverables={deliverables} />
         </div>
       );
   }
@@ -194,7 +209,7 @@ function CardFrame({
   );
 }
 
-function ResultCard({ step }: { step: ToolStep }) {
+function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deliverables }) {
   const p = step.presented;
   const duration = step.durationMs !== null ? formatMs(step.durationMs) : undefined;
   // P10a — la question passe AVANT la charge utile : sur l'appel qui a suspendu
@@ -218,7 +233,7 @@ function ResultCard({ step }: { step: ToolStep }) {
     case 'table':
       return <TableCard payload={p} aside={duration} />;
     case 'files':
-      return <FilesCard payload={p} step={step} aside={duration} />;
+      return <FilesCard payload={p} step={step} aside={duration} deliverables={deliverables} />;
     case 'terminal':
       return <TerminalCard payload={p} />;
     case 'sent':
@@ -269,46 +284,98 @@ function TableCard({ payload, aside }: { payload: CardPayloadFor<'table'>; aside
           {payload.tables.length > 1 && t.name && (
             <p className="px-4 pt-3 text-label-11 uppercase tracking-wider text-ink-4">{t.name}</p>
           )}
-          <div className="overflow-x-auto">
-            <Table frame={false}>
-              {t.header === 'columns' && t.columns.length > 0 && (
-                <THead>
-                  {t.columns.map((c, j) => (
-                    <Th key={j}>{c}</Th>
-                  ))}
-                </THead>
-              )}
-              <tbody>
-                {t.rows.map((r, ri) => (
-                  <Tr key={ri}>
-                    {r.map((cell, ci) => (
-                      <Td
-                        key={ci}
-                        align={typeof cell === 'number' ? 'right' : 'left'}
-                        className="max-w-[40ch] truncate text-mono-12 text-ink-2 whitespace-nowrap"
-                      >
-                        {cell === null ? '' : String(cell)}
-                      </Td>
-                    ))}
-                  </Tr>
-                ))}
-              </tbody>
-            </Table>
-          </div>
-          {(t.truncated || t.clipped || t.header === 'unknown') && (
-            <p className="px-4 py-2 text-mono-11 text-ink-4">
-              {[
-                t.truncated ? `showing ${t.rows.length} of ${t.total} rows` : null,
-                t.clipped ? 'some cells were shortened' : null,
-                t.header === 'unknown' ? 'first row may or may not be a header' : null,
-              ]
-                .filter((x): x is string => x !== null)
-                .join(' · ')}
-            </p>
-          )}
+          <TableBody entry={t} />
         </div>
       ))}
     </CardFrame>
+  );
+}
+
+/**
+ * UNE table dessinée, et ce qu'elle doit dire d'elle-même. Extraite de
+ * `TableCard` (P12) : l'aperçu d'un classeur écrit se rend par le même code,
+ * sinon les deux tableaux divergeraient au premier correctif. `notes` ajoute
+ * ce que l'APPELANT sait en plus (« values only », côté aperçu) au pied déjà
+ * calculé depuis la charge utile.
+ */
+function TableBody({ entry, notes = [] }: { entry: TableEntry; notes?: readonly string[] }) {
+  const foot = [
+    entry.truncated ? `showing ${entry.rows.length} of ${entry.total} rows` : null,
+    entry.clipped ? 'some cells were shortened' : null,
+    entry.header === 'unknown' ? 'first row may or may not be a header' : null,
+    ...notes,
+  ].filter((x): x is string => x !== null);
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <Table frame={false}>
+          {entry.header === 'columns' && entry.columns.length > 0 && (
+            <THead>
+              {entry.columns.map((c, j) => (
+                <Th key={j}>{c}</Th>
+              ))}
+            </THead>
+          )}
+          <tbody>
+            {entry.rows.map((r, ri) => (
+              <Tr key={ri}>
+                {r.map((cell, ci) => (
+                  <Td
+                    key={ci}
+                    align={typeof cell === 'number' ? 'right' : 'left'}
+                    className="max-w-[40ch] truncate text-mono-12 text-ink-2 whitespace-nowrap"
+                  >
+                    {cell === null ? '' : String(cell)}
+                  </Td>
+                ))}
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
+      {foot.length > 0 && <p className="px-4 py-2 text-mono-11 text-ink-4">{foot.join(' · ')}</p>}
+    </>
+  );
+}
+
+/**
+ * P12 — l'état de vérification d'un document, dit en une ligne.
+ *
+ * `not_configured` est le cas du jour : le vérificateur de documents (v7-B du
+ * plan « Vérifier & Corriger ») n'existe pas encore, et la carte le DIT plutôt
+ * que de laisser croire à une vérification. Un statut que cette table ne
+ * connaît pas rend `null` : pas de ligne, jamais un état inventé (invariant #4).
+ */
+const VERIFICATION_NOTE: Readonly<Record<string, string>> = {
+  not_configured: 'Not verified: no checks exist for documents yet',
+  dirty: 'Not yet verified',
+  pending_approval: 'Checks await approval',
+  green: 'Verified',
+  red: 'Checks failed',
+  infra_error: 'Checks could not run',
+};
+
+/** L'aperçu d'un fichier écrit : ses premières lignes, ce qu'elles taisent, et son état. */
+function FilePreview({ entry, status }: { entry: TableEntry; status: string | undefined }) {
+  const note = status === undefined ? undefined : VERIFICATION_NOTE[status];
+  return (
+    <div className="border-t border-rule-2">
+      {/* La feuille touchée se nomme : un classeur en a plusieurs, et l'aperçu
+          n'en montre qu'une. */}
+      {entry.name !== undefined && (
+        <p className="px-4 pt-3 text-label-11 uppercase tracking-wider text-ink-4">{entry.name}</p>
+      )}
+      <TableBody
+        entry={entry}
+        notes={[
+          ...(entry.total === 0 ? ['empty sheet'] : []),
+          'values only: no formulas, formatting or merged cells',
+        ]}
+      />
+      {note !== undefined && (
+        <p className="border-t border-rule-2 px-4 py-2 text-mono-11 text-ink-4">{note}</p>
+      )}
+    </div>
   );
 }
 
@@ -316,10 +383,12 @@ function FilesCard({
   payload,
   step,
   aside,
+  deliverables,
 }: {
   payload: CardPayloadFor<'files'>;
   step: ToolStep;
   aside?: string;
+  deliverables: Deliverables;
 }) {
   return (
     <CardFrame
@@ -329,6 +398,18 @@ function FilesCard({
     >
       <ul className="py-1">
         {payload.files.map((f, i) => {
+          // P12 — l'aperçu se pose SOUS la ligne du fichier, au-dessus du diff
+          // de P11. L'état de vérification ne se lit que si l'outil a écrit la
+          // clé du livrable ET que le fil porte une ligne pour elle.
+          const preview =
+            f.preview === undefined ? undefined : (
+              <FilePreview
+                entry={f.preview}
+                status={
+                  f.deliverableKey === undefined ? undefined : deliverables.get(f.deliverableKey)
+                }
+              />
+            );
           // P11 — un fichier ÉCRIT se déplie sur son diff. Un fichier `listed`
           // vient d'une lecture : il n'a pas d'avant, donc pas de bouton — une
           // pastille qui s'ouvrirait sur « aucun changement » serait pire que
@@ -344,17 +425,23 @@ function FilesCard({
                 action={f.action}
                 {...(f.bytes !== undefined ? { bytes: `${formatTokens(f.bytes)} B` } : {})}
                 {...(f.detail !== undefined ? { detail: f.detail } : {})}
+                {...(preview !== undefined ? { preview } : {})}
               />
             );
           }
           return (
-            <li key={i} className="flex items-center gap-3 px-4 py-1.5 text-mono-12 text-ink-2">
-              <span className="min-w-0 flex-1 truncate">{f.path}</span>
-              <MonoMicroTag tone={f.action === 'listed' ? 'ink' : 'agent'}>{f.action}</MonoMicroTag>
-              {f.bytes !== undefined && (
-                <span className="text-ink-4">{formatTokens(f.bytes)} B</span>
-              )}
-              {f.detail !== undefined && <span className="truncate text-ink-4">{f.detail}</span>}
+            <li key={i} className="text-mono-12 text-ink-2">
+              <div className="flex items-center gap-3 px-4 py-1.5">
+                <span className="min-w-0 flex-1 truncate">{f.path}</span>
+                <MonoMicroTag tone={f.action === 'listed' ? 'ink' : 'agent'}>
+                  {f.action}
+                </MonoMicroTag>
+                {f.bytes !== undefined && (
+                  <span className="text-ink-4">{formatTokens(f.bytes)} B</span>
+                )}
+                {f.detail !== undefined && <span className="truncate text-ink-4">{f.detail}</span>}
+              </div>
+              {preview}
             </li>
           );
         })}

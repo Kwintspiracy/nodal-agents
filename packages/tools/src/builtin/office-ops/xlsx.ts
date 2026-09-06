@@ -17,7 +17,16 @@ import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { detailOf, failureText, searchCard, tableCard, writtenFile } from '../../presenters';
+import type { CardPayloadFor } from '@nodal-agents/shared';
+import { CARD_ROWS_MAX, projectKey } from '@nodal-agents/shared';
+import {
+  detailOf,
+  failureText,
+  searchCard,
+  tableCard,
+  tableEntry,
+  writtenFile,
+} from '../../presenters';
 import { readWorkspaceBinary, writeWorkspaceBinary } from './office-helpers';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -186,6 +195,104 @@ function stringifyCellValue(val: ExcelJS.CellValue): string {
   return String(val);
 }
 
+// ─── P12: the preview a written workbook carries on its card ──────────────────
+
+/**
+ * The first rows of the sheet a write tool just touched, read back from the
+ * workbook IT HOLDS IN MEMORY — never re-read from disk. What was just written
+ * is the source of truth; a second read could only disagree with it.
+ *
+ * `abs_path` is the resolved absolute path. It is NEVER displayed: `present()`
+ * turns it into `projectKey(abs_path)`, the canonical key under which
+ * `job_deliverable_verification_state` records this document's verification
+ * state, so the card can say whether the file is verified without the screen
+ * having to re-resolve a workspace-relative path.
+ */
+export type XlsxSheetPreview = {
+  sheet: string;
+  rows: Array<Array<string | number | null>>;
+  /** Rows the sheet really has — `rows` shows at most CARD_ROWS_MAX of them. */
+  total: number;
+  abs_path: string;
+};
+
+/**
+ * A cell as a VALUE, for the preview grid. Numbers stay numbers (the card
+ * right-aligns them); dates become ISO days; rich text becomes plain text.
+ *
+ * A FORMULA cell: exceljs does not evaluate anything, so a formula this tool
+ * just wrote has no cached result. Rather than print an empty cell — which
+ * would read as "blank" — the formula itself is shown ("=SUM(B2:B3)"). A
+ * workbook saved by Excel does carry cached results, and those are shown as
+ * the values they are.
+ */
+function previewCellValue(val: ExcelJS.CellValue): string | number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'boolean') return String(val);
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  if (typeof val === 'object' && 'formula' in val) {
+    const formula = val as ExcelJS.CellFormulaValue;
+    const result: unknown = formula.result;
+    if (result === undefined || result === null) return `=${formula.formula}`;
+    if (typeof result === 'number') return result;
+    if (result instanceof Date) return result.toISOString().slice(0, 10);
+    if (typeof result === 'object' && 'error' in result) {
+      return String((result as { error: unknown }).error);
+    }
+    return String(result);
+  }
+  if (typeof val === 'object' && 'text' in val)
+    return String((val as { text: unknown }).text ?? '');
+  if (typeof val === 'object' && 'result' in val) {
+    return String((val as { result: unknown }).result ?? '');
+  }
+  if (typeof val === 'object' && 'error' in val) return String((val as { error: unknown }).error);
+  return String(val);
+}
+
+/** Read back the touched sheet, capped at CARD_ROWS_MAX rows. An empty sheet gives `rows: []`. */
+function sheetPreview(ws: ExcelJS.Worksheet, absPath: string): XlsxSheetPreview {
+  const rows: Array<Array<string | number | null>> = [];
+  let total = 0;
+  ws.eachRow((row) => {
+    total++;
+    if (rows.length >= CARD_ROWS_MAX) return;
+    const cells: Array<string | number | null> = [];
+    row.eachCell({ includeEmpty: true }, (c) => {
+      cells.push(previewCellValue(c.value));
+    });
+    rows.push(cells);
+  });
+  return { sheet: ws.name, rows, total, abs_path: absPath };
+}
+
+/**
+ * The `files` card of a written workbook: the file line, plus the preview of
+ * the sheet that was touched and the key under which its verification state
+ * lives. `detailOf` skips `preview` on its own — it is drawn, not spelled out.
+ */
+function writtenWorkbook(
+  path: string,
+  action: 'created' | 'modified',
+  output: { preview: XlsxSheetPreview } & Record<string, unknown>,
+): CardPayloadFor<'files'> {
+  const p = output.preview;
+  return writtenFile(path, action, {
+    detail: detailOf(output),
+    // `columns: []` + `header: 'unknown'`: nobody knows whether the first row
+    // is a header (P1) — the card says so, it does not guess.
+    preview: tableEntry({
+      name: p.sheet,
+      columns: [],
+      header: 'unknown',
+      rows: p.rows,
+      total: p.total,
+    }),
+    deliverableKey: projectKey(p.abs_path),
+  });
+}
+
 /** Apply a plain value to a cell — "=" prefix means formula, null clears it. Same convention as xlsx_set_cell/xlsx_set_range. */
 function assignCellValue(cell: ExcelJS.Cell, val: string | number | boolean | null): void {
   if (val === null) {
@@ -348,7 +455,9 @@ const XlsxSetCellInput = z.object({
     ),
 });
 
-type XlsxSetCellOutput = { ok: true; cell: string; sheet: string } | { ok: false; reason: string };
+type XlsxSetCellOutput =
+  | { ok: true; cell: string; sheet: string; preview: XlsxSheetPreview }
+  | { ok: false; reason: string };
 
 export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCellOutput> = {
   name: 'xlsx_set_cell',
@@ -360,9 +469,7 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -384,7 +491,12 @@ export const xlsxSetCellTool: ToolDefinition<typeof XlsxSetCellInput, XlsxSetCel
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, cell: input.cell, sheet: input.sheet };
+    return {
+      ok: true,
+      cell: input.cell,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 
@@ -408,7 +520,7 @@ const XlsxSetRangeInput = z.object({
 });
 
 type XlsxSetRangeOutput =
-  | { ok: true; rows_written: number; cols_written: number }
+  | { ok: true; rows_written: number; cols_written: number; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetRangeOutput> = {
@@ -420,9 +532,7 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -459,6 +569,7 @@ export const xlsxSetRangeTool: ToolDefinition<typeof XlsxSetRangeInput, XlsxSetR
       ok: true,
       rows_written: input.values.length,
       cols_written: Math.max(0, ...input.values.map((r) => r.length)),
+      preview: sheetPreview(ws, resolvedPath),
     };
   },
 };
@@ -477,7 +588,7 @@ const XlsxAppendRowsInput = z.object({
 });
 
 type XlsxAppendRowsOutput =
-  | { ok: true; rows_appended: number; new_last_row: number }
+  | { ok: true; rows_appended: number; new_last_row: number; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, XlsxAppendRowsOutput> =
@@ -490,9 +601,7 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
     riskLevel: 'write',
     card: 'files',
     present: ({ input, output }) =>
-      output.ok
-        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-        : failureText(output.reason),
+      output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -526,6 +635,7 @@ export const xlsxAppendRowsTool: ToolDefinition<typeof XlsxAppendRowsInput, Xlsx
         ok: true,
         rows_appended: input.rows.length,
         new_last_row: lastRow + input.rows.length,
+        preview: sheetPreview(ws, resolvedPath),
       };
     },
   };
@@ -537,7 +647,9 @@ const XlsxAddSheetInput = z.object({
   name: z.string().min(1).describe('Name of the new worksheet.'),
 });
 
-type XlsxAddSheetOutput = { ok: true; sheet: string } | { ok: false; reason: string };
+type XlsxAddSheetOutput =
+  | { ok: true; sheet: string; preview: XlsxSheetPreview }
+  | { ok: false; reason: string };
 
 export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddSheetOutput> = {
   name: 'xlsx_add_sheet',
@@ -546,9 +658,7 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -558,11 +668,13 @@ export const xlsxAddSheetTool: ToolDefinition<typeof XlsxAddSheetInput, XlsxAddS
     if (workbook.getWorksheet(input.name)) {
       return { ok: false, reason: `Sheet "${input.name}" already exists in workbook.` };
     }
-    workbook.addWorksheet(input.name);
+    const added = workbook.addWorksheet(input.name);
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, sheet: input.name };
+    // A brand-new sheet is empty: `rows: []`, `total: 0` — the card says
+    // "empty sheet" rather than showing nothing at all.
+    return { ok: true, sheet: input.name, preview: sheetPreview(added, resolvedPath) };
   },
 };
 
@@ -585,7 +697,9 @@ const XlsxCreateInput = z.object({
     .describe('If false (default) refuse to overwrite an existing file.'),
 });
 
-type XlsxCreateOutput = { ok: true; path: string; sheet: string } | { ok: false; reason: string };
+type XlsxCreateOutput =
+  | { ok: true; path: string; sheet: string; preview: XlsxSheetPreview }
+  | { ok: false; reason: string };
 
 export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOutput> = {
   name: 'xlsx_create',
@@ -596,12 +710,10 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
   riskLevel: 'write',
   card: 'files',
   present: ({ output }) =>
-    output.ok
-      ? writtenFile(output.path, 'created', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(output.path, 'created', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const workbook = new ExcelJS.Workbook();
-    workbook.addWorksheet(input.sheet);
+    const created = workbook.addWorksheet(input.sheet);
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -609,7 +721,12 @@ export const xlsxCreateTool: ToolDefinition<typeof XlsxCreateInput, XlsxCreateOu
       overwrite: input.overwrite,
     });
     if (!writeResult.ok) return writeResult;
-    return { ok: true, path: writeResult.path, sheet: input.sheet };
+    return {
+      ok: true,
+      path: writeResult.path,
+      sheet: input.sheet,
+      preview: sheetPreview(created, writeResult.path),
+    };
   },
 };
 
@@ -627,7 +744,7 @@ const XlsxDeleteRowsInput = z.object({
 });
 
 type XlsxDeleteRowsOutput =
-  | { ok: true; rows_deleted: number; sheet: string }
+  | { ok: true; rows_deleted: number; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, XlsxDeleteRowsOutput> =
@@ -641,9 +758,7 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
     riskLevel: 'destructive',
     card: 'files',
     present: ({ input, output }) =>
-      output.ok
-        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-        : failureText(output.reason),
+      output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
     defaultApproval: 'require_approval',
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
@@ -667,7 +782,12 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
 
       const save = await saveWorkbook(ctx, workbook, resolvedPath);
       if (!save.ok) return save;
-      return { ok: true, rows_deleted: input.count, sheet: input.sheet };
+      return {
+        ok: true,
+        rows_deleted: input.count,
+        sheet: input.sheet,
+        preview: sheetPreview(ws, resolvedPath),
+      };
     },
   };
 
@@ -747,7 +867,7 @@ const XlsxFormatRangeInput = z.object({
 });
 
 type XlsxFormatRangeOutput =
-  | { ok: true; cells_formatted: number; range: string; sheet: string }
+  | { ok: true; cells_formatted: number; range: string; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxFormatRangeTool: ToolDefinition<
@@ -765,9 +885,7 @@ export const xlsxFormatRangeTool: ToolDefinition<
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const { font, fill, border, alignment } = input;
     if (!font && !fill && !border && !alignment && input.num_fmt === undefined) {
@@ -847,7 +965,13 @@ export const xlsxFormatRangeTool: ToolDefinition<
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, cells_formatted: cellsFormatted, range: input.range, sheet: input.sheet };
+    return {
+      ok: true,
+      cells_formatted: cellsFormatted,
+      range: input.range,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 
@@ -875,7 +999,7 @@ const XlsxInsertRowsInput = z.object({
 });
 
 type XlsxInsertRowsOutput =
-  | { ok: true; rows_inserted: number; sheet: string }
+  | { ok: true; rows_inserted: number; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, XlsxInsertRowsOutput> =
@@ -889,9 +1013,7 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
     riskLevel: 'write',
     card: 'files',
     present: ({ input, output }) =>
-      output.ok
-        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-        : failureText(output.reason),
+      output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -919,7 +1041,12 @@ export const xlsxInsertRowsTool: ToolDefinition<typeof XlsxInsertRowsInput, Xlsx
 
       const save = await saveWorkbook(ctx, workbook, resolvedPath);
       if (!save.ok) return save;
-      return { ok: true, rows_inserted: input.rows.length, sheet: input.sheet };
+      return {
+        ok: true,
+        rows_inserted: input.rows.length,
+        sheet: input.sheet,
+        preview: sheetPreview(ws, resolvedPath),
+      };
     },
   };
 
@@ -935,7 +1062,7 @@ const XlsxDeleteColumnsInput = z.object({
 });
 
 type XlsxDeleteColumnsOutput =
-  | { ok: true; columns_deleted: number; sheet: string }
+  | { ok: true; columns_deleted: number; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxDeleteColumnsTool: ToolDefinition<
@@ -951,9 +1078,7 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
   riskLevel: 'destructive',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
@@ -978,7 +1103,12 @@ export const xlsxDeleteColumnsTool: ToolDefinition<
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, columns_deleted: input.count, sheet: input.sheet };
+    return {
+      ok: true,
+      columns_deleted: input.count,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 
@@ -1002,7 +1132,7 @@ const XlsxInsertColumnsInput = z.object({
 });
 
 type XlsxInsertColumnsOutput =
-  | { ok: true; columns_inserted: number; sheet: string }
+  | { ok: true; columns_inserted: number; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxInsertColumnsTool: ToolDefinition<
@@ -1017,9 +1147,7 @@ export const xlsxInsertColumnsTool: ToolDefinition<
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1047,7 +1175,12 @@ export const xlsxInsertColumnsTool: ToolDefinition<
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, columns_inserted: input.columns.length, sheet: input.sheet };
+    return {
+      ok: true,
+      columns_inserted: input.columns.length,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 
@@ -1063,7 +1196,7 @@ const XlsxMergeCellsInput = z.object({
 });
 
 type XlsxMergeCellsOutput =
-  | { ok: true; range: string; sheet: string }
+  | { ok: true; range: string; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, XlsxMergeCellsOutput> =
@@ -1077,9 +1210,7 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
     riskLevel: 'write',
     card: 'files',
     present: ({ input, output }) =>
-      output.ok
-        ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-        : failureText(output.reason),
+      output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
     execute: async (input, ctx) => {
       const load = await loadWorkbookForWrite(ctx, input.path);
       if (!load.ok) return load;
@@ -1110,7 +1241,12 @@ export const xlsxMergeCellsTool: ToolDefinition<typeof XlsxMergeCellsInput, Xlsx
 
       const save = await saveWorkbook(ctx, workbook, resolvedPath);
       if (!save.ok) return save;
-      return { ok: true, range: input.range, sheet: input.sheet };
+      return {
+        ok: true,
+        range: input.range,
+        sheet: input.sheet,
+        preview: sheetPreview(ws, resolvedPath),
+      };
     },
   };
 
@@ -1126,7 +1262,7 @@ const XlsxUnmergeCellsInput = z.object({
 });
 
 type XlsxUnmergeCellsOutput =
-  | { ok: true; range: string; sheet: string }
+  | { ok: true; range: string; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxUnmergeCellsTool: ToolDefinition<
@@ -1139,9 +1275,7 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1163,7 +1297,12 @@ export const xlsxUnmergeCellsTool: ToolDefinition<
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, range: input.range, sheet: input.sheet };
+    return {
+      ok: true,
+      range: input.range,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 
@@ -1204,7 +1343,7 @@ const XlsxSetColumnWidthsInput = z.object({
 });
 
 type XlsxSetColumnWidthsOutput =
-  | { ok: true; columns_set: number; sheet: string }
+  | { ok: true; columns_set: number; sheet: string; preview: XlsxSheetPreview }
   | { ok: false; reason: string };
 
 export const xlsxSetColumnWidthsTool: ToolDefinition<
@@ -1221,9 +1360,7 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     if ((!input.widths || input.widths.length === 0) && !input.autofit) {
       return { ok: false, reason: 'Provide widths and/or set autofit:true.' };
@@ -1269,7 +1406,12 @@ export const xlsxSetColumnWidthsTool: ToolDefinition<
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, columns_set: columnsSet, sheet: input.sheet };
+    return {
+      ok: true,
+      columns_set: columnsSet,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 
@@ -1295,7 +1437,13 @@ const XlsxFreezePanesInput = z.object({
 });
 
 type XlsxFreezePanesOutput =
-  | { ok: true; rows_frozen: number; columns_frozen: number; sheet: string }
+  | {
+      ok: true;
+      rows_frozen: number;
+      columns_frozen: number;
+      sheet: string;
+      preview: XlsxSheetPreview;
+    }
   | { ok: false; reason: string };
 
 export const xlsxFreezePanesTool: ToolDefinition<
@@ -1311,9 +1459,7 @@ export const xlsxFreezePanesTool: ToolDefinition<
   riskLevel: 'write',
   card: 'files',
   present: ({ input, output }) =>
-    output.ok
-      ? writtenFile(input.path, 'modified', { detail: detailOf(output) })
-      : failureText(output.reason),
+    output.ok ? writtenWorkbook(input.path, 'modified', output) : failureText(output.reason),
   execute: async (input, ctx) => {
     const load = await loadWorkbookForWrite(ctx, input.path);
     if (!load.ok) return load;
@@ -1332,7 +1478,13 @@ export const xlsxFreezePanesTool: ToolDefinition<
 
     const save = await saveWorkbook(ctx, workbook, resolvedPath);
     if (!save.ok) return save;
-    return { ok: true, rows_frozen: input.rows, columns_frozen: input.columns, sheet: input.sheet };
+    return {
+      ok: true,
+      rows_frozen: input.rows,
+      columns_frozen: input.columns,
+      sheet: input.sheet,
+      preview: sheetPreview(ws, resolvedPath),
+    };
   },
 };
 

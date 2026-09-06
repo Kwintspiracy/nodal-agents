@@ -140,6 +140,7 @@ export default function FileDiff({
   action,
   bytes,
   detail,
+  preview,
 }: {
   jobId: string;
   toolCallId: string;
@@ -147,6 +148,12 @@ export default function FileDiff({
   action: string;
   bytes?: string;
   detail?: string;
+  /**
+   * P12 — ce que le fichier CONTIENT, dessiné côté serveur et passé tel quel.
+   * Il reste visible fermé comme ouvert : l'aperçu dit l'état du fichier, le
+   * panneau dit ce qui a changé — deux questions différentes.
+   */
+  preview?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<FileDiffView | null>(null);
@@ -176,6 +183,7 @@ export default function FileDiff({
         {bytes !== undefined && <span className="text-ink-4">{bytes}</span>}
         {detail !== undefined && <span className="truncate text-ink-4">{detail}</span>}
       </DisclosureButton>
+      {preview}
       {open && loading && <Note>Loading the diff…</Note>}
       {open && !loading && error !== null && <Note>No diff: {error}</Note>}
       {open && !loading && view !== null && <DiffBody view={view} />}

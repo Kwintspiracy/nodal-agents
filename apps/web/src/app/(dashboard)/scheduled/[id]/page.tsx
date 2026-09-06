@@ -86,7 +86,7 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
       }
     >
       <LiveRefresh live={live} />
-      <ConversationFeedView feed={feed} />
+      <ConversationFeedView feed={feed} deliverables={verification.deliverables} />
       {/* P3 — la preuve, la même carte que le détail Code (elle n'est jamais
           vide : elle dit « pas encore », « hors vérification », « rien à
           configurer »), puis la file d'envoi. */}

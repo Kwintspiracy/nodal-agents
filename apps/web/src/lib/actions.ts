@@ -118,8 +118,10 @@ import {
   jobDeliveries,
 } from '@nodal-agents/db';
 import {
+  deliverableStatuses,
   groupVerificationRuns,
   mergeSkippedSurfaces,
+  type DeliverableStatusView,
   type VerificationSequenceView,
   type VerificationUnconfiguredView,
 } from './verification-runs-view.ts';
@@ -2376,6 +2378,8 @@ export type SpaceConversationView = {
     sequences: VerificationSequenceView[];
     skippedSurfaces: string[];
     unconfigured: VerificationUnconfiguredView[];
+    /** P12 — l'état de chaque DOCUMENT du fil, pour la carte du fichier écrit. */
+    deliverables: DeliverableStatusView[];
   };
   cost: SpaceCostView;
   /** P3 — la file d'envoi de ce travail (`job_deliveries`), telle quelle. */
@@ -2466,15 +2470,22 @@ export async function getSpaceConversationAction(
             canonicalKey: jobDeliverableVerificationState.canonicalKey,
             displayPath: jobDeliverableVerificationState.displayPathSnapshot,
             decisionStatus: jobDeliverableVerificationState.decisionStatus,
+            updatedAt: jobDeliverableVerificationState.updatedAt,
           })
           .from(jobDeliverableVerificationState)
           .where(
             and(
               inArray(jobDeliverableVerificationState.jobId, relevantIds),
-              inArray(jobDeliverableVerificationState.decisionStatus, [
-                'not_configured',
-                'pending_approval',
-              ]),
+              // P3 veut les livrables NON configurés ; P12 veut l'état de TOUS
+              // les documents, `dirty` et `green` compris, pour la carte du
+              // classeur écrit. Une requête, deux lectures triées ensuite.
+              or(
+                inArray(jobDeliverableVerificationState.decisionStatus, [
+                  'not_configured',
+                  'pending_approval',
+                ]),
+                eq(jobDeliverableVerificationState.deliverableType, 'office_file'),
+              ),
             ),
           ),
         db
@@ -2534,14 +2545,20 @@ export async function getSpaceConversationAction(
         job.verificationSkippedSurfaces,
         ...descendants.map((d) => d.verificationSkippedSurfaces),
       ]),
-      unconfigured: unconfiguredRows.map(
-        (r): VerificationUnconfiguredView => ({
-          deliverableType: r.deliverableType,
-          canonicalKey: r.canonicalKey,
-          displayPath: r.displayPath,
-          reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
-        }),
-      ),
+      unconfigured: unconfiguredRows
+        .filter(
+          (r) => r.decisionStatus === 'not_configured' || r.decisionStatus === 'pending_approval',
+        )
+        .map(
+          (r): VerificationUnconfiguredView => ({
+            deliverableType: r.deliverableType,
+            canonicalKey: r.canonicalKey,
+            displayPath: r.displayPath,
+            reason: r.decisionStatus === 'pending_approval' ? 'pending_approval' : 'not_configured',
+          }),
+        ),
+      // P12 — l'état de chaque DOCUMENT, rangé par sa clé canonique.
+      deliverables: deliverableStatuses(unconfiguredRows),
     };
 
     return ok({

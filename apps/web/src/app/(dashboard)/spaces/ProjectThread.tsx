@@ -54,7 +54,10 @@ export default function ProjectThread({
                 boutons avec lui. `live` est déjà calculé par le même chargeur
                 que les deux autres pages — il n'était simplement pas branché. */}
             <LiveRefresh live={thread.data.live} />
-            <ConversationFeedView feed={thread.data.feed} />
+            <ConversationFeedView
+              feed={thread.data.feed}
+              deliverables={thread.data.verification.deliverables}
+            />
           </>
         ) : (
           <div className="mx-auto max-w-[840px]">

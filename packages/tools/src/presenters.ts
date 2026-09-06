@@ -15,7 +15,7 @@ import {
   CARD_ROWS_MAX,
   CARD_TEXT_MAX,
 } from '@nodal-agents/shared';
-import type { CardPayloadFor } from '@nodal-agents/shared';
+import type { CardPayloadFor, TableEntry } from '@nodal-agents/shared';
 
 /** Coupe à `max` caractères en le disant (« … »). Une chaîne courte est rendue intacte. */
 export function clip(value: string, max: number): string {
@@ -109,6 +109,10 @@ export type FileEntry = {
   action: 'created' | 'modified' | 'written' | 'listed';
   bytes?: number;
   detail?: string;
+  /** P12 — les premières lignes de ce que le fichier contient maintenant. */
+  preview?: TableEntry;
+  /** P12 — `projectKey(chemin absolu)`, la clé de l'état de vérification. */
+  deliverableKey?: string;
 };
 
 export function filesCard(
@@ -120,6 +124,10 @@ export function filesCard(
     action: f.action,
     ...(f.bytes !== undefined ? { bytes: f.bytes } : {}),
     ...(f.detail !== undefined ? { detail: clip(f.detail, CARD_LABEL_MAX) } : {}),
+    ...(f.preview !== undefined ? { preview: f.preview } : {}),
+    ...(f.deliverableKey !== undefined
+      ? { deliverableKey: clip(f.deliverableKey, CARD_LABEL_MAX) }
+      : {}),
   }));
   return {
     card: 'files',
@@ -133,7 +141,7 @@ export function filesCard(
 export function writtenFile(
   path: string,
   action: 'created' | 'modified' | 'written',
-  extra: { bytes?: number; detail?: string } = {},
+  extra: { bytes?: number; detail?: string; preview?: TableEntry; deliverableKey?: string } = {},
 ): CardPayloadFor<'files'> {
   return filesCard([{ path, action, ...extra }]);
 }
@@ -149,45 +157,54 @@ function cell(v: unknown): [Cell, boolean] {
   return [clip(s, CARD_CELL_MAX), s.length > CARD_CELL_MAX];
 }
 
-export function tableCard(
-  tables: ReadonlyArray<{
-    name?: string;
-    columns: ReadonlyArray<string>;
-    rows: ReadonlyArray<ReadonlyArray<unknown>>;
-    /**
-     * `columns` : les colonnes données SONT l'en-tête. `unknown` : personne ne
-     * sait si la première ligne est un en-tête (un classeur lu tel quel) — le
-     * rendu ne le devinera pas, il le demandera ou le dira.
-     */
-    header?: 'columns' | 'unknown';
-    total?: number;
-    truncated?: boolean;
-  }>,
-): CardPayloadFor<'table'> {
-  return {
-    card: 'table',
-    tables: tables.map((t) => {
-      // Coupé quelque part — une cellule OU un intitulé de colonne (revue passe
-      // 15 : les colonnes étaient coupées sans que `clipped` le dise).
-      let clipped = t.columns.some((c) => c.length > CARD_CELL_MAX);
-      const shown = t.rows.slice(0, CARD_ROWS_MAX).map((r) =>
-        r.map((v) => {
-          const [c, wasClipped] = cell(v);
-          if (wasClipped) clipped = true;
-          return c;
-        }),
-      );
-      return {
-        ...(t.name !== undefined ? { name: clip(t.name, CARD_LABEL_MAX) } : {}),
-        columns: t.columns.map((c) => clip(c, CARD_CELL_MAX)),
-        header: t.header ?? (t.columns.length > 0 ? 'columns' : 'unknown'),
-        rows: shown,
-        total: t.total ?? t.rows.length,
-        truncated: (t.truncated ?? false) || shown.length < t.rows.length,
-        clipped,
-      };
+export type TableEntryInput = {
+  name?: string;
+  columns: ReadonlyArray<string>;
+  rows: ReadonlyArray<ReadonlyArray<unknown>>;
+  /**
+   * `columns` : les colonnes données SONT l'en-tête. `unknown` : personne ne
+   * sait si la première ligne est un en-tête (un classeur lu tel quel) — le
+   * rendu ne le devinera pas, il le demandera ou le dira.
+   */
+  header?: 'columns' | 'unknown';
+  total?: number;
+  truncated?: boolean;
+};
+
+/**
+ * UNE table plafonnée. Extraite de `tableCard` (P12) parce que l'APERÇU d'un
+ * fichier écrit porte la même forme : un aperçu ne peut pas peser plus qu'une
+ * table, et il se dessine par le même composant.
+ */
+export function tableEntry(t: TableEntryInput): TableEntry {
+  // Coupé quelque part — une cellule OU un intitulé de colonne (revue passe
+  // 15 : les colonnes étaient coupées sans que `clipped` le dise).
+  let clipped = t.columns.some((c) => c.length > CARD_CELL_MAX);
+  const shown = t.rows.slice(0, CARD_ROWS_MAX).map((r) =>
+    r.map((v) => {
+      const [c, wasClipped] = cell(v);
+      if (wasClipped) clipped = true;
+      return c;
     }),
+  );
+  const total = t.total ?? t.rows.length;
+  return {
+    ...(t.name !== undefined ? { name: clip(t.name, CARD_LABEL_MAX) } : {}),
+    columns: t.columns.map((c) => clip(c, CARD_CELL_MAX)),
+    header: t.header ?? (t.columns.length > 0 ? 'columns' : 'unknown'),
+    rows: shown,
+    total,
+    // Coupé ici (on a plafonné), coupé avant (l'appelant le dit), ou coupé
+    // AVANT MÊME l'appel : un appelant qui plafonne lui-même passe des `rows`
+    // déjà courtes et un `total` plus grand — sans cette troisième condition
+    // (P12), la carte annonçait « complet » sur un aperçu tronqué.
+    truncated: (t.truncated ?? false) || shown.length < t.rows.length || shown.length < total,
+    clipped,
   };
+}
+
+export function tableCard(tables: ReadonlyArray<TableEntryInput>): CardPayloadFor<'table'> {
+  return { card: 'table', tables: tables.map(tableEntry) };
 }
 
 /**
@@ -291,14 +308,16 @@ export function delegationCard(a: {
 
 /**
  * Ce qu'un outil dit de ce qu'il a fait, en `clé=valeur` — pour le `detail`
- * d'un fichier écrit (« rows_appended=3 · sheet=Data »). `ok` et `path` sont
- * déjà portés ailleurs sur la carte, ils ne sont pas répétés.
+ * d'un fichier écrit (« rows_appended=3 · sheet=Data »). `ok`, `path` et
+ * `preview` sont déjà portés ailleurs sur la carte, ils ne sont pas répétés :
+ * `preview` (P12) est un objet, il rendrait « preview=[object Object] » dans
+ * une ligne censée tenir en un coup d'œil.
  */
 export function detailOf(
   output: Record<string, unknown>,
   omit: ReadonlyArray<string> = [],
 ): string {
-  const skip = new Set(['ok', 'path', ...omit]);
+  const skip = new Set(['ok', 'path', 'preview', ...omit]);
   return Object.entries(output)
     .filter(([k, v]) => !skip.has(k) && v !== undefined && v !== null)
     .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(',') : String(v)}`)

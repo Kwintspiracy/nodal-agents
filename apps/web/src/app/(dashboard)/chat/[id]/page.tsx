@@ -92,7 +92,7 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
       }
     >
       <LiveRefresh live={live} />
-      <ConversationFeedView feed={feed} />
+      <ConversationFeedView feed={feed} deliverables={verification.deliverables} />
       {/* P3 — la preuve et la file d'envoi de TOUT le fil, la même carte que la
           page d'un espace. */}
       <div className="mx-auto mt-8 max-w-[840px] space-y-6">

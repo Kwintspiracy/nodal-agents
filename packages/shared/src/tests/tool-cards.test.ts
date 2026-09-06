@@ -130,6 +130,71 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
     ).toBe(false);
   });
 
+  // ── P12 — l'aperçu d'un fichier écrit ──────────────────────────────────────
+
+  it("un fichier écrit porte un APERÇU à la forme d'une table, sa clé de livrable, et rien d'autre", () => {
+    const preview = {
+      name: 'Data',
+      columns: [],
+      header: 'unknown',
+      rows: [
+        ['Name', 'Score'],
+        ['Alice', 90],
+      ],
+      total: 2,
+      truncated: false,
+      clipped: false,
+    };
+    const withPreview = {
+      card: 'files',
+      files: [
+        {
+          path: 'ws/report.xlsx',
+          action: 'modified',
+          preview,
+          deliverableKey: 'd:/ws/report.xlsx',
+        },
+      ],
+      total: 1,
+      truncated: false,
+    };
+    const parsed = ToolCardPayloadSchema.safeParse(withPreview);
+    expect(parsed.success, parsed.success ? '' : parsed.error.message).toBe(true);
+    if (parsed.success && parsed.data.card === 'files') {
+      // La charge relue EST l'aperçu : mêmes cellules, même ordre.
+      expect(parsed.data.files[0]?.preview?.rows).toEqual(preview.rows);
+      expect(parsed.data.files[0]?.preview?.header).toBe('unknown');
+      expect(parsed.data.files[0]?.deliverableKey).toBe('d:/ws/report.xlsx');
+    }
+
+    // Un aperçu est une table : il ne peut pas peser plus qu'elle. Au-delà du
+    // plafond, la carte est REFUSÉE — pas silencieusement coupée.
+    const trop = {
+      ...withPreview,
+      files: [
+        {
+          ...withPreview.files[0],
+          preview: {
+            ...preview,
+            rows: Array.from({ length: CARD_ROWS_MAX + 1 }, () => ['x']),
+            total: CARD_ROWS_MAX + 1,
+            truncated: true,
+          },
+        },
+      ],
+    };
+    expect(ToolCardPayloadSchema.safeParse(trop).success).toBe(false);
+
+    // Un aperçu sans `header`/`clipped` : la même exigence que sur une table.
+    const { header: _h, ...sansHeader } = preview;
+    expect(
+      ToolCardPayloadSchema.safeParse({
+        ...withPreview,
+        files: [{ ...withPreview.files[0], preview: sansHeader }],
+      }).success,
+    ).toBe(false);
+  });
+
   it('ce qui a été coupé se DIT : une table sans `header`/`clipped`, un terminal sans ses drapeaux, sont refusés', () => {
     // Revue passe 14 : une charge tronquée passait pour complète.
     const { header: _h, ...sansHeader } = table([['x']]).tables[0]!;
