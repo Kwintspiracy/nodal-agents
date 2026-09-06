@@ -23,11 +23,14 @@ import {
   codeProjects,
   jobCheckpoints,
   jobDeliverableVerificationState,
+  toolCalls,
   workspaceLocks,
+  and,
   eq,
 } from '@nodal-agents/db';
 import { listCheckpoints } from '@nodal-agents/checkpoints';
 import type { CliTurnResult } from '../../cli-runtime/provider.ts';
+import type { ClaudeTurnEvent } from '../../cli-runtime/claude-turn.ts';
 import type * as ProviderModule from '../../cli-runtime/provider.ts';
 import type * as OrchestrationModule from '@nodal-agents/orchestration';
 
@@ -250,5 +253,34 @@ describe('run-job : l’instantané AVANT binding.run (P11)', () => {
       await db.select({ path: workspaceLocks.workspacePath }).from(workspaceLocks),
       'les verrous sont restés pris après un refus',
     ).toEqual([]);
+  });
+});
+
+describe('run-job : la ligne d’audit du harnais porte le tour de son instantané (passe 42)', () => {
+  it('une écriture du harnais a le MÊME `turn` que la ligne job_checkpoints — sinon la route ne retrouve jamais l’état d’avant', async () => {
+    const jobId = await newJob();
+    fakeRun.mockImplementationOnce(async (opts: unknown) => {
+      const { onEvent } = opts as { onEvent: (e: ClaudeTurnEvent) => void };
+      onEvent({
+        kind: 'tool_use',
+        toolUseId: 'tu-p42',
+        toolName: 'Write',
+        input: { file_path: `${alpha}/src/a.ts` },
+      });
+      onEvent({ kind: 'tool_result', toolUseId: 'tu-p42', output: 'ok' });
+      return greenTurn();
+    });
+
+    const outcome = await runJob(jobId, 'write', [alpha]);
+    expect(outcome.status).toBe('completed');
+
+    const [audit] = await db
+      .select({ turn: toolCalls.turn, toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, jobId), eq(toolCalls.toolCallId, 'tu-p42')));
+    expect(audit?.toolName).toBe('cli:Write');
+    const [cp] = await rowsOf(jobId);
+    expect(cp?.turn).toBe(1);
+    expect(audit?.turn, 'la ligne d’audit ne porte pas le tour de l’instantané').toBe(cp!.turn);
   });
 });

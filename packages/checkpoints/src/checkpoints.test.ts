@@ -11,7 +11,7 @@
 // exactement le test qui passerait sur une implémentation qui ne restaure pas.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, mkdir, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -350,4 +350,50 @@ describe('diffFile', () => {
     expect(res.truncated, 'un diff enorme doit annoncer sa coupe').toBe(true);
     expect(res.text.length).toBe(DIFF_MAX_BYTES);
   });
+});
+
+describe('diffFile — une lecture ne dérange pas les instantanés (passe 42)', () => {
+  it("ne touche pas l'index du dossier, et ne laisse aucun index jetable derrière elle", async () => {
+    await writeFile(join(ws, 'a.txt'), 'un\n');
+    const avant = await snapshot(store, ws, 'avant');
+    // Un fichier NEUF après la photo : c'est le cas qui oblige à restager.
+    await writeFile(join(ws, 'neuf.txt'), 'neuf\n');
+    const indexDir = join(store, 'indexes');
+    const indexFiles = (await readdir(indexDir)).filter((f) => !f.includes('.diff-'));
+    expect(indexFiles).toHaveLength(1);
+    const indexAvant = await readFile(join(indexDir, indexFiles[0]!));
+
+    const res = await diffFile(store, ws, avant!.sha, null, 'neuf.txt');
+    expect(res.kind).toBe('diff');
+    if (res.kind !== 'diff') return;
+    expect(res.text).toContain('+neuf');
+
+    // L'index du dossier est OCTET POUR OCTET celui d'avant la lecture…
+    const indexApres = await readFile(join(indexDir, indexFiles[0]!));
+    expect(indexApres.equals(indexAvant), "l'index du dossier a été modifié par une lecture").toBe(
+      true,
+    );
+    // …et l'index jetable de la lecture a disparu.
+    expect((await readdir(indexDir)).filter((f) => f.includes('.diff-'))).toEqual([]);
+    // Le tour suivant photographie normalement, le fichier neuf compris.
+    const apres = await snapshot(store, ws, 'apres');
+    expect(apres).not.toBeNull();
+  });
+
+  it("un diff plus gros que le tampon d'execFile est coupé aux octets annoncés, pas une panne", async () => {
+    await writeFile(join(ws, 'geant.txt'), 'x\n');
+    const avant = await snapshot(store, ws, 'avant');
+    // ~9 Mo : au-delà du maxBuffer de 8 Mio d'execFile. Des caractères non
+    // ASCII pour que la borne compte des OCTETS, pas des unités UTF-16.
+    const ligne = 'é'.repeat(60);
+    const geant = Array.from({ length: 75_000 }, (_, i) => `${i} ${ligne}`).join('\n');
+    await writeFile(join(ws, 'geant.txt'), geant);
+
+    const res = await diffFile(store, ws, avant!.sha, null, 'geant.txt');
+    expect(res.kind).toBe('diff');
+    if (res.kind !== 'diff') return;
+    expect(res.truncated).toBe(true);
+    expect(Buffer.byteLength(res.text, 'utf8')).toBeLessThanOrEqual(DIFF_MAX_BYTES);
+    expect(res.text.startsWith('diff --git')).toBe(true);
+  }, 60_000);
 });

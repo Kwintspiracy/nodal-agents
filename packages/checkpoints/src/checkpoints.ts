@@ -29,9 +29,9 @@
 // judgement, and an agent that could roll itself back could also roll back the
 // evidence.
 
-import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -100,15 +100,16 @@ function workspaceKey(workspace: string): string {
   return createHash('sha256').update(norm).digest('hex').slice(0, 16);
 }
 
-function gitEnv(store: string, workspace: string): NodeJS.ProcessEnv {
+function gitEnv(store: string, workspace: string, indexFile?: string): NodeJS.ProcessEnv {
   const key = workspaceKey(workspace);
   return {
     ...process.env,
     GIT_DIR: join(store, 'store'),
     GIT_WORK_TREE: workspace,
     // A per-workspace index: two workspaces snapshotting at once must not
-    // stomp on each other's staging area.
-    GIT_INDEX_FILE: join(store, 'indexes', key),
+    // stomp on each other's staging area. A READ (diffFile) brings its own
+    // temporary index instead — see diffFile — so it never touches this one.
+    GIT_INDEX_FILE: indexFile ?? join(store, 'indexes', key),
     // A checkpoint is machinery, not authorship. Identity is fixed so it can
     // never depend on — or leak — the owner's git config.
     GIT_AUTHOR_NAME: 'Nodal checkpoints',
@@ -121,11 +122,16 @@ function gitEnv(store: string, workspace: string): NodeJS.ProcessEnv {
   };
 }
 
-async function git(store: string, workspace: string, args: string[]): Promise<string> {
+async function git(
+  store: string,
+  workspace: string,
+  args: string[],
+  indexFile?: string,
+): Promise<string> {
   const { stdout } = await run('git', args, {
     timeout: GIT_TIMEOUT_MS,
     windowsHide: true,
-    env: gitEnv(store, workspace),
+    env: gitEnv(store, workspace, indexFile),
   });
   return stdout.trim();
 }
@@ -136,14 +142,88 @@ async function git(store: string, workspace: string, args: string[]): Promise<st
  * une espace, qu'un `trim` mangerait sur la première ligne d'un fragment) et
  * dépasse volontiers le méga-octet par défaut d'`execFile`.
  */
-async function gitRaw(store: string, workspace: string, args: string[]): Promise<string> {
+async function gitRaw(
+  store: string,
+  workspace: string,
+  args: string[],
+  indexFile?: string,
+): Promise<string> {
   const { stdout } = await run('git', args, {
     timeout: GIT_TIMEOUT_MS,
     windowsHide: true,
     maxBuffer: 8 * 1024 * 1024,
-    env: gitEnv(store, workspace),
+    env: gitEnv(store, workspace, indexFile),
   });
   return stdout;
+}
+
+/**
+ * Comme `gitRaw`, mais la sortie est lue EN FLUX et coupée à `maxBytes` : au
+ * premier octet de trop, le processus est tué et ce qu'on a lu est rendu, dit
+ * tronqué (revue Codex, passe 42). Sans ça, un diff de 10 Mo faisait exploser
+ * le tampon d'`execFile` AVANT la coupe, et l'écran disait « dossier
+ * injoignable » pour un fichier simplement gros. Les OCTETS sont comptés (un
+ * `Buffer`), pas les unités UTF-16 d'une chaîne : la borne annoncée est la
+ * borne réelle.
+ */
+function gitRawCapped(
+  store: string,
+  workspace: string,
+  args: string[],
+  maxBytes: number,
+  indexFile?: string,
+): Promise<{ text: string; truncated: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      windowsHide: true,
+      env: gitEnv(store, workspace, indexFile),
+    });
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let truncated = false;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS} ms`));
+    }, GIT_TIMEOUT_MS);
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const all = Buffer.concat(chunks);
+      const cut = truncated ? all.subarray(0, maxBytes) : all;
+      resolve({ text: cut.toString('utf8'), truncated });
+    };
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (truncated) return;
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size > maxBytes) {
+        truncated = true;
+        // Tout ce qu'il fallait est là : inutile de laisser git écrire la suite.
+        child.kill();
+        finish();
+      }
+    });
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      if (code !== 0 && code !== null) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error(`git ${args[0]} exited with ${code}`));
+        return;
+      }
+      finish();
+    });
+  });
 }
 
 /** Create the shared shadow store if it does not exist yet. Idempotent. */
@@ -243,6 +323,7 @@ export async function headCheckpoint(store: string, workspace: string): Promise<
 /**
  * Au-delà, le texte est coupé et le dit. Un diff de 200 Ko est déjà plus long
  * que ce que quiconque lira ; ce qui compte est que la coupe soit ANNONCÉE.
+ * Des OCTETS (la sortie de git est lue en `Buffer`), pas des caractères.
  */
 export const DIFF_MAX_BYTES = 200_000;
 
@@ -266,15 +347,18 @@ export type FileDiff =
  * `toSha` null = l'arbre de travail d'aujourd'hui, c'est-à-dire le dernier tour
  * d'un travail encore en cours.
  *
- * POURQUOI L'INDEX EST RAFRAÎCHI pour le cas « arbre de travail ». `git diff
- * <commit>` ne montre que les fichiers SUIVIS, et le suivi vit dans l'index —
- * ici l'index laissé par le dernier `snapshot`. Un fichier créé APRÈS cet
- * instantané n'y est pas : le diff serait vide, et l'écran dirait « aucun
- * changement » sur un fichier que l'agent vient d'écrire. On restage donc le
- * seul chemin demandé (`add -A -- <relPath>`) avant de comparer le commit à
- * l'index. L'index est de toute façon reconstruit en entier par le prochain
- * `snapshot` : rien de durable n'est touché, et le dépôt du propriétaire
- * encore moins (le magasin est un git fantôme, jamais le `.git` du projet).
+ * POURQUOI UN INDEX TEMPORAIRE pour le cas « arbre de travail ». `git diff
+ * <commit>` ne montre que les fichiers SUIVIS, et le suivi vit dans l'index.
+ * Un fichier créé APRÈS le dernier instantané n'y est pas : le diff serait
+ * vide, et l'écran dirait « aucun changement » sur un fichier que l'agent
+ * vient d'écrire. Il faut donc restager le chemin demandé — mais JAMAIS dans
+ * l'index du dossier, celui que `snapshot` utilise (revue Codex, passe 42) :
+ * une lecture qui y écrivait pouvait tenir `index.lock` au moment où le tour
+ * suivant prenait sa photo, et faire refuser ce tour (`checkpoint_failed`)
+ * pour un panneau ouvert dans le fil. Chaque lecture a donc SON index, jetable
+ * : rempli depuis le commit d'avant (`read-tree`), le seul chemin demandé y
+ * est restagé, le diff se lit `--cached`, et le fichier est supprimé. Le dépôt
+ * du propriétaire n'est jamais touché (le magasin est un git fantôme).
  *
  * `relPath` est relatif au dossier, en forme slash.
  */
@@ -293,46 +377,56 @@ export async function diffFile(
     )) !== '';
 
   const inFrom = await inTree(fromSha);
-  let inTo: boolean;
-  if (toSha === null) {
-    // Un chemin ignoré par le `.gitignore` du dossier fait échouer `add` — c'est
-    // exactement l'information qu'on cherche, pas une panne.
-    await git(store, workspace, ['add', '-A', '--', relPath]).catch(() => '');
-    inTo =
-      (await git(store, workspace, ['ls-files', '--cached', '--', relPath]).catch(() => '')) !== '';
-  } else {
-    inTo = await inTree(toSha);
+
+  // L'index JETABLE de cette lecture — jamais celui du dossier.
+  const scratch =
+    toSha === null
+      ? join(store, 'indexes', `${workspaceKey(workspace)}.diff-${randomBytes(6).toString('hex')}`)
+      : undefined;
+  try {
+    let inTo: boolean;
+    if (scratch !== undefined) {
+      // L'index part du commit d'avant, puis le SEUL chemin demandé est restagé
+      // depuis l'arbre de travail : un fichier neuf y entre, un fichier
+      // supprimé en sort. Un chemin ignoré par le `.gitignore` du dossier fait
+      // échouer `add` — c'est exactement l'information qu'on cherche, pas une
+      // panne.
+      await git(store, workspace, ['read-tree', fromSha], scratch);
+      await git(store, workspace, ['add', '-A', '--', relPath], scratch).catch(() => '');
+      inTo =
+        (await git(store, workspace, ['ls-files', '--cached', '--', relPath], scratch).catch(
+          () => '',
+        )) !== '';
+    } else {
+      inTo = await inTree(toSha as string);
+    }
+    if (!inFrom && !inTo) return { kind: 'not_in_snapshot' };
+
+    const range = scratch !== undefined ? ['--cached', fromSha] : [fromSha, toSha as string];
+
+    // `--numstat` d'abord : il répond aux deux questions bon marché (rien n'a
+    // changé / c'est du binaire) sans jamais matérialiser le texte du diff.
+    // Un fichier binaire s'y écrit `-\t-\t<chemin>`.
+    const numstat = await gitRaw(
+      store,
+      workspace,
+      ['diff', '--no-color', '--numstat', ...range, '--', relPath],
+      scratch,
+    );
+    if (numstat.trim() === '') return { kind: 'unchanged' };
+    if (/^-\t-\t/m.test(numstat)) return { kind: 'binary' };
+
+    const { text, truncated } = await gitRawCapped(
+      store,
+      workspace,
+      ['diff', '--no-color', '--unified=3', ...range, '--', relPath],
+      DIFF_MAX_BYTES,
+      scratch,
+    );
+    return { kind: 'diff', text, truncated };
+  } finally {
+    if (scratch !== undefined) await rm(scratch, { force: true }).catch(() => undefined);
   }
-  if (!inFrom && !inTo) return { kind: 'not_in_snapshot' };
-
-  const range = toSha === null ? ['--cached', fromSha] : [fromSha, toSha];
-
-  // `--numstat` d'abord : il répond aux deux questions bon marché (rien n'a
-  // changé / c'est du binaire) sans jamais matérialiser le texte du diff.
-  // Un fichier binaire s'y écrit `-\t-\t<chemin>`.
-  const numstat = await gitRaw(store, workspace, [
-    'diff',
-    '--no-color',
-    '--numstat',
-    ...range,
-    '--',
-    relPath,
-  ]);
-  if (numstat.trim() === '') return { kind: 'unchanged' };
-  if (/^-\t-\t/m.test(numstat)) return { kind: 'binary' };
-
-  const text = await gitRaw(store, workspace, [
-    'diff',
-    '--no-color',
-    '--unified=3',
-    ...range,
-    '--',
-    relPath,
-  ]);
-  if (text.length > DIFF_MAX_BYTES) {
-    return { kind: 'diff', text: text.slice(0, DIFF_MAX_BYTES), truncated: true };
-  }
-  return { kind: 'diff', text, truncated: false };
 }
 
 /** Checkpoints for a workspace, newest first. */

@@ -265,14 +265,26 @@ async function harnessEdits(
  * La LIGNE, elle, ne refuse rien : c'est un confort de lecture (le fil montrera
  * le diff), pas le filet. Une panne se dit par `CHECKPOINT_ROW_FAILED`.
  */
+export async function resolveCliTurn(db: AnyDrizzleDb, jobId: string): Promise<number> {
+  const [played] = await db.select({ n: count() }).from(cliRuns).where(eq(cliRuns.jobId, jobId));
+  return 1 + Number(played?.n ?? 0);
+}
+
+/**
+ * `turn` est CALCULÉ UNE FOIS par le tour (`resolveCliTurn`) et posé ici ET sur
+ * chaque ligne `tool_calls` que l'enregistreur d'événements insère (revue Codex,
+ * passe 42) : la route du diff retrouve l'état d'avant par
+ * `(job, tool_calls.turn, dossier)` — une ligne d'audit sans `turn` rendait
+ * `no_checkpoint` pour TOUT fichier écrit par le harnais, l'instantané ayant
+ * pourtant été pris.
+ */
 export async function takeCliTurnCheckpoints(
   db: AnyDrizzleDb,
   jobId: string,
   workspaces: ReadonlyArray<{ label: string; path: string }>,
+  turn: number,
 ): Promise<void> {
   const store = checkpointsRoot();
-  const [played] = await db.select({ n: count() }).from(cliRuns).where(eq(cliRuns.jobId, jobId));
-  const turn = 1 + Number(played?.n ?? 0);
 
   for (const w of workspaces) {
     let sha: string | null;
@@ -387,6 +399,9 @@ export async function runCliRuntimeJob(args: {
   // event becomes a tool_calls row as it happens, so the existing Runs page
   // shows the session working in real time. Rows pair tool_use → tool_result
   // by the CLI's own tool_use id.
+  // Le numéro de CE tour — le même pour l'instantané et pour chaque ligne
+  // d'audit (voir takeCliTurnCheckpoints).
+  const cliTurn = await resolveCliTurn(db, jobId);
   const pending = new Map<string, { name: string; input: unknown; startedAt: number }>();
   // Les écritures d'audit ENCORE EN VOL à la fin du tour (revue Codex, passe
   // 33) : chaque insertion part sans être attendue — l'audit ne doit jamais
@@ -414,6 +429,7 @@ export async function runCliRuntimeJob(args: {
         .values({
           entityId: job.entityId,
           jobId,
+          turn: cliTurn,
           // Le masquage et le préfixe vivent dans audit.ts, partagés avec le
           // chemin chat — voir ce fichier pour ce qui est masqué et pourquoi.
           ...buildCliAuditRow({
@@ -518,7 +534,7 @@ export async function runCliRuntimeJob(args: {
       // P11 — l'état d'avant du tour, AVANT que la CLI touche au disque. Même
       // place et même filet que l'intention ci-dessus : un échec relâche les
       // verrous et refuse le tour. Voir takeCliTurnCheckpoints.
-      await takeCliTurnCheckpoints(db, jobId, args.workspaces);
+      await takeCliTurnCheckpoints(db, jobId, args.workspaces, cliTurn);
     }
 
     const workspaceGit = await probeWorkspaceGit(cwd);

@@ -73,7 +73,16 @@ const TONE: Readonly<Record<Line['kind'], string>> = {
   '@': 'text-ink-4',
 };
 
-function DiffLines({ lines, truncated }: { lines: Line[]; truncated: boolean }) {
+function DiffLines({
+  lines,
+  truncated,
+  truncatedNote = '… truncated',
+}: {
+  lines: Line[];
+  truncated: boolean;
+  /** Ce que la coupe VEUT DIRE ici : un texte coupé, ou un diff fin abandonné. */
+  truncatedNote?: string;
+}) {
   return (
     <div className="border-t border-rule-2 bg-sidebar px-4 py-2">
       <pre className="max-h-80 overflow-auto text-mono-11 whitespace-pre-wrap break-words">
@@ -83,7 +92,7 @@ function DiffLines({ lines, truncated }: { lines: Line[]; truncated: boolean }) 
           </div>
         ))}
       </pre>
-      {truncated && <p className="pt-1 text-mono-11 text-ink-4">… truncated</p>}
+      {truncated && <p className="pt-1 text-mono-11 text-ink-4">{truncatedNote}</p>}
     </div>
   );
 }
@@ -103,7 +112,17 @@ export function DiffBody({ view }: { view: FileDiffView }) {
       return <DiffLines lines={gitDiffLines(view.text)} truncated={view.truncated} />;
     case 'fragment': {
       const d = fragmentDiff(view.oldString, view.newString);
-      return <DiffLines lines={d.lines} truncated={d.truncated} />;
+      // Au-delà de la borne, `fragmentDiff` rend les deux fragments entiers en
+      // bloc (rien n'est coupé) : la note dit ce qui a été abandonné — la
+      // comparaison ligne à ligne — pas un contenu manquant (revue Codex,
+      // passe 42).
+      return (
+        <DiffLines
+          lines={d.lines}
+          truncated={d.truncated}
+          truncatedNote="diff simplified: too long to compare line by line"
+        />
+      );
     }
     case 'unchanged':
       return <Note>No change</Note>;
