@@ -55,7 +55,7 @@ fichier joint, et une ligne ».
 
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
-| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1, P2, P3 CLOSES** le 06/09 (passes Codex 16, 19, 21 : « aucun constat neuf ») · **P4 suivante**, scindée : barre d'état depuis `llm_calls` / estimateur de coût cache-aware à créer · ⚠️ page /spaces à ouvrir par Quentin (base en local-auth) |
+| 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | 🔄 **P1, P2, P3 CLOSES** (passes 16, 19, 21, 23) · **P4 codée le 06/09** : estimateur cache-aware + prix de cache par modèle (P4a) et barre d'état + panneau de coût (P4b), en revue (passes 24-25) · retours de Quentin traités : automatisations à part, fil nettoyé sur capture réelle · ⚠️ page /spaces à ouvrir par Quentin (base en local-auth) |
 | 2 | **L'espace où l'on reste** | P5 fichiers et diff · P6 l'espace | Un chantier durable, sa conversation continue, ses diffs cliquables | ⬜ |
 | 3 | **L'agent qui demande** | P7 `ask_user` · P8 le tableur rendu | Des questions avec boutons dans la conversation ET dans Telegram ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P9 relecteurs (= PR④ de Vérifier & Corriger) · P10 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre | ⬜ |
@@ -206,6 +206,8 @@ un `verification_runs` rouge rend l'extrait, un vert ne le rend pas.
 
 ### P4 · La barre d'état et le coût — M
 
+> **État au 06/09 : codée.** P4a : `ModelPricing.cacheReadPerMillionUsd` / `cacheWritePerMillionUsd` par modèle (source OpenRouter `GET /api/v1/models`, relevé le 06/09 — le rapport n'est pas universel : Anthropic 0,1×/1,25×, DeepSeek 0,5×, Kimi ≈ 0,17×), `estimateCallCostUsd` cache-aware dans `call-sink` et `execute.ts`, dix prix in/out rafraîchis ; un modèle sans prix de cache est facturé plein et le dit (`hasCachePricing`). P4b : `aggregateSpaceCost` (par agent, attente humaine, temps de preuve), `StatusBar` permanente + panneau « What this work cost ». La garde « au dixième / 1,25× » tient pour Anthropic ; pour les autres vendeurs c'est LEUR prix, pas un facteur.
+>
 > **Dépendance découverte le 06/09** : la garde (« cache lu au dixième, cache écrit 1,25× ») suppose un estimateur cache-aware. Or `estimateModelCostUsd` (`packages/shared/src/model-catalog.ts`) calcule `input × prix + output × prix` et ignore `cachedTokens` / `cacheCreationTokens` ; seul OpenRouter rapporte un coût déjà cache-aware. P4 se scinde donc : (a) la barre d'état depuis `llm_calls` tel quel (jetons, part de cache, coût rapporté, durée, envois en attente) ; (b) l'estimateur cache-aware, travail moteur à part (backlog « cache-aware »), sans lequel le coût des fournisseurs natifs reste surestimé.
 
 **Ce que ça pose.** La barre du bas, permanente : preuve, modèle actif, agents,
