@@ -129,6 +129,18 @@ export function computeApprovalImpactLine(toolName: string, toolInput: unknown):
         'gitignored files (.env, local data) and the commands it runs are not.'
       );
     }
+    case 'register_project': {
+      // Créer un projet passe par l'approbation depuis P10b (revue Codex,
+      // passes 39-41) : la carte est donc la SEULE chose que le propriétaire
+      // lit avant de dire oui. Tombé dans le default, l'outil s'annonçait
+      // « irreversible or destructive » — faux : un dossier créé s'il manque,
+      // une ligne au registre, rien d'écrit ni d'effacé (revue Codex, passe 44).
+      const path = typeof input['path'] === 'string' && input['path'] !== '' ? input['path'] : null;
+      const kind = input['kind'] === 'code' ? 'code' : 'documents';
+      return path
+        ? `Creates the folder "${path}" in the workspace (if missing) and registers it as a ${kind} project in Spaces. No file is written or deleted.`
+        : `Creates a folder in the workspace and registers it as a ${kind} project in Spaces. No file is written or deleted.`;
+    }
     default:
       return `${toolName}: irreversible or destructive action.`;
   }

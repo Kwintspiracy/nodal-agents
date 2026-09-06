@@ -126,3 +126,25 @@ describe('computeApprovalImpactLine — outils de lecture gates par regle utilis
     expect(computeApprovalImpactLine('file_list', {})).toContain('read-only');
   });
 });
+
+describe('computeApprovalImpactLine — register_project (P10b, passe Codex 44)', () => {
+  it('dit le dossier créé et le registre, jamais « irreversible or destructive »', () => {
+    const line = computeApprovalImpactLine('register_project', {
+      path: 'veille-ia',
+      name: 'Veille IA',
+    });
+    expect(line).toContain('"veille-ia"');
+    expect(line).toContain('registers it as a documents project');
+    expect(line).toContain('No file is written or deleted');
+    expect(line).not.toContain('irreversible');
+  });
+
+  it('dit « code project » quand le kind est code, et reste lisible sans chemin', () => {
+    expect(computeApprovalImpactLine('register_project', { path: 'app', kind: 'code' })).toContain(
+      'code project',
+    );
+    const sansChemin = computeApprovalImpactLine('register_project', {});
+    expect(sansChemin).toContain('Creates a folder');
+    expect(sansChemin).not.toContain('irreversible');
+  });
+});

@@ -124,6 +124,18 @@ describe('explainApproval — built-in tools keep their deterministic impact', (
     expect(x.target).toBe('shared/rapport.md');
     expect(x.effect).toBe('write');
   });
+
+  it('register_project : une écriture ciblée sur le dossier, jamais « destructive » (P10b, passe 44)', () => {
+    const x = explainApproval({
+      toolName: 'register_project',
+      toolInput: { path: 'veille-ia', name: 'Veille IA' },
+    });
+    expect(x.provenance.kind).toBe('builtin');
+    expect(x.effect).toBe('write');
+    expect(x.target).toBe('veille-ia');
+    expect(x.impact).toContain('registers it as a documents project');
+    expect(x.impact).not.toContain('irreversible');
+  });
 });
 
 describe('argument rendering', () => {
