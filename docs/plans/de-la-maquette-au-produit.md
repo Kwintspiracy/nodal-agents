@@ -52,14 +52,15 @@ code : c'est un travail. La règle est récursive sur les agents à qui on a pas
 Elle se lit sur les cartes de P1, jamais sur un nom d'outil ; pour les outils
 tiers il faut persister leur niveau de risque.
 
-**Une question ouverte, à trancher par Quentin : l'agent de recherche.** À
-02:15 il a cité « utilise l'agent de recherche et ne fait pas la recherche
-lui-même » comme une production. À 02:20 il a posé qu'un sous-agent qui n'a fait
-que parler reste du chat. Deux lectures possibles, le plan n'en choisit aucune :
-(a) confier le travail à un agent spécialisé est en soi une production, quel que
-soit ce qu'il rend ; (b) la règle est récursive et un agent de recherche qui a
-seulement répondu reste du chat, celui qui a produit un document est un travail.
-La garde de P7 a une variante par lecture.
+**L'agent de recherche — tranché par Quentin le 06/09 au moment du go.** À
+02:15 il avait cité « utilise l'agent de recherche et ne fait pas la recherche
+lui-même » comme une production ; à 02:20 il avait posé qu'un sous-agent qui n'a
+fait que parler reste du chat. En donnant le go il a confirmé la seconde lecture :
+« si un sous-agent est utilisé, ça ne correspond pas forcément à un projet ; s'il
+ne fait que répondre à un message dans le chat, ce n'est pas un projet ». La règle
+est donc **récursive** : un agent de recherche qui a seulement répondu reste du
+chat ; celui qui a produit un document est un travail, et l'encart remonte au tour
+parent. La garde de P7 est écrite pour cette lecture.
 
 
 **Chat accueille toutes les conversations**, dashboard et Telegram, Slack,
@@ -91,7 +92,7 @@ replié — il reçoit la prose, le fichier joint, et un lien vers le projet.
 | # | Lot | Pierres | Ce que Quentin voit à la fin | État |
 |---|-----|---------|------------------------------|------|
 | 1 | **Rendre visible ce qui existe** | P1 contrat de rendu · P2 conversation · P3 cartes de preuve et d'envoi · P4 barre d'état et coût | Une entrée « Spaces » ouvre le nouvel espace ; sa page est la conversation dessinée, avec preuves, coûts, jetons. Runs, Code et Chat inchangés | ✅ **LOT 1 CLOS le 06/09** — P1 (passe 16), P2 (19), P3 (21), P4 (24-25 : « aucun constat neuf ») ; retours de Quentin traités (automatisations à part, fil nettoyé sur capture réelle, coût cache-aware) · ⚠️ à voir par Quentin dans son navigateur : /spaces et un fil récent |
-| 2 | **Le projet et la conversation** | P5 registre des projets · P6 conversation continue et projet courant · P7 Chat pour toutes les conversations, encart · P8 Spaces = projets, nouveau projet, chat du projet · P9 Scheduled | Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les automatisations ont leur page | ⬜ plan réécrit le 06/09, **attend le go** |
+| 2 | **Le projet et la conversation** | P5 registre des projets · P6 conversation continue et projet courant · P7 Chat pour toutes les conversations, encart · P8 Spaces = projets, nouveau projet, chat du projet · P9 Scheduled | Chat regroupe dashboard et Telegram ; un projet naît d'un clic ou d'une production ; les automatisations ont leur page | 🟡 **go de Quentin le 06/09** — ordre : P5 · P9 (en parallèle) → P6 → P7 → P8 ; chaque pierre codée par Opus, relue par moi, puis `codex review` |
 | 3 | **L'agent qui demande et montre** | P10 `ask_user` · P11 fichiers et diff · P12 le tableur rendu | « Où écrire ? » avec boutons dans le chat et dans Telegram ; diffs cliquables ; un classeur qui s'affiche | ⬜ |
 | 4 | **Ce qui reste cher** | P13 relecteurs (= PR④ de Vérifier & Corriger) · P14 aperçu vivant | Deux relecteurs cités ; l'application qui tourne au centre du projet | ⬜ |
 
@@ -294,7 +295,7 @@ lu est bien facturé au dixième et le cache écrit à 1,25×, sinon le test rou
 
 **Garde.** Un « bonjour » : sans encart. Une recherche web répondue dans le chat : sans encart. Un `save_memory` : sans encart. Un `file_write` dans un projet : encart avec le lien. Un email avec les résultats : encart. Un connecteur en écriture : encart ; en lecture : sans. Un sous-agent qui n'a fait que parler : sans ; un sous-agent qui a écrit : encart sur le tour parent.
 
-**À trancher par Quentin.** **L'agent de recherche.** À 02:15 il l'a cité comme une production (« utilise l'agent de recherche et ne fait pas la recherche lui-même ») ; à 02:20 il a posé qu'un sous-agent qui n'a fait que parler reste du chat. Le plan ne choisit pas : lecture (a), confier le travail à un agent spécialisé est en soi une production ; lecture (b), la règle est récursive, seul ce que le sous-agent a produit compte. La garde « un sous-agent qui n'a fait que parler : sans encart » vaut pour (b) ; pour (a) elle devient « une délégation à un agent de recherche : encart ».
+**Tranché par Quentin le 06/09 (au go du lot 2).** **L'agent de recherche** suit la règle récursive : seul ce que le sous-agent a produit compte. « S'il ne fait que répondre à un message dans le chat, ce n'est pas un projet. » La garde « un sous-agent qui n'a fait que parler : sans encart » est donc la bonne ; déléguer n'est jamais en soi une production.
 
 **À vérifier.** **Deux sources pour un fil.** Une conversation du dashboard vit dans `conversations` + `chat_messages` ; le contrat du schéma dit qu'un tour pur ne crée pas de job et qu'un tour devenu action porte `jobId`. Le fil de P2 lit un job : P7 doit lire les deux (les tours dans `chat_messages`, les actions par leur job) — à vérifier dans le code du chat avant de découper P7. Et répondre depuis le web dans un fil Telegram, Slack, Discord : canal par canal, ce que l'outil d'envoi permet aujourd'hui.
 

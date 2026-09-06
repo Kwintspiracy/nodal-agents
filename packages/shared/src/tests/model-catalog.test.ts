@@ -276,7 +276,14 @@ describe('GLM 5.3 Flash', () => {
   });
 
   it('carries the upstream pricing', () => {
-    expect(flash?.pricing).toEqual({ inputPerMillionUsd: 0.075, outputPerMillionUsd: 0.25 });
+    // Le prix de lecture du cache (P4a, lu sur /api/v1/models le 2026-09-06)
+    // fait partie du contrat : sans lui, le coût d'un tour qui relit son
+    // contexte serait compté au prix plein.
+    expect(flash?.pricing).toEqual({
+      inputPerMillionUsd: 0.075,
+      outputPerMillionUsd: 0.25,
+      cacheReadPerMillionUsd: 0.015,
+    });
   });
 
   it('supports tools, and reasoning WITHOUT the family mandatory flag', () => {

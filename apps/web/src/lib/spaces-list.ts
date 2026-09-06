@@ -1,10 +1,17 @@
-// spaces-list.ts — la liste des espaces, en deux sections (retour de Quentin,
-// 06/09 : « la liste est noyée par les cron, il faut les grouper à part »).
+// spaces-list.ts — le regroupement des runs d'automatisation (retour de
+// Quentin, 06/09 : « la liste est noyée par les cron, il faut les grouper à
+// part »).
 //
 // Pur, pas de DB : des lignes → { conversations, scheduled }. Les tâches
 // venues d'une automatisation se regroupent par automatisation (une ligne par
 // automatisation, ses runs dessous, repliés) ; tout le reste — dashboard,
 // Telegram, chat, API, webhook — est une conversation, telle quelle.
+//
+// P9 : les deux mondes ont désormais chacun LEUR page et LEUR action de
+// lecture. /scheduled n'utilise que `scheduled` (elle ne lit que des runs
+// cron) ; /spaces n'appelle plus cette fonction du tout. Le tri `conversations`
+// reste pour que la fonction demeure totale — une ligne non-cron passée ici
+// n'est pas perdue en silence (invariant #4).
 
 import type { SpaceListRow } from './actions.ts';
 

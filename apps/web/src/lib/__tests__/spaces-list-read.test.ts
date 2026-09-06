@@ -1,7 +1,9 @@
-// spaces-list-read.test.ts — la liste des espaces lue en base : les
-// automatisations et les conversations ont chacune leur limite (revue passe
-// 22 : une limite globale laissait les cron évincer les conversations), les
-// délégations n'apparaissent pas, le nom de l'automatisation vient de la trace.
+// spaces-list-read.test.ts — les deux listes lues en base. P9 : les runs
+// d'automatisation ont leur page, donc leur ACTION. `listSpacesAction` ne rend
+// que des conversations (aucune ligne cron, même quand les runs cron sont plus
+// récents et plus nombreux), `listScheduledRunsAction` ne rend que des runs
+// cron, avec le nom de l'automatisation lu dans la trace et sa propre limite.
+// Dans les deux cas les délégations n'apparaissent pas.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -48,7 +50,8 @@ beforeAll(async () => {
   testDb = result.db;
   seed = await seedMinimal(testDb);
 
-  // Une conversation ANCIENNE (Telegram), puis cinq runs cron plus récents.
+  // Une conversation ANCIENNE (Telegram), puis 300 runs cron TOUS plus
+  // récents qu'elle — bien au-delà de la limite par défaut des conversations.
   const [conv] = await testDb
     .insert(agentJobs)
     .values({
@@ -60,17 +63,17 @@ beforeAll(async () => {
       createdAt: at(600),
     })
     .returning();
-  for (let i = 0; i < 5; i++) {
-    await testDb.insert(agentJobs).values({
+  await testDb.insert(agentJobs).values(
+    Array.from({ length: 300 }, (_, i) => ({
       entityId: seed.entityId,
       agentId: seed.agentId,
       channel: 'cron',
       task: 'Goal: detect new CHANGELOG entries',
       status: i === 2 ? 'failed' : 'completed',
-      createdAt: at(60 - i * 10),
+      createdAt: at(1 + i),
       triggerContext: { type: 'cron', scheduleId: 'sched-1', scheduleName: 'Changelog' } as never,
-    });
-  }
+    })),
+  );
   // Une délégation (enfant) : jamais une ligne de la liste.
   await testDb.insert(agentJobs).values({
     entityId: seed.entityId,
@@ -84,19 +87,49 @@ beforeAll(async () => {
 });
 
 describe('listSpacesAction', () => {
-  it('une conversation ancienne survit à des runs cron plus nombreux que sa limite', async () => {
+  it('ne rend AUCUN run cron, même quand 300 runs cron sont plus récents que la conversation', async () => {
     const { listSpacesAction } = await actions();
-    const r = await listSpacesAction({ conversations: 10, scheduledRuns: 3 });
+    const r = await listSpacesAction();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const channels = r.data.map((x) => x.channel);
-    expect(channels.filter((c) => c === 'telegram')).toHaveLength(1);
-    expect(channels.filter((c) => c === 'cron')).toHaveLength(3); // la limite des automatisations, pas la globale
+    expect(channels).not.toContain('cron'); // P9 : les runs vivent sur /scheduled
     expect(channels).not.toContain('internal'); // la délégation n'est pas une tâche de tête
-    const cron = r.data.filter((x) => x.channel === 'cron');
-    expect(cron.every((x) => x.scheduleName === 'Changelog')).toBe(true);
-    // Les plus récents d'abord, toutes sections confondues.
+    // La conversation ancienne est là malgré les 300 runs plus récents.
+    expect(r.data.map((x) => x.task)).toContain('Rappelle-moi ce que j’aime');
+  });
+
+  it('applique sa limite aux conversations', async () => {
+    const { listSpacesAction } = await actions();
+    const r = await listSpacesAction({ conversations: 1 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data).toHaveLength(1);
+    expect(r.data[0]!.channel).not.toBe('cron');
+  });
+});
+
+describe('listScheduledRunsAction', () => {
+  it('ne rend que les runs cron, avec le nom de l’automatisation, les plus récents d’abord', async () => {
+    const { listScheduledRunsAction } = await actions();
+    const r = await listScheduledRunsAction();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data).toHaveLength(300); // la limite par défaut, tous les runs semés
+    expect(r.data.every((x) => x.channel === 'cron')).toBe(true);
+    expect(r.data.every((x) => x.scheduleName === 'Changelog')).toBe(true);
+    expect(r.data.filter((x) => x.status === 'failed')).toHaveLength(1);
     const times = r.data.map((x) => x.createdAt?.getTime() ?? 0);
     expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+
+  it('applique sa limite', async () => {
+    const { listScheduledRunsAction } = await actions();
+    const r = await listScheduledRunsAction({ limit: 3 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data).toHaveLength(3);
+    // Les trois plus récents : 1, 2 et 3 minutes avant maintenant.
+    expect(r.data.every((x) => x.channel === 'cron')).toBe(true);
   });
 });

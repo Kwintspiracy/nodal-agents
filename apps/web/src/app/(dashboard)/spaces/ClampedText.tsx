@@ -5,6 +5,7 @@
 // montre, il ne la déroule pas d'office (retour de Quentin, 06/09).
 
 import { useState } from 'react';
+import TextButton from '@/components/ui/TextButton';
 
 const LINES = 6;
 
@@ -22,13 +23,12 @@ export default function ClampedText({
     <div className={className}>
       <p className={`whitespace-pre-wrap ${!open && long ? 'line-clamp-6' : ''}`}>{text}</p>
       {long && (
-        <button
-          type="button"
+        <TextButton
           onClick={() => setOpen((v) => !v)}
           className="mt-1 text-body-12 text-ink-3 hover:text-ink"
         >
           {open ? 'Show less' : 'Show more'}
-        </button>
+        </TextButton>
       )}
     </div>
   );

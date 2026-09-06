@@ -12,6 +12,7 @@
 import { useState } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import TextButton from '@/components/ui/TextButton';
 import type { SpaceCostView } from '@/lib/actions.ts';
 import { formatCost, formatMs, formatTokens } from './format.ts';
 
@@ -106,9 +107,9 @@ function Seg({
   } ${onClick ? 'cursor-pointer hover:bg-hover' : ''}`;
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={cls} aria-pressed={active}>
+      <TextButton onClick={onClick} className={cls} aria-pressed={active}>
         {children}
-      </button>
+      </TextButton>
     );
   }
   return <span className={cls}>{children}</span>;
@@ -154,13 +155,12 @@ function CostPanel({ cost, onClose }: { cost: SpaceCostView; onClose: () => void
       <div className="mb-3 flex items-baseline gap-3">
         <h2 className="text-medium-15 text-ink">What this work cost</h2>
         <span className="text-mono-11 text-ink-4">updated every turn · nothing is final</span>
-        <button
-          type="button"
+        <TextButton
           onClick={onClose}
           className="ml-auto rounded-[8px] border border-rule-2 bg-paper px-2.5 py-1 text-body-12 text-ink-2 hover:bg-hover"
         >
           Back to the conversation
-        </button>
+        </TextButton>
       </div>
       {sentences(cost).map((s, i) => (
         <p key={i} className="mb-3 max-w-[66ch] text-body-14 text-ink-2">

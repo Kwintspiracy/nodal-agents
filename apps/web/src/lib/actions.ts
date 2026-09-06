@@ -2250,85 +2250,132 @@ export type SpaceListRow = {
   scheduleName: string | null;
 };
 
+/** Les colonnes lues par les deux listes (conversations et runs planifiés). */
+const SPACE_LIST_SELECT = {
+  id: agentJobs.id,
+  agentName: agents.name,
+  agentSlug: agents.slug,
+  agentAvatarUrl: agents.avatarUrl,
+  channel: agentJobs.channel,
+  task: agentJobs.task,
+  status: agentJobs.status,
+  costUsd: agentJobs.totalCostUsd,
+  inputTokens: agentJobs.inputTokens,
+  outputTokens: agentJobs.outputTokens,
+  createdAt: agentJobs.createdAt,
+  completedAt: agentJobs.completedAt,
+  conversationId: agentJobs.conversationId,
+  scheduleId: agentJobs.scheduleId,
+  triggerContext: agentJobs.triggerContext,
+};
+
+type SpaceListDbRow = {
+  id: string;
+  agentName: string | null;
+  agentSlug: string | null;
+  agentAvatarUrl: string | null;
+  channel: string;
+  task: string;
+  status: string | null;
+  costUsd: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  createdAt: Date | null;
+  completedAt: Date | null;
+  conversationId: string | null;
+  scheduleId: string | null;
+  triggerContext: JobTriggerContext | null;
+};
+
+function toSpaceListRow(r: SpaceListDbRow): SpaceListRow {
+  return {
+    id: r.id,
+    agentName: r.agentName ?? '—',
+    agentSlug: r.agentSlug,
+    agentAvatarUrl: r.agentAvatarUrl,
+    channel: r.channel,
+    task: r.task,
+    status: r.status,
+    costUsd: r.costUsd ?? 0,
+    inputTokens: r.inputTokens ?? 0,
+    outputTokens: r.outputTokens ?? 0,
+    createdAt: r.createdAt,
+    completedAt: r.completedAt,
+    conversationId: r.conversationId,
+    scheduleId: r.scheduleId,
+    scheduleName:
+      r.channel === 'cron' && r.triggerContext?.type === 'cron'
+        ? r.triggerContext.scheduleName
+        : null,
+  };
+}
+
 /**
- * Les tâches de TÊTE (sans parent) de l'entité, les plus récentes d'abord,
- * avec leur automatisation quand elles en viennent — la page /spaces les
- * sépare : les conversations d'un côté, les automatisations groupées de
- * l'autre (retour de Quentin, 06/09 : « la liste est noyée par les cron »).
+ * Les CONVERSATIONS de TÊTE (sans parent) de l'entité, les plus récentes
+ * d'abord. Les runs d'automatisation en sont exclus : ils ont leur propre
+ * page (P9) et leur propre action, `listScheduledRunsAction`.
+ *
+ * La passe 22 avait séparé les deux mondes en deux REQUÊTES avec deux limites,
+ * parce qu'une limite globale laissait 200 runs cron récents évincer toutes
+ * les conversations. Deux ACTIONS règlent le même problème plus franchement :
+ * chaque page lit ce qu'elle montre, et rien d'autre.
  */
 export async function listSpacesAction(
-  opts: { conversations?: number; scheduledRuns?: number } = {},
+  opts: { conversations?: number } = {},
 ): Promise<ActionResult<SpaceListRow[]>> {
   try {
     const session = await getSession();
     const db = getDb();
-    // Deux requêtes, deux limites (revue passe 22) : une seule limite globale
-    // appliquée AVANT la séparation laissait 200 runs cron récents évincer
-    // toutes les conversations — l'inverse exact de ce que la page promet.
     const conversationsLimit = Math.min(opts.conversations ?? 100, 500);
-    const scheduledLimit = Math.min(opts.scheduledRuns ?? 300, 2000);
-    const select = {
-      id: agentJobs.id,
-      agentName: agents.name,
-      agentSlug: agents.slug,
-      agentAvatarUrl: agents.avatarUrl,
-      channel: agentJobs.channel,
-      task: agentJobs.task,
-      status: agentJobs.status,
-      costUsd: agentJobs.totalCostUsd,
-      inputTokens: agentJobs.inputTokens,
-      outputTokens: agentJobs.outputTokens,
-      createdAt: agentJobs.createdAt,
-      completedAt: agentJobs.completedAt,
-      conversationId: agentJobs.conversationId,
-      scheduleId: agentJobs.scheduleId,
-      triggerContext: agentJobs.triggerContext,
-    };
-    const topLevel = and(eq(agentJobs.entityId, session.entityId), isNull(agentJobs.parentJobId));
-    const [conversationRows, scheduledRows] = await Promise.all([
-      db
-        .select(select)
-        .from(agentJobs)
-        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-        .where(and(topLevel, ne(agentJobs.channel, 'cron')))
-        .orderBy(desc(agentJobs.createdAt))
-        .limit(conversationsLimit),
-      db
-        .select(select)
-        .from(agentJobs)
-        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-        .where(and(topLevel, eq(agentJobs.channel, 'cron')))
-        .orderBy(desc(agentJobs.createdAt))
-        .limit(scheduledLimit),
-    ]);
-    const rows = [...conversationRows, ...scheduledRows].sort(
-      (a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0),
-    );
-    return ok(
-      rows.map((r) => ({
-        id: r.id,
-        agentName: r.agentName ?? '—',
-        agentSlug: r.agentSlug,
-        agentAvatarUrl: r.agentAvatarUrl,
-        channel: r.channel,
-        task: r.task,
-        status: r.status,
-        costUsd: r.costUsd ?? 0,
-        inputTokens: r.inputTokens ?? 0,
-        outputTokens: r.outputTokens ?? 0,
-        createdAt: r.createdAt,
-        completedAt: r.completedAt,
-        conversationId: r.conversationId,
-        scheduleId: r.scheduleId,
-        scheduleName:
-          r.channel === 'cron' && r.triggerContext?.type === 'cron'
-            ? r.triggerContext.scheduleName
-            : null,
-      })),
-    );
+    const rows = await db
+      .select(SPACE_LIST_SELECT)
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          isNull(agentJobs.parentJobId),
+          ne(agentJobs.channel, 'cron'),
+        ),
+      )
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(conversationsLimit);
+    return ok(rows.map(toSpaceListRow));
   } catch (err) {
     console.error('[listSpacesAction]', err);
     return fail('db_error', 'Failed to load spaces');
+  }
+}
+
+/**
+ * Les runs d'automatisation de TÊTE, les plus récents d'abord (P9 : les runs
+ * d'automatisation ont leur page, /scheduled, où ils sont groupés par
+ * automatisation ; ils ne noient plus la liste des conversations).
+ */
+export async function listScheduledRunsAction(
+  opts: { limit?: number } = {},
+): Promise<ActionResult<SpaceListRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const limit = Math.min(opts.limit ?? 300, 2000);
+    const rows = await db
+      .select(SPACE_LIST_SELECT)
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          isNull(agentJobs.parentJobId),
+          eq(agentJobs.channel, 'cron'),
+        ),
+      )
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(limit);
+    return ok(rows.map(toSpaceListRow));
+  } catch (err) {
+    console.error('[listScheduledRunsAction]', err);
+    return fail('db_error', 'Failed to load scheduled runs');
   }
 }
 

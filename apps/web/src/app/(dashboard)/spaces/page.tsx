@@ -1,16 +1,16 @@
 import { listSpacesAction } from '@/lib/actions.ts';
-import { groupSpaces } from '@/lib/spaces-list.ts';
 import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
 import ConversationsTable from './ConversationsTable.tsx';
-import ScheduledSection from './ScheduledSection.tsx';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
 
 export default async function SpacesPage() {
+  // P9 : plus AUCUN run d'automatisation ici. `listSpacesAction` ne lit que
+  // les conversations ; les runs cron vivent sur /scheduled.
   const result = await listSpacesAction();
-  const { conversations, scheduled } = groupSpaces(result.ok ? result.data : []);
+  const conversations = result.ok ? result.data : [];
 
   return (
     <PageShell
@@ -19,24 +19,13 @@ export default async function SpacesPage() {
     >
       {!result.ok ? (
         <p className="text-sm text-err">{result.message}</p>
-      ) : conversations.length === 0 && scheduled.length === 0 ? (
+      ) : conversations.length === 0 ? (
         <EmptyState
           title="No conversation yet"
-          description="Ask an agent something from Chat, Telegram or an automation, and it shows up here."
+          description="Ask an agent something from Chat or Telegram, and it shows up here."
         />
       ) : (
-        <>
-          {conversations.length === 0 ? (
-            <EmptyState
-              compact
-              title="No conversation yet"
-              description="Everything so far came from automations. They are listed below."
-            />
-          ) : (
-            <ConversationsTable rows={conversations} />
-          )}
-          <ScheduledSection groups={scheduled} />
-        </>
+        <ConversationsTable rows={conversations} />
       )}
     </PageShell>
   );
