@@ -457,10 +457,10 @@
             un classeur qui s'affiche.
           </td>
           <td>
-            <span class="etat">go le 06/09 (soir)</span> — ✅ P5b (<code>16d1f574</code>, passe
-            Codex 32 traitée dans <code>4491ae46</code> + <code>aefdcec3</code>, passe 33 lancée) ·
-            🔄 P10a <code>ask_user</code> (Opus en cours) · ⬜ P10b « où écrire ? » · ⬜ P11 · ⬜
-            P12
+            <span class="etat">go le 06/09 (soir)</span> — ✅ P5b (<code>16d1f574</code> ; passes
+            Codex 32-33 traitées dans <code>4491ae46</code>, <code>aefdcec3</code>,
+            <code>934091d4</code> ; passe 34 lancée) · 🔄 P10a <code>ask_user</code> (Opus en cours)
+            · ⬜ P10b « où écrire ? » · ⬜ P11 · ⬜ P12
           </td>
         </tr>
         <tr>
@@ -1162,10 +1162,11 @@
       <span class="l">livré</span
       ><span class="v"
         ><b>Le 06/09</b> (<code>16d1f574</code>, puis <code>4491ae46</code> et
-        <code>aefdcec3</code> pour la passe Codex 32). Codé par moi : l'agent Opus est tombé sur sa
-        limite de session au premier geste, et Sonnet est interdit (Quentin, 06/09). En place :
-        <code>projects/markers.ts</code> (le manifeste et les chemins réels, partagés entre
-        l'intention et le registre), <code>projects/register.ts</code> (une instruction
+        <code>aefdcec3</code> pour la passe Codex 32, <code>934091d4</code> pour la passe 33). Codé
+        par moi : l'agent Opus est tombé sur sa limite de session au premier geste, et Sonnet est
+        interdit (Quentin, 06/09). En place : <code>projects/markers.ts</code> (le manifeste et les
+        chemins réels, partagés entre l'intention et le registre),
+        <code>projects/register.ts</code> (une instruction
         <code>INSERT … ON CONFLICT DO UPDATE … WHERE registered_at IS NULL</code>, nom choisi et
         masquage jamais touchés), la déclaration dans <code>attach.ts</code> avant la recherche du
         projet contenant, le chemin CLI qui lit les chemins écrits par le harnais, le backfill au
@@ -1188,7 +1189,11 @@
         projet montre son activité,
         <b>le backfill rattache l'historique</b> (<code>agent_jobs.project_id</code>) — aussi pour
         un projet déclaré d'un clic. (5) Les chemins du harnais se résolvent sans le disque. (6)
-        Compteurs du backfill par raison.</span
+        Compteurs du backfill par raison. <b>Passe 33</b> (aucun constat bloquant, les huit constats
+        de 32 confirmés traités) : la course entre l'enregistreur d'événements de la CLI (insertions
+        jamais attendues) et la lecture des chemins écrits — les écritures d'audit en vol sont
+        attendues avant de lire ; et <code>realPathOf</code> d'un chemin disparu remonte à l'ancêtre
+        existant (un fichier écrit puis supprimé sous un alias retombe sous sa racine réelle).</span
       >
     </div>
     <div class="ligne">
