@@ -11,7 +11,11 @@
 // (`scanProjects`, job/code-projects.ts) — jamais par une seconde règle — et
 // RATTACHE les jobs qui y ont écrit (`agent_jobs.project_id`, « le premier
 // gagne », comme au fil de l'eau) : sans ça, la page d'un projet déclaré ici
-// n'aurait aucune conversation à montrer alors que l'activité existe.
+// n'aurait aucune conversation à montrer alors que l'activité existe. Le
+// rattachement de l'historique vaut pour TOUT projet dérivé qui est au
+// registre, qu'il vienne d'être déclaré ici ou l'ait été depuis Spaces : un
+// projet déclaré d'un clic a la même activité passée qu'un projet déclaré au
+// boot, et sa page doit la montrer aussi.
 //
 // IDEMPOTENT : une ligne déjà déclarée n'est pas retouchée
 // (`registerCodeProjects` ne met à jour que `registered_at IS NULL`), un job
@@ -42,7 +46,16 @@
 // phrase.
 
 import { existsSync } from 'node:fs';
-import { agentJobs, entities, and, eq, inArray, isNull } from '@nodal-agents/db';
+import {
+  agentJobs,
+  codeProjects,
+  entities,
+  and,
+  eq,
+  inArray,
+  isNull,
+  isNotNull,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { isWithinRoot, projectKey } from '@nodal-agents/shared';
 import { registerCodeProjects } from '@nodal-agents/tools';
@@ -97,12 +110,27 @@ export async function backfillRegisteredProjects(
         registeredAt: new Date(),
         roots: [{ key: projectKey(project.path), path: project.path }],
       });
-      const row = declared[0];
-      if (!row) {
+      let projectId = declared[0]?.id ?? null;
+      if (projectId) {
+        report.registered += 1;
+      } else {
+        // Déjà au registre (par un boot précédent, ou d'un clic dans Spaces) :
+        // rien à déclarer, mais son historique se rattache comme les autres.
+        const [existing] = await db
+          .select({ id: codeProjects.id })
+          .from(codeProjects)
+          .where(
+            and(
+              eq(codeProjects.entityId, entityId),
+              eq(codeProjects.projectKey, projectKey(project.path)),
+              isNotNull(codeProjects.registeredAt),
+            ),
+          )
+          .limit(1);
         report.skipped.alreadyRegistered += 1;
-        continue;
+        projectId = existing?.id ?? null;
+        if (!projectId) continue;
       }
-      report.registered += 1;
 
       // L'historique : les jobs qui ont écrit dans ce projet et n'en portent
       // encore aucun. `project_id IS NULL` dans le WHERE = « le premier
@@ -111,7 +139,7 @@ export async function backfillRegisteredProjects(
       if (project.jobIds.length > 0) {
         const attached = await db
           .update(agentJobs)
-          .set({ projectId: row.id })
+          .set({ projectId })
           .where(
             and(
               inArray(agentJobs.id, project.jobIds),

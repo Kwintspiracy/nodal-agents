@@ -132,6 +132,17 @@ beforeAll(async () => {
       createdAt: new Date('2026-08-06T10:00:00.000Z'),
     },
   ]);
+  // `app2` est DÉJÀ au registre, déclaré depuis Spaces : le backfill n'y touche
+  // pas, mais rattache son historique comme celui des projets qu'il déclare.
+  await db.insert(codeProjects).values({
+    entityId: seed.entityId,
+    projectPath: `${dev}/app2`,
+    projectKey: projectKey(`${dev}/app2`),
+    displayName: 'App deux',
+    agentId: seed.agentId,
+    registeredAt: new Date('2026-09-01T10:00:00.000Z'),
+    registeredFrom: 'spaces',
+  });
   _resetProjectsCacheForTests();
 });
 
@@ -173,11 +184,12 @@ describe('backfillRegisteredProjects', () => {
     const avant = new Date();
     const report = await backfillRegisteredProjects(db);
 
-    // app1, app2, app3 déclarés ; vrac (sans manifeste) et secret (masqué) sautés.
+    // app1 et app3 déclarés, app2 déjà là ; vrac (sans manifeste) et secret
+    // (masqué) sautés.
     expect(report).toEqual({
-      registered: 3,
+      registered: 2,
       jobsAttached: 2,
-      skipped: { missing: 0, noMarker: 1, hidden: 1, alreadyRegistered: 0 },
+      skipped: { missing: 0, noMarker: 1, hidden: 1, alreadyRegistered: 1 },
     });
 
     const app1 = await ligne(`${dev}/app1`);
@@ -193,8 +205,14 @@ describe('backfillRegisteredProjects', () => {
     // L'instant de la déclaration, pas la dernière activité.
     expect(app1!.registeredAt!.getTime()).toBeGreaterThanOrEqual(avant.getTime() - 1000);
 
+    // Déclaré depuis Spaces : intact — nom, agent, origine, date.
     const app2 = await ligne(`${dev}/app2`);
-    expect(app2).toMatchObject({ agentId: null, registeredFrom: 'conversation' });
+    expect(app2).toMatchObject({
+      displayName: 'App deux',
+      agentId: seed.agentId,
+      registeredFrom: 'spaces',
+      registeredAt: new Date('2026-09-01T10:00:00.000Z'),
+    });
 
     // Un seul détenteur : c'est lui.
     const app3 = await ligne(`${dev2}/app3`);
@@ -205,7 +223,8 @@ describe('backfillRegisteredProjects', () => {
     expect(await ligne(dev)).toBeNull();
 
     // L'historique rattaché : le job semé a écrit dans app1 ET app2 — le
-    // premier gagne, et le scan rend le plus actif d'abord (app2, 03/08).
+    // premier gagne, et le scan rend le plus actif d'abord (app2, 03/08) ; app2
+    // était déclaré d'avance, son historique se rattache quand même.
     expect(await projetDuJob(seed.jobId)).toBe(app2!.id);
     expect(await projetDuJob(job2Id)).toBe(app3!.id);
   });
