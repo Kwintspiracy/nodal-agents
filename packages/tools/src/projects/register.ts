@@ -43,6 +43,25 @@ export interface RegisterCodeProjectsInput {
   readonly registeredJobId: string | null;
   /** L'instant de la déclaration — `now()` au fil de l'eau, la dernière activité au backfill. */
   readonly registeredAt: Date;
+  /**
+   * CE QUE le projet produit — du code, ou des documents (P10b).
+   *
+   * OBLIGATOIRE, jamais par défaut : les deux appelants historiques déclarent
+   * une racine à MANIFESTE, donc `'code'`, et le troisième
+   * (`register_project`, la réponse à « où écrire ? ») déclare un dossier de
+   * DOCUMENTS. Un défaut aurait rangé le prochain appelant au hasard.
+   */
+  readonly kind: 'code' | 'documents';
+  /**
+   * Le nom choisi, posé à l'INSERT SEULEMENT.
+   *
+   * Sur une ligne qui existe déjà, `display_name` reste ce que le PROPRIÉTAIRE
+   * a écrit : il l'a saisi dans Spaces, et un agent qui redéclare le même
+   * dossier sous un autre nom le renommerait dans le dos de celui qui l'a
+   * nommé. C'est la même règle que `hidden` (voir l'en-tête). `null`/absent =
+   * nom du dossier.
+   */
+  readonly displayName?: string | null;
   /** Les racines à déclarer, telles que `resolveProjectRoots` les rend (clé + chemin affiché). */
   readonly roots: ReadonlyArray<{ readonly key: string; readonly path: string }>;
 }
@@ -74,7 +93,8 @@ export async function registerCodeProjects(
         entityId: input.entityId,
         projectPath: root.path,
         projectKey: root.key,
-        kind: 'code',
+        kind: input.kind,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
         agentId: input.agentId,
         registeredAt: input.registeredAt,
         registeredFrom: 'conversation',
@@ -83,7 +103,9 @@ export async function registerCodeProjects(
       .onConflictDoUpdate({
         target: [codeProjects.entityId, codeProjects.projectKey],
         set: {
-          kind: 'code',
+          // `display_name` n'est PAS dans le `set` : voir `displayName` plus
+          // haut — un nom déjà écrit par le propriétaire ne se réécrit pas.
+          kind: input.kind,
           // Un agent connu remplace l'absence ; une absence ne remplace rien.
           ...(input.agentId ? { agentId: input.agentId } : {}),
           registeredAt: input.registeredAt,

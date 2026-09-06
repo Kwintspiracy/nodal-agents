@@ -167,6 +167,19 @@ export interface ConversationContext {
   openedByCommand: boolean;
   /** Le projet courant, ou `null` tant qu'aucune production n'a atterri dans un projet enregistré. */
   currentProject: { name: string; path: string; kind: 'code' | 'documents' } | null;
+  /**
+   * Les projets DÉCLARÉS de l'espace (P10b) — ce que l'agent met en options
+   * quand il demande « où ranger ce document ? ».
+   *
+   * Distincts des projets du bloc `## Runtime`, qui sont DÉRIVÉS de l'activité
+   * de code : ceux-ci sont au REGISTRE (`code_projects.registered_at`), donc
+   * choisis par quelqu'un. Rendus seulement quand la conversation n'a pas
+   * encore de projet — avec un projet courant, la question ne se pose plus, et
+   * la liste ne ferait qu'inviter à en changer.
+   *
+   * Absent sur les appelants qui ne les chargent pas (aperçu du dashboard).
+   */
+  registeredProjects?: ReadonlyArray<{ name: string; path: string; kind: 'code' | 'documents' }>;
 }
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
@@ -386,6 +399,9 @@ function buildJobContextBlock(ctx: JobContext): string {
 
 // ─── buildConversationBlock ───────────────────────────────────────────────────
 
+/** Combien de projets déclarés le bloc `## Conversation` liste au plus (P10b). */
+export const REGISTERED_PROJECTS_IN_PROMPT = 12;
+
 /**
  * Render the `## Conversation` block (P6).
  *
@@ -427,10 +443,37 @@ function buildConversationBlock(conv: ConversationContext): string {
         'unless the user names another place.',
     );
   } else {
+    // P10b — « rien ne se crée en silence ». Texte de PLATEFORME, pas la voix
+    // de l'agent (invariant #2) : c'est une règle de rangement, au même titre
+    // que la phrase du projet courant juste au-dessus. Elle ne dit pas quoi
+    // répondre à l'utilisateur, elle dit dans quel ordre poser les gestes.
     lines.push(
       '- Current project: none yet. Nothing produced in this conversation has landed ' +
-        'in a registered project.',
+        'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
+        'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
+        '`ask_user`: offer the registered projects by name and one "New project: <name you ' +
+        'propose>" option, then call `register_project` for a new one, then write. Code that ' +
+        'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
+        'its own project: never ask for it.',
     );
+    const registered = conv.registeredProjects ?? [];
+    if (registered.length > 0) {
+      // Les OPTIONS de cette question. Plafonnées à 12 : au-delà, la liste
+      // coûte plus de contexte qu'elle n'aide, et `ask_user` n'accepte de
+      // toute façon que six options.
+      //
+      // Neutralisation identique aux projets du bloc Runtime : ces noms
+      // viennent de la base et du disque, et un saut de ligne dans l'un d'eux
+      // forgerait une fausse section du prompt.
+      const shown = registered.slice(0, REGISTERED_PROJECTS_IN_PROMPT);
+      lines.push('- Registered projects you can offer as options:');
+      for (const p of shown) {
+        lines.push(
+          `  - **${sanitizePromptField(p.name, 80)}** — ` +
+            `\`${sanitizePromptField(p.path, 256)}\` (${p.kind})`,
+        );
+      }
+    }
   }
   return `\n\n## Conversation\n${lines.join('\n')}`;
 }

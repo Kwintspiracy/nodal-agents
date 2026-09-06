@@ -38,12 +38,17 @@ import {
   entities,
   verificationRuns,
 } from '@nodal-agents/db';
-import { normalizePath, projectKey, type VerifyCommand } from '@nodal-agents/shared';
+import {
+  normalizePath,
+  projectKey,
+  isSafeSubfolder,
+  type VerifyCommand,
+} from '@nodal-agents/shared';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { isUnderPath } from './code-projects.ts';
-import { isSafeSubfolder } from './project-path.ts';
+
 import { deriveVerifyStatus, type VerifyStatus } from './verification-display.ts';
 import { groupVerificationRuns, type VerificationSequenceView } from './verification-runs-view.ts';
 
@@ -348,7 +353,7 @@ export async function listProjectTerrainsAction(): Promise<ActionResult<ProjectT
 
 // ─── createProjectAction ─────────────────────────────────────────────────────
 
-// La règle du sous-dossier (`isSafeSubfolder`) vit dans `project-path.ts` :
+// La règle du sous-dossier (`isSafeSubfolder`) vit dans `@nodal-agents/shared` :
 // la modale de création l'applique aussi, pour montrer le chemin final pendant
 // la saisie, et un module 'use server' ne se charge pas dans le navigateur.
 

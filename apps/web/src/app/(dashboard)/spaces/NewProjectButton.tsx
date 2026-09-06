@@ -9,7 +9,7 @@
 // La modale n'est pas « dismissable » : c'est un formulaire d'édition, il ne se
 // ferme que par ses boutons (règle du dépôt). Et l'aperçu du chemin final est
 // montré PENDANT la saisie — la même règle que celle appliquée par l'action
-// (`project-path.ts`), pour qu'on ne découvre pas au clic que le sous-dossier
+// (`isSafeSubfolder`, @nodal-agents/shared), pour qu'on ne découvre pas au clic que le sous-dossier
 // était refusé.
 
 import { useEffect, useState, useTransition } from 'react';
@@ -27,7 +27,7 @@ import {
   listProjectTerrainsAction,
   type ProjectTerrain,
 } from '@/lib/project-actions.ts';
-import { previewProjectPath } from '@/lib/project-path.ts';
+import { previewProjectPath } from '@nodal-agents/shared';
 
 export default function NewProjectButton() {
   const router = useRouter();

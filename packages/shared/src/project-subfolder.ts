@@ -1,12 +1,18 @@
-// project-path.ts — la règle du sous-dossier d'un projet, et le chemin qu'elle
-// produit (plan « De la maquette au produit », P8).
+// project-subfolder.ts — la règle du sous-dossier d'un projet, et le chemin
+// qu'elle produit (plan « De la maquette au produit », P8 puis P10b).
 //
-// Module PUR, hors 'use server' : la modale « New project » doit montrer le
+// Module PUR, sans import Node : la modale « New project » doit montrer le
 // chemin final PENDANT la saisie, et un module serveur ne se charge pas dans le
-// navigateur. La règle vit donc ici, et `project-actions.ts` l'importe — un
-// seul énoncé, jamais deux copies qui divergeront le jour où l'une se resserre.
+// navigateur.
+//
+// Il vivait dans `apps/web/src/lib/project-path.ts` jusqu'à P10b. L'outil
+// `register_project` crée désormais un projet depuis une CONVERSATION, et il
+// doit appliquer EXACTEMENT la même règle que le bouton de Spaces : deux
+// énoncés auraient divergé le jour où l'un se resserre, et l'agent aurait pu
+// créer un dossier que l'écran refuse. La règle a donc remonté ici, où le web,
+// les outils et le runner la lisent tous les trois.
 
-import { normalizePath } from '@nodal-agents/shared';
+import { normalizePath } from './project-key';
 
 /**
  * Le sous-dossier accepté : des segments RELATIFS, et rien d'autre.

@@ -4,6 +4,7 @@
 import type { ToolRegistry } from '../types';
 import { returnResultTool } from './return-result';
 import { askUserTool } from './ask-user';
+import { registerProjectTool } from './register-project';
 import { saveMemoryTool } from './save-memory';
 import { queryMemoryTool } from './query-memory';
 import { searchHistoryTool } from './search-history';
@@ -31,6 +32,8 @@ import { listSchedulesTool } from './list-schedules';
 
 export { returnResultTool } from './return-result';
 export { askUserTool, AskUserInputSchema } from './ask-user';
+export { registerProjectTool, RegisterProjectInputSchema } from './register-project';
+export type { RegisterProjectInput, RegisterProjectOutput } from './register-project';
 export type { AskUserInput, AskUserOutput } from './ask-user';
 export { skillViewTool } from './skill-view';
 export { listModelsTool } from './list-models';
@@ -139,6 +142,7 @@ export type {
 export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(returnResultTool);
   registry.register(askUserTool);
+  registry.register(registerProjectTool);
   registry.register(skillViewTool);
   registry.register(listModelsTool);
   registry.register(listSchedulesTool);
@@ -209,6 +213,11 @@ export const ALWAYS_ON_TOOLS = [
   // par simple oubli de configuration, et ce qu'il produirait alors serait
   // indiscernable d'une réponse fondée.
   'ask_user',
+  // register_project — TOUJOURS disponible, pour la même raison qu'`ask_user` :
+  // c'est la seconde moitié d'un seul geste (P10b). Un agent qui peut demander
+  // « où ranger ce rapport ? » mais pas créer le projet que l'utilisateur vient
+  // de choisir n'aurait plus qu'à écrire quelque part au hasard.
+  'register_project',
   'skill_view',
   'list_models',
   'list_schedules',
@@ -260,6 +269,7 @@ export const UNBLOCKABLE_TOOLS: Readonly<Record<string, string>> = {
 export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: string }> = [
   { name: returnResultTool.name, description: returnResultTool.description },
   { name: askUserTool.name, description: askUserTool.description },
+  { name: registerProjectTool.name, description: registerProjectTool.description },
   { name: skillViewTool.name, description: skillViewTool.description },
   { name: listModelsTool.name, description: listModelsTool.description },
   { name: listSchedulesTool.name, description: listSchedulesTool.description },

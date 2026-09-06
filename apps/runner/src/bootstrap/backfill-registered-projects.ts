@@ -108,6 +108,9 @@ export async function backfillRegisteredProjects(
       }
       const declared = await registerCodeProjects(db, {
         entityId,
+        // Le backfill ne remonte que des racines à MANIFESTE (`hasMarker`
+        // ci-dessus) : ce sont des projets de CODE.
+        kind: 'code' as const,
         agentId: project.ownerIds.length === 1 ? (project.ownerIds[0] ?? null) : null,
         registeredJobId: null,
         registeredAt: new Date(),

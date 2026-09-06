@@ -23,9 +23,10 @@
 // `## Conversation` du prompt qui dit au modèle que c'est le premier tour.
 
 import { basename } from 'node:path/posix';
-import { eq, and, sql, desc, count, isNull, ne } from '@nodal-agents/db';
+import { eq, and, sql, desc, count, isNull, isNotNull, ne } from '@nodal-agents/db';
 import { agentJobs, conversations, chatMessages, codeProjects } from '@nodal-agents/db';
 import { stripGroupPrefix } from '@nodal-agents/shared';
+import { REGISTERED_PROJECTS_IN_PROMPT } from '@nodal-agents/orchestration';
 import type { ConversationContext } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -208,6 +209,7 @@ export async function loadConversationContext(
   const [conv] = await db
     .select({
       id: conversations.id,
+      entityId: conversations.entityId,
       channel: conversations.channel,
       projectId: codeProjects.id,
       projectPath: codeProjects.projectPath,
@@ -243,7 +245,60 @@ export async function loadConversationContext(
   // et ce reste EST la demande.
   const openedByCommand = priorTurns === 0 && (opts.task ?? '').trim() === NEW_CONVERSATION_COMMAND;
 
-  return { id: conv.id, priorTurns, openedByCommand, currentProject };
+  // P10b — les projets DÉCLARÉS de l'espace, chargés seulement quand le fil
+  // n'en a pas encore un : ce sont les options de la question « où ranger ce
+  // document ? ». Avec un projet courant, la question ne se pose plus, et la
+  // requête serait payée pour rien à chaque tour.
+  // `entity_id` est nullable en base : sans entité il n'y a pas de registre à
+  // interroger — liste vide, jamais un scan de toute la table.
+  const registeredProjects =
+    currentProject || !conv.entityId ? [] : await listRegisteredProjects(db, conv.entityId);
+
+  return {
+    id: conv.id,
+    priorTurns,
+    openedByCommand,
+    currentProject,
+    ...(registeredProjects.length > 0 ? { registeredProjects } : {}),
+  };
+}
+
+/**
+ * Les projets DÉCLARÉS de cette entité — jamais les lignes de COMPTABILITÉ.
+ *
+ * `registered_at IS NOT NULL` est LE discriminant du registre (migration 0093,
+ * voir le schéma) : une ligne posée par un renommage, un masquage ou une
+ * intention de mutation n'est pas un projet qu'on peut proposer. Les projets
+ * MASQUÉS sont exclus aussi — masquer les retire du bloc `## Runtime`, les
+ * proposer ici les ramènerait par la fenêtre.
+ *
+ * Plafonné à ce que le prompt affiche : rendre plus ne servirait qu'à jeter.
+ */
+async function listRegisteredProjects(
+  db: RunnerDeps['db'],
+  entityId: string,
+): Promise<Array<{ name: string; path: string; kind: 'code' | 'documents' }>> {
+  const rows = await db
+    .select({
+      path: codeProjects.projectPath,
+      displayName: codeProjects.displayName,
+      kind: codeProjects.kind,
+    })
+    .from(codeProjects)
+    .where(
+      and(
+        eq(codeProjects.entityId, entityId),
+        isNotNull(codeProjects.registeredAt),
+        eq(codeProjects.hidden, false),
+      ),
+    )
+    .orderBy(desc(codeProjects.registeredAt))
+    .limit(REGISTERED_PROJECTS_IN_PROMPT);
+  return rows.map((r) => ({
+    name: r.displayName ?? basename(r.path),
+    path: r.path,
+    kind: r.kind === 'documents' ? ('documents' as const) : ('code' as const),
+  }));
 }
 
 /**

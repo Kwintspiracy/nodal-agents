@@ -1,10 +1,10 @@
-// project-path.test.ts — la règle du sous-dossier, et le chemin qu'elle
+// project-subfolder.test.ts — la règle du sous-dossier, et le chemin qu'elle
 // produit. C'est la MÊME règle que celle appliquée par `createProjectAction` :
 // si l'aperçu montrait un chemin que l'action refuse, la modale promettrait un
 // dossier qui ne serait jamais créé.
 
 import { describe, it, expect } from 'vitest';
-import { isSafeSubfolder, previewProjectPath } from '../project-path.ts';
+import { isSafeSubfolder, previewProjectPath } from '../project-subfolder';
 
 const terrain = 'D:/Terrain';
 

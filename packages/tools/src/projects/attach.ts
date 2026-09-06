@@ -385,6 +385,8 @@ async function registerManifestProjects(
 
   const rows = await registerCodeProjects(ctx.db, {
     entityId: ctx.entityId,
+    // P5b : seules les racines à MANIFESTE arrivent ici — c'est du code.
+    kind: 'code' as const,
     agentId: ctx.agentId,
     registeredJobId: ctx.jobId,
     registeredAt: new Date(),

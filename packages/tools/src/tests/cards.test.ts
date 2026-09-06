@@ -123,6 +123,7 @@ const EXPECTED_CARDS: Record<string, ToolCard> = {
   pptx_read: 'read',
   pptx_replace_text: 'files',
   query_memory: 'search',
+  register_project: 'text',
   return_result: 'text',
   review_verdict: 'checks',
   run_command: 'terminal',

@@ -40,6 +40,7 @@ export * from './catastrophic-command';
 export * from './project-key';
 export * from './group-prefix';
 export * from './project-roots';
+export * from './project-subfolder';
 export * from './verify-command-discovery';
 export * from './types/verification';
 export * from './verification-manifest';

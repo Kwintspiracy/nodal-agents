@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs, codeProjects, toolCalls, eq } from '@nodal-agents/db';
+import { agentJobs, approvalRequests, codeProjects, toolCalls, eq } from '@nodal-agents/db';
 import { normalizePath, projectKey } from '@nodal-agents/shared';
 import { createToolRegistry } from '../../registry';
 import { registerBuiltins } from '../../builtin';
@@ -284,5 +284,72 @@ describe('le registre au seam d’exécution — la DÉCLARATION (P5b)', () => {
     const row = await ligneDeclaree(app);
     expect(row?.registeredAt ?? null).toBeNull();
     expect(await projetDuJob(jobId)).toBeNull();
+  });
+});
+
+// ─── P10b : « où écrire ? » de bout en bout ──────────────────────────────────
+//
+// Le geste complet, par le seam et rien d'autre : l'utilisateur a répondu à une
+// question, l'agent crée le projet, puis il écrit dedans. Trois traces relues —
+// le projet porté par le job, la ligne `tool_calls` du `file_write`, le fichier
+// sur le disque.
+describe('le registre au seam d’exécution — register_project puis file_write (P10b)', () => {
+  it('la réponse crée le projet, et l’écriture suivante y atterrit', async () => {
+    const terrain = racine;
+    const jobId = await jobNeuf();
+
+    // Ce que le clic de l'utilisateur a laissé en base (P10a).
+    await db.insert(approvalRequests).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      jobId,
+      toolCallId: `call-ask-${jobId}`,
+      toolName: 'ask_user',
+      toolInput: { question: 'Où ranger cette synthèse ?', options: ['New project: veille-ia'] },
+      kind: 'question',
+      status: 'approved',
+      answer: 'New project: veille-ia',
+      resolvedAt: new Date(),
+    });
+
+    const reg = registry.get('register_project');
+    if (!reg) throw new Error('register_project absent du registre');
+    const creation = await executeTool(
+      reg,
+      { path: 'veille-ia', name: 'Veille IA' },
+      ctx(terrain, jobId),
+      options(),
+    );
+    expect(creation.outcome === 'error' ? creation.error : creation.outcome).toBe('success');
+    if (creation.outcome !== 'success') return;
+    const projet = creation.output as { ok: boolean; project_id: string; path: string };
+    expect(projet.ok).toBe(true);
+
+    // Le job porte le projet DÈS la création — sans quoi le tour suivant
+    // reposerait la même question.
+    expect(await projetDuJob(jobId)).toBe(projet.project_id);
+
+    const write = registry.get('file_write');
+    if (!write) throw new Error('file_write absent du registre');
+    const res = await executeTool(
+      write,
+      { path: 'veille-ia/synthese.md', content: '# Synthèse\n' },
+      ctx(terrain, jobId),
+      options(),
+    );
+    expect(res.outcome).toBe('success');
+
+    // 1. Le fichier est là, avec son contenu.
+    expect(await readFile(join(terrain, 'veille-ia', 'synthese.md'), 'utf8')).toBe('# Synthèse\n');
+    // 2. Les deux lignes d'audit existent, dans l'ordre du geste.
+    const audit = await db
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, jobId))
+      .orderBy(toolCalls.createdAt);
+    expect(audit.map((r) => r.toolName)).toEqual(['register_project', 'file_write']);
+    // 3. Le job porte toujours CE projet — le premier gagne, et c'est le bon.
+    expect(await projetDuJob(jobId)).toBe(projet.project_id);
+    expect(normalizePath(projet.path)).toBe(`${terrain}/veille-ia`);
   });
 });
