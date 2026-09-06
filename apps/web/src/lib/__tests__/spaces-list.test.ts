@@ -100,3 +100,25 @@ describe('groupSpaces', () => {
     expect(g.conversations).toEqual([]);
   });
 });
+
+describe('groupSpaces — le prérequis d’ordre', () => {
+  it('prend le PREMIER run reçu comme dernier run : l’appelant trie du plus récent au plus ancien (listSpacesAction)', () => {
+    const rows = [
+      row({
+        id: 'recent',
+        channel: 'cron',
+        scheduleId: 'S',
+        createdAt: new Date('2026-09-06T10:00:00Z'),
+      }),
+      row({
+        id: 'ancien',
+        channel: 'cron',
+        scheduleId: 'S',
+        createdAt: new Date('2026-09-05T10:00:00Z'),
+      }),
+    ];
+    expect(groupSpaces(rows).scheduled[0]?.lastRun.id).toBe('recent');
+    // L'ordre inverse donnerait un dernier run faux : le contrat est l'ordre reçu.
+    expect(groupSpaces([...rows].reverse()).scheduled[0]?.lastRun.id).toBe('ancien');
+  });
+});

@@ -68,6 +68,7 @@ import {
   eq,
   and,
   isNull,
+  ne,
   isNotNull,
   or,
   desc,
@@ -2255,35 +2256,53 @@ export type SpaceListRow = {
  * l'autre (retour de Quentin, 06/09 : « la liste est noyée par les cron »).
  */
 export async function listSpacesAction(
-  opts: { limit?: number } = {},
+  opts: { conversations?: number; scheduledRuns?: number } = {},
 ): Promise<ActionResult<SpaceListRow[]>> {
   try {
     const session = await getSession();
     const db = getDb();
-    const limit = Math.min(opts.limit ?? 200, 500);
-    const rows = await db
-      .select({
-        id: agentJobs.id,
-        agentName: agents.name,
-        agentSlug: agents.slug,
-        agentAvatarUrl: agents.avatarUrl,
-        channel: agentJobs.channel,
-        task: agentJobs.task,
-        status: agentJobs.status,
-        costUsd: agentJobs.totalCostUsd,
-        inputTokens: agentJobs.inputTokens,
-        outputTokens: agentJobs.outputTokens,
-        createdAt: agentJobs.createdAt,
-        completedAt: agentJobs.completedAt,
-        conversationId: agentJobs.conversationId,
-        scheduleId: agentJobs.scheduleId,
-        triggerContext: agentJobs.triggerContext,
-      })
-      .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(and(eq(agentJobs.entityId, session.entityId), isNull(agentJobs.parentJobId)))
-      .orderBy(desc(agentJobs.createdAt))
-      .limit(limit);
+    // Deux requêtes, deux limites (revue passe 22) : une seule limite globale
+    // appliquée AVANT la séparation laissait 200 runs cron récents évincer
+    // toutes les conversations — l'inverse exact de ce que la page promet.
+    const conversationsLimit = Math.min(opts.conversations ?? 100, 500);
+    const scheduledLimit = Math.min(opts.scheduledRuns ?? 300, 2000);
+    const select = {
+      id: agentJobs.id,
+      agentName: agents.name,
+      agentSlug: agents.slug,
+      agentAvatarUrl: agents.avatarUrl,
+      channel: agentJobs.channel,
+      task: agentJobs.task,
+      status: agentJobs.status,
+      costUsd: agentJobs.totalCostUsd,
+      inputTokens: agentJobs.inputTokens,
+      outputTokens: agentJobs.outputTokens,
+      createdAt: agentJobs.createdAt,
+      completedAt: agentJobs.completedAt,
+      conversationId: agentJobs.conversationId,
+      scheduleId: agentJobs.scheduleId,
+      triggerContext: agentJobs.triggerContext,
+    };
+    const topLevel = and(eq(agentJobs.entityId, session.entityId), isNull(agentJobs.parentJobId));
+    const [conversationRows, scheduledRows] = await Promise.all([
+      db
+        .select(select)
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(topLevel, ne(agentJobs.channel, 'cron')))
+        .orderBy(desc(agentJobs.createdAt))
+        .limit(conversationsLimit),
+      db
+        .select(select)
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(topLevel, eq(agentJobs.channel, 'cron')))
+        .orderBy(desc(agentJobs.createdAt))
+        .limit(scheduledLimit),
+    ]);
+    const rows = [...conversationRows, ...scheduledRows].sort(
+      (a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0),
+    );
     return ok(
       rows.map((r) => ({
         id: r.id,

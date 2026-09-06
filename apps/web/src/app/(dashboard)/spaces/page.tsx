@@ -9,7 +9,7 @@ import ScheduledSection from './ScheduledSection.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function SpacesPage() {
-  const result = await listSpacesAction({ limit: 200 });
+  const result = await listSpacesAction();
   const { conversations, scheduled } = groupSpaces(result.ok ? result.data : []);
 
   return (
