@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, eq } from '@nodal-agents/db';
+import { agents, jobCheckpoints, and, eq } from '@nodal-agents/db';
 import { executeTool } from '../execute';
 import { listCheckpoints } from '@nodal-agents/checkpoints';
 import { createToolRegistry } from '../registry';
@@ -351,5 +351,143 @@ describe('workspace injoignable — le constat 2 de la passe 2', () => {
       (await listCheckpoints(store, ws)).length,
       'la cible saine reste couverte',
     ).toBeGreaterThan(0);
+  });
+});
+
+// ─── P11 — la photo devient RETROUVABLE ──────────────────────────────────────
+//
+// Le sha ne vivait que dans une ligne de console. Ce qui est vérifié ici est la
+// LIGNE relue en base, et que son sha est bien celui que le magasin porte —
+// pas qu'une insertion a été tentée.
+
+describe('job_checkpoints — la ligne du tour (P11)', () => {
+  it('pose une ligne (travail, tour, dossier, sha) et le sha est celui du magasin', async () => {
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'a.txt', content: '1' },
+      ctx({ turn: 41 }),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+
+    const lignes = await db
+      .select()
+      .from(jobCheckpoints)
+      .where(and(eq(jobCheckpoints.jobId, seed.jobId), eq(jobCheckpoints.turn, 41)));
+    expect(lignes).toHaveLength(1);
+    expect(lignes[0]!.workspace).toBe(ws);
+
+    const cps = await listCheckpoints(store, ws);
+    expect(cps.length).toBeGreaterThan(0);
+    expect(lignes[0]!.sha, 'la ligne ne pointe pas l instantané réellement pris').toBe(cps[0]!.sha);
+  });
+
+  it('une seule ligne pour trois écritures du même tour', async () => {
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'a.txt', content: '1' },
+      ctx({ turn: 42 }),
+      opts,
+    );
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'b.txt', content: '2' },
+      ctx({ turn: 42 }),
+      opts,
+    );
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'c.txt', content: '3' },
+      ctx({ turn: 42 }),
+      opts,
+    );
+
+    const lignes = await db
+      .select()
+      .from(jobCheckpoints)
+      .where(and(eq(jobCheckpoints.jobId, seed.jobId), eq(jobCheckpoints.turn, 42)));
+    expect(lignes).toHaveLength(1);
+  });
+
+  it('un tour dont l arbre n a pas bougé porte le sha de l instantané EXISTANT', async () => {
+    // `snapshot` rend null quand rien n a change : sans reprise du sha de tete,
+    // ce tour n aurait aucune ligne — et l ecran ne pourrait rien comparer alors
+    // que l etat d avant est parfaitement connu.
+    //
+    // Deux tours qui ecrivent chacun un `.log` — un motif que le magasin EXCLUT
+    // (voir EXCLUDES dans checkpoints.ts). L arbre de travail change donc, mais
+    // l arbre PHOTOGRAPHIE reste identique : exactement le cas ou `snapshot`
+    // rend null. Deux noms distincts parce qu ecraser un fichier existant
+    // passerait par la porte d approbation et n executerait rien.
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'un.log', content: 'a' },
+      ctx({ turn: 51 }),
+      opts,
+    );
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'deux.log', content: 'b' },
+      ctx({ turn: 52 }),
+      opts,
+    );
+
+    const ligne = async (turn: number) =>
+      db
+        .select()
+        .from(jobCheckpoints)
+        .where(and(eq(jobCheckpoints.jobId, seed.jobId), eq(jobCheckpoints.turn, turn)));
+
+    const t51 = await ligne(51);
+    const t52 = await ligne(52);
+    expect(t51).toHaveLength(1);
+    expect(t52, 'un tour sur un arbre inchangé est resté sans ligne').toHaveLength(1);
+    // Le second instantané n a rien réenregistré : les deux tours pointent le
+    // même commit, qui EST l état d avant des deux.
+    expect(t52[0]!.sha).toBe(t51[0]!.sha);
+    expect(await listCheckpoints(store, ws)).toHaveLength(1);
+  });
+
+  it('sans numéro de tour, AUCUNE ligne — un diff « du tour » n aurait pas de sens', async () => {
+    const avant = await db
+      .select()
+      .from(jobCheckpoints)
+      .where(eq(jobCheckpoints.jobId, seed.jobId));
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'sans-tour.txt', content: '1' },
+      ctx({ turn: undefined }),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+    // L instantané, lui, est bien pris : c est la LIGNE qui n a pas de sens.
+    expect((await listCheckpoints(store, ws)).length).toBeGreaterThan(0);
+    const apres = await db
+      .select()
+      .from(jobCheckpoints)
+      .where(eq(jobCheckpoints.jobId, seed.jobId));
+    expect(apres.length).toBe(avant.length);
+  });
+
+  it('une ligne par DOSSIER attaché sur le même tour', async () => {
+    const autre = join(root, 'p11-autre');
+    await mkdir(autre, { recursive: true });
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'a.txt', content: '1' },
+      ctx({
+        turn: 61,
+        workspaces: [
+          { label: 'shared', path: ws } as never,
+          { label: 'p11-autre', path: autre } as never,
+        ],
+      }),
+      opts,
+    );
+    const lignes = await db
+      .select()
+      .from(jobCheckpoints)
+      .where(and(eq(jobCheckpoints.jobId, seed.jobId), eq(jobCheckpoints.turn, 61)));
+    expect(lignes.map((l) => l.workspace).sort()).toEqual([autre, ws].sort());
   });
 });

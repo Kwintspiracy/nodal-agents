@@ -21,7 +21,10 @@ import {
   listCheckpoints,
   restoreCheckpoint,
   ensureStore,
+  headCheckpoint,
+  diffFile,
   CHECKPOINT_COVERAGE_NOTE,
+  DIFF_MAX_BYTES,
 } from './checkpoints';
 
 let root: string;
@@ -225,5 +228,126 @@ describe('couverture — ce que le filet ne rattrape PAS', () => {
     // La limite ci-dessus n'est tolérable que si elle voyage avec le paquet.
     expect(CHECKPOINT_COVERAGE_NOTE).toMatch(/gitignore/);
     expect(CHECKPOINT_COVERAGE_NOTE).toMatch(/cannot be restored/);
+  });
+});
+
+// ─── P11 — le sha de tête, et le diff d'un fichier ───────────────────────────
+//
+// Un vrai dépôt fantôme dans un dossier temporaire, un vrai `git` : le diff est
+// exactement ce que l'écran montrera, pas une reconstitution. Chaque assertion
+// porte sur le TEXTE rendu (les lignes `-` / `+`), jamais sur un appel.
+
+describe('headCheckpoint', () => {
+  it('rend null tant que le dossier n a jamais ete photographie', async () => {
+    expect(await headCheckpoint(store, ws)).toBeNull();
+  });
+
+  it('rend le sha du dernier instantane', async () => {
+    await writeFile(join(ws, 'a.txt'), 'un');
+    const premier = await snapshot(store, ws, 'premier');
+    expect(await headCheckpoint(store, ws)).toBe(premier!.sha);
+
+    await writeFile(join(ws, 'a.txt'), 'deux');
+    const second = await snapshot(store, ws, 'second');
+    expect(second!.sha).not.toBe(premier!.sha);
+    expect(await headCheckpoint(store, ws)).toBe(second!.sha);
+  });
+
+  it('rend null pour un AUTRE dossier du meme magasin', async () => {
+    // Une ref par dossier : le sha de l un ne doit jamais servir de reponse
+    // pour l autre, sinon un diff comparerait deux arbres etrangers.
+    await writeFile(join(ws, 'a.txt'), 'un');
+    await snapshot(store, ws, 'premier');
+    const autre = join(root, 'autre-espace');
+    await mkdir(autre, { recursive: true });
+    expect(await headCheckpoint(store, autre)).toBeNull();
+  });
+});
+
+describe('diffFile', () => {
+  it('rend les lignes - et + entre deux instantanes', async () => {
+    await writeFile(join(ws, 'code.txt'), 'alpha\nbeta\ngamma\n');
+    const avant = await snapshot(store, ws, 'avant');
+    await writeFile(join(ws, 'code.txt'), 'alpha\nBETA\ngamma\n');
+    const apres = await snapshot(store, ws, 'apres');
+
+    const res = await diffFile(store, ws, avant!.sha, apres!.sha, 'code.txt');
+    expect(res.kind).toBe('diff');
+    if (res.kind !== 'diff') return;
+    expect(res.text).toContain('-beta');
+    expect(res.text).toContain('+BETA');
+    expect(res.text).toContain(' alpha');
+    expect(res.truncated).toBe(false);
+  });
+
+  it('compare a l ARBRE DE TRAVAIL quand toSha est null, fichier cree apres l instantane compris', async () => {
+    // Le cas du tour en cours : rien n a encore ete rephotographie. Et le
+    // fichier NEUF est le piege — il n est pas dans l index laisse par
+    // l instantane, donc un `git diff <commit>` nu ne le montrerait pas.
+    await writeFile(join(ws, 'code.txt'), 'v1\n');
+    const avant = await snapshot(store, ws, 'avant');
+    await writeFile(join(ws, 'code.txt'), 'v2\n');
+    await writeFile(join(ws, 'neuf.txt'), 'tout neuf\n');
+
+    const modifie = await diffFile(store, ws, avant!.sha, null, 'code.txt');
+    expect(modifie.kind).toBe('diff');
+    if (modifie.kind === 'diff') {
+      expect(modifie.text).toContain('-v1');
+      expect(modifie.text).toContain('+v2');
+    }
+
+    const cree = await diffFile(store, ws, avant!.sha, null, 'neuf.txt');
+    expect(cree.kind, 'un fichier cree apres l instantane doit se diffuser').toBe('diff');
+    if (cree.kind === 'diff') expect(cree.text).toContain('+tout neuf');
+  });
+
+  it('dit unchanged quand le fichier n a pas bouge', async () => {
+    await writeFile(join(ws, 'code.txt'), 'stable\n');
+    const avant = await snapshot(store, ws, 'avant');
+    await writeFile(join(ws, 'autre.txt'), 'pour faire bouger l arbre\n');
+    const apres = await snapshot(store, ws, 'apres');
+
+    expect((await diffFile(store, ws, avant!.sha, apres!.sha, 'code.txt')).kind).toBe('unchanged');
+  });
+
+  it('dit not_in_snapshot pour un fichier ignore par le .gitignore du dossier', async () => {
+    // La limite du paquet, cote lecture cette fois : le fichier existe sur le
+    // disque et a change, mais aucun instantane ne l a jamais vu. L ecran doit
+    // le DIRE, pas afficher « aucun changement ».
+    await writeFile(join(ws, '.gitignore'), 'secrets.env\n');
+    await writeFile(join(ws, 'secrets.env'), 'CLE=avant\n');
+    await writeFile(join(ws, 'code.txt'), 'v1\n');
+    const avant = await snapshot(store, ws, 'avant');
+    await writeFile(join(ws, 'secrets.env'), 'CLE=apres\n');
+
+    expect(await diffFile(store, ws, avant!.sha, null, 'secrets.env')).toEqual({
+      kind: 'not_in_snapshot',
+    });
+  });
+
+  it('dit binary pour un contenu que git refuse de diffuser', async () => {
+    await writeFile(join(ws, 'image.bin'), Buffer.from([0, 1, 2, 0, 3, 4, 0]));
+    const avant = await snapshot(store, ws, 'avant');
+    await writeFile(join(ws, 'image.bin'), Buffer.from([0, 9, 9, 0, 8, 8, 0]));
+    const apres = await snapshot(store, ws, 'apres');
+
+    expect(await diffFile(store, ws, avant!.sha, apres!.sha, 'image.bin')).toEqual({
+      kind: 'binary',
+    });
+  });
+
+  it('borne le texte et le dit', async () => {
+    await writeFile(join(ws, 'gros.txt'), 'x\n');
+    const avant = await snapshot(store, ws, 'avant');
+    // Chaque ligne ajoutee pese au moins deux octets dans le diff : bien
+    // au-dela de DIFF_MAX_BYTES.
+    const enorme = Array.from({ length: 40_000 }, (_, i) => `ligne ${i}`).join('\n');
+    await writeFile(join(ws, 'gros.txt'), enorme);
+
+    const res = await diffFile(store, ws, avant!.sha, null, 'gros.txt');
+    expect(res.kind).toBe('diff');
+    if (res.kind !== 'diff') return;
+    expect(res.truncated, 'un diff enorme doit annoncer sa coupe').toBe(true);
+    expect(res.text.length).toBe(DIFF_MAX_BYTES);
   });
 });

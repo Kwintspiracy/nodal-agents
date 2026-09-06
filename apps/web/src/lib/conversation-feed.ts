@@ -129,6 +129,12 @@ export type Step =
       toolName: string;
       toolCallId: string | null;
       /**
+       * Le TRAVAIL dont cette étape fait partie (P11). Un fil couvre plusieurs
+       * jobs ; le diff d'un fichier se demande par (travail, appel), et sans ce
+       * champ la carte aurait dû le deviner depuis l'item qui l'entoure.
+       */
+      jobId: string;
+      /**
        * La carte persistée sur la ligne (P1). null : pas de ligne (l'outil n'est
        * pas passé par executeTool — return_result, assign_*) ou ligne
        * antérieure à 0092. L'écran montre alors le nom et la sortie brute.
@@ -480,6 +486,7 @@ export function buildConversationFeed(
           kind: 'tool',
           toolName,
           toolCallId: b.toolCallId ?? null,
+          jobId: job.id,
           card,
           presented: row ? parsePresented(row.presented) : null,
           input: b.payload,

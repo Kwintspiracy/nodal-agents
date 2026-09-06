@@ -687,6 +687,13 @@
       "when": 1786000019000,
       "tag": "0098_approval_requests_question",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1786000020000,
+      "tag": "0099_job_checkpoints",
+      "breakpoints": true
     }
   ]
 }

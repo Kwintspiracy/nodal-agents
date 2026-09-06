@@ -885,6 +885,20 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     );
     CREATE INDEX IF NOT EXISTS idx_job_deliveries_open
       ON job_deliveries (outcome, claimed_at) WHERE outcome IN ('prepared','attempted');
+
+    -- job_checkpoints (migration 0099) — l etat d AVANT d un tour : le sha de
+    -- l instantane pris par le filet, relie au travail et au tour. Une ligne
+    -- par (travail, tour, dossier) ; c est ce que le diff du fil relit.
+    CREATE TABLE IF NOT EXISTS job_checkpoints (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_id uuid NOT NULL REFERENCES agent_jobs(id) ON DELETE CASCADE,
+      turn integer NOT NULL,
+      workspace text NOT NULL,
+      sha text NOT NULL,
+      taken_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT job_checkpoints_job_turn_workspace_unique UNIQUE (job_id, turn, workspace)
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_checkpoints_job ON job_checkpoints (job_id);
   `);
 
   const db = drizzle(pg, { schema });

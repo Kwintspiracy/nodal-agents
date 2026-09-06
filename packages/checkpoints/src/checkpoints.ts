@@ -100,30 +100,50 @@ function workspaceKey(workspace: string): string {
   return createHash('sha256').update(norm).digest('hex').slice(0, 16);
 }
 
-async function git(store: string, workspace: string, args: string[]): Promise<string> {
+function gitEnv(store: string, workspace: string): NodeJS.ProcessEnv {
   const key = workspaceKey(workspace);
+  return {
+    ...process.env,
+    GIT_DIR: join(store, 'store'),
+    GIT_WORK_TREE: workspace,
+    // A per-workspace index: two workspaces snapshotting at once must not
+    // stomp on each other's staging area.
+    GIT_INDEX_FILE: join(store, 'indexes', key),
+    // A checkpoint is machinery, not authorship. Identity is fixed so it can
+    // never depend on — or leak — the owner's git config.
+    GIT_AUTHOR_NAME: 'Nodal checkpoints',
+    GIT_AUTHOR_EMAIL: 'checkpoints@nodal.local',
+    GIT_COMMITTER_NAME: 'Nodal checkpoints',
+    GIT_COMMITTER_EMAIL: 'checkpoints@nodal.local',
+    // The owner's global config must not change what we store or how.
+    GIT_CONFIG_GLOBAL: join(store, 'gitconfig'),
+    GIT_CONFIG_SYSTEM: join(store, 'gitconfig'),
+  };
+}
+
+async function git(store: string, workspace: string, args: string[]): Promise<string> {
   const { stdout } = await run('git', args, {
     timeout: GIT_TIMEOUT_MS,
     windowsHide: true,
-    env: {
-      ...process.env,
-      GIT_DIR: join(store, 'store'),
-      GIT_WORK_TREE: workspace,
-      // A per-workspace index: two workspaces snapshotting at once must not
-      // stomp on each other's staging area.
-      GIT_INDEX_FILE: join(store, 'indexes', key),
-      // A checkpoint is machinery, not authorship. Identity is fixed so it can
-      // never depend on — or leak — the owner's git config.
-      GIT_AUTHOR_NAME: 'Nodal checkpoints',
-      GIT_AUTHOR_EMAIL: 'checkpoints@nodal.local',
-      GIT_COMMITTER_NAME: 'Nodal checkpoints',
-      GIT_COMMITTER_EMAIL: 'checkpoints@nodal.local',
-      // The owner's global config must not change what we store or how.
-      GIT_CONFIG_GLOBAL: join(store, 'gitconfig'),
-      GIT_CONFIG_SYSTEM: join(store, 'gitconfig'),
-    },
+    env: gitEnv(store, workspace),
   });
   return stdout.trim();
+}
+
+/**
+ * Comme `git`, mais SANS `trim` et avec un tampon large : la sortie d'un diff
+ * est significative caractère par caractère (une ligne de contexte commence par
+ * une espace, qu'un `trim` mangerait sur la première ligne d'un fragment) et
+ * dépasse volontiers le méga-octet par défaut d'`execFile`.
+ */
+async function gitRaw(store: string, workspace: string, args: string[]): Promise<string> {
+  const { stdout } = await run('git', args, {
+    timeout: GIT_TIMEOUT_MS,
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024,
+    env: gitEnv(store, workspace),
+  });
+  return stdout;
 }
 
 /** Create the shared shadow store if it does not exist yet. Idempotent. */
@@ -197,6 +217,122 @@ export async function snapshot(
   await git(store, workspace, ['update-ref', ref, sha]);
 
   return { sha, workspace, at, label };
+}
+
+/**
+ * Le sha du DERNIER instantané de ce dossier, ou null s'il n'y en a jamais eu.
+ *
+ * Existe pour le cas que `snapshot` rend `null` : l'arbre n'a pas bougé depuis
+ * la dernière photo, donc rien n'est réenregistré — mais l'état d'avant du tour
+ * courant EST ce commit-là, et sans lui la ligne `job_checkpoints` de ce tour
+ * n'aurait aucun sha à porter. Une lecture, jamais une écriture.
+ */
+export async function headCheckpoint(store: string, workspace: string): Promise<string | null> {
+  if (!existsSync(join(store, 'store', 'HEAD'))) return null;
+  const ref = `refs/nodal/${workspaceKey(workspace)}`;
+  // `--verify --quiet` : ref absente ⇒ sortie vide et code 1, donc rejet — d'où
+  // le `catch`. C'est la même forme que dans `snapshot`.
+  const sha = await git(store, workspace, ['rev-parse', '--verify', '--quiet', ref]).catch(
+    () => '',
+  );
+  return sha === '' ? null : sha;
+}
+
+// ─── Le diff d'un fichier entre deux instantanés ─────────────────────────────
+
+/**
+ * Au-delà, le texte est coupé et le dit. Un diff de 200 Ko est déjà plus long
+ * que ce que quiconque lira ; ce qui compte est que la coupe soit ANNONCÉE.
+ */
+export const DIFF_MAX_BYTES = 200_000;
+
+export type FileDiff =
+  | { kind: 'diff'; text: string; truncated: boolean }
+  /** Git ne sait pas diffuser ce contenu (image, archive, exécutable). */
+  | { kind: 'binary' }
+  /** Le fichier est identique entre les deux états. */
+  | { kind: 'unchanged' }
+  /**
+   * Le chemin n'est dans AUCUN des deux états — le cas normal étant un fichier
+   * que le `.gitignore` du dossier exclut : voir CHECKPOINT_COVERAGE_NOTE, un
+   * instantané fait `add -A` SANS `-f` et ne photographie donc pas ces
+   * fichiers-là. Ils existent sur le disque, mais pas dans l'histoire.
+   */
+  | { kind: 'not_in_snapshot' };
+
+/**
+ * Ce qui a changé dans UN fichier entre deux instantanés du même dossier.
+ *
+ * `toSha` null = l'arbre de travail d'aujourd'hui, c'est-à-dire le dernier tour
+ * d'un travail encore en cours.
+ *
+ * POURQUOI L'INDEX EST RAFRAÎCHI pour le cas « arbre de travail ». `git diff
+ * <commit>` ne montre que les fichiers SUIVIS, et le suivi vit dans l'index —
+ * ici l'index laissé par le dernier `snapshot`. Un fichier créé APRÈS cet
+ * instantané n'y est pas : le diff serait vide, et l'écran dirait « aucun
+ * changement » sur un fichier que l'agent vient d'écrire. On restage donc le
+ * seul chemin demandé (`add -A -- <relPath>`) avant de comparer le commit à
+ * l'index. L'index est de toute façon reconstruit en entier par le prochain
+ * `snapshot` : rien de durable n'est touché, et le dépôt du propriétaire
+ * encore moins (le magasin est un git fantôme, jamais le `.git` du projet).
+ *
+ * `relPath` est relatif au dossier, en forme slash.
+ */
+export async function diffFile(
+  store: string,
+  workspace: string,
+  fromSha: string,
+  toSha: string | null,
+  relPath: string,
+): Promise<FileDiff> {
+  if (!existsSync(join(store, 'store', 'HEAD'))) return { kind: 'not_in_snapshot' };
+
+  const inTree = async (sha: string): Promise<boolean> =>
+    (await git(store, workspace, ['ls-tree', '-r', '--name-only', sha, '--', relPath]).catch(
+      () => '',
+    )) !== '';
+
+  const inFrom = await inTree(fromSha);
+  let inTo: boolean;
+  if (toSha === null) {
+    // Un chemin ignoré par le `.gitignore` du dossier fait échouer `add` — c'est
+    // exactement l'information qu'on cherche, pas une panne.
+    await git(store, workspace, ['add', '-A', '--', relPath]).catch(() => '');
+    inTo =
+      (await git(store, workspace, ['ls-files', '--cached', '--', relPath]).catch(() => '')) !== '';
+  } else {
+    inTo = await inTree(toSha);
+  }
+  if (!inFrom && !inTo) return { kind: 'not_in_snapshot' };
+
+  const range = toSha === null ? ['--cached', fromSha] : [fromSha, toSha];
+
+  // `--numstat` d'abord : il répond aux deux questions bon marché (rien n'a
+  // changé / c'est du binaire) sans jamais matérialiser le texte du diff.
+  // Un fichier binaire s'y écrit `-\t-\t<chemin>`.
+  const numstat = await gitRaw(store, workspace, [
+    'diff',
+    '--no-color',
+    '--numstat',
+    ...range,
+    '--',
+    relPath,
+  ]);
+  if (numstat.trim() === '') return { kind: 'unchanged' };
+  if (/^-\t-\t/m.test(numstat)) return { kind: 'binary' };
+
+  const text = await gitRaw(store, workspace, [
+    'diff',
+    '--no-color',
+    '--unified=3',
+    ...range,
+    '--',
+    relPath,
+  ]);
+  if (text.length > DIFF_MAX_BYTES) {
+    return { kind: 'diff', text: text.slice(0, DIFF_MAX_BYTES), truncated: true };
+  }
+  return { kind: 'diff', text, truncated: false };
 }
 
 /** Checkpoints for a workspace, newest first. */

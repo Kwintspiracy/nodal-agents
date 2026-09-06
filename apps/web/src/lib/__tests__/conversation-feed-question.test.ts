@@ -154,6 +154,7 @@ describe('une question en attente', () => {
       kind: 'tool',
       toolName: 'un_autre_outil_qui_demande',
       toolCallId: CALL_ID,
+      jobId: 'job-1',
       card: 'question',
       presented: null,
       input: {},

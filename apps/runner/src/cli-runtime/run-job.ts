@@ -10,8 +10,11 @@
 // of the final text VERBATIM (invariant #2).
 
 import {
+  cliRuns,
   cliSessions,
+  jobCheckpoints,
   toolCalls,
+  count,
   eq,
   and,
   gte,
@@ -44,6 +47,7 @@ import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { isDeliveryRefusal, resolveDeliveryTarget } from '../delivery/resolve-delivery-target.ts';
 import { isAutoRunPaused } from '../approvals/rules.ts';
 import { probeWorkspaceGit } from '../lib/workspace-git.ts';
+import { snapshot, headCheckpoint, checkpointsRoot } from '@nodal-agents/checkpoints';
 import { type ClaudeTurnEvent } from './claude-turn.ts';
 import { resolveRuntime, isCliSetupError, type CliTurnResult } from './provider.ts';
 
@@ -233,6 +237,68 @@ async function harnessEdits(
         `error=${err instanceof Error ? err.message : String(err)}`,
     );
     return [];
+  }
+}
+
+/**
+ * L'instantané du tour, pour le chemin CLI — P11.
+ *
+ * Le harnais de code écrivait SANS FILET : `executeTool` ne le voit jamais
+ * (voir l'intention de mutation, même raison), donc `takeCheckpointForTurn` ne
+ * s'y déclenche pas. L'agent qui EST une CLI de code — celui qui écrit le plus,
+ * et le plus vite — était le seul à travailler sans état d'avant. Ni retour
+ * arrière, ni diff dans le fil.
+ *
+ * LE NUMÉRO DE TOUR. Un job CLI n'a pas de compteur `turn` : il n'y a pas de
+ * boucle d'outils Nodal pour l'avancer. Le seul compteur qui existe est le
+ * nombre de tours DÉJÀ joués, et il est déjà tenu — une ligne `cli_runs` par
+ * tour, réussi ou non. Le tour courant est donc `1 + ce compte`, lu AVANT de
+ * lancer la CLI (la ligne de ce tour-ci n'est écrite qu'après `binding.run`).
+ * C'est le même numéro que la ligne `tool_calls` du tour portera, ce qui est
+ * précisément ce dont le diff a besoin pour retrouver l'état d'avant.
+ *
+ * ÉCHOUER REFUSE LE TOUR — même contrat que le seam : un filet qui n'est pas là
+ * est pire que pas de filet, parce que c'est celui que le propriétaire croyait
+ * avoir. Levé avec un CODE (`checkpoint_failed:<cause>`), sous le même filet que
+ * l'intention de mutation, donc les verrous sont rendus.
+ *
+ * La LIGNE, elle, ne refuse rien : c'est un confort de lecture (le fil montrera
+ * le diff), pas le filet. Une panne se dit par `CHECKPOINT_ROW_FAILED`.
+ */
+export async function takeCliTurnCheckpoints(
+  db: AnyDrizzleDb,
+  jobId: string,
+  workspaces: ReadonlyArray<{ label: string; path: string }>,
+): Promise<void> {
+  const store = checkpointsRoot();
+  const [played] = await db.select({ n: count() }).from(cliRuns).where(eq(cliRuns.jobId, jobId));
+  const turn = 1 + Number(played?.n ?? 0);
+
+  for (const w of workspaces) {
+    let sha: string | null;
+    try {
+      const cp = await snapshot(store, w.path, `before cli turn (job ${jobId})`);
+      // `null` = l'arbre n'a pas bougé depuis la dernière photo : l'état d'avant
+      // de ce tour EST ce commit-là.
+      sha = cp?.sha ?? (await headCheckpoint(store, w.path));
+    } catch (err) {
+      const cause = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      throw new Error(`checkpoint_failed:${cause}`.slice(0, 300));
+    }
+    if (!sha) continue;
+    try {
+      await db
+        .insert(jobCheckpoints)
+        .values({ jobId, turn, workspace: w.path, sha })
+        .onConflictDoNothing({
+          target: [jobCheckpoints.jobId, jobCheckpoints.turn, jobCheckpoints.workspace],
+        });
+    } catch (err) {
+      console.error(
+        `[cli-runtime] CHECKPOINT_ROW_FAILED job=${jobId} turn=${turn} workspace=${w.path} ` +
+          `error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
 
@@ -448,6 +514,11 @@ export async function runCliRuntimeJob(args: {
       if (intent.kind === 'already_terminal') {
         throw new Error('verification_intent_failed:intent_already_terminal');
       }
+
+      // P11 — l'état d'avant du tour, AVANT que la CLI touche au disque. Même
+      // place et même filet que l'intention ci-dessus : un échec relâche les
+      // verrous et refuse le tour. Voir takeCliTurnCheckpoints.
+      await takeCliTurnCheckpoints(db, jobId, args.workspaces);
     }
 
     const workspaceGit = await probeWorkspaceGit(cwd);

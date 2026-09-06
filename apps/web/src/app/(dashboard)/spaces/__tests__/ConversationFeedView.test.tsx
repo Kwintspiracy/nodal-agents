@@ -16,6 +16,7 @@ const tool = (over: Partial<Extract<Step, { kind: 'tool' }>>): Extract<Step, { k
   kind: 'tool',
   toolName: 'x',
   toolCallId: 'c',
+  jobId: 'job-1',
   card: null,
   presented: null,
   input: {},

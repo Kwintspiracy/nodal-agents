@@ -11,6 +11,7 @@ import { healthRoute } from './routes/health.ts';
 import { agentRoute } from './routes/agent.ts';
 import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
+import { fileDiffRoute } from './routes/file-diff.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { webhookRoute } from './routes/webhook.ts';
@@ -213,6 +214,10 @@ export function createApp(
   app.use('/api/chat', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
+  // P11 — le diff d'un fichier écrit par un tour. Même garde que /api/approve :
+  // le web appelle avec WORKER_SECRET, un porteur de session ne voit que son
+  // entité (la route le vérifie sur le travail).
+  app.use('/api/jobs/:jobId/file-diff', requireRunnerAuth);
   app.use('/api/whatsapp/pairing', requireRunnerAuth);
   app.use('/api/code-task/doctor', requireRunnerAuth);
 
@@ -229,6 +234,8 @@ export function createApp(
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
   app.post('/api/cron', (c) => cronRoute(c, deps));
+
+  app.get('/api/jobs/:jobId/file-diff', (c) => fileDiffRoute(c, deps));
 
   // Community skill install/uninstall (open Agent Skills format). Own
   // WORKER_SECRET check inside the handlers (web → runner cross-process call).

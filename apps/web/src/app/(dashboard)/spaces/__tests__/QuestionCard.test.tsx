@@ -186,6 +186,7 @@ describe('ConversationFeedView — le dispatch sur la carte `question`', () => {
                 kind: 'tool',
                 toolName: 'ask_user',
                 toolCallId: 'call_ask',
+                jobId: 'job-1',
                 card: 'question',
                 presented: null,
                 input: { question: PROMPT, options: OPTIONS },

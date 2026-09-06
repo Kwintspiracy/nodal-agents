@@ -23,6 +23,7 @@ import type {
 import StepsGroup from './StepsGroup.tsx';
 import ProducedCard from './ProducedCard.tsx';
 import QuestionCard from './QuestionCard.tsx';
+import FileDiff from './FileDiff.tsx';
 import HistoryGroup from './HistoryGroup.tsx';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
@@ -217,7 +218,7 @@ function ResultCard({ step }: { step: ToolStep }) {
     case 'table':
       return <TableCard payload={p} aside={duration} />;
     case 'files':
-      return <FilesCard payload={p} aside={duration} />;
+      return <FilesCard payload={p} step={step} aside={duration} />;
     case 'terminal':
       return <TerminalCard payload={p} />;
     case 'sent':
@@ -311,7 +312,15 @@ function TableCard({ payload, aside }: { payload: CardPayloadFor<'table'>; aside
   );
 }
 
-function FilesCard({ payload, aside }: { payload: CardPayloadFor<'files'>; aside?: string }) {
+function FilesCard({
+  payload,
+  step,
+  aside,
+}: {
+  payload: CardPayloadFor<'files'>;
+  step: ToolStep;
+  aside?: string;
+}) {
   return (
     <CardFrame
       title={`${payload.total} ${payload.total === 1 ? 'file' : 'files'}`}
@@ -319,14 +328,36 @@ function FilesCard({ payload, aside }: { payload: CardPayloadFor<'files'>; aside
       aside={aside}
     >
       <ul className="py-1">
-        {payload.files.map((f, i) => (
-          <li key={i} className="flex items-center gap-3 px-4 py-1.5 text-mono-12 text-ink-2">
-            <span className="min-w-0 flex-1 truncate">{f.path}</span>
-            <MonoMicroTag tone={f.action === 'listed' ? 'ink' : 'agent'}>{f.action}</MonoMicroTag>
-            {f.bytes !== undefined && <span className="text-ink-4">{formatTokens(f.bytes)} B</span>}
-            {f.detail !== undefined && <span className="truncate text-ink-4">{f.detail}</span>}
-          </li>
-        ))}
+        {payload.files.map((f, i) => {
+          // P11 — un fichier ÉCRIT se déplie sur son diff. Un fichier `listed`
+          // vient d'une lecture : il n'a pas d'avant, donc pas de bouton — une
+          // pastille qui s'ouvrirait sur « aucun changement » serait pire que
+          // pas de pastille. Sans identifiant d'appel il n'y a rien à demander
+          // au runner (les lignes d'audit anciennes n'en ont pas).
+          if (f.action !== 'listed' && step.toolCallId !== null) {
+            return (
+              <FileDiff
+                key={i}
+                jobId={step.jobId}
+                toolCallId={step.toolCallId}
+                path={f.path}
+                action={f.action}
+                {...(f.bytes !== undefined ? { bytes: `${formatTokens(f.bytes)} B` } : {})}
+                {...(f.detail !== undefined ? { detail: f.detail } : {})}
+              />
+            );
+          }
+          return (
+            <li key={i} className="flex items-center gap-3 px-4 py-1.5 text-mono-12 text-ink-2">
+              <span className="min-w-0 flex-1 truncate">{f.path}</span>
+              <MonoMicroTag tone={f.action === 'listed' ? 'ink' : 'agent'}>{f.action}</MonoMicroTag>
+              {f.bytes !== undefined && (
+                <span className="text-ink-4">{formatTokens(f.bytes)} B</span>
+              )}
+              {f.detail !== undefined && <span className="truncate text-ink-4">{f.detail}</span>}
+            </li>
+          );
+        })}
       </ul>
     </CardFrame>
   );

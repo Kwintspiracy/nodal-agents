@@ -29,3 +29,4 @@ export * from './cli-runs.ts';
 export * from './llm-calls.ts';
 export * from './job-deliveries.ts';
 export * from './verification.ts';
+export * from './job-checkpoints.ts';

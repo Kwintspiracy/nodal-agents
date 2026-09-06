@@ -45,3 +45,4 @@ export * from './verify-command-discovery';
 export * from './types/verification';
 export * from './verification-manifest';
 export * from './verification-surfaces';
+export * from './fragment-diff';

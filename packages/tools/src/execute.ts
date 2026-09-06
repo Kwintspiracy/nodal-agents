@@ -1,6 +1,6 @@
 // @nodal-agents/tools — execution wrapper with approval gate and audit trail
 
-import { approvalRequests, toolCalls, and, eq, inArray } from '@nodal-agents/db';
+import { approvalRequests, toolCalls, jobCheckpoints, and, eq, inArray } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
@@ -20,7 +20,7 @@ import type {
 import { InvalidInputError } from './errors';
 import { presentToolResult } from './cards';
 import type { ToolCardPayload } from '@nodal-agents/shared';
-import { snapshot } from '@nodal-agents/checkpoints';
+import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent } from './verification/intent';
 import { attachProductionToProject } from './projects/attach';
@@ -890,6 +890,9 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
       }
       checkpointedTurns.add(turnKey);
       if (cp) console.info(`[checkpoints] ${cp.sha.slice(0, 8)} ${workspace} before ${toolName}`);
+      // P11 — la photo devient RETROUVABLE : une ligne (travail, tour, dossier,
+      // sha). Ne refuse jamais l'écriture, voir recordTurnCheckpoint.
+      await recordTurnCheckpoint(store, workspace, cp?.sha ?? null, ctx);
     } catch (err) {
       // One workspace that cannot be snapshotted is enough to refuse: we have
       // no way to tell it is not the one about to be written.
@@ -901,6 +904,51 @@ async function takeCheckpointForTurn(toolName: string, ctx: ToolContext): Promis
     }
   }
   return null;
+}
+
+/**
+ * La ligne `job_checkpoints` de ce tour — P11.
+ *
+ * L'instantané existe déjà quand on arrive ici ; cette ligne dit seulement OÙ
+ * le retrouver. D'où deux règles :
+ *
+ * 1. **Elle ne refuse jamais rien.** Une panne d'insertion est un confort de
+ *    lecture perdu (la carte du fil ne montrera pas de diff pour ce tour), pas
+ *    un filet absent. Refuser l'écriture ici transformerait un défaut d'écran
+ *    en blocage du travail. Dite par un code, jamais avalée.
+ * 2. **Pas de `ctx.turn`, pas de ligne.** Sans compteur de tour, le seam
+ *    retombe sur « un instantané par appel » : il n'existe alors AUCUN tour
+ *    auquel rattacher la photo, et un diff « du tour » n'a pas de sens. Une
+ *    ligne inventée (turn = 0, par exemple) mentirait au lecteur.
+ *
+ * `sha` null = `snapshot` n'a rien réenregistré parce que l'arbre n'a pas bougé
+ * depuis la dernière photo. L'état d'avant de CE tour est donc le commit déjà
+ * en tête de la ref : c'est lui qu'on inscrit, pas rien.
+ */
+async function recordTurnCheckpoint(
+  store: string,
+  workspace: string,
+  sha: string | null,
+  ctx: ToolContext,
+): Promise<void> {
+  if (ctx.turn === undefined || !ctx.jobId) return;
+  try {
+    const resolved = sha ?? (await headCheckpoint(store, workspace));
+    if (!resolved) return;
+    await ctx.db
+      .insert(jobCheckpoints)
+      .values({ jobId: ctx.jobId, turn: ctx.turn, workspace, sha: resolved })
+      // La deuxième écriture du même tour retombe sur la même photo : la base
+      // tranche, plutôt qu'un mémo de plus à tenir côté processus.
+      .onConflictDoNothing({
+        target: [jobCheckpoints.jobId, jobCheckpoints.turn, jobCheckpoints.workspace],
+      });
+  } catch (err) {
+    console.error(
+      `[checkpoints] CHECKPOINT_ROW_FAILED job=${ctx.jobId} turn=${ctx.turn} ` +
+        `workspace=${workspace} error=${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 async function _writeToolCall(
