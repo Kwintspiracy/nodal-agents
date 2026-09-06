@@ -457,11 +457,11 @@
             un classeur qui s'affiche.
           </td>
           <td>
-            <span class="etat">go le 06/09 (soir)</span> — ✅ P5b (<code>16d1f574</code> ; passes
-            Codex 32-35 traitées dans <code>4491ae46</code>, <code>aefdcec3</code>,
-            <code>934091d4</code>, <code>4f084c21</code>, <code>268f68ef</code> ; passe 36 lancée) ·
-            🔄 P10a <code>ask_user</code> (Opus en cours) · ⬜ P10b « où écrire ? » · ⬜ P11 · ⬜
-            P12
+            <span class="etat">go le 06/09 (soir)</span> — ✅ P5b CLOSE (<code>16d1f574</code> ;
+            passes Codex 32-35 traitées dans <code>4491ae46</code>, <code>aefdcec3</code>,
+            <code>934091d4</code>, <code>4f084c21</code>, <code>268f68ef</code> ; passe 36 : aucun
+            constat bloquant, rien de neuf) · 🔄 P10a <code>ask_user</code> (Opus en cours) · ⬜
+            P10b « où écrire ? » · ⬜ P11 · ⬜ P12
           </td>
         </tr>
         <tr>
@@ -1204,7 +1204,9 @@
         pas propre à P5b : c'est la robustesse du client de base (<code>statement_timeout</code>
         exclu à dessein, keepalive TCP 60 s, <code>lock_timeout</code> 30 s), la même exposition
         pour toute requête du runner et pour les insertions d'audit d'avant P5b. Arbitrage
-        ci-dessous.</span
+        ci-dessous. <b>Passe 36</b> : Codex confirme les deux points (le test rougit par causalité,
+        sans horloge ; aucun chemin de P5b n'aggrave l'état d'avant) — aucun constat bloquant,
+        <b>P5b close</b>.</span
       >
     </div>
     <div class="ligne">
