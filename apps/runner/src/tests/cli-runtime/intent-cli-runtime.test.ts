@@ -583,26 +583,92 @@ describe('run-job : les écritures d’audit en vol sont attendues avant de lire
       return greenTurn();
     });
 
-  it('une insertion d’audit encore en route quand la CLI se termine est vue par le registre', async () => {
-    // La preuve est TEMPORELLE, et elle le dit (revue Codex, passe 34) : sans
-    // l'attente, la lecture précède l'insertion sauf si tout ce que run-job
-    // fait entre le retour du binding et la lecture (une ligne cli_runs, la
-    // remise des verrous) dépasse `DELAI` — d'où une fenêtre large, et la
-    // seconde assertion : le tour a bien DURÉ au moins ce délai, c'est-à-dire
-    // qu'il a attendu.
-    const DELAI = 1_500;
+  /**
+   * Un double de base SANS horloge (revue Codex, passes 34-35) : l'insertion
+   * dans `tool_calls` est RETENUE jusqu'à ce que le test la libère, et le
+   * double observe deux choses — quelqu'un a-t-il ATTENDU cette insertion (un
+   * `then` posé sur la promesse que `onEvent` garde), et un `select` sur
+   * `tool_calls` est-il parti AVANT la libération ? Le test libère l'insertion
+   * dès qu'il voit l'un ou l'autre : avec l'attente, c'est le premier ; sans
+   * elle, c'est le second, et c'est la faute. Aucune durée n'entre en jeu.
+   */
+  const dbWithHeldAudit = () => {
+    const gate = { awaited: false, readBeforeWrite: false, released: false, release: () => {} };
+    const proxy = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'select') {
+          const select = Reflect.get(target, prop, receiver) as (...a: unknown[]) => {
+            from: (t: unknown) => unknown;
+          };
+          return (...args: unknown[]) => {
+            const builder = select.apply(target, args);
+            return new Proxy(builder, {
+              get(b, key, r) {
+                if (key !== 'from') return Reflect.get(b, key, r);
+                return (table: unknown) => {
+                  if (table === toolCalls && !gate.released) gate.readBeforeWrite = true;
+                  return b.from(table);
+                };
+              },
+            });
+          };
+        }
+        if (prop !== 'insert') return Reflect.get(target, prop, receiver);
+        return (table: unknown) => {
+          const q = (
+            target as unknown as { insert: (t: unknown) => { values: (v: unknown) => unknown } }
+          ).insert(table);
+          if (table !== toolCalls) return q;
+          return {
+            values: (v: unknown) => {
+              const real = new Promise<unknown>((resolve, reject) => {
+                gate.release = () => {
+                  gate.released = true;
+                  Promise.resolve(q.values(v)).then(resolve, reject);
+                };
+              });
+              // Ce que `onEvent` garde : `.catch(...)` sur ce que `values()` rend.
+              // Le résultat du `.catch` est un thenable dont le `then` dit
+              // « quelqu'un attend cette écriture ».
+              return {
+                catch: (onRejected: (e: unknown) => unknown) => ({
+                  then: (onFulfilled: (v: unknown) => unknown, onRej?: (e: unknown) => unknown) => {
+                    gate.awaited = true;
+                    return real.catch(onRejected).then(onFulfilled, onRej);
+                  },
+                }),
+              };
+            },
+          };
+        };
+      },
+    });
+    return { proxy, gate };
+  };
+
+  it('une insertion d’audit encore en route quand la CLI se termine est ATTENDUE, puis lue (sans horloge)', async () => {
+    const { proxy, gate } = dbWithHeldAudit();
     const jobId = await newJob();
     ecritureParEvenement();
-    const debut = Date.now();
 
-    const outcome = await runWith(dbWithSlowAudit(DELAI), jobId);
+    const running = runWith(proxy, jobId);
+    // Laisser le tour avancer jusqu'à ce qu'il attende l'écriture (bien) ou
+    // lise `tool_calls` sans elle (mal) — puis libérer l'écriture dans les deux
+    // cas, pour que le tour finisse et que l'assertion parle.
+    while (!gate.awaited && !gate.readBeforeWrite) {
+      await new Promise((r) => setImmediate(r));
+    }
+    gate.release();
+    const outcome = await running;
 
     expect(outcome.status).toBe('completed');
-    expect(Date.now() - debut, 'le tour n’a pas attendu l’écriture d’audit').toBeGreaterThanOrEqual(
-      DELAI - 50,
-    );
+    expect(
+      gate.readBeforeWrite,
+      'tool_calls a été lu avant que l’écriture d’audit soit posée',
+    ).toBe(false);
+    expect(gate.awaited).toBe(true);
     const row = await ligneDeclaree(alpha);
-    expect(row, 'la ligne d’audit en vol a été lue trop tôt : alpha non déclaré').not.toBeNull();
+    expect(row, 'alpha non déclaré').not.toBeNull();
   });
 
   it('une insertion d’audit qui ne se règle JAMAIS ne gèle pas le tour : borne, code, et le tour finit', async () => {
