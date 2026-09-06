@@ -25,9 +25,10 @@ import {
 } from '@nodal-agents/db';
 import {
   parseApprovalCallbackData,
-  type ApprovalCallbackDecision,
+  type ParsedApprovalCallback,
 } from '../../telegram/approval-callback.ts';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
+import { readQuestionToolInput } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import type { SlackInteractionAck } from './types.ts';
@@ -116,10 +117,12 @@ export async function resolveSlackApprovalTarget(
 
 export type SlackApprovalInteractionResult =
   | { handled: true; decision: 'approve' | 'reject'; jobId: string }
+  /** P10a — une option d'une QUESTION a ete choisie ; le job reprend avec elle. */
+  | { handled: true; decision: 'answer'; jobId: string; answer: string }
   | { handled: false; reason: string };
 
 export async function handleSlackApprovalInteraction(args: {
-  parsed: { approvalRequestId: string; decision: ApprovalCallbackDecision };
+  parsed: ParsedApprovalCallback;
   channelId: string;
   channelType: 'im' | 'channel';
   /** The agent whose gateway received this interaction — must own the resolved delivery target (defense in depth). */
@@ -132,7 +135,11 @@ export async function handleSlackApprovalInteraction(args: {
 
   // Le flux « Toujours autoriser » (suffixes w/wc/wb) est Telegram-only pour
   // l'instant — la carte Slack ne porte pas ce bouton : refus honnête.
-  if (parsed.decision !== 'approve' && parsed.decision !== 'reject') {
+  if (
+    parsed.decision !== 'approve' &&
+    parsed.decision !== 'reject' &&
+    parsed.decision !== 'option'
+  ) {
     await ack.ephemeralReply('Standing rules can only be granted from the dashboard.');
     return { handled: false, reason: 'unsupported_decision' };
   }
@@ -150,6 +157,8 @@ export async function handleSlackApprovalInteraction(args: {
       jobId: approvalRequests.jobId,
       agentId: approvalRequests.agentId,
       status: approvalRequests.status,
+      kind: approvalRequests.kind,
+      toolInput: approvalRequests.toolInput,
       toolName: approvalRequests.toolName,
     })
     .from(approvalRequests)
@@ -182,6 +191,48 @@ export async function handleSlackApprovalInteraction(args: {
   if (approval.status !== 'pending') {
     await ack.ephemeralReply(`Already ${approval.status}.`);
     return { handled: false, reason: 'already_resolved' };
+  }
+
+  // ── P10a — repondre a une QUESTION ────────────────────────────────────────
+  //
+  // APRES toutes les gardes de securite : repondre reprend un job, exactement
+  // comme approuver. Les deux sens du croisement sont refuses explicitement —
+  // un OK sur une question ne dit pas laquelle, une option sur une approbation
+  // n'a pas de liste ou pointer (invariant #4).
+  const isQuestion = approval.kind === 'question';
+
+  if (parsed.decision === 'option') {
+    if (!isQuestion) {
+      await ack.ephemeralReply('Not a question.');
+      return { handled: false, reason: 'not_a_question' };
+    }
+    const question = readQuestionToolInput(approval.toolInput);
+    const chosen = question?.options[parsed.optionIndex];
+    if (chosen === undefined) {
+      await ack.ephemeralReply('Unknown option.');
+      return { handled: false, reason: 'unknown_option' };
+    }
+    const answered = await resolveApprovalDecision(deps, env, {
+      approvalRequestId: parsed.approvalRequestId,
+      decision: 'approve',
+      answer: chosen,
+      resolvedBy: 'slack',
+    });
+    if (!answered.ok) {
+      await ack.ephemeralReply('Could not apply — try the dashboard.');
+      return { handled: false, reason: answered.code };
+    }
+    await ack.resolveCard(`✅ Answered: ${chosen}`);
+    return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
+  }
+
+  if (isQuestion) {
+    // Approuver ou refuser sans choisir n'a pas de sens sur une question.
+    // Decliner depuis ce canal n'est pas offert en P10a : la carte ne porte que
+    // des options, donc un `a`/`r` ici est un payload forge ou une carte
+    // croisee — refus honnete plutot qu'une resolution au hasard.
+    await ack.ephemeralReply('Pick an option.');
+    return { handled: false, reason: 'question_needs_option' };
   }
 
   const result = await resolveApprovalDecision(deps, env, {

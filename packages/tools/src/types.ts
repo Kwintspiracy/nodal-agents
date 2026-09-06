@@ -313,6 +313,22 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    */
   defaultApproval?: 'require_approval';
   /**
+   * This tool SUSPENDS the job until a human answers it (P10a, `ask_user`).
+   *
+   * The gate treats such a call as an approval request of kind `question`,
+   * WHATEVER the rules and the autonomy level say: neither an explicit
+   * `auto_approve` rule nor `fully_autonomous` can skip it, because there is
+   * nothing to skip to — running `ask_user` with no answer on record has no
+   * meaning, and its only possible outcome would be `question_unanswered`.
+   * A `block` rule IS still honoured: an owner who forbids the tool forbids
+   * it, and the agent gets the ordinary refusal.
+   *
+   * It is NOT a variant of `defaultApproval`: that one expresses a POSTURE an
+   * explicit rule may override. This one expresses a mechanism — the answer
+   * IS the tool's input.
+   */
+  asksUser?: boolean;
+  /**
    * Optional check that runs BEFORE the approval gate — the only hook that can
    * refuse a call without a human ever being asked about it.
    *
@@ -479,6 +495,14 @@ export interface ApprovalGateRequest {
   jobId: string;
   agentId: string;
   entityId: string;
+  /**
+   * Ce que la ligne demande (P10a) — la MÊME valeur que la colonne
+   * `approval_requests.kind` que la porte vient d'écrire. Passée ici plutôt
+   * que relue par le notifieur : celui-ci doit choisir entre une carte
+   * d'approbation et une carte de question, et une seconde lecture de la ligne
+   * pourrait diverger de ce qui a été posé.
+   */
+  kind: 'approval' | 'question';
 }
 
 export interface ExecuteOptions {

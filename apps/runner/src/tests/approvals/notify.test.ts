@@ -96,6 +96,7 @@ function req(): ApprovalGateRequest {
     jobId: seed.jobId,
     agentId: seed.agentId,
     entityId: seed.entityId,
+    kind: 'approval',
   };
 }
 
@@ -161,6 +162,7 @@ describe('notifyApprovalCreated', () => {
       jobId: seed.jobId,
       agentId: seed.agentId,
       entityId: seed.entityId,
+      kind: 'approval',
     });
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -253,6 +255,7 @@ describe('notifyApprovalCreated', () => {
       jobId: childJob!.id,
       agentId: delegate!.id,
       entityId: seed.entityId,
+      kind: 'approval',
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -330,6 +333,7 @@ describe('notifyApprovalCreated', () => {
       jobId: job!.id,
       agentId: ownerlessAgent!.id,
       entityId: seed.entityId,
+      kind: 'approval',
     });
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -455,6 +459,7 @@ describe('resolveTelegramDeliveryTarget: entity boundary assertion (F2)', () => 
       jobId: childJob!.id,
       agentId: delegate!.id,
       entityId: seed.entityId,
+      kind: 'approval',
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -507,6 +512,7 @@ describe('notifyApprovalCreated — channel-parametric delivery (W2)', () => {
       jobId: job!.id,
       agentId: seed.agentId,
       entityId: seed.entityId,
+      kind: 'approval',
     });
 
     expect(discordSendApprovalCardMock).toHaveBeenCalledTimes(1);
@@ -558,6 +564,7 @@ describe('notifyApprovalCreated — channel-parametric delivery (W2)', () => {
         jobId: job!.id,
         agentId: seed.agentId,
         entityId: seed.entityId,
+        kind: 'approval',
       }),
     ).resolves.toBeUndefined();
 
@@ -639,6 +646,7 @@ describe('notifyApprovalCreated — channel-parametric delivery (W2)', () => {
       jobId: childJob!.id,
       agentId: delegate!.id,
       entityId: seed.entityId,
+      kind: 'approval',
     });
 
     expect(discordSendApprovalCardMock).not.toHaveBeenCalled();

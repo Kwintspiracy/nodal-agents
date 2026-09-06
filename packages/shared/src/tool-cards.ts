@@ -177,12 +177,51 @@ export const DelegationCardSchema = z.object({
   sessionId: text(CARD_LABEL_MAX).nullable().optional(),
 });
 
-/** Une question posée à l'utilisateur (P7 — aucun outil ne la déclare encore). */
+/**
+ * Une question posée à l'utilisateur, et — quand elle a été répondue — l'option
+ * choisie (P10a). `ask_user` la déclare : la carte porte donc la question ET sa
+ * réponse, parce que l'écran doit montrer les deux sur la MÊME carte (celle qui
+ * a suspendu le travail et celle qui l'a repris sont un seul appel, rejoué).
+ *
+ * `answer` est le LIBELLÉ de l'option, jamais son index : la ligne d'audit est
+ * relue des mois plus tard, alors que la liste d'options d'alors n'existe plus
+ * nulle part ailleurs. `null` (ou absent) = pas encore répondue.
+ */
 export const QuestionCardSchema = z.object({
   card: z.literal('question'),
   prompt: text(CARD_TEXT_MAX),
   options: z.array(text(CARD_LABEL_MAX)).optional(),
+  answer: text(CARD_LABEL_MAX).nullable().optional(),
 });
+
+/**
+ * La question, ses options et son contexte, tels que la LIGNE les porte —
+ * `approval_requests.tool_input` ou `tool_calls.tool_input`, deux colonnes
+ * `jsonb` dont rien ne garantit la forme à la lecture (P10a).
+ *
+ * Ici, et pas dans chaque lecteur : le runner en a besoin pour composer la
+ * carte du canal, le web pour la page Approvals et pour le fil. Trois copies
+ * de la même lecture auraient divergé au premier correctif — c'est exactement
+ * ce que `tool-card-payload.ts` documente déjà côté web.
+ *
+ * Rend `null` dès qu'un champ manque ou n'a pas le bon type : l'appelant
+ * retombe alors sur un affichage brut, jamais sur une question à moitié lue.
+ */
+export function readQuestionToolInput(
+  toolInput: unknown,
+): { question: string; options: string[]; context: string | null } | null {
+  if (typeof toolInput !== 'object' || toolInput === null) return null;
+  const raw = toolInput as { question?: unknown; options?: unknown; context?: unknown };
+  if (typeof raw.question !== 'string' || raw.question.trim() === '') return null;
+  if (!Array.isArray(raw.options)) return null;
+  const options = raw.options.filter((o): o is string => typeof o === 'string');
+  if (options.length !== raw.options.length || options.length === 0) return null;
+  return {
+    question: raw.question,
+    options,
+    context: typeof raw.context === 'string' && raw.context.trim() !== '' ? raw.context : null,
+  };
+}
 
 /**
  * Rien de mieux à montrer que l'entrée et la sortie brutes — déjà sur la ligne
@@ -212,8 +251,13 @@ export type CardPayloadFor<C extends ToolCard> = Extract<ToolCardPayload, { card
 /**
  * Les cartes dont la charge utile a une STRUCTURE — un outil qui déclare l'une
  * d'elles doit fournir `present()`. `text` se déduit de n'importe quelle
- * sortie, `generic` n'a rien à porter, `question` ne naît pas d'un outil.
+ * sortie, `generic` n'a rien à porter.
+ *
+ * `question` en faisait partie tant qu'aucun outil ne la déclarait. `ask_user`
+ * la déclare depuis P10a, et sa charge utile a bien une forme (la question, les
+ * options, la réponse) qu'aucune sortie ne donne toute seule : elle est donc
+ * soumise au contrat comme les autres.
  */
 export const CARDS_NEEDING_PRESENTER: readonly ToolCard[] = TOOL_CARDS.filter(
-  (c) => c !== 'text' && c !== 'generic' && c !== 'question',
+  (c) => c !== 'text' && c !== 'generic',
 );

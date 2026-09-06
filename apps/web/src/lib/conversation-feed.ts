@@ -46,6 +46,21 @@ export type FeedToolCallRow = {
   createdAt: Date | null;
 };
 
+/**
+ * Une QUESTION posée par l'agent et son sort (P10a) — une ligne
+ * `approval_requests` de kind `question`, rangée par `tool_call_id` sur
+ * l'étape qui l'a posée.
+ */
+export type FeedQuestionRow = {
+  approvalRequestId: string;
+  toolCallId: string | null;
+  status: string;
+  /** L'option retenue, sur une question répondue. */
+  answer: string | null;
+  /** La raison donnée en déclinant, s'il y en a une. */
+  notes: string | null;
+};
+
 export type FeedLlmCallRow = {
   turn: number | null;
   source: string;
@@ -125,6 +140,19 @@ export type Step =
       outputText: string | null;
       outcome: StepOutcome;
       durationMs: number | null;
+      /**
+       * P10a — la question que CET appel a posée, quand une ligne
+       * `approval_requests` lui correspond par `toolCallId`. null pour toute
+       * autre étape, et pour une carte `question` dont la ligne n'a pas été
+       * chargée : l'écran montre alors la question sans boutons, plutôt que
+       * des boutons qui ne résoudraient rien.
+       */
+      question: {
+        approvalRequestId: string;
+        status: string;
+        answer: string | null;
+        notes: string | null;
+      } | null;
     };
 
 export type TurnBlock =
@@ -239,6 +267,12 @@ export const RUNNER_NOTE_PREFIX = '[système]';
  */
 export function showsAlone(step: Extract<Step, { kind: 'tool' }>): boolean {
   if (step.card === null || !STANDALONE_CARDS.has(step.card)) return false;
+  // P10a — une question SUSPENDUE se montre, et c'est tout l'intérêt : l'appel
+  // n'a pas réussi (il attend), et c'est précisément là qu'il faut les boutons.
+  // La condition porte sur la CARTE et sur l'ÉTAT de la ligne, jamais sur le
+  // nom de l'outil — un second outil qui poserait des questions demain hérite
+  // du même traitement sans qu'on touche à ce fichier.
+  if (step.card === 'question' && step.question !== null) return true;
   if (step.outcome !== 'success') return false;
   const p = step.presented;
   if (p === null) return true; // carte de résultat sans charge : l'écran montre le brut, mais à sa place
@@ -314,6 +348,8 @@ export function buildConversationFeed(
   job: FeedJob,
   toolCalls: readonly FeedToolCallRow[],
   llmCalls: readonly FeedLlmCallRow[],
+  /** Les questions de ce travail (P10a), rangées par `tool_call_id`. */
+  questions: readonly FeedQuestionRow[] = [],
 ): ConversationFeed {
   const items: FeedItem[] = [];
   const origin: Origin = {
@@ -334,6 +370,14 @@ export function buildConversationFeed(
       byNameQueue.set(row.toolName, q);
     }
   }
+  // Les questions par id d'appel. Une ligne sans `tool_call_id` n'est
+  // rattachable à aucune étape : elle reste sur la page Approvals, où elle est
+  // résoluble — jamais devinée par le nom de l'outil.
+  const questionByCallId = new Map<string, FeedQuestionRow>();
+  for (const q of questions) {
+    if (q.toolCallId) questionByCallId.set(q.toolCallId, q);
+  }
+
   const rowFor = (toolCallId: string, toolName: string): FeedToolCallRow | undefined => {
     const direct = byCallId.get(toolCallId);
     if (direct) return direct;
@@ -431,6 +475,7 @@ export function buildConversationFeed(
         const row = rowFor(b.toolCallId ?? '', toolName);
         if (row && row.turn !== null) rowTurns.push(row.turn);
         const card = row && isToolCard(row.card) ? row.card : null;
+        const q = b.toolCallId ? questionByCallId.get(b.toolCallId) : undefined;
         const step: Extract<Step, { kind: 'tool' }> = {
           kind: 'tool',
           toolName,
@@ -441,6 +486,14 @@ export function buildConversationFeed(
           outputText: row?.toolOutput ?? null,
           outcome: outcomeOfToolOutput(row?.toolOutput),
           durationMs: row?.durationMs ?? null,
+          question: q
+            ? {
+                approvalRequestId: q.approvalRequestId,
+                status: q.status,
+                answer: q.answer,
+                notes: q.notes,
+              }
+            : null,
         };
         if (showsAlone(step)) {
           flush();

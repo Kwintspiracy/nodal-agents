@@ -22,6 +22,7 @@ const tool = (over: Partial<Extract<Step, { kind: 'tool' }>>): Extract<Step, { k
   outputText: null,
   outcome: 'success',
   durationMs: 10,
+  question: null,
   ...over,
 });
 

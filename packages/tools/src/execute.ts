@@ -1,6 +1,6 @@
 // @nodal-agents/tools — execution wrapper with approval gate and audit trail
 
-import { approvalRequests, toolCalls } from '@nodal-agents/db';
+import { approvalRequests, toolCalls, and, eq, inArray } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import {
   redactSecretsForAudit,
@@ -58,6 +58,38 @@ const CODE_EXECUTION_TOOL_SET = new Set(CODE_EXECUTION_TOOL_NAMES);
 
 export function isCodeExecutionTool(toolName: string): boolean {
   return CODE_EXECUTION_TOOL_SET.has(toolName);
+}
+
+// ─── Questions déjà tranchées ─────────────────────────────────────────────────
+
+/**
+ * A human has already decided THIS call of an asking tool — answered or
+ * declined. Used by the third hardline floor to let the resume path through.
+ *
+ * NO `toolCallId` ⇒ false, always. The resume replays the tool with its
+ * ORIGINAL tool_use id (apps/runner/src/job/execute.ts, `toolCallId:
+ * req.toolCallId ?? undefined`), which is precisely what ties a decision to the
+ * call it answers. Without that id there is nothing to look up, and matching on
+ * the job alone would hand this call an answer given to a DIFFERENT question.
+ * Asking again is the honest outcome — a lightweight context that provides no
+ * call id simply cannot resume, and says so by suspending.
+ */
+async function hasAnsweredQuestion(ctx: ToolContext, toolName: string): Promise<boolean> {
+  if (!ctx.toolCallId) return false;
+  const [row] = await ctx.db
+    .select({ id: approvalRequests.id })
+    .from(approvalRequests)
+    .where(
+      and(
+        eq(approvalRequests.jobId, ctx.jobId),
+        eq(approvalRequests.toolCallId, ctx.toolCallId),
+        eq(approvalRequests.toolName, toolName),
+        eq(approvalRequests.kind, 'question'),
+        inArray(approvalRequests.status, ['approved', 'rejected']),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
 }
 
 // ─── executeTool ──────────────────────────────────────────────────────────────
@@ -322,6 +354,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     effectiveAction = 'require_approval';
   }
 
+  // Third hardline floor: a tool that ASKS THE USER (P10a, `ask_user`).
+  //
+  // Not a posture, a mechanism — so it overrides every relaxation, including an
+  // explicit `auto_approve` rule and `fully_autonomous`. Letting a blanket
+  // "never ask me again" run `ask_user` would not save the human a prompt: the
+  // tool's whole input is the answer, so the call would reach execute() with
+  // nothing to read and fail loud with `question_unanswered`. The only useful
+  // meaning of "auto-approve a question" is "ask it anyway".
+  //
+  // `block` still wins, and that is deliberate: an owner who forbids this tool
+  // for an agent forbids it, and the agent gets the ordinary blocked message.
+  //
+  // Once the question HAS been answered (or declined), the floor steps aside so
+  // the runner's resume path can replay the call and read the answer. That is
+  // the same shape as any approved tool — the difference is only that the
+  // synthetic `resume-bypass` auto_approve rule the runner passes would not, on
+  // its own, get past this floor.
+  if (tool.asksUser && effectiveAction !== 'block') {
+    effectiveAction = (await hasAnsweredQuestion(ctx, tool.name))
+      ? 'auto_approve'
+      : 'require_approval';
+  }
+
   if (effectiveAction === 'block') {
     // Prescriptive, like the delegation refusals (delegation_depth_exceeded…):
     // the bare word "blocked" gave the model nothing to correct with — it
@@ -365,6 +420,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // étape D: the originating tool_use id — lets the resume path target
         // the EXACT awaiting marker instead of matching by toolName alone.
         toolCallId: ctx.toolCallId ?? null,
+        // P10a : ce que la ligne DEMANDE, posé ici depuis ce que l'outil
+        // déclare — jamais deviné plus tard par son nom (invariant #1). Le web,
+        // le runner et Telegram lisent cette colonne pour savoir s'ils doivent
+        // montrer « approuver / refuser » ou une liste d'options.
+        kind: tool.asksUser === true ? 'question' : 'approval',
         status: 'pending',
       })
       .returning();
@@ -389,6 +449,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       jobId: ctx.jobId,
       agentId: ctx.agentId,
       entityId: ctx.entityId,
+      kind: tool.asksUser === true ? 'question' : 'approval',
     };
 
     await opts.onApprovalRequired(gateRequest);

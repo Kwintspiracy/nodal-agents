@@ -45,7 +45,20 @@ describe('ToolCardPayloadSchema — une forme par carte', () => {
 
   it('les cartes à structure sont exactement celles qui exigent un présentateur', () => {
     expect([...CARDS_NEEDING_PRESENTER].sort()).toEqual(
-      ['read', 'search', 'files', 'table', 'terminal', 'sent', 'checks', 'delegation'].sort(),
+      // `question` en fait partie depuis P10a : `ask_user` la déclare, et sa
+      // charge utile (la question, les options, la réponse) ne se déduit
+      // d'aucune sortie toute seule.
+      [
+        'read',
+        'search',
+        'files',
+        'table',
+        'terminal',
+        'sent',
+        'checks',
+        'delegation',
+        'question',
+      ].sort(),
     );
   });
 

@@ -8,11 +8,20 @@
 
 import { eq, and } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
+import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 
 export type ApprovalDecision = 'approve' | 'reject';
+
+/**
+ * Les options TELLES QUE LA LIGNE les porte (P10a) — relues depuis
+ * `approval_requests.tool_input`, la seule source qui dit ce que l'agent a
+ * réellement proposé. `tool_input` est un `jsonb` : sa forme n'est garantie par
+ * rien à la lecture, d'où le parse.
+ */
+const QuestionOptionsSchema = z.array(z.string());
 
 export interface ResolveApprovalInput {
   approvalRequestId: string;
@@ -20,6 +29,16 @@ export interface ResolveApprovalInput {
   /** Provenance of the decision — recorded in approval_requests.resolved_by. */
   resolvedBy: string;
   notes?: string | null;
+  /**
+   * L'option choisie, pour une ligne `kind = 'question'` (P10a). Le LIBELLÉ,
+   * jamais l'index : c'est ce que la ligne stocke et ce que l'agent relit.
+   *
+   * OBLIGATOIRE pour approuver une question, INTERDIT partout ailleurs — une
+   * réponse sur une approbation ordinaire est refusée plutôt qu'ignorée
+   * (invariant #4 : un champ silencieusement jeté est un bug qui ne se voit
+   * qu'à l'usage).
+   */
+  answer?: string | null;
   /**
    * Set by an UNTRUSTED caller (session bearer-token via /api/approve —
    * finding #4/#5): the approval must belong to this entity, closing the
@@ -35,6 +54,8 @@ export type ResolveApprovalResult =
       ok: true;
       jobId: string;
       decision: ApprovalDecision;
+      /** L'option retenue, pour une question approuvée. null sinon (et sur un refus). */
+      answer: string | null;
       chatId: string | null;
       /**
        * How the job will pick up this decision. 'worker' = the usual path — the
@@ -48,7 +69,15 @@ export type ResolveApprovalResult =
     }
   | {
       ok: false;
-      code: 'approval_not_found' | 'already_resolved' | 'job_not_found' | 'job_not_resumable';
+      code:
+        | 'approval_not_found'
+        | 'already_resolved'
+        | 'job_not_found'
+        | 'job_not_resumable'
+        // P10a — les trois refus propres aux questions.
+        | 'answer_not_an_option'
+        | 'answer_not_expected'
+        | 'question_options_unreadable';
       status?: string | null;
     };
 
@@ -83,6 +112,41 @@ export async function resolveApprovalDecision(
     return { ok: false, code: 'already_resolved', status: approval.status };
   }
 
+  // ── P10a — une QUESTION ne se résout pas comme une approbation ─────────────
+  //
+  // Ce qui change : approuver, ici, c'est CHOISIR. La réponse doit être l'une
+  // des options que l'agent a proposées, lues sur la ligne elle-même — jamais
+  // sur ce que l'appelant affirme. Un client qui poste un libellé de son cru
+  // (une carte périmée, un bouton forgé, une option retirée depuis) est refusé,
+  // parce que l'agent relira cette chaîne comme le résultat de son outil.
+  //
+  // Le refus, lui, reste un refus ordinaire : décliner une question est permis,
+  // le job reprend sur le marqueur `[REJECTED]` habituel et l'agent fait
+  // autrement. Une réponse n'y a rien à faire.
+  const kind = approval.kind === 'question' ? 'question' : 'approval';
+  const rawAnswer = typeof input.answer === 'string' ? input.answer.trim() : null;
+  let answerToStore: string | null = null;
+
+  if (kind === 'question' && input.decision === 'approve') {
+    const options = QuestionOptionsSchema.safeParse(
+      (approval.toolInput as { options?: unknown } | null)?.options,
+    );
+    // Une ligne dont les options ne se lisent plus ne peut PAS être répondue :
+    // rien ne permettrait de dire que la réponse était offerte. On le dit
+    // (invariant #4) plutôt que d'accepter n'importe quelle chaîne.
+    if (!options.success || options.data.length === 0) {
+      return { ok: false, code: 'question_options_unreadable' };
+    }
+    if (rawAnswer === null || !options.data.includes(rawAnswer)) {
+      return { ok: false, code: 'answer_not_an_option' };
+    }
+    answerToStore = rawAnswer;
+  } else if (rawAnswer !== null) {
+    // Une réponse sur une approbation ordinaire, ou sur un refus de question :
+    // l'appelant s'est trompé de geste. Refusé, jamais silencieusement jeté.
+    return { ok: false, code: 'answer_not_expected' };
+  }
+
   const jobId = approval.jobId;
   const [job] = await deps.db.select().from(agentJobs).where(eq(agentJobs.id, jobId)).limit(1);
   if (!job) return { ok: false, code: 'job_not_found' };
@@ -101,6 +165,7 @@ export async function resolveApprovalDecision(
       resolvedAt: new Date(),
       resolvedBy: input.resolvedBy,
       notes: input.notes ?? null,
+      answer: answerToStore,
     })
     .where(
       and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.status, 'pending')),
@@ -156,6 +221,7 @@ export async function resolveApprovalDecision(
         ok: true,
         jobId,
         decision: input.decision,
+        answer: answerToStore,
         chatId: (job as { chatId?: string | null }).chatId ?? null,
         resumed: 'in_process',
       };
@@ -169,6 +235,7 @@ export async function resolveApprovalDecision(
     ok: true,
     jobId,
     decision: input.decision,
+    answer: answerToStore,
     chatId: (job as { chatId?: string | null }).chatId ?? null,
     resumed: 'worker',
   };

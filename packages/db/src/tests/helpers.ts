@@ -295,6 +295,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_name text NOT NULL,
       tool_input jsonb NOT NULL,
       tool_call_id text,
+      kind text NOT NULL DEFAULT 'approval' CHECK (kind IN ('approval','question')),
+      answer text,
       status text DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
       requested_at timestamptz DEFAULT now(),
       resolved_at timestamptz,

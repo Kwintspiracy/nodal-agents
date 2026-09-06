@@ -3,6 +3,7 @@
 
 import type { ToolRegistry } from '../types';
 import { returnResultTool } from './return-result';
+import { askUserTool } from './ask-user';
 import { saveMemoryTool } from './save-memory';
 import { queryMemoryTool } from './query-memory';
 import { searchHistoryTool } from './search-history';
@@ -29,6 +30,8 @@ import { listModelsTool } from './list-models';
 import { listSchedulesTool } from './list-schedules';
 
 export { returnResultTool } from './return-result';
+export { askUserTool, AskUserInputSchema } from './ask-user';
+export type { AskUserInput, AskUserOutput } from './ask-user';
 export { skillViewTool } from './skill-view';
 export { listModelsTool } from './list-models';
 export { listSchedulesTool } from './list-schedules';
@@ -135,6 +138,7 @@ export type {
  */
 export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(returnResultTool);
+  registry.register(askUserTool);
   registry.register(skillViewTool);
   registry.register(listModelsTool);
   registry.register(listSchedulesTool);
@@ -199,6 +203,12 @@ export function registerBuiltins(registry: ToolRegistry): void {
  */
 export const ALWAYS_ON_TOOLS = [
   'return_result',
+  // ask_user — TOUJOURS disponible, sans skill ni toggle. C'est la leçon de
+  // l'incident de confabulation (11-12/07) : un agent qui ne peut pas demander
+  // invente. Le rendre optionnel reviendrait à laisser un agent sans ce recours
+  // par simple oubli de configuration, et ce qu'il produirait alors serait
+  // indiscernable d'une réponse fondée.
+  'ask_user',
   'skill_view',
   'list_models',
   'list_schedules',
@@ -249,6 +259,7 @@ export const UNBLOCKABLE_TOOLS: Readonly<Record<string, string>> = {
  */
 export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: string }> = [
   { name: returnResultTool.name, description: returnResultTool.description },
+  { name: askUserTool.name, description: askUserTool.description },
   { name: skillViewTool.name, description: skillViewTool.description },
   { name: listModelsTool.name, description: listModelsTool.description },
   { name: listSchedulesTool.name, description: listSchedulesTool.description },

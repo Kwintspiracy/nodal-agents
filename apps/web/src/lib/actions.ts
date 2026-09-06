@@ -5708,6 +5708,14 @@ export type ApprovalRow = {
   agentSlug: string | null;
   toolName: string;
   toolInput: unknown;
+  /**
+   * Ce que la ligne DEMANDE (P10a) : 'approval' — approuver ou refuser une
+   * action — ou 'question' — choisir parmi les options que l'agent propose.
+   * Lu sur la colonne, jamais déduit du nom de l'outil (invariant #1).
+   */
+  kind: string;
+  /** L'option retenue, sur une question résolue. null tant que personne n'a répondu. */
+  answer: string | null;
   status: string;
   requestedAt: Date | null;
   resolvedAt: Date | null;
@@ -5771,6 +5779,8 @@ export async function listApprovalsAction(
         agentSlug: agents.slug,
         toolName: approvalRequests.toolName,
         toolInput: approvalRequests.toolInput,
+        kind: approvalRequests.kind,
+        answer: approvalRequests.answer,
         status: approvalRequests.status,
         requestedAt: approvalRequests.requestedAt,
         resolvedAt: approvalRequests.resolvedAt,
@@ -5847,6 +5857,13 @@ const ResolveApprovalSchema = z.object({
   approvalRequestId: z.string().guid(),
   decision: z.enum(['approve', 'reject']),
   notes: z.string().max(5000).optional(),
+  /**
+   * P10a — l'option choisie sur une QUESTION. Le libellé, jamais l'index. Le
+   * runner la valide contre les options de la ligne : cette action ne fait que
+   * la transporter, et un libellé qui n'est plus une option revient en erreur
+   * plutôt que d'être écrit.
+   */
+  answer: z.string().max(400).optional(),
 });
 
 /**
@@ -5859,7 +5876,7 @@ const ResolveApprovalSchema = z.object({
  */
 export async function resolveApprovalAction(
   raw: unknown,
-): Promise<ActionResult<{ jobId: string; decision: string }>> {
+): Promise<ActionResult<{ jobId: string; decision: string; answer: string | null }>> {
   try {
     const session = await getSession();
     const parsed = ResolveApprovalSchema.safeParse(raw);
@@ -5915,11 +5932,11 @@ export async function resolveApprovalAction(
       return fail(code, `Runner rejected: ${code}`);
     }
 
-    const body = (await res.json()) as { jobId: string; decision: string };
+    const body = (await res.json()) as { jobId: string; decision: string; answer?: string | null };
     revalidatePath('/approvals');
     revalidatePath('/jobs');
     revalidatePath(`/jobs/${body.jobId}`);
-    return ok({ jobId: body.jobId, decision: body.decision });
+    return ok({ jobId: body.jobId, decision: body.decision, answer: body.answer ?? null });
   } catch (err) {
     console.error('[resolveApprovalAction]', err);
     return fail('db_error', 'Failed to resolve approval');

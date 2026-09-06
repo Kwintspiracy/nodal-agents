@@ -40,6 +40,7 @@ export type {
   SendTextOpts,
   OutboundMedia,
   ApprovalCard,
+  QuestionCard,
   SendResult,
   BotIdentity,
   ChannelCapabilities,

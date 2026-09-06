@@ -12,6 +12,7 @@ import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { CardPayloadFor } from '@nodal-agents/shared';
+import { readQuestionToolInput } from '@nodal-agents/shared';
 import type {
   ConversationFeed,
   FeedChildJob,
@@ -21,6 +22,7 @@ import type {
 } from '@/lib/conversation-feed.ts';
 import StepsGroup from './StepsGroup.tsx';
 import ProducedCard from './ProducedCard.tsx';
+import QuestionCard from './QuestionCard.tsx';
 import HistoryGroup from './HistoryGroup.tsx';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
@@ -194,6 +196,22 @@ function CardFrame({
 function ResultCard({ step }: { step: ToolStep }) {
   const p = step.presented;
   const duration = step.durationMs !== null ? formatMs(step.durationMs) : undefined;
+  // P10a — la question passe AVANT la charge utile : sur l'appel qui a suspendu
+  // le travail il n'y en a pas encore (rien n'a été exécuté), et c'est
+  // exactement l'état où la carte doit porter les boutons. Ce qu'on montre vient
+  // du `presented` quand il existe, de l'entrée relue sinon — jamais du nom de
+  // l'outil.
+  if (step.card === 'question') {
+    const fromInput = readQuestionToolInput(step.input);
+    const prompt = p?.card === 'question' ? p.prompt : (fromInput?.question ?? null);
+    const options = p?.card === 'question' ? (p.options ?? []) : (fromInput?.options ?? []);
+    if (prompt !== null && options.length > 0) {
+      return <QuestionCard prompt={prompt} options={options} question={step.question} />;
+    }
+    // Une question dont ni la charge ni l'entrée ne se lisent : le brut, dit
+    // tel quel, plutôt qu'une carte vide qui prétendrait poser une question.
+    return <RawCard step={step} />;
+  }
   if (p === null) return <RawCard step={step} />;
   switch (p.card) {
     case 'table':
@@ -209,8 +227,8 @@ function ResultCard({ step }: { step: ToolStep }) {
     case 'delegation':
       return <DelegationCard payload={p} />;
     default:
-      // Une carte que l'écran ne dessine pas encore (question, P7) ou un texte :
-      // le brut, dit tel quel — jamais une devinette.
+      // Une carte que l'écran ne dessine pas encore, ou un texte : le brut, dit
+      // tel quel — jamais une devinette.
       return <RawCard step={step} />;
   }
 }

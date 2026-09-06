@@ -21,6 +21,7 @@ import type {
   DiscoveredConversation,
   OutboundMedia,
   ApprovalCard,
+  QuestionCard,
   SendResult,
   BotIdentity,
   TextFormat,
@@ -325,6 +326,53 @@ async function sendApprovalCard(
 }
 
 /**
+ * QuestionCard → a Slack section block plus one button per option (P10a).
+ * `action_id` carries `<callbackId>:o<index>` — the same wire format Telegram
+ * and Discord use, read by the shared parser in the runner. Slack allows 25
+ * elements in an actions block; `ask_user` allows six options.
+ */
+async function sendQuestionCard(
+  creds: ChannelCredentials,
+  conversationId: string,
+  card: QuestionCard,
+): Promise<SendResult> {
+  const botToken = requireBotToken(creds);
+  const channelId = requireChannelId(conversationId);
+  const client = makeClient(botToken);
+
+  const sectionBlock: SectionBlock = {
+    type: 'section',
+    text: { type: 'mrkdwn', text: card.text },
+  };
+  const buttons: Button[] = card.options.map((label, i) => ({
+    type: 'button',
+    ...(i === 0 ? { style: 'primary' as const } : {}),
+    text: { type: 'plain_text', text: label },
+    action_id: `${card.callbackId}:o${i}`,
+  }));
+  const actionsBlock: ActionsBlock = { type: 'actions', elements: buttons };
+
+  let ts: string | undefined;
+  try {
+    const result = await client.chat.postMessage({
+      channel: channelId,
+      text: card.text,
+      blocks: [sectionBlock, actionsBlock],
+    });
+    ts = result.ts;
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+  if (!ts) {
+    throw new DeliveryError(
+      'send_failed',
+      'send_failed: chat.postMessage returned no ts to identify the sent question',
+    );
+  }
+  return { messageId: ts };
+}
+
+/**
  * Edit a previously-sent message's text. Best-effort like Telegram's and
  * Discord's edit: this is used to turn a resolved approval card into its
  * resolved state, and a failed edit must not undo a decision that already
@@ -435,6 +483,7 @@ export const slackAdapter: ChannelAdapter = {
   sendText,
   sendMedia,
   sendApprovalCard,
+  sendQuestionCard,
   editMessageText,
   listConversations,
   validateCredentials,

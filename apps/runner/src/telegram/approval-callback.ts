@@ -36,6 +36,7 @@ import {
   isAutoRunPaused,
 } from '../approvals/rules.ts';
 import { isCodeExecutionTool } from '@nodal-agents/tools';
+import { readQuestionToolInput } from '@nodal-agents/shared';
 
 export interface HandleApprovalCallbackArgs {
   update: TelegramUpdate;
@@ -53,11 +54,15 @@ export type ApprovalCallbackResult =
   // restaurée après un « Back ». Elles sont TRAITÉES (le tap a eu un effet
   // visible) sans porter de décision.
   | { handled: true; decision: 'always_confirm_shown' | 'card_restored'; jobId: string }
+  /** P10a — une option a été choisie sur une question ; le job reprend avec elle. */
+  | { handled: true; decision: 'answer'; jobId: string; answer: string }
   | { handled: false; reason: string };
 
 export type ApprovalCallbackDecision =
   | 'approve'
   | 'reject'
+  /** P10a — une option d'une QUESTION a été choisie ; son rang est `optionIndex`. */
+  | 'option'
   /** 1er tap sur 🔁 — afficher la question de confirmation. */
   | 'always_ask'
   /** Confirmation — écrire la règle auto_approve PUIS approuver. */
@@ -80,16 +85,41 @@ const DECISION_BY_SUFFIX: Record<string, ApprovalCallbackDecision> = Object.assi
   } satisfies Record<string, ApprovalCallbackDecision>,
 );
 
-/** Parse `apr:<uuid>:<a|r|w|wc|wb>` → { id, decision }, or null if it isn't ours / malformed. */
-export function parseApprovalCallbackData(
-  data: string | undefined,
-): { approvalRequestId: string; decision: ApprovalCallbackDecision } | null {
+/** P10a — le suffixe d'une option : `o` suivi d'un entier décimal. */
+const OPTION_SUFFIX = /^o(\d{1,3})$/;
+
+/**
+ * Ce qu'un payload de bouton PORTE une fois lu. Union discriminée : seul un
+ * `option` a un index, et les handlers des trois canaux la reçoivent telle
+ * quelle — un handler qui reconstruirait sa propre forme perdrait l'index.
+ */
+export type ParsedApprovalCallback =
+  | { approvalRequestId: string; decision: Exclude<ApprovalCallbackDecision, 'option'> }
+  | { approvalRequestId: string; decision: 'option'; optionIndex: number };
+
+/**
+ * Parse `apr:<uuid>:<a|r|w|wc|wb|o<n>>` → { id, decision }, or null if it isn't
+ * ours / malformed.
+ *
+ * `o<n>` (P10a) carries the chosen option's INDEX and is NOT bounded here: this
+ * function knows nothing about how many options the question had. Bounding it
+ * would mean hardcoding `ask_user`'s maximum in a wire parser, and it would be
+ * the wrong place anyway — the row is what says which options exist, and the
+ * handler checks the index against it. A three-digit cap is kept only so a
+ * forged payload cannot make us parse an arbitrarily long digit string.
+ */
+export function parseApprovalCallbackData(data: string | undefined): ParsedApprovalCallback | null {
   if (!data) return null;
   const parts = data.split(':');
   if (parts.length !== 3 || parts[0] !== APPROVAL_CALLBACK_PREFIX) return null;
   const [, id, d] = parts;
-  const decision = d ? DECISION_BY_SUFFIX[d] : undefined;
-  if (!id || !decision) return null;
+  if (!id || !d) return null;
+  const option = OPTION_SUFFIX.exec(d);
+  if (option?.[1] !== undefined) {
+    return { approvalRequestId: id, decision: 'option', optionIndex: Number(option[1]) };
+  }
+  const decision = DECISION_BY_SUFFIX[d];
+  if (!decision || decision === 'option') return null;
   return { approvalRequestId: id, decision };
 }
 
@@ -135,6 +165,7 @@ export async function handleApprovalCallback(
       agentId: approvalRequests.agentId,
       entityId: approvalRequests.entityId,
       status: approvalRequests.status,
+      kind: approvalRequests.kind,
       toolName: approvalRequests.toolName,
       toolInput: approvalRequests.toolInput,
     })
@@ -186,6 +217,63 @@ export async function handleApprovalCallback(
       });
     }
     return { handled: false, reason: 'already_resolved' };
+  }
+
+  // ── P10a — répondre à une QUESTION ────────────────────────────────────────
+  //
+  // Placé APRÈS toutes les gardes de sécurité (chat privé, propriétaire, même
+  // bot, même chat, encore pending) : répondre reprend un job, exactement comme
+  // approuver, donc rien ici ne doit s'exécuter avant elles.
+  //
+  // Les deux sens du croisement sont refusés, jamais silencieusement traduits :
+  // un ✅ sur une question ne dit pas LAQUELLE, et une option sur une
+  // approbation n'a pas de liste où pointer. Le refus est explicite (invariant
+  // #4) et la carte reste telle quelle, donc retentable.
+  const isQuestion = approval.kind === 'question';
+
+  if (parsed.decision === 'option') {
+    if (!isQuestion) {
+      await answerTelegramCallback(botToken, cb.id, 'Not a question.', true);
+      return { handled: false, reason: 'not_a_question' };
+    }
+    const question = readQuestionToolInput(approval.toolInput);
+    const chosen = question?.options[parsed.optionIndex];
+    if (chosen === undefined) {
+      await answerTelegramCallback(botToken, cb.id, 'Unknown option.', true);
+      return { handled: false, reason: 'unknown_option' };
+    }
+    const answered = await resolveApprovalDecision(deps, env, {
+      approvalRequestId: parsed.approvalRequestId,
+      decision: 'approve',
+      answer: chosen,
+      resolvedBy: 'telegram',
+    });
+    if (!answered.ok) {
+      await answerTelegramCallback(botToken, cb.id, 'Could not apply — try the dashboard.', true);
+      return { handled: false, reason: answered.code };
+    }
+    await answerTelegramCallback(botToken, cb.id, `✅ ${chosen}`);
+    if (messageId !== undefined) {
+      // Les boutons disparaissent avec l'édition (aucun `inlineKeyboard`) : la
+      // question est tranchée, et une seconde option cliquable sur une carte
+      // déjà résolue ne mènerait qu'à un « Already approved ».
+      await editTelegramMessageText({
+        botToken,
+        chatId: jobChatId,
+        messageId,
+        text: `✅ Answered: ${chosen}`,
+      });
+    }
+    return { handled: true, decision: 'answer', jobId: answered.jobId, answer: chosen };
+  }
+
+  if (isQuestion && parsed.decision !== 'reject') {
+    // `a`, `w`, `wc`, `wb` sur une question : approuver sans choisir n'a pas de
+    // sens, et une règle « toujours » sur une question voudrait dire « réponds
+    // toujours la même chose », ce qui n'est pas une chose que l'on accorde.
+    // Décliner (`r`) reste possible et passe plus bas, inchangé.
+    await answerTelegramCallback(botToken, cb.id, 'Pick an option.', true);
+    return { handled: false, reason: 'question_needs_option' };
   }
 
   // ── Flux « Toujours autoriser » (lot approbations, 24/08) ────────────────

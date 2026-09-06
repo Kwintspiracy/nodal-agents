@@ -85,8 +85,10 @@ const productTools: AnyTool[] = [...registry.list(), ...capabilityTools];
  *   sent       — quelque chose est parti vers un canal
  *   checks     — un verdict de vérification
  *   delegation — un travail confié à un autre agent (Nodal ou CLI de code)
+ *   question   — une question posée à l'utilisateur, et l'option qu'il a choisie
  */
 const EXPECTED_CARDS: Record<string, ToolCard> = {
+  ask_user: 'question',
   attach_agent: 'text',
   attach_connector: 'text',
   attach_mcp: 'text',

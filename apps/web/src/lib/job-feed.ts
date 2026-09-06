@@ -11,7 +11,16 @@
 // `'use server'` à l'autre est un piège connu de ce dépôt.
 
 import 'server-only';
-import { eq, and, inArray, agents, agentJobs, toolCalls, llmCalls } from '@nodal-agents/db';
+import {
+  eq,
+  and,
+  inArray,
+  agents,
+  agentJobs,
+  toolCalls,
+  llmCalls,
+  approvalRequests,
+} from '@nodal-agents/db';
 import { redactTranscriptForDisplay, redactSecretsInText } from '@nodal-agents/shared';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
@@ -112,7 +121,7 @@ export async function assembleJobFeeds(
   if (inputs.length === 0) return [];
   const ids = inputs.map((i) => i.job.id);
 
-  const [childRows, toolRows, llmRows] = await Promise.all([
+  const [childRows, toolRows, llmRows, questionRows] = await Promise.all([
     db
       .select({
         parentJobId: agentJobs.parentJobId,
@@ -163,6 +172,28 @@ export async function assembleJobFeeds(
       .from(llmCalls)
       .where(and(inArray(llmCalls.jobId, ids), eq(llmCalls.entityId, entityId)))
       .orderBy(llmCalls.createdAt),
+    // P10a — les QUESTIONS de ces travaux. Chargées ici, avec le reste du fil,
+    // et filtrées EN SQL sur `kind` : une approbation ordinaire n'a rien à
+    // faire sur une carte, et la ramener pour l'écarter en mémoire ferait
+    // grossir la page de toutes les approbations d'un travail bavard.
+    db
+      .select({
+        approvalRequestId: approvalRequests.id,
+        jobId: approvalRequests.jobId,
+        toolCallId: approvalRequests.toolCallId,
+        status: approvalRequests.status,
+        answer: approvalRequests.answer,
+        notes: approvalRequests.notes,
+      })
+      .from(approvalRequests)
+      .where(
+        and(
+          inArray(approvalRequests.jobId, ids),
+          eq(approvalRequests.entityId, entityId),
+          eq(approvalRequests.kind, 'question'),
+        ),
+      )
+      .orderBy(approvalRequests.requestedAt),
   ]);
 
   /** Range les lignes sous leur job, en gardant l'ordre de la requête. */
@@ -181,6 +212,7 @@ export async function assembleJobFeeds(
   const childrenByJob = groupBy(childRows, (r) => r.parentJobId);
   const toolsByJob = groupBy(toolRows, (r) => r.jobId);
   const llmByJob = groupBy(llmRows, (r) => r.jobId);
+  const questionsByJob = groupBy(questionRows, (r) => r.jobId);
 
   return inputs.map((input) => {
     const { job } = input;
@@ -221,6 +253,13 @@ export async function assembleJobFeeds(
         toolOutput: t.toolOutput === null ? null : redactSecretsInText(t.toolOutput),
       })),
       llmByJob.get(job.id) ?? [],
+      (questionsByJob.get(job.id) ?? []).map((q) => ({
+        approvalRequestId: q.approvalRequestId,
+        toolCallId: q.toolCallId,
+        status: q.status ?? 'pending',
+        answer: q.answer,
+        notes: q.notes,
+      })),
     );
 
     return { feed, displayTask, scheduleName };

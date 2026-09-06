@@ -15,6 +15,7 @@
 
 import EmptyState from '@/components/ui/EmptyState';
 import ConversationFeedView from './ConversationFeedView.tsx';
+import LiveRefresh from './LiveRefresh.tsx';
 import ProjectComposer from './ProjectComposer.tsx';
 import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 
@@ -45,7 +46,16 @@ export default function ProjectThread({
     <>
       <div className="mt-8">
         {thread !== null ? (
-          <ConversationFeedView feed={thread.data.feed} />
+          <>
+            {/* P10a — la page d'un projet ne se rafraîchissait pas toute seule,
+                alors que celles de /chat et /scheduled le font depuis P2. Une
+                question posée pendant qu'on la regarde n'y serait jamais
+                apparue : le fil serait resté au dernier rendu, et la carte à
+                boutons avec lui. `live` est déjà calculé par le même chargeur
+                que les deux autres pages — il n'était simplement pas branché. */}
+            <LiveRefresh live={thread.data.live} />
+            <ConversationFeedView feed={thread.data.feed} />
+          </>
         ) : (
           <div className="mx-auto max-w-[840px]">
             <EmptyState title="Nothing said here yet" compact />
