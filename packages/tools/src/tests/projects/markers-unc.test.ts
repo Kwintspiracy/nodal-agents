@@ -6,10 +6,11 @@
 // N'est PAS tenté sans dépendre d'un réseau.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as NodeFs from 'node:fs';
 
 const probes: string[] = [];
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFs>();
   return {
     ...actual,
     realpathSync: Object.assign(
