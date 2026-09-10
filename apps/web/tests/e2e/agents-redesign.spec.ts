@@ -148,7 +148,7 @@ async function dragWorkerByKeyboardUntil(
   return null;
 }
 
-test.describe('Agents page redesign', () => {
+test.describe('Agents page redesign @cap:organiser-equipe', () => {
   test('render, dark mode, add-worker modal, keyboard drag round-trip', async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];

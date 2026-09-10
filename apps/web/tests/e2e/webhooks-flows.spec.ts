@@ -27,7 +27,7 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 90_000 });
 
-test.describe('Webhooks section — full click flow', () => {
+test.describe('Webhooks section — full click flow @cap:declencher-sur-evenement', () => {
   test('create, copy URL, toggle, rotate, delete, empty state', async ({ page }) => {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');

@@ -37,7 +37,7 @@ function networkSection(
     .first();
 }
 
-test.describe('NetworkForm — /settings', () => {
+test.describe('NetworkForm — /settings @cap:se-connecter', () => {
   // ── Test 1 — Section renders correctly ────────────────────────────────────
   test('Network section renders with radio buttons and read-only URL fields', async ({ page }) => {
     await page.goto('/settings');

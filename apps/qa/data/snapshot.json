@@ -1,6 +1,6 @@
 {
-  "genereLe": "2026-09-10T14:46:22.150Z",
-  "commit": "ef14c4be",
+  "genereLe": "2026-09-10T14:50:42.490Z",
+  "commit": "c4009184",
   "branche": "qa/etat-zero-tests",
   "paquets": [
     {
@@ -647,7 +647,7 @@
     "couvertureLignes": 81.58,
     "capacites": 24,
     "capacitesProuvees": 0,
-    "capacitesJamaisProuvees": 15,
+    "capacitesJamaisProuvees": 0,
     "testsEnMemoire": 169,
     "testsInstables": 0,
     "testsCasses": 22
@@ -673,9 +673,14 @@
         "domaine": "Entrer",
         "nom": "Protéger et se connecter",
         "question": "Puis-je fermer mon instance et y revenir avec mon compte ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "se-connecter",
+            "origine": "apps/web/tests/e2e/settings-network.spec.ts"
+          }
+        ]
       },
       {
         "slug": "creer-agent",
@@ -696,27 +701,42 @@
         "domaine": "Composer une équipe",
         "nom": "Configurer un agent",
         "question": "Puis-je changer son profil, sa personnalité, ses réglages ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "configurer-agent",
+            "origine": "apps/web/tests/e2e/agent-recipes.spec.ts"
+          }
+        ]
       },
       {
         "slug": "organiser-equipe",
         "domaine": "Composer une équipe",
         "nom": "Organiser une équipe",
         "question": "Puis-je rattacher des agents à un orchestrateur ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "organiser-equipe",
+            "origine": "apps/web/tests/e2e/agents-redesign.spec.ts"
+          }
+        ]
       },
       {
         "slug": "choisir-modele",
         "domaine": "Composer une équipe",
         "nom": "Choisir un modèle",
         "question": "Puis-je décider quel modèle fait tourner quel agent ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "choisir-modele",
+            "origine": "packages/llm/src/tests/client.test.ts"
+          }
+        ]
       },
       {
         "slug": "parler-a-un-agent",
@@ -737,7 +757,7 @@
         "domaine": "Parler et suivre",
         "nom": "Suivre ce qu'il fait",
         "question": "Puis-je voir, pendant qu'il travaille, ce qu'il fait vraiment ?",
-        "exigee": false,
+        "exigee": true,
         "etat": "non jouée",
         "preuves": [
           {
@@ -751,45 +771,70 @@
         "domaine": "Parler et suivre",
         "nom": "Reprendre une conversation",
         "question": "Puis-je revenir demain et repartir de là où on en était ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "reprendre-conversation",
+            "origine": "apps/runner/src/tests/job/thread-history.test.ts"
+          }
+        ]
       },
       {
         "slug": "parler-par-canal-externe",
         "domaine": "Parler et suivre",
         "nom": "Parler depuis ailleurs",
         "question": "Puis-je lui parler depuis Telegram plutôt que depuis l'écran ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "parler-par-canal-externe",
+            "origine": "apps/web/tests/e2e/agent-flows.spec.ts"
+          }
+        ]
       },
       {
         "slug": "assigner-outils",
         "domaine": "Donner des capacités",
         "nom": "Donner des outils",
         "question": "Puis-je décider exactement ce que cet agent a le droit de faire ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "assigner-outils",
+            "origine": "apps/web/tests/e2e/agent-tool-assignment.spec.ts"
+          }
+        ]
       },
       {
         "slug": "assigner-skill",
         "domaine": "Donner des capacités",
         "nom": "Donner un savoir-faire",
         "question": "Puis-je lui attacher une skill, et la lui retirer ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "assigner-skill",
+            "origine": "packages/db/src/tests/assign-skill-repo.test.ts"
+          }
+        ]
       },
       {
         "slug": "apprendre-une-skill",
         "domaine": "Donner des capacités",
         "nom": "Installer une skill du catalogue",
         "question": "Puis-je prendre une skill de la communauté et la tenir à jour ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "apprendre-une-skill",
+            "origine": "apps/web/tests/e2e/learned-skills.spec.ts"
+          }
+        ]
       },
       {
         "slug": "connecter-un-service",
@@ -814,16 +859,21 @@
         "domaine": "Donner des capacités",
         "nom": "Se souvenir",
         "question": "Est-ce qu'il retient ce que je lui ai appris ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "se-souvenir",
+            "origine": "apps/web/tests/e2e/agent-flows.spec.ts"
+          }
+        ]
       },
       {
         "slug": "regler-autonomie",
         "domaine": "Garder la main",
         "nom": "Régler l'autonomie",
         "question": "Puis-je choisir ce qui passe seul et ce qui me demande ?",
-        "exigee": false,
+        "exigee": true,
         "etat": "non jouée",
         "preuves": [
           {
@@ -877,9 +927,14 @@
         "domaine": "Garder la main",
         "nom": "Travailler sur mes fichiers",
         "question": "Puis-je lui donner un dossier et retrouver ce qu’il y a écrit ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "travailler-sur-des-fichiers",
+            "origine": "packages/tools/src/builtin/file-ops/overwrite-gate.test.ts"
+          }
+        ]
       },
       {
         "slug": "verifier-un-livrable",
@@ -900,36 +955,56 @@
         "domaine": "Automatiser",
         "nom": "Planifier une tâche",
         "question": "Puis-je lui demander de faire ça tous les matins ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "planifier-une-tache",
+            "origine": "apps/web/tests/e2e/schedule-daily-budget.spec.ts"
+          }
+        ]
       },
       {
         "slug": "declencher-sur-evenement",
         "domaine": "Automatiser",
         "nom": "Déclencher sur un événement",
         "question": "Puis-je le faire réagir à quelque chose qui arrive de l'extérieur ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "declencher-sur-evenement",
+            "origine": "apps/web/tests/e2e/webhooks-flows.spec.ts"
+          }
+        ]
       },
       {
         "slug": "voir-le-cout",
         "domaine": "Piloter",
         "nom": "Voir ce que ça coûte",
         "question": "Puis-je savoir ce que ce tour de chat vient de me coûter ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "voir-le-cout",
+            "origine": "apps/runner/src/tests/llm/call-sink.test.ts"
+          }
+        ]
       },
       {
         "slug": "consulter-l-aide",
         "domaine": "Piloter",
         "nom": "Trouver comment faire",
         "question": "Quand je bloque, est-ce que le produit sait me l'expliquer ?",
-        "exigee": false,
-        "etat": "jamais prouvée",
-        "preuves": []
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "consulter-l-aide",
+            "origine": "apps/web/tests/e2e/help-guides.spec.ts"
+          }
+        ]
       }
     ],
     "fautes": []
@@ -945,374 +1020,374 @@
         "cle": "apps/web/tests/e2e/agent-flows.spec.ts::Scenario A — Proactive save_memory concierge saves memory proactively when user says \"retiens-le\"",
         "fichier": "apps/web/tests/e2e/agent-flows.spec.ts",
         "titre": "Scenario A — Proactive save_memory concierge saves memory proactively when user says \"retiens-le\"",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/agent-recipes.spec.ts::agent recipes a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
         "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
         "titre": "agent recipes a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 6470,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section Scenario A — Tools & Connectors section renders with the test connector",
         "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
         "titre": "Agent edit page — Tools & Connectors section Scenario A — Tools & Connectors section renders with the test connector",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/agents-redesign.spec.ts::Agents page redesign render, dark mode, add-worker modal, keyboard drag round-trip",
         "fichier": "apps/web/tests/e2e/agents-redesign.spec.ts",
         "titre": "Agents page redesign render, dark mode, add-worker modal, keyboard drag round-trip",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 5335,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/airtable-oauth.spec.ts::Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
         "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
         "titre": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10401,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/apify-apikey.spec.ts::Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
         "fichier": "apps/web/tests/e2e/apify-apikey.spec.ts",
         "titre": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 11628,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 25047,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test B — Agent edit picks LLM provider change LLM provider dropdown on agent edit → model field updates → save → toast",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test B — Agent edit picks LLM provider change LLM provider dropdown on agent edit → model field updates → save → toast",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 4487,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/code-verification.spec.ts::Proof commands — onglet Code A — configurer puis approuver, hash écrit EN BASE",
         "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
         "titre": "Proof commands — onglet Code A — configurer puis approuver, hash écrit EN BASE",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/connector-multi-instance.spec.ts::Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
         "fichier": "apps/web/tests/e2e/connector-multi-instance.spec.ts",
         "titre": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 11646,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/credentials-reuse.spec.ts::Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
         "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
         "titre": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10308,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/help-guides.spec.ts::Help guides — api_key connector (Apify) \"Where do I get this?\" expander reveals console.apify.com link",
         "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
         "titre": "Help guides — api_key connector (Apify) \"Where do I get this?\" expander reveals console.apify.com link",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10270,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/help-guides.spec.ts::Help guides — OAuth wizard (Google Drive) wizard shows 4 Google API links and format hint",
         "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
         "titre": "Help guides — OAuth wizard (Google Drive) wizard shows 4 Google API links and format hint",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10288,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/mcp-connectors.spec.ts::MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
         "fichier": "apps/web/tests/e2e/mcp-connectors.spec.ts",
         "titre": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/notion-internal.spec.ts::Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
         "fichier": "apps/web/tests/e2e/notion-internal.spec.ts",
         "titre": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10270,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/notion-oauth.spec.ts::Notion OAuth flow (wizard-driven) connect via wizard → callback → connected status (no Refresh button)",
         "fichier": "apps/web/tests/e2e/notion-oauth.spec.ts",
         "titre": "Notion OAuth flow (wizard-driven) connect via wizard → callback → connected status (no Refresh button)",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10315,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/oauth-flow.spec.ts::Google Drive OAuth flow (wizard-driven) connect via wizard → callback → connected status and toast",
         "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
         "titre": "Google Drive OAuth flow (wizard-driven) connect via wizard → callback → connected status and toast",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 10313,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/settings-verification-surfaces.spec.ts::Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
         "fichier": "apps/web/tests/e2e/settings-verification-surfaces.spec.ts",
         "titre": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 502,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/telegram-allowlist.spec.ts::A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
         "fichier": "apps/web/tests/e2e/telegram-allowlist.spec.ts",
         "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/tools-tab.spec.ts::Step 2 — Tools tab lists both native tool groups",
         "fichier": "apps/web/tests/e2e/tools-tab.spec.ts",
         "titre": "Step 2 — Tools tab lists both native tool groups",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 9909,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/user-menu.spec.ts::UserMenu — sign-out + re-login round-trip shows email in sidebar, signs out, redirects to /login, re-logs in",
         "fichier": "apps/web/tests/e2e/user-menu.spec.ts",
         "titre": "UserMenu — sign-out + re-login round-trip shows email in sidebar, signs out, redirects to /login, re-logs in",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 17267,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/webhooks-flows.spec.ts::Webhooks section — full click flow create, copy URL, toggle, rotate, delete, empty state",
         "fichier": "apps/web/tests/e2e/webhooks-flows.spec.ts",
         "titre": "Webhooks section — full click flow create, copy URL, toggle, rotate, delete, empty state",
-        "tours": 1,
-        "echecs": 1,
-        "recents": "r",
-        "dernierTourLe": "2026-09-10T14:46:22.150Z",
-        "dernierEchecLe": "2026-09-10T14:46:22.150Z",
+        "tours": 2,
+        "echecs": 2,
+        "recents": "rr",
+        "dernierTourLe": "2026-09-10T14:50:42.490Z",
+        "dernierEchecLe": "2026-09-10T14:50:42.490Z",
         "rougeDepuis": null,
         "dureeMs": 1998,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 1,
-        "rouges": 1,
+        "fenetre": 2,
+        "rouges": 2,
         "verts": 0
       }
     ]
@@ -2763,7 +2838,7 @@
         "number": 65,
         "state": "OPEN",
         "title": "Le portail hiérarchise, et il prévient",
-        "updatedAt": "2026-09-10T14:17:45Z",
+        "updatedAt": "2026-09-10T14:47:36Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/65"
       },
       {
@@ -3047,9 +3122,9 @@
             "__typename": "CheckRun",
             "completedAt": "0001-01-01T00:00:00Z",
             "conclusion": "",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34490811903/job/102917179455",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34491399480/job/102919226824",
             "name": "ci",
-            "startedAt": "2026-09-10T14:43:34Z",
+            "startedAt": "2026-09-10T14:48:57Z",
             "status": "IN_PROGRESS",
             "workflowName": "CI"
           },
@@ -3057,9 +3132,9 @@
             "__typename": "CheckRun",
             "completedAt": "0001-01-01T00:00:00Z",
             "conclusion": "",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34490811903/job/102917179409",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34491399480/job/102919226613",
             "name": "ci-windows",
-            "startedAt": "2026-09-10T14:43:34Z",
+            "startedAt": "2026-09-10T14:48:58Z",
             "status": "IN_PROGRESS",
             "workflowName": "CI"
           },
@@ -3067,32 +3142,32 @@
             "__typename": "CheckRun",
             "completedAt": "0001-01-01T00:00:00Z",
             "conclusion": "",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34490811903/job/102917179103",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34491399480/job/102919226871",
             "name": "pack-smoke",
-            "startedAt": "2026-09-10T14:43:33Z",
+            "startedAt": "2026-09-10T14:48:57Z",
             "status": "IN_PROGRESS",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T14:45:52Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34490811903/job/102917179436",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34491399480/job/102919226786",
             "name": "e2e-smoke",
-            "startedAt": "2026-09-10T14:43:33Z",
-            "status": "COMPLETED",
+            "startedAt": "2026-09-10T14:48:58Z",
+            "status": "IN_PROGRESS",
             "workflowName": "CI"
           },
           {
             "__typename": "StatusContext",
             "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-09-10T14:42:31Z",
+            "startedAt": "2026-09-10T14:47:50Z",
             "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/3d81d1cf-a54d-4742-aac2-e13c907f5a93"
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/9ca31aa8-7aea-41df-bc50-3f601a2b838c"
           }
         ],
         "title": "Un portail qualité, et la CI qui le nourrit",
-        "updatedAt": "2026-09-10T14:42:18Z",
+        "updatedAt": "2026-09-10T14:47:36Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51"
       },
       {
@@ -5968,7 +6043,7 @@
           "test",
           "produit"
         ],
-        "majLe": "2026-09-10T14:17:45Z",
+        "majLe": "2026-09-10T14:47:36Z",
         "colonne": "À tester"
       },
       {
@@ -6145,7 +6220,7 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51",
         "brouillon": false,
         "etiquettes": [],
-        "majLe": "2026-09-10T14:42:18Z",
+        "majLe": "2026-09-10T14:47:36Z",
         "ci": "en cours",
         "colonne": "En review"
       },

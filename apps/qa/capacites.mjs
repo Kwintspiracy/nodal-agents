@@ -16,10 +16,16 @@
 //
 // ─── `exigee` ─────────────────────────────────────────────────────────────────
 //
-// La porte refuse une capacité `exigee` que plus aucun test ne prouve. Elles ne
-// le sont pas toutes au départ, et c'est délibéré : une porte qui exige tout le
-// premier jour se fait désactiver le deuxième. La vague s'élargit à mesure que
-// les parcours sont étiquetés.
+// La porte refuse une capacité `exigee` que plus aucun test ne prouve.
+//
+// Elles ne l'étaient pas toutes au départ — sept seulement — parce qu'une porte
+// qui exige tout le premier jour se fait désactiver le deuxième. La vague s'est
+// élargie à mesure de l'étiquetage, et elle est CLOSE : les vingt-quatre sont
+// désormais revendiquées par au moins un test, donc toutes exigées. Supprimer
+// le dernier test qui prouve l'une d'elles fait maintenant rougir la CI.
+//
+// Ajouter une capacité ici sans l'étiqueter nulle part casse la porte, et c'est
+// voulu : c'est le seul moment où quelqu'un se demande encore ce qui la prouve.
 
 /** @typedef {{ slug: string, domaine: string, nom: string, question: string, exigee: boolean }} Capacite */
 
@@ -38,7 +44,7 @@ export const CAPACITES = [
     domaine: 'Entrer',
     nom: 'Protéger et se connecter',
     question: 'Puis-je fermer mon instance et y revenir avec mon compte ?',
-    exigee: false,
+    exigee: true,
   },
 
   // ─── Composer une équipe ────────────────────────────────────────────────────
@@ -54,21 +60,21 @@ export const CAPACITES = [
     domaine: 'Composer une équipe',
     nom: 'Configurer un agent',
     question: 'Puis-je changer son profil, sa personnalité, ses réglages ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'organiser-equipe',
     domaine: 'Composer une équipe',
     nom: 'Organiser une équipe',
     question: 'Puis-je rattacher des agents à un orchestrateur ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'choisir-modele',
     domaine: 'Composer une équipe',
     nom: 'Choisir un modèle',
     question: 'Puis-je décider quel modèle fait tourner quel agent ?',
-    exigee: false,
+    exigee: true,
   },
 
   // ─── Parler et suivre ───────────────────────────────────────────────────────
@@ -84,21 +90,21 @@ export const CAPACITES = [
     domaine: 'Parler et suivre',
     nom: "Suivre ce qu'il fait",
     question: "Puis-je voir, pendant qu'il travaille, ce qu'il fait vraiment ?",
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'reprendre-conversation',
     domaine: 'Parler et suivre',
     nom: 'Reprendre une conversation',
     question: 'Puis-je revenir demain et repartir de là où on en était ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'parler-par-canal-externe',
     domaine: 'Parler et suivre',
     nom: 'Parler depuis ailleurs',
     question: "Puis-je lui parler depuis Telegram plutôt que depuis l'écran ?",
-    exigee: false,
+    exigee: true,
   },
 
   // ─── Donner des capacités ───────────────────────────────────────────────────
@@ -107,21 +113,21 @@ export const CAPACITES = [
     domaine: 'Donner des capacités',
     nom: 'Donner des outils',
     question: 'Puis-je décider exactement ce que cet agent a le droit de faire ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'assigner-skill',
     domaine: 'Donner des capacités',
     nom: 'Donner un savoir-faire',
     question: 'Puis-je lui attacher une skill, et la lui retirer ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'apprendre-une-skill',
     domaine: 'Donner des capacités',
     nom: 'Installer une skill du catalogue',
     question: 'Puis-je prendre une skill de la communauté et la tenir à jour ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'connecter-un-service',
@@ -135,7 +141,7 @@ export const CAPACITES = [
     domaine: 'Donner des capacités',
     nom: 'Se souvenir',
     question: "Est-ce qu'il retient ce que je lui ai appris ?",
-    exigee: false,
+    exigee: true,
   },
 
   // ─── Garder la main ─────────────────────────────────────────────────────────
@@ -144,7 +150,7 @@ export const CAPACITES = [
     domaine: 'Garder la main',
     nom: "Régler l'autonomie",
     question: 'Puis-je choisir ce qui passe seul et ce qui me demande ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'approuver-une-action',
@@ -165,7 +171,7 @@ export const CAPACITES = [
     domaine: 'Garder la main',
     nom: 'Travailler sur mes fichiers',
     question: 'Puis-je lui donner un dossier et retrouver ce qu’il y a écrit ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'verifier-un-livrable',
@@ -181,14 +187,14 @@ export const CAPACITES = [
     domaine: 'Automatiser',
     nom: 'Planifier une tâche',
     question: 'Puis-je lui demander de faire ça tous les matins ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'declencher-sur-evenement',
     domaine: 'Automatiser',
     nom: 'Déclencher sur un événement',
     question: "Puis-je le faire réagir à quelque chose qui arrive de l'extérieur ?",
-    exigee: false,
+    exigee: true,
   },
 
   // ─── Piloter ────────────────────────────────────────────────────────────────
@@ -197,14 +203,14 @@ export const CAPACITES = [
     domaine: 'Piloter',
     nom: 'Voir ce que ça coûte',
     question: 'Puis-je savoir ce que ce tour de chat vient de me coûter ?',
-    exigee: false,
+    exigee: true,
   },
   {
     slug: 'consulter-l-aide',
     domaine: 'Piloter',
     nom: 'Trouver comment faire',
     question: "Quand je bloque, est-ce que le produit sait me l'expliquer ?",
-    exigee: false,
+    exigee: true,
   },
 ];
 

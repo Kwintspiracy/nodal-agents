@@ -223,7 +223,7 @@ test.afterAll(async () => {
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
-test.describe('Agent edit page — Tools & Connectors section', () => {
+test.describe('Agent edit page — Tools & Connectors section @cap:assigner-outils', () => {
   test.describe.configure({ timeout: 30_000 });
 
   test('Scenario A — Tools & Connectors section renders with the test connector', async ({

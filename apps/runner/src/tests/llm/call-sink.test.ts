@@ -19,7 +19,7 @@ beforeAll(async () => {
 
 const flush = () => new Promise((r) => setTimeout(r, 50));
 
-describe('makeLlmCallSink', () => {
+describe('makeLlmCallSink @cap:voir-le-cout', () => {
   it('writes a full row: reported model wins, failover from chainIndex, provider cost kept', async () => {
     const sink = makeLlmCallSink(db, {
       source: 'job',

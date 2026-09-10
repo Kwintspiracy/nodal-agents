@@ -33,7 +33,7 @@ import {
 } from '@nodal-agents/db';
 import { requireLiveStack, makeDbClient, testSlugSuffix } from './helpers';
 
-test.describe('agent recipes', () => {
+test.describe('agent recipes @cap:configurer-agent', () => {
   test.beforeAll(async () => {
     await requireLiveStack();
   });

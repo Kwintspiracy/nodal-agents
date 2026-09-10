@@ -73,7 +73,7 @@ function opts(autonomy?: ExecuteOptions['autonomy'], rules: ApprovalRule[] = [])
   };
 }
 
-describe('D1 overwrite gate — file_write', () => {
+describe('D1 overwrite gate — file_write @cap:travailler-sur-des-fichiers', () => {
   it('shared workspace + existing file + propose_confirm (undefined autonomy) → awaiting_approval', async () => {
     await writeFile(join(SHARED_ROOT, 'template.json'), 'old', 'utf8');
     const result = await executeTool(
