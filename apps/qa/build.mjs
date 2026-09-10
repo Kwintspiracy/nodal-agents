@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ecartsDe } from './lib.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const DATA = join(ICI, 'data');
@@ -51,72 +52,10 @@ const dateFr = (iso) =>
 
 // ─── Écarts : la liste qui dit quoi faire, classée par ce que ça coûte ────────
 
-function ecarts() {
-  const out = [];
-  const r = s.resume;
-
-  const nonJoues = s.parcours.filter((p) => !p.jouParLaCi);
-  if (nonJoues.length > 0) {
-    const cas = nonJoues.reduce((a, p) => a + p.cas, 0);
-    out.push({
-      gravite: 'haute',
-      titre: `${nonJoues.length} parcours sur ${r.specsE2e} ne sont jamais joués par la CI`,
-      detail: `${cas} cas de test écrits, versionnés, et qu'aucune intégration continue n'exécute. Ce sont les parcours utilisateur — précisément ce qu'une régression casse en premier et qu'un test unitaire ne voit pas.`,
-      quoi: nonJoues.map((p) => p.nom),
-    });
-  }
-
-  const nonMesures = s.paquets.filter((p) => !p.couverture && p.tests.cas > 0);
-  if (nonMesures.length > 0) {
-    out.push({
-      gravite: 'haute',
-      titre: `${nonMesures.length} paquets portent des tests dont la couverture n'a jamais été mesurée`,
-      detail: `La configuration de couverture existait depuis toujours ; le paquet qui la fait tourner n'était pas installé. Aucun de ces paquets ne peut dire quelle part de son code ses tests traversent.`,
-      quoi: nonMesures.map((p) => p.nom),
-    });
-  }
-
-  const sansBanc = s.ci.filter((w) => !w.lanceBanc);
-  if (sansBanc.length === s.ci.length && s.ci.length > 0) {
-    out.push({
-      gravite: 'haute',
-      titre: `Aucun workflow ne lance le banc d'essai`,
-      detail: `Le banc sort déjà en erreur sur une régression de métrique — c'est une porte qui fonctionne et que personne ne franchit. Une régression du gate d'approbation peut donc partir en production sans un mot.`,
-      quoi: s.banc.sections.map((b) => b.id),
-    });
-  }
-
-  const sansCouvertureCi = s.ci.filter((w) => w.lanceCouverture);
-  if (sansCouvertureCi.length === 0 && s.ci.length > 0) {
-    out.push({
-      gravite: 'moyenne',
-      titre: `Aucun workflow ne mesure la couverture`,
-      detail: `Sans mesure en continu, la couverture est un chiffre du jour où quelqu'un a pensé à la lancer — pas une propriété du dépôt.`,
-      quoi: [],
-    });
-  }
-
-  const nus = s.paquets.filter((p) => p.tests.cas === 0 && p.tests.e2e === 0);
-  if (nus.length > 0) {
-    out.push({
-      gravite: 'moyenne',
-      titre: `${nus.length} paquets sans aucun test`,
-      detail: `Un paquet sans test n'est pas forcément un problème — certains ne portent que des types ou de la configuration. Ceux-là méritent d'être nommés pour qu'on cesse de se poser la question.`,
-      quoi: nus.map((p) => p.nom),
-    });
-  }
-
-  if (historique.length < 2) {
-    out.push({
-      gravite: 'basse',
-      titre: `L'historique commence tout juste`,
-      detail: `${historique.length} collecte(s) enregistrée(s). Les questions « combien de fois ça tourne » et « à quelle régularité » deviennent répondables dès que la CI collecte à chaque exécution.`,
-      quoi: [],
-    });
-  }
-
-  return out;
-}
+// La liste vit dans `lib.mjs`, sous test : c'est elle qui décide de ce qu'on
+// regarde en premier, et elle est passée d'un tas indifférencié à une hiérarchie
+// déduite de faits (issue #65).
+const ecarts = () => ecartsDe(s, historique);
 
 // ─── Fragments ────────────────────────────────────────────────────────────────
 

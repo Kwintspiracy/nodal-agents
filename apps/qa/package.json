@@ -10,6 +10,7 @@
     "render": "node build.mjs",
     "serve": "node serve.mjs",
     "porte": "node porte.mjs",
+    "alerte": "node alerte.mjs",
     "test": "vitest run"
   },
   "devDependencies": {

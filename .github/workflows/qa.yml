@@ -173,6 +173,19 @@ jobs:
             git push origin HEAD:main
           fi
 
+      # Un tableau qu'il faut penser à ouvrir n'existe pas. Ce geste est le seul
+      # qui manquait : quand quelque chose est rouge, le portail ouvre l'issue
+      # lui-même, et elle atterrit dans le Kanban à sa colonne. UNE issue tenue
+      # à jour, fermée dès qu'elle n'a plus rien à dire — un robot qui ouvre
+      # douze billets par nuit se fait couper au bout de trois jours.
+      #
+      # `|| true` : ne jamais faire échouer la mesure parce que l'alerte n'a pas
+      # pu écrire. Ce serait perdre la mesure ET l'alerte.
+      - name: Alerter si quelque chose est rouge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node apps/qa/alerte.mjs --appliquer || true
+
       - name: Rendre le portail
         run: node apps/qa/build.mjs
 

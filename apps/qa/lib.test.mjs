@@ -24,6 +24,8 @@ import {
   fautesDuRegistre,
   regrouperParCapacite,
   croiserPreuves,
+  ecartsDe,
+  alertes,
   cleDuTest,
   fusionnerEssais,
   instabiliteDe,
@@ -31,6 +33,7 @@ import {
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
+import { corpsDeLalerte } from './alerte.mjs';
 
 describe('etatCi — le vert ne s’accorde qu’à ce qui a réussi', () => {
   it('tout en succès ⇒ vert', () => {
@@ -277,6 +280,179 @@ describe('parcoursDunWorkflow — nommés et balayés', () => {
   });
 });
 
+// ─── La gravité (issue #65) ───────────────────────────────────────────────────
+
+describe('ecartsDe — le produit passe avant le dépôt', () => {
+  const CAP = (etat, exigee = true) => ({
+    slug: 'x',
+    nom: 'Connecter un service',
+    etat,
+    exigee,
+    preuves: [],
+  });
+  const SNAP = (extra = {}) => ({
+    resume: { specsE2e: 2 },
+    capacites: { registre: [] },
+    parcours: [],
+    paquets: [],
+    ci: [],
+    ...extra,
+  });
+
+  it('une capacité EXIGÉE cassée est haute — c’est une promesse rompue', () => {
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('rouge')] } }), [{}, {}]);
+    expect(e[0].gravite).toBe('haute');
+    expect(e[0].titre).toMatch(/capacité\(s\) exigée\(s\) du produit sont cassées/);
+    expect(e[0].quoi).toEqual(['Connecter un service']);
+  });
+
+  it('les capacités JAMAIS prouvées restent basses — c’est un plan, pas une alerte', () => {
+    // Les monter en haute noierait les vraies régressions sous une liste qui
+    // ne bouge que lentement. Le bruit décourage d'ouvrir la page.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('jamais prouvée', false)] } }), [{}, {}]);
+    expect(e).toHaveLength(1);
+    expect(e[0].gravite).toBe('basse');
+  });
+
+  it('une capacité exigée dont la preuve DORT est moyenne, pas haute', () => {
+    // Trou dans la mesure, pas dans le produit : le traiter comme une
+    // régression enverrait chercher un bug qui n'existe pas.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('non jouée')] } }), [{}, {}]);
+    expect(e[0].gravite).toBe('moyenne');
+  });
+
+  it('un rouge FRAIS est haut, un rouge ancien ne l’est pas', () => {
+    // La distinction qui fait tout le lot : une régression de la nuit se
+    // traite, une dette de trois mois se planifie.
+    const now = Date.parse('2026-09-10T00:00:00Z');
+    const memoire = (jour) => ({
+      instables: 0,
+      listeCasses: [{ cle: 'a::b', titre: 'un test', rougeDepuis: jour }],
+    });
+
+    const frais = ecartsDe(SNAP({ memoire: memoire('2026-09-09T12:00:00Z') }), [{}, {}], now);
+    expect(
+      frais.some((x) => x.gravite === 'haute' && /rouge dans les deux derniers/.test(x.titre)),
+    ).toBe(true);
+
+    const vieux = ecartsDe(SNAP({ memoire: memoire('2026-06-01T00:00:00Z') }), [{}, {}], now);
+    expect(vieux.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
+  });
+
+  it('un cassé SANS date connue ne passe pas pour frais', () => {
+    // `Date.parse(null)` rend NaN, et toute comparaison avec NaN est fausse —
+    // mais compter sur ça serait un accident. La garde est explicite.
+    const e = ecartsDe(
+      SNAP({ memoire: { instables: 0, listeCasses: [{ cle: 'a::b', rougeDepuis: null }] } }),
+      [{}, {}],
+    );
+    expect(e.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
+  });
+
+  it('à gravité égale, le PRODUIT est listé avant le dépôt', () => {
+    const e = ecartsDe(
+      SNAP({
+        capacites: { registre: [CAP('rouge')] },
+        parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: false }],
+      }),
+      [{}, {}],
+    );
+    const hautes = e.filter((x) => x.gravite === 'haute');
+    expect(hautes[0].titre).toMatch(/capacité/);
+    expect(hautes[1].titre).toMatch(/parcours/);
+  });
+
+  it('trie par gravité, toutes catégories confondues', () => {
+    const e = ecartsDe(
+      SNAP({
+        capacites: { registre: [CAP('jamais prouvée', false), CAP('rouge')] },
+        paquets: [{ nom: 'p', tests: { cas: 0, e2e: 0 } }],
+      }),
+      [{}, {}],
+    );
+    expect(e.map((x) => x.gravite)).toEqual(
+      [...e.map((x) => x.gravite)].sort(
+        (a, b) => ({ haute: 0, moyenne: 1, basse: 2 })[a] - { haute: 0, moyenne: 1, basse: 2 }[b],
+      ),
+    );
+  });
+
+  it('un dépôt sans rien à dire ne dit rien', () => {
+    expect(ecartsDe(SNAP(), [{}, {}])).toEqual([]);
+    expect(ecartsDe(null)).toEqual([]);
+    expect(ecartsDe(undefined)).toEqual([]);
+  });
+
+  it('un historique d’une seule collecte se signale, en basse', () => {
+    const e = ecartsDe(SNAP(), []);
+    expect(e).toHaveLength(1);
+    expect(e[0].gravite).toBe('basse');
+  });
+});
+
+describe('alertes — seule la gravité haute réveille quelqu’un', () => {
+  it('ne garde que les hautes', () => {
+    const e = [{ gravite: 'haute' }, { gravite: 'moyenne' }, { gravite: 'basse' }];
+    expect(alertes(e)).toEqual([{ gravite: 'haute' }]);
+  });
+
+  it('rien à signaler ⇒ liste vide, pas une alerte vide', () => {
+    // Une alerte qui part quand tout va bien est une alerte qu'on désactive.
+    expect(alertes([{ gravite: 'moyenne' }])).toEqual([]);
+    expect(alertes([])).toEqual([]);
+    expect(alertes()).toEqual([]);
+  });
+});
+
+describe('corpsDeLalerte — un billet dont on doute est un billet qu’on ignore', () => {
+  const ECART = {
+    gravite: 'haute',
+    titre: 'Deux capacités sont cassées',
+    detail: 'Le test qui les prouve échoue.',
+    quoi: ['Connecter un service', 'Approuver ou refuser'],
+  };
+
+  it('nomme la collecte qui l’a produit', () => {
+    // Sans ça, personne ne peut dire si le billet parle d'aujourd'hui ou d'il y
+    // a trois semaines.
+    const c = corpsDeLalerte([ECART], {
+      le: '2026-09-10T22:00:00Z',
+      commit: 'abc1234',
+      branche: 'main',
+    });
+    expect(c).toContain('2026-09-10T22:00:00Z');
+    expect(c).toContain('abc1234');
+    expect(c).toContain('main');
+  });
+
+  it('liste ce qui est touché', () => {
+    const c = corpsDeLalerte([ECART], {});
+    expect(c).toContain('Connecter un service');
+    expect(c).toContain('Approuver ou refuser');
+  });
+
+  it('BORNE la liste — sinon le billet devient le bruit qu’il remplaçait', () => {
+    const c = corpsDeLalerte(
+      [{ ...ECART, quoi: Array.from({ length: 40 }, (_, i) => `t${i}`) }],
+      {},
+    );
+    expect(c).toContain('t14');
+    expect(c).not.toContain('t15');
+    expect(c).toContain('et 25 autres');
+  });
+
+  it('un écart sans détail nommé ne fabrique pas de liste vide', () => {
+    const c = corpsDeLalerte([{ ...ECART, quoi: [] }], {});
+    expect(c).toContain('Deux capacités sont cassées');
+    expect(c).not.toMatch(/^- /m);
+  });
+
+  it('une collecte sans métadonnées ne laisse pas « undefined » dans le billet', () => {
+    const c = corpsDeLalerte([ECART]);
+    expect(c).not.toContain('undefined');
+  });
+});
+
 // ─── La mémoire, test par test (issue #64) ────────────────────────────────────
 
 describe('fusionnerEssais — ce qui n’a pas tourné ne bouge pas', () => {
@@ -300,15 +476,41 @@ describe('fusionnerEssais — ce qui n’a pas tourné ne bouge pas', () => {
   });
 
   it('compte les échecs et retient QUAND', () => {
-    let r = fusionnerEssais([], [T('un', 'rouge', '2026-09-01')]);
+    let r = fusionnerEssais([], [T('un', 'vert', '2026-08-31')]);
+    r = fusionnerEssais(r, [T('un', 'rouge', '2026-09-01')]);
     r = fusionnerEssais(r, [T('un', 'rouge', '2026-09-02')]);
     expect(r[0]).toMatchObject({
-      tours: 2,
+      tours: 3,
       echecs: 2,
-      recents: 'rr',
+      recents: 'vrr',
       dernierEchecLe: '2026-09-02',
       rougeDepuis: '2026-09-01',
     });
+  });
+
+  it('un test INCONNU trouvé rouge n’est pas daté — on ne l’a jamais vu vert', () => {
+    // La première collecte a présenté vingt-deux rouges anciens comme des
+    // régressions du jour. « Passé au rouge » suppose une transition observée ;
+    // sans elle, la date serait celle où on a commencé à regarder.
+    const r = fusionnerEssais([], [T('un', 'rouge', '2026-09-10')]);
+    expect(r[0]).toMatchObject({ echecs: 1, rougeDepuis: null, dernierEchecLe: '2026-09-10' });
+  });
+
+  it('un rouge qui SUCCÈDE à un rouge ne rajeunit pas le problème', () => {
+    // L'erreur inverse, et la plus insidieuse : dater chaque nuit ferait
+    // paraître neuf un test cassé depuis trois mois, et une dette passerait
+    // éternellement pour une régression du jour.
+    let r = fusionnerEssais([], [T('un', 'rouge', '2026-09-01')]);
+    expect(r[0].rougeDepuis).toBeNull();
+    r = fusionnerEssais(r, [T('un', 'rouge', '2026-09-02')]);
+    expect(r[0].rougeDepuis).toBeNull();
+  });
+
+  it('la date arrive à la BASCULE, et à elle seule', () => {
+    let r = fusionnerEssais([], [T('un', 'rouge', '2026-09-01')]);
+    r = fusionnerEssais(r, [T('un', 'vert', '2026-09-05')]);
+    r = fusionnerEssais(r, [T('un', 'rouge', '2026-09-06')]);
+    expect(r[0].rougeDepuis).toBe('2026-09-06');
   });
 
   it('`rougeDepuis` est l’âge du problème COURANT, pas du premier de l’histoire', () => {

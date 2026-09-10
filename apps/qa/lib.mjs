@@ -193,6 +193,158 @@ export function parcoursDunWorkflow(texte, tousLesParcours) {
   return { nommes: [...new Set(nommes)], balaye: true, exclus: [...exclus], joues };
 }
 
+// ─── La gravité ───────────────────────────────────────────────────────────────
+//
+// Vingt-et-un parcours rouges affichés à l'identique, c'est du bruit — et le
+// bruit décourage d'ouvrir la page. La gravité se DÉDUIT de faits, jamais d'un
+// réglage à la main : est-ce qu'une capacité exigée tombe, est-ce que le rouge
+// est frais ou déjà vieux.
+//
+// Cette liste vivait dans le rendu, hors de portée d'un test. C'est pourtant
+// elle qui décide de ce qu'on regarde en premier.
+
+const RANG = { haute: 0, moyenne: 1, basse: 2 };
+
+/** Un rouge de moins de deux jours est une régression ; au-delà, c'est une dette. */
+const JEUNE_MS = 2 * 24 * 60 * 60 * 1000;
+
+export function ecartsDe(s, historique = [], maintenant = Date.now()) {
+  const out = [];
+  if (!s) return out;
+  const r = s.resume ?? {};
+  const registre = s.capacites?.registre ?? [];
+  const mem = s.memoire ?? null;
+
+  // ── Le produit d'abord. Un paquet mal couvert est une question d'ingénieur ;
+  // une capacité cassée est une promesse rompue.
+  const exigeesCassees = registre.filter((c) => c.exigee && c.etat === 'rouge');
+  if (exigeesCassees.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${exigeesCassees.length} capacité(s) exigée(s) du produit sont cassées`,
+      detail: `Le test qui les prouve échoue. Ce ne sont pas des lignes non couvertes : ce sont des choses qu'un utilisateur croit pouvoir faire.`,
+      quoi: exigeesCassees.map((c) => c.nom),
+    });
+  }
+
+  const dorment = registre.filter((c) => c.exigee && c.etat === 'non jouée');
+  if (dorment.length > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${dorment.length} capacité(s) exigée(s) ne sont prouvées que sur le papier`,
+      detail: `Un test les revendique, aucune exécution ne l'a joué. La preuve existe et dort — c'est un trou dans la mesure, pas dans le produit.`,
+      quoi: dorment.map((c) => c.nom),
+    });
+  }
+
+  const jamais = registre.filter((c) => c.etat === 'jamais prouvée');
+  if (jamais.length > 0) {
+    out.push({
+      // Basse à dessein : c'est un plan de travail, pas une alerte. La monter
+      // en haute noierait les vraies régressions sous une liste qui ne bouge
+      // que lentement.
+      gravite: 'basse',
+      titre: `${jamais.length} capacité(s) sur ${registre.length} ne sont revendiquées par aucun test`,
+      detail: `C'est la liste de ce qu'on croit livré. Elle est censée rétrécir.`,
+      quoi: jamais.map((c) => c.nom),
+    });
+  }
+
+  // ── La mémoire. Un test cassé se répare ; un test instable se subit.
+  if (mem?.instables > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${mem.instables} test(s) instables`,
+      detail: `Verts et rouges dans leur fenêtre. Aucune exécution isolée ne les dénonce : ils passent pour verts chaque fois qu'ils passent.`,
+      quoi: (mem.pires ?? []).map((e) => e.titre ?? e.cle),
+    });
+  }
+
+  const frais = (mem?.listeCasses ?? []).filter(
+    (e) => e.rougeDepuis && maintenant - Date.parse(e.rougeDepuis) < JEUNE_MS,
+  );
+  if (frais.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${frais.length} test(s) sont passés au rouge dans les deux derniers jours`,
+      detail: `Un rouge frais est une régression : quelque chose a bougé, et on sait quand. Un rouge ancien est une dette qu'on a appris à ne plus voir — les deux ne se traitent pas pareil.`,
+      quoi: frais.map((e) => e.titre ?? e.cle),
+    });
+  }
+
+  // ── Le dépôt. Réel, mais jamais au-dessus du produit.
+  const nonJoues = (s.parcours ?? []).filter((p) => !p.jouParLaCi);
+  if (nonJoues.length > 0) {
+    const cas = nonJoues.reduce((a, p) => a + p.cas, 0);
+    out.push({
+      gravite: 'haute',
+      titre: `${nonJoues.length} parcours sur ${r.specsE2e} ne sont jamais joués par la CI`,
+      detail: `${cas} cas de test écrits, versionnés, et qu'aucune intégration continue n'exécute. Ce sont les parcours utilisateur — précisément ce qu'une régression casse en premier et qu'un test unitaire ne voit pas.`,
+      quoi: nonJoues.map((p) => p.nom),
+    });
+  }
+
+  const nonMesures = (s.paquets ?? []).filter((p) => !p.couverture && p.tests?.cas > 0);
+  if (nonMesures.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${nonMesures.length} paquets portent des tests dont la couverture n'a jamais été mesurée`,
+      detail: `La configuration de couverture existait depuis toujours ; le paquet qui la fait tourner n'était pas installé. Aucun de ces paquets ne peut dire quelle part de son code ses tests traversent.`,
+      quoi: nonMesures.map((p) => p.nom),
+    });
+  }
+
+  const ci = s.ci ?? [];
+  if (ci.length > 0 && ci.every((w) => !w.lanceBanc)) {
+    out.push({
+      gravite: 'haute',
+      titre: `Aucun workflow ne lance le banc d'essai`,
+      detail: `Le banc sort déjà en erreur sur une régression de métrique — c'est une porte qui fonctionne et que personne ne franchit. Une régression du gate d'approbation peut donc partir en production sans un mot.`,
+      quoi: (s.banc?.sections ?? []).map((b) => b.id),
+    });
+  }
+
+  if (ci.length > 0 && !ci.some((w) => w.lanceCouverture)) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `Aucun workflow ne mesure la couverture`,
+      detail: `Sans mesure en continu, la couverture est un chiffre du jour où quelqu'un a pensé à la lancer — pas une propriété du dépôt.`,
+      quoi: [],
+    });
+  }
+
+  const nus = (s.paquets ?? []).filter((p) => p.tests?.cas === 0 && p.tests?.e2e === 0);
+  if (nus.length > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${nus.length} paquets sans aucun test`,
+      detail: `Un paquet sans test n'est pas forcément un problème — certains ne portent que des types ou de la configuration. Ceux-là méritent d'être nommés pour qu'on cesse de se poser la question.`,
+      quoi: nus.map((p) => p.nom),
+    });
+  }
+
+  if ((historique ?? []).length < 2) {
+    out.push({
+      gravite: 'basse',
+      titre: `L'historique commence tout juste`,
+      detail: `${(historique ?? []).length} collecte(s) enregistrée(s). Les questions « combien de fois ça tourne » et « à quelle régularité » deviennent répondables dès que la CI collecte à chaque exécution.`,
+      quoi: [],
+    });
+  }
+
+  // Tri STABLE par gravité : à gravité égale, l'ordre de déclaration est
+  // conservé, et il place le produit avant le dépôt.
+  return out
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => RANG[a.e.gravite] - RANG[b.e.gravite] || a.i - b.i)
+    .map((x) => x.e);
+}
+
+/** Ce qui mérite de réveiller quelqu'un. Rien d'autre. */
+export function alertes(ecarts) {
+  return (ecarts ?? []).filter((e) => e.gravite === 'haute');
+}
+
 // ─── La mémoire, test par test ────────────────────────────────────────────────
 //
 // `history.ndjson` garde une ligne par COLLECTE : des totaux. Ils ne savent pas
@@ -253,6 +405,10 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
       rougeDepuis: null,
     };
 
+    // Le sort du tour PRÉCÉDENT, lu avant d'écrire celui-ci : c'est lui qui
+    // permet de dire si le test vient de basculer, ou s'il était déjà là.
+    const precedent = e.recents.at(-1) ?? null;
+
     e.tours += 1;
     e.recents = (e.recents + lettre).slice(-max);
     e.dernierTourLe = n.le ?? le ?? e.dernierTourLe;
@@ -263,7 +419,16 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
       e.dernierEchecLe = e.dernierTourLe;
       // L'âge du problème COURANT, pas celui du premier échec de l'histoire :
       // un test cassé en juillet, réparé, recassé hier a un problème d'un jour.
-      if (!e.rougeDepuis) e.rougeDepuis = e.dernierTourLe;
+      //
+      // Et seulement sur une BASCULE OBSERVÉE. « Passé au rouge » suppose qu'on
+      // l'a vu passant juste avant. Dater le premier tour d'un test inconnu
+      // donnerait la date où on a commencé à regarder — la première collecte a
+      // fait exactement ça, et a présenté vingt-deux rouges anciens comme des
+      // régressions du jour. Dater un rouge qui succède à un rouge serait
+      // l'erreur inverse : ça rajeunirait le problème à chaque nuit.
+      if (!e.rougeDepuis && (precedent === 'v' || precedent === 'f')) {
+        e.rougeDepuis = e.dernierTourLe;
+      }
     } else if (n.sort === 'vert') {
       e.rougeDepuis = null;
     }
