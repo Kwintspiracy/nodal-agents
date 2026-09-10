@@ -1,6 +1,6 @@
 {
-  "genereLe": "2026-09-10T05:19:18.589Z",
-  "commit": "4da206e7",
+  "genereLe": "2026-09-10T05:27:58.763Z",
+  "commit": "9f438b06",
   "branche": "qa/etat-zero-tests",
   "paquets": [
     {
@@ -12,7 +12,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 49.39,
+        "branches": 37.25,
+        "fonctions": 54.05,
+        "lignes": 51.33,
+        "lignesCouvertes": 77,
+        "lignesTotal": 150,
+        "fichiersMesures": 6
+      }
     },
     {
       "nom": "@nodal-agents/adapter-apify",
@@ -23,7 +31,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 98.93,
+        "branches": 85.13,
+        "fonctions": 100,
+        "lignes": 98.87,
+        "lignesCouvertes": 88,
+        "lignesTotal": 89,
+        "fichiersMesures": 6
+      }
     },
     {
       "nom": "@nodal-agents/adapter-cloudflare",
@@ -34,7 +50,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 18.81,
+        "branches": 4.16,
+        "fonctions": 40,
+        "lignes": 21.59,
+        "lignesCouvertes": 19,
+        "lignesTotal": 88,
+        "fichiersMesures": 6
+      }
     },
     {
       "nom": "@nodal-agents/adapter-firecrawl",
@@ -45,7 +69,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 86.58,
+        "branches": 80.95,
+        "fonctions": 100,
+        "lignes": 87.34,
+        "lignesCouvertes": 69,
+        "lignesTotal": 79,
+        "fichiersMesures": 6
+      }
     },
     {
       "nom": "@nodal-agents/adapter-gmail",
@@ -56,7 +88,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 91.18,
+        "branches": 58.69,
+        "fonctions": 91.01,
+        "lignes": 92.63,
+        "lignesCouvertes": 415,
+        "lignesTotal": 448,
+        "fichiersMesures": 14
+      }
     },
     {
       "nom": "@nodal-agents/adapter-google-calendar",
@@ -67,7 +107,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 20.68,
+        "branches": 0,
+        "fonctions": 34.48,
+        "lignes": 21.9,
+        "lignesCouvertes": 23,
+        "lignesTotal": 105,
+        "fichiersMesures": 6
+      }
     },
     {
       "nom": "@nodal-agents/adapter-google-docs",
@@ -78,7 +126,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 89.32,
+        "branches": 68.71,
+        "fonctions": 94,
+        "lignes": 93.61,
+        "lignesCouvertes": 220,
+        "lignesTotal": 235,
+        "fichiersMesures": 10
+      }
     },
     {
       "nom": "@nodal-agents/adapter-google-drive",
@@ -89,7 +145,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 83.67,
+        "branches": 61.15,
+        "fonctions": 97.72,
+        "lignes": 84.32,
+        "lignesCouvertes": 199,
+        "lignesTotal": 236,
+        "fichiersMesures": 23
+      }
     },
     {
       "nom": "@nodal-agents/adapter-google-sheets",
@@ -100,7 +164,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 90.08,
+        "branches": 65.56,
+        "fonctions": 97.33,
+        "lignes": 92.46,
+        "lignesCouvertes": 307,
+        "lignesTotal": 332,
+        "fichiersMesures": 11
+      }
     },
     {
       "nom": "@nodal-agents/adapter-mcp",
@@ -111,7 +183,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 88.02,
+        "branches": 82.35,
+        "fonctions": 85.71,
+        "lignes": 90.53,
+        "lignesCouvertes": 153,
+        "lignesTotal": 169,
+        "fichiersMesures": 4
+      }
     },
     {
       "nom": "@nodal-agents/adapter-notion",
@@ -122,7 +202,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 74.4,
+        "branches": 46.53,
+        "fonctions": 89.87,
+        "lignes": 76.47,
+        "lignesCouvertes": 364,
+        "lignesTotal": 476,
+        "fichiersMesures": 13
+      }
     },
     {
       "nom": "@nodal-agents/adapter-outlook-mail",
@@ -133,7 +221,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 91.66,
+        "branches": 71.42,
+        "fonctions": 94.28,
+        "lignes": 92.96,
+        "lignesCouvertes": 238,
+        "lignesTotal": 256,
+        "fichiersMesures": 12
+      }
     },
     {
       "nom": "@nodal-agents/adapter-poyo",
@@ -144,7 +240,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 81.92,
+        "branches": 71.69,
+        "fonctions": 100,
+        "lignes": 82.05,
+        "lignesCouvertes": 64,
+        "lignesTotal": 78,
+        "fichiersMesures": 5
+      }
     },
     {
       "nom": "@nodal-agents/adapter-tavily",
@@ -155,7 +259,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 70.14,
+        "branches": 58.13,
+        "fonctions": 95,
+        "lignes": 71.21,
+        "lignesCouvertes": 47,
+        "lignesTotal": 66,
+        "fichiersMesures": 5
+      }
     },
     {
       "nom": "@nodal-agents/auth",
@@ -177,7 +289,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 91.66,
+        "branches": 92.85,
+        "fonctions": 100,
+        "lignes": 100,
+        "lignesCouvertes": 18,
+        "lignesTotal": 18,
+        "fichiersMesures": 1
+      }
     },
     {
       "nom": "@nodal-agents/catalog",
@@ -245,7 +365,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 80.63,
+        "branches": 72.03,
+        "fonctions": 80.3,
+        "lignes": 82.72,
+        "lignesCouvertes": 675,
+        "lignesTotal": 816,
+        "fichiersMesures": 10
+      }
     },
     {
       "nom": "@nodal-agents/docs",
@@ -286,7 +414,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 86.84,
+        "branches": 91.07,
+        "fonctions": 80,
+        "lignes": 86.48,
+        "lignesCouvertes": 64,
+        "lignesTotal": 74,
+        "fichiersMesures": 2
+      }
     },
     {
       "nom": "@nodal-agents/memory",
@@ -297,7 +433,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 96.14,
+        "branches": 83.98,
+        "fonctions": 98.46,
+        "lignes": 96.95,
+        "lignesCouvertes": 287,
+        "lignesTotal": 296,
+        "fichiersMesures": 12
+      }
     },
     {
       "nom": "@nodal-agents/orchestration",
@@ -308,7 +452,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 88.46,
+        "branches": 75.4,
+        "fonctions": 86.15,
+        "lignes": 91.72,
+        "lignesCouvertes": 565,
+        "lignesTotal": 616,
+        "fichiersMesures": 15
+      }
     },
     {
       "nom": "@nodal-agents/qa",
@@ -319,7 +471,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": null,
+        "branches": null,
+        "fonctions": null,
+        "lignes": null,
+        "lignesCouvertes": 0,
+        "lignesTotal": 0,
+        "fichiersMesures": 0
+      }
     },
     {
       "nom": "@nodal-agents/runner",
@@ -330,7 +490,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 80.89,
+        "branches": 71.97,
+        "fonctions": 76.26,
+        "lignes": 82.84,
+        "lignesCouvertes": 5337,
+        "lignesTotal": 6442,
+        "fichiersMesures": 109
+      }
     },
     {
       "nom": "@nodal-agents/runner-adapters",
@@ -341,7 +509,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 100,
+        "branches": 100,
+        "fonctions": 100,
+        "lignes": 100,
+        "lignesCouvertes": 23,
+        "lignesTotal": 23,
+        "fichiersMesures": 1
+      }
     },
     {
       "nom": "@nodal-agents/secrets",
@@ -409,7 +585,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 83.75,
+        "branches": 70.98,
+        "fonctions": 82.59,
+        "lignes": 86.47,
+        "lignesCouvertes": 3158,
+        "lignesTotal": 3652,
+        "fichiersMesures": 85
+      }
     },
     {
       "nom": "@nodal-agents/web",
@@ -420,7 +604,15 @@
         "e2e": 30,
         "casE2e": 233
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 76.01,
+        "branches": 66.81,
+        "fonctions": 78.75,
+        "lignes": 78.19,
+        "lignesCouvertes": 5153,
+        "lignesTotal": 6590,
+        "fichiersMesures": 99
+      }
     },
     {
       "nom": "nodal-agents",
@@ -431,7 +623,15 @@
         "e2e": 0,
         "casE2e": 0
       },
-      "couverture": null
+      "couverture": {
+        "instructions": 48.8,
+        "branches": 47.36,
+        "fonctions": 52.08,
+        "lignes": 50.36,
+        "lignesCouvertes": 278,
+        "lignesTotal": 552,
+        "fichiersMesures": 13
+      }
     }
   ],
   "resume": {
@@ -441,22 +641,22 @@
     "specsE2e": 30,
     "casE2e": 233,
     "specsE2eJoueesParLaCi": 2,
-    "paquetsMesures": 7,
-    "lignesCouvertes": 2254,
-    "lignesTotal": 2745,
-    "couvertureLignes": 82.11
+    "paquetsMesures": 32,
+    "lignesCouvertes": 20095,
+    "lignesTotal": 24631,
+    "couvertureLignes": 81.58
   },
   "banc": {
     "sections": [
       {
         "id": "architecture",
-        "gitSha": "2805c3e",
-        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "gitSha": "4da206e7",
+        "accepteeLe": "2026-09-10T05:25:15.121Z",
         "metriques": [
           {
             "id": "packages_scanned",
             "label": "Packages scannés",
-            "valeur": 29,
+            "valeur": 32,
             "unite": "packages",
             "sens": "higher-is-better"
           },
@@ -484,6 +684,34 @@
           {
             "id": "hardcoded_uuid_violations",
             "label": "UUID par utilisateur en dur (invariant #6)",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "mutating_launcher_violations",
+            "label": "Écritures disque hors seam d’intention",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "terminal_write_violations",
+            "label": "Écritures terminales hors de la primitive (V&C)",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "terminal_send_violations",
+            "label": "Envois de canal hors de l’outbox (V&C)",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "deliverable_literal_violations",
+            "label": "Types de livrable en dur dans la primitive (V&C)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
@@ -527,8 +755,8 @@
       },
       {
         "id": "catalog",
-        "gitSha": "2805c3e",
-        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "gitSha": "4da206e7",
+        "accepteeLe": "2026-09-10T05:25:15.121Z",
         "metriques": [
           {
             "id": "providers",
@@ -540,21 +768,21 @@
           {
             "id": "models",
             "label": "Modèles au catalogue",
-            "valeur": 51,
+            "valeur": 55,
             "unite": "modèles",
             "sens": "higher-is-better"
           },
           {
             "id": "models_with_tools",
             "label": "Modèles déclarant les outils",
-            "valeur": 51,
+            "valeur": 55,
             "unite": "modèles",
             "sens": "higher-is-better"
           },
           {
             "id": "models_reasoning",
             "label": "Modèles à raisonnement",
-            "valeur": 28,
+            "valeur": 32,
             "unite": "modèles",
             "sens": "higher-is-better"
           },
@@ -590,8 +818,8 @@
       },
       {
         "id": "gate",
-        "gitSha": "2805c3e",
-        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "gitSha": "4da206e7",
+        "accepteeLe": "2026-09-10T05:25:15.121Z",
         "metriques": [
           {
             "id": "decisions_total",
@@ -603,14 +831,14 @@
           {
             "id": "asks_human",
             "label": "Suspend pour approbation",
-            "valeur": 10,
+            "valeur": 12,
             "unite": "décisions",
             "sens": "exact"
           },
           {
             "id": "runs_freely",
             "label": "Passe sans demander",
-            "valeur": 10,
+            "valeur": 8,
             "unite": "décisions",
             "sens": "exact"
           },
@@ -625,8 +853,8 @@
       },
       {
         "id": "trust-boundary",
-        "gitSha": "2805c3e",
-        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "gitSha": "4da206e7",
+        "accepteeLe": "2026-09-10T05:25:15.121Z",
         "metriques": [
           {
             "id": "third_party_families_covered",
@@ -675,7 +903,7 @@
       "declencheurs": ["push", "pull_request"],
       "jobs": ["push", "pull_request", "ci", "ci-windows", "pack-smoke", "e2e-smoke"],
       "specsNommees": ["smoke.spec.ts", "autonomy-approvals.spec.ts"],
-      "lanceBanc": false,
+      "lanceBanc": true,
       "lanceCouverture": false
     },
     {
@@ -686,6 +914,15 @@
       "specsNommees": [],
       "lanceBanc": false,
       "lanceCouverture": false
+    },
+    {
+      "fichier": ".github/workflows/qa.yml",
+      "nom": "Qualité — mesure complète",
+      "declencheurs": ["schedule", "manuel"],
+      "jobs": ["schedule", "workflow_dispatch", "mesure"],
+      "specsNommees": [],
+      "lanceBanc": true,
+      "lanceCouverture": true
     }
   ],
   "parcours": [
