@@ -315,44 +315,66 @@ function vueEcarts() {
 </section>`;
 }
 
+const COLONNES = ['À faire', 'En cours', 'En review', 'À tester', 'Fait'];
+
+const TONS_ETIQUETTE = {
+  décision: 'violet',
+  sécurité: 'rouge',
+  test: 'bleu',
+  dette: 'ambre',
+  coût: 'vert',
+  produit: 'rose',
+};
+
 function vueChantiers() {
-  const issues = s.chantiers?.issues ?? null;
-  const prs = s.chantiers?.pr ?? null;
-  if (!issues && !prs) {
-    return `<section id="chantiers" class="vue"><h2 class="titre-vue">Chantiers</h2>
+  const cartes = s.chantiers?.cartes ?? null;
+  if (!cartes) {
+    return `<section id="chantiers" class="vue actif"><h2 class="titre-vue">Chantiers</h2>
       <div class="alerte">GitHub n'a pas répondu — le portail ne montre rien plutôt qu'une liste périmée.</div></section>`;
   }
-  const colonne = (titre, items, rendu) => `<div class="colonne">
-      <header><h3>${esc(titre)}</h3><span class="compte">${items.length}</span></header>
-      ${items.length ? items.map(rendu).join('') : '<p class="vide">Rien ici.</p>'}
-    </div>`;
-  const carteIssue = (i) =>
-    `<a class="ticket" href="${esc(i.url)}"><span class="num-ticket">#${i.number}</span> ${esc(i.title)}</a>`;
-  const cartePr = (p) =>
-    `<a class="ticket" href="${esc(p.url)}"><span class="num-ticket">#${p.number}</span> ${esc(p.title)}${p.isDraft ? ' <span class="jeton">brouillon</span>' : ''}</a>`;
+
+  const carte = (c) => {
+    const etiquettes = (c.etiquettes ?? [])
+      .map((e) => `<span class="etiq etiq--${TONS_ETIQUETTE[e] ?? 'gris'}">${esc(e)}</span>`)
+      .join('');
+    const ci =
+      c.ci === 'vert'
+        ? '<span class="pastille pastille--ok">CI verte</span>'
+        : c.ci === 'rouge'
+          ? '<span class="pastille pastille--ko">CI rouge</span>'
+          : c.ci === 'en cours'
+            ? '<span class="pastille pastille--inconnu">CI en cours</span>'
+            : '';
+    return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">brouillon</span>' : ''}${ci}</span>
+      <span class="ticket__titre">${esc(c.titre)}</span>
+      ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
+    </a>`;
+  };
+
+  // « Fait » est borné : une colonne qui empile tout l'historique noie les
+  // quatre autres, et ce n'est pas là qu'on regarde.
+  const colonnes = COLONNES.map((nom) => {
+    const dedans = cartes.filter((c) => c.colonne === nom);
+    const montrees = nom === 'Fait' ? dedans.slice(0, 8) : dedans;
+    return `<section class="colonne">
+      <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
+      <div class="pile">
+        ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Rien ici.</p>'}
+        ${dedans.length > montrees.length ? `<p class="vide">+ ${dedans.length - montrees.length} de plus</p>` : ''}
+      </div>
+    </section>`;
+  }).join('');
+
+  const aFaire = cartes.filter((c) => c.colonne === 'À faire').length;
+  const enReview = cartes.filter((c) => c.colonne === 'En review').length;
 
   return `
-<section id="chantiers" class="vue">
+<section id="chantiers" class="vue actif">
   <h2 class="titre-vue">Chantiers</h2>
-  <p class="chapo">Les bugs et les revues, lus depuis GitHub à la génération du portail.</p>
-  <div class="kanban">
-    ${colonne(
-      'Bugs ouverts',
-      (issues ?? []).filter((i) => i.state === 'OPEN'),
-      carteIssue,
-    )}
-    ${colonne(
-      'PR en cours',
-      (prs ?? []).filter((p) => p.state === 'OPEN'),
-      cartePr,
-    )}
-    ${colonne(
-      'Bugs fermés',
-      (issues ?? []).filter((i) => i.state !== 'OPEN'),
-      carteIssue,
-    )}
-    ${colonne('PR mergées', (prs ?? []).filter((p) => p.state === 'MERGED').slice(0, 12), cartePr)}
-  </div>
+  <p class="chapo">Le travail en cours, lu depuis GitHub. Les colonnes sont DÉDUITES — une PR ouverte est en review, une issue fermée est faite, une décision attend Quentin. Rien ne se range à la main, donc rien ne peut mentir par oubli.</p>
+  ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} décision${aFaire > 1 ? 's' : ''} t'attend${aFaire > 1 ? 'ent' : ''}</b> — elles bloquent le reste tant qu'elles ne sont pas tranchées.${enReview > 0 ? ` Et ${enReview} PR ${enReview > 1 ? 'attendent' : 'attend'} ton merge.` : ''}</div>` : ''}
+  <div class="kanban">${colonnes}</div>
 </section>`;
 }
 
@@ -548,15 +570,37 @@ tr:last-child td{border-bottom:0}
 .ligne-meta b{color:var(--encre3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;margin-right:3px}
 
 /* ── Kanban ── */
-.kanban{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;align-items:start}
-.colonne{background:var(--panneau2);border-radius:12px;padding:12px}
-.colonne header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.colonne h3{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--encre3)}
-.ticket{display:block;background:var(--panneau);border:1px solid var(--regle);border-radius:9px;
-  padding:9px 11px;margin-bottom:7px;font-size:12.5px;color:var(--encre2);text-decoration:none;line-height:1.45}
-.ticket:hover{border-color:var(--accent)}
-.num-ticket{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--encre3)}
-.vide{font-size:12.5px;color:var(--encre3);margin:0;padding:4px 2px}
+.rappel{background:var(--accent-doux);border:1px solid var(--accent);border-radius:10px;
+  padding:11px 15px;margin:0 0 18px;font-size:13.5px;color:var(--encre2)}
+.rappel b{color:var(--accent)}
+.kanban{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:start}
+@media(max-width:1200px){.kanban{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:820px){.kanban{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.kanban{grid-template-columns:1fr}}
+.colonne{background:var(--panneau2);border-radius:12px;padding:11px;min-width:0}
+.colonne header{display:flex;justify-content:space-between;align-items:center;
+  gap:8px;margin-bottom:10px;padding:0 3px}
+.colonne h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--encre3)}
+.pile{display:flex;flex-direction:column;gap:7px}
+.ticket{display:flex;flex-direction:column;gap:6px;background:var(--panneau);
+  border:1px solid var(--regle);border-left:3px solid var(--regle);border-radius:9px;
+  padding:10px 11px;text-decoration:none;color:var(--encre2);box-shadow:var(--ombre)}
+.ticket:hover{border-color:var(--accent);border-left-color:var(--accent)}
+.ticket--pr{border-left-color:var(--accent)}
+.ticket__tete{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ticket__titre{font-size:12.5px;line-height:1.4;color:var(--encre)}
+.ticket__pied{display:flex;flex-wrap:wrap;gap:4px}
+.num-ticket{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--encre3)}
+.vide{font-size:12px;color:var(--encre3);margin:0;padding:3px 4px}
+.etiq{display:inline-block;font-size:10px;padding:1px 7px;border-radius:99px;
+  border:1px solid transparent;white-space:nowrap}
+.etiq--violet{background:rgba(124,92,220,.14);color:#7c5cdc;border-color:rgba(124,92,220,.3)}
+.etiq--rouge{background:var(--ko-doux);color:var(--ko);border-color:var(--ko)}
+.etiq--bleu{background:rgba(37,120,190,.14);color:#2578be;border-color:rgba(37,120,190,.3)}
+.etiq--ambre{background:var(--moyen-doux);color:var(--moyen);border-color:var(--moyen)}
+.etiq--vert{background:var(--ok-doux);color:var(--ok);border-color:var(--ok)}
+.etiq--rose{background:rgba(198,70,140,.14);color:#c6468c;border-color:rgba(198,70,140,.3)}
+.etiq--gris{background:var(--panneau2);color:var(--encre3);border-color:var(--regle)}
 
 /* ── Divers ── */
 .alerte{background:var(--ko-doux);border:1px solid var(--ko);border-radius:10px;padding:12px 15px;
@@ -577,12 +621,12 @@ tr:last-child td{border-bottom:0}
       <span>NODAL-AGENTS</span>
     </div>
     <nav id="nav">
-      <a href="#vue" class="actif">Vue d'ensemble</a>
+      <a href="#chantiers" class="actif">Chantiers <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Fait').length}</b></a>
+      <a href="#vue">Tests — vue d'ensemble</a>
       <a href="#ecarts">Écarts <b>${ecarts().length}</b></a>
       <a href="#parcours">Parcours <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
       <a href="#banc">Banc d'essai <b>${s.banc.sections.length}</b></a>
       <a href="#ci">Déclencheurs <b>${s.ci.length}</b></a>
-      <a href="#chantiers">Chantiers</a>
       <a href="#historique">Historique <b>${historique.length}</b></a>
     </nav>
     <footer>
@@ -592,12 +636,12 @@ tr:last-child td{border-bottom:0}
     </footer>
   </aside>
   <main class="contenu">
+    ${vueChantiers()}
     ${vueEnsemble()}
     ${vueEcarts()}
     ${vueParcours()}
     ${vueBanc()}
     ${vueCi()}
-    ${vueChantiers()}
     ${vueHistorique()}
   </main>
 </div>
@@ -613,7 +657,7 @@ tr:last-child td{border-bottom:0}
     window.scrollTo(0,0);
   }
   window.addEventListener('hashchange', function(){ montrer(location.hash); });
-  montrer(location.hash || '#vue');
+  montrer(location.hash || '#chantiers');
 })();
 </script>
 </body>

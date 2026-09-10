@@ -1,0 +1,73 @@
+name: Qualité — publier le portail
+
+# Le portail qualité, sur Cloudflare Pages.
+#
+# Pourquoi pas GitHub Pages, qui était déjà câblé : ce dépôt est PUBLIC, et le
+# portail montre l'état interne du travail — bugs ouverts, parcours rouges,
+# couverture par paquet, décisions en attente. Rien de secret au sens du code,
+# mais une vitrine qu'on ne choisit pas d'ouvrir. Cloudflare sait mettre une
+# porte devant (Zero Trust Access, gratuit) le jour où on la veut ; GitHub Pages
+# ne le sait pas sans passer Enterprise.
+#
+# Le portail est RENDU à partir des données déjà committées par la mesure
+# nocturne (`qa.yml`) — aucun test n'est relancé ici. Un déploiement publie ce
+# qui a été mesuré ; s'il mesurait à son tour, deux exécutions du même commit
+# donneraient deux vérités.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Le code du portail, et les données qu'il rend — donc après chaque
+      # mesure nocturne, qui committe `apps/qa/data/`.
+      - 'apps/qa/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-pages
+  cancel-in-progress: true
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      # `build.mjs` ne lit que `apps/qa/data/*.json` et n'importe rien : pas
+      # besoin d'installer le workspace pour rendre une page statique.
+      - name: Rendre le portail
+        run: node apps/qa/build.mjs
+
+      # Sans les secrets, on s'arrête ICI en le disant. Un job qui « réussit »
+      # sans avoir rien publié est pire qu'un job rouge : il fait croire que le
+      # portail est en ligne.
+      - name: Vérifier les secrets Cloudflare
+        env:
+          JETON: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          COMPTE: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$JETON" ] || [ -z "$COMPTE" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN et/ou CLOUDFLARE_ACCOUNT_ID manquent."
+            echo "Créer un projet Cloudflare Pages nommé 'nodalai-qualite', puis un jeton"
+            echo "API avec la permission 'Cloudflare Pages: Edit', et les poser en secrets"
+            echo "du dépôt. Sans eux ce workflow ne peut rien publier."
+            exit 1
+          fi
+
+      - name: Déployer sur Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/qa/dist --project-name=nodalai-qualite --branch=main

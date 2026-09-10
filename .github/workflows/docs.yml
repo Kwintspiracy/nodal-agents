@@ -10,9 +10,6 @@ on:
     branches: [main]
     paths:
       - 'apps/docs/**'
-      # Le portail se reconstruit quand son code OU ses données changent — donc
-      # après chaque mesure nocturne, qui committe `apps/qa/data/`.
-      - 'apps/qa/**'
   workflow_dispatch:
 
 permissions:
@@ -43,18 +40,6 @@ jobs:
 
       - name: Build docs
         run: pnpm --filter @nodal-agents/docs build
-
-      # Le portail est rendu à partir des données DÉJÀ committées par la mesure
-      # nocturne — on ne relance aucun test ici. Un déploiement doit publier ce
-      # qui a été mesuré, pas mesurer à nouveau : sinon deux exécutions du même
-      # commit donneraient deux vérités.
-      - name: Build the quality portal
-        run: node apps/qa/build.mjs
-
-      - name: Place the portal under /qa
-        run: |
-          mkdir -p apps/docs/out/qa
-          cp -r apps/qa/dist/. apps/docs/out/qa/
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

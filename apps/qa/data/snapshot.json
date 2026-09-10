@@ -1,6 +1,6 @@
 {
-  "genereLe": "2026-09-10T05:27:58.763Z",
-  "commit": "9f438b06",
+  "genereLe": "2026-09-10T08:40:38.416Z",
+  "commit": "18088eeb",
   "branche": "qa/etat-zero-tests",
   "paquets": [
     {
@@ -1778,8 +1778,292 @@
     }
   ],
   "chantiers": {
-    "issues": [],
+    "issues": [
+      {
+        "createdAt": "2026-09-10T08:39:42Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "produit",
+            "description": "comportement visible",
+            "color": "EC4899"
+          }
+        ],
+        "number": 62,
+        "state": "OPEN",
+        "title": "Une personnalité d agent ne doit pas nommer d outil",
+        "updatedAt": "2026-09-10T08:39:42Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/62"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:40Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7d2g",
+            "name": "décision",
+            "description": "Quentin tranche",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7e8g",
+            "name": "sécurité",
+            "description": "garde ou permission",
+            "color": "DC2626"
+          }
+        ],
+        "number": 61,
+        "state": "OPEN",
+        "title": "Que faire des règles d approbation orphelines déjà en base",
+        "updatedAt": "2026-09-10T08:39:40Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/61"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:39Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eug",
+            "name": "dette",
+            "description": "à rembourser",
+            "color": "F59E0B"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "produit",
+            "description": "comportement visible",
+            "color": "EC4899"
+          }
+        ],
+        "number": 60,
+        "state": "OPEN",
+        "title": "Constater les écritures réelles sur le disque",
+        "updatedAt": "2026-09-10T08:39:39Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/60"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:37Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eug",
+            "name": "dette",
+            "description": "à rembourser",
+            "color": "F59E0B"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "produit",
+            "description": "comportement visible",
+            "color": "EC4899"
+          }
+        ],
+        "number": 59,
+        "state": "OPEN",
+        "title": "Les vérifications du relecteur ne sont enregistrées nulle part",
+        "updatedAt": "2026-09-10T08:39:37Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/59"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:14Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          }
+        ],
+        "number": 58,
+        "state": "OPEN",
+        "title": "Deux paquets restent hors de la mesure de couverture",
+        "updatedAt": "2026-09-10T08:39:14Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/58"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:12Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eug",
+            "name": "dette",
+            "description": "à rembourser",
+            "color": "F59E0B"
+          }
+        ],
+        "number": 57,
+        "state": "OPEN",
+        "title": "Le portail qualité n a aucun test",
+        "updatedAt": "2026-09-10T08:39:12Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/57"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:10Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          }
+        ],
+        "number": 56,
+        "state": "OPEN",
+        "title": "La CI ne joue que 2 parcours sur 30",
+        "updatedAt": "2026-09-10T08:39:10Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/56"
+      },
+      {
+        "createdAt": "2026-09-10T08:39:08Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eug",
+            "name": "dette",
+            "description": "à rembourser",
+            "color": "F59E0B"
+          }
+        ],
+        "number": 55,
+        "state": "OPEN",
+        "title": "Les parcours e2e ne tiennent à rien de stable",
+        "updatedAt": "2026-09-10T08:39:08Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/55"
+      },
+      {
+        "createdAt": "2026-09-10T08:38:40Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7d2g",
+            "name": "décision",
+            "description": "Quentin tranche",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7fWw",
+            "name": "coût",
+            "description": "jetons et facture",
+            "color": "10B981"
+          }
+        ],
+        "number": 54,
+        "state": "OPEN",
+        "title": "Déléguer fait expirer le cache du parent — 21 % de la facture",
+        "updatedAt": "2026-09-10T08:38:40Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/54"
+      },
+      {
+        "createdAt": "2026-09-10T08:38:38Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7d2g",
+            "name": "décision",
+            "description": "Quentin tranche",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7fWw",
+            "name": "coût",
+            "description": "jetons et facture",
+            "color": "10B981"
+          }
+        ],
+        "number": 53,
+        "state": "OPEN",
+        "title": "Relire coûte 11,5 fois plus cher qu écrire",
+        "updatedAt": "2026-09-10T08:38:38Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/53"
+      },
+      {
+        "createdAt": "2026-09-10T08:38:36Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7d2g",
+            "name": "décision",
+            "description": "Quentin tranche",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7e8g",
+            "name": "sécurité",
+            "description": "garde ou permission",
+            "color": "DC2626"
+          }
+        ],
+        "number": 52,
+        "state": "OPEN",
+        "title": "Une garde de navigateur se contourne par un outil voisin",
+        "updatedAt": "2026-09-10T08:38:36Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/52"
+      }
+    ],
     "pr": [
+      {
+        "createdAt": "2026-09-10T07:18:59Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 51,
+        "state": "OPEN",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T07:35:28Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34449349405/job/102781260618",
+            "name": "ci",
+            "startedAt": "2026-09-10T07:19:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T07:38:32Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34449349405/job/102781260503",
+            "name": "ci-windows",
+            "startedAt": "2026-09-10T07:19:06Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T07:23:17Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34449349405/job/102781260610",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-10T07:19:06Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T07:22:05Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34449349405/job/102781260989",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-10T07:19:06Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-10T07:19:09Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6b7927fd-014d-4b70-a275-9f97625c790c"
+          }
+        ],
+        "title": "Un portail qualité, et la CI qui le nourrit",
+        "updatedAt": "2026-09-10T07:18:59Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51"
+      },
       {
         "createdAt": "2026-09-09T17:01:51Z",
         "isDraft": false,
@@ -1789,54 +2073,54 @@
         "statusCheckRollup": [
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T03:18:59Z",
+            "completedAt": "2026-09-10T07:09:45Z",
             "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729079973",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34447003910/job/102773951566",
             "name": "ci",
-            "startedAt": "2026-09-10T03:04:55Z",
+            "startedAt": "2026-09-10T06:50:20Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T03:22:42Z",
+            "completedAt": "2026-09-10T07:14:38Z",
             "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729080047",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34447003910/job/102773951376",
             "name": "ci-windows",
-            "startedAt": "2026-09-10T03:04:55Z",
+            "startedAt": "2026-09-10T06:50:23Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T03:08:43Z",
+            "completedAt": "2026-09-10T06:54:03Z",
             "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729079768",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34447003910/job/102773951242",
             "name": "pack-smoke",
-            "startedAt": "2026-09-10T03:04:54Z",
+            "startedAt": "2026-09-10T06:50:20Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T03:07:18Z",
+            "completedAt": "2026-09-10T06:52:43Z",
             "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729080075",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34447003910/job/102773951411",
             "name": "e2e-smoke",
-            "startedAt": "2026-09-10T03:04:55Z",
+            "startedAt": "2026-09-10T06:50:20Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "StatusContext",
             "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-09-10T03:04:48Z",
+            "startedAt": "2026-09-10T06:50:09Z",
             "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6c390242-1968-4e7c-997f-b1579f0d3bb1"
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/ccb356d8-4f3c-4943-92f6-ef77e5ede95d"
           }
         ],
         "title": "Deux gardes qui mesuraient faux — la règle du shell, et la durée d'un job",
-        "updatedAt": "2026-09-10T03:04:40Z",
+        "updatedAt": "2026-09-10T06:49:55Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/50"
       },
       {
@@ -4640,35 +4924,718 @@
         "title": "[Snyk] Security upgrade undici from 7.25.0 to 7.28.0",
         "updatedAt": "2026-08-20T14:33:05Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/2"
+      }
+    ],
+    "cartes": [
+      {
+        "type": "issue",
+        "numero": 62,
+        "titre": "Une personnalité d agent ne doit pas nommer d outil",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/62",
+        "etiquettes": ["produit"],
+        "majLe": "2026-09-10T08:39:42Z",
+        "colonne": "En cours"
       },
       {
-        "createdAt": "2026-06-03T06:15:43Z",
-        "isDraft": false,
-        "mergedAt": null,
-        "number": 1,
-        "state": "CLOSED",
-        "statusCheckRollup": [
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-06-03T06:16:00Z",
-            "conclusion": "FAILURE",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/26867263369/job/79233670668",
-            "name": "ci",
-            "startedAt": "2026-06-03T06:15:50Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "StatusContext",
-            "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-06-03T06:15:52Z",
-            "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/d1e87968-665d-4525-abef-103dac7d9e28"
-          }
-        ],
-        "title": "[Snyk] Security upgrade @mendable/firecrawl-js from 4.22.2 to 4.25.2",
-        "updatedAt": "2026-08-20T14:33:16Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/1"
+        "type": "issue",
+        "numero": 61,
+        "titre": "Que faire des règles d approbation orphelines déjà en base",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/61",
+        "etiquettes": ["décision", "sécurité"],
+        "majLe": "2026-09-10T08:39:40Z",
+        "colonne": "À faire"
+      },
+      {
+        "type": "issue",
+        "numero": 60,
+        "titre": "Constater les écritures réelles sur le disque",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/60",
+        "etiquettes": ["dette", "produit"],
+        "majLe": "2026-09-10T08:39:39Z",
+        "colonne": "En cours"
+      },
+      {
+        "type": "issue",
+        "numero": 59,
+        "titre": "Les vérifications du relecteur ne sont enregistrées nulle part",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/59",
+        "etiquettes": ["dette", "produit"],
+        "majLe": "2026-09-10T08:39:37Z",
+        "colonne": "En cours"
+      },
+      {
+        "type": "issue",
+        "numero": 58,
+        "titre": "Deux paquets restent hors de la mesure de couverture",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/58",
+        "etiquettes": ["test"],
+        "majLe": "2026-09-10T08:39:14Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
+        "numero": 57,
+        "titre": "Le portail qualité n a aucun test",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/57",
+        "etiquettes": ["test", "dette"],
+        "majLe": "2026-09-10T08:39:12Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
+        "numero": 56,
+        "titre": "La CI ne joue que 2 parcours sur 30",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/56",
+        "etiquettes": ["test"],
+        "majLe": "2026-09-10T08:39:10Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
+        "numero": 55,
+        "titre": "Les parcours e2e ne tiennent à rien de stable",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/55",
+        "etiquettes": ["test", "dette"],
+        "majLe": "2026-09-10T08:39:08Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
+        "numero": 54,
+        "titre": "Déléguer fait expirer le cache du parent — 21 % de la facture",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/54",
+        "etiquettes": ["décision", "coût"],
+        "majLe": "2026-09-10T08:38:40Z",
+        "colonne": "À faire"
+      },
+      {
+        "type": "issue",
+        "numero": 53,
+        "titre": "Relire coûte 11,5 fois plus cher qu écrire",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/53",
+        "etiquettes": ["décision", "coût"],
+        "majLe": "2026-09-10T08:38:38Z",
+        "colonne": "À faire"
+      },
+      {
+        "type": "issue",
+        "numero": 52,
+        "titre": "Une garde de navigateur se contourne par un outil voisin",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/52",
+        "etiquettes": ["décision", "sécurité"],
+        "majLe": "2026-09-10T08:38:36Z",
+        "colonne": "À faire"
+      },
+      {
+        "type": "pr",
+        "numero": 51,
+        "titre": "Un portail qualité, et la CI qui le nourrit",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-10T07:18:59Z",
+        "ci": "vert",
+        "colonne": "En review"
+      },
+      {
+        "type": "pr",
+        "numero": 50,
+        "titre": "Deux gardes qui mesuraient faux — la règle du shell, et la durée d'un job",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/50",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-10T06:49:55Z",
+        "ci": "vert",
+        "colonne": "En review"
+      },
+      {
+        "type": "pr",
+        "numero": 49,
+        "titre": "Prouver sans configurer — l'agent déclare, le système exécute",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/49",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-09T06:20:11Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 48,
+        "titre": "Le fil dit la vérité — quatre points sur cinq",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/48",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-09T06:19:16Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 47,
+        "titre": "Une routine a un état à elle, pas un souvenir",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/47",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-08T03:25:51Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 46,
+        "titre": "Vérifier & Corriger — PR① : fondations, intention de mutation, primitive terminale, outbox, UI de configuration et de lecture",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/46",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-07T17:15:37Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 45,
+        "titre": "feat(agents): « What should this agent do? » — profils d'agents, un à la fois",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/45",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-07T16:19:00Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 44,
+        "titre": "perf(ci,pack): le cache Turborepo en CI, et 1,3 Mo de snapshots hors du paquet",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/44",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-29T07:05:00Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 43,
+        "titre": "release(0.8.8): changelog et bump de version",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/43",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-28T14:45:57Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 42,
+        "titre": "fix(channels): une socket Slack morte revient, et une panne DB ne détruit plus le log",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/42",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-28T13:49:53Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 41,
+        "titre": "docs(suivi): le source du backlog vivant entre dans le dépôt",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/41",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-28T13:44:52Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 40,
+        "titre": "fix(security): les jetons de canaux quittent le clair, GLM 5.3 Flash, auth de canal traitée",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/40",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-28T04:47:15Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 39,
+        "titre": "feat(code): l'onglet Code cesse de deviner — on renomme, on masque, on range",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/39",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-27T14:50:47Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 38,
+        "titre": "fix(review): les 12 constats bloquants et majeurs des revues #16-#37",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/38",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-25T07:31:00Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 37,
+        "titre": "feat(context): les projets de code injectés dans le bloc Runtime de chaque agent",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/37",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-25T05:21:27Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 36,
+        "titre": "fix(code): .json neutre, dropdown de sessions riche, squelette de chargement",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/36",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-25T02:46:57Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 35,
+        "titre": "fix(code): un workspace-conteneur ne fusionne plus toutes ses apps en un projet",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/35",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-25T01:39:37Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 34,
+        "titre": "feat(code): l'onglet Code s'organise par projet, avec archivage UI",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/34",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T18:52:06Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 33,
+        "titre": "feat(approvals): « Always allow » sur la carte Telegram + impact honnête pour code_task",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/33",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T17:25:14Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 32,
+        "titre": "feat(web): changer son mot de passe depuis Settings",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/32",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T15:16:34Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 31,
+        "titre": "fix(web): l'overview d'un agent compte aussi ses serveurs MCP comme connecteurs",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/31",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T13:44:39Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 30,
+        "titre": "feat(code-tab): punch list V1.1 — approbation inline + transitions au canal",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/30",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T12:37:11Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 29,
+        "titre": "feat(web): onglet Connectors d'un agent — connectés seulement, la bibliothèque en modale",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/29",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T08:58:51Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 28,
+        "titre": "feat(web): onglet Skills d'un agent — attachés seulement, la bibliothèque en modale",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/28",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T08:49:32Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 27,
+        "titre": "feat(cli,web): surveillance de la santé après le boot — un Postgres mort déclenche l'alerte",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/27",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T08:10:59Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 26,
+        "titre": "feat(web): le sélecteur de dossier est le mode canonique — champ texte retiré",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/26",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T07:18:52Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 25,
+        "titre": "feat(web): bouton Browse — explorateur de dossiers côté serveur pour les workspaces",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/25",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T06:51:54Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 24,
+        "titre": "feat(autonomy): le frein remplace le master-switch (inversion du modele a deux cles)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/24",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T04:38:15Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 23,
+        "titre": "feat(logs): les logs de service lisibles dans le dashboard",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/23",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T04:02:39Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 22,
+        "titre": "fix(copy): l interrupteur maitre Yolo dit ce qu il fait — il deverrouille",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/22",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T03:22:05Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 21,
+        "titre": "fix(cli): rotation des logs de service par taille",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/21",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T03:16:06Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 20,
+        "titre": "fix(ds): un PrimaryButton desactive doit se voir",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/20",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T02:55:09Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 19,
+        "titre": "fix(code): un codeur sans CLI est un codeur quand meme (definition v4)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/19",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-24T01:52:18Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 18,
+        "titre": "release(0.8.6): changelog, docs, bump",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/18",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-23T14:36:09Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 17,
+        "titre": "feat(mcp): nodal-agents mcp serve — la connexion en une ligne, zero secret",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/17",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-23T13:34:40Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 16,
+        "titre": "feat(auth): le pont local-trust vers local-auth (compte proprietaire)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/16",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-23T13:31:33Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 15,
+        "titre": "test(mcp): l'interrupteur du serveur a ses 5 gardes",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/15",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-23T13:31:29Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 14,
+        "titre": "feat(mcp): la cible se choisit, l entite jamais — parametre agent optionnel",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/14",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-23T04:17:20Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 13,
+        "titre": "feat(mcp): jamais les outils de configuration, et un interrupteur maitre ferme par defaut",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/13",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-23T03:36:09Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 12,
+        "titre": "feat(mcp): Nodal expose ses outils de delegation en serveur MCP (etape C1)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/12",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-22T19:14:10Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 11,
+        "titre": "fix(agents): appeler une CLI et tourner SUR une CLI ne portent plus le meme nom",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/11",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-22T17:02:52Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 10,
+        "titre": "feat(code): voir la session pendant qu elle tourne, et savoir qui l a executee",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/10",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-22T16:07:58Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 9,
+        "titre": "fix(catalog): Gemini 3.7 Flash, et un modele qui refusait les images en silence",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/9",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-22T11:35:49Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 8,
+        "titre": "fix(runtime): un agent en runtime CLI recevait sa personnalité brute",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/8",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-22T11:58:51Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 7,
+        "titre": "feat: poste de développement — continuité, conscience du dépôt, retour arrière",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/7",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-22T11:36:47Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 6,
+        "titre": "fix(security): isoler les runs Codex de la config utilisateur (MCP hérités + sandbox désactivée)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/6",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-21T16:05:48Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 5,
+        "titre": "feat(code-task): agents sous abonnement - tool code_task (etape B)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/5",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-21T05:38:48Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 4,
+        "titre": "Audit sécurité/coût/qualité 0.8.1 — P0 et P1 fermés, banc d'essai, catalogue modèles",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/4",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-21T05:38:50Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 3,
+        "titre": "fix(pack): 0.8.1 — le tarball 0.8.0 perdait 7 chunks serveur, dashboard 100% en 500",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/3",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-07-30T17:17:39Z",
+        "ci": "vert",
+        "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 2,
+        "titre": "[Snyk] Security upgrade undici from 7.25.0 to 7.28.0",
+        "etat": "CLOSED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/2",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-08-20T14:33:05Z",
+        "ci": "rouge",
+        "colonne": "En review"
       }
     ]
   }

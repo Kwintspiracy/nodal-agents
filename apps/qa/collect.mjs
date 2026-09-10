@@ -261,14 +261,68 @@ function chantiers() {
       return null;
     }
   };
-  return {
-    issues: j(
+  const issues =
+    j(
       'gh issue list --state all --limit 200 --json number,title,state,labels,createdAt,updatedAt,url',
-    ),
-    pr: j(
+    ) ?? [];
+  const pr =
+    j(
       'gh pr list --state all --limit 50 --json number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup',
-    ),
+    ) ?? [];
+
+  // ── La colonne d'une carte ────────────────────────────────────────────────
+  //
+  // Déduite de FAITS, jamais saisie : un tableau qu'il faut ranger à la main
+  // est un tableau qui ment dès qu'on oublie de le ranger. Ce que GitHub sait
+  // déjà — une PR ouverte, une PR mergée, une issue fermée, une étiquette —
+  // suffit à placer chaque carte.
+  //
+  //   Fait      · issue fermée, PR mergée
+  //   En review · PR ouverte, c'est sa définition
+  //   À tester  · une issue étiquetée `test`
+  //   À faire   · une issue étiquetée `décision` — elle attend Quentin
+  //   En cours  · le reste des issues ouvertes
+  const colonne = (carte) => {
+    if (carte.type === 'pr') return carte.etat === 'MERGED' ? 'Fait' : 'En review';
+    if (carte.etat !== 'OPEN') return 'Fait';
+    if (carte.etiquettes.includes('décision')) return 'À faire';
+    if (carte.etiquettes.includes('test')) return 'À tester';
+    return 'En cours';
   };
+
+  const cartes = [
+    ...issues.map((i) => ({
+      type: 'issue',
+      numero: i.number,
+      titre: i.title,
+      etat: i.state,
+      url: i.url,
+      etiquettes: (i.labels ?? []).map((l) => l.name),
+      majLe: i.updatedAt ?? null,
+    })),
+    ...pr.map((p) => ({
+      type: 'pr',
+      numero: p.number,
+      titre: p.title,
+      etat: p.state,
+      url: p.url,
+      brouillon: p.isDraft === true,
+      etiquettes: [],
+      majLe: p.mergedAt ?? p.updatedAt ?? null,
+      // L'état de la CI tel que GitHub le rend : une PR en review dont les
+      // contrôles rougissent n'attend pas la même chose qu'une PR verte.
+      ci: (() => {
+        const r = p.statusCheckRollup ?? [];
+        if (r.length === 0) return null;
+        if (r.some((c) => (c.conclusion ?? c.state) === 'FAILURE')) return 'rouge';
+        if (r.some((c) => ['IN_PROGRESS', 'QUEUED', 'PENDING'].includes(c.status ?? '')))
+          return 'en cours';
+        return 'vert';
+      })(),
+    })),
+  ].map((c) => ({ ...c, colonne: colonne(c) }));
+
+  return { issues, pr, cartes };
 }
 
 // ─── Assemblage ───────────────────────────────────────────────────────────────
