@@ -1,7 +1,7 @@
 {
   "sectionId": "trust-boundary",
-  "gitSha": "2805c3e",
-  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "gitSha": "4da206e7",
+  "acceptedAt": "2026-09-10T05:25:15.121Z",
   "metrics": [
     {
       "id": "third_party_families_covered",

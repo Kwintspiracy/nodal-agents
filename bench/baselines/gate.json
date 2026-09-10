@@ -1,7 +1,7 @@
 {
   "sectionId": "gate",
-  "gitSha": "2805c3e",
-  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "gitSha": "4da206e7",
+  "acceptedAt": "2026-09-10T05:25:15.121Z",
   "metrics": [
     {
       "id": "decisions_total",
@@ -13,7 +13,7 @@
     {
       "id": "asks_human",
       "label": "Suspend pour approbation",
-      "value": 10,
+      "value": 12,
       "unit": "décisions",
       "direction": "exact",
       "detail": [
@@ -24,15 +24,17 @@
         "mcp_declare_destructeur@destructive_gate → demande",
         "run_command_anodin@défaut → demande",
         "run_command_anodin@propose_confirm → demande",
+        "run_command_anodin@fully_autonomous → demande",
         "run_command_destructeur@défaut → demande",
         "run_command_destructeur@propose_confirm → demande",
-        "run_command_destructeur@destructive_gate → demande"
+        "run_command_destructeur@destructive_gate → demande",
+        "run_command_destructeur@fully_autonomous → demande"
       ]
     },
     {
       "id": "runs_freely",
       "label": "Passe sans demander",
-      "value": 10,
+      "value": 8,
       "unit": "décisions",
       "direction": "exact",
       "detail": [
@@ -43,9 +45,7 @@
         "builtin_lecture@propose_confirm → passe",
         "builtin_lecture@destructive_gate → passe",
         "builtin_lecture@fully_autonomous → passe",
-        "run_command_anodin@destructive_gate → passe",
-        "run_command_anodin@fully_autonomous → passe",
-        "run_command_destructeur@fully_autonomous → passe"
+        "run_command_anodin@destructive_gate → passe"
       ]
     },
     {

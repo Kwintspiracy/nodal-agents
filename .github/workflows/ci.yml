@@ -122,6 +122,24 @@ jobs:
       - name: Script tests
         run: pnpm test:scripts
 
+      # Le banc répond à une AUTRE question que la suite : pas « est-ce
+      # cassé ? » mais « qu'est-ce qui a CHANGÉ, et de combien ». Il sort en 1
+      # dès qu'une métrique s'écarte de sa baseline acceptée.
+      #
+      # Il existait depuis le 11/08 et RIEN ne le lançait. Le 10/09/2026, un
+      # premier passage a trouvé la section `gate` en régression : deux
+      # décisions d'approbation étaient passées de « passe » à « demande »
+      # depuis la 0.8.9. Un changement voulu — mais il aurait tout aussi bien pu
+      # être l'inverse, et il serait parti en production sans un mot.
+      #
+      # Bloquant, et c'est le point : une régression de métrique s'accepte
+      # sciemment (`pnpm bench --update`, qui réécrit la baseline et se
+      # committe), jamais par omission. La section `catalog-drift` reste hors
+      # course — elle interroge l'API du fournisseur, et un incident chez lui
+      # n'est pas une régression chez nous.
+      - name: Banc d'essai
+        run: pnpm bench
+
       # SUPPLY-002 (audit 2026-08-07): nothing in CI ever looked at whether a
       # dependency had a known vulnerability. Non-blocking on purpose — on a
       # 5600-dependency tree a blocking gate produces noise a single maintainer

@@ -1,0 +1,4438 @@
+{
+  "genereLe": "2026-09-10T05:19:18.589Z",
+  "commit": "4da206e7",
+  "branche": "qa/etat-zero-tests",
+  "paquets": [
+    {
+      "nom": "@nodal-agents/adapter-airtable",
+      "chemin": "packages/adapters/airtable",
+      "tests": {
+        "fichiers": 4,
+        "cas": 47,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-apify",
+      "chemin": "packages/adapters/apify",
+      "tests": {
+        "fichiers": 5,
+        "cas": 70,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-cloudflare",
+      "chemin": "packages/adapters/cloudflare",
+      "tests": {
+        "fichiers": 3,
+        "cas": 9,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-firecrawl",
+      "chemin": "packages/adapters/firecrawl",
+      "tests": {
+        "fichiers": 5,
+        "cas": 54,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-gmail",
+      "chemin": "packages/adapters/gmail",
+      "tests": {
+        "fichiers": 12,
+        "cas": 171,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-google-calendar",
+      "chemin": "packages/adapters/google-calendar",
+      "tests": {
+        "fichiers": 3,
+        "cas": 12,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-google-docs",
+      "chemin": "packages/adapters/google-docs",
+      "tests": {
+        "fichiers": 10,
+        "cas": 152,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-google-drive",
+      "chemin": "packages/adapters/google-drive",
+      "tests": {
+        "fichiers": 16,
+        "cas": 106,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-google-sheets",
+      "chemin": "packages/adapters/google-sheets",
+      "tests": {
+        "fichiers": 10,
+        "cas": 153,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-mcp",
+      "chemin": "packages/adapters/mcp",
+      "tests": {
+        "fichiers": 5,
+        "cas": 63,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-notion",
+      "chemin": "packages/adapters/notion",
+      "tests": {
+        "fichiers": 10,
+        "cas": 110,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-outlook-mail",
+      "chemin": "packages/adapters/outlook-mail",
+      "tests": {
+        "fichiers": 11,
+        "cas": 127,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-poyo",
+      "chemin": "packages/adapters/poyo",
+      "tests": {
+        "fichiers": 4,
+        "cas": 22,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/adapter-tavily",
+      "chemin": "packages/adapters/tavily",
+      "tests": {
+        "fichiers": 4,
+        "cas": 42,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/auth",
+      "chemin": "packages/auth",
+      "tests": {
+        "fichiers": 9,
+        "cas": 92,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/bench",
+      "chemin": "packages/bench",
+      "tests": {
+        "fichiers": 1,
+        "cas": 7,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/catalog",
+      "chemin": "packages/catalog",
+      "tests": {
+        "fichiers": 5,
+        "cas": 34,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 95.83,
+        "branches": 75,
+        "fonctions": 88.88,
+        "lignes": 96.92,
+        "lignesCouvertes": 63,
+        "lignesTotal": 65,
+        "fichiersMesures": 31
+      }
+    },
+    {
+      "nom": "@nodal-agents/checkpoints",
+      "chemin": "packages/checkpoints",
+      "tests": {
+        "fichiers": 1,
+        "cas": 28,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 83.82,
+        "branches": 75.71,
+        "fonctions": 74.07,
+        "lignes": 87.28,
+        "lignesCouvertes": 103,
+        "lignesTotal": 118,
+        "fichiersMesures": 1
+      }
+    },
+    {
+      "nom": "@nodal-agents/db",
+      "chemin": "packages/db",
+      "tests": {
+        "fichiers": 20,
+        "cas": 204,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 61.97,
+        "branches": 55.66,
+        "fonctions": 42.07,
+        "lignes": 63.17,
+        "lignesCouvertes": 326,
+        "lignesTotal": 516,
+        "fichiersMesures": 48
+      }
+    },
+    {
+      "nom": "@nodal-agents/delivery",
+      "chemin": "packages/delivery",
+      "tests": {
+        "fichiers": 13,
+        "cas": 175,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/docs",
+      "chemin": "apps/docs",
+      "tests": {
+        "fichiers": 0,
+        "cas": 0,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/llm",
+      "chemin": "packages/llm",
+      "tests": {
+        "fichiers": 28,
+        "cas": 328,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 83.92,
+        "branches": 78.68,
+        "fonctions": 86.09,
+        "lignes": 86.4,
+        "lignesCouvertes": 801,
+        "lignesTotal": 927,
+        "fichiersMesures": 27
+      }
+    },
+    {
+      "nom": "@nodal-agents/mcp-server",
+      "chemin": "packages/mcp-server",
+      "tests": {
+        "fichiers": 1,
+        "cas": 23,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/memory",
+      "chemin": "packages/memory",
+      "tests": {
+        "fichiers": 12,
+        "cas": 145,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/orchestration",
+      "chemin": "packages/orchestration",
+      "tests": {
+        "fichiers": 19,
+        "cas": 243,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/qa",
+      "chemin": "apps/qa",
+      "tests": {
+        "fichiers": 0,
+        "cas": 0,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/runner",
+      "chemin": "apps/runner",
+      "tests": {
+        "fichiers": 123,
+        "cas": 1347,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/runner-adapters",
+      "chemin": "packages/runner-adapters",
+      "tests": {
+        "fichiers": 2,
+        "cas": 11,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/secrets",
+      "chemin": "packages/secrets",
+      "tests": {
+        "fichiers": 2,
+        "cas": 22,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 89.23,
+        "branches": 80,
+        "fonctions": 80,
+        "lignes": 92.85,
+        "lignesCouvertes": 52,
+        "lignesTotal": 56,
+        "fichiersMesures": 1
+      }
+    },
+    {
+      "nom": "@nodal-agents/shared",
+      "chemin": "packages/shared",
+      "tests": {
+        "fichiers": 26,
+        "cas": 307,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 90.31,
+        "branches": 80.12,
+        "fonctions": 84.12,
+        "lignes": 91.56,
+        "lignesCouvertes": 749,
+        "lignesTotal": 818,
+        "fichiersMesures": 47
+      }
+    },
+    {
+      "nom": "@nodal-agents/test-kit",
+      "chemin": "packages/test-kit",
+      "tests": {
+        "fichiers": 3,
+        "cas": 36,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": {
+        "instructions": 63.25,
+        "branches": 55.73,
+        "fonctions": 61.62,
+        "lignes": 65.3,
+        "lignesCouvertes": 160,
+        "lignesTotal": 245,
+        "fichiersMesures": 7
+      }
+    },
+    {
+      "nom": "@nodal-agents/tools",
+      "chemin": "packages/tools",
+      "tests": {
+        "fichiers": 67,
+        "cas": 957,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    },
+    {
+      "nom": "@nodal-agents/web",
+      "chemin": "apps/web",
+      "tests": {
+        "fichiers": 99,
+        "cas": 1318,
+        "e2e": 30,
+        "casE2e": 233
+      },
+      "couverture": null
+    },
+    {
+      "nom": "nodal-agents",
+      "chemin": "apps/cli",
+      "tests": {
+        "fichiers": 17,
+        "cas": 141,
+        "e2e": 0,
+        "casE2e": 0
+      },
+      "couverture": null
+    }
+  ],
+  "resume": {
+    "paquets": 34,
+    "fichiersDeTest": 550,
+    "casDeTest": 6556,
+    "specsE2e": 30,
+    "casE2e": 233,
+    "specsE2eJoueesParLaCi": 2,
+    "paquetsMesures": 7,
+    "lignesCouvertes": 2254,
+    "lignesTotal": 2745,
+    "couvertureLignes": 82.11
+  },
+  "banc": {
+    "sections": [
+      {
+        "id": "architecture",
+        "gitSha": "2805c3e",
+        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "metriques": [
+          {
+            "id": "packages_scanned",
+            "label": "Packages scannés",
+            "valeur": 29,
+            "unite": "packages",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "agent_slug_violations",
+            "label": "Slugs d’agent en dur (invariant #1)",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "user_facing_violations",
+            "label": "Texte utilisateur en dur (invariant #2)",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "db_driver_violations",
+            "label": "Imports de driver DB hors packages/db",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "hardcoded_uuid_violations",
+            "label": "UUID par utilisateur en dur (invariant #6)",
+            "valeur": 0,
+            "unite": "violations",
+            "sens": "lower-is-better"
+          }
+        ]
+      },
+      {
+        "id": "catalog-drift",
+        "gitSha": "b2d0577",
+        "accepteeLe": "2026-08-08T16:26:11.558Z",
+        "metriques": [
+          {
+            "id": "openrouter_models_listed",
+            "label": "Modèles OpenRouter au catalogue",
+            "valeur": 31,
+            "unite": "modèles",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "dead_ids",
+            "label": "Identifiants absents en amont",
+            "valeur": 0,
+            "unite": "modèles",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "families_with_newer_upstream",
+            "label": "Familles ayant plus récent en amont",
+            "valeur": 0,
+            "unite": "familles",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "upstream_catalogue_size",
+            "label": "Taille du catalogue amont",
+            "valeur": 400,
+            "unite": "modèles",
+            "sens": "higher-is-better"
+          }
+        ]
+      },
+      {
+        "id": "catalog",
+        "gitSha": "2805c3e",
+        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "metriques": [
+          {
+            "id": "providers",
+            "label": "Fournisseurs au catalogue",
+            "valeur": 9,
+            "unite": "fournisseurs",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "models",
+            "label": "Modèles au catalogue",
+            "valeur": 51,
+            "unite": "modèles",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "models_with_tools",
+            "label": "Modèles déclarant les outils",
+            "valeur": 51,
+            "unite": "modèles",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "models_reasoning",
+            "label": "Modèles à raisonnement",
+            "valeur": 28,
+            "unite": "modèles",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "missing_context_window",
+            "label": "Sans fenêtre de contexte",
+            "valeur": 0,
+            "unite": "modèles",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "missing_pricing",
+            "label": "Sans tarif",
+            "valeur": 2,
+            "unite": "modèles",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "duplicate_ids",
+            "label": "Identifiants dupliqués chez un fournisseur",
+            "valeur": 0,
+            "unite": "doublons",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "context_on_fallback",
+            "label": "Contexte laissé sur la valeur par défaut",
+            "valeur": 2,
+            "unite": "modèles",
+            "sens": "lower-is-better"
+          }
+        ]
+      },
+      {
+        "id": "gate",
+        "gitSha": "2805c3e",
+        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "metriques": [
+          {
+            "id": "decisions_total",
+            "label": "Décisions mesurées",
+            "valeur": 20,
+            "unite": "décisions",
+            "sens": "exact"
+          },
+          {
+            "id": "asks_human",
+            "label": "Suspend pour approbation",
+            "valeur": 10,
+            "unite": "décisions",
+            "sens": "exact"
+          },
+          {
+            "id": "runs_freely",
+            "label": "Passe sans demander",
+            "valeur": 10,
+            "unite": "décisions",
+            "sens": "exact"
+          },
+          {
+            "id": "blocked",
+            "label": "Refusé d’emblée",
+            "valeur": 0,
+            "unite": "décisions",
+            "sens": "exact"
+          }
+        ]
+      },
+      {
+        "id": "trust-boundary",
+        "gitSha": "2805c3e",
+        "accepteeLe": "2026-08-11T11:30:02.865Z",
+        "metriques": [
+          {
+            "id": "third_party_families_covered",
+            "label": "Familles tierces cadrées",
+            "valeur": 20,
+            "unite": "/20",
+            "sens": "higher-is-better"
+          },
+          {
+            "id": "own_tools_wrongly_framed",
+            "label": "Outils du produit cadrés à tort",
+            "valeur": 0,
+            "unite": "outils",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "payloads_lost",
+            "label": "Charges utiles perdues par l’enveloppe",
+            "valeur": 0,
+            "unite": "payloads",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "payloads_unframed",
+            "label": "Charges utiles sorties sans cadre",
+            "valeur": 0,
+            "unite": "payloads",
+            "sens": "lower-is-better"
+          },
+          {
+            "id": "delimiter_escapes",
+            "label": "Délimiteurs contrefaits non neutralisés",
+            "valeur": 0,
+            "unite": "évasions",
+            "sens": "lower-is-better"
+          }
+        ]
+      }
+    ],
+    "dernierRun": null
+  },
+  "ci": [
+    {
+      "fichier": ".github/workflows/ci.yml",
+      "nom": "CI",
+      "declencheurs": ["push", "pull_request"],
+      "jobs": ["push", "pull_request", "ci", "ci-windows", "pack-smoke", "e2e-smoke"],
+      "specsNommees": ["smoke.spec.ts", "autonomy-approvals.spec.ts"],
+      "lanceBanc": false,
+      "lanceCouverture": false
+    },
+    {
+      "fichier": ".github/workflows/docs.yml",
+      "nom": "Deploy Docs to GitHub Pages",
+      "declencheurs": ["push", "manuel"],
+      "jobs": ["push", "workflow_dispatch", "build", "deploy"],
+      "specsNommees": [],
+      "lanceBanc": false,
+      "lanceCouverture": false
+    }
+  ],
+  "parcours": [
+    {
+      "fichier": "apps/web/tests/e2e/agent-flows.spec.ts",
+      "nom": "agent-flows.spec.ts",
+      "cas": 25,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 6,
+        "verts": 0,
+        "dureeMs": 0,
+        "cas": [
+          {
+            "titre": "concierge saves memory proactively when user says \"retiens-le\"",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "concierge delegates summarization AND saves Bali memory",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "planner delegates to calculator via task board and completes",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "concierge saves a fact via save_memory then queries it via query_memory",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "job created with channel=telegram triggers save_memory and completes",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "skip: no adapter skills registered in this local environment",
+            "vert": false,
+            "dureeMs": 0
+          }
+        ]
+      },
+      "intention": "─── Constants ────────────────────────────────────────────────────────────────"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
+      "nom": "agent-recipes.spec.ts",
+      "cas": 4,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 2,
+        "verts": 1,
+        "dureeMs": 7507,
+        "cas": [
+          {
+            "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
+            "vert": false,
+            "dureeMs": 6470
+          },
+          {
+            "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
+            "vert": true,
+            "dureeMs": 1037
+          }
+        ]
+      },
+      "intention": "`eq`/`sql` viennent de `@nodal-agents/db`, qui les réexporte : seul ce paquet"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
+      "nom": "agent-tool-assignment.spec.ts",
+      "cas": 8,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 4,
+        "verts": 0,
+        "dureeMs": 0,
+        "cas": [
+          {
+            "titre": "Scenario A — Tools & Connectors section renders with the test connector",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "Scenario B — checking connector checkbox creates assignment row in DB",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "Scenario C — unchecking connector removes assignment from DB",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "Scenario D — Enable all button keeps enabledOperations=null in DB",
+            "vert": false,
+            "dureeMs": 0
+          }
+        ]
+      },
+      "intention": "─── Constants ────────────────────────────────────────────────────────────────"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/agents-redesign.spec.ts",
+      "nom": "agents-redesign.spec.ts",
+      "cas": 3,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 5335,
+        "cas": [
+          {
+            "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
+            "vert": false,
+            "dureeMs": 5335
+          }
+        ]
+      },
+      "intention": "Temporary regression spec for the /agents card-based redesign"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
+      "nom": "airtable-oauth.spec.ts",
+      "cas": 3,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 10401,
+        "cas": [
+          {
+            "titre": "connect via wizard → callback → connected status",
+            "vert": false,
+            "dureeMs": 10401
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/apify-apikey.spec.ts",
+      "nom": "apify-apikey.spec.ts",
+      "cas": 4,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 11628,
+        "cas": [
+          {
+            "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
+            "vert": false,
+            "dureeMs": 11628
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/automations-notify-runnow.spec.ts",
+      "nom": "automations-notify-runnow.spec.ts",
+      "cas": 12,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 3,
+        "verts": 3,
+        "dureeMs": 8287,
+        "cas": [
+          {
+            "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
+            "vert": true,
+            "dureeMs": 1476
+          },
+          {
+            "titre": "creates a schedule then clicks Run now and sees success toast",
+            "vert": true,
+            "dureeMs": 3196
+          },
+          {
+            "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
+            "vert": true,
+            "dureeMs": 3615
+          }
+        ]
+      },
+      "intention": "─── Scenario A — Garde-fou warning ──────────────────────────────────────────"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/autonomy-approvals.spec.ts",
+      "nom": "autonomy-approvals.spec.ts",
+      "cas": 12,
+      "jouParLaCi": true,
+      "resultat": {
+        "total": 4,
+        "verts": 3,
+        "dureeMs": 8883,
+        "cas": [
+          {
+            "titre": "find an existing agent to navigate to",
+            "vert": true,
+            "dureeMs": 1111
+          },
+          {
+            "titre": "Autonomy tab is visible in the agent editor",
+            "vert": true,
+            "dureeMs": 5280
+          },
+          {
+            "titre": "Autonomy tab renders without errors (empty state or tool list)",
+            "vert": true,
+            "dureeMs": 1310
+          },
+          {
+            "titre": "3-way control is present and interactive when write tools exist",
+            "vert": false,
+            "dureeMs": 1182
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
+      "nom": "brique31-flows.spec.ts",
+      "cas": 20,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 5,
+        "verts": 0,
+        "dureeMs": 29858,
+        "cas": [
+          {
+            "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
+            "vert": false,
+            "dureeMs": 25047
+          },
+          {
+            "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
+            "vert": false,
+            "dureeMs": 4487
+          },
+          {
+            "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
+            "vert": false,
+            "dureeMs": 123
+          },
+          {
+            "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
+            "vert": false,
+            "dureeMs": 101
+          },
+          {
+            "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
+            "vert": false,
+            "dureeMs": 100
+          }
+        ]
+      },
+      "intention": "─── E2E sentinel user ────────────────────────────────────────────────────────"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/code-verification.spec.ts",
+      "nom": "code-verification.spec.ts",
+      "cas": 11,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 6,
+        "verts": 0,
+        "dureeMs": 0,
+        "cas": [
+          {
+            "titre": "A — configurer puis approuver, hash écrit EN BASE",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "B — éditer une commande approuvée retire l’approbation",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "C — le cap de cinq est visible : l’ajout disparaît",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "E — un échec serveur ne ment pas",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "F — le tiroir Other sessions n’a aucun panneau",
+            "vert": false,
+            "dureeMs": 0
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/connector-multi-instance.spec.ts",
+      "nom": "connector-multi-instance.spec.ts",
+      "cas": 4,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 11646,
+        "cas": [
+          {
+            "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
+            "vert": false,
+            "dureeMs": 11646
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
+      "nom": "connector-scope-disclosure.spec.ts",
+      "cas": 6,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 3,
+        "verts": 3,
+        "dureeMs": 4394,
+        "cas": [
+          {
+            "titre": "Google Drive states it reaches the ENTIRE Drive",
+            "vert": true,
+            "dureeMs": 1056
+          },
+          {
+            "titre": "Google Sheets and Docs disclose their reach too",
+            "vert": true,
+            "dureeMs": 2326
+          },
+          {
+            "titre": "a connector whose reach matches its name shows NO disclosure",
+            "vert": true,
+            "dureeMs": 1012
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
+      "nom": "credentials-reuse.spec.ts",
+      "cas": 3,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 10308,
+        "cas": [
+          {
+            "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
+            "vert": false,
+            "dureeMs": 10308
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
+      "nom": "help-guides.spec.ts",
+      "cas": 5,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 2,
+        "verts": 0,
+        "dureeMs": 20558,
+        "cas": [
+          {
+            "titre": "wizard shows 4 Google API links and format hint",
+            "vert": false,
+            "dureeMs": 10288
+          },
+          {
+            "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
+            "vert": false,
+            "dureeMs": 10270
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/internal-tool-toggles.spec.ts",
+      "nom": "internal-tool-toggles.spec.ts",
+      "cas": 11,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 4,
+        "verts": 4,
+        "dureeMs": 10907,
+        "cas": [
+          {
+            "titre": "the section lists the built-in tools, always — no fixtures needed",
+            "vert": true,
+            "dureeMs": 2190
+          },
+          {
+            "titre": "return_result is shown but locked, with the reason",
+            "vert": true,
+            "dureeMs": 2145
+          },
+          {
+            "titre": "blocking a built-in tool persists across a reload",
+            "vert": true,
+            "dureeMs": 3310
+          },
+          {
+            "titre": "and can be handed back — the restriction is reversible",
+            "vert": true,
+            "dureeMs": 3262
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/learned-skills.spec.ts",
+      "nom": "learned-skills.spec.ts",
+      "cas": 6,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 4,
+        "verts": 4,
+        "dureeMs": 2550,
+        "cas": [
+          {
+            "titre": "renders the Learned Skills page at /learned-skills",
+            "vert": true,
+            "dureeMs": 1185
+          },
+          {
+            "titre": "toggle switches the reflection_enabled flag (UI responds)",
+            "vert": true,
+            "dureeMs": 394
+          },
+          {
+            "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
+            "vert": true,
+            "dureeMs": 510
+          },
+          {
+            "titre": "assignment-mode control renders both options and is interactive",
+            "vert": true,
+            "dureeMs": 461
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/mcp-connectors.spec.ts",
+      "nom": "mcp-connectors.spec.ts",
+      "cas": 6,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 2,
+        "verts": 0,
+        "dureeMs": 0,
+        "cas": [
+          {
+            "titre": "Scenario A — /mcp renders the connected Cogni Cortex server",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "Scenario B — sidebar shows API Connectors and MCP Connectors",
+            "vert": false,
+            "dureeMs": 0
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/notify-channel.spec.ts",
+      "nom": "notify-channel.spec.ts",
+      "cas": 14,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 4,
+        "verts": 4,
+        "dureeMs": 11235,
+        "cas": [
+          {
+            "titre": "create with explicit Telegram channel, persists across reload + edit",
+            "vert": true,
+            "dureeMs": 4046
+          },
+          {
+            "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
+            "vert": true,
+            "dureeMs": 3661
+          },
+          {
+            "titre": "warns for a channel-less agent, clears when switching to a connected one",
+            "vert": true,
+            "dureeMs": 1679
+          },
+          {
+            "titre": "schedule form notify controls render correctly in both themes",
+            "vert": true,
+            "dureeMs": 1849
+          }
+        ]
+      },
+      "intention": "─── Shared helpers ───────────────────────────────────────────────────────────"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/notion-internal.spec.ts",
+      "nom": "notion-internal.spec.ts",
+      "cas": 3,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 10270,
+        "cas": [
+          {
+            "titre": "connect with api_key shows connected status and persists",
+            "vert": false,
+            "dureeMs": 10270
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/notion-oauth.spec.ts",
+      "nom": "notion-oauth.spec.ts",
+      "cas": 3,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 10315,
+        "cas": [
+          {
+            "titre": "connect via wizard → callback → connected status (no Refresh button)",
+            "vert": false,
+            "dureeMs": 10315
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
+      "nom": "oauth-flow.spec.ts",
+      "cas": 3,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 10313,
+        "cas": [
+          {
+            "titre": "connect via wizard → callback → connected status and toast",
+            "vert": false,
+            "dureeMs": 10313
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/schedule-daily-budget.spec.ts",
+      "nom": "schedule-daily-budget.spec.ts",
+      "cas": 6,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 2,
+        "verts": 2,
+        "dureeMs": 4604,
+        "cas": [
+          {
+            "titre": "is present with a default of 5 on the New schedule form",
+            "vert": true,
+            "dureeMs": 1187
+          },
+          {
+            "titre": "persists a custom value on create, and an edit updates it",
+            "vert": true,
+            "dureeMs": 3417
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/settings-network.spec.ts",
+      "nom": "settings-network.spec.ts",
+      "cas": 6,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 4,
+        "verts": 4,
+        "dureeMs": 4362,
+        "cas": [
+          {
+            "titre": "Network section renders with radio buttons and read-only URL fields",
+            "vert": true,
+            "dureeMs": 1642
+          },
+          {
+            "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
+            "vert": true,
+            "dureeMs": 462
+          },
+          {
+            "titre": "re-saving the mode already in force reports no restart needed",
+            "vert": true,
+            "dureeMs": 811
+          },
+          {
+            "titre": "saving the other mode persists it, demands a restart, and is put back",
+            "vert": true,
+            "dureeMs": 1447
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/settings-verification-surfaces.spec.ts",
+      "nom": "settings-verification-surfaces.spec.ts",
+      "cas": 7,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 3,
+        "verts": 2,
+        "dureeMs": 1562,
+        "cas": [
+          {
+            "titre": "la section rend ses quatre cases et la pilule owner only",
+            "vert": true,
+            "dureeMs": 427
+          },
+          {
+            "titre": "décocher demande confirmation, annuler laisse la case cochée",
+            "vert": false,
+            "dureeMs": 502
+          },
+          {
+            "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
+            "vert": true,
+            "dureeMs": 633
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/smoke.spec.ts",
+      "nom": "smoke.spec.ts",
+      "cas": 10,
+      "jouParLaCi": true,
+      "resultat": {
+        "total": 5,
+        "verts": 5,
+        "dureeMs": 15805,
+        "cas": [
+          {
+            "titre": "the root page IS the dashboard — no login form, no redirect away",
+            "vert": true,
+            "dureeMs": 639
+          },
+          {
+            "titre": "sidebar links every dashboard section",
+            "vert": true,
+            "dureeMs": 459
+          },
+          {
+            "titre": "creates an agent, sends a task, and shows the job in the list",
+            "vert": true,
+            "dureeMs": 5763
+          },
+          {
+            "titre": "every (dashboard) route returns 200 and renders an h1",
+            "vert": true,
+            "dureeMs": 8077
+          },
+          {
+            "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
+            "vert": true,
+            "dureeMs": 867
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/telegram-allowlist.spec.ts",
+      "nom": "telegram-allowlist.spec.ts",
+      "cas": 5,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 3,
+        "verts": 0,
+        "dureeMs": 0,
+        "cas": [
+          {
+            "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "B — Approve a pending chat activates it",
+            "vert": false,
+            "dureeMs": 0
+          },
+          {
+            "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
+            "vert": false,
+            "dureeMs": 0
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/thread-autoscroll.spec.ts",
+      "nom": "thread-autoscroll.spec.ts",
+      "cas": 9,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 4,
+        "verts": 4,
+        "dureeMs": 18690,
+        "cas": [
+          {
+            "titre": "A — un fil long s’ouvre sur son dernier message",
+            "vert": true,
+            "dureeMs": 7593
+          },
+          {
+            "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
+            "vert": true,
+            "dureeMs": 2732
+          },
+          {
+            "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
+            "vert": true,
+            "dureeMs": 2632
+          },
+          {
+            "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas",
+            "vert": true,
+            "dureeMs": 5733
+          }
+        ]
+      },
+      "intention": null
+    },
+    {
+      "fichier": "apps/web/tests/e2e/tools-tab.spec.ts",
+      "nom": "tools-tab.spec.ts",
+      "cas": 14,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 6,
+        "verts": 1,
+        "dureeMs": 11388,
+        "cas": [
+          {
+            "titre": "Step 1 — find an existing agent (skip suite if none)",
+            "vert": true,
+            "dureeMs": 1148
+          },
+          {
+            "titre": "Step 2 — Tools tab lists both native tool groups",
+            "vert": false,
+            "dureeMs": 9909
+          },
+          {
+            "titre": "Step 3 — disclosure expands to show the gated tool names as chips",
+            "vert": false,
+            "dureeMs": 101
+          },
+          {
+            "titre": "Step 4 — \"Includes guidance\" badge opens a read-only modal with the skill content",
+            "vert": false,
+            "dureeMs": 75
+          },
+          {
+            "titre": "Step 5 — office-editing and command-execution are absent from the agent's Skills tab",
+            "vert": false,
+            "dureeMs": 80
+          },
+          {
+            "titre": "Step 6 — command-execution assigned to this agent is still absent from /skills Assigned",
+            "vert": false,
+            "dureeMs": 75
+          }
+        ]
+      },
+      "intention": "─── Step 1: Find an existing agent ──────────────────────────────────────────"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/user-menu.spec.ts",
+      "nom": "user-menu.spec.ts",
+      "cas": 5,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 17267,
+        "cas": [
+          {
+            "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
+            "vert": false,
+            "dureeMs": 17267
+          }
+        ]
+      },
+      "intention": "Independent storageState — this file tests the full login/logout cycle"
+    },
+    {
+      "fichier": "apps/web/tests/e2e/webhooks-flows.spec.ts",
+      "nom": "webhooks-flows.spec.ts",
+      "cas": 5,
+      "jouParLaCi": false,
+      "resultat": {
+        "total": 1,
+        "verts": 0,
+        "dureeMs": 1998,
+        "cas": [
+          {
+            "titre": "create, copy URL, toggle, rotate, delete, empty state",
+            "vert": false,
+            "dureeMs": 1998
+          }
+        ]
+      },
+      "intention": "─── Shared helpers ───────────────────────────────────────────────────────────"
+    }
+  ],
+  "chantiers": {
+    "issues": [],
+    "pr": [
+      {
+        "createdAt": "2026-09-09T17:01:51Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 50,
+        "state": "OPEN",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T03:18:59Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729079973",
+            "name": "ci",
+            "startedAt": "2026-09-10T03:04:55Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T03:22:42Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729080047",
+            "name": "ci-windows",
+            "startedAt": "2026-09-10T03:04:55Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T03:08:43Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729079768",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-10T03:04:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-10T03:07:18Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34431927734/job/102729080075",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-10T03:04:55Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-10T03:04:48Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6c390242-1968-4e7c-997f-b1579f0d3bb1"
+          }
+        ],
+        "title": "Deux gardes qui mesuraient faux — la règle du shell, et la durée d'un job",
+        "updatedAt": "2026-09-10T03:04:40Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/50"
+      },
+      {
+        "createdAt": "2026-09-08T16:28:56Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-09T06:20:11Z",
+        "number": 49,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:21:13Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313291344/job/102344193439",
+            "name": "ci",
+            "startedAt": "2026-09-09T05:02:35Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:18:55Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313291344/job/102344193311",
+            "name": "ci-windows",
+            "startedAt": "2026-09-09T05:02:35Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:06:02Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313291344/job/102344193333",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-09T05:02:35Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:04:54Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313291344/job/102344193192",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-09T05:02:35Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-09T05:02:36Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/8e9e29df-4d95-42b0-8262-c2b317e2f00d"
+          }
+        ],
+        "title": "Prouver sans configurer — l'agent déclare, le système exécute",
+        "updatedAt": "2026-09-09T07:08:05Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/49"
+      },
+      {
+        "createdAt": "2026-09-08T08:44:30Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-09T06:19:16Z",
+        "number": 48,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:08:18Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313157081/job/102343801373",
+            "name": "ci",
+            "startedAt": "2026-09-09T05:00:33Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:07:51Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313157081/job/102343801407",
+            "name": "ci-windows",
+            "startedAt": "2026-09-09T05:00:33Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:04:36Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313157081/job/102343801549",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-09T05:00:33Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-09T05:02:57Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34313157081/job/102343801438",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-09T05:00:33Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-09T05:00:34Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/a3a93d9e-1ee0-49fb-8b23-c8959c5ac188"
+          }
+        ],
+        "title": "Le fil dit la vérité — quatre points sur cinq",
+        "updatedAt": "2026-09-09T07:08:03Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/48"
+      },
+      {
+        "createdAt": "2026-09-08T02:27:16Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-08T03:25:51Z",
+        "number": 47,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-08T03:22:42Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34182075720/job/101923071939",
+            "name": "ci",
+            "startedAt": "2026-09-08T03:02:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-08T03:25:19Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34182075720/job/101923072281",
+            "name": "ci-windows",
+            "startedAt": "2026-09-08T03:02:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-08T03:05:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34182075720/job/101923072178",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-08T03:02:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-08T03:04:24Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34182075720/job/101923072053",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-08T03:02:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-08T03:01:48Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/1c73da1e-993c-460a-aaf5-48daa7dc42ba"
+          }
+        ],
+        "title": "Une routine a un état à elle, pas un souvenir",
+        "updatedAt": "2026-09-08T03:25:54Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/47"
+      },
+      {
+        "createdAt": "2026-09-04T06:54:35Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-07T17:15:37Z",
+        "number": 46,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-07T17:12:04Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34145119095/job/101815363222",
+            "name": "ci",
+            "startedAt": "2026-09-07T16:51:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-07T17:14:51Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34145119095/job/101815363472",
+            "name": "ci-windows",
+            "startedAt": "2026-09-07T16:51:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-07T16:55:18Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34145119095/job/101815363433",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-07T16:51:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-07T16:53:54Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34145119095/job/101815363387",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-07T16:51:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-07T16:51:16Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/943aafc3-0064-4c6a-a394-051c1f479919"
+          }
+        ],
+        "title": "Vérifier & Corriger — PR① : fondations, intention de mutation, primitive terminale, outbox, UI de configuration et de lecture",
+        "updatedAt": "2026-09-07T17:15:56Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/46"
+      },
+      {
+        "createdAt": "2026-08-29T17:26:49Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-07T16:19:00Z",
+        "number": 45,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-30T05:11:18Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33293909587/job/99210190956",
+            "name": "ci",
+            "startedAt": "2026-08-30T05:05:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-30T05:10:57Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33293909587/job/99210191117",
+            "name": "ci-windows",
+            "startedAt": "2026-08-30T05:05:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-30T05:09:07Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33293909587/job/99210190991",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-30T05:05:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-30T05:07:35Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33293909587/job/99210190902",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-30T05:05:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-30T05:05:26Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6f66a8da-ee3c-4612-b702-5d00582b299d"
+          }
+        ],
+        "title": "feat(agents): « What should this agent do? » — profils d'agents, un à la fois",
+        "updatedAt": "2026-09-07T16:19:02Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/45"
+      },
+      {
+        "createdAt": "2026-08-28T15:47:16Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-29T07:05:00Z",
+        "number": 44,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-29T06:52:01Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33239455969/job/99066161983",
+            "name": "ci",
+            "startedAt": "2026-08-29T06:50:57Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-29T06:52:13Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33239455969/job/99066161980",
+            "name": "ci-windows",
+            "startedAt": "2026-08-29T06:50:57Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-29T06:54:53Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33239455969/job/99066161960",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-29T06:50:57Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-29T06:53:01Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33239455969/job/99066162056",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-29T06:50:57Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-29T06:51:01Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/d1c55d92-f596-4b57-90d8-73e657f11474"
+          }
+        ],
+        "title": "perf(ci,pack): le cache Turborepo en CI, et 1,3 Mo de snapshots hors du paquet",
+        "updatedAt": "2026-08-29T07:05:03Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/44"
+      },
+      {
+        "createdAt": "2026-08-28T14:25:41Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-28T14:45:57Z",
+        "number": 43,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T14:43:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33180086489/job/98878820351",
+            "name": "ci",
+            "startedAt": "2026-08-28T14:25:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T14:45:26Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33180086489/job/98878820296",
+            "name": "ci-windows",
+            "startedAt": "2026-08-28T14:25:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T14:29:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33180086489/job/98878820082",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-28T14:25:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T14:28:08Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33180086489/job/98878820341",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-28T14:25:50Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-28T14:25:52Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/c585151b-5e5d-4c4a-93c4-1df964b5428f"
+          }
+        ],
+        "title": "release(0.8.8): changelog et bump de version",
+        "updatedAt": "2026-08-28T14:46:00Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/43"
+      },
+      {
+        "createdAt": "2026-08-28T06:42:50Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-28T13:49:53Z",
+        "number": 42,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T13:47:19Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33175571930/job/98863266269",
+            "name": "ci",
+            "startedAt": "2026-08-28T13:29:13Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T13:48:49Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33175571930/job/98863265938",
+            "name": "ci-windows",
+            "startedAt": "2026-08-28T13:29:12Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T13:33:14Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33175571930/job/98863266243",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-28T13:29:13Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T13:31:38Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33175571930/job/98863266137",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-28T13:29:14Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-28T13:29:01Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/720ab92c-4ca7-43af-bccb-226951b6f055"
+          }
+        ],
+        "title": "fix(channels): une socket Slack morte revient, et une panne DB ne détruit plus le log",
+        "updatedAt": "2026-08-28T13:49:56Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/42"
+      },
+      {
+        "createdAt": "2026-08-28T06:20:47Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-28T13:44:52Z",
+        "number": 41,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T06:34:05Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33147613337/job/98772024974",
+            "name": "ci",
+            "startedAt": "2026-08-28T06:20:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T06:40:10Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33147613337/job/98772025132",
+            "name": "ci-windows",
+            "startedAt": "2026-08-28T06:20:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T06:24:40Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33147613337/job/98772025197",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-28T06:20:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T06:23:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33147613337/job/98772025115",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-28T06:20:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-28T06:20:56Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/1779b828-b709-492f-a764-c6915e8be9f2"
+          }
+        ],
+        "title": "docs(suivi): le source du backlog vivant entre dans le dépôt",
+        "updatedAt": "2026-08-28T13:44:54Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/41"
+      },
+      {
+        "createdAt": "2026-08-28T04:06:20Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-28T04:47:15Z",
+        "number": 40,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T04:28:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892210",
+            "name": "ci",
+            "startedAt": "2026-08-28T04:11:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T04:31:27Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892174",
+            "name": "ci-windows",
+            "startedAt": "2026-08-28T04:11:26Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T04:15:18Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892011",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-28T04:11:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-28T04:13:26Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892166",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-28T04:11:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-28T04:11:12Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6403c264-e432-4e51-bfdc-866ac3a49a71"
+          }
+        ],
+        "title": "fix(security): les jetons de canaux quittent le clair, GLM 5.3 Flash, auth de canal traitée",
+        "updatedAt": "2026-08-28T04:47:18Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/40"
+      },
+      {
+        "createdAt": "2026-08-25T08:24:13Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-27T14:50:47Z",
+        "number": 39,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-27T14:48:36Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588748",
+            "name": "ci",
+            "startedAt": "2026-08-27T14:30:28Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-27T14:45:55Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588688",
+            "name": "ci-windows",
+            "startedAt": "2026-08-27T14:30:28Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-27T14:34:02Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588876",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-27T14:30:28Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-27T14:32:42Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588503",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-27T14:30:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-27T14:31:25Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/4b836279-6e3f-4b4c-8ad6-7a1b6745717b"
+          }
+        ],
+        "title": "feat(code): l'onglet Code cesse de deviner — on renomme, on masque, on range",
+        "updatedAt": "2026-08-27T14:50:47Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/39"
+      },
+      {
+        "createdAt": "2026-08-25T06:29:23Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-25T07:31:00Z",
+        "number": 38,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T07:17:27Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276771",
+            "name": "ci",
+            "startedAt": "2026-08-25T07:03:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T07:19:17Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276740",
+            "name": "ci-windows",
+            "startedAt": "2026-08-25T07:03:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T07:07:39Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276769",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-25T07:03:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T07:06:16Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276582",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-25T07:03:54Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-25T07:03:42Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/95a8a702-beb8-480b-aa81-3987c43e6da8"
+          }
+        ],
+        "title": "fix(review): les 12 constats bloquants et majeurs des revues #16-#37",
+        "updatedAt": "2026-08-25T07:31:04Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/38"
+      },
+      {
+        "createdAt": "2026-08-25T05:02:02Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-25T05:21:27Z",
+        "number": 37,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T05:18:04Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843866",
+            "name": "ci",
+            "startedAt": "2026-08-25T05:02:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T05:20:58Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843889",
+            "name": "ci-windows",
+            "startedAt": "2026-08-25T05:02:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T05:05:59Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843900",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-25T05:02:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T05:04:13Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843691",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-25T05:02:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-25T05:02:11Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/90d750a2-7a2b-4537-b978-99a71dec0078"
+          }
+        ],
+        "title": "feat(context): les projets de code injectés dans le bloc Runtime de chaque agent",
+        "updatedAt": "2026-08-25T05:21:30Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/37"
+      },
+      {
+        "createdAt": "2026-08-25T01:54:56Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-25T02:46:57Z",
+        "number": 36,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T02:44:10Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32801557917/job/97663279214",
+            "name": "ci",
+            "startedAt": "2026-08-25T02:29:00Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T02:46:35Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32801557917/job/97663279340",
+            "name": "ci-windows",
+            "startedAt": "2026-08-25T02:29:00Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T02:32:07Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32801557917/job/97663279318",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-25T02:29:00Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T02:31:14Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32801557917/job/97663279397",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-25T02:29:00Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-25T02:29:02Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/05ee3e2d-fe1a-4453-9fc6-6ed11d3dd71c"
+          }
+        ],
+        "title": "fix(code): .json neutre, dropdown de sessions riche, squelette de chargement",
+        "updatedAt": "2026-08-25T02:47:00Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/36"
+      },
+      {
+        "createdAt": "2026-08-25T01:16:49Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-25T01:39:37Z",
+        "number": 35,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T01:30:14Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32796934750/job/97650053705",
+            "name": "ci",
+            "startedAt": "2026-08-25T01:16:55Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T01:36:30Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32796934750/job/97650053806",
+            "name": "ci-windows",
+            "startedAt": "2026-08-25T01:16:59Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T01:20:50Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32796934750/job/97650053843",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-25T01:16:56Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-25T01:19:06Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32796934750/job/97650053797",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-25T01:16:56Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-25T01:17:00Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/89734556-3011-4b5c-ac0e-c1cef2c4dbeb"
+          }
+        ],
+        "title": "fix(code): un workspace-conteneur ne fusionne plus toutes ses apps en un projet",
+        "updatedAt": "2026-08-25T01:39:40Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/35"
+      },
+      {
+        "createdAt": "2026-08-24T17:36:02Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T18:52:06Z",
+        "number": 34,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T18:46:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32762786357/job/97545394308",
+            "name": "ci",
+            "startedAt": "2026-08-24T18:30:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T18:51:03Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32762786357/job/97545394105",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T18:30:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T18:33:56Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32762786357/job/97545394268",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T18:30:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T18:33:08Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32762786357/job/97545393900",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T18:30:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T18:30:41Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/2cd8b9f2-95fb-48b6-8e8a-58307f6e1ba2"
+          }
+        ],
+        "title": "feat(code): l'onglet Code s'organise par projet, avec archivage UI",
+        "updatedAt": "2026-08-24T18:52:10Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/34"
+      },
+      {
+        "createdAt": "2026-08-24T17:05:00Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T17:25:14Z",
+        "number": 33,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T17:21:26Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32754566745/job/97518995609",
+            "name": "ci",
+            "startedAt": "2026-08-24T17:05:08Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T17:23:58Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32754566745/job/97518995561",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T17:05:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T17:08:52Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32754566745/job/97518995345",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T17:05:08Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T17:07:30Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32754566745/job/97518995622",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T17:05:08Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T17:05:35Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/7f18dc0f-9e47-417c-9f46-9a6d38bc7f03"
+          }
+        ],
+        "title": "feat(approvals): « Always allow » sur la carte Telegram + impact honnête pour code_task",
+        "updatedAt": "2026-08-24T17:25:16Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/33"
+      },
+      {
+        "createdAt": "2026-08-24T14:58:03Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T15:16:34Z",
+        "number": 32,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T15:11:50Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32741965829/job/97478306911",
+            "name": "ci",
+            "startedAt": "2026-08-24T14:58:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T15:16:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32741965829/job/97478307112",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T14:58:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T15:01:56Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32741965829/job/97478307160",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T14:58:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T15:00:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32741965829/job/97478307107",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T14:58:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T14:58:17Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/cd2d3f46-f838-4b3c-a2a5-04ae26383c34"
+          }
+        ],
+        "title": "feat(web): changer son mot de passe depuis Settings",
+        "updatedAt": "2026-08-24T15:16:37Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/32"
+      },
+      {
+        "createdAt": "2026-08-24T13:25:33Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T13:44:39Z",
+        "number": 31,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T13:41:52Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32732615500/job/97448042544",
+            "name": "ci",
+            "startedAt": "2026-08-24T13:25:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T13:44:09Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32732615500/job/97448042373",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T13:25:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T13:29:34Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32732615500/job/97448043061",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T13:25:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T13:27:56Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32732615500/job/97448042093",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T13:25:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T13:25:43Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/337fadbd-9eda-4ccf-848f-b42a1a37d881"
+          }
+        ],
+        "title": "fix(web): l'overview d'un agent compte aussi ses serveurs MCP comme connecteurs",
+        "updatedAt": "2026-08-24T13:44:42Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/31"
+      },
+      {
+        "createdAt": "2026-08-24T12:17:10Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T12:37:11Z",
+        "number": 30,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T12:34:07Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32726295982/job/97428219097",
+            "name": "ci",
+            "startedAt": "2026-08-24T12:17:19Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T12:36:38Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32726295982/job/97428219119",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T12:17:18Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T12:21:11Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32726295982/job/97428219053",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T12:17:17Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T12:19:42Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32726295982/job/97428218830",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T12:17:17Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T12:17:20Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/1591c1b9-1a43-4416-b84c-a6c1a9c26b43"
+          }
+        ],
+        "title": "feat(code-tab): punch list V1.1 — approbation inline + transitions au canal",
+        "updatedAt": "2026-08-24T12:37:15Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/30"
+      },
+      {
+        "createdAt": "2026-08-24T08:40:33Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T08:58:51Z",
+        "number": 29,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:56:27Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32707510388/job/97371651504",
+            "name": "ci",
+            "startedAt": "2026-08-24T08:40:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:58:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32707510388/job/97371651722",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T08:40:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:44:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32707510388/job/97371651647",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T08:40:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:43:06Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32707510388/job/97371651678",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T08:40:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T08:40:43Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/250b2ec4-c1c6-462a-9708-45786bd6e44b"
+          }
+        ],
+        "title": "feat(web): onglet Connectors d'un agent — connectés seulement, la bibliothèque en modale",
+        "updatedAt": "2026-08-24T08:58:56Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/29"
+      },
+      {
+        "createdAt": "2026-08-24T08:30:06Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T08:49:32Z",
+        "number": 28,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:46:26Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32706637448/job/97369029051",
+            "name": "ci",
+            "startedAt": "2026-08-24T08:30:13Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:48:59Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32706637448/job/97369029096",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T08:30:16Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:33:42Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32706637448/job/97369029132",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T08:30:14Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:32:24Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32706637448/job/97369028842",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T08:30:13Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T08:30:16Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/15520fa8-5375-4d5a-8bed-ec91396ef6c4"
+          }
+        ],
+        "title": "feat(web): onglet Skills d'un agent — attachés seulement, la bibliothèque en modale",
+        "updatedAt": "2026-08-24T08:49:35Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/28"
+      },
+      {
+        "createdAt": "2026-08-24T07:53:12Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T08:10:59Z",
+        "number": 27,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:09:43Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32703569393/job/97359874715",
+            "name": "ci",
+            "startedAt": "2026-08-24T07:53:19Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T08:10:46Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32703569393/job/97359874930",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T07:53:18Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T07:56:49Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32703569393/job/97359874808",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T07:53:18Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T07:55:40Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32703569393/job/97359874863",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T07:53:18Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T07:53:20Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/11d37055-91ec-4a5a-81f7-390736c1655b"
+          }
+        ],
+        "title": "feat(cli,web): surveillance de la santé après le boot — un Postgres mort déclenche l'alerte",
+        "updatedAt": "2026-08-24T08:11:03Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/27"
+      },
+      {
+        "createdAt": "2026-08-24T07:00:58Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T07:18:52Z",
+        "number": 26,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T07:12:14Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32699676542/job/97348497921",
+            "name": "ci",
+            "startedAt": "2026-08-24T07:01:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T07:18:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32699676542/job/97348497765",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T07:01:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T07:04:49Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32699676542/job/97348498095",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T07:01:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T07:03:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32699676542/job/97348497992",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T07:01:05Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T07:01:07Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6d43adf7-cd62-4d36-a8d0-8e3ae7641b7c"
+          }
+        ],
+        "title": "feat(web): le sélecteur de dossier est le mode canonique — champ texte retiré",
+        "updatedAt": "2026-08-24T07:18:56Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/26"
+      },
+      {
+        "createdAt": "2026-08-24T06:30:11Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T06:51:54Z",
+        "number": 25,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T06:47:07Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32697742803/job/97343047592",
+            "name": "ci",
+            "startedAt": "2026-08-24T06:32:41Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T06:51:31Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32697742803/job/97343047645",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T06:32:41Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T06:36:25Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32697742803/job/97343047477",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T06:32:41Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T06:35:01Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32697742803/job/97343047873",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T06:32:42Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T06:32:30Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/ce92e547-b39b-48e3-83d0-4b67e8a028bd"
+          }
+        ],
+        "title": "feat(web): bouton Browse — explorateur de dossiers côté serveur pour les workspaces",
+        "updatedAt": "2026-08-24T06:51:57Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/25"
+      },
+      {
+        "createdAt": "2026-08-24T04:19:46Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T04:38:15Z",
+        "number": 24,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T04:32:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32689602315/job/97320798218",
+            "name": "ci",
+            "startedAt": "2026-08-24T04:19:56Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T04:37:06Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32689602315/job/97320798263",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T04:19:56Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T04:23:58Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32689602315/job/97320798107",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T04:19:58Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T04:22:06Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32689602315/job/97320798282",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T04:19:56Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T04:20:00Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/fcd0330f-5a6e-45d0-8c54-9bdf5caab2de"
+          }
+        ],
+        "title": "feat(autonomy): le frein remplace le master-switch (inversion du modele a deux cles)",
+        "updatedAt": "2026-08-24T04:38:15Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/24"
+      },
+      {
+        "createdAt": "2026-08-24T03:42:33Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T04:02:39Z",
+        "number": 23,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:59:05Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32687389552/job/97314837543",
+            "name": "ci",
+            "startedAt": "2026-08-24T03:42:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T04:01:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32687389552/job/97314837669",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T03:42:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:46:10Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32687389552/job/97314837950",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T03:42:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:44:53Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32687389552/job/97314837625",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T03:42:39Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T03:42:53Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/b081b519-c417-483b-bd8b-6a1b45512bb3"
+          }
+        ],
+        "title": "feat(logs): les logs de service lisibles dans le dashboard",
+        "updatedAt": "2026-08-24T04:02:39Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/23"
+      },
+      {
+        "createdAt": "2026-08-24T02:59:40Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T03:22:05Z",
+        "number": 22,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:17:36Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684924266/job/97308215543",
+            "name": "ci",
+            "startedAt": "2026-08-24T03:00:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:20:08Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684924266/job/97308215547",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T03:00:47Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:04:07Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684924266/job/97308215312",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T03:00:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:04:17Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684924266/job/97308215544",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T03:00:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T03:00:28Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/363bb664-dcc9-4713-8922-a2ccb8981cd7"
+          }
+        ],
+        "title": "fix(copy): l interrupteur maitre Yolo dit ce qu il fait — il deverrouille",
+        "updatedAt": "2026-08-24T03:22:05Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/22"
+      },
+      {
+        "createdAt": "2026-08-24T02:57:39Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T03:16:06Z",
+        "number": 21,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:11:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684775606/job/97307745658",
+            "name": "ci",
+            "startedAt": "2026-08-24T02:57:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:15:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684775606/job/97307745663",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T02:57:45Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:01:56Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684775606/job/97307745641",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T02:57:45Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T03:00:11Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32684775606/job/97307745448",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T02:57:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T02:57:48Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/f4661bc7-09e7-4229-88fb-837b28d7fe8a"
+          }
+        ],
+        "title": "fix(cli): rotation des logs de service par taille",
+        "updatedAt": "2026-08-24T03:16:06Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/21"
+      },
+      {
+        "createdAt": "2026-08-24T02:35:14Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T02:55:09Z",
+        "number": 20,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T02:51:35Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32683549365/job/97304366548",
+            "name": "ci",
+            "startedAt": "2026-08-24T02:35:20Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T02:53:36Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32683549365/job/97304366637",
+            "name": "ci-windows",
+            "startedAt": "2026-08-24T02:35:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T02:39:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32683549365/job/97304366633",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-24T02:35:22Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-24T02:37:41Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32683549365/job/97304366700",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-24T02:35:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-24T02:35:24Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/65d090b7-70cf-4c2b-85a6-66550fbcf63c"
+          }
+        ],
+        "title": "fix(ds): un PrimaryButton desactive doit se voir",
+        "updatedAt": "2026-08-24T02:55:09Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/20"
+      },
+      {
+        "createdAt": "2026-08-23T15:52:41Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-24T01:52:18Z",
+        "number": 19,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T16:08:29Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32649923470/job/97219794752",
+            "name": "ci",
+            "startedAt": "2026-08-23T15:52:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T16:11:12Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32649923470/job/97219794780",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T15:52:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T15:56:33Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32649923470/job/97219794872",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T15:52:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T15:54:52Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32649923470/job/97219794784",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T15:52:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T15:52:49Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/c3f5813b-8d02-4794-8277-ae14a9144617"
+          }
+        ],
+        "title": "fix(code): un codeur sans CLI est un codeur quand meme (definition v4)",
+        "updatedAt": "2026-08-24T01:52:18Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/19"
+      },
+      {
+        "createdAt": "2026-08-23T14:00:21Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-23T14:36:09Z",
+        "number": 18,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T14:16:14Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32644091261/job/97205522674",
+            "name": "ci",
+            "startedAt": "2026-08-23T14:00:28Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T14:19:15Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32644091261/job/97205522576",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T14:00:30Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T14:03:58Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32644091261/job/97205522677",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T14:00:29Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T14:02:38Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32644091261/job/97205522766",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T14:00:29Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T14:00:31Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/e611d123-e220-47c7-8700-225fe36e63f7"
+          }
+        ],
+        "title": "release(0.8.6): changelog, docs, bump",
+        "updatedAt": "2026-08-23T14:36:09Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/18"
+      },
+      {
+        "createdAt": "2026-08-23T08:37:30Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-23T13:34:40Z",
+        "number": 17,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T13:51:47Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32642762178/job/97202280073",
+            "name": "ci",
+            "startedAt": "2026-08-23T13:34:34Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T13:52:46Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32642762178/job/97202280060",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T13:34:34Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T13:38:21Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32642762178/job/97202279987",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T13:34:34Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T13:37:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32642762178/job/97202280046",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T13:34:35Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T13:34:36Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/761e57bd-3133-4621-9815-a13310b6ad40"
+          }
+        ],
+        "title": "feat(mcp): nodal-agents mcp serve — la connexion en une ligne, zero secret",
+        "updatedAt": "2026-08-23T13:34:40Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/17"
+      },
+      {
+        "createdAt": "2026-08-23T06:55:50Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-23T13:31:33Z",
+        "number": 16,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T12:00:47Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32637392299/job/97189092410",
+            "name": "ci",
+            "startedAt": "2026-08-23T11:44:25Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T12:02:54Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32637392299/job/97189092421",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T11:44:24Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T11:48:08Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32637392299/job/97189092409",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T11:44:24Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T11:46:36Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32637392299/job/97189092460",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T11:44:25Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T11:44:25Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/0ad587f0-e7a4-4afd-b7ff-5cbfb96a3c4d"
+          }
+        ],
+        "title": "feat(auth): le pont local-trust vers local-auth (compte proprietaire)",
+        "updatedAt": "2026-08-23T13:31:33Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/16"
+      },
+      {
+        "createdAt": "2026-08-23T05:19:03Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-23T13:31:29Z",
+        "number": 15,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T05:35:21Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32620052960/job/97146759201",
+            "name": "ci",
+            "startedAt": "2026-08-23T05:19:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T05:33:03Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32620052960/job/97146759166",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T05:19:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T05:22:48Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32620052960/job/97146759113",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T05:19:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T05:21:33Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32620052960/job/97146759163",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T05:19:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T05:19:12Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/e9036017-d4e0-4ba7-a987-156f0818c11d"
+          }
+        ],
+        "title": "test(mcp): l'interrupteur du serveur a ses 5 gardes",
+        "updatedAt": "2026-08-23T13:31:30Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/15"
+      },
+      {
+        "createdAt": "2026-08-23T03:38:41Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-23T04:17:20Z",
+        "number": 14,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T04:10:44Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32616564953/job/97138205941",
+            "name": "ci",
+            "startedAt": "2026-08-23T03:56:02Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T04:15:50Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32616564953/job/97138206026",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T03:56:01Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T03:59:50Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32616564953/job/97138206029",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T03:56:02Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T03:58:03Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32616564953/job/97138206041",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T03:56:01Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T03:55:42Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/2ece6f10-fd32-45df-b510-e210e27ba4bc"
+          }
+        ],
+        "title": "feat(mcp): la cible se choisit, l entite jamais — parametre agent optionnel",
+        "updatedAt": "2026-08-23T04:17:20Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/14"
+      },
+      {
+        "createdAt": "2026-08-23T03:01:42Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-23T03:36:09Z",
+        "number": 13,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T03:18:52Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32614308550/job/97134661750",
+            "name": "ci",
+            "startedAt": "2026-08-23T03:01:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T03:35:34Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32614308550/job/97134651076",
+            "name": "ci-windows",
+            "startedAt": "2026-08-23T03:22:42Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T03:05:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32614308550/job/97134651440",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-23T03:01:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-23T03:03:58Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32614308550/job/97134651703",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-23T03:01:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-23T03:01:52Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/411d90b1-7bec-46ea-ab88-2af65c94c9c2"
+          }
+        ],
+        "title": "feat(mcp): jamais les outils de configuration, et un interrupteur maitre ferme par defaut",
+        "updatedAt": "2026-08-23T03:36:09Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/13"
+      },
+      {
+        "createdAt": "2026-08-22T17:46:53Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-22T19:14:10Z",
+        "number": 12,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T19:13:11Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32592220711/job/97077743009",
+            "name": "ci",
+            "startedAt": "2026-08-22T18:56:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T19:11:24Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32592220711/job/97077743176",
+            "name": "ci-windows",
+            "startedAt": "2026-08-22T18:56:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T19:00:37Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32592220711/job/97077743116",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-22T18:56:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T18:59:02Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32592220711/job/97077743115",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-22T18:56:40Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-22T18:56:23Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/f4245a0e-e6a1-46ca-90dd-d6f079fac1b0"
+          }
+        ],
+        "title": "feat(mcp): Nodal expose ses outils de delegation en serveur MCP (etape C1)",
+        "updatedAt": "2026-08-22T19:14:10Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/12"
+      },
+      {
+        "createdAt": "2026-08-22T16:27:01Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-22T17:02:52Z",
+        "number": 11,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T17:01:39Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32585667015/job/97061577146",
+            "name": "ci",
+            "startedAt": "2026-08-22T16:45:45Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T16:59:54Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32585667015/job/97061577102",
+            "name": "ci-windows",
+            "startedAt": "2026-08-22T16:45:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T16:49:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32585667015/job/97061576987",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-22T16:45:45Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T16:48:03Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32585667015/job/97061577211",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-22T16:45:47Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-22T16:45:27Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/98fdfe85-80fd-4483-b89b-5a18106be4ce"
+          }
+        ],
+        "title": "fix(agents): appeler une CLI et tourner SUR une CLI ne portent plus le meme nom",
+        "updatedAt": "2026-08-22T17:02:53Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/11"
+      },
+      {
+        "createdAt": "2026-08-22T14:54:02Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-22T16:07:58Z",
+        "number": 10,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T16:06:40Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32582879791/job/97054815009",
+            "name": "ci",
+            "startedAt": "2026-08-22T15:50:16Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T16:07:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32582879791/job/97054815099",
+            "name": "ci-windows",
+            "startedAt": "2026-08-22T15:50:16Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T15:54:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32582879791/job/97054815054",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-22T15:50:16Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T15:52:47Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32582879791/job/97054815032",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-22T15:50:17Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-22T15:49:58Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/fad6c2f8-f1a6-43d0-860a-2ed65ae3b72e"
+          }
+        ],
+        "title": "feat(code): voir la session pendant qu elle tourne, et savoir qui l a executee",
+        "updatedAt": "2026-08-22T16:07:59Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/10"
+      },
+      {
+        "createdAt": "2026-08-22T02:29:30Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-22T11:35:49Z",
+        "number": 9,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T04:24:46Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32550929584/job/96977400441",
+            "name": "ci",
+            "startedAt": "2026-08-22T04:09:12Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T04:27:02Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32550929584/job/96977400419",
+            "name": "ci-windows",
+            "startedAt": "2026-08-22T04:09:12Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T04:12:51Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32550929584/job/96977400457",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-22T04:09:12Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T04:11:32Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32550929584/job/96977400343",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-22T04:09:13Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-22T04:09:13Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/936a0986-6b1f-43ef-8615-8bf4d0a7c209"
+          }
+        ],
+        "title": "fix(catalog): Gemini 3.7 Flash, et un modele qui refusait les images en silence",
+        "updatedAt": "2026-08-22T11:35:49Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/9"
+      },
+      {
+        "createdAt": "2026-08-22T02:20:00Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-22T11:58:51Z",
+        "number": 8,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T11:55:53Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32571005679/job/97026340186",
+            "name": "ci",
+            "startedAt": "2026-08-22T11:42:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T11:58:12Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32571005679/job/97026340284",
+            "name": "ci-windows",
+            "startedAt": "2026-08-22T11:42:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T11:46:13Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32571005679/job/97026340332",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-22T11:42:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T11:44:21Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32571005679/job/97026340269",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-22T11:42:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-22T11:42:27Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/f505cb6a-e690-40cb-bb18-47c9601f917e"
+          }
+        ],
+        "title": "fix(runtime): un agent en runtime CLI recevait sa personnalité brute",
+        "updatedAt": "2026-08-22T11:58:51Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/8"
+      },
+      {
+        "createdAt": "2026-08-21T16:15:18Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-22T11:36:47Z",
+        "number": 7,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T07:22:04Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32558614821/job/96996631073",
+            "name": "ci",
+            "startedAt": "2026-08-22T07:04:29Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T07:22:20Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32558614821/job/96996631044",
+            "name": "ci-windows",
+            "startedAt": "2026-08-22T07:04:28Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T07:08:22Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32558614821/job/96996631051",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-22T07:04:28Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-22T07:06:33Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32558614821/job/96996630941",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-22T07:04:27Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-22T07:04:15Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/a87e969e-bfb6-4465-8abf-78da44e26c04"
+          }
+        ],
+        "title": "feat: poste de développement — continuité, conscience du dépôt, retour arrière",
+        "updatedAt": "2026-08-22T11:36:47Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/7"
+      },
+      {
+        "createdAt": "2026-08-21T13:57:38Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-21T16:05:48Z",
+        "number": 6,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T16:04:55Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32499667660/job/96826194356",
+            "name": "ci",
+            "startedAt": "2026-08-21T15:49:20Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T16:02:55Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32499667660/job/96826194077",
+            "name": "ci-windows",
+            "startedAt": "2026-08-21T15:49:20Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T15:53:29Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32499667660/job/96826194688",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-21T15:49:21Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T15:51:27Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32499667660/job/96826194240",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-21T15:49:20Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-21T15:49:27Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/30983c40-4335-4e85-a050-5a0dc32c2250"
+          }
+        ],
+        "title": "fix(security): isoler les runs Codex de la config utilisateur (MCP hérités + sandbox désactivée)",
+        "updatedAt": "2026-08-21T16:05:48Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/6"
+      },
+      {
+        "createdAt": "2026-08-19T03:07:50Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-21T05:38:48Z",
+        "number": 5,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T05:36:01Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32450145294/job/96677052479",
+            "name": "ci",
+            "startedAt": "2026-08-21T05:20:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T05:37:45Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32450145294/job/96677052475",
+            "name": "ci-windows",
+            "startedAt": "2026-08-21T05:20:10Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T05:23:53Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32450145294/job/96677052251",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-21T05:20:08Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-21T05:22:25Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32450145294/job/96677052396",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-21T05:20:09Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-21T05:20:03Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/3a9db5eb-205c-402f-9300-51a2e6acf97c"
+          }
+        ],
+        "title": "feat(code-task): agents sous abonnement - tool code_task (etape B)",
+        "updatedAt": "2026-08-21T05:38:48Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/5"
+      },
+      {
+        "createdAt": "2026-08-09T10:09:54Z",
+        "isDraft": false,
+        "mergedAt": "2026-08-21T05:38:50Z",
+        "number": 4,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-16T08:11:50Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/31935192465/job/95135873362",
+            "name": "ci",
+            "startedAt": "2026-08-16T07:57:07Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-16T08:13:15Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/31935192465/job/95135873354",
+            "name": "ci-windows",
+            "startedAt": "2026-08-16T07:57:07Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-16T08:00:38Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/31935192465/job/95135873312",
+            "name": "pack-smoke",
+            "startedAt": "2026-08-16T07:57:06Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-16T07:59:17Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/31935192465/job/95135873381",
+            "name": "e2e-smoke",
+            "startedAt": "2026-08-16T07:57:06Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-08-16T07:57:11Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/c5776aa6-ab26-4771-bfe4-554a0a2d0695"
+          }
+        ],
+        "title": "Audit sécurité/coût/qualité 0.8.1 — P0 et P1 fermés, banc d'essai, catalogue modèles",
+        "updatedAt": "2026-08-21T05:38:50Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/4"
+      },
+      {
+        "createdAt": "2026-07-30T16:47:01Z",
+        "isDraft": false,
+        "mergedAt": "2026-07-30T17:17:39Z",
+        "number": 3,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-07-30T17:00:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/30563025808/job/90940595808",
+            "name": "ci",
+            "startedAt": "2026-07-30T16:47:15Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-07-30T17:30:53Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/30565332050/job/90948304872",
+            "name": "ci",
+            "startedAt": "2026-07-30T17:17:44Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-07-30T17:19:01Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/30565332060/job/90948304821",
+            "name": "build",
+            "startedAt": "2026-07-30T17:17:44Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-07-30T17:19:16Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/30565332060/job/90948635321",
+            "name": "deploy",
+            "startedAt": "2026-07-30T17:19:06Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-07-30T16:47:15Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/2d58ec1a-0c09-48dc-830f-da4b14827817"
+          }
+        ],
+        "title": "fix(pack): 0.8.1 — le tarball 0.8.0 perdait 7 chunks serveur, dashboard 100% en 500",
+        "updatedAt": "2026-07-30T17:17:39Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/3"
+      },
+      {
+        "createdAt": "2026-07-22T16:50:15Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 2,
+        "state": "CLOSED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-07-22T16:50:35Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/29939755751/job/88990345029",
+            "name": "ci",
+            "startedAt": "2026-07-22T16:50:26Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-07-22T16:50:34Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/bc7b4af2-4bdc-4c07-b7be-42f5f83da340"
+          }
+        ],
+        "title": "[Snyk] Security upgrade undici from 7.25.0 to 7.28.0",
+        "updatedAt": "2026-08-20T14:33:05Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/2"
+      },
+      {
+        "createdAt": "2026-06-03T06:15:43Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 1,
+        "state": "CLOSED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-06-03T06:16:00Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/26867263369/job/79233670668",
+            "name": "ci",
+            "startedAt": "2026-06-03T06:15:50Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-06-03T06:15:52Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/d1e87968-665d-4525-abef-103dac7d9e28"
+          }
+        ],
+        "title": "[Snyk] Security upgrade @mendable/firecrawl-js from 4.22.2 to 4.25.2",
+        "updatedAt": "2026-08-20T14:33:16Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/1"
+      }
+    ]
+  }
+}

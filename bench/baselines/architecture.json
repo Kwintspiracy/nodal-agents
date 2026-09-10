@@ -1,12 +1,12 @@
 {
   "sectionId": "architecture",
-  "gitSha": "2805c3e",
-  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "gitSha": "4da206e7",
+  "acceptedAt": "2026-09-10T05:25:15.121Z",
   "metrics": [
     {
       "id": "packages_scanned",
       "label": "Packages scannés",
-      "value": 29,
+      "value": 32,
       "unit": "packages",
       "direction": "higher-is-better"
     },
@@ -37,6 +37,38 @@
     {
       "id": "hardcoded_uuid_violations",
       "label": "UUID par utilisateur en dur (invariant #6)",
+      "value": 0,
+      "unit": "violations",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "mutating_launcher_violations",
+      "label": "Écritures disque hors seam d’intention",
+      "value": 0,
+      "unit": "violations",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "terminal_write_violations",
+      "label": "Écritures terminales hors de la primitive (V&C)",
+      "value": 0,
+      "unit": "violations",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "terminal_send_violations",
+      "label": "Envois de canal hors de l’outbox (V&C)",
+      "value": 0,
+      "unit": "violations",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "deliverable_literal_violations",
+      "label": "Types de livrable en dur dans la primitive (V&C)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",

@@ -1,0 +1,154 @@
+name: Qualité — mesure complète
+
+# Ce workflow ne garde rien : il MESURE, et il écrit ce qu'il a mesuré dans
+# `apps/qa/data/`. C'est cette écriture, répétée, qui donne au portail son
+# historique — donc les réponses à « combien de fois ça tourne » et « à quelle
+# régularité ». Un rendu statique ne les aura jamais.
+#
+# Pourquoi la nuit et pas à chaque commit : la mesure complète instrumente
+# 34 paquets et joue 30 parcours navigateur. À chaque push elle doublerait le
+# temps de CI pour un chiffre qui ne bouge pas d'un commit à l'autre. Les
+# portes qui doivent bloquer une PR restent dans `ci.yml`.
+
+on:
+  schedule:
+    # 03:17 UTC — une heure creuse, et une minute qui n'est ni 0 ni 30 pour ne
+    # pas rejoindre la vague de tous les crons de la planète.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qa-mesure
+  cancel-in-progress: false
+
+jobs:
+  mesure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Le job réécrit `apps/qa/data/` et pousse : il lui faut l'historique
+          # git, pas un checkout superficiel.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Couverture, paquet par paquet ──────────────────────────────────────
+      # Surtout PAS un `vitest run --coverage` unique à la racine : chaque
+      # paquet porte son propre environnement (DATABASE_URL, mocks), qu'un
+      # lancement racine n'applique pas — 421 tests tombent alors pour une
+      # raison qui n'a rien à voir avec le code (constaté le 10/09/2026).
+      #
+      # `|| true` par paquet : un paquet qui échoue ne doit pas priver le
+      # portail des 33 autres mesures. Le portail montre l'absence comme une
+      # absence, jamais comme un zéro.
+      - name: Couverture par paquet
+        run: |
+          for d in packages/* packages/adapters/* apps/*; do
+            [ -f "$d/package.json" ] || continue
+            name=$(node -p "require('./$d/package.json').name" 2>/dev/null) || continue
+            [ "$name" = "@nodal-agents/docs" ] && continue
+            echo "::group::$name"
+            (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot) || echo "  (échec — on continue)"
+            echo "::endgroup::"
+          done
+
+      # ── Le banc ────────────────────────────────────────────────────────────
+      # Il sort en 1 sur régression ; ici on ne veut pas arrêter la mesure, on
+      # veut l'ENREGISTRER. La porte bloquante, elle, vit dans `ci.yml`.
+      - name: Banc d'essai
+        run: pnpm bench --json apps/qa/data/bench-run.json || true
+
+      - name: Install Playwright browsers
+        timeout-minutes: 12
+        run: |
+          for i in 1 2; do
+            timeout 300 pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium && exit 0
+            echo "playwright install attempt $i failed or hung — retrying"
+          done
+          exit 1
+
+      - name: Boot the stack
+        run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
+
+      - name: Wait for the dashboard
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/ > /dev/null; then echo "web up"; exit 0; fi
+            sleep 5
+          done
+          echo "dashboard never answered on :3000"; exit 1
+
+      # TOUS les parcours, pas les deux de `ci.yml`. C'est le point de ce
+      # workflow : le 10/09/2026, la première exécution des 28 parcours que la
+      # CI ne jouait pas a rendu 25 rouges. Personne ne pouvait le savoir.
+      #
+      # `agent-flows.spec.ts` est exclu, et c'est la seule exclusion : il sonde
+      # un LM Studio sur localhost:1234, qui n'existe pas sur un runner. Il
+      # échouerait à sa première ligne pour une raison qui n'apprend rien.
+      # La liste est construite ici plutôt que passée à un drapeau : Playwright
+      # n'a pas d'option d'exclusion par FICHIER (`--grep-invert` filtre sur les
+      # titres, `--ignore` n'existe pas), et un drapeau inventé aurait fait
+      # échouer le workflow sur sa syntaxe plutôt que sur les tests.
+      - name: Tous les parcours
+        run: |
+          mapfile -t specs < <(ls tests/e2e/*.spec.ts | grep -v 'agent-flows.spec.ts')
+          echo "${#specs[@]} parcours à jouer"
+          npx playwright test "${specs[@]}" --reporter=json > playwright-raw.json || true
+        working-directory: apps/web
+
+      # La sortie JSON de Playwright peut être précédée d'une ligne du
+      # global-setup ; on repart de la première accolade.
+      - name: Normaliser le rapport
+        run: |
+          node -e "
+            const fs=require('fs');
+            const brut=fs.readFileSync('apps/web/playwright-raw.json','utf8');
+            const i=brut.indexOf('{');
+            if(i<0){ console.log('aucun rapport'); process.exit(0); }
+            fs.mkdirSync('apps/qa/data',{recursive:true});
+            fs.writeFileSync('apps/qa/data/playwright-run.json', brut.slice(i));
+            const s=JSON.parse(brut.slice(i)).stats||{};
+            console.log('verts',s.expected,'rouges',s.unexpected,'ignorés',s.skipped);
+          " || true
+        working-directory: .
+
+      - name: Collecter
+        run: node apps/qa/collect.mjs
+
+      # L'historique doit SURVIVRE au runner : c'est la seule donnée de ce
+      # workflow qui ne se recalcule pas. `[skip ci]` évite qu'un push de
+      # données ne relance la CI en boucle.
+      - name: Enregistrer la mesure
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/qa/data
+          if git diff --cached --quiet; then
+            echo "rien de neuf à enregistrer"
+          else
+            git commit -m "chore(qa): mesure du $(date -u +%Y-%m-%d) [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Rendre le portail
+        run: node apps/qa/build.mjs
+
+      - name: Publier le portail comme artefact du run
+        uses: actions/upload-artifact@v4
+        with:
+          name: portail-qualite
+          path: apps/qa/dist
+          retention-days: 30

@@ -1,0 +1,13 @@
+{
+  "name": "@nodal-agents/qa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Le portail qualité — ce que le dépôt sait de ses propres tests, et ce qu'il ne sait pas.",
+  "scripts": {
+    "collect": "node collect.mjs",
+    "build": "node collect.mjs && node build.mjs",
+    "render": "node build.mjs",
+    "serve": "node serve.mjs"
+  }
+}
