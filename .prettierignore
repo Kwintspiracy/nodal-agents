@@ -17,3 +17,8 @@ next-env.d.ts
 apps/docs/.source/
 apps/docs/content/docs/reference/
 pack/
+
+# Mesures du portail qualité — écrites par `apps/qa/collect.mjs` à chaque
+# collecte, jamais à la main. Les formater ferait diverger le fichier committé
+# par la CI de celui produit en local, et chaque nuit rouvrirait le même diff.
+apps/qa/data/

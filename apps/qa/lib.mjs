@@ -124,6 +124,45 @@ export function compterParcours(cas) {
   return c;
 }
 
+// ─── Ce qui déclenche un workflow, et à quelle cadence ────────────────────────
+
+/**
+ * Les événements qui lancent un workflow, lus dans son texte.
+ *
+ * Vit ici, sous test, parce que la première version a passé une journée à
+ * rendre une liste VIDE pour `ci.yml` sans que rien ne le signale : un `\b`
+ * écrit depuis un script shell était devenu un caractère de contrôle littéral
+ * (`\x08`) dans le fichier, et la regex cherchait un caractère invisible. Le
+ * portail affichait « à la main » pour tous les parcours, y compris ceux joués
+ * à chaque PR.
+ *
+ * Une détection muette qui se trompe est pire qu'une absente : elle répond.
+ */
+export function declencheursDunWorkflow(texte) {
+  if (!/^on:/m.test(texte)) return [];
+  const out = [];
+  if (/^\s*push:/m.test(texte)) out.push('push');
+  if (/^\s*pull_request:/m.test(texte)) out.push('pull_request');
+  if (/^\s*schedule:/m.test(texte)) out.push('schedule');
+  if (/workflow_dispatch/.test(texte)) out.push('manuel');
+  return out;
+}
+
+/**
+ * À quel rythme un workflow garde le dépôt.
+ *
+ * L'ordre n'est pas cosmétique : un parcours joué à chaque PR BLOQUE une
+ * régression avant le merge ; joué chaque nuit, il la constate après. Les
+ * confondre, c'est appeler « couvert » un parcours qui ne garde rien.
+ */
+export function cadenceDe(declencheurs) {
+  const d = declencheurs ?? [];
+  if (d.includes('pull_request')) return 'chaque PR';
+  if (d.includes('schedule')) return 'chaque nuit';
+  if (d.includes('push')) return 'chaque push sur main';
+  return 'à la main';
+}
+
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
 /**

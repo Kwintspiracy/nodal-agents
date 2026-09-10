@@ -22,7 +22,15 @@ import {
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
-import { etatCi, colonneDeCarte, sortDuCas, compterParcours, parcoursDunWorkflow } from './lib.mjs';
+import {
+  etatCi,
+  colonneDeCarte,
+  sortDuCas,
+  compterParcours,
+  parcoursDunWorkflow,
+  declencheursDunWorkflow,
+  cadenceDe,
+} from './lib.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const RACINE = join(ICI, '..', '..');
@@ -174,13 +182,7 @@ function ci(fichiers, tousLesParcours) {
   return wfs.map((f) => {
     const texte = readFileSync(join(RACINE, f), 'utf8');
     const jobs = [...texte.matchAll(/^ {2}([a-z0-9_-]+):\s*$/gim)].map((m) => m[1]);
-    const declencheurs = [];
-    if (/^on:/m.test(texte)) {
-      if (/push:/.test(texte)) declencheurs.push('push');
-      if (/pull_request:/.test(texte)) declencheurs.push('pull_request');
-      if (/schedule:/.test(texte)) declencheurs.push('schedule');
-      if (/workflow_dispatch/.test(texte)) declencheurs.push('manuel');
-    }
+    const declencheurs = declencheursDunWorkflow(texte);
     const parcours = parcoursDunWorkflow(texte, tousLesParcours);
     return {
       fichier: f,
@@ -193,15 +195,7 @@ function ci(fichiers, tousLesParcours) {
       specsNommees: parcours.joues,
       balayeLesParcours: parcours.balaye,
       parcoursExclus: parcours.exclus ?? [],
-      // Un parcours joué CHAQUE NUIT n'est pas joué à chaque PR : le portail
-      // doit pouvoir dire lequel des deux, sinon « couvert » ne veut rien dire.
-      cadence: declencheurs.includes('pull_request')
-        ? 'chaque PR'
-        : declencheurs.includes('schedule')
-          ? 'chaque nuit'
-          : declencheurs.includes('push')
-            ? 'chaque push sur main'
-            : 'à la main',
+      cadence: cadenceDe(declencheurs),
       lanceBanc: /pnpm bench|@nodal-agents\/bench/.test(texte),
       lanceCouverture: /--coverage/.test(texte),
     };

@@ -10,7 +10,15 @@
 // regarde.
 
 import { describe, it, expect } from 'vitest';
-import { etatCi, colonneDeCarte, sortDuCas, compterParcours, parcoursDunWorkflow } from './lib.mjs';
+import {
+  etatCi,
+  colonneDeCarte,
+  sortDuCas,
+  compterParcours,
+  parcoursDunWorkflow,
+  declencheursDunWorkflow,
+  cadenceDe,
+} from './lib.mjs';
 
 describe('etatCi — le vert ne s’accorde qu’à ce qui a réussi', () => {
   it('tout en succès ⇒ vert', () => {
@@ -132,6 +140,83 @@ describe('sortDuCas — ignoré n’est pas rouge', () => {
   it('compterParcours ventile les quatre sorts', () => {
     const c = compterParcours(['vert', 'vert', 'rouge', 'ignoré', 'instable']);
     expect(c).toEqual({ total: 5, vert: 2, rouge: 1, ignoré: 1, instable: 1 });
+  });
+});
+
+describe('declencheursDunWorkflow — une détection muette qui se trompe répond quand même', () => {
+  // Le cas réel : un `\b` écrit depuis un script shell est devenu un caractère
+  // de contrôle littéral dans le fichier. La regex cherchait un caractère
+  // invisible, ne trouvait jamais rien, et le portail affichait « à la main »
+  // pour TOUS les parcours — y compris les deux joués à chaque PR. Rien ne
+  // l'a signalé pendant une journée.
+  const CI = `name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest`;
+
+  const NOCTURNE = `name: Qualité
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  mesure:
+    runs-on: ubuntu-latest`;
+
+  it('lit push et pull_request', () => {
+    expect(declencheursDunWorkflow(CI)).toEqual(['push', 'pull_request']);
+  });
+
+  it('lit schedule et le déclenchement manuel', () => {
+    expect(declencheursDunWorkflow(NOCTURNE)).toEqual(['schedule', 'manuel']);
+  });
+
+  it('un fichier sans bloc `on:` ne déclenche rien', () => {
+    expect(declencheursDunWorkflow('jobs:\n  ci:\n    runs-on: ubuntu-latest')).toEqual([]);
+  });
+
+  it('ne confond pas un `push` de texte avec un déclencheur', () => {
+    // `declencheurs.push(...)` dans un commentaire, un `git push` dans un
+    // script : ce ne sont pas des déclencheurs. L'ancre en début de ligne est
+    // ce qui les distingue.
+    const wf = `name: X
+
+on:
+  workflow_dispatch:
+
+jobs:
+  x:
+    steps:
+      - run: git push origin main`;
+    expect(declencheursDunWorkflow(wf)).toEqual(['manuel']);
+  });
+});
+
+describe('cadenceDe — garder n’est pas constater', () => {
+  it('une PR prime sur tout : c’est la seule cadence qui BLOQUE', () => {
+    expect(cadenceDe(['push', 'pull_request', 'schedule'])).toBe('chaque PR');
+  });
+
+  it('la nuit constate, elle ne bloque pas', () => {
+    expect(cadenceDe(['schedule', 'manuel'])).toBe('chaque nuit');
+  });
+
+  it('un push sur main est entre les deux', () => {
+    expect(cadenceDe(['push', 'manuel'])).toBe('chaque push sur main');
+  });
+
+  it('rien d’automatique ⇒ à la main', () => {
+    expect(cadenceDe(['manuel'])).toBe('à la main');
+    expect(cadenceDe([])).toBe('à la main');
   });
 });
 

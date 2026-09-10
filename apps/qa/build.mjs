@@ -204,40 +204,77 @@ function vueEnsemble() {
 }
 
 function vueParcours() {
-  const joues = s.parcours.filter((p) => p.jouParLaCi);
-  const non = s.parcours.filter((p) => !p.jouParLaCi);
+  // Regroupés par CADENCE, pas par « joué / pas joué ». Un parcours joué la
+  // nuit constate une régression ; joué à chaque PR, il la BLOQUE avant le
+  // merge. Les mettre dans le même sac, c'est appeler « couvert » un parcours
+  // qui ne garde rien.
+  const parCadence = new Map();
+  for (const p of s.parcours) {
+    const c = p.cadence ?? 'jamais joué';
+    parCadence.set(c, [...(parCadence.get(c) ?? []), p]);
+  }
+  const ORDRE = ['chaque PR', 'chaque push sur main', 'chaque nuit', 'à la main', 'jamais joué'];
+
   const ligne = (p) => {
     const r = p.resultat;
-    const etat = !r
-      ? '<span class="pastille pastille--inconnu">jamais exécuté ici</span>'
-      : r.verts === r.total
-        ? `<span class="pastille pastille--ok">${r.verts}/${r.total} verts</span>`
-        : `<span class="pastille pastille--ko">${r.total - r.verts} rouge(s) sur ${r.total}</span>`;
+    let etat;
+    if (!r) {
+      etat = '<span class="pastille pastille--inconnu">jamais exécuté ici</span>';
+    } else {
+      // Quatre sorts, montrés SÉPARÉMENT. Un cas ignoré n'est pas un cas rouge :
+      // les confondre, c'est le défaut que ce portail dénonce ailleurs.
+      const bouts = [];
+      if (r.vert)
+        bouts.push(
+          `<span class="pastille pastille--ok">${r.vert} vert${r.vert > 1 ? 's' : ''}</span>`,
+        );
+      if (r.rouge)
+        bouts.push(
+          `<span class="pastille pastille--ko">${r.rouge} rouge${r.rouge > 1 ? 's' : ''}</span>`,
+        );
+      if (r.instable)
+        bouts.push(
+          `<span class="pastille pastille--moyen">${r.instable} instable${r.instable > 1 ? 's' : ''}</span>`,
+        );
+      if (r['ignoré'])
+        bouts.push(
+          `<span class="pastille pastille--inconnu">${r['ignoré']} non exécuté${r['ignoré'] > 1 ? 's' : ''}</span>`,
+        );
+      etat = bouts.join(' ') || '<span class="pastille pastille--inconnu">rien à dire</span>';
+    }
     return `<tr>
       <td><span class="mono">${esc(p.nom)}</span>${p.intention ? `<br><span class="intention">${esc(p.intention)}</span>` : ''}</td>
       <td class="num">${p.cas}</td>
-      <td>${p.jouParLaCi ? '<span class="pastille pastille--ok">oui</span>' : '<span class="pastille pastille--ko">non</span>'}</td>
       <td>${etat}</td>
       <td class="num dim">${r?.dureeMs ? `${(r.dureeMs / 1000).toFixed(1)} s` : '—'}</td>
     </tr>`;
   };
+
+  const bloc = (cadence) => {
+    const dedans = parCadence.get(cadence);
+    if (!dedans || dedans.length === 0) return '';
+    const note =
+      cadence === 'chaque PR'
+        ? 'Ceux-là BLOQUENT une régression avant le merge.'
+        : cadence === 'chaque nuit'
+          ? 'Ceux-là la CONSTATENT le lendemain. Ils ne gardent aucune PR.'
+          : cadence === 'jamais joué'
+            ? 'Écrits, versionnés, et qu’aucune intégration continue n’exécute.'
+            : '';
+    return `<h3 class="sous-titre">${esc(cadence)} <span class="compte">${dedans.length}</span></h3>
+      ${note ? `<p class="note-section">${note}</p>` : ''}
+      <div class="tableau"><table>
+        <thead><tr><th>Parcours</th><th class="num">Cas</th><th style="min-width:230px">Dernier résultat</th><th class="num">Durée</th></tr></thead>
+        <tbody>${dedans.map(ligne).join('\n')}</tbody>
+      </table></div>`;
+  };
+
+  const bloque = (parCadence.get('chaque PR') ?? []).length;
   return `
 <section id="parcours" class="vue">
   <h2 class="titre-vue">Parcours</h2>
-  <p class="chapo">Les scénarios bout en bout : ce qu'un utilisateur fait réellement. ${s.parcours.length} versionnés, <b>${joues.length} joués par la CI</b>.</p>
-
-  <h3 class="sous-titre">Jamais joués par la CI <span class="compte">${non.length}</span></h3>
-  <p class="note-section">Écrits, versionnés, et qu'aucune intégration continue n'exécute. La colonne « dernier résultat » ne se remplit que si quelqu'un les lance à la main.</p>
-  <div class="tableau"><table>
-    <thead><tr><th>Parcours</th><th class="num">Cas</th><th>En CI</th><th>Dernier résultat</th><th class="num">Durée</th></tr></thead>
-    <tbody>${non.map(ligne).join('\n')}</tbody>
-  </table></div>
-
-  <h3 class="sous-titre">Joués à chaque intégration <span class="compte">${joues.length}</span></h3>
-  <div class="tableau"><table>
-    <thead><tr><th>Parcours</th><th class="num">Cas</th><th>En CI</th><th>Dernier résultat</th><th class="num">Durée</th></tr></thead>
-    <tbody>${joues.map(ligne).join('\n')}</tbody>
-  </table></div>
+  <p class="chapo">Les scénarios bout en bout : ce qu'un utilisateur fait réellement. ${s.parcours.length} versionnés, et <b>${bloque} seulement gardent une PR</b> — les autres constatent après coup, ou jamais.</p>
+  ${ORDRE.map(bloc).join('\n')}
 </section>`;
 }
 
@@ -315,7 +352,9 @@ function vueEcarts() {
 </section>`;
 }
 
-const COLONNES = ['À faire', 'En cours', 'En review', 'À tester', 'Fait'];
+// « Abandonné » est une colonne à part entière : sans elle, une PR fermée
+// sans merge n'apparaîtrait NULLE PART — disparue du tableau sans trace.
+const COLONNES = ['À faire', 'En cours', 'En review', 'À tester', 'Fait', 'Abandonné'];
 
 const TONS_ETIQUETTE = {
   décision: 'violet',
@@ -356,7 +395,7 @@ function vueChantiers() {
   // quatre autres, et ce n'est pas là qu'on regarde.
   const colonnes = COLONNES.map((nom) => {
     const dedans = cartes.filter((c) => c.colonne === nom);
-    const montrees = nom === 'Fait' ? dedans.slice(0, 8) : dedans;
+    const montrees = nom === 'Fait' || nom === 'Abandonné' ? dedans.slice(0, 8) : dedans;
     return `<section class="colonne">
       <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
       <div class="pile">
@@ -535,6 +574,7 @@ tr:last-child td{border-bottom:0}
 .pastille--ok{background:var(--ok-doux);color:var(--ok)}
 .pastille--ko{background:var(--ko-doux);color:var(--ko)}
 .pastille--inconnu{background:var(--panneau2);color:var(--inconnu)}
+.pastille--moyen{background:var(--moyen-doux);color:var(--moyen)}
 .jeton{display:inline-block;font-size:11px;padding:1px 7px;border:1px solid var(--regle);
   border-radius:99px;color:var(--encre3);white-space:nowrap}
 
@@ -573,7 +613,7 @@ tr:last-child td{border-bottom:0}
 .rappel{background:var(--accent-doux);border:1px solid var(--accent);border-radius:10px;
   padding:11px 15px;margin:0 0 18px;font-size:13.5px;color:var(--encre2)}
 .rappel b{color:var(--accent)}
-.kanban{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:start}
+.kanban{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:start}
 @media(max-width:1200px){.kanban{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:820px){.kanban{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.kanban{grid-template-columns:1fr}}

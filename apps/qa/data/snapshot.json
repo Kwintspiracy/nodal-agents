@@ -1,6 +1,6 @@
 {
-  "genereLe": "2026-09-10T11:08:41.452Z",
-  "commit": "5bd614fb",
+  "genereLe": "2026-09-10T13:07:50.521Z",
+  "commit": "81c68c17",
   "branche": "qa/etat-zero-tests",
   "paquets": [
     {
@@ -466,8 +466,8 @@
       "nom": "@nodal-agents/qa",
       "chemin": "apps/qa",
       "tests": {
-        "fichiers": 0,
-        "cas": 0,
+        "fichiers": 1,
+        "cas": 33,
         "e2e": 0,
         "casE2e": 0
       },
@@ -636,8 +636,8 @@
   ],
   "resume": {
     "paquets": 34,
-    "fichiersDeTest": 550,
-    "casDeTest": 6556,
+    "fichiersDeTest": 551,
+    "casDeTest": 6589,
     "specsE2e": 30,
     "casE2e": 233,
     "specsE2eJoueesParLaCi": 29,
@@ -900,44 +900,79 @@
     {
       "fichier": ".github/workflows/ci.yml",
       "nom": "CI",
-      "declencheurs": [],
-      "jobs": ["push", "pull_request", "ci", "ci-windows", "pack-smoke", "e2e-smoke"],
-      "specsNommees": ["smoke.spec.ts", "autonomy-approvals.spec.ts"],
+      "declencheurs": [
+        "push",
+        "pull_request"
+      ],
+      "jobs": [
+        "push",
+        "pull_request",
+        "ci",
+        "ci-windows",
+        "pack-smoke",
+        "e2e-smoke"
+      ],
+      "specsNommees": [
+        "smoke.spec.ts",
+        "autonomy-approvals.spec.ts"
+      ],
       "balayeLesParcours": false,
       "parcoursExclus": [],
-      "cadence": "à la main",
+      "cadence": "chaque PR",
       "lanceBanc": true,
       "lanceCouverture": false
     },
     {
       "fichier": ".github/workflows/docs.yml",
       "nom": "Deploy Docs to GitHub Pages",
-      "declencheurs": ["manuel"],
-      "jobs": ["push", "workflow_dispatch", "build", "deploy"],
+      "declencheurs": [
+        "push",
+        "manuel"
+      ],
+      "jobs": [
+        "push",
+        "workflow_dispatch",
+        "build",
+        "deploy"
+      ],
       "specsNommees": [],
       "balayeLesParcours": false,
       "parcoursExclus": [],
-      "cadence": "à la main",
+      "cadence": "chaque push sur main",
       "lanceBanc": false,
       "lanceCouverture": false
     },
     {
       "fichier": ".github/workflows/qa-pages.yml",
       "nom": "Qualité — publier le portail",
-      "declencheurs": ["manuel"],
-      "jobs": ["push", "workflow_dispatch", "publier"],
+      "declencheurs": [
+        "push",
+        "manuel"
+      ],
+      "jobs": [
+        "push",
+        "workflow_dispatch",
+        "publier"
+      ],
       "specsNommees": [],
       "balayeLesParcours": false,
       "parcoursExclus": [],
-      "cadence": "à la main",
+      "cadence": "chaque push sur main",
       "lanceBanc": false,
       "lanceCouverture": false
     },
     {
       "fichier": ".github/workflows/qa.yml",
       "nom": "Qualité — mesure complète",
-      "declencheurs": ["manuel"],
-      "jobs": ["schedule", "workflow_dispatch", "mesure"],
+      "declencheurs": [
+        "schedule",
+        "manuel"
+      ],
+      "jobs": [
+        "schedule",
+        "workflow_dispatch",
+        "mesure"
+      ],
       "specsNommees": [
         "agent-recipes.spec.ts",
         "agent-tool-assignment.spec.ts",
@@ -970,8 +1005,10 @@
         "webhooks-flows.spec.ts"
       ],
       "balayeLesParcours": true,
-      "parcoursExclus": ["agent-flows.spec.ts"],
-      "cadence": "à la main",
+      "parcoursExclus": [
+        "agent-flows.spec.ts"
+      ],
+      "cadence": "chaque nuit",
       "lanceBanc": true,
       "lanceCouverture": true
     }
@@ -1030,7 +1067,7 @@
       "nom": "agent-recipes.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 2,
         "vert": 1,
@@ -1058,7 +1095,7 @@
       "nom": "agent-tool-assignment.spec.ts",
       "cas": 8,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 4,
         "vert": 0,
@@ -1096,7 +1133,7 @@
       "nom": "agents-redesign.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1119,7 +1156,7 @@
       "nom": "airtable-oauth.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1142,7 +1179,7 @@
       "nom": "apify-apikey.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1165,7 +1202,7 @@
       "nom": "automations-notify-runnow.spec.ts",
       "cas": 12,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 3,
         "vert": 3,
@@ -1198,7 +1235,7 @@
       "nom": "autonomy-approvals.spec.ts",
       "cas": 12,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque PR",
       "resultat": {
         "total": 4,
         "vert": 3,
@@ -1236,7 +1273,7 @@
       "nom": "brique31-flows.spec.ts",
       "cas": 20,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 5,
         "vert": 0,
@@ -1279,7 +1316,7 @@
       "nom": "code-verification.spec.ts",
       "cas": 11,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 6,
         "vert": 0,
@@ -1327,7 +1364,7 @@
       "nom": "connector-multi-instance.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1350,7 +1387,7 @@
       "nom": "connector-scope-disclosure.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 3,
         "vert": 3,
@@ -1383,7 +1420,7 @@
       "nom": "credentials-reuse.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1406,7 +1443,7 @@
       "nom": "help-guides.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 2,
         "vert": 0,
@@ -1434,7 +1471,7 @@
       "nom": "internal-tool-toggles.spec.ts",
       "cas": 11,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -1472,7 +1509,7 @@
       "nom": "learned-skills.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -1510,7 +1547,7 @@
       "nom": "mcp-connectors.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 2,
         "vert": 0,
@@ -1538,7 +1575,7 @@
       "nom": "notify-channel.spec.ts",
       "cas": 14,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -1576,7 +1613,7 @@
       "nom": "notion-internal.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1599,7 +1636,7 @@
       "nom": "notion-oauth.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1622,7 +1659,7 @@
       "nom": "oauth-flow.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1645,7 +1682,7 @@
       "nom": "schedule-daily-budget.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 2,
         "vert": 2,
@@ -1673,7 +1710,7 @@
       "nom": "settings-network.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -1711,7 +1748,7 @@
       "nom": "settings-verification-surfaces.spec.ts",
       "cas": 7,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 3,
         "vert": 2,
@@ -1744,7 +1781,7 @@
       "nom": "smoke.spec.ts",
       "cas": 10,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque PR",
       "resultat": {
         "total": 5,
         "vert": 5,
@@ -1787,7 +1824,7 @@
       "nom": "telegram-allowlist.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 3,
         "vert": 0,
@@ -1820,7 +1857,7 @@
       "nom": "thread-autoscroll.spec.ts",
       "cas": 9,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -1858,7 +1895,7 @@
       "nom": "tools-tab.spec.ts",
       "cas": 14,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 6,
         "vert": 1,
@@ -1906,7 +1943,7 @@
       "nom": "user-menu.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -1929,7 +1966,7 @@
       "nom": "webhooks-flows.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "à la main",
+      "cadence": "chaque nuit",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -2185,54 +2222,54 @@
         "statusCheckRollup": [
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T10:02:50Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34463848458/job/102827691440",
+            "completedAt": "2026-09-10T11:14:12Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954162",
             "name": "ci",
-            "startedAt": "2026-09-10T10:01:37Z",
+            "startedAt": "2026-09-10T11:13:37Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T10:03:04Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34463848458/job/102827691067",
+            "completedAt": "2026-09-10T11:14:40Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954217",
             "name": "ci-windows",
-            "startedAt": "2026-09-10T10:01:37Z",
+            "startedAt": "2026-09-10T11:13:37Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T10:05:05Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34463848458/job/102827691324",
+            "completedAt": "2026-09-10T11:13:54Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954313",
             "name": "pack-smoke",
-            "startedAt": "2026-09-10T10:01:37Z",
+            "startedAt": "2026-09-10T11:13:37Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T10:03:53Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34463848458/job/102827691411",
+            "completedAt": "2026-09-10T11:13:54Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954397",
             "name": "e2e-smoke",
-            "startedAt": "2026-09-10T10:01:37Z",
+            "startedAt": "2026-09-10T11:13:37Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "StatusContext",
             "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-09-10T10:01:51Z",
+            "startedAt": "2026-09-10T11:13:38Z",
             "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/1a9bcbff-cb1a-4cf0-a462-016d78ec5ed8"
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/fa14278b-dd3d-45fd-8082-8beefb99e1f1"
           }
         ],
         "title": "Un portail qualité, et la CI qui le nourrit",
-        "updatedAt": "2026-09-10T10:01:30Z",
+        "updatedAt": "2026-09-10T11:13:28Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51"
       },
       {
@@ -5104,7 +5141,9 @@
         "titre": "Une personnalité d agent ne doit pas nommer d outil",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/62",
-        "etiquettes": ["produit"],
+        "etiquettes": [
+          "produit"
+        ],
         "majLe": "2026-09-10T08:39:42Z",
         "colonne": "En cours"
       },
@@ -5114,7 +5153,10 @@
         "titre": "Que faire des règles d approbation orphelines déjà en base",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/61",
-        "etiquettes": ["décision", "sécurité"],
+        "etiquettes": [
+          "décision",
+          "sécurité"
+        ],
         "majLe": "2026-09-10T08:39:40Z",
         "colonne": "À faire"
       },
@@ -5124,7 +5166,10 @@
         "titre": "Constater les écritures réelles sur le disque",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/60",
-        "etiquettes": ["dette", "produit"],
+        "etiquettes": [
+          "dette",
+          "produit"
+        ],
         "majLe": "2026-09-10T08:39:39Z",
         "colonne": "En cours"
       },
@@ -5134,7 +5179,10 @@
         "titre": "Les vérifications du relecteur ne sont enregistrées nulle part",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/59",
-        "etiquettes": ["dette", "produit"],
+        "etiquettes": [
+          "dette",
+          "produit"
+        ],
         "majLe": "2026-09-10T08:39:37Z",
         "colonne": "En cours"
       },
@@ -5144,7 +5192,9 @@
         "titre": "Deux paquets restent hors de la mesure de couverture",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/58",
-        "etiquettes": ["test"],
+        "etiquettes": [
+          "test"
+        ],
         "majLe": "2026-09-10T08:39:14Z",
         "colonne": "À tester"
       },
@@ -5154,7 +5204,10 @@
         "titre": "Le portail qualité n a aucun test",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/57",
-        "etiquettes": ["test", "dette"],
+        "etiquettes": [
+          "test",
+          "dette"
+        ],
         "majLe": "2026-09-10T08:39:12Z",
         "colonne": "À tester"
       },
@@ -5164,7 +5217,9 @@
         "titre": "La CI ne joue que 2 parcours sur 30",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/56",
-        "etiquettes": ["test"],
+        "etiquettes": [
+          "test"
+        ],
         "majLe": "2026-09-10T08:39:10Z",
         "colonne": "À tester"
       },
@@ -5174,7 +5229,10 @@
         "titre": "Les parcours e2e ne tiennent à rien de stable",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/55",
-        "etiquettes": ["test", "dette"],
+        "etiquettes": [
+          "test",
+          "dette"
+        ],
         "majLe": "2026-09-10T08:39:08Z",
         "colonne": "À tester"
       },
@@ -5184,7 +5242,10 @@
         "titre": "Déléguer fait expirer le cache du parent — 21 % de la facture",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/54",
-        "etiquettes": ["décision", "coût"],
+        "etiquettes": [
+          "décision",
+          "coût"
+        ],
         "majLe": "2026-09-10T08:38:40Z",
         "colonne": "À faire"
       },
@@ -5194,7 +5255,10 @@
         "titre": "Relire coûte 11,5 fois plus cher qu écrire",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/53",
-        "etiquettes": ["décision", "coût"],
+        "etiquettes": [
+          "décision",
+          "coût"
+        ],
         "majLe": "2026-09-10T08:38:38Z",
         "colonne": "À faire"
       },
@@ -5204,7 +5268,10 @@
         "titre": "Une garde de navigateur se contourne par un outil voisin",
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/52",
-        "etiquettes": ["décision", "sécurité"],
+        "etiquettes": [
+          "décision",
+          "sécurité"
+        ],
         "majLe": "2026-09-10T08:38:36Z",
         "colonne": "À faire"
       },
@@ -5216,8 +5283,8 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51",
         "brouillon": false,
         "etiquettes": [],
-        "majLe": "2026-09-10T10:01:30Z",
-        "ci": "vert",
+        "majLe": "2026-09-10T11:13:28Z",
+        "ci": "rouge",
         "colonne": "En review"
       },
       {
