@@ -118,9 +118,12 @@ capacité `exigee` que plus aucun test ne revendique. **Elle ne juge aucun
 résultat** — elle tourne sur les PR, où aucun rapport e2e n'existe. La gravité
 d'un test rouge est un autre sujet (issue #65).
 
-Toutes les capacités ne sont pas `exigee` : la vague s'élargit à mesure que les
-parcours sont étiquetés. Une porte qui exige tout le premier jour se fait
-désactiver le deuxième.
+**Les 24 capacités sont `exigee`** — la vague est close. Elles ne l'étaient pas
+toutes au départ (sept), parce qu'une porte qui exige tout le premier jour se
+fait désactiver le deuxième ; elles le sont devenues à mesure de l'étiquetage.
+Ajouter une capacité au registre sans l'étiqueter nulle part fait donc rougir la
+CI, et c'est voulu : c'est le seul moment où quelqu'un se demande encore ce qui
+la prouve.
 
 ⚠️ **Une étiquette écrite ailleurs que dans un titre n'est pas lue** — ni dans un
 commentaire, ni dans une chaîne. C'est délibéré : les fixtures du portail
