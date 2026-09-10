@@ -329,6 +329,103 @@ function vueCi() {
 </section>`;
 }
 
+// La seule vue qui parle du PRODUIT. Toutes les autres parlent du dépôt :
+// « @nodal-agents/web à 78 % » ne dit rien à personne. Ici la ligne est une
+// phrase qu'un humain reconnaît, et la colonne qui compte est la dernière —
+// celle de ce que personne n'a jamais prouvé.
+const PASTILLE_CAPACITE = {
+  prouvée: 'ok',
+  rouge: 'ko',
+  instable: 'moyen',
+  'non jouée': 'moyen',
+  'jamais prouvée': 'inconnu',
+};
+
+function vueCapacites() {
+  const reg = s.capacites?.registre ?? [];
+  if (reg.length === 0) {
+    return `<section id="capacites" class="vue"><h2 class="titre-vue">Capacités</h2>
+      <p class="chapo">Aucun registre dans cette collecte.</p></section>`;
+  }
+
+  const prouvees = reg.filter((c) => c.etat === 'prouvée').length;
+  const jamais = reg.filter((c) => c.etat === 'jamais prouvée');
+  const dorment = reg.filter((c) => c.etat === 'non jouée');
+  const cassees = reg.filter((c) => c.etat === 'rouge' || c.etat === 'instable');
+
+  const domaines = [];
+  for (const c of reg) {
+    const d = domaines.find((x) => x.nom === c.domaine);
+    if (d) d.capacites.push(c);
+    else domaines.push({ nom: c.domaine, capacites: [c] });
+  }
+
+  const lignes = (caps) =>
+    caps
+      .map((c) => {
+        const cls = PASTILLE_CAPACITE[c.etat] ?? 'inconnu';
+        const preuves =
+          c.preuves.length === 0
+            ? '<span class="dim">personne</span>'
+            : [...new Set(c.preuves.map((p) => p.origine.split('/').pop()))]
+                .map((f) => `<span class="jeton">${esc(f)}</span>`)
+                .join(' ');
+        return `<tr>
+        <td><b>${esc(c.nom)}</b>${c.exigee ? ' <span class="jeton">exigée</span>' : ''}<br>
+          <span class="intention">${esc(c.question)}</span></td>
+        <td><span class="pastille pastille--${cls}">${esc(c.etat)}</span></td>
+        <td>${preuves}</td>
+      </tr>`;
+      })
+      .join('');
+
+  return `
+<section id="capacites" class="vue">
+  <h2 class="titre-vue">Ce que le produit sait faire</h2>
+  <p class="chapo">Une ligne par capacité, et ce qui la prouve. La question n'est pas « quel pourcentage de <code>apps/web</code> est couvert » mais « un utilisateur peut-il connecter Notion ce matin, et qu'est-ce qui le montre ».</p>
+
+  <div class="cartes">
+    <article class="carte carte--phare ${jamais.length > 0 ? 'carte--alerte' : ''}">
+      <h3>Jamais prouvées</h3>
+      <p class="chiffre">${jamais.length}</p>
+      <p class="sous">sur ${reg.length} capacités nommées</p>
+      <p class="avertissement">Aucun test ne les revendique. C'est la liste de ce qu'on croit livré.</p>
+    </article>
+
+    <article class="carte">
+      <h3>Prouvées</h3>
+      <p class="chiffre">${prouvees}</p>
+      <p class="sous">un test vert les tient</p>
+    </article>
+
+    <article class="carte ${dorment.length > 0 ? 'carte--alerte' : ''}">
+      <h3>La preuve dort</h3>
+      <p class="chiffre">${dorment.length}</p>
+      <p class="sous">un test les revendique, il n'a pas tourné</p>
+    </article>
+
+    <article class="carte ${cassees.length > 0 ? 'carte--alerte' : ''}">
+      <h3>Cassées</h3>
+      <p class="chiffre">${cassees.length}</p>
+      <p class="sous">le test qui les tient échoue</p>
+    </article>
+  </div>
+
+  ${domaines
+    .map(
+      (d) => `
+  <h3 class="sous-titre">${esc(d.nom)} <span class="compte">${d.capacites.length}</span></h3>
+  <table class="tableau">
+    <thead><tr><th>Capacité</th><th>État</th><th>Ce qui la prouve</th></tr></thead>
+    <tbody>${lignes(d.capacites)}</tbody>
+  </table>`,
+    )
+    .join('')}
+
+  <p class="note-section">L'étiquette <code>@cap:</code> se pose dans le titre d'un <code>describe</code> ou d'un test, et vaut pour tous les cas qu'il contient. <code>node apps/qa/porte.mjs</code> refuse une étiquette qui ne désigne rien, et une capacité exigée que plus aucun test ne revendique.</p>
+</section>`;
+}
+
 function vueEcarts() {
   const list = ecarts();
   return `
@@ -662,6 +759,7 @@ tr:last-child td{border-bottom:0}
     </div>
     <nav id="nav">
       <a href="#chantiers" class="actif">Chantiers <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Fait').length}</b></a>
+      <a href="#capacites">Capacités <b>${(s.capacites?.registre ?? []).filter((c) => c.etat === 'jamais prouvée').length}</b></a>
       <a href="#vue">Tests — vue d'ensemble</a>
       <a href="#ecarts">Écarts <b>${ecarts().length}</b></a>
       <a href="#parcours">Parcours <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
@@ -677,6 +775,7 @@ tr:last-child td{border-bottom:0}
   </aside>
   <main class="contenu">
     ${vueChantiers()}
+    ${vueCapacites()}
     ${vueEnsemble()}
     ${vueEcarts()}
     ${vueParcours()}

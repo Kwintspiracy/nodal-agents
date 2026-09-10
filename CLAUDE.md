@@ -93,6 +93,41 @@ pnpm deps:check   # dependency-cruiser
 3. **Regression** — un test par comportement legacy préservé. Écrit AVANT le port.
 4. **Integration / smoke** — uniquement pour briques touchant un service externe (LLM, DB, API tierce).
 
+### Ce qu'un test PROUVE — l'étiquette `@cap:`
+
+Un test dit quelle capacité du produit il prouve, en écrivant `@cap:<slug>` dans
+son titre. Vitest et Playwright n'ont rien à comprendre : le titre voyage tel
+quel jusqu'au rapport.
+
+```ts
+test.describe('Notion OAuth flow @cap:connecter-un-service', () => { … });
+test('Check 8 — inline Approve @cap:approuver-une-action', async ({ page }) => { … });
+```
+
+Posée sur un `describe`, elle vaut pour tous ses cas — c'est la forme la moins
+verbeuse, et donc la seule qui tienne dans le temps.
+
+Le registre des capacités est `apps/qa/capacites.mjs`. Il est DÉRIVÉ des
+parcours et des écrans réels, jamais imaginé : un registre d'imagination décrit
+le produit qu'on aimerait avoir, et l'écart avec les tests ne veut plus rien
+dire.
+
+`pnpm capacites:check` (porte bloquante de la CI) refuse deux choses, et deux
+seulement : une étiquette qui ne désigne aucune capacité du registre, et une
+capacité `exigee` que plus aucun test ne revendique. **Elle ne juge aucun
+résultat** — elle tourne sur les PR, où aucun rapport e2e n'existe. La gravité
+d'un test rouge est un autre sujet (issue #65).
+
+Toutes les capacités ne sont pas `exigee` : la vague s'élargit à mesure que les
+parcours sont étiquetés. Une porte qui exige tout le premier jour se fait
+désactiver le deuxième.
+
+⚠️ **Une étiquette écrite ailleurs que dans un titre n'est pas lue** — ni dans un
+commentaire, ni dans une chaîne. C'est délibéré : les fixtures du portail
+contiennent des exemples, et le premier scan les prenait pour de vraies
+déclarations. Si un test doit manipuler une étiquette littérale, il l'assemble à
+l'exécution (`'@' + 'cap'`), comme le fait `apps/qa/lib.test.mjs`.
+
 ### Où vivent les tests
 
 **À CÔTÉ du code qu'ils prouvent**, jamais dans un dossier `tests/` central :

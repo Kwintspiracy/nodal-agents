@@ -76,7 +76,7 @@ async function openScrollableThread(page: Page): Promise<number> {
   return best;
 }
 
-test('A — un fil long s’ouvre sur son dernier message', async ({ page }) => {
+test('A — un fil long s’ouvre sur son dernier message @cap:suivre-execution', async ({ page }) => {
   test.skip((await openScrollableThread(page)) <= 200, 'aucun fil assez long dans cette base');
 
   const m = await scrollMetrics(page);

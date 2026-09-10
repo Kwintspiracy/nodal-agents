@@ -23,7 +23,7 @@ test.beforeAll(async () => {
   await requireLiveStack();
 });
 
-test.describe('dashboard navigation', () => {
+test.describe('dashboard navigation @cap:installer-et-demarrer', () => {
   test('the root page IS the dashboard — no login form, no redirect away', async ({ page }) => {
     const response = await page.goto('/');
 
@@ -67,7 +67,7 @@ test.describe('dashboard navigation', () => {
   });
 });
 
-test.describe('agent → task → job flow', () => {
+test.describe('agent → task → job flow @cap:creer-agent @cap:parler-a-un-agent', () => {
   test('creates an agent, sends a task, and shows the job in the list', async ({ page }) => {
     await page.goto('/agents');
 
@@ -163,7 +163,7 @@ test.describe('agent → task → job flow', () => {
   });
 });
 
-test.describe('settings pages render without runtime errors', () => {
+test.describe('settings pages render without runtime errors @cap:installer-et-demarrer', () => {
   test('every (dashboard) route returns 200 and renders an h1', async ({ page }) => {
     // Every folder under src/app/(dashboard), plus the root page itself.
     const routes = [

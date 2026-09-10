@@ -15,6 +15,7 @@
     "format:check": "prettier --check .",
     "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages",
     "secrets:check": "node scripts/check-no-secrets.mjs",
+    "capacites:check": "node apps/qa/porte.mjs",
     "hygiene:check": "node scripts/check-commit-hygiene.mjs --all",
     "hooks:install": "node scripts/install-hooks.mjs",
     "prepare": "node scripts/install-hooks.mjs",

@@ -9,6 +9,7 @@
     "build": "node collect.mjs && node build.mjs",
     "render": "node build.mjs",
     "serve": "node serve.mjs",
+    "porte": "node porte.mjs",
     "test": "vitest run"
   },
   "devDependencies": {

@@ -30,7 +30,12 @@ import {
   parcoursDunWorkflow,
   declencheursDunWorkflow,
   cadenceDe,
+  croiserPreuves,
+  regrouperParCapacite,
+  fautesDuRegistre,
 } from './lib.mjs';
+import { CAPACITES } from './capacites.mjs';
+import { revendicationsDuDepot } from './porte.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const RACINE = join(ICI, '..', '..');
@@ -224,9 +229,14 @@ function parcours(fichiers, workflows) {
   const resultats = lireJson(join(DATA, 'playwright-run.json'));
   const parFichier = new Map();
   if (resultats?.suites) {
-    const marcher = (suites) => {
+    // `chemin` accumule les titres des `describe` traversés. Sans lui, seul le
+    // titre du cas est connu — or une étiquette `@cap:` posée sur le describe
+    // vaut pour tous ses cas, et c'est la façon la moins verbeuse de
+    // l'écrire. La perdre reviendrait à exiger une étiquette par cas.
+    const marcher = (suites, chemin = []) => {
       for (const s of suites ?? []) {
         const f = s.file ? `apps/web/tests/e2e/${s.file}` : null;
+        const ici = s.title ? [...chemin, s.title] : chemin;
         for (const spec of s.specs ?? []) {
           if (!f) continue;
           const essais = (spec.tests ?? []).flatMap((t) => t.results ?? []);
@@ -239,10 +249,15 @@ function parcours(fichiers, workflows) {
           const b = parFichier.get(f) ?? { sorts: [], dureeMs: 0, cas: [] };
           b.sorts.push(sort);
           b.dureeMs += duree;
-          b.cas.push({ titre: spec.title, sort, dureeMs: duree });
+          b.cas.push({
+            titre: spec.title,
+            titreComplet: [...ici, spec.title].join(' '),
+            sort,
+            dureeMs: duree,
+          });
           parFichier.set(f, b);
         }
-        marcher(s.suites);
+        marcher(s.suites, ici);
       }
     };
     marcher(resultats.suites);
@@ -319,6 +334,25 @@ function chantiers() {
   return { issues, pr, cartes };
 }
 
+// ─── 8. Les capacités du produit, et ce qui les prouve ────────────────────────
+//
+// La seule section qui parle du PRODUIT et non du dépôt. « @nodal-agents/web à
+// 78 % » ne dit rien à personne ; « est-ce qu'un utilisateur peut connecter
+// Notion, et qu'est-ce qui le prouve » est la question qu'on se pose vraiment.
+
+function capacites(fichiers, e2e) {
+  // Ce que le dépôt REVENDIQUE : un scan textuel des titres, qui vaut pour les
+  // tests unitaires comme pour les parcours.
+  const declarees = revendicationsDuDepot(fichiers, (f) => readFileSync(join(RACINE, f), 'utf8'));
+
+  const preuves = croiserPreuves({ declarees, e2e });
+
+  return {
+    registre: regrouperParCapacite({ capacites: CAPACITES, preuves }),
+    fautes: fautesDuRegistre({ capacites: CAPACITES, preuves }),
+  };
+}
+
 // ─── Assemblage ───────────────────────────────────────────────────────────────
 
 function main() {
@@ -333,6 +367,7 @@ function main() {
     .map((f) => f.split('/').pop());
   const workflows = ci(fichiers, nomsParcours);
   const e2e = parcours(fichiers, workflows);
+  const cap = capacites(fichiers, e2e);
 
   const paquetsEnrichis = listePaquets.map((p) => ({
     ...p,
@@ -365,7 +400,11 @@ function main() {
       lignesTotal,
       couvertureLignes:
         lignesTotal > 0 ? Number(((lignesCouvertes / lignesTotal) * 100).toFixed(2)) : null,
+      capacites: cap.registre.length,
+      capacitesProuvees: cap.registre.filter((c) => c.etat === 'prouvée').length,
+      capacitesJamaisProuvees: cap.registre.filter((c) => c.etat === 'jamais prouvée').length,
     },
+    capacites: cap,
     banc: banc(),
     ci: workflows,
     parcours: e2e,
@@ -394,6 +433,9 @@ function main() {
   );
   console.log(
     `couverture: ${r.paquetsMesures}/${r.paquets} paquets mesurés · ${r.couvertureLignes ?? '—'}% des lignes mesurées`,
+  );
+  console.log(
+    `capacités: ${r.capacites} nommées · ${r.capacitesProuvees} prouvées · ${r.capacitesJamaisProuvees} jamais prouvées`,
   );
 }
 

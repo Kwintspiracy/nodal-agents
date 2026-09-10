@@ -109,6 +109,15 @@ jobs:
       - name: Architecture check
         run: pnpm deps:check
 
+      # Le lien entre le produit et ses preuves. Ne juge AUCUN résultat : elle
+      # lit les titres des tests versionnés et refuse deux pourritures
+      # silencieuses — une étiquette `@cap:` qui ne désigne plus rien, et une
+      # capacité exigée que plus aucun test ne revendique. Quelques secondes,
+      # sans build ni base, ce qui est la raison pour laquelle elle peut tourner
+      # sur chaque PR.
+      - name: Capacités du produit
+        run: pnpm capacites:check
+
       - name: Unit tests
         # Cap turbo concurrency: running all ~26 package suites at once (each with
         # its own vitest worker pool) oversubscribes the shared runner and starves

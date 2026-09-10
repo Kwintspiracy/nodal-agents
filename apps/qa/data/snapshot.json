@@ -1,6 +1,6 @@
 {
-  "genereLe": "2026-09-10T13:07:50.521Z",
-  "commit": "81c68c17",
+  "genereLe": "2026-09-10T14:31:39.160Z",
+  "commit": "cc0c3c6e",
   "branche": "qa/etat-zero-tests",
   "paquets": [
     {
@@ -467,7 +467,7 @@
       "chemin": "apps/qa",
       "tests": {
         "fichiers": 1,
-        "cas": 33,
+        "cas": 68,
         "e2e": 0,
         "casE2e": 0
       },
@@ -637,14 +637,299 @@
   "resume": {
     "paquets": 34,
     "fichiersDeTest": 551,
-    "casDeTest": 6589,
+    "casDeTest": 6624,
     "specsE2e": 30,
     "casE2e": 233,
     "specsE2eJoueesParLaCi": 29,
     "paquetsMesures": 32,
     "lignesCouvertes": 20095,
     "lignesTotal": 24631,
-    "couvertureLignes": 81.58
+    "couvertureLignes": 81.58,
+    "capacites": 24,
+    "capacitesProuvees": 0,
+    "capacitesJamaisProuvees": 15
+  },
+  "capacites": {
+    "registre": [
+      {
+        "slug": "installer-et-demarrer",
+        "domaine": "Entrer",
+        "nom": "Installer et démarrer",
+        "question": "Puis-je installer Nodal et arriver sur un écran qui répond ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "installer-et-demarrer",
+            "origine": "apps/web/tests/e2e/smoke.spec.ts"
+          }
+        ]
+      },
+      {
+        "slug": "se-connecter",
+        "domaine": "Entrer",
+        "nom": "Protéger et se connecter",
+        "question": "Puis-je fermer mon instance et y revenir avec mon compte ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "creer-agent",
+        "domaine": "Composer une équipe",
+        "nom": "Créer un agent",
+        "question": "Puis-je créer un agent et lui donner un rôle ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "creer-agent",
+            "origine": "apps/web/tests/e2e/smoke.spec.ts"
+          }
+        ]
+      },
+      {
+        "slug": "configurer-agent",
+        "domaine": "Composer une équipe",
+        "nom": "Configurer un agent",
+        "question": "Puis-je changer son profil, sa personnalité, ses réglages ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "organiser-equipe",
+        "domaine": "Composer une équipe",
+        "nom": "Organiser une équipe",
+        "question": "Puis-je rattacher des agents à un orchestrateur ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "choisir-modele",
+        "domaine": "Composer une équipe",
+        "nom": "Choisir un modèle",
+        "question": "Puis-je décider quel modèle fait tourner quel agent ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "parler-a-un-agent",
+        "domaine": "Parler et suivre",
+        "nom": "Parler à un agent",
+        "question": "Puis-je écrire à un agent et obtenir une réponse ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "parler-a-un-agent",
+            "origine": "apps/web/tests/e2e/smoke.spec.ts"
+          }
+        ]
+      },
+      {
+        "slug": "suivre-execution",
+        "domaine": "Parler et suivre",
+        "nom": "Suivre ce qu'il fait",
+        "question": "Puis-je voir, pendant qu'il travaille, ce qu'il fait vraiment ?",
+        "exigee": false,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "suivre-execution",
+            "origine": "apps/web/tests/e2e/thread-autoscroll.spec.ts"
+          }
+        ]
+      },
+      {
+        "slug": "reprendre-conversation",
+        "domaine": "Parler et suivre",
+        "nom": "Reprendre une conversation",
+        "question": "Puis-je revenir demain et repartir de là où on en était ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "parler-par-canal-externe",
+        "domaine": "Parler et suivre",
+        "nom": "Parler depuis ailleurs",
+        "question": "Puis-je lui parler depuis Telegram plutôt que depuis l'écran ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "assigner-outils",
+        "domaine": "Donner des capacités",
+        "nom": "Donner des outils",
+        "question": "Puis-je décider exactement ce que cet agent a le droit de faire ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "assigner-skill",
+        "domaine": "Donner des capacités",
+        "nom": "Donner un savoir-faire",
+        "question": "Puis-je lui attacher une skill, et la lui retirer ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "apprendre-une-skill",
+        "domaine": "Donner des capacités",
+        "nom": "Installer une skill du catalogue",
+        "question": "Puis-je prendre une skill de la communauté et la tenir à jour ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "connecter-un-service",
+        "domaine": "Donner des capacités",
+        "nom": "Connecter un service",
+        "question": "Puis-je connecter Notion, Google, Airtable — et voir ce que je cède ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "connecter-un-service",
+            "origine": "apps/web/tests/e2e/notion-oauth.spec.ts"
+          },
+          {
+            "capacite": "connecter-un-service",
+            "origine": "apps/web/tests/e2e/oauth-flow.spec.ts"
+          }
+        ]
+      },
+      {
+        "slug": "se-souvenir",
+        "domaine": "Donner des capacités",
+        "nom": "Se souvenir",
+        "question": "Est-ce qu'il retient ce que je lui ai appris ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "regler-autonomie",
+        "domaine": "Garder la main",
+        "nom": "Régler l'autonomie",
+        "question": "Puis-je choisir ce qui passe seul et ce qui me demande ?",
+        "exigee": false,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "regler-autonomie",
+            "origine": "apps/web/tests/e2e/autonomy-approvals.spec.ts"
+          },
+          {
+            "capacite": "regler-autonomie",
+            "origine": "packages/tools/src/tests/execute.test.ts"
+          }
+        ]
+      },
+      {
+        "slug": "approuver-une-action",
+        "domaine": "Garder la main",
+        "nom": "Approuver ou refuser",
+        "question": "Est-ce qu'il m'attend vraiment quand il doit m'attendre ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "approuver-une-action",
+            "origine": "packages/tools/src/tests/execute.test.ts"
+          },
+          {
+            "capacite": "approuver-une-action",
+            "origine": "packages/tools/src/tests/run-command.test.ts"
+          }
+        ]
+      },
+      {
+        "slug": "executer-une-commande",
+        "domaine": "Garder la main",
+        "nom": "Exécuter une commande",
+        "question": "Puis-je le laisser lancer une commande sur ma machine ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "executer-une-commande",
+            "origine": "packages/tools/src/tests/execute.test.ts"
+          },
+          {
+            "capacite": "executer-une-commande",
+            "origine": "packages/tools/src/tests/run-command.test.ts"
+          }
+        ]
+      },
+      {
+        "slug": "travailler-sur-des-fichiers",
+        "domaine": "Garder la main",
+        "nom": "Travailler sur mes fichiers",
+        "question": "Puis-je lui donner un dossier et retrouver ce qu’il y a écrit ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "verifier-un-livrable",
+        "domaine": "Garder la main",
+        "nom": "Vérifier un livrable",
+        "question": "Est-ce que ce qu'il annonce avoir produit est vraiment là ?",
+        "exigee": true,
+        "etat": "non jouée",
+        "preuves": [
+          {
+            "capacite": "verifier-un-livrable",
+            "origine": "apps/web/tests/e2e/code-verification.spec.ts"
+          }
+        ]
+      },
+      {
+        "slug": "planifier-une-tache",
+        "domaine": "Automatiser",
+        "nom": "Planifier une tâche",
+        "question": "Puis-je lui demander de faire ça tous les matins ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "declencher-sur-evenement",
+        "domaine": "Automatiser",
+        "nom": "Déclencher sur un événement",
+        "question": "Puis-je le faire réagir à quelque chose qui arrive de l'extérieur ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "voir-le-cout",
+        "domaine": "Piloter",
+        "nom": "Voir ce que ça coûte",
+        "question": "Puis-je savoir ce que ce tour de chat vient de me coûter ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      },
+      {
+        "slug": "consulter-l-aide",
+        "domaine": "Piloter",
+        "nom": "Trouver comment faire",
+        "question": "Quand je bloque, est-ce que le produit sait me l'expliquer ?",
+        "exigee": false,
+        "etat": "jamais prouvée",
+        "preuves": []
+      }
+    ],
+    "fautes": []
   },
   "banc": {
     "sections": [
@@ -1030,31 +1315,37 @@
         "cas": [
           {
             "titre": "concierge saves memory proactively when user says \"retiens-le\"",
+            "titreComplet": "agent-flows.spec.ts Scenario A — Proactive save_memory concierge saves memory proactively when user says \"retiens-le\"",
             "sort": "rouge",
             "dureeMs": 0
           },
           {
             "titre": "concierge delegates summarization AND saves Bali memory",
+            "titreComplet": "agent-flows.spec.ts Scenario B — Mid-delegation + save_memory concierge delegates summarization AND saves Bali memory",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "planner delegates to calculator via task board and completes",
+            "titreComplet": "agent-flows.spec.ts Scenario C — Planner save_memory planner delegates to calculator via task board and completes",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "concierge saves a fact via save_memory then queries it via query_memory",
+            "titreComplet": "agent-flows.spec.ts Scenario D — query_memory concierge saves a fact via save_memory then queries it via query_memory",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "job created with channel=telegram triggers save_memory and completes",
+            "titreComplet": "agent-flows.spec.ts Scenario E — Telegram channel job created with channel=telegram triggers save_memory and completes",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "skip: no adapter skills registered in this local environment",
+            "titreComplet": "agent-flows.spec.ts Scenario F — Adapter coexistence skip: no adapter skills registered in this local environment",
             "sort": "ignoré",
             "dureeMs": 0
           }
@@ -1078,11 +1369,13 @@
         "cas": [
           {
             "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
+            "titreComplet": "agent-recipes.spec.ts agent recipes a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "sort": "rouge",
             "dureeMs": 6470
           },
           {
             "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
+            "titreComplet": "agent-recipes.spec.ts agent recipes \"Customize a new agent\" is selected by default and Next opens the empty form",
             "sort": "vert",
             "dureeMs": 1037
           }
@@ -1106,21 +1399,25 @@
         "cas": [
           {
             "titre": "Scenario A — Tools & Connectors section renders with the test connector",
+            "titreComplet": "agent-tool-assignment.spec.ts Agent edit page — Tools & Connectors section Scenario A — Tools & Connectors section renders with the test connector",
             "sort": "rouge",
             "dureeMs": 0
           },
           {
             "titre": "Scenario B — checking connector checkbox creates assignment row in DB",
+            "titreComplet": "agent-tool-assignment.spec.ts Agent edit page — Tools & Connectors section Scenario B — checking connector checkbox creates assignment row in DB",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "Scenario C — unchecking connector removes assignment from DB",
+            "titreComplet": "agent-tool-assignment.spec.ts Agent edit page — Tools & Connectors section Scenario C — unchecking connector removes assignment from DB",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "Scenario D — Enable all button keeps enabledOperations=null in DB",
+            "titreComplet": "agent-tool-assignment.spec.ts Agent edit page — Tools & Connectors section Scenario D — Enable all button keeps enabledOperations=null in DB",
             "sort": "ignoré",
             "dureeMs": 0
           }
@@ -1144,6 +1441,7 @@
         "cas": [
           {
             "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
+            "titreComplet": "agents-redesign.spec.ts Agents page redesign render, dark mode, add-worker modal, keyboard drag round-trip",
             "sort": "rouge",
             "dureeMs": 5335
           }
@@ -1167,6 +1465,7 @@
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status",
+            "titreComplet": "airtable-oauth.spec.ts Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
             "sort": "rouge",
             "dureeMs": 10401
           }
@@ -1190,6 +1489,7 @@
         "cas": [
           {
             "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
+            "titreComplet": "apify-apikey.spec.ts Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
             "sort": "rouge",
             "dureeMs": 11628
           }
@@ -1213,16 +1513,19 @@
         "cas": [
           {
             "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
+            "titreComplet": "automations-notify-runnow.spec.ts Scenario A — Garde-fou: Telegram notify warning for bot-less agent shows warning when notify checked + bot-less agent; hides on uncheck",
             "sort": "vert",
             "dureeMs": 1476
           },
           {
             "titre": "creates a schedule then clicks Run now and sees success toast",
+            "titreComplet": "automations-notify-runnow.spec.ts Scenario B — Run now button shows success toast creates a schedule then clicks Run now and sees success toast",
             "sort": "vert",
             "dureeMs": 3196
           },
           {
             "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
+            "titreComplet": "automations-notify-runnow.spec.ts Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "sort": "vert",
             "dureeMs": 3615
           }
@@ -1246,21 +1549,25 @@
         "cas": [
           {
             "titre": "find an existing agent to navigate to",
+            "titreComplet": "autonomy-approvals.spec.ts Autonomy / Approvals tab find an existing agent to navigate to",
             "sort": "vert",
             "dureeMs": 1111
           },
           {
             "titre": "Autonomy tab is visible in the agent editor",
+            "titreComplet": "autonomy-approvals.spec.ts Autonomy / Approvals tab Autonomy tab is visible in the agent editor",
             "sort": "vert",
             "dureeMs": 5280
           },
           {
             "titre": "Autonomy tab renders without errors (empty state or tool list)",
+            "titreComplet": "autonomy-approvals.spec.ts Autonomy / Approvals tab Autonomy tab renders without errors (empty state or tool list)",
             "sort": "vert",
             "dureeMs": 1310
           },
           {
             "titre": "3-way control is present and interactive when write tools exist",
+            "titreComplet": "autonomy-approvals.spec.ts Autonomy / Approvals tab 3-way control is present and interactive when write tools exist",
             "sort": "ignoré",
             "dureeMs": 1182
           }
@@ -1284,26 +1591,31 @@
         "cas": [
           {
             "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
+            "titreComplet": "brique31-flows.spec.ts Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
             "sort": "rouge",
             "dureeMs": 25047
           },
           {
             "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
+            "titreComplet": "brique31-flows.spec.ts Test B — Agent edit picks LLM provider change LLM provider dropdown on agent edit → model field updates → save → toast",
             "sort": "rouge",
             "dureeMs": 4487
           },
           {
             "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
+            "titreComplet": "brique31-flows.spec.ts Test C — Send-task with Telegram checkbox (Brique 31 acceptance) job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "sort": "ignoré",
             "dureeMs": 123
           },
           {
             "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
+            "titreComplet": "brique31-flows.spec.ts Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
             "sort": "ignoré",
             "dureeMs": 101
           },
           {
             "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
+            "titreComplet": "brique31-flows.spec.ts Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "sort": "ignoré",
             "dureeMs": 100
           }
@@ -1327,31 +1639,37 @@
         "cas": [
           {
             "titre": "A — configurer puis approuver, hash écrit EN BASE",
+            "titreComplet": "code-verification.spec.ts Proof commands — onglet Code A — configurer puis approuver, hash écrit EN BASE",
             "sort": "rouge",
             "dureeMs": 0
           },
           {
             "titre": "B — éditer une commande approuvée retire l’approbation",
+            "titreComplet": "code-verification.spec.ts Proof commands — onglet Code B — éditer une commande approuvée retire l’approbation",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "C — le cap de cinq est visible : l’ajout disparaît",
+            "titreComplet": "code-verification.spec.ts Proof commands — onglet Code C — le cap de cinq est visible : l’ajout disparaît",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
+            "titreComplet": "code-verification.spec.ts Proof commands — onglet Code D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "E — un échec serveur ne ment pas",
+            "titreComplet": "code-verification.spec.ts Proof commands — onglet Code E — un échec serveur ne ment pas",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "F — le tiroir Other sessions n’a aucun panneau",
+            "titreComplet": "code-verification.spec.ts Proof commands — onglet Code F — le tiroir Other sessions n’a aucun panneau",
             "sort": "ignoré",
             "dureeMs": 0
           }
@@ -1375,6 +1693,7 @@
         "cas": [
           {
             "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
+            "titreComplet": "connector-multi-instance.spec.ts Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
             "sort": "rouge",
             "dureeMs": 11646
           }
@@ -1398,16 +1717,19 @@
         "cas": [
           {
             "titre": "Google Drive states it reaches the ENTIRE Drive",
+            "titreComplet": "connector-scope-disclosure.spec.ts Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
             "sort": "vert",
             "dureeMs": 1056
           },
           {
             "titre": "Google Sheets and Docs disclose their reach too",
+            "titreComplet": "connector-scope-disclosure.spec.ts Connector scope disclosure Google Sheets and Docs disclose their reach too",
             "sort": "vert",
             "dureeMs": 2326
           },
           {
             "titre": "a connector whose reach matches its name shows NO disclosure",
+            "titreComplet": "connector-scope-disclosure.spec.ts Connector scope disclosure a connector whose reach matches its name shows NO disclosure",
             "sort": "vert",
             "dureeMs": 1012
           }
@@ -1431,6 +1753,7 @@
         "cas": [
           {
             "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
+            "titreComplet": "credentials-reuse.spec.ts Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
             "sort": "rouge",
             "dureeMs": 10308
           }
@@ -1454,11 +1777,13 @@
         "cas": [
           {
             "titre": "wizard shows 4 Google API links and format hint",
+            "titreComplet": "help-guides.spec.ts Help guides — OAuth wizard (Google Drive) wizard shows 4 Google API links and format hint",
             "sort": "rouge",
             "dureeMs": 10288
           },
           {
             "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
+            "titreComplet": "help-guides.spec.ts Help guides — api_key connector (Apify) \"Where do I get this?\" expander reveals console.apify.com link",
             "sort": "rouge",
             "dureeMs": 10270
           }
@@ -1482,21 +1807,25 @@
         "cas": [
           {
             "titre": "the section lists the built-in tools, always — no fixtures needed",
+            "titreComplet": "internal-tool-toggles.spec.ts Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
             "sort": "vert",
             "dureeMs": 2190
           },
           {
             "titre": "return_result is shown but locked, with the reason",
+            "titreComplet": "internal-tool-toggles.spec.ts Built-in tools — per-tool controls return_result is shown but locked, with the reason",
             "sort": "vert",
             "dureeMs": 2145
           },
           {
             "titre": "blocking a built-in tool persists across a reload",
+            "titreComplet": "internal-tool-toggles.spec.ts Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
             "sort": "vert",
             "dureeMs": 3310
           },
           {
             "titre": "and can be handed back — the restriction is reversible",
+            "titreComplet": "internal-tool-toggles.spec.ts Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
             "sort": "vert",
             "dureeMs": 3262
           }
@@ -1520,21 +1849,25 @@
         "cas": [
           {
             "titre": "renders the Learned Skills page at /learned-skills",
+            "titreComplet": "learned-skills.spec.ts learned-skills page renders the Learned Skills page at /learned-skills",
             "sort": "vert",
             "dureeMs": 1185
           },
           {
             "titre": "toggle switches the reflection_enabled flag (UI responds)",
+            "titreComplet": "learned-skills.spec.ts learned-skills page toggle switches the reflection_enabled flag (UI responds)",
             "sort": "vert",
             "dureeMs": 394
           },
           {
             "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
+            "titreComplet": "learned-skills.spec.ts learned-skills page no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "sort": "vert",
             "dureeMs": 510
           },
           {
             "titre": "assignment-mode control renders both options and is interactive",
+            "titreComplet": "learned-skills.spec.ts learned-skills page assignment-mode control renders both options and is interactive",
             "sort": "vert",
             "dureeMs": 461
           }
@@ -1558,11 +1891,13 @@
         "cas": [
           {
             "titre": "Scenario A — /mcp renders the connected Cogni Cortex server",
+            "titreComplet": "mcp-connectors.spec.ts MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
             "sort": "rouge",
             "dureeMs": 0
           },
           {
             "titre": "Scenario B — sidebar shows API Connectors and MCP Connectors",
+            "titreComplet": "mcp-connectors.spec.ts MCP Connectors page Scenario B — sidebar shows API Connectors and MCP Connectors",
             "sort": "ignoré",
             "dureeMs": 0
           }
@@ -1586,21 +1921,25 @@
         "cas": [
           {
             "titre": "create with explicit Telegram channel, persists across reload + edit",
+            "titreComplet": "notify-channel.spec.ts Scenario 1 — Schedule form: Notify via lists only the agent's real active channels create with explicit Telegram channel, persists across reload + edit",
             "sort": "vert",
             "dureeMs": 4046
           },
           {
             "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
+            "titreComplet": "notify-channel.spec.ts Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "sort": "vert",
             "dureeMs": 3661
           },
           {
             "titre": "warns for a channel-less agent, clears when switching to a connected one",
+            "titreComplet": "notify-channel.spec.ts Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent warns for a channel-less agent, clears when switching to a connected one",
             "sort": "vert",
             "dureeMs": 1679
           },
           {
             "titre": "schedule form notify controls render correctly in both themes",
+            "titreComplet": "notify-channel.spec.ts Scenario 4 — Dark mode: notify controls stay theme-aware schedule form notify controls render correctly in both themes",
             "sort": "vert",
             "dureeMs": 1849
           }
@@ -1624,6 +1963,7 @@
         "cas": [
           {
             "titre": "connect with api_key shows connected status and persists",
+            "titreComplet": "notion-internal.spec.ts Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
             "sort": "rouge",
             "dureeMs": 10270
           }
@@ -1647,6 +1987,7 @@
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status (no Refresh button)",
+            "titreComplet": "notion-oauth.spec.ts Notion OAuth flow (wizard-driven) connect via wizard → callback → connected status (no Refresh button)",
             "sort": "rouge",
             "dureeMs": 10315
           }
@@ -1670,6 +2011,7 @@
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status and toast",
+            "titreComplet": "oauth-flow.spec.ts Google Drive OAuth flow (wizard-driven) connect via wizard → callback → connected status and toast",
             "sort": "rouge",
             "dureeMs": 10313
           }
@@ -1693,11 +2035,13 @@
         "cas": [
           {
             "titre": "is present with a default of 5 on the New schedule form",
+            "titreComplet": "schedule-daily-budget.spec.ts Daily budget field on ScheduleForm is present with a default of 5 on the New schedule form",
             "sort": "vert",
             "dureeMs": 1187
           },
           {
             "titre": "persists a custom value on create, and an edit updates it",
+            "titreComplet": "schedule-daily-budget.spec.ts Daily budget field on ScheduleForm persists a custom value on create, and an edit updates it",
             "sort": "vert",
             "dureeMs": 3417
           }
@@ -1721,21 +2065,25 @@
         "cas": [
           {
             "titre": "Network section renders with radio buttons and read-only URL fields",
+            "titreComplet": "settings-network.spec.ts NetworkForm — /settings Network section renders with radio buttons and read-only URL fields",
             "sort": "vert",
             "dureeMs": 1642
           },
           {
             "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
+            "titreComplet": "settings-network.spec.ts NetworkForm — /settings clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "sort": "vert",
             "dureeMs": 462
           },
           {
             "titre": "re-saving the mode already in force reports no restart needed",
+            "titreComplet": "settings-network.spec.ts NetworkForm — /settings re-saving the mode already in force reports no restart needed",
             "sort": "vert",
             "dureeMs": 811
           },
           {
             "titre": "saving the other mode persists it, demands a restart, and is put back",
+            "titreComplet": "settings-network.spec.ts NetworkForm — /settings saving the other mode persists it, demands a restart, and is put back",
             "sort": "vert",
             "dureeMs": 1447
           }
@@ -1759,16 +2107,19 @@
         "cas": [
           {
             "titre": "la section rend ses quatre cases et la pilule owner only",
+            "titreComplet": "settings-verification-surfaces.spec.ts Verification surfaces — /settings la section rend ses quatre cases et la pilule owner only",
             "sort": "vert",
             "dureeMs": 427
           },
           {
             "titre": "décocher demande confirmation, annuler laisse la case cochée",
+            "titreComplet": "settings-verification-surfaces.spec.ts Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
             "sort": "rouge",
             "dureeMs": 502
           },
           {
             "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
+            "titreComplet": "settings-verification-surfaces.spec.ts Verification surfaces — /settings décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "sort": "vert",
             "dureeMs": 633
           }
@@ -1792,26 +2143,31 @@
         "cas": [
           {
             "titre": "the root page IS the dashboard — no login form, no redirect away",
+            "titreComplet": "smoke.spec.ts dashboard navigation the root page IS the dashboard — no login form, no redirect away",
             "sort": "vert",
             "dureeMs": 639
           },
           {
             "titre": "sidebar links every dashboard section",
+            "titreComplet": "smoke.spec.ts dashboard navigation sidebar links every dashboard section",
             "sort": "vert",
             "dureeMs": 459
           },
           {
             "titre": "creates an agent, sends a task, and shows the job in the list",
+            "titreComplet": "smoke.spec.ts agent → task → job flow creates an agent, sends a task, and shows the job in the list",
             "sort": "vert",
             "dureeMs": 5763
           },
           {
             "titre": "every (dashboard) route returns 200 and renders an h1",
+            "titreComplet": "smoke.spec.ts settings pages render without runtime errors every (dashboard) route returns 200 and renders an h1",
             "sort": "vert",
             "dureeMs": 8077
           },
           {
             "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
+            "titreComplet": "smoke.spec.ts settings pages render without runtime errors les routes à paramètre rendent, atteintes par les liens de l’app",
             "sort": "vert",
             "dureeMs": 867
           }
@@ -1835,16 +2191,19 @@
         "cas": [
           {
             "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
+            "titreComplet": "telegram-allowlist.spec.ts A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
             "sort": "rouge",
             "dureeMs": 0
           },
           {
             "titre": "B — Approve a pending chat activates it",
+            "titreComplet": "telegram-allowlist.spec.ts B — Approve a pending chat activates it",
             "sort": "ignoré",
             "dureeMs": 0
           },
           {
             "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
+            "titreComplet": "telegram-allowlist.spec.ts C — Revoke a member deletes the row (via ConfirmDialog)",
             "sort": "ignoré",
             "dureeMs": 0
           }
@@ -1868,21 +2227,25 @@
         "cas": [
           {
             "titre": "A — un fil long s’ouvre sur son dernier message",
+            "titreComplet": "thread-autoscroll.spec.ts A — un fil long s’ouvre sur son dernier message",
             "sort": "vert",
             "dureeMs": 7593
           },
           {
             "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
+            "titreComplet": "thread-autoscroll.spec.ts C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "sort": "vert",
             "dureeMs": 2732
           },
           {
             "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
+            "titreComplet": "thread-autoscroll.spec.ts D — remonter PENDANT qu’un défilement automatique est en vol",
             "sort": "vert",
             "dureeMs": 2632
           },
           {
             "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas",
+            "titreComplet": "thread-autoscroll.spec.ts B — remonter dans l’historique tient : on n’est pas ramené en bas",
             "sort": "vert",
             "dureeMs": 5733
           }
@@ -1906,31 +2269,37 @@
         "cas": [
           {
             "titre": "Step 1 — find an existing agent (skip suite if none)",
+            "titreComplet": "tools-tab.spec.ts Step 1 — find an existing agent (skip suite if none)",
             "sort": "vert",
             "dureeMs": 1148
           },
           {
             "titre": "Step 2 — Tools tab lists both native tool groups",
+            "titreComplet": "tools-tab.spec.ts Step 2 — Tools tab lists both native tool groups",
             "sort": "rouge",
             "dureeMs": 9909
           },
           {
             "titre": "Step 3 — disclosure expands to show the gated tool names as chips",
+            "titreComplet": "tools-tab.spec.ts Step 3 — disclosure expands to show the gated tool names as chips",
             "sort": "ignoré",
             "dureeMs": 101
           },
           {
             "titre": "Step 4 — \"Includes guidance\" badge opens a read-only modal with the skill content",
+            "titreComplet": "tools-tab.spec.ts Step 4 — \"Includes guidance\" badge opens a read-only modal with the skill content",
             "sort": "ignoré",
             "dureeMs": 75
           },
           {
             "titre": "Step 5 — office-editing and command-execution are absent from the agent's Skills tab",
+            "titreComplet": "tools-tab.spec.ts Step 5 — office-editing and command-execution are absent from the agent's Skills tab",
             "sort": "ignoré",
             "dureeMs": 80
           },
           {
             "titre": "Step 6 — command-execution assigned to this agent is still absent from /skills Assigned",
+            "titreComplet": "tools-tab.spec.ts Step 6 — command-execution assigned to this agent is still absent from /skills Assigned",
             "sort": "ignoré",
             "dureeMs": 75
           }
@@ -1954,6 +2323,7 @@
         "cas": [
           {
             "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
+            "titreComplet": "user-menu.spec.ts UserMenu — sign-out + re-login round-trip shows email in sidebar, signs out, redirects to /login, re-logs in",
             "sort": "rouge",
             "dureeMs": 17267
           }
@@ -1977,6 +2347,7 @@
         "cas": [
           {
             "titre": "create, copy URL, toggle, rotate, delete, empty state",
+            "titreComplet": "webhooks-flows.spec.ts Webhooks section — full click flow create, copy URL, toggle, rotate, delete, empty state",
             "sort": "rouge",
             "dureeMs": 1998
           }
@@ -1987,6 +2358,72 @@
   ],
   "chantiers": {
     "issues": [
+      {
+        "createdAt": "2026-09-10T14:17:45Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "produit",
+            "description": "comportement visible",
+            "color": "EC4899"
+          }
+        ],
+        "number": 65,
+        "state": "OPEN",
+        "title": "Le portail hiérarchise, et il prévient",
+        "updatedAt": "2026-09-10T14:17:45Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/65"
+      },
+      {
+        "createdAt": "2026-09-10T14:17:39Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eug",
+            "name": "dette",
+            "description": "à rembourser",
+            "color": "F59E0B"
+          }
+        ],
+        "number": 64,
+        "state": "OPEN",
+        "title": "Le portail se souvient, test par test",
+        "updatedAt": "2026-09-10T14:17:39Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/64"
+      },
+      {
+        "createdAt": "2026-09-10T14:17:34Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7eUA",
+            "name": "test",
+            "description": "état des tests",
+            "color": "0EA5E9"
+          },
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "produit",
+            "description": "comportement visible",
+            "color": "EC4899"
+          }
+        ],
+        "number": 63,
+        "state": "OPEN",
+        "title": "Le portail parle en capacités du produit, plus en paquets",
+        "updatedAt": "2026-09-10T14:17:34Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/63"
+      },
       {
         "createdAt": "2026-09-10T08:39:42Z",
         "labels": [
@@ -2222,54 +2659,54 @@
         "statusCheckRollup": [
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T11:14:12Z",
-            "conclusion": "FAILURE",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954162",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34487907031/job/102906812930",
             "name": "ci",
-            "startedAt": "2026-09-10T11:13:37Z",
-            "status": "COMPLETED",
+            "startedAt": "2026-09-10T14:15:59Z",
+            "status": "IN_PROGRESS",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T11:14:40Z",
-            "conclusion": "FAILURE",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954217",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34487907031/job/102906812971",
             "name": "ci-windows",
-            "startedAt": "2026-09-10T11:13:37Z",
-            "status": "COMPLETED",
+            "startedAt": "2026-09-10T14:16:00Z",
+            "status": "IN_PROGRESS",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T11:13:54Z",
-            "conclusion": "FAILURE",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954313",
+            "completedAt": "2026-09-10T14:19:58Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34487907031/job/102906812725",
             "name": "pack-smoke",
-            "startedAt": "2026-09-10T11:13:37Z",
+            "startedAt": "2026-09-10T14:16:00Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "CheckRun",
-            "completedAt": "2026-09-10T11:13:54Z",
-            "conclusion": "FAILURE",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34470166577/job/102847954397",
+            "completedAt": "2026-09-10T14:19:28Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34487907031/job/102906812782",
             "name": "e2e-smoke",
-            "startedAt": "2026-09-10T11:13:37Z",
+            "startedAt": "2026-09-10T14:15:59Z",
             "status": "COMPLETED",
             "workflowName": "CI"
           },
           {
             "__typename": "StatusContext",
             "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-09-10T11:13:38Z",
+            "startedAt": "2026-09-10T14:16:22Z",
             "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/fa14278b-dd3d-45fd-8082-8beefb99e1f1"
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/959e61f1-2c2d-4d2b-b46f-c9fb429bd8bf"
           }
         ],
         "title": "Un portail qualité, et la CI qui le nourrit",
-        "updatedAt": "2026-09-10T11:13:28Z",
+        "updatedAt": "2026-09-10T14:15:52Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51"
       },
       {
@@ -5137,6 +5574,45 @@
     "cartes": [
       {
         "type": "issue",
+        "numero": 65,
+        "titre": "Le portail hiérarchise, et il prévient",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/65",
+        "etiquettes": [
+          "test",
+          "produit"
+        ],
+        "majLe": "2026-09-10T14:17:45Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
+        "numero": 64,
+        "titre": "Le portail se souvient, test par test",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/64",
+        "etiquettes": [
+          "test",
+          "dette"
+        ],
+        "majLe": "2026-09-10T14:17:39Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
+        "numero": 63,
+        "titre": "Le portail parle en capacités du produit, plus en paquets",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/63",
+        "etiquettes": [
+          "test",
+          "produit"
+        ],
+        "majLe": "2026-09-10T14:17:34Z",
+        "colonne": "À tester"
+      },
+      {
+        "type": "issue",
         "numero": 62,
         "titre": "Une personnalité d agent ne doit pas nommer d outil",
         "etat": "OPEN",
@@ -5283,8 +5759,8 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/51",
         "brouillon": false,
         "etiquettes": [],
-        "majLe": "2026-09-10T11:13:28Z",
-        "ci": "rouge",
+        "majLe": "2026-09-10T14:15:52Z",
+        "ci": "en cours",
         "colonne": "En review"
       },
       {

@@ -651,7 +651,7 @@ function makeRunCommandTool(): ToolDefinition<z.ZodObject<{ command: z.ZodString
   };
 }
 
-describe('executeTool — run_command hardline floor', () => {
+describe('executeTool — run_command hardline floor @cap:executer-une-commande', () => {
   function yoloRule(): ApprovalRule {
     return {
       id: 'yolo',
@@ -694,7 +694,7 @@ describe('executeTool — run_command hardline floor', () => {
   });
 });
 
-describe('executeTool — fully_autonomous workspace', () => {
+describe('executeTool — fully_autonomous workspace @cap:regler-autonomie', () => {
   function autonomousOpts(rules: ApprovalRule[] = []): ExecuteOptions {
     return { ...makeOpts(rules), autonomy: 'fully_autonomous' };
   }
@@ -793,7 +793,7 @@ describe('executeTool — fully_autonomous workspace', () => {
   });
 });
 
-describe('executeTool — destructive_gate workspace', () => {
+describe('executeTool — destructive_gate workspace @cap:approuver-une-action', () => {
   function gateOpts(rules: ApprovalRule[] = []): ExecuteOptions {
     return { ...makeOpts(rules), autonomy: 'destructive_gate' };
   }

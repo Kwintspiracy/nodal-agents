@@ -49,7 +49,7 @@ function ctx(overrides?: Partial<ToolContext>): ToolContext {
   };
 }
 
-describe('run_command builtin', () => {
+describe('run_command builtin @cap:executer-une-commande', () => {
   it('captures stdout and exit code 0 from a real command', async () => {
     const out = await runCommandTool.execute(
       { purpose: 'run test command', command: `node -e "process.stdout.write('hello-stdout')"` },
@@ -179,7 +179,7 @@ describe('run_command builtin', () => {
 // If it ever leaked into ALWAYS_ON_TOOLS, every agent could run shell commands —
 // this block fails loud on that regression.
 
-describe('run_command gating', () => {
+describe('run_command gating @cap:approuver-une-action', () => {
   it('is registered but NOT always-on', () => {
     expect((ALWAYS_ON_TOOLS as readonly string[]).includes('run_command')).toBe(false);
     const reg = createToolRegistry();

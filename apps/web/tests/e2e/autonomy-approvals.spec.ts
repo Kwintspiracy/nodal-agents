@@ -33,7 +33,7 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 60_000 });
 
-test.describe('Autonomy / Approvals tab', () => {
+test.describe('Autonomy / Approvals tab @cap:regler-autonomie', () => {
   // Populated by the "find first agent" setup test.
   let firstAgentEditUrl: string | null = null;
 

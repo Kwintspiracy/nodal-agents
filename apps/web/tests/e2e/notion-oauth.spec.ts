@@ -24,7 +24,7 @@ test.beforeAll(async () => {
   await cleanCredentialsByType('notion-oauth');
 });
 
-test.describe('Notion OAuth flow (wizard-driven)', () => {
+test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service', () => {
   test('connect via wizard → callback → connected status (no Refresh button)', async ({
     page,
     context,

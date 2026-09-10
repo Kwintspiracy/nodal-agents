@@ -192,3 +192,165 @@ export function parcoursDunWorkflow(texte, tousLesParcours) {
   const joues = (tousLesParcours ?? []).filter((n) => !exclus.has(n));
   return { nommes: [...new Set(nommes)], balaye: true, exclus: [...exclus], joues };
 }
+
+// ─── Les capacités du produit ─────────────────────────────────────────────────
+//
+// Un test déclare ce qu'il prouve en écrivant `@cap:<slug>` dans son titre. La
+// convention tient pour Vitest comme pour Playwright parce qu'aucun des deux
+// n'a besoin de la comprendre : le titre voyage tel quel jusqu'au rapport.
+
+/**
+ * Les capacités qu'un titre revendique.
+ *
+ * Un titre peut en revendiquer plusieurs — un parcours de bout en bout traverse
+ * souvent deux ou trois capacités, et prétendre le contraire forcerait à couper
+ * des parcours utiles en morceaux pour satisfaire le registre.
+ */
+export function capacitesDunTitre(titre) {
+  return [...String(titre ?? '').matchAll(/@cap:([a-z0-9-]+)/g)].map((m) => m[1]);
+}
+
+/**
+ * Les titres des tests d'un fichier — `describe`, `it`, `test`, et leurs
+ * variantes `.skip` / `.only` / `.each`.
+ *
+ * Le scan cherchait d'abord `@cap:` n'importe où dans le texte. Une mutation l'a
+ * pris en flagrant délit : il lisait les étiquettes d'exemple qui vivent dans
+ * les FIXTURES du portail lui-même, et signalait « @cap:tout-faire ne désigne
+ * aucune capacité ». Le faux positif serait revenu à chaque fichier qui
+ * documente la convention — et un contrôle qui crie à tort finit désactivé.
+ *
+ * Lire les titres est aussi plus fidèle à la règle : un test déclare ce qu'il
+ * prouve DANS SON TITRE, pas dans un commentaire ni dans une chaîne de test.
+ */
+export function titresDeTest(texte) {
+  const t = String(texte ?? '');
+  const out = [];
+  // Le `(?:\(…\)\s*)?` optionnel absorbe le PREMIER appel de `test.each([…])(…)`,
+  // dont le titre n'arrive qu'au second. Sans lui, tout un fichier bâti sur
+  // `.each` se déclarait sans le moindre test.
+  const APPEL =
+    /\b(?:describe|it|test)(?:\.\w+)*\s*(?:\([^()]*(?:\([^()]*\)[^()]*)*\)\s*)?\(\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  for (const m of t.matchAll(APPEL)) {
+    out.push(m[2]);
+  }
+  return out;
+}
+
+/**
+ * Ce qu'on peut dire d'une capacité, au vu des tests qui la revendiquent.
+ *
+ * Cinq états, et les deux derniers sont des trous DIFFÉRENTS qu'il ne faut
+ * surtout pas confondre :
+ *   - `jamais prouvée` : aucun test ne la revendique. Personne n'a écrit la
+ *     preuve. C'est la colonne qui compte — la liste de ce qu'on croit livré ;
+ *   - `non jouée` : un test la revendique, mais il n'a pas tourné (ignoré, ou
+ *     jamais exécuté par aucune CI). La preuve existe et dort.
+ *
+ * Le rouge l'emporte sur tout le reste : une capacité tenue par trois tests
+ * dont un échoue est cassée, pas « majoritairement verte ».
+ */
+export function etatDuneCapacite(preuves) {
+  const p = preuves ?? [];
+  if (p.length === 0) return 'jamais prouvée';
+  const sorts = p.map((x) => x?.sort ?? null);
+  if (sorts.some((s) => s === 'rouge')) return 'rouge';
+  if (sorts.some((s) => s === 'instable')) return 'instable';
+  if (sorts.some((s) => s === 'vert')) return 'prouvée';
+  return 'non jouée';
+}
+
+/**
+ * Ce que la porte refuse.
+ *
+ * Deux fautes, et deux seulement :
+ *   1. une étiquette qui ne désigne aucune capacité du registre — une faute de
+ *      frappe, ou un slug renommé. Sans ce contrôle l'étiquetage pourrit en
+ *      trois semaines sans que personne ne le voie ;
+ *   2. une capacité `exigee` que plus AUCUN test ne revendique — le cas du test
+ *      supprimé ou renommé qui emporte la preuve avec lui.
+ *
+ * Ce qu'elle ne refuse PAS, et c'est délibéré : une capacité dont les tests
+ * ÉCHOUENT. Cette porte garde le LIEN entre le produit et ses preuves ; la
+ * gravité d'un rouge est le sujet de l'issue #65. Écrire ici qu'elle protège du
+ * rouge en ferait une garde imaginaire, exactement ce que ce portail dénonce.
+ */
+export function fautesDuRegistre({ capacites, preuves } = {}) {
+  const registre = capacites ?? [];
+  const toutes = preuves ?? [];
+  const slugs = new Set(registre.map((c) => c.slug));
+  const fautes = [];
+
+  const parEtiquette = new Map();
+  for (const p of toutes) {
+    const l = parEtiquette.get(p.capacite) ?? [];
+    l.push(p.origine ?? '?');
+    parEtiquette.set(p.capacite, l);
+  }
+  for (const [slug, origines] of parEtiquette) {
+    if (slugs.has(slug)) continue;
+    fautes.push({
+      type: 'étiquette inconnue',
+      slug,
+      origines: [...new Set(origines)].sort(),
+    });
+  }
+
+  for (const c of registre) {
+    if (!c.exigee) continue;
+    const siennes = toutes.filter((p) => p.capacite === c.slug);
+    if (etatDuneCapacite(siennes) === 'jamais prouvée') {
+      fautes.push({ type: 'capacité exigée sans preuve', slug: c.slug, nom: c.nom });
+    }
+  }
+
+  return fautes;
+}
+
+/**
+ * Les preuves d'une capacité, en croisant ce que le dépôt REVENDIQUE et ce que
+ * la CI a JOUÉ.
+ *
+ * Deux sources qui ne disent pas la même chose :
+ *   - `declarees` vient d'un scan des titres. Elle vaut pour tout le dépôt,
+ *     tests unitaires compris, mais ne sait pas si le test passe ;
+ *   - `e2e` vient d'un vrai rapport d'exécution. Elle sait, mais seulement pour
+ *     les parcours qui ont tourné.
+ *
+ * Quand les deux parlent du même couple (fichier, capacité), l'exécution
+ * l'emporte et la déclaration disparaît : la garder ferait compter deux fois la
+ * même preuve, dont une sans résultat, et une capacité verte s'afficherait
+ * éternellement « non jouée » à côté d'elle-même.
+ */
+export function croiserPreuves({ declarees, e2e } = {}) {
+  const jouees = [];
+  const remplaces = new Set();
+  for (const p of e2e ?? []) {
+    for (const c of p.resultat?.cas ?? []) {
+      for (const slug of capacitesDunTitre(c.titreComplet ?? c.titre)) {
+        // Un cas par preuve, jamais un fichier : quand une capacité tombe, la
+        // seule information utile est QUEL test exact l'a lâchée.
+        jouees.push({ capacite: slug, origine: p.fichier, titre: c.titre, sort: c.sort });
+        remplaces.add(`${p.fichier}::${slug}`);
+      }
+    }
+  }
+  const restantes = (declarees ?? []).filter((d) => !remplaces.has(`${d.origine}::${d.capacite}`));
+  return [...restantes, ...jouees];
+}
+
+/**
+ * Le registre, chaque capacité munie de son état et des tests qui la tiennent.
+ *
+ * L'ordre du registre est conservé : il est groupé par domaine, et ce groupement
+ * est la seule structure de l'écran. Trier par état mettrait les rouges en haut
+ * mais ferait perdre « voici tout ce que le produit sait faire », qui est la
+ * raison d'être de la page.
+ */
+export function regrouperParCapacite({ capacites, preuves } = {}) {
+  const toutes = preuves ?? [];
+  return (capacites ?? []).map((c) => {
+    const siennes = toutes.filter((p) => p.capacite === c.slug);
+    return { ...c, etat: etatDuneCapacite(siennes), preuves: siennes };
+  });
+}
