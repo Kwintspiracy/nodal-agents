@@ -193,6 +193,119 @@ export function parcoursDunWorkflow(texte, tousLesParcours) {
   return { nommes: [...new Set(nommes)], balaye: true, exclus: [...exclus], joues };
 }
 
+// ─── La mémoire, test par test ────────────────────────────────────────────────
+//
+// `history.ndjson` garde une ligne par COLLECTE : des totaux. Ils ne savent pas
+// répondre à « ce test a tourné 47 fois, échoué 3 fois ». Or tout ce qui compte
+// vient du temps — la tendance, l'âge d'un problème, et surtout l'instabilité,
+// qui est indétectable dans une seule exécution. La calculer par run, comme le
+// fait `sortDuCas`, est presque un contresens : ça ne voit qu'une reprise
+// immédiate, jamais un test qui tombe un jour sur trois.
+//
+// Un enregistrement par test, pas un par exécution : le fichier reste borné
+// (quelques milliers de lignes) là où l'autre forme grossirait de six mille
+// lignes par nuit et deviendrait invivable en un mois.
+
+/** La lettre qui code un sort dans la fenêtre `recents`. */
+const LETTRE = { vert: 'v', rouge: 'r', ignoré: 'i', instable: 'f' };
+const SORT_DE_LETTRE = { v: 'vert', r: 'rouge', i: 'ignoré', f: 'instable' };
+
+/**
+ * L'identité d'un test à travers le temps.
+ *
+ * Le fichier ET le titre complet : deux tests peuvent porter le même titre dans
+ * deux fichiers, et un titre seul ferait fusionner leurs historiques.
+ */
+export function cleDuTest(fichier, titre) {
+  return `${fichier}::${titre}`;
+}
+
+/**
+ * Range une salve de résultats dans la mémoire existante.
+ *
+ * Trois règles, et la troisième est celle qu'on oublie :
+ *   - un test jamais vu ouvre un enregistrement ;
+ *   - un test revu incrémente son compteur et pousse une lettre dans sa fenêtre ;
+ *   - **un test connu ABSENT de la salve ne bouge pas.** Il n'a pas tourné —
+ *     compter un tour, ou pire un échec, ferait mentir tous les taux. C'est
+ *     exactement ce qui arrive quand une exécution ne joue qu'une partie de la
+ *     suite, ce qui est le cas normal ici.
+ */
+export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {}) {
+  const parCle = new Map((existants ?? []).map((e) => [e.cle, { ...e }]));
+
+  for (const n of nouveaux ?? []) {
+    const lettre = LETTRE[n.sort];
+    // Un sort qu'on ne sait pas coder n'entre pas dans la mémoire : mieux vaut
+    // un trou qu'une lettre inventée sur laquelle on calculera des taux.
+    if (!lettre) continue;
+
+    const cle = n.cle ?? cleDuTest(n.fichier, n.titre);
+    const e = parCle.get(cle) ?? {
+      cle,
+      fichier: n.fichier ?? null,
+      titre: n.titre ?? null,
+      tours: 0,
+      echecs: 0,
+      recents: '',
+      dernierTourLe: null,
+      dernierEchecLe: null,
+      rougeDepuis: null,
+    };
+
+    e.tours += 1;
+    e.recents = (e.recents + lettre).slice(-max);
+    e.dernierTourLe = n.le ?? le ?? e.dernierTourLe;
+    if (n.dureeMs != null) e.dureeMs = n.dureeMs;
+
+    if (n.sort === 'rouge') {
+      e.echecs += 1;
+      e.dernierEchecLe = e.dernierTourLe;
+      // L'âge du problème COURANT, pas celui du premier échec de l'histoire :
+      // un test cassé en juillet, réparé, recassé hier a un problème d'un jour.
+      if (!e.rougeDepuis) e.rougeDepuis = e.dernierTourLe;
+    } else if (n.sort === 'vert') {
+      e.rougeDepuis = null;
+    }
+
+    parCle.set(cle, e);
+  }
+
+  return [...parCle.values()].sort((a, b) => a.cle.localeCompare(b.cle));
+}
+
+/**
+ * Ce que la mémoire d'un test dit de lui.
+ *
+ * `instable` ne se prononce QUE sur plusieurs exécutions : un test qui a été
+ * vert et rouge dans sa fenêtre est instable, quoi qu'il ait fait la dernière
+ * fois. C'est la seule définition qui attrape le test qui tombe un jour sur
+ * trois — celui qui use une équipe et qu'aucun run isolé ne dénonce.
+ */
+export function instabiliteDe(enr) {
+  const recents = String(enr?.recents ?? '');
+  const utiles = [...recents].filter((c) => c === 'v' || c === 'r' || c === 'f');
+  if (utiles.length === 0) return { verdict: 'inconnu', tauxEchec: null, fenetre: 0 };
+
+  const rouges = utiles.filter((c) => c === 'r').length;
+  const verts = utiles.filter((c) => c === 'v').length;
+  const flottants = utiles.filter((c) => c === 'f').length;
+  const tauxEchec = Number(((rouges / utiles.length) * 100).toFixed(1));
+
+  let verdict;
+  if (rouges === utiles.length) verdict = 'cassé';
+  else if (rouges > 0 || flottants > 0) verdict = 'instable';
+  else verdict = 'sûr';
+
+  return { verdict, tauxEchec, fenetre: utiles.length, rouges, verts };
+}
+
+/** Le sort du dernier tour connu, lu dans la fenêtre. */
+export function dernierSort(enr) {
+  const recents = String(enr?.recents ?? '');
+  return SORT_DE_LETTRE[recents.at(-1)] ?? null;
+}
+
 // ─── Les capacités du produit ─────────────────────────────────────────────────
 //
 // Un test déclare ce qu'il prouve en écrivant `@cap:<slug>` dans son titre. La

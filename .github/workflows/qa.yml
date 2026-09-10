@@ -54,6 +54,11 @@ jobs:
       # `|| true` par paquet : un paquet qui échoue ne doit pas priver le
       # portail des 33 autres mesures. Le portail montre l'absence comme une
       # absence, jamais comme un zéro.
+      #
+      # Le second `--reporter=json` écrit `tests-run.json` à côté de la
+      # couverture : c'est lui qui alimente la mémoire test par test, donc
+      # l'instabilité — qu'aucune exécution isolée ne sait voir. Même passage,
+      # deux sorties : la mesure ne coûte pas un run de plus.
       - name: Couverture par paquet
         run: |
           for d in packages/* packages/adapters/* apps/*; do
@@ -61,7 +66,7 @@ jobs:
             name=$(node -p "require('./$d/package.json').name" 2>/dev/null) || continue
             [ "$name" = "@nodal-agents/docs" ] && continue
             echo "::group::$name"
-            (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot) || echo "  (échec — on continue)"
+            (cd "$d" && npx vitest run --coverage --coverage.reporter=json-summary --reporter=dot --reporter=json --outputFile=tests-run.json) || echo "  (échec — on continue)"
             echo "::endgroup::"
           done
 

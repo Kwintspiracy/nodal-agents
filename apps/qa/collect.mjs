@@ -33,6 +33,8 @@ import {
   croiserPreuves,
   regrouperParCapacite,
   fautesDuRegistre,
+  fusionnerEssais,
+  instabiliteDe,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -233,10 +235,12 @@ function parcours(fichiers, workflows) {
     // titre du cas est connu — or une étiquette `@cap:` posée sur le describe
     // vaut pour tous ses cas, et c'est la façon la moins verbeuse de
     // l'écrire. La perdre reviendrait à exiger une étiquette par cas.
-    const marcher = (suites, chemin = []) => {
+    const marcher = (suites, chemin = [], niveau = 0) => {
       for (const s of suites ?? []) {
         const f = s.file ? `apps/web/tests/e2e/${s.file}` : null;
-        const ici = s.title ? [...chemin, s.title] : chemin;
+        // Le niveau 0 est le FICHIER : son titre est le nom du fichier, déjà
+        // porté par `fichier`. L'inclure doublerait chaque clé de la mémoire.
+        const ici = niveau > 0 && s.title ? [...chemin, s.title] : chemin;
         for (const spec of s.specs ?? []) {
           if (!f) continue;
           const essais = (spec.tests ?? []).flatMap((t) => t.results ?? []);
@@ -257,7 +261,7 @@ function parcours(fichiers, workflows) {
           });
           parFichier.set(f, b);
         }
-        marcher(s.suites, ici);
+        marcher(s.suites, ici, niveau + 1);
       }
     };
     marcher(resultats.suites);
@@ -353,6 +357,101 @@ function capacites(fichiers, e2e) {
   };
 }
 
+// ─── 9. La mémoire, test par test ─────────────────────────────────────────────
+//
+// `history.ndjson` garde des TOTAUX par collecte : ils ne sauront jamais dire
+// « ce test a tourné 47 fois, échoué 3 fois, toujours sous Windows ». Un
+// enregistrement par test, mis à jour à chaque collecte, le sait — et reste
+// borné là où une ligne par test et par exécution ajouterait six mille lignes
+// chaque nuit.
+
+const SORT_VITEST = { passed: 'vert', failed: 'rouge', skipped: 'ignoré', pending: 'ignoré' };
+
+/** Les cas joués lors de CETTE collecte : parcours e2e et suites unitaires. */
+function essaisDeLaCollecte(e2e, listePaquets) {
+  const essais = [];
+
+  for (const p of e2e) {
+    for (const c of p.resultat?.cas ?? []) {
+      essais.push({
+        fichier: p.fichier,
+        titre: c.titreComplet ?? c.titre,
+        sort: c.sort,
+        dureeMs: c.dureeMs ?? null,
+      });
+    }
+  }
+
+  // Les rapports unitaires, paquet par paquet — jamais à la racine, où un run
+  // unique fait tomber des centaines de tests pour une raison étrangère au
+  // code (chaque paquet porte son environnement). ABSENT ≠ vide : un paquet
+  // sans rapport n'apporte simplement aucun essai.
+  for (const p of listePaquets) {
+    const rapport = lireJson(join(RACINE, p.chemin, 'tests-run.json'));
+    for (const fichier of rapport?.testResults ?? []) {
+      const rel = relative(RACINE, fichier.name ?? '')
+        .split(sep)
+        .join('/');
+      for (const cas of fichier.assertionResults ?? []) {
+        const sort = SORT_VITEST[cas.status];
+        if (!sort) continue;
+        essais.push({
+          fichier: rel,
+          titre: cas.fullName ?? cas.title,
+          sort,
+          dureeMs: cas.duration ?? null,
+        });
+      }
+    }
+  }
+
+  return essais;
+}
+
+function memoire(e2e, listePaquets, le) {
+  const chemin = join(DATA, 'tests.ndjson');
+  const existants = existsSync(chemin)
+    ? readFileSync(chemin, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+    : [];
+
+  const essais = essaisDeLaCollecte(e2e, listePaquets);
+  const fusionnes = fusionnerEssais(existants, essais, { le });
+
+  // Une ligne par test, triée : le diff nocturne reste lisible à l'œil.
+  writeFileSync(chemin, fusionnes.map((e) => JSON.stringify(e)).join('\n') + '\n');
+
+  const avecVerdict = fusionnes.map((e) => ({ ...e, ...instabiliteDe(e) }));
+  return {
+    total: fusionnes.length,
+    joues: essais.length,
+    instables: avecVerdict.filter((e) => e.verdict === 'instable').length,
+    casses: avecVerdict.filter((e) => e.verdict === 'cassé').length,
+    // Les plus nuisibles d'abord : ceux qui tombent sans être franchement
+    // cassés. Un test cassé se répare ; un test instable se subit.
+    pires: avecVerdict
+      .filter((e) => e.verdict === 'instable')
+      .sort((a, b) => b.tauxEchec - a.tauxEchec)
+      .slice(0, 20),
+    // Les cassés, du plus ancien au plus récent : l'âge d'un rouge dit s'il
+    // s'agit d'une régression de la nuit ou d'une dette qu'on a appris à ne
+    // plus voir.
+    listeCasses: avecVerdict
+      .filter((e) => e.verdict === 'cassé')
+      .sort((a, b) => String(a.rougeDepuis ?? '').localeCompare(String(b.rougeDepuis ?? '')))
+      .slice(0, 30),
+  };
+}
+
 // ─── Assemblage ───────────────────────────────────────────────────────────────
 
 function main() {
@@ -368,6 +467,8 @@ function main() {
   const workflows = ci(fichiers, nomsParcours);
   const e2e = parcours(fichiers, workflows);
   const cap = capacites(fichiers, e2e);
+  const genereLe = new Date().toISOString();
+  const mem = memoire(e2e, listePaquets, genereLe);
 
   const paquetsEnrichis = listePaquets.map((p) => ({
     ...p,
@@ -384,7 +485,7 @@ function main() {
   const lignesTotal = mesures.reduce((n, p) => n + (p.couverture.lignesTotal ?? 0), 0);
 
   const snapshot = {
-    genereLe: new Date().toISOString(),
+    genereLe,
     commit: sh('git rev-parse HEAD').slice(0, 8) || null,
     branche: sh('git rev-parse --abbrev-ref HEAD') || null,
     paquets: paquetsEnrichis,
@@ -403,8 +504,12 @@ function main() {
       capacites: cap.registre.length,
       capacitesProuvees: cap.registre.filter((c) => c.etat === 'prouvée').length,
       capacitesJamaisProuvees: cap.registre.filter((c) => c.etat === 'jamais prouvée').length,
+      testsEnMemoire: mem.total,
+      testsInstables: mem.instables,
+      testsCasses: mem.casses,
     },
     capacites: cap,
+    memoire: mem,
     banc: banc(),
     ci: workflows,
     parcours: e2e,
@@ -436,6 +541,9 @@ function main() {
   );
   console.log(
     `capacités: ${r.capacites} nommées · ${r.capacitesProuvees} prouvées · ${r.capacitesJamaisProuvees} jamais prouvées`,
+  );
+  console.log(
+    `mémoire: ${r.testsEnMemoire} tests suivis (${mem.joues} joués cette fois) · ${r.testsInstables} instables · ${r.testsCasses} cassés`,
   );
 }
 

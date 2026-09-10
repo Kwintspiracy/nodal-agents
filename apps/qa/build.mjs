@@ -426,6 +426,79 @@ function vueCapacites() {
 </section>`;
 }
 
+// Ce que le portail ne savait pas dire : « ce test a tourné 47 fois, échoué 3
+// fois ». Une photo ne le sait jamais. L'instabilité, surtout, est indétectable
+// dans une seule exécution — un test qui tombe un jour sur trois passe pour vert
+// à chaque fois qu'il passe.
+function ruban(recents) {
+  const CLASSE = { v: 'ok', r: 'ko', i: 'inconnu', f: 'moyen' };
+  return [...String(recents ?? '')]
+    .map((c) => `<i class="grain grain--${CLASSE[c] ?? 'inconnu'}"></i>`)
+    .join('');
+}
+
+function vueMemoire() {
+  const m = s.memoire;
+  if (!m || m.total === 0) {
+    return `<section id="memoire" class="vue"><h2 class="titre-vue">Mémoire des tests</h2>
+      <p class="chapo">Aucun test suivi pour l'instant. La mémoire se remplit à chaque mesure ; elle a besoin de plusieurs passages avant de savoir dire quoi que ce soit d'utile.</p></section>`;
+  }
+
+  const lignes = (liste, colonneAge) =>
+    liste
+      .map(
+        (e) => `<tr>
+      <td><span class="intention">${esc(e.fichier ?? '')}</span><br><b>${esc(e.titre ?? e.cle)}</b></td>
+      <td class="mono">${ruban(e.recents)}</td>
+      <td class="num">${e.echecs}/${e.tours}</td>
+      <td class="num">${e.tauxEchec != null ? e.tauxEchec + ' %' : '—'}</td>
+      <td>${esc(dateFr(colonneAge ? e.rougeDepuis : e.dernierTourLe))}</td>
+    </tr>`,
+      )
+      .join('');
+
+  const casses = (m.casses ?? 0) > 0 ? (m.listeCasses ?? []) : [];
+
+  return `
+<section id="memoire" class="vue">
+  <h2 class="titre-vue">Mémoire des tests</h2>
+  <p class="chapo">Un enregistrement par test, pas par exécution. C'est la seule forme qui sache répondre « combien de fois ça tourne, et combien de fois ça tombe ».</p>
+
+  <div class="cartes">
+    <article class="carte carte--phare ${m.instables > 0 ? 'carte--alerte' : ''}">
+      <h3>Tests instables</h3>
+      <p class="chiffre">${m.instables}</p>
+      <p class="sous">verts ET rouges dans leur fenêtre</p>
+      <p class="avertissement">Un test cassé se répare. Un test instable se subit : aucune exécution isolée ne le dénonce, il passe pour vert chaque fois qu'il passe.</p>
+    </article>
+
+    <article class="carte ${m.casses > 0 ? 'carte--alerte' : ''}">
+      <h3>Tests cassés</h3>
+      <p class="chiffre">${m.casses}</p>
+      <p class="sous">rouges à chaque tour connu</p>
+    </article>
+
+    <article class="carte">
+      <h3>Tests suivis</h3>
+      <p class="chiffre">${n(m.total)}</p>
+      <p class="sous">${n(m.joues)} joués lors de la dernière mesure</p>
+    </article>
+  </div>
+
+  ${
+    (m.pires ?? []).length > 0
+      ? `<h3 class="sous-titre">Les plus nuisibles <span class="compte">${m.pires.length}</span></h3>
+  <p class="note-section">Triés par taux d'échec. Le ruban se lit de gauche à droite, du plus ancien au plus récent.</p>
+  <table class="tableau">
+    <thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead>
+    <tbody>${lignes(m.pires, true)}</tbody>
+  </table>`
+      : `<p class="note-section">Aucun test instable détecté. C'est peut-être vrai — ou la mémoire est encore trop courte pour le voir : l'instabilité demande plusieurs passages avant d'apparaître, et elle en compte ${(m.pires ?? []).length === 0 && m.total > 0 ? 'peu' : 'aucun'} pour l'instant.</p>`
+  }
+  ${casses.length > 0 ? `<h3 class="sous-titre">Cassés</h3><table class="tableau"><thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead><tbody>${lignes(casses, true)}</tbody></table>` : ''}
+</section>`;
+}
+
 function vueEcarts() {
   const list = ecarts();
   return `
@@ -596,6 +669,11 @@ body{margin:0;background:var(--fond);color:var(--encre2);
   font-size:14.5px;line-height:1.6;-webkit-font-smoothing:antialiased}
 h1,h2,h3{font-family:Archivo,system-ui,sans-serif;color:var(--encre);letter-spacing:-.015em;text-wrap:balance;margin:0}
 .mono,td.num,.chiffre{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+.grain{display:inline-block;width:7px;height:14px;margin-right:2px;border-radius:2px;vertical-align:middle}
+.grain--ok{background:var(--ok)}
+.grain--ko{background:var(--ko)}
+.grain--moyen{background:var(--moyen)}
+.grain--inconnu{background:var(--regle)}
 a{color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
@@ -765,6 +843,7 @@ tr:last-child td{border-bottom:0}
       <a href="#parcours">Parcours <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
       <a href="#banc">Banc d'essai <b>${s.banc.sections.length}</b></a>
       <a href="#ci">Déclencheurs <b>${s.ci.length}</b></a>
+      <a href="#memoire">Mémoire des tests <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
       <a href="#historique">Historique <b>${historique.length}</b></a>
     </nav>
     <footer>
@@ -781,6 +860,7 @@ tr:last-child td{border-bottom:0}
     ${vueParcours()}
     ${vueBanc()}
     ${vueCi()}
+    ${vueMemoire()}
     ${vueHistorique()}
   </main>
 </div>

@@ -24,6 +24,10 @@ import {
   fautesDuRegistre,
   regrouperParCapacite,
   croiserPreuves,
+  cleDuTest,
+  fusionnerEssais,
+  instabiliteDe,
+  dernierSort,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -270,6 +274,134 @@ describe('parcoursDunWorkflow — nommés et balayés', () => {
   it('un workflow qui ne parle d’aucun parcours n’en joue aucun', () => {
     const r = parcoursDunWorkflow('- run: pnpm typecheck', TOUS);
     expect(r.joues).toEqual([]);
+  });
+});
+
+// ─── La mémoire, test par test (issue #64) ────────────────────────────────────
+
+describe('fusionnerEssais — ce qui n’a pas tourné ne bouge pas', () => {
+  const T = (titre, sort, le) => ({ fichier: 'a.spec.ts', titre, sort, le });
+
+  it('ouvre un enregistrement pour un test jamais vu', () => {
+    const r = fusionnerEssais([], [T('un', 'vert', '2026-09-01')]);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ cle: 'a.spec.ts::un', tours: 1, echecs: 0, recents: 'v' });
+  });
+
+  it('un test connu ABSENT de la salve garde ses compteurs', () => {
+    // La règle qu'on oublie. Une exécution ne joue presque jamais toute la
+    // suite : compter un tour pour un test qui n'a pas tourné ferait mentir
+    // tous les taux, et compter un échec serait pire.
+    const avant = fusionnerEssais([], [T('un', 'vert'), T('deux', 'rouge')]);
+    const apres = fusionnerEssais(avant, [T('un', 'vert')]);
+    const deux = apres.find((e) => e.cle === 'a.spec.ts::deux');
+    expect(deux).toMatchObject({ tours: 1, echecs: 1, recents: 'r' });
+    expect(apres.find((e) => e.cle === 'a.spec.ts::un')).toMatchObject({ tours: 2, recents: 'vv' });
+  });
+
+  it('compte les échecs et retient QUAND', () => {
+    let r = fusionnerEssais([], [T('un', 'rouge', '2026-09-01')]);
+    r = fusionnerEssais(r, [T('un', 'rouge', '2026-09-02')]);
+    expect(r[0]).toMatchObject({
+      tours: 2,
+      echecs: 2,
+      recents: 'rr',
+      dernierEchecLe: '2026-09-02',
+      rougeDepuis: '2026-09-01',
+    });
+  });
+
+  it('`rougeDepuis` est l’âge du problème COURANT, pas du premier de l’histoire', () => {
+    // Un test cassé en juillet, réparé, recassé hier a un problème d'un jour.
+    // Garder juillet ferait passer une régression fraîche pour une dette
+    // ancienne, et l'inverse est tout aussi trompeur.
+    let r = fusionnerEssais([], [T('un', 'rouge', '2026-07-01')]);
+    r = fusionnerEssais(r, [T('un', 'vert', '2026-08-01')]);
+    expect(r[0].rougeDepuis).toBeNull();
+    r = fusionnerEssais(r, [T('un', 'rouge', '2026-09-09')]);
+    expect(r[0].rougeDepuis).toBe('2026-09-09');
+    // La mémoire du dernier échec, elle, ne s'efface jamais.
+    expect(r[0].dernierEchecLe).toBe('2026-09-09');
+  });
+
+  it('la fenêtre glisse et reste bornée', () => {
+    // Sans borne, le fichier grossit sans fin et le dépôt finit par porter
+    // l'historique complet de six mille tests.
+    let r = [];
+    for (let i = 0; i < 10; i++) r = fusionnerEssais(r, [T('un', 'vert')], { max: 4 });
+    expect(r[0].recents).toBe('vvvv');
+    expect(r[0].tours).toBe(10);
+  });
+
+  it('un sort inconnu n’entre pas dans la mémoire', () => {
+    // Mieux vaut un trou qu'une lettre inventée sur laquelle on calculera des
+    // taux ensuite.
+    const r = fusionnerEssais([], [T('un', 'sorti-de-nulle-part'), T('deux', 'vert')]);
+    expect(r.map((e) => e.cle)).toEqual(['a.spec.ts::deux']);
+  });
+
+  it('deux tests homonymes dans deux fichiers ne fusionnent pas', () => {
+    const r = fusionnerEssais(
+      [],
+      [
+        { fichier: 'a.spec.ts', titre: 'ouvre', sort: 'vert' },
+        { fichier: 'b.spec.ts', titre: 'ouvre', sort: 'rouge' },
+      ],
+    );
+    expect(r).toHaveLength(2);
+    expect(cleDuTest('a.spec.ts', 'ouvre')).toBe('a.spec.ts::ouvre');
+  });
+
+  it('rend une liste triée — le diff du fichier doit rester lisible', () => {
+    const r = fusionnerEssais(
+      [],
+      [T('z', 'vert'), T('a', 'vert'), T('m', 'vert')].map((x) => x),
+    );
+    expect(r.map((e) => e.titre)).toEqual(['a', 'm', 'z']);
+  });
+
+  it('sans argument, elle ne s’effondre pas', () => {
+    expect(fusionnerEssais()).toEqual([]);
+    expect(fusionnerEssais([], [])).toEqual([]);
+  });
+});
+
+describe('instabiliteDe — l’instabilité ne se voit QUE dans le temps', () => {
+  it('que des verts ⇒ sûr', () => {
+    expect(instabiliteDe({ recents: 'vvvvv' })).toMatchObject({ verdict: 'sûr', tauxEchec: 0 });
+  });
+
+  it('que des rouges ⇒ cassé, pas instable', () => {
+    // Un test qui échoue toujours n'est pas capricieux : il est cassé. Les
+    // confondre noierait la vraie instabilité dans la liste des régressions.
+    expect(instabiliteDe({ recents: 'rrr' })).toMatchObject({ verdict: 'cassé', tauxEchec: 100 });
+  });
+
+  it('un mélange ⇒ INSTABLE, même si le dernier tour est vert', () => {
+    // Le cas qui justifie tout ce lot : ce test tombe un jour sur trois. Aucune
+    // exécution isolée ne le dénonce, et `sortDuCas` le dirait « vert » à
+    // chaque fois qu'il passe.
+    const i = instabiliteDe({ recents: 'vvrvvvrvv' });
+    expect(i.verdict).toBe('instable');
+    expect(i.tauxEchec).toBe(22.2);
+    expect(dernierSort({ recents: 'vvrvvvrvv' })).toBe('vert');
+  });
+
+  it('une reprise au second essai compte comme instable', () => {
+    expect(instabiliteDe({ recents: 'vvfv' }).verdict).toBe('instable');
+  });
+
+  it('les tours IGNORÉS ne comptent ni au numérateur ni au dénominateur', () => {
+    // Un test qu'on saute n'est ni une réussite ni un échec. Le compter
+    // gonflerait la fenêtre et diluerait le taux jusqu'à le rendre muet.
+    expect(instabiliteDe({ recents: 'iiivv' })).toMatchObject({ verdict: 'sûr', fenetre: 2 });
+    expect(instabiliteDe({ recents: 'iii' })).toMatchObject({ verdict: 'inconnu', fenetre: 0 });
+  });
+
+  it('sans mémoire, elle ne prononce rien', () => {
+    expect(instabiliteDe({})).toMatchObject({ verdict: 'inconnu', tauxEchec: null });
+    expect(instabiliteDe(null)).toMatchObject({ verdict: 'inconnu' });
+    expect(dernierSort(null)).toBeNull();
   });
 });
 
