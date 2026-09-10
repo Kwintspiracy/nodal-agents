@@ -23,7 +23,7 @@ test.describe('Notion Internal Integration (api_key) — regression', () => {
     // The Notion card slug is 'notion', authType 'api_key'.
     // Each connector renders as a .rounded-xl card — use that to scope the locator.
     const notionCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Notion', exact: true, level: 3 }) });
     await expect(notionCard).toBeVisible({ timeout: 10_000 });
 

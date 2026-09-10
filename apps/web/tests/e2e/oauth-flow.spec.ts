@@ -61,7 +61,7 @@ test.describe('Google Drive OAuth flow (wizard-driven)', () => {
 
     // Find the Google Drive card.
     const driveCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
     await expect(driveCard).toBeVisible({ timeout: 10_000 });
 
@@ -144,7 +144,7 @@ test.describe('Google Drive OAuth flow (wizard-driven)', () => {
 
     await expect(
       page
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) })
         .getByText(/connected/i)
         .first(),

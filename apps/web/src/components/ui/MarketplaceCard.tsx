@@ -58,6 +58,19 @@ export default function MarketplaceCard({
 }: Props) {
   return (
     <div
+      // L'ANCRE de la carte, dérivée de son nom.
+      //
+      // Les parcours e2e la désignaient par son rayon de bordure
+      // (`.rounded-xl`) filtré sur son titre. Le rayon est passé à
+      // `rounded-2xl` avec le design system, et huit parcours sont devenus
+      // rouges d'un coup, en silence, le 10/09/2026 — sans qu'une seule
+      // fonctionnalité soit cassée. Une classe de mise en forme n'est pas un
+      // contrat ; un `data-testid` en est un.
+      data-testid={`marketplace-card-${String(name)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')}`}
+      data-marketplace-card=""
       className={`relative flex h-full min-h-[200px] flex-col gap-1.5 rounded-2xl border border-rule-2 bg-paper p-[18px] ${className}`}
     >
       {topRight && (

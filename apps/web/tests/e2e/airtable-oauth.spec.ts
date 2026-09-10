@@ -48,7 +48,7 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
     await page.goto('/connectors');
 
     const airtableCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) });
     await expect(airtableCard).toBeVisible({ timeout: 10_000 });
 
@@ -124,7 +124,7 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
     // Use exact text match to avoid matching the substring "connected" inside "disconnected".
     await expect(
       page
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) })
         .getByText('connected', { exact: true })
         .first(),
@@ -133,7 +133,7 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
     // Airtable supports refresh — check the "Refresh now" button appears.
     await expect(
       page
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) })
         .getByRole('button', { name: /refresh now/i }),
     ).toBeVisible({ timeout: 5_000 });

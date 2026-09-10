@@ -22,6 +22,7 @@ import {
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { etatCi, colonneDeCarte, sortDuCas, compterParcours, parcoursDunWorkflow } from './lib.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const RACINE = join(ICI, '..', '..');
@@ -168,27 +169,39 @@ function banc() {
 // La question de Quentin — « qu'est-ce qui les déclenche » — se lit dans les
 // workflows, pas dans une intention. On lit les fichiers.
 
-function ci(fichiers) {
+function ci(fichiers, tousLesParcours) {
   const wfs = fichiers.filter((f) => f.startsWith('.github/workflows/') && /\.ya?ml$/.test(f));
   return wfs.map((f) => {
     const texte = readFileSync(join(RACINE, f), 'utf8');
     const jobs = [...texte.matchAll(/^ {2}([a-z0-9_-]+):\s*$/gim)].map((m) => m[1]);
     const declencheurs = [];
     if (/^on:/m.test(texte)) {
-      if (/\bpush:/.test(texte)) declencheurs.push('push');
-      if (/\bpull_request:/.test(texte)) declencheurs.push('pull_request');
-      if (/\bschedule:/.test(texte)) declencheurs.push('schedule');
+      if (/push:/.test(texte)) declencheurs.push('push');
+      if (/pull_request:/.test(texte)) declencheurs.push('pull_request');
+      if (/schedule:/.test(texte)) declencheurs.push('schedule');
       if (/workflow_dispatch/.test(texte)) declencheurs.push('manuel');
     }
-    // Les specs Playwright NOMMÉES dans le workflow : c'est la liste réellement
-    // jouée, et l'écart avec les specs versionnées est le trou qu'on cherche.
-    const specsNommees = [...texte.matchAll(/tests\/e2e\/([\w.-]+\.spec\.ts)/g)].map((m) => m[1]);
+    const parcours = parcoursDunWorkflow(texte, tousLesParcours);
     return {
       fichier: f,
       nom: (texte.match(/^name:\s*(.+)$/m)?.[1] ?? f).trim().replace(/^['"]|['"]$/g, ''),
       declencheurs,
       jobs,
-      specsNommees: [...new Set(specsNommees)],
+      // Un workflow qui BALAIE les parcours en joue autant qu'un qui les
+      // nomme — ne lire que les noms littéraux laissait le portail annoncer
+      // « 2 en CI » pour toujours (revue Codex, PR #51).
+      specsNommees: parcours.joues,
+      balayeLesParcours: parcours.balaye,
+      parcoursExclus: parcours.exclus ?? [],
+      // Un parcours joué CHAQUE NUIT n'est pas joué à chaque PR : le portail
+      // doit pouvoir dire lequel des deux, sinon « couvert » ne veut rien dire.
+      cadence: declencheurs.includes('pull_request')
+        ? 'chaque PR'
+        : declencheurs.includes('schedule')
+          ? 'chaque nuit'
+          : declencheurs.includes('push')
+            ? 'chaque push sur main'
+            : 'à la main',
       lanceBanc: /pnpm bench|@nodal-agents\/bench/.test(texte),
       lanceCouverture: /--coverage/.test(texte),
     };
@@ -201,7 +214,19 @@ function parcours(fichiers, workflows) {
   const specs = fichiers.filter(
     (f) => f.startsWith('apps/web/tests/e2e/') && f.endsWith('.spec.ts'),
   );
-  const joues = new Set(workflows.flatMap((w) => w.specsNommees));
+  // Qui joue quoi, et à quelle cadence. Un parcours joué chaque nuit n'est pas
+  // joué à chaque PR : les confondre, c'est appeler « couvert » un parcours qui
+  // ne garde aucune PR.
+  const cadenceParParcours = new Map();
+  for (const w of workflows) {
+    for (const nom of w.specsNommees) {
+      const dejaVue = cadenceParParcours.get(nom);
+      // « chaque PR » est la cadence la plus forte : elle l'emporte.
+      if (dejaVue === 'chaque PR') continue;
+      cadenceParParcours.set(nom, w.cadence);
+    }
+  }
+
   const resultats = lireJson(join(DATA, 'playwright-run.json'));
   const parFichier = new Map();
   if (resultats?.suites) {
@@ -209,18 +234,18 @@ function parcours(fichiers, workflows) {
       for (const s of suites ?? []) {
         const f = s.file ? `apps/web/tests/e2e/${s.file}` : null;
         for (const spec of s.specs ?? []) {
-          const ok = (spec.tests ?? []).every((t) =>
-            (t.results ?? []).every((r) => r.status === 'passed'),
-          );
-          const duree = (spec.tests ?? [])
-            .flatMap((t) => t.results ?? [])
-            .reduce((n, r) => n + (r.duration ?? 0), 0);
           if (!f) continue;
-          const b = parFichier.get(f) ?? { total: 0, verts: 0, dureeMs: 0, cas: [] };
-          b.total += 1;
-          if (ok) b.verts += 1;
+          const essais = (spec.tests ?? []).flatMap((t) => t.results ?? []);
+          // Quatre sorts, gardés séparés : `vert`, `rouge`, `ignoré`,
+          // `instable`. Les écraser en un booléen faisait passer 36 cas
+          // IGNORÉS pour des régressions (revue Codex, PR #51) — le défaut même
+          // que ce portail dénonce ailleurs.
+          const sort = sortDuCas(essais);
+          const duree = essais.reduce((n, r) => n + (r.duration ?? 0), 0);
+          const b = parFichier.get(f) ?? { sorts: [], dureeMs: 0, cas: [] };
+          b.sorts.push(sort);
           b.dureeMs += duree;
-          b.cas.push({ titre: spec.title, vert: ok, dureeMs: duree });
+          b.cas.push({ titre: spec.title, sort, dureeMs: duree });
           parFichier.set(f, b);
         }
         marcher(s.suites);
@@ -230,7 +255,10 @@ function parcours(fichiers, workflows) {
   }
   return specs.map((f) => {
     const nom = f.split('/').pop();
-    const r = parFichier.get(f) ?? null;
+    const brut = parFichier.get(f) ?? null;
+    const r = brut
+      ? { ...compterParcours(brut.sorts), dureeMs: brut.dureeMs, cas: brut.cas }
+      : null;
     let texte = '';
     try {
       texte = readFileSync(join(RACINE, f), 'utf8');
@@ -241,7 +269,8 @@ function parcours(fichiers, workflows) {
       fichier: f,
       nom,
       cas: (texte.match(/^\s*test(\.\w+)*\s*\(/gm) ?? []).length,
-      jouParLaCi: joues.has(nom),
+      jouParLaCi: cadenceParParcours.has(nom),
+      cadence: cadenceParParcours.get(nom) ?? null,
       resultat: r,
       // La première ligne de commentaire du fichier, quand il y en a une :
       // c'est ce que l'auteur a jugé utile de dire du parcours.
@@ -270,26 +299,6 @@ function chantiers() {
       'gh pr list --state all --limit 50 --json number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup',
     ) ?? [];
 
-  // ── La colonne d'une carte ────────────────────────────────────────────────
-  //
-  // Déduite de FAITS, jamais saisie : un tableau qu'il faut ranger à la main
-  // est un tableau qui ment dès qu'on oublie de le ranger. Ce que GitHub sait
-  // déjà — une PR ouverte, une PR mergée, une issue fermée, une étiquette —
-  // suffit à placer chaque carte.
-  //
-  //   Fait      · issue fermée, PR mergée
-  //   En review · PR ouverte, c'est sa définition
-  //   À tester  · une issue étiquetée `test`
-  //   À faire   · une issue étiquetée `décision` — elle attend Quentin
-  //   En cours  · le reste des issues ouvertes
-  const colonne = (carte) => {
-    if (carte.type === 'pr') return carte.etat === 'MERGED' ? 'Fait' : 'En review';
-    if (carte.etat !== 'OPEN') return 'Fait';
-    if (carte.etiquettes.includes('décision')) return 'À faire';
-    if (carte.etiquettes.includes('test')) return 'À tester';
-    return 'En cours';
-  };
-
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -309,18 +318,9 @@ function chantiers() {
       brouillon: p.isDraft === true,
       etiquettes: [],
       majLe: p.mergedAt ?? p.updatedAt ?? null,
-      // L'état de la CI tel que GitHub le rend : une PR en review dont les
-      // contrôles rougissent n'attend pas la même chose qu'une PR verte.
-      ci: (() => {
-        const r = p.statusCheckRollup ?? [];
-        if (r.length === 0) return null;
-        if (r.some((c) => (c.conclusion ?? c.state) === 'FAILURE')) return 'rouge';
-        if (r.some((c) => ['IN_PROGRESS', 'QUEUED', 'PENDING'].includes(c.status ?? '')))
-          return 'en cours';
-        return 'vert';
-      })(),
+      ci: etatCi(p.statusCheckRollup),
     })),
-  ].map((c) => ({ ...c, colonne: colonne(c) }));
+  ].map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
 
   return { issues, pr, cartes };
 }
@@ -334,7 +334,10 @@ function main() {
   const listePaquets = paquets();
   const parPaquet = tests(listePaquets, fichiers);
   const cov = couverture(listePaquets);
-  const workflows = ci(fichiers);
+  const nomsParcours = fichiers
+    .filter((f) => f.startsWith('apps/web/tests/e2e/') && f.endsWith('.spec.ts'))
+    .map((f) => f.split('/').pop());
+  const workflows = ci(fichiers, nomsParcours);
   const e2e = parcours(fichiers, workflows);
 
   const paquetsEnrichis = listePaquets.map((p) => ({

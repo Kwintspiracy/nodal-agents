@@ -6,7 +6,7 @@
 // protocole fichier les bloque. Un port dès maintenant évite de refaire.
 
 import { createServer } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,13 +30,28 @@ createServer((req, res) => {
   const cible = url.startsWith('/data/')
     ? join(ICI, url)
     : join(DIST, url === '/' ? 'index.html' : url);
-  if (!cible.startsWith(ICI) || !existsSync(cible)) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('introuvable');
+  // Un DOSSIER passe le test d'existence et fait lever `EISDIR` à la lecture.
+  // L'erreur n'était pas rattrapée : une simple requête sur `/data/` éteignait
+  // le serveur entier (revue Codex, PR #51). Un portail qu'une URL suffit à
+  // tuer n'est pas un portail.
+  let contenu;
+  try {
+    if (!cible.startsWith(ICI) || !existsSync(cible) || !statSync(cible).isFile()) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('introuvable');
+      return;
+    }
+    contenu = readFileSync(cible);
+  } catch (err) {
+    // Fichier effacé entre le test et la lecture, permission refusée, disque
+    // qui tousse : on répond 500 et on CONTINUE de servir.
+    console.error(`[qa] lecture impossible de ${url} :`, err);
+    res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('lecture impossible');
     return;
   }
   res.writeHead(200, { 'content-type': TYPES[extname(cible)] ?? 'application/octet-stream' });
-  res.end(readFileSync(cible));
+  res.end(contenu);
 }).listen(PORT, () => {
   console.log(`Portail qualité → http://localhost:${PORT}`);
 });

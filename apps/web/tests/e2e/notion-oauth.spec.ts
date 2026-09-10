@@ -53,7 +53,7 @@ test.describe('Notion OAuth flow (wizard-driven)', () => {
     await page.goto('/connectors');
 
     const notionCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) });
     await expect(notionCard).toBeVisible({ timeout: 10_000 });
 
@@ -125,7 +125,7 @@ test.describe('Notion OAuth flow (wizard-driven)', () => {
     // ── 9. Assert connected status ────────────────────────────────────────────
     await expect(
       page
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) })
         .getByText(/connected/i)
         .first(),
@@ -133,7 +133,7 @@ test.describe('Notion OAuth flow (wizard-driven)', () => {
 
     // ── 10. Refresh button must NOT appear (Notion supportsRefresh: false) ────
     const refreshBtn = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) })
       .getByRole('button', { name: /refresh now/i });
     await expect(refreshBtn).not.toBeVisible();

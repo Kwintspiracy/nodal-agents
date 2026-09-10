@@ -23,7 +23,7 @@ test.describe('Help guides — OAuth wizard (Google Drive)', () => {
 
     // Find the Google Drive card.
     const driveCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
     await expect(driveCard).toBeVisible({ timeout: 10_000 });
 
@@ -75,7 +75,7 @@ test.describe('Help guides — api_key connector (Apify)', () => {
 
     // Find the Apify card.
     const apifyCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Apify', level: 3 }) });
     await expect(apifyCard).toBeVisible({ timeout: 10_000 });
 

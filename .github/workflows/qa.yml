@@ -68,8 +68,14 @@ jobs:
       # ── Le banc ────────────────────────────────────────────────────────────
       # Il sort en 1 sur régression ; ici on ne veut pas arrêter la mesure, on
       # veut l'ENREGISTRER. La porte bloquante, elle, vit dans `ci.yml`.
+      # Chemin ABSOLU : `pnpm bench` délègue à `pnpm --filter @nodal-agents/bench`,
+      # donc le CLI tourne dans `packages/bench` et un chemin relatif visait
+      # `packages/bench/apps/qa/data/` — un dossier qui n'existe pas. L'erreur
+      # était avalée et aucun rapport n'arrivait au collecteur (revue Codex).
       - name: Banc d'essai
-        run: pnpm bench --json apps/qa/data/bench-run.json || true
+        run: |
+          mkdir -p apps/qa/data
+          pnpm bench --json "$GITHUB_WORKSPACE/apps/qa/data/bench-run.json" || true
 
       - name: Install Playwright browsers
         timeout-minutes: 12
@@ -80,7 +86,15 @@ jobs:
           done
           exit 1
 
+      # `NODALAI_ALLOW_OAUTH_MOCK` — contrairement au job `e2e-smoke`, ce
+      # workflow joue les parcours OAuth, qui présentent un code d'autorisation
+      # synthétique `mock-`. La route de callback ne l'accepte qu'avec ce
+      # drapeau ; sans lui ces parcours tentent un vrai échange de jeton chez le
+      # fournisseur et échouent quoi que vaille le produit (revue Codex).
+      # Posé sur CETTE stack de test isolée, jamais ailleurs.
       - name: Boot the stack
+        env:
+          NODALAI_ALLOW_OAUTH_MOCK: '1'
         run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
 
       - name: Wait for the dashboard
@@ -111,19 +125,30 @@ jobs:
 
       # La sortie JSON de Playwright peut être précédée d'une ligne du
       # global-setup ; on repart de la première accolade.
+      # Si Playwright n'émet aucun rapport, l'ANCIEN est effacé.
+      #
+      # Sans ça, la collecte qui suit attachait les résultats de la veille à un
+      # horodatage et un commit frais : des mesures périmées présentées comme
+      # celles du jour. C'est précisément le mensonge que ce portail existe pour
+      # empêcher (revue Codex). Mieux vaut une case vide qu'une case fausse.
       - name: Normaliser le rapport
         run: |
           node -e "
             const fs=require('fs');
-            const brut=fs.readFileSync('apps/web/playwright-raw.json','utf8');
-            const i=brut.indexOf('{');
-            if(i<0){ console.log('aucun rapport'); process.exit(0); }
+            const cible='apps/qa/data/playwright-run.json';
             fs.mkdirSync('apps/qa/data',{recursive:true});
-            fs.writeFileSync('apps/qa/data/playwright-run.json', brut.slice(i));
+            let brut='';
+            try { brut=fs.readFileSync('apps/web/playwright-raw.json','utf8'); } catch {}
+            const i=brut.indexOf('{');
+            if(i<0){
+              if(fs.existsSync(cible)) fs.rmSync(cible);
+              console.log('::warning::Playwright n a emis aucun rapport — l ancien est efface plutot que servi comme neuf.');
+              process.exit(0);
+            }
+            fs.writeFileSync(cible, brut.slice(i));
             const s=JSON.parse(brut.slice(i)).stats||{};
-            console.log('verts',s.expected,'rouges',s.unexpected,'ignorés',s.skipped);
-          " || true
-        working-directory: .
+            console.log('verts',s.expected,'rouges',s.unexpected,'ignores',s.skipped);
+          "
 
       - name: Collecter
         run: node apps/qa/collect.mjs

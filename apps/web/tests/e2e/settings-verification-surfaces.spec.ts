@@ -45,7 +45,12 @@ test.describe('Verification surfaces — /settings', () => {
     await shell.click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('Stop verifying')).toBeVisible();
+    // Le TITRE, pas n'importe quelle occurrence : « Stop verifying » est aussi
+    // le libellé du bouton de confirmation, donc un `getByText` nu attrape deux
+    // éléments et Playwright refuse (strict mode). Ce que ce test veut prouver,
+    // c'est que le dialogue s'ouvre en NOMMANT la surface concernée — d'où le
+    // titre, avec son nom dedans.
+    await expect(dialog.getByRole('heading', { name: /^Stop verifying / })).toBeVisible();
     await dialog.getByRole('button', { name: /cancel/i }).click();
     await expect(dialog).toBeHidden();
     await expect(shell).toBeChecked();

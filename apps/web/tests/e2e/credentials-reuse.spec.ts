@@ -60,7 +60,7 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
 
     for (const name of ['Google Drive', 'Gmail']) {
       const card = page
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name, level: 3 }) });
       if (await card.getByRole('button', { name: /disconnect/i }).isVisible()) {
         await card
@@ -78,7 +78,7 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
 
     // ── 3. Connect Google Drive via wizard ────────────────────────────────
     const driveCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
     await expect(driveCard).toBeVisible({ timeout: 10_000 });
 
@@ -135,7 +135,7 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
 
     // ── 6. Connect Gmail using the EXISTING credential (dropdown) ──────────
     const gmailCard = page
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: 'Gmail', level: 3 }) });
     await expect(gmailCard).toBeVisible({ timeout: 10_000 });
 

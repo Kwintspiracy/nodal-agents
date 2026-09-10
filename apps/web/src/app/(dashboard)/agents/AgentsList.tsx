@@ -574,7 +574,20 @@ interface CardBodyProps {
 function CardShell({ group, header, workersZone, onAddWorker }: CardBodyProps) {
   const orchestrator = group.orchestrator;
   return (
-    <div className="rounded-2xl border border-rule-2 bg-paper p-[17px]">
+    // Une ANCRE, parce que cette page n'en avait aucune : les parcours e2e s'y
+    // accrochaient au texte (« Orchestrator ») et à une classe de mise en forme
+    // (`.rounded-2xl`), donc ils cassaient à chaque retouche du design ou du
+    // libellé — et ils ont cassé, en silence, jusqu'au 10/09/2026. Le libellé
+    // avait gagné un suffixe de moteur, et « Add worker » apparaît trois fois
+    // dans la page : plus rien ne désignait UNE carte.
+    //
+    // L'id de l'orchestrateur, pas son nom : un renommage ne casse rien.
+    // `unassigned` pour le groupe sans orchestrateur, qui existe aussi.
+    <div
+      data-testid={`orchestrator-card-${orchestrator?.id ?? 'unassigned'}`}
+      data-orchestrator-card=""
+      className="rounded-2xl border border-rule-2 bg-paper p-[17px]"
+    >
       {orchestrator ? (
         header
       ) : (
@@ -590,7 +603,11 @@ function CardShell({ group, header, workersZone, onAddWorker }: CardBodyProps) {
         >
           {workersZone}
           {orchestrator && (
-            <EdAddButton size="sm" onClick={() => onAddWorker(orchestrator.id)}>
+            <EdAddButton
+              size="sm"
+              testId={`add-worker-${orchestrator.id}`}
+              onClick={() => onAddWorker(orchestrator.id)}
+            >
               Add worker
             </EdAddButton>
           )}
@@ -712,6 +729,7 @@ function SortableNestedOrchestratorRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
+      data-worker-row={agent.id}
       className={`w-full rounded-[10px] border border-rule-2 bg-hover p-[10px] ${isDragging ? 'opacity-50' : ''}`}
     >
       <div className="group flex w-full items-center gap-[10px]">
@@ -824,6 +842,7 @@ function SortableWorkerRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
+      data-worker-row={agent.id}
       className={`group flex w-full items-center gap-[10px] rounded-[10px] border border-rule-2 bg-hover p-[10px] ${isDragging ? 'opacity-50' : ''}`}
     >
       <span
@@ -910,7 +929,11 @@ function StaticWorkersZone({
     <div className="flex w-full flex-col gap-2">
       {group.workers.map((w) =>
         depth <= MAX_NEST_DEPTH && nestedOrchIds.has(w.id) && groupByOrchId.has(w.id) ? (
-          <div key={w.id} className="w-full rounded-[10px] border border-rule-2 bg-hover p-[10px]">
+          <div
+            key={w.id}
+            data-worker-row={w.id}
+            className="w-full rounded-[10px] border border-rule-2 bg-hover p-[10px]"
+          >
             <div className="group flex w-full items-center gap-[10px]">
               <span className="shrink-0 text-ink-4" aria-hidden>
                 <DotsSixVertical size={13} />
@@ -939,6 +962,7 @@ function StaticWorkersZone({
         ) : (
           <div
             key={w.id}
+            data-worker-row={w.id}
             className="group flex w-full items-center gap-[10px] rounded-[10px] border border-rule-2 bg-hover p-[10px]"
           >
             <span className="shrink-0 text-ink-4" aria-hidden>

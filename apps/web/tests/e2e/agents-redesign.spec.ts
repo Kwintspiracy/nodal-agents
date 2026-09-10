@@ -15,59 +15,59 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = path.join(__dirname, '..', '..', 'test-results', 'agents-redesign');
 
-/** Finds the card ("Unassigned" or an orchestrator's name) that currently
- *  contains a worker row with the given exact name. Walks the DOM directly
- *  (no CSS selector escaping needed for Tailwind arbitrary-value classes). */
+/** La carte qui contient actuellement le worker nommé — « Unassigned », ou le
+ *  nom de son orchestrateur.
+ *
+ *  Marchait par CLASSES CSS (`rounded-2xl`, `text-sm`, `text-ink`) : le design
+ *  system a bougé et l'aide ne reconnaissait plus rien, faisant échouer le test
+ *  sur « aucun orchestrateur avec un worker » alors que la page en montrait
+ *  plusieurs. Elle s'appuie désormais sur les ancres de la page. */
 async function cardIdentityForWorker(page: Page, workerName: string): Promise<string | null> {
   return page.evaluate((name) => {
-    const allP = Array.from(document.querySelectorAll('p'));
-    const target = allP.find((p) => p.textContent?.trim() === name);
-    if (!target) return null;
-    let card: HTMLElement | null = target;
-    while (card && !card.classList.contains('rounded-2xl')) card = card.parentElement;
+    const row = Array.from(document.querySelectorAll('[data-worker-row]')).find((r) =>
+      Array.from(r.querySelectorAll('p')).some((p) => p.textContent?.trim() === name),
+    );
+    if (!row) return null;
+    const card = row.closest('[data-orchestrator-card]');
     if (!card) return null;
-    const unassignedLabel = Array.from(card.querySelectorAll('p')).find(
-      (p) => p.textContent?.trim() === 'Unassigned',
-    );
-    if (unassignedLabel) return 'Unassigned';
-    const nameP = Array.from(card.querySelectorAll('p')).find(
+    const id = card.getAttribute('data-testid') ?? '';
+    if (id.endsWith('unassigned')) return 'Unassigned';
+    // Le nom de l'orchestrateur vit dans l'en-tête, hors de toute ligne de
+    // worker — c'est ce qui le distingue sans dépendre d'une classe.
+    const enTete = Array.from(card.querySelectorAll('p')).find(
       (p) =>
-        p.className.includes('text-sm') &&
-        p.className.includes('text-ink') &&
-        !p.className.includes('text-ink-3'),
+        !p.closest('[data-worker-row]') &&
+        !/^Orchestrator( · .+)?$/.test(p.textContent?.trim() ?? ''),
     );
-    return nameP?.textContent?.trim() ?? null;
+    return enTete?.textContent?.trim() ?? null;
   }, workerName);
 }
 
-/** Picks the first orchestrator card that has at least one worker, and
- *  returns that orchestrator's name plus its first worker's name. */
+/** Le premier orchestrateur qui a au moins un worker, avec le nom de ce
+ *  worker. Même correction : ancres plutôt que classes. */
 async function firstOrchestratorWithWorker(
   page: Page,
 ): Promise<{ orchestratorName: string; workerName: string } | null> {
   return page.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll('div')).filter((d) =>
-      d.classList.contains('rounded-2xl'),
-    );
-    for (const card of cards) {
-      const nameP = Array.from(card.querySelectorAll('p')).find(
-        (p) =>
-          p.className.includes('text-sm') &&
-          p.className.includes('text-ink') &&
-          !p.className.includes('text-ink-3'),
-      );
-      if (!nameP) continue; // Unassigned card has no name paragraph
-      const rows = Array.from(card.querySelectorAll('div')).filter((d) =>
-        d.className.includes('rounded-[10px]'),
-      );
+    for (const card of Array.from(document.querySelectorAll('[data-orchestrator-card]'))) {
+      const id = card.getAttribute('data-testid') ?? '';
+      if (id.endsWith('unassigned')) continue;
+      const rows = Array.from(card.querySelectorAll('[data-worker-row]'));
       if (rows.length === 0) continue;
-      const workerNameP = Array.from(rows[0]!.querySelectorAll('p')).find((p) =>
-        p.className.includes('text-[12.5px]'),
+      const nomOrch = Array.from(card.querySelectorAll('p')).find(
+        (p) =>
+          !p.closest('[data-worker-row]') &&
+          !/^Orchestrator( · .+)?$/.test(p.textContent?.trim() ?? ''),
       );
-      if (!workerNameP?.textContent) continue;
+      const nomWorker = Array.from(rows[0]!.querySelectorAll('p')).find(
+        (p) =>
+          (p.textContent?.trim() ?? '') !== '' &&
+          !/^Orchestrator( · .+)?$/.test(p.textContent?.trim() ?? ''),
+      );
+      if (!nomOrch?.textContent || !nomWorker?.textContent) continue;
       return {
-        orchestratorName: nameP.textContent?.trim() ?? '',
-        workerName: workerNameP.textContent.trim(),
+        orchestratorName: nomOrch.textContent.trim(),
+        workerName: nomWorker.textContent.trim(),
       };
     }
     return null;
@@ -161,18 +161,31 @@ test.describe('Agents page redesign', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
 
     // ── 1. RENDU ──────────────────────────────────────────────────────────
-    const orchestratorEyebrow = page.getByText('Orchestrator', { exact: true }).first();
-    await expect(orchestratorEyebrow).toBeVisible();
-    const orchestratorCard = orchestratorEyebrow.locator(
-      'xpath=ancestor::div[contains(@class,"rounded-2xl")][1]',
-    );
+    // Une carte d'orchestrateur, désignée par son ANCRE et non par son texte.
+    // Ce test s'accrochait au mot « Orchestrator » puis remontait au premier
+    // ancêtre `.rounded-2xl` : deux prises fragiles, et les deux ont lâché. Le
+    // libellé a gagné un suffixe de moteur (`Orchestrator · codex`), et l'étiquette
+    // apparaît AUSSI sur les workers qui sont eux-mêmes orchestrateurs — donc
+    // l'ancêtre remonté n'était plus la bonne carte, et « Add worker » y était
+    // trouvé trois fois.
+    const orchestratorCard = page.locator('[data-orchestrator-card]').first();
     await expect(orchestratorCard).toBeVisible();
+    const orchestratorEyebrow = orchestratorCard.getByText(/^Orchestrator( · .+)?$/).first();
+    await expect(orchestratorEyebrow).toBeVisible();
 
     const firstWorkerHandle = orchestratorCard.locator('[aria-label="Drag row"]').first();
     await expect(firstWorkerHandle).toBeVisible();
     const firstWorkerRow = firstWorkerHandle.locator('xpath=..');
 
-    await expect(orchestratorCard.getByRole('button', { name: 'Add worker' })).toBeVisible();
+    // Le bouton PROPRE à la carte. `getByRole` en attrapait deux : la carte
+    // contient aussi celui de chaque orchestrateur imbriqué, même libellé.
+    // L'ancre porte l'id de l'orchestrateur, donc elle ne peut désigner que le
+    // sien (EdAddButton `testId`, ajouté pour ça).
+    const cardId = await orchestratorCard.getAttribute('data-testid');
+    const ownAddWorker = orchestratorCard.getByTestId(
+      String(cardId).replace('orchestrator-card-', 'add-worker-'),
+    );
+    await expect(ownAddWorker).toBeVisible();
     await expect(page.getByText('Unassigned', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'New orchestrator' })).toBeVisible();
 

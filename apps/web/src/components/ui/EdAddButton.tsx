@@ -11,6 +11,16 @@ type Props = {
   hint?: ReactNode;
   size?: Size;
   className?: string;
+  /**
+   * Ancre de test, posée sur l'élément rendu.
+   *
+   * Existe parce qu'un même écran porte plusieurs de ces boutons avec le MÊME
+   * libellé — la page Agents en a trois « Add worker », dont un dans chaque
+   * orchestrateur imbriqué. Un parcours e2e qui vise le rôle et le nom en
+   * attrape alors deux et Playwright refuse. Sans ancre, le seul recours est
+   * une position dans le DOM, qui casse au premier réagencement.
+   */
+  testId?: string;
 };
 
 const PLUS_SIZE: Record<Size, number> = { md: 14, sm: 11, lg: 14 };
@@ -36,6 +46,7 @@ export default function EdAddButton({
   hint,
   size = 'md',
   className = '',
+  testId,
 }: Props) {
   const icon = (
     <svg
@@ -63,13 +74,13 @@ export default function EdAddButton({
     );
     if (href) {
       return (
-        <a href={href} className={classes}>
+        <a href={href} className={classes} data-testid={testId}>
           {content}
         </a>
       );
     }
     return (
-      <button type="button" onClick={onClick} className={classes}>
+      <button type="button" onClick={onClick} className={classes} data-testid={testId}>
         {content}
       </button>
     );
@@ -83,14 +94,14 @@ export default function EdAddButton({
 
   if (href) {
     return (
-      <a href={href} className={classes}>
+      <a href={href} className={classes} data-testid={testId}>
         {icon}
         {children}
       </a>
     );
   }
   return (
-    <button type="button" onClick={onClick} className={classes}>
+    <button type="button" onClick={onClick} className={classes} data-testid={testId}>
       {icon}
       {children}
     </button>

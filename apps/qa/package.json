@@ -8,6 +8,10 @@
     "collect": "node collect.mjs",
     "build": "node collect.mjs && node build.mjs",
     "render": "node build.mjs",
-    "serve": "node serve.mjs"
+    "serve": "node serve.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.6"
   }
 }

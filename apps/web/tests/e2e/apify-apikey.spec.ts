@@ -39,7 +39,7 @@ test.describe('Apify api_key connector smoke test', () => {
       if (!(await activeSectionEl.isVisible().catch(() => false))) return;
 
       const instanceCard = activeSectionEl
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
         .first();
 
@@ -70,7 +70,7 @@ test.describe('Apify api_key connector smoke test', () => {
     await expect(marketplaceSection).toBeVisible({ timeout: 10_000 });
 
     const marketplaceCard = marketplaceSection
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
 
     await expect(marketplaceCard).toBeVisible({ timeout: 10_000 });
@@ -119,7 +119,7 @@ test.describe('Apify api_key connector smoke test', () => {
       has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
     });
     const instanceCard = activeSectionLoc
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: INSTANCE_NAME, level: 3, exact: true }) })
       .first();
 

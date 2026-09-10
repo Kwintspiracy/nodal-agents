@@ -53,7 +53,7 @@ test.describe('Connector multi-instance', () => {
 
       // Use exact: true + first() to avoid strict-mode errors when multiple instances exist.
       const instanceCard = activeSectionEl
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
         .first();
 
@@ -89,7 +89,7 @@ test.describe('Connector multi-instance', () => {
 
     // Within Marketplace, pick the card whose h3 is exactly "Tavily".
     const marketplaceCard = marketplaceSection
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
 
     await expect(marketplaceCard).toBeVisible({ timeout: 10_000 });
@@ -127,7 +127,7 @@ test.describe('Connector multi-instance', () => {
       has: page.getByRole('heading', { name: 'Marketplace', level: 2 }),
     });
     const marketplaceCardB = marketplaceSectionB
-      .locator('.rounded-xl')
+      .locator('[data-marketplace-card]')
       .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
 
     await expect(marketplaceCardB).toBeVisible({ timeout: 10_000 });
@@ -174,7 +174,7 @@ test.describe('Connector multi-instance', () => {
         has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
       });
       const card = sectionLoc
-        .locator('.rounded-xl')
+        .locator('[data-marketplace-card]')
         .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
         .first();
 
