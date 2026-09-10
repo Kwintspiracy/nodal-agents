@@ -193,6 +193,50 @@ export function parcoursDunWorkflow(texte, tousLesParcours) {
   return { nommes: [...new Set(nommes)], balaye: true, exclus: [...exclus], joues };
 }
 
+/**
+ * Les cartes du tableau, à partir de ce que GitHub a répondu.
+ *
+ * Rend `null` — et non une liste vide — dès qu'une des deux requêtes n'a PAS
+ * abouti. La distinction est tout l'objet de cette fonction : « personne n'a
+ * rien ouvert » et « je n'ai pas pu demander » se ressemblent à l'écran et ne
+ * veulent pas dire la même chose.
+ *
+ * Le collecteur écrivait `?? []`. Dans la mesure nocturne, où `gh` tourne sans
+ * jeton, les deux requêtes échouent : le portail publiait chaque nuit un Kanban
+ * VIDE par-dessus le vrai, sans un mot. C'est exactement le défaut qu'il dénonce
+ * partout ailleurs — rendre une absence comme un zéro — commis chez lui.
+ */
+export function cartesDuTableau({ issues, pr } = {}) {
+  if (!Array.isArray(issues) || !Array.isArray(pr)) return null;
+
+  const cartes = [
+    ...issues.map((i) => ({
+      type: 'issue',
+      numero: i.number,
+      titre: i.title,
+      etat: i.state,
+      url: i.url,
+      etiquettes: (i.labels ?? []).map((l) => l.name),
+      majLe: i.updatedAt ?? null,
+      creeLe: i.createdAt ?? null,
+    })),
+    ...pr.map((p) => ({
+      type: 'pr',
+      numero: p.number,
+      titre: p.title,
+      etat: p.mergedAt ? 'MERGED' : p.state,
+      url: p.url,
+      brouillon: p.isDraft ?? false,
+      etiquettes: [],
+      majLe: p.updatedAt ?? null,
+      creeLe: p.createdAt ?? null,
+      ci: etatCi(p.statusCheckRollup),
+    })),
+  ];
+
+  return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
 // ─── La gravité ───────────────────────────────────────────────────────────────
 //
 // Vingt-et-un parcours rouges affichés à l'identique, c'est du bruit — et le
@@ -260,7 +304,12 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     });
   }
 
-  const frais = (mem?.listeCasses ?? []).filter(
+  // `regressions` et non `listeCasses` : un test qui passait et qui tombe a un
+  // historique `vr`, donc le verdict « instable » — il sortait de la liste des
+  // cassés, et la seule vraie régression que ce lot devait attraper échappait à
+  // l'alerte. Elle n'y serait entrée qu'une fois devenue « cassée », avec une
+  // date déjà trop vieille pour être signalée (revue Codex du 11/09).
+  const frais = (mem?.regressions ?? []).filter(
     (e) => e.rougeDepuis && maintenant - Date.parse(e.rougeDepuis) < JEUNE_MS,
   );
   if (frais.length > 0) {
@@ -465,6 +514,23 @@ export function instabiliteDe(enr) {
   return { verdict, tauxEchec, fenetre: utiles.length, rouges, verts };
 }
 
+/**
+ * Les tests qui sont rouges MAINTENANT et dont on a vu la bascule.
+ *
+ * Indépendant du verdict d'instabilité, et c'est tout l'objet : un test qui
+ * passait hier et tombe aujourd'hui a un historique `vr`, donc il est
+ * « instable » au sens de la fenêtre. Le chercher parmi les seuls « cassés »
+ * revenait à ne le voir qu'une fois cassé pour de bon — trop tard, et avec une
+ * date de bascule devenue trop ancienne pour alerter qui que ce soit.
+ *
+ * Deux conditions, et les deux comptent : le dernier tour est rouge (le
+ * problème est ACTUEL), et `rougeDepuis` est posé (la bascule a été OBSERVÉE,
+ * on ne date pas un rouge qu'on n'a jamais vu vert).
+ */
+export function regressionsFraiches(enregistrements) {
+  return (enregistrements ?? []).filter((e) => dernierSort(e) === 'rouge' && e.rougeDepuis);
+}
+
 /** Le sort du dernier tour connu, lu dans la fenêtre. */
 export function dernierSort(enr) {
   const recents = String(enr?.recents ?? '');
@@ -591,26 +657,30 @@ export function fautesDuRegistre({ capacites, preuves } = {}) {
  *
  * Deux sources qui ne disent pas la même chose :
  *   - `declarees` vient d'un scan des titres. Elle vaut pour tout le dépôt,
- *     tests unitaires compris, mais ne sait pas si le test passe ;
- *   - `e2e` vient d'un vrai rapport d'exécution. Elle sait, mais seulement pour
- *     les parcours qui ont tourné.
+ *     mais ne sait pas si le test passe ;
+ *   - `joues` vient de vrais rapports d'exécution. Elle sait, pour ce qui a
+ *     tourné.
+ *
+ * `joues` est une liste PLATE, parcours et tests unitaires mélangés. La première
+ * version ne prenait que les rapports Playwright : les capacités tenues
+ * uniquement par de l'unitaire — choisir un modèle, attacher une skill, voir le
+ * coût — seraient restées « non jouée » à jamais, et une preuve unitaire rouge
+ * n'aurait jamais rougi sa capacité (revue Codex du 11/09).
  *
  * Quand les deux parlent du même couple (fichier, capacité), l'exécution
  * l'emporte et la déclaration disparaît : la garder ferait compter deux fois la
  * même preuve, dont une sans résultat, et une capacité verte s'afficherait
  * éternellement « non jouée » à côté d'elle-même.
  */
-export function croiserPreuves({ declarees, e2e } = {}) {
+export function croiserPreuves({ declarees, joues } = {}) {
   const jouees = [];
   const remplaces = new Set();
-  for (const p of e2e ?? []) {
-    for (const c of p.resultat?.cas ?? []) {
-      for (const slug of capacitesDunTitre(c.titreComplet ?? c.titre)) {
-        // Un cas par preuve, jamais un fichier : quand une capacité tombe, la
-        // seule information utile est QUEL test exact l'a lâchée.
-        jouees.push({ capacite: slug, origine: p.fichier, titre: c.titre, sort: c.sort });
-        remplaces.add(`${p.fichier}::${slug}`);
-      }
+  for (const c of joues ?? []) {
+    for (const slug of capacitesDunTitre(c.titreComplet ?? c.titre)) {
+      // Un cas par preuve, jamais un fichier : quand une capacité tombe, la
+      // seule information utile est QUEL test exact l'a lâchée.
+      jouees.push({ capacite: slug, origine: c.fichier, titre: c.titre, sort: c.sort });
+      remplaces.add(`${c.fichier}::${slug}`);
     }
   }
   const restantes = (declarees ?? []).filter((d) => !remplaces.has(`${d.origine}::${d.capacite}`));

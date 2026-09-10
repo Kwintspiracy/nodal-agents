@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
   etatCi,
   colonneDeCarte,
+  cartesDuTableau,
   sortDuCas,
   compterParcours,
   parcoursDunWorkflow,
@@ -29,6 +30,7 @@ import {
   cleDuTest,
   fusionnerEssais,
   instabiliteDe,
+  regressionsFraiches,
   dernierSort,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -123,6 +125,37 @@ describe('colonneDeCarte — déduite de faits', () => {
     expect(colonneDeCarte({ type: 'issue', etat: 'CLOSED', etiquettes: ['décision'] })).toBe(
       'Fait',
     );
+  });
+});
+
+describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vide', () => {
+  // Revue Codex du 11/09, P2. Dans la mesure nocturne, `collect.mjs` appelle
+  // `gh` sans jeton : les deux requêtes échouent, `?? []` les changeait en
+  // listes vides, et le portail publiait chaque nuit un Kanban VIDE par-dessus
+  // le vrai. C'est le défaut que ce portail dénonce partout ailleurs — rendre
+  // une absence comme un zéro — commis dans son propre collecteur.
+  const ISSUE = { number: 1, title: 'a', state: 'OPEN', labels: [], url: 'u' };
+  const PR = { number: 2, title: 'b', state: 'OPEN', url: 'v' };
+
+  it('rend null quand les issues n’ont pas pu être lues', () => {
+    expect(cartesDuTableau({ issues: null, pr: [PR] })).toBeNull();
+  });
+
+  it('rend null quand les PR n’ont pas pu être lues', () => {
+    expect(cartesDuTableau({ issues: [ISSUE], pr: null })).toBeNull();
+  });
+
+  it('un tableau réellement VIDE reste un tableau vide, pas une absence', () => {
+    // La distinction utile : « personne n'a rien ouvert » et « je n'ai pas pu
+    // demander » se ressemblent et ne veulent pas dire la même chose.
+    expect(cartesDuTableau({ issues: [], pr: [] })).toEqual([]);
+  });
+
+  it('mélange issues et PR, chacune avec sa colonne', () => {
+    const c = cartesDuTableau({ issues: [ISSUE], pr: [{ ...PR, state: 'MERGED' }] });
+    expect(c).toHaveLength(2);
+    expect(c.find((x) => x.type === 'issue').colonne).toBe('En cours');
+    expect(c.find((x) => x.type === 'pr').colonne).toBe('Fait');
   });
 });
 
@@ -327,7 +360,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     const now = Date.parse('2026-09-10T00:00:00Z');
     const memoire = (jour) => ({
       instables: 0,
-      listeCasses: [{ cle: 'a::b', titre: 'un test', rougeDepuis: jour }],
+      regressions: [{ cle: 'a::b', titre: 'un test', rougeDepuis: jour }],
     });
 
     const frais = ecartsDe(SNAP({ memoire: memoire('2026-09-09T12:00:00Z') }), [{}, {}], now);
@@ -339,11 +372,37 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     expect(vieux.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
   });
 
+  it('une RÉGRESSION FRAÎCHE est vue même quand l’historique la dit instable', () => {
+    // Revue Codex du 11/09, P2. Un test qui passait et qui tombe a un historique
+    // `vr` : `instabiliteDe` le classe « instable », donc il sortait de
+    // `listeCasses` — et `ecartsDe` ne cherchait les rouges frais QUE là. La
+    // seule vraie régression que ce lot devait attraper lui échappait, et elle
+    // n'apparaissait qu'une fois devenue « cassée », c'est-à-dire trop tard,
+    // avec une date déjà trop vieille pour être signalée.
+    const now = Date.parse('2026-09-11T00:00:00Z');
+    const e = ecartsDe(
+      SNAP({
+        memoire: {
+          instables: 1,
+          listeCasses: [],
+          regressions: [
+            { cle: 'a::b', titre: 'un test qui passait hier', rougeDepuis: '2026-09-10T20:00:00Z' },
+          ],
+        },
+      }),
+      [{}, {}],
+      now,
+    );
+    const alerte = e.find((x) => /rouge dans les deux derniers/.test(x.titre));
+    expect(alerte?.gravite).toBe('haute');
+    expect(alerte?.quoi).toEqual(['un test qui passait hier']);
+  });
+
   it('un cassé SANS date connue ne passe pas pour frais', () => {
     // `Date.parse(null)` rend NaN, et toute comparaison avec NaN est fausse —
     // mais compter sur ça serait un accident. La garde est explicite.
     const e = ecartsDe(
-      SNAP({ memoire: { instables: 0, listeCasses: [{ cle: 'a::b', rougeDepuis: null }] } }),
+      SNAP({ memoire: { instables: 0, regressions: [{ cle: 'a::b', rougeDepuis: null }] } }),
       [{}, {}],
     );
     expect(e.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
@@ -565,6 +624,34 @@ describe('fusionnerEssais — ce qui n’a pas tourné ne bouge pas', () => {
   it('sans argument, elle ne s’effondre pas', () => {
     expect(fusionnerEssais()).toEqual([]);
     expect(fusionnerEssais([], [])).toEqual([]);
+  });
+});
+
+describe('regressionsFraiches — indépendantes du verdict d’instabilité', () => {
+  it('prend un test qui passait et qui tombe, que l’historique dit « instable »', () => {
+    const r = regressionsFraiches([
+      { cle: 'a::b', recents: 'vvvr', rougeDepuis: '2026-09-10T20:00:00Z' },
+    ]);
+    expect(r).toHaveLength(1);
+  });
+
+  it('laisse un test REDEVENU vert', () => {
+    // Le dernier tour est ce qui compte : un problème réparé n'est plus un
+    // problème, même si sa bascule est encore datée dans la fenêtre.
+    expect(
+      regressionsFraiches([{ recents: 'vrv', rougeDepuis: '2026-09-10T20:00:00Z' }]),
+    ).toHaveLength(0);
+  });
+
+  it('laisse un rouge dont la bascule n’a JAMAIS été vue', () => {
+    // Sans `rougeDepuis`, on ne sait pas quand il a cassé — l'annoncer comme
+    // frais reviendrait à dater le jour où on a commencé à regarder.
+    expect(regressionsFraiches([{ recents: 'rrr', rougeDepuis: null }])).toHaveLength(0);
+  });
+
+  it('ne s’effondre pas sur rien', () => {
+    expect(regressionsFraiches()).toEqual([]);
+    expect(regressionsFraiches([])).toEqual([]);
   });
 });
 
@@ -828,23 +915,21 @@ describe('regrouperParCapacite — l’ordre du registre est l’écran', () => 
 });
 
 describe('croiserPreuves — l’exécution l’emporte sur la déclaration', () => {
-  const E2E = [
+  // La liste est PLATE : parcours et suites unitaires y arrivent sous la même
+  // forme, et c'est ce qui garantit qu'une capacité ne peut pas ignorer une
+  // source de preuves que la mémoire, elle, compterait.
+  const JOUES = [
     {
       fichier: 'apps/web/tests/e2e/smoke.spec.ts',
-      resultat: {
-        cas: [
-          {
-            titre: 'ouvre le tableau de bord',
-            titreComplet: `nav ${E}:installer-et-demarrer ouvre le tableau de bord`,
-            sort: 'vert',
-          },
-          {
-            titre: 'liste les sections',
-            titreComplet: `nav ${E}:installer-et-demarrer liste les sections`,
-            sort: 'rouge',
-          },
-        ],
-      },
+      titre: 'ouvre le tableau de bord',
+      titreComplet: `nav ${E}:installer-et-demarrer ouvre le tableau de bord`,
+      sort: 'vert',
+    },
+    {
+      fichier: 'apps/web/tests/e2e/smoke.spec.ts',
+      titre: 'liste les sections',
+      titreComplet: `nav ${E}:installer-et-demarrer liste les sections`,
+      sort: 'rouge',
     },
   ];
 
@@ -852,7 +937,7 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
     // C'est la façon la moins verbeuse d'étiqueter : une ligne pour tout un
     // bloc. Ne lire que le titre du cas obligerait à répéter l'étiquette
     // partout, et personne ne le ferait.
-    const p = croiserPreuves({ declarees: [], e2e: E2E });
+    const p = croiserPreuves({ declarees: [], joues: JOUES });
     expect(p).toHaveLength(2);
     expect(p.every((x) => x.capacite === 'installer-et-demarrer')).toBe(true);
     expect(p.map((x) => x.sort)).toEqual(['vert', 'rouge']);
@@ -861,7 +946,7 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
   it('un cas par preuve — pas un fichier', () => {
     // Quand une capacité tombe, la seule information utile est QUEL test exact
     // l'a lâchée. Agréger par fichier la perdrait.
-    const p = croiserPreuves({ declarees: [], e2e: E2E });
+    const p = croiserPreuves({ declarees: [], joues: JOUES });
     expect(p.map((x) => x.titre)).toEqual(['ouvre le tableau de bord', 'liste les sections']);
   });
 
@@ -872,7 +957,7 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
       declarees: [
         { capacite: 'installer-et-demarrer', origine: 'apps/web/tests/e2e/smoke.spec.ts' },
       ],
-      e2e: E2E,
+      joues: JOUES,
     });
     expect(p).toHaveLength(2);
     expect(p.every((x) => x.sort)).toBe(true);
@@ -881,12 +966,31 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
   it('une déclaration que rien n’a jouée SURVIT — c’est une preuve qui dort', () => {
     const p = croiserPreuves({
       declarees: [{ capacite: 'approuver-une-action', origine: 'packages/tools/x.test.ts' }],
-      e2e: E2E,
+      joues: JOUES,
     });
     expect(p).toHaveLength(3);
     expect(etatDuneCapacite(p.filter((x) => x.capacite === 'approuver-une-action'))).toBe(
       'non jouée',
     );
+  });
+
+  it('un test UNITAIRE joué prouve sa capacité, et son échec la casse', () => {
+    // Revue Codex du 11/09, P2. Seuls les résultats Playwright entraient ici,
+    // alors que la mesure nocturne collecte aussi les rapports Vitest. Les
+    // capacités tenues UNIQUEMENT par de l'unitaire — choisir un modèle,
+    // attacher une skill, voir le coût — seraient restées « non jouée » à
+    // jamais, et une preuve unitaire rouge n'aurait jamais rougi sa capacité.
+    const p = croiserPreuves({
+      declarees: [{ capacite: 'choisir-modele', origine: 'packages/llm/src/tests/client.test.ts' }],
+      joues: [
+        {
+          fichier: 'packages/llm/src/tests/client.test.ts',
+          titre: `createLlmClient ${E}:choisir-modele résout le fournisseur`,
+          sort: 'rouge',
+        },
+      ],
+    });
+    expect(etatDuneCapacite(p.filter((x) => x.capacite === 'choisir-modele'))).toBe('rouge');
   });
 
   it('un parcours joué SANS étiquette ne prouve rien', () => {

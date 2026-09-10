@@ -19,6 +19,14 @@ on:
 
 permissions:
   contents: write
+  # `alerte.mjs --appliquer` ouvre, met à jour et ferme SON billet. Sans cette
+  # ligne le jeton n'a pas le droit d'écrire une issue : chaque tentative aurait
+  # échoué, et le `|| true` de l'étape l'aurait masquée — une alerte qui ne part
+  # jamais et personne pour le dire (revue Codex du 11/09).
+  issues: write
+  # `collect.mjs` interroge `gh` pour le tableau. En lecture seule, mais il lui
+  # faut le droit de demander.
+  pull-requests: read
 
 concurrency:
   group: qa-mesure
@@ -155,7 +163,13 @@ jobs:
             console.log('verts',s.expected,'rouges',s.unexpected,'ignores',s.skipped);
           "
 
+      # `GH_TOKEN` est indispensable ICI : sur un runner neuf, `gh` n'est
+      # authentifié nulle part. Sans lui les deux requêtes de `chantiers()`
+      # échouaient, et le portail publiait un tableau marqué ABSENT chaque nuit —
+      # mieux qu'un Kanban vide, mais toujours pas le vrai (revue Codex 11/09).
       - name: Collecter
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node apps/qa/collect.mjs
 
       # L'historique doit SURVIVRE au runner : c'est la seule donnée de ce

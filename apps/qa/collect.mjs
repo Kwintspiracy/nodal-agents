@@ -23,8 +23,7 @@ import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import {
-  etatCi,
-  colonneDeCarte,
+  cartesDuTableau,
   sortDuCas,
   compterParcours,
   parcoursDunWorkflow,
@@ -35,6 +34,7 @@ import {
   fautesDuRegistre,
   fusionnerEssais,
   instabiliteDe,
+  regressionsFraiches,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -297,43 +297,29 @@ function parcours(fichiers, workflows) {
 function chantiers() {
   const j = (cmd) => {
     const out = sh(cmd);
+    if (!out) return null;
     try {
       return JSON.parse(out);
     } catch {
       return null;
     }
   };
-  const issues =
-    j(
-      'gh issue list --state all --limit 200 --json number,title,state,labels,createdAt,updatedAt,url',
-    ) ?? [];
-  const pr =
-    j(
-      'gh pr list --state all --limit 50 --json number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup',
-    ) ?? [];
+  const issues = j(
+    'gh issue list --state all --limit 200 --json number,title,state,labels,createdAt,updatedAt,url',
+  );
+  const pr = j(
+    'gh pr list --state all --limit 50 --json number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup',
+  );
 
-  const cartes = [
-    ...issues.map((i) => ({
-      type: 'issue',
-      numero: i.number,
-      titre: i.title,
-      etat: i.state,
-      url: i.url,
-      etiquettes: (i.labels ?? []).map((l) => l.name),
-      majLe: i.updatedAt ?? null,
-    })),
-    ...pr.map((p) => ({
-      type: 'pr',
-      numero: p.number,
-      titre: p.title,
-      etat: p.state,
-      url: p.url,
-      brouillon: p.isDraft === true,
-      etiquettes: [],
-      majLe: p.mergedAt ?? p.updatedAt ?? null,
-      ci: etatCi(p.statusCheckRollup),
-    })),
-  ].map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+  // `null` et non `[]` quand une requête n'a pas abouti. Le collecteur écrivait
+  // `?? []` : dans la mesure nocturne, où `gh` tournait sans jeton, les deux
+  // requêtes échouaient et le portail publiait chaque nuit un Kanban VIDE
+  // par-dessus le vrai, sans un mot (revue Codex du 11/09).
+  const cartes = cartesDuTableau({ issues, pr });
+  if (!cartes) {
+    console.warn('[qa] GitHub sans réponse — le tableau est marqué ABSENT, pas vide.');
+    return null;
+  }
 
   return { issues, pr, cartes };
 }
@@ -344,12 +330,15 @@ function chantiers() {
 // 78 % » ne dit rien à personne ; « est-ce qu'un utilisateur peut connecter
 // Notion, et qu'est-ce qui le prouve » est la question qu'on se pose vraiment.
 
-function capacites(fichiers, e2e) {
+function capacites(fichiers, joues) {
   // Ce que le dépôt REVENDIQUE : un scan textuel des titres, qui vaut pour les
   // tests unitaires comme pour les parcours.
   const declarees = revendicationsDuDepot(fichiers, (f) => readFileSync(join(RACINE, f), 'utf8'));
 
-  const preuves = croiserPreuves({ declarees, e2e });
+  // `joues` porte les parcours ET les suites unitaires. Ne passer que les
+  // premiers laissait « choisir un modèle » ou « voir le coût » éternellement
+  // non jouées, alors que leurs tests tournent chaque nuit.
+  const preuves = croiserPreuves({ declarees, joues });
 
   return {
     registre: regrouperParCapacite({ capacites: CAPACITES, preuves }),
@@ -408,7 +397,7 @@ function essaisDeLaCollecte(e2e, listePaquets) {
   return essais;
 }
 
-function memoire(e2e, listePaquets, le) {
+function memoire(essais, le) {
   const chemin = join(DATA, 'tests.ndjson');
   const existants = existsSync(chemin)
     ? readFileSync(chemin, 'utf8')
@@ -424,7 +413,6 @@ function memoire(e2e, listePaquets, le) {
         .filter(Boolean)
     : [];
 
-  const essais = essaisDeLaCollecte(e2e, listePaquets);
   const fusionnes = fusionnerEssais(existants, essais, { le });
 
   // Une ligne par test, triée : le diff nocturne reste lisible à l'œil.
@@ -442,6 +430,12 @@ function memoire(e2e, listePaquets, le) {
       .filter((e) => e.verdict === 'instable')
       .sort((a, b) => b.tauxEchec - a.tauxEchec)
       .slice(0, 20),
+    // Ce qui est rouge MAINTENANT et dont la bascule a été vue — quel que soit
+    // le verdict d'instabilité. Un test qui passait hier a un historique `vr`,
+    // donc « instable » : le chercher parmi les cassés le laissait passer.
+    regressions: regressionsFraiches(avecVerdict).sort((a, b) =>
+      String(b.rougeDepuis ?? '').localeCompare(String(a.rougeDepuis ?? '')),
+    ),
     // Les cassés, du plus ancien au plus récent : l'âge d'un rouge dit s'il
     // s'agit d'une régression de la nuit ou d'une dette qu'on a appris à ne
     // plus voir.
@@ -466,9 +460,14 @@ function main() {
     .map((f) => f.split('/').pop());
   const workflows = ci(fichiers, nomsParcours);
   const e2e = parcours(fichiers, workflows);
-  const cap = capacites(fichiers, e2e);
+  // Une seule liste d'essais, calculée une fois : la mémoire test-par-test et
+  // l'évaluation des capacités regardent EXACTEMENT les mêmes résultats. Deux
+  // chemins séparés, c'était la porte ouverte à ce qu'une capacité ignore une
+  // suite que la mémoire, elle, comptait.
+  const essais = essaisDeLaCollecte(e2e, listePaquets);
+  const cap = capacites(fichiers, essais);
   const genereLe = new Date().toISOString();
-  const mem = memoire(e2e, listePaquets, genereLe);
+  const mem = memoire(essais, genereLe);
 
   const paquetsEnrichis = listePaquets.map((p) => ({
     ...p,

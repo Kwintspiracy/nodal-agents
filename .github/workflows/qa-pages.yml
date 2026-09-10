@@ -15,11 +15,21 @@ name: Qualité — publier le portail
 # donneraient deux vérités.
 
 on:
+  # La mesure nocturne, une fois terminée. C'est le déclencheur PRINCIPAL, et il
+  # a fallu une revue pour s'en apercevoir : `qa.yml` committe ses données avec
+  # `GITHUB_TOKEN`, or un push fait avec ce jeton ne déclenche AUCUN autre
+  # workflow — et son message porte en plus `[skip ci]`. Le `push:` ci-dessous
+  # ne se serait donc jamais déclenché après une mesure : chaque nuit aurait
+  # mesuré pour rien, et le portail en ligne serait resté figé à jamais
+  # (revue Codex du 11/09).
+  workflow_run:
+    workflows: ['Qualité — mesure complète']
+    types: [completed]
   push:
     branches: [main]
     paths:
-      # Le code du portail, et les données qu'il rend — donc après chaque
-      # mesure nocturne, qui committe `apps/qa/data/`.
+      # Le code du portail poussé à la main — le rendu change alors sans qu'une
+      # mesure ait eu lieu.
       - 'apps/qa/**'
   workflow_dispatch:
 
@@ -34,8 +44,19 @@ jobs:
   publier:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Publier ce qu'une mesure RATÉE a laissé derrière elle donnerait un portail
+    # à moitié écrit, présenté comme l'état du jour.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v5
+        with:
+          # `workflow_run` part du SHA qui a déclenché la mesure, pas du commit
+          # de données qu'elle vient de pousser. Sans ce `ref`, on publierait
+          # l'état d'AVANT la mesure — le bug qu'on vient de corriger, remis en
+          # place un cran plus loin.
+          ref: main
 
       - uses: pnpm/action-setup@v4
 

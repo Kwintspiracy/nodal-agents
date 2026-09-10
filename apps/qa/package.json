@@ -3,10 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Le portail qualité — ce que le dépôt sait de ses propres tests, et ce qu'il ne sait pas.",
+  "description": "Le portail qualité — ce que le dépôt sait de ses propres tests, et ce qu'il ne sait pas. `build` REND seulement ; `mesurer` collecte, et c'est un geste explicite : un `pnpm build` du workspace relançait le collecteur, qui relisait un vieux rapport et le comptait comme une nouvelle exécution.",
   "scripts": {
     "collect": "node collect.mjs",
-    "build": "node collect.mjs && node build.mjs",
+    "build": "node build.mjs",
+    "mesurer": "node collect.mjs && node build.mjs",
     "render": "node build.mjs",
     "serve": "node serve.mjs",
     "porte": "node porte.mjs",
