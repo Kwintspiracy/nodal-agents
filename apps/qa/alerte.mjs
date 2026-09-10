@@ -59,13 +59,43 @@ export function corpsDeLalerte(liste, meta = {}) {
   return [...entete, ...corps].join('\n\n').trim();
 }
 
+/**
+ * Le billet d'alerte parmi ceux que GitHub a rendus — au titre EXACT.
+ *
+ * Le titre exact et rien d'autre : la recherche GitHub est approximative et
+ * rendrait aussi « Portail : ce qui est rouge — suite », qu'un humain aurait pu
+ * ouvrir à côté. Éditer celui-là reviendrait à écraser le travail de quelqu'un.
+ */
+export function trouverLeBillet(liste, titre) {
+  return (liste ?? []).find((i) => i.title === titre) ?? null;
+}
+
 const gh = (args) =>
   execFileSync('gh', args, { cwd: RACINE, encoding: 'utf8', maxBuffer: 32e6 }).trim();
 
+/**
+ * Le billet ouvert, cherché PAR SON TITRE côté serveur.
+ *
+ * La première version listait les cinquante issues ouvertes les plus récentes et
+ * cherchait dedans. Passé ce seuil, le billet existant sortait du lot : une
+ * mesure rouge en aurait ouvert un DEUXIÈME, et une mesure propre n'aurait
+ * jamais pu fermer le premier — le portail se serait mis à empiler des doublons
+ * exactement comme le robot qu'il ne veut pas être (revue Codex du 11/09).
+ */
 function issueOuverte() {
-  const brut = gh(['issue', 'list', '--state', 'open', '--limit', '50', '--json', 'number,title']);
-  const liste = JSON.parse(brut || '[]');
-  return liste.find((i) => i.title === TITRE) ?? null;
+  const brut = gh([
+    'issue',
+    'list',
+    '--state',
+    'open',
+    '--search',
+    `in:title "${TITRE}"`,
+    '--limit',
+    '50',
+    '--json',
+    'number,title',
+  ]);
+  return trouverLeBillet(JSON.parse(brut || '[]'), TITRE);
 }
 
 function main(appliquer) {

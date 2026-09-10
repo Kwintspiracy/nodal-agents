@@ -42,6 +42,13 @@ jobs:
           # Le job réécrit `apps/qa/data/` et pousse : il lui faut l'historique
           # git, pas un checkout superficiel.
           fetch-depth: 0
+          # ET il lui faut MAIN, quelle que soit la branche d'où part le
+          # déclenchement manuel. Sans cette ligne, un `workflow_dispatch` lancé
+          # depuis une branche mesurait cette branche puis poussait `HEAD:main` :
+          # tout son code partait sur main, pas seulement les données de mesure,
+          # sans revue et sans que les portes aient à passer. La mesure décrit
+          # main ; elle n'est pas un chemin pour y arriver (revue Codex 11/09).
+          ref: main
 
       - uses: pnpm/action-setup@v4
 
@@ -175,17 +182,48 @@ jobs:
       # L'historique doit SURVIVRE au runner : c'est la seule donnée de ce
       # workflow qui ne se recalcule pas. `[skip ci]` évite qu'un push de
       # données ne relance la CI en boucle.
+      # Un merge ordinaire pendant l'heure de mesure faisait avancer main, et ce
+      # push partait alors en non-fast-forward : la mesure mourait avec le
+      # runner, l'alerte et l'artefact étaient sautés, et la publication refusait
+      # un run en échec. Le groupe de concurrence ne sérialise que les mesures
+      # entre elles, pas les merges des humains (revue Codex 11/09).
+      #
+      # On rejoue donc le commit de DONNÉES sur le main le plus récent, trois
+      # fois au plus. Seul `apps/qa/data/` est réécrit, et personne d'autre n'y
+      # touche : reposer les fichiers sur un main frais est sans ambiguïté.
       - name: Enregistrer la mesure
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/qa/data
-          if git diff --cached --quiet; then
+
+          if git diff --quiet -- apps/qa/data; then
             echo "rien de neuf à enregistrer"
-          else
-            git commit -m "chore(qa): mesure du $(date -u +%Y-%m-%d) [skip ci]"
-            git push origin HEAD:main
+            exit 0
           fi
+
+          mkdir -p "$RUNNER_TEMP/mesure"
+          cp -r apps/qa/data/. "$RUNNER_TEMP/mesure/"
+
+          for essai in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p apps/qa/data
+            cp -r "$RUNNER_TEMP/mesure/." apps/qa/data/
+            git add apps/qa/data
+            if git diff --cached --quiet; then
+              echo "main porte déjà cette mesure"
+              exit 0
+            fi
+            git commit -m "chore(qa): mesure du $(date -u +%Y-%m-%d) [skip ci]"
+            if git push origin HEAD:main; then
+              echo "mesure enregistrée (essai $essai)"
+              exit 0
+            fi
+            echo "main a bougé pendant la mesure — on rejoue (essai $essai)"
+          done
+
+          echo "::error::trois tentatives, main bouge trop vite : la mesure n'a pas pu être enregistrée"
+          exit 1
 
       # Un tableau qu'il faut penser à ouvrir n'existe pas. Ce geste est le seul
       # qui manquait : quand quelque chose est rouge, le portail ouvre l'issue

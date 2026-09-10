@@ -11,7 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe } from './lib.mjs';
+import { ecartsDe, verdictDuBanc } from './lib.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const DATA = join(ICI, 'data');
@@ -227,6 +227,30 @@ function vueBanc() {
       ? ''
       : `<div class="alerte"><b>Aucun workflow ne le lance.</b> Le banc peut détecter une régression et le dire ; il reste muet tant que rien ne l'exécute.</div>`
   }
+  ${(() => {
+    // Le verdict du DERNIER passage, et pas seulement les baselines acceptées.
+    // Le banc détectait les régressions, les écrivait, et personne ne les lisait
+    // — la vue ne montrait que ce qui avait été validé un jour.
+    const v = verdictDuBanc(s.banc?.dernierRun);
+    if (v.absent) {
+      return `<div class="alerte"><b>Aucun passage enregistré.</b> Les valeurs ci-dessous sont les baselines ACCEPTÉES, pas une mesure du jour. Absent n'est pas « rien n'a bougé ».</div>`;
+    }
+    if (v.regressions.length === 0 && v.erreurs.length === 0) {
+      return `<p class="note-section">Dernier passage le ${esc(dateFr(v.mesureLe))} — aucune régression, aucune section en panne.</p>`;
+    }
+    const bouts = [];
+    if (v.regressions.length > 0) {
+      bouts.push(
+        `<b>${v.regressions.length} section(s) ont régressé :</b> ${v.regressions.map(esc).join(', ')}`,
+      );
+    }
+    if (v.erreurs.length > 0) {
+      bouts.push(
+        `<b>${v.erreurs.length} section(s) n'ont pas pu tourner :</b> ${v.erreurs.map(esc).join(', ')} — une panne, pas un ralentissement`,
+      );
+    }
+    return `<div class="alerte">${bouts.join('<br>')}<br><span class="dim">Passage du ${esc(dateFr(v.mesureLe))}.</span></div>`;
+  })()}
   <div class="grille-banc">
     ${s.banc.sections
       .map(

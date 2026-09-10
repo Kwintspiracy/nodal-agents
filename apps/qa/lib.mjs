@@ -321,6 +321,26 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     });
   }
 
+  // ── Le banc. Il DÉTECTE déjà les régressions et les écrit ; il ne manquait
+  // que quelqu'un pour les lire.
+  const banc = verdictDuBanc(s.banc?.dernierRun);
+  if (banc.regressions.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${banc.regressions.length} section(s) du banc ont RÉGRESSÉ`,
+      detail: `Le banc l'a mesuré et l'a écrit. La mesure nocturne l'ignore volontairement pour ne pas s'interrompre — c'est ici que ça se dit.`,
+      quoi: banc.regressions,
+    });
+  }
+  if (banc.erreurs.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${banc.erreurs.length} section(s) du banc n'ont PAS PU tourner`,
+      detail: `Une panne, pas un ralentissement. Ces sections ne mesurent plus rien, donc elles ne peuvent plus rien garder.`,
+      quoi: banc.erreurs,
+    });
+  }
+
   // ── Le dépôt. Réel, mais jamais au-dessus du produit.
   const nonJoues = (s.parcours ?? []).filter((p) => !p.jouParLaCi);
   if (nonJoues.length > 0) {
@@ -387,6 +407,31 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     .map((e, i) => ({ e, i }))
     .sort((a, b) => RANG[a.e.gravite] - RANG[b.e.gravite] || a.i - b.i)
     .map((x) => x.e);
+}
+
+/**
+ * Ce que le dernier passage du banc a trouvé.
+ *
+ * La mesure nocturne lance le banc avec `|| true` — délibérément, pour
+ * ENREGISTRER une régression plutôt que d'arrêter la mesure — et range son
+ * rapport. Mais personne ne le lisait : le portail n'affichait que les baselines
+ * ACCEPTÉES, si bien qu'une régression de métrique passait la nuit sans un mot,
+ * alors même que le banc l'avait détectée et écrite (revue Codex du 11/09).
+ *
+ * `absent` n'est pas « tout va bien » : c'est le trou de mesure que ce portail
+ * refuse de peindre en vert. Et une section qui n'a PAS PU tourner est rangée à
+ * part d'une section qui a ralenti — les confondre ferait chercher un
+ * ralentissement là où il y a une panne.
+ */
+export function verdictDuBanc(rapport) {
+  if (!rapport?.diffs) return { absent: true, regressions: [], erreurs: [], mesureLe: null };
+  const diffs = rapport.diffs ?? [];
+  return {
+    absent: false,
+    regressions: diffs.filter((d) => d.regressed && !d.error).map((d) => d.label ?? d.sectionId),
+    erreurs: diffs.filter((d) => d.error).map((d) => d.label ?? d.sectionId),
+    mesureLe: rapport.run?.startedAt ?? null,
+  };
 }
 
 /** Ce qui mérite de réveiller quelqu'un. Rien d'autre. */

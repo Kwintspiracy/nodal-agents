@@ -27,6 +27,7 @@ import {
   croiserPreuves,
   ecartsDe,
   alertes,
+  verdictDuBanc,
   cleDuTest,
   fusionnerEssais,
   instabiliteDe,
@@ -35,7 +36,7 @@ import {
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
-import { corpsDeLalerte } from './alerte.mjs';
+import { corpsDeLalerte, trouverLeBillet } from './alerte.mjs';
 
 describe('etatCi — le vert ne s’accorde qu’à ce qui a réussi', () => {
   it('tout en succès ⇒ vert', () => {
@@ -408,6 +409,41 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     expect(e.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
   });
 
+  it('une RÉGRESSION DU BANC remonte en haute', () => {
+    // Ce branchement-là avait échappé à la mutation : `verdictDuBanc` était
+    // testée, mais rien ne prouvait qu'`ecartsDe` la lisait. On pouvait donc
+    // débrancher le banc des écarts sans qu'un seul test rougisse.
+    const e = ecartsDe(
+      SNAP({
+        banc: {
+          dernierRun: {
+            run: { startedAt: '2026-09-11T03:17:00Z' },
+            diffs: [{ sectionId: 'architecture', label: 'Architecture', regressed: true }],
+          },
+        },
+      }),
+      [{}, {}],
+    );
+    const x = e.find((y) => /banc ont RÉGRESSÉ/.test(y.titre));
+    expect(x?.gravite).toBe('haute');
+    expect(x?.quoi).toEqual(['Architecture']);
+  });
+
+  it('une section du banc EN PANNE remonte, distincte d’une régression', () => {
+    const e = ecartsDe(
+      SNAP({ banc: { dernierRun: { diffs: [{ sectionId: 'x', label: 'X', error: 'ENOENT' }] } } }),
+      [{}, {}],
+    );
+    expect(e.find((y) => /n'ont PAS PU tourner/.test(y.titre))?.gravite).toBe('haute');
+    expect(e.some((y) => /banc ont RÉGRESSÉ/.test(y.titre))).toBe(false);
+  });
+
+  it('un banc jamais passé ne crie pas dans les écarts', () => {
+    // Absent se dit à l'écran du banc, pas dans la liste des alertes : sinon
+    // chaque dépôt neuf partirait avec une alerte permanente.
+    expect(ecartsDe(SNAP(), [{}, {}]).some((y) => /banc/.test(y.titre))).toBe(false);
+  });
+
   it('à gravité égale, le PRODUIT est listé avant le dépôt', () => {
     const e = ecartsDe(
       SNAP({
@@ -446,6 +482,71 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     const e = ecartsDe(SNAP(), []);
     expect(e).toHaveLength(1);
     expect(e[0].gravite).toBe('basse');
+  });
+});
+
+describe('verdictDuBanc — une porte qui sort en erreur et que personne ne lit', () => {
+  // Revue Codex du 11/09, P2. La mesure nocturne lance le banc avec `|| true`
+  // — délibérément, pour enregistrer plutôt que d'arrêter — et range son
+  // rapport dans `bench-run.json`. Mais ni l'écran ni `ecartsDe` ne le lisaient :
+  // le portail n'affichait que les baselines ACCEPTÉES. Une régression de
+  // métrique passait donc la nuit sans un mot, alors même que le banc l'avait
+  // détectée et écrite.
+
+  it('rend absent quand aucun rapport n’a été produit', () => {
+    // Absent n'est pas « tout va bien » : c'est le trou de mesure que ce portail
+    // refuse de peindre en vert.
+    expect(verdictDuBanc(null)).toMatchObject({ absent: true, regressions: [], erreurs: [] });
+    expect(verdictDuBanc(undefined).absent).toBe(true);
+  });
+
+  it('nomme les sections qui ont RÉGRESSÉ', () => {
+    const v = verdictDuBanc({
+      run: { startedAt: '2026-09-11T03:17:00Z', gitSha: 'abc' },
+      diffs: [
+        { sectionId: 'architecture', label: 'Architecture', regressed: true, diffs: [] },
+        { sectionId: 'contexte', label: 'Contexte', regressed: false, diffs: [] },
+      ],
+    });
+    expect(v.absent).toBe(false);
+    expect(v.regressions).toEqual(['Architecture']);
+    expect(v.mesureLe).toBe('2026-09-11T03:17:00Z');
+  });
+
+  it('une section qui n’a PAS PU tourner est une erreur, pas une régression', () => {
+    // Les confondre ferait chercher un ralentissement là où il y a une panne.
+    const v = verdictDuBanc({
+      diffs: [{ sectionId: 'x', label: 'X', regressed: false, error: 'ENOENT' }],
+    });
+    expect(v.erreurs).toEqual(['X']);
+    expect(v.regressions).toEqual([]);
+  });
+
+  it('un rapport sans le moindre écart ne crie pas', () => {
+    const v = verdictDuBanc({ diffs: [{ sectionId: 'x', label: 'X', regressed: false }] });
+    expect(v).toMatchObject({ absent: false, regressions: [], erreurs: [] });
+  });
+});
+
+describe('trouverLeBillet — le billet d’alerte doit être RETROUVÉ, pas recréé', () => {
+  // Revue Codex du 11/09, P2. La recherche listait les 50 issues ouvertes les
+  // plus récentes : passé ce seuil, le billet existant sortait du lot. Une
+  // mesure rouge en aurait ouvert un DEUXIÈME, et une mesure propre n'aurait
+  // jamais pu fermer le premier.
+  it('exige le titre EXACT', () => {
+    const l = [
+      { number: 1, title: 'Portail : ce qui est rouge — suite' },
+      { number: 2, title: 'Portail : ce qui est rouge' },
+    ];
+    expect(trouverLeBillet(l, 'Portail : ce qui est rouge')?.number).toBe(2);
+  });
+
+  it('ne rend rien quand aucun titre ne correspond', () => {
+    expect(
+      trouverLeBillet([{ number: 9, title: 'autre chose' }], 'Portail : ce qui est rouge'),
+    ).toBeNull();
+    expect(trouverLeBillet([], 'x')).toBeNull();
+    expect(trouverLeBillet(null, 'x')).toBeNull();
   });
 });
 
