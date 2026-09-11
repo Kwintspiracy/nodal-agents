@@ -317,7 +317,10 @@ function chantiers() {
   // sans un mot (revue Codex, 3e passe). L'ouvert est demandé en entier, le
   // fermé seulement pour ce qui vient d'être fait.
   const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url';
-  const CHAMPS_PR = 'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup';
+  // `body` : c'est là que « Closes #n » vit — sans lui le tableau ne peut pas
+  // savoir qu'une issue a sa PR.
+  const CHAMPS_PR =
+    'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,body,statusCheckRollup';
   const deuxEtats = (famille, champs, limiteFermes) =>
     fusionnerEtats(
       j(`gh ${famille} list --state open --limit 1000 --json ${champs}`),

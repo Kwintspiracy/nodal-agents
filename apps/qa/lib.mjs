@@ -79,6 +79,9 @@ export function colonneDeCarte(carte) {
   const etiquettes = carte.etiquettes ?? [];
   if (etiquettes.includes('décision')) return 'À faire';
   if (etiquettes.includes('test')) return 'À tester';
+  // Une PR ouverte la ferme (`parPr`, posé par `cartesDuTableau`) : le travail
+  // est écrit, il attend sa relecture — pas « en cours » (12/09).
+  if (carte.parPr != null) return 'En review';
   return 'En cours';
 }
 
@@ -230,6 +233,21 @@ export function fusionnerEtats(ouverts, fermes) {
 export function cartesDuTableau({ issues, pr } = {}) {
   if (!Array.isArray(issues) || !Array.isArray(pr)) return null;
 
+  // Les issues qu'une PR OUVERTE ferme (« Closes #n », « Fixes #n »,
+  // « Resolves #n » dans son corps — le vocabulaire que GitHub lie). Une telle
+  // issue n'est plus « en cours » : son travail est écrit et attend sa
+  // relecture. Une PR mergée ou fermée ne couvre plus rien — GitHub aura fermé
+  // l'issue, ou elle est retombée à ce qu'elle est.
+  const couvertes = new Map();
+  for (const p of pr) {
+    if (p.state !== 'OPEN' || p.mergedAt) continue;
+    for (const m of String(p.body ?? '').matchAll(
+      /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi,
+    )) {
+      if (!couvertes.has(Number(m[1]))) couvertes.set(Number(m[1]), p.number);
+    }
+  }
+
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -240,6 +258,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: (i.labels ?? []).map((l) => l.name),
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
+      parPr: couvertes.get(i.number) ?? null,
     })),
     ...pr.map((p) => ({
       type: 'pr',
