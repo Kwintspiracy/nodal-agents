@@ -905,6 +905,20 @@ describe('titresDeTest — une étiquette ne compte que dans un TITRE', () => {
     expect(titresDeTest(src)).toEqual([`trois ${E}:vivant`]);
   });
 
+  it('un « /* » dans une chaîne (un glob) n’ouvre pas un commentaire', () => {
+    // Trouvé en rejouant le nettoyage sur les 587 fichiers de test du dépôt :
+    // `ls tests/e2e/*.spec.ts` dans une fixture, puis un `*/` six cents lignes
+    // plus loin, et tout ce qui vivait entre les deux avait disparu du scan.
+    // Un commentaire de bloc COMMENCE une ligne ; un glob, jamais.
+    const src = [
+      `const glob = 'ls tests/e2e/*.spec.ts';`,
+      `it('entre les deux ${E}:vivant', () => {});`,
+      '/** un vrai commentaire */',
+      `it('après ${E}:aussi', () => {});`,
+    ].join('\n');
+    expect(titresDeTest(src)).toEqual([`entre les deux ${E}:vivant`, `après ${E}:aussi`]);
+  });
+
   it('un titre qui contient une URL n’est pas coupé au « // »', () => {
     // Le nettoyage des commentaires ne doit retirer que les LIGNES commentées :
     // un `//` au milieu d'un titre est un morceau de titre.

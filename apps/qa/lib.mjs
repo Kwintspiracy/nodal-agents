@@ -646,8 +646,14 @@ export function titresDeTest(texte) {
   // capacité la laissait « prouvée » (revue Codex, 3e passe). On retire les
   // blocs `/* … */` et les LIGNES qui commencent par `//` — jamais un `//` en
   // milieu de ligne, qui est le plus souvent le `//` d'une URL dans un titre.
+  //
+  // Et un bloc ne compte que s'il COMMENCE une ligne. Un `/*` en milieu de
+  // ligne est presque toujours un glob dans une chaîne (`tests/e2e/*.spec.ts`)
+  // : rejoué sur les 587 fichiers de test du dépôt, le retrait naïf partait de
+  // ce glob jusqu'au `*/` suivant, six cents lignes plus loin, et tout ce qui
+  // vivait entre les deux disparaissait du scan.
   const t = String(texte ?? '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, '')
     .replace(/^[ \t]*\/\/.*$/gm, '');
   const out = [];
   // Le `(?:\(…\)\s*)?` optionnel absorbe le PREMIER appel de `test.each([…])(…)`,
