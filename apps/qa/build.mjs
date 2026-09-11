@@ -518,7 +518,7 @@ function vueChantiers() {
             ? '<span class="pastille pastille--inconnu">CI en cours</span>'
             : '';
     return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">brouillon</span>' : ''}${ci}</span>
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">brouillon</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
     </a>`;

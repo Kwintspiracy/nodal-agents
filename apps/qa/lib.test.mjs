@@ -159,6 +159,46 @@ describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vi
     expect(c.find((x) => x.type === 'issue').colonne).toBe('En cours');
     expect(c.find((x) => x.type === 'pr').colonne).toBe('Fait');
   });
+
+  it('une issue qu’une PR OUVERTE ferme (« Closes #n ») est en review, pas en cours', () => {
+    // 12/09 : trois issues avaient chacune leur PR ouverte et restaient « En
+    // cours » — la colonne disait « personne n'a rien fait » alors que le
+    // travail attendait sa relecture. Le fait est dans le corps de la PR ;
+    // le tableau le lit.
+    const c = cartesDuTableau({
+      issues: [ISSUE],
+      pr: [{ ...PR, state: 'OPEN', body: 'Ce que ça change.\n\nCloses #1.' }],
+    });
+    const issue = c.find((x) => x.type === 'issue');
+    expect(issue.colonne).toBe('En review');
+    expect(issue.parPr).toBe(2);
+  });
+
+  it('une PR MERGÉE ou FERMÉE ne couvre plus rien — l’issue redevient ce qu’elle est', () => {
+    const merged = cartesDuTableau({
+      issues: [ISSUE],
+      pr: [{ ...PR, state: 'MERGED', mergedAt: 'x', body: 'Fixes #1' }],
+    });
+    expect(merged.find((x) => x.type === 'issue').colonne).toBe('En cours');
+    const closed = cartesDuTableau({
+      issues: [ISSUE],
+      pr: [{ ...PR, state: 'CLOSED', body: 'Resolves #1' }],
+    });
+    expect(closed.find((x) => x.type === 'issue').colonne).toBe('En cours');
+  });
+
+  it('un « #n » cité sans verbe ne couvre pas, et une décision reste À faire même couverte', () => {
+    const cite = cartesDuTableau({
+      issues: [ISSUE],
+      pr: [{ ...PR, state: 'OPEN', body: 'Voir aussi #1 pour le contexte.' }],
+    });
+    expect(cite.find((x) => x.type === 'issue').colonne).toBe('En cours');
+    const decision = cartesDuTableau({
+      issues: [{ ...ISSUE, labels: [{ name: 'décision' }] }],
+      pr: [{ ...PR, state: 'OPEN', body: 'Closes #1' }],
+    });
+    expect(decision.find((x) => x.type === 'issue').colonne).toBe('À faire');
+  });
 });
 
 describe('fusionnerEtats — deux requêtes, un seul chantier par numéro', () => {
