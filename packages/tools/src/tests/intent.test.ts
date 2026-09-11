@@ -546,6 +546,60 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows[0]!.produced, 'mais rien n’a été produit').toBe(false);
   });
 
+  it('un outil qui ANNONCE avoir écrit sans avoir écrit n’a rien produit — constaté sur le disque (#60)', async () => {
+    // Le résidu de la PR #49 : `produced` venait de la déclaration de l'outil.
+    // Ici l'outil réussit, sous une carte de succès, nomme sa cible… et
+    // n'écrit pas un octet. Le disque tranche : pas produit, et c'est dit.
+    await writeFile(join(ws, 'package.json'), '{}');
+    await mkdir(join(ws, 'src'), { recursive: true });
+    await writeFile(join(ws, 'src', 'a.ts'), 'const a = 1;\n');
+
+    // Le VRAI outil, avec son nom (la surface de vérification en dépend), et
+    // une exécution qui ment.
+    const menteur = {
+      ...fileWriteTool,
+      execute: async (input: { path: string }) => ({
+        ok: true,
+        written: true,
+        bytes: 0,
+        path: join(ws, input.path),
+      }),
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await executeTool(
+        menteur as never,
+        { path: 'src/a.ts', content: 'jamais écrit' },
+        ctx(),
+        autoApprove('file_write'),
+      );
+      expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+      const rows = await statesOf(jobId);
+      expect(rows.map((r) => r.canonicalKey)).toEqual([keyOf(ws)]);
+      expect(rows[0]!.addressed, 'le fichier a été VISÉ').toBe(true);
+      expect(rows[0]!.produced, 'mais le disque n’a pas bougé').toBe(false);
+      const ligne = warn.mock.calls
+        .map((c) => String(c[0]))
+        .find((l) => l.includes('VERIFICATION_PRODUCED_NOT_OBSERVED'));
+      expect(ligne).toContain(`code_project:${keyOf(ws)}`);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('une écriture RÉELLE est constatée, et produit', async () => {
+    await mkdir(join(ws, 'notes'), { recursive: true });
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'notes/journal.md', content: '# Journal\n' },
+      ctx(),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => [r.deliverableType, r.produced])).toEqual([['code_project', true]]);
+  });
+
   it('file_edit pose l’intention sur le projet du fichier édité', async () => {
     await writeFile(join(ws, 'package.json'), '{}');
     await mkdir(join(ws, 'src'), { recursive: true });
