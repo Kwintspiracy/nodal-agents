@@ -155,7 +155,13 @@ function couverture(listePaquets) {
 
 function banc() {
   const dir = join(RACINE, 'bench', 'baselines');
-  if (!existsSync(dir)) return { sections: [], dernierRun: null };
+  // `attendu` : la mesure nocturne lance TOUJOURS le banc avant de collecter,
+  // donc un rapport absent en CI est une panne, pas une omission. En local,
+  // personne ne le lance avant `pnpm collect` et son absence ne dit rien —
+  // c'est la différence entre un trou de mesure et un dépôt neuf (revue
+  // Codex, 3e passe, contre une décision antérieure qui ne distinguait pas).
+  const attendu = process.env['GITHUB_ACTIONS'] === 'true';
+  if (!existsSync(dir)) return { sections: [], dernierRun: null, attendu };
   const sections = readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => {
@@ -176,7 +182,7 @@ function banc() {
       );
     })
     .filter(Boolean);
-  return { sections, dernierRun: lireJson(join(DATA, 'bench-run.json')) };
+  return { sections, dernierRun: lireJson(join(DATA, 'bench-run.json')), attendu };
 }
 
 // ─── 5. Ce que la CI exécute VRAIMENT ─────────────────────────────────────────
@@ -304,12 +310,21 @@ function chantiers() {
       return null;
     }
   };
-  const issues = j(
-    'gh issue list --state all --limit 200 --json number,title,state,labels,createdAt,updatedAt,url',
-  );
-  const pr = j(
-    'gh pr list --state all --limit 50 --json number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup',
-  );
+  // Deux requêtes par famille, jamais une seule `--state all` bornée : la
+  // borne portait sur TOUS les états, et cinquante PR fermées récentes
+  // auraient évincé une PR ouverte plus ancienne — disparue de « En review »
+  // sans un mot (revue Codex, 3e passe). L'ouvert est demandé en entier, le
+  // fermé seulement pour ce qui vient d'être fait.
+  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url';
+  const CHAMPS_PR = 'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup';
+  const deuxEtats = (famille, champs, limiteFermes) => {
+    const ouverts = j(`gh ${famille} list --state open --limit 1000 --json ${champs}`);
+    const fermes = j(`gh ${famille} list --state closed --limit ${limiteFermes} --json ${champs}`);
+    if (!ouverts || !fermes) return null;
+    return [...ouverts, ...fermes];
+  };
+  const issues = deuxEtats('issue', CHAMPS_ISSUE, 100);
+  const pr = deuxEtats('pr', CHAMPS_PR, 50);
 
   // `null` et non `[]` quand une requête n'a pas abouti. Le collecteur écrivait
   // `?? []` : dans la mesure nocturne, où `gh` tournait sans jeton, les deux
