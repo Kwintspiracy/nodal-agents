@@ -36,6 +36,12 @@ export interface ReadyConfig {
   readonly commands: readonly VerifyCommand[];
   /** `verification_epoch` de la cible au moment de la lecture. */
   readonly epoch: number;
+  /**
+   * Le livrable LUI-MÊME, pour un vérificateur qui ne lance rien et constate
+   * (un document : son chemin). Une séquence de commandes n'en a pas besoin,
+   * `cwd` lui suffit ; un constat sans commande n'a que ça.
+   */
+  readonly subject?: string;
 }
 
 /**

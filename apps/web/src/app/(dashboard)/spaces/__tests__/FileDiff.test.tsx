@@ -239,3 +239,46 @@ describe('DiffBody — chaque état se DIT', () => {
     );
   });
 });
+
+// ─── « Créer, c'est prouver », point 1 — le NOM du fichier se lit ────────────
+
+describe('FileDiff — le nom du fichier passe devant, le dossier derrière', () => {
+  // Le 07/09, trois écritures dans un même dossier affichaient trois fois le
+  // même préfixe absolu, tronqué à droite : Quentin a cru voir trois diffs sur
+  // le même fichier. C'étaient `SKILL.md`, `base.css` et `base.html`.
+  it('trois fichiers d’un même dossier se distinguent par leur nom, rendu à part', () => {
+    const html = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={feedWith([
+          { path: 'D:/dev/skills/base-css/SKILL.md', action: 'written' },
+          { path: 'D:/dev/skills/base-css/base.css', action: 'written' },
+          { path: 'D:/dev/skills/base-css/base.html', action: 'written' },
+        ])}
+      />,
+    );
+    // Le nom seul, dans son propre élément — pas noyé dans le chemin.
+    for (const nom of ['SKILL.md', 'base.css', 'base.html']) {
+      expect(html).toMatch(new RegExp(`>${nom.replace('.', '\.')}<`));
+    }
+    // Le chemin complet reste disponible au survol.
+    expect(html).toContain('title="D:/dev/skills/base-css/SKILL.md"');
+  });
+
+  it('un fichier LU (sans bouton) suit la même règle', () => {
+    const html = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={feedWith([{ path: 'notes/2026/journal.md', action: 'listed' }])}
+      />,
+    );
+    expect(html).toMatch(/>journal\.md</);
+    expect(html).toContain('title="notes/2026/journal.md"');
+  });
+
+  it('un chemin sans dossier ne rend que le nom, sans séparateur orphelin', () => {
+    const html = renderToStaticMarkup(
+      <ConversationFeedView feed={feedWith([{ path: 'README.md', action: 'written' }])} />,
+    );
+    expect(html).toMatch(/>README\.md</);
+    expect(html).not.toMatch(/>\/</);
+  });
+});

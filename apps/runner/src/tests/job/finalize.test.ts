@@ -775,15 +775,66 @@ describe('finalizeJobSuccess — génération périmée et persistance', () => {
   });
 });
 
+// ─── Un DOCUMENT se vérifie tout seul, de bout en bout ──────────────────────
+
+describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
+  // « Créer, c'est prouver », point 4 : un skill écrit hors projet n'affiche
+  // plus « non configuré ». La primitive n'a rien appris — c'est le registre
+  // qui porte le vérificateur — et pourtant quatre constats se retrouvent dans
+  // `verification_runs`, et la décision est verte. Aucune commande n'a tourné.
+  it('quatre constats verts en base, décision green, job completed — sans une seule commande', async () => {
+    const doc = join(dir, 'SKILL.md');
+    await writeFile(doc, '# Base CSS\n\nUn skill.\n', 'utf8');
+    const docKey = projectKey(doc);
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'document', docKey, 1, true);
+
+    const outcome = await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', toolsUsed: ['file_write'] },
+      deps(),
+    );
+    expect(outcome.kind).toBe('completed');
+
+    const runs = await runsOf(jobId);
+    expect(runs.map((r) => [r.commandRank, r.verdict, r.outcomeKind, r.exitCode])).toEqual([
+      [1, 'green', 'exit', 0],
+      [2, 'green', 'exit', 0],
+      [3, 'green', 'exit', 0],
+      [4, 'green', 'exit', 0],
+    ]);
+    expect(new Set(runs.map((r) => r.sequenceId)).size).toBe(1);
+    expect((await stateRow(stateId)).decisionStatus).toBe('green');
+    expect((await stateRow(stateId)).verifiedGeneration).toBe(1);
+    expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
+  it('un markdown sans titre : la décision est ROUGE, et la ligne rouge dit pourquoi', async () => {
+    const doc = join(dir, 'sans-titre.md');
+    await writeFile(doc, 'du texte sans titre\n', 'utf8');
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true);
+
+    await finalizeJobSuccess(asDb(), { jobId, result: 'ok', toolsUsed: [] }, deps());
+
+    const runs = await runsOf(jobId);
+    expect(runs.map((r) => r.verdict)).toEqual(['green', 'green', 'green', 'red']);
+    expect((await stateRow(stateId)).decisionStatus).toBe('red');
+    // En ①, un rouge ne bloque pas la fin du job : il est DIT, pas caché.
+    expect((await jobRow(jobId)).status).toBe('completed');
+  });
+});
+
 // ─── Aucun type de livrable dans la primitive ───────────────────────────────
 
 describe('finalizeJobSuccess — le registre décide, pas la primitive', () => {
   it('un livrable d’un type sans vérificateur ⇒ DELIVERABLE_TYPE_UNSUPPORTED, rien n’est écrit', async () => {
     const jobId = await insertJob('processing');
-    // `document` reste réservé sans vérificateur (v7-A en branche deux :
-    // `code_project` et `office_file`). Le jour où il en gagne un, ce test
-    // doit être reporté sur un type encore réservé — pas supprimé.
-    const stateId = await insertState(jobId, 'document', '/srv/rapport.docx', 1);
+    // `other` reste réservé sans vérificateur (`document` en a un depuis
+    // « Créer, c'est prouver », et ce test a été reporté dessus, comme prévu).
+    // Le jour où `other` en gagne un, le reporter sur un type encore réservé —
+    // pas le supprimer.
+    const stateId = await insertState(jobId, 'other', '/srv/rapport.bin', 1);
 
     await expect(
       finalizeJobSuccess(asDb(), { jobId: jobId, result: 'ok', toolsUsed: [] }, deps()),

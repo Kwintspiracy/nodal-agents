@@ -20,27 +20,32 @@ describe('registre — un type sans vérificateur est refusé', () => {
   it('getVerifier d’un type réservé lève DELIVERABLE_TYPE_UNSUPPORTED', () => {
     let caught: unknown = null;
     try {
-      getVerifier('document');
+      getVerifier('outbound_action');
     } catch (error) {
       caught = error;
     }
     expect(caught).toBeInstanceOf(DeliverableTypeUnsupportedError);
     expect((caught as DeliverableTypeUnsupportedError).code).toBe(DELIVERABLE_TYPE_UNSUPPORTED);
-    expect((caught as DeliverableTypeUnsupportedError).deliverableType).toBe('document');
+    expect((caught as DeliverableTypeUnsupportedError).deliverableType).toBe('outbound_action');
   });
 
   it('canonicalKeyFor refuse aussi — aucune clé n’est inventée pour un type inconnu', () => {
-    expect(() => canonicalKeyFor('document', '/srv/App')).toThrow(DELIVERABLE_TYPE_UNSUPPORTED);
+    expect(() => canonicalKeyFor('other', '/srv/App')).toThrow(DELIVERABLE_TYPE_UNSUPPORTED);
     expect(() => canonicalKeyFor('outbound_action', 'telegram:42')).toThrow(
       DELIVERABLE_TYPE_UNSUPPORTED,
     );
     expect(() => canonicalKeyFor('inconnu', '/srv/App')).toThrow(DELIVERABLE_TYPE_UNSUPPORTED);
   });
 
-  it('deux types sont branchés en v7-A — le registre s’indexe sur le vérificateur, pas sur une liste recopiée', () => {
-    expect([...registeredDeliverableTypes()].sort()).toEqual(['code_project', 'office_file']);
+  it('trois types sont branchés — le registre s’indexe sur le vérificateur, pas sur une liste recopiée', () => {
+    expect([...registeredDeliverableTypes()].sort()).toEqual([
+      'code_project',
+      'document',
+      'office_file',
+    ]);
     expect(getVerifier('code_project').deliverableType).toBe('code_project');
     expect(getVerifier('office_file').deliverableType).toBe('office_file');
+    expect(getVerifier('document').deliverableType).toBe('document');
   });
 
   it('office_file : même règle d’identité que partout, et rien à configurer (v7-A)', async () => {

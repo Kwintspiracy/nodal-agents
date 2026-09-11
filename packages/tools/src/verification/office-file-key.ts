@@ -45,8 +45,22 @@ export function officeFileDeliverableKey(
   absPath: string,
   workspaceRoots: readonly string[],
 ): string | null {
+  return fileDeliverableKey(absPath, workspaceRoots, 'office_file');
+}
+
+/**
+ * La même clé pour tout livrable dont l'identité est le FICHIER — un classeur
+ * (`office_file`) comme un document (`document`, plan « Créer, c'est
+ * prouver »). Le type ne change pas la clé ; il est demandé pour que la cible
+ * soit typée comme l'outil l'a déclarée, jamais devinée ici.
+ */
+export function fileDeliverableKey(
+  absPath: string,
+  workspaceRoots: readonly string[],
+  deliverableType: 'office_file' | 'document',
+): string | null {
   const [file] = officeFileDeliverables(
-    [{ kind: 'file', path: absPath, deliverableType: 'office_file' }],
+    [{ kind: 'file', path: absPath, deliverableType }],
     workspaceRoots,
   );
   return file?.key ?? null;

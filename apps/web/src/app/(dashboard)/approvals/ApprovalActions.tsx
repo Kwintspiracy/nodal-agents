@@ -66,7 +66,7 @@ export default function ApprovalActions({
     startTransition(async () => {
       const r = await resolve('approve');
       if (!r.ok) toast.error(r.message);
-      else toast.success('Approuvé, cette fois seulement.');
+      else toast.success('Approved, this time only.');
     });
   }
 
@@ -91,17 +91,17 @@ export default function ApprovalActions({
         scope: ruleScope,
       });
       if (!rule.ok) {
-        toast.error(`Règle non enregistrée : ${rule.message}. L'approbation reste en attente.`);
+        toast.error(`Rule not saved: ${rule.message}. The approval stays pending.`);
         return;
       }
-      const scopeLabel = ruleScope === 'entity' ? 'pour tous vos agents' : 'pour cet agent';
+      const scopeLabel = ruleScope === 'entity' ? 'for all your agents' : 'for this agent';
       const r = await resolve('approve');
       if (!r.ok) toast.error(r.message);
       else {
         toast.success(
           scope === 'server'
-            ? `Approuvé. Tous les outils de ${mcpServerName ?? 'ce serveur'} passeront désormais sans demande, ${scopeLabel}.`
-            : `Approuvé. ${toolName} passera désormais sans demande, ${scopeLabel}.`,
+            ? `Approved. Every tool from ${mcpServerName ?? 'this server'} will now run without asking, ${scopeLabel}.`
+            : `Approved. ${toolName} will now run without asking, ${scopeLabel}.`,
         );
       }
     });
@@ -117,12 +117,12 @@ export default function ApprovalActions({
         action: 'block',
       });
       if (!rule.ok) {
-        toast.error(`Règle non enregistrée : ${rule.message}. L'approbation reste en attente.`);
+        toast.error(`Rule not saved: ${rule.message}. The approval stays pending.`);
         return;
       }
-      const r = await resolve('reject', 'Bloqué définitivement par le propriétaire.');
+      const r = await resolve('reject', 'Permanently blocked by the owner.');
       if (!r.ok) toast.error(r.message);
-      else toast.success(`${toolName} est désormais bloqué pour cet agent.`);
+      else toast.success(`${toolName} is now blocked for this agent.`);
     });
   }
 
@@ -135,7 +135,7 @@ export default function ApprovalActions({
       const r = await resolve('reject', notes.trim() || undefined);
       if (!r.ok) toast.error(r.message);
       else {
-        toast.success('Refusé');
+        toast.success('Rejected');
         setShowRejectInput(false);
         setNotes('');
       }
@@ -154,7 +154,7 @@ export default function ApprovalActions({
           disabled={isPending}
           className="!bg-ok !text-xs !text-canvas hover:!brightness-[0.92]"
         >
-          Approuver une fois
+          Approve once
         </PrimaryButton>
 
         {canRule && mcpRulePattern && (
@@ -168,7 +168,7 @@ export default function ApprovalActions({
             disabled={isPending}
             className="!text-xs"
           >
-            Toujours pour ce serveur
+            Always for this server
           </PrimaryButton>
         )}
 
@@ -183,7 +183,7 @@ export default function ApprovalActions({
             disabled={isPending}
             className="!text-xs"
           >
-            Toujours pour cet outil
+            Always for this tool
           </PrimaryButton>
         )}
 
@@ -194,7 +194,7 @@ export default function ApprovalActions({
           disabled={isPending}
           className="!text-xs"
         >
-          {showRejectInput ? 'Confirmer le refus' : 'Refuser'}
+          {showRejectInput ? 'Confirm rejection' : 'Reject'}
         </PrimaryButton>
 
         {canRule && !showRejectInput && (
@@ -205,7 +205,7 @@ export default function ApprovalActions({
             disabled={isPending}
             className="!text-xs !text-danger"
           >
-            Toujours refuser
+            Always reject
           </PrimaryButton>
         )}
 
@@ -219,7 +219,7 @@ export default function ApprovalActions({
               setNotes('');
             }}
           >
-            Annuler
+            Cancel
           </PrimaryButton>
         )}
       </div>
@@ -228,7 +228,7 @@ export default function ApprovalActions({
         <TextArea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="Raison du refus (facultatif, transmise à l'agent)"
+          placeholder="Reason for rejecting (optional, passed to the agent)"
           rows={2}
           maxLength={500}
           className="!resize-none !bg-canvas text-xs"
@@ -237,18 +237,16 @@ export default function ApprovalActions({
 
       <ConfirmDialog
         open={confirm === 'server'}
-        title={`Toujours autoriser ${mcpServerName ?? 'ce serveur'} ?`}
-        message={`Tous les outils exposés par ce serveur s'exécuteront sans demande pour cet agent, y compris ceux qu'il ajoutera plus tard. Une règle par outil peut toujours faire exception. Révocable dans les réglages de l'agent.`}
-        confirmLabel="Toujours autoriser"
+        title={`Always allow ${mcpServerName ?? 'this server'}?`}
+        message={`Every tool this server exposes will run without asking for this agent, including tools it adds later. A per-tool rule can still make an exception. Revocable in the agent settings.`}
+        confirmLabel="Always allow"
         destructive={false}
         extra={
           <Checkbox
             checked={allAgents}
             onChange={(e) => setAllAgents(e.target.checked)}
             label={
-              <span className="text-body-13 text-ink-2">
-                Pour tous mes agents, pas seulement celui-ci
-              </span>
+              <span className="text-body-13 text-ink-2">For all my agents, not only this one</span>
             }
           />
         }
@@ -258,18 +256,16 @@ export default function ApprovalActions({
 
       <ConfirmDialog
         open={confirm === 'tool'}
-        title={`Toujours autoriser ${toolName} ?`}
-        message={`Cet outil s'exécutera sans demande pour cet agent, quels que soient ses arguments. Révocable dans les réglages de l'agent.`}
-        confirmLabel="Toujours autoriser"
+        title={`Always allow ${toolName}?`}
+        message={`This tool will run without asking for this agent, whatever its arguments. Revocable in the agent settings.`}
+        confirmLabel="Always allow"
         destructive={false}
         extra={
           <Checkbox
             checked={allAgents}
             onChange={(e) => setAllAgents(e.target.checked)}
             label={
-              <span className="text-body-13 text-ink-2">
-                Pour tous mes agents, pas seulement celui-ci
-              </span>
+              <span className="text-body-13 text-ink-2">For all my agents, not only this one</span>
             }
           />
         }
@@ -279,9 +275,9 @@ export default function ApprovalActions({
 
       <ConfirmDialog
         open={confirm === 'block'}
-        title={`Toujours refuser ${toolName} ?`}
-        message={`Cet outil échouera immédiatement pour cet agent, sans rien demander. L'agent verra l'échec et devra faire autrement. Révocable dans les réglages de l'agent.`}
-        confirmLabel="Toujours refuser"
+        title={`Always reject ${toolName}?`}
+        message={`This tool will fail immediately for this agent, without asking. The agent will see the failure and have to find another way. Revocable in the agent settings.`}
+        confirmLabel="Always reject"
         destructive
         onConfirm={handleBlockAlways}
         onCancel={() => setConfirm(null)}

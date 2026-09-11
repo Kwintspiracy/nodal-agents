@@ -13,6 +13,8 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { detailOf, failureText, writtenFile } from '../../presenters';
+import { deliverableTypeForWrittenFile } from '../../verification/written-file-type';
+import { fileDeliverableKey } from '../../verification/office-file-key';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
@@ -49,7 +51,14 @@ export const FileEditInputSchema = z.object({
 
 export type FileEditInput = z.infer<typeof FileEditInputSchema>;
 export type FileEditOutput =
-  | { ok: true; edited: true; replacements: number; bytes: number }
+  | {
+      ok: true;
+      edited: true;
+      replacements: number;
+      bytes: number;
+      /** La clé du DOCUMENT édité, quand c'en est un — voir `file-write.ts`. */
+      deliverable_key?: string;
+    }
   | { ok: false; reason: string };
 
 export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOutput> = {
@@ -67,7 +76,10 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     output.ok
       ? writtenFile(input.path, 'modified', {
           bytes: output.bytes,
-          detail: detailOf(output, ['edited', 'bytes']),
+          detail: detailOf(output, ['edited', 'bytes', 'deliverable_key']),
+          ...(output.deliverable_key !== undefined
+            ? { deliverableKey: output.deliverable_key }
+            : {}),
         })
       : failureText(output.reason),
   mutatesWorkspace: true,
@@ -77,10 +89,11 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   resolveMutationTargets: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
-      // Même règle que file_write : cet outil édite du TEXTE dans un dossier
-      // attaché, donc du projet. Aucune reconnaissance d'extension (v7-A) —
-      // rien dans un chemin ne distingue une donnée de test d'un livrable.
-      return [{ kind: 'file', path, deliverableType: 'code_project' }];
+      // Même règle que file_write : code sous un projet de code, document
+      // sinon (`written-file-type.ts`). Aucune reconnaissance d'extension.
+      return [
+        { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
+      ];
     } catch {
       return [];
     }
@@ -154,7 +167,21 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
         await unlink(tmp).catch(() => undefined);
         throw err;
       }
-      return { ok: true, edited: true, replacements, bytes };
+      const deliverableKey =
+        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
+          ? fileDeliverableKey(
+              path,
+              (ctx.workspaces ?? []).map((w) => w.path),
+              'document',
+            )
+          : null;
+      return {
+        ok: true,
+        edited: true,
+        replacements,
+        bytes,
+        ...(deliverableKey !== null ? { deliverable_key: deliverableKey } : {}),
+      };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
       const code = (err as NodeJS.ErrnoException).code;

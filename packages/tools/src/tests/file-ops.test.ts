@@ -44,13 +44,24 @@ beforeEach(async () => {
 
 // ─── Context helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Une base SANS projet déclaré : `file_write` et `file_edit` la consultent
+ * pour typer ce qu'ils écrivent (code sous un projet déclaré, document
+ * sinon — « Créer, c'est prouver », point 3). Ces tests prouvent l'écriture,
+ * pas le typage : la table est vide, et c'est `intent.test.ts` qui exerce la
+ * règle sur une vraie base.
+ */
+const noProjectsDb = {
+  select: () => ({ from: () => ({ where: async () => [] }) }),
+} as unknown as ToolContext['db'];
+
 /** Single-workspace context (backward-compat helper). */
 function ctxWith(rootPath: string | null | undefined): ToolContext {
   return {
     jobId: '00000000-0000-0000-0000-000000000aaa',
     agentId: '00000000-0000-0000-0000-000000000bbb',
     entityId: '00000000-0000-0000-0000-000000000ccc',
-    db: undefined as unknown as ToolContext['db'],
+    db: noProjectsDb,
     jobChatId: null,
     workspaces:
       rootPath === null || rootPath === undefined
@@ -67,7 +78,7 @@ function ctxMulti(): ToolContext {
     jobId: '00000000-0000-0000-0000-000000000aaa',
     agentId: '00000000-0000-0000-0000-000000000bbb',
     entityId: '00000000-0000-0000-0000-000000000ccc',
-    db: undefined as unknown as ToolContext['db'],
+    db: noProjectsDb,
     jobChatId: null,
     workspaces: [
       { label: 'notes', path: WORKSPACE },

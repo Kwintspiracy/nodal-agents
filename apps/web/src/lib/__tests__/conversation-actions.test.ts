@@ -951,7 +951,7 @@ describe('listAllConversationsAction — le titre de repli', () => {
 // ─── P12 — l'état de vérification des DOCUMENTS du fil ────────────────────────
 
 describe('getConversationThreadAction — l’état des documents (P12)', () => {
-  it('charge TOUS les livrables office_file, `dirty` compris, un état par (job, clé)', async () => {
+  it('charge TOUS les livrables office_file et document, `dirty` compris, un état par (job, clé)', async () => {
     const cleDirty = projectKey('/terrain/bilans/septembre.xlsx');
     const cleVerte = projectKey('/terrain/bilans/aout.xlsx');
     const cleNonConfig = projectKey('/terrain/bilans/juillet.xlsx');
@@ -1004,6 +1004,17 @@ describe('getConversationThreadAction — l’état des documents (P12)', () => 
         dirtyGeneration: 5,
         decisionStatus: 'dirty',
       },
+      // Un DOCUMENT (« Créer, c'est prouver ») : un fichier hors projet, vérifié
+      // sans pouvoir. Sa carte lit son état exactement comme celle d'un classeur.
+      {
+        jobId: telegramConv.jobB,
+        deliverableType: 'document',
+        canonicalKey: projectKey('/terrain/skills/SKILL.md'),
+        displayPathSnapshot: 'skills/SKILL.md',
+        dirtyGeneration: 1,
+        verifiedGeneration: 1,
+        decisionStatus: 'green',
+      },
     ]);
 
     const { getConversationThreadAction } = await actions();
@@ -1020,6 +1031,11 @@ describe('getConversationThreadAction — l’état des documents (P12)', () => 
       { jobId: jobHaut, canonicalKey: cleVerte, status: statusOf(jobHaut) },
       { jobId: telegramConv.jobB, canonicalKey: cleNonConfig, status: 'not_configured' },
       { jobId: telegramConv.jobA, canonicalKey: cleDirty, status: 'dirty' },
+      {
+        jobId: telegramConv.jobB,
+        canonicalKey: projectKey('/terrain/skills/SKILL.md'),
+        status: 'green',
+      },
     ]);
 
     // Et la section de preuve, elle, ne voit toujours QUE le non configuré :

@@ -88,7 +88,13 @@ export function deliverableStatusKey(jobId: string, canonicalKey: string): strin
   return `${jobId} ${canonicalKey}`;
 }
 
-/** Les états des documents du fil, un par (job, clé), triés pour être stables. */
+/**
+ * Les états des livrables FICHIER du fil — un classeur (`office_file`) ou un
+ * document (`document`, plan « Créer, c'est prouver ») — un par (job, clé),
+ * triés pour être stables. Un projet de code n'y est pas : son état est celui
+ * du projet, dit ailleurs.
+ */
+export const FILE_DELIVERABLE_TYPES: readonly string[] = ['office_file', 'document'];
 export function deliverableStatuses(
   rows: ReadonlyArray<{
     jobId: string;
@@ -98,7 +104,7 @@ export function deliverableStatuses(
   }>,
 ): DeliverableStatusView[] {
   return rows
-    .filter((r) => r.deliverableType === 'office_file')
+    .filter((r) => FILE_DELIVERABLE_TYPES.includes(r.deliverableType))
     .map((r) => ({ jobId: r.jobId, canonicalKey: r.canonicalKey, status: r.decisionStatus }))
     .sort((a, b) => {
       const k = a.canonicalKey < b.canonicalKey ? -1 : a.canonicalKey > b.canonicalKey ? 1 : 0;

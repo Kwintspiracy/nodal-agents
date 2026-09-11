@@ -21,9 +21,11 @@
 // Un type sans vérificateur est REFUSÉ, jamais accepté avec une clé inventée
 // (invariant #4 : pas de repli silencieux). C'est le cas des types réservés de
 // `DELIVERABLE_TYPES` que rien ne sait encore canonicaliser ; `code_project`
-// et `office_file` sont branchés (v7-A).
+// et `office_file` sont branchés (v7-A), `document` depuis « Créer, c'est
+// prouver » (le vérificateur sans pouvoir d'un fichier hors projet).
 
 import { codeProjectVerifier } from './code-project.ts';
+import { documentVerifier } from './document.ts';
 import { officeFileVerifier } from './office-file.ts';
 import type { DeliverableVerifier } from './types.ts';
 
@@ -55,7 +57,7 @@ export class DeliverableTypeUnsupportedError extends Error {
  * recopiant leurs noms ici (une deuxième liste finirait par diverger).
  */
 const VERIFIERS: ReadonlyMap<string, DeliverableVerifier> = new Map(
-  [codeProjectVerifier, officeFileVerifier].map(
+  [codeProjectVerifier, officeFileVerifier, documentVerifier].map(
     (verifier) => [verifier.deliverableType, verifier] as const,
   ),
 );

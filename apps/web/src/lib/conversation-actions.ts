@@ -60,6 +60,7 @@ import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
   deliverableStatuses,
+  FILE_DELIVERABLE_TYPES,
   groupVerificationRuns,
   mergeSkippedSurfaces,
   type DeliverableStatusView,
@@ -779,7 +780,9 @@ export async function getConversationThreadAction(
                       'not_configured',
                       'pending_approval',
                     ]),
-                    eq(jobDeliverableVerificationState.deliverableType, 'office_file'),
+                    inArray(jobDeliverableVerificationState.deliverableType, [
+                      ...FILE_DELIVERABLE_TYPES,
+                    ]),
                   ),
                 ),
               ),

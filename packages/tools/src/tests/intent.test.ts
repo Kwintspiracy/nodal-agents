@@ -20,6 +20,7 @@ import {
   codeProjects,
   entities,
   jobDeliverableVerificationState,
+  toolCalls,
   and,
   eq,
 } from '@nodal-agents/db';
@@ -253,7 +254,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
         surface: 'fileOps',
         targets: [
           { kind: 'file', path: join(ws, 'a.ts'), deliverableType: 'code_project' },
-          { kind: 'file', path: join(ws, 'note.md'), deliverableType: 'document' },
+          { kind: 'file', path: join(ws, 'note.md'), deliverableType: 'other' },
         ],
       });
       expect(outcome).toEqual({ kind: 'failed', code: 'intent_type_unsupported' });
@@ -290,20 +291,21 @@ describe('l’intention de mutation, posée par executeTool', () => {
   });
 
   it('un type de livrable sans règle de canonicalisation est REFUSÉ', async () => {
-    // `document` est réservé par le plan, sans canonicaliseur branché. Une clé
-    // inventée ici donnerait un état qui ne désigne rien : l'intention échoue,
-    // et le seam refusera l'écriture.
+    // `other` est réservé par le plan, sans canonicaliseur branché (`document`
+    // l'a depuis « Créer, c'est prouver »). Une clé inventée ici donnerait un
+    // état qui ne désigne rien : l'intention échoue, et le seam refusera
+    // l'écriture.
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const outcome = await writeMutationIntent(ctx(), {
         surface: 'fileOps',
-        targets: [{ kind: 'file', path: join(ws, 'note.md'), deliverableType: 'document' }],
+        targets: [{ kind: 'file', path: join(ws, 'note.md'), deliverableType: 'other' }],
       });
       expect(outcome).toEqual({ kind: 'failed', code: 'intent_type_unsupported' });
       expect(
         err.mock.calls
           .map((c) => String(c[0]))
-          .some((l) => l.includes('VERIFICATION_INTENT_TYPE_UNSUPPORTED type=document')),
+          .some((l) => l.includes('VERIFICATION_INTENT_TYPE_UNSUPPORTED type=other')),
       ).toBe(true);
     } finally {
       err.mockRestore();
@@ -343,6 +345,9 @@ describe('l’intention de mutation, posée par executeTool', () => {
     // renommé, masqué ou configuré. Sans cette création, la finalisation
     // verrouillerait puis lirait des lignes inexistantes.
     expect(await projectRow(keyOf(ws))).toBeUndefined();
+    // Un dossier à manifeste : c'est un projet de code, donc `file_write` y
+    // écrit du code (« Créer, c'est prouver », point 3).
+    await writeFile(join(ws, 'package.json'), '{}');
 
     await executeTool(fileWriteTool as never, { path: 'a.txt', content: 'x' }, ctx(), opts);
 
@@ -760,6 +765,135 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.canonicalKey).toBe(keyOf(ws));
     expect(rows[0]!.dirtyGeneration).toBe(1);
+  });
+});
+
+describe('un fichier créé est typé pour ce qu’il EST — « Créer, c’est prouver », point 3', () => {
+  // Le défaut corrigé : `file_write` et `file_edit` déclaraient
+  // `code_project` en dur. Un skill (SKILL.md, base.css, base.html) écrit dans
+  // le dossier partagé devenait un « projet de code » sans commande de test,
+  // et l'écran disait « non configuré » sur un travail qui n'avait rien à
+  // lancer. La règle est mécanique, zéro LLM : sous une racine à MANIFESTE ou
+  // sous un projet DÉCLARÉ (`registered_at`, kind `code`) ⇒ `code_project` ;
+  // sinon ⇒ `document`. MUTATION : remettre `'code_project'` en dur dans
+  // `file-write.ts` fait rougir le premier test.
+
+  it('un fichier écrit hors de tout projet est un DOCUMENT, avec sa propre clé', async () => {
+    await mkdir(join(ws, 'skills', 'base-css'), { recursive: true });
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'skills/base-css/SKILL.md', content: '# Base CSS\n' },
+      ctx(),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+
+    const rows = await statesOf(jobId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.deliverableType).toBe('document');
+    // L'identité d'un document est le FICHIER, pas le dossier qui l'héberge.
+    expect(rows[0]!.canonicalKey).toBe(keyOf(join(ws, 'skills', 'base-css', 'SKILL.md')));
+    expect(rows[0]!.decisionStatus).toBe('dirty');
+    // Et aucune ligne de projet n'est née : rien à faire vieillir.
+    expect(await projectRow(keyOf(join(ws, 'skills', 'base-css')))).toBeUndefined();
+  });
+
+  it('le même fichier sous une racine à MANIFESTE reste un projet de code', async () => {
+    await mkdir(join(ws, 'app'), { recursive: true });
+    await writeFile(join(ws, 'app', 'package.json'), '{}');
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'app/README.md', content: '# App\n' },
+      ctx(),
+      opts,
+    );
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => [r.deliverableType, r.canonicalKey])).toEqual([
+      ['code_project', keyOf(join(ws, 'app'))],
+    ]);
+  });
+
+  it('sous un projet DÉCLARÉ sans manifeste, c’est encore un projet de code', async () => {
+    // Un dépôt déclaré depuis l'écran Spaces peut ne porter aucun manifeste
+    // (un projet Python sans pyproject, un dossier de scripts) : la déclaration
+    // vaut manifeste.
+    await mkdir(join(ws, 'scripts'), { recursive: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: normalizePath(join(ws, 'scripts')),
+      projectKey: keyOf(join(ws, 'scripts')),
+      kind: 'code',
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'scripts/run.sh', content: 'echo ok\n' },
+      ctx(),
+      opts,
+    );
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => [r.deliverableType, r.canonicalKey])).toEqual([
+      ['code_project', keyOf(join(ws, 'scripts'))],
+    ]);
+  });
+
+  it('un projet déclaré de DOCUMENTS ne fait pas de ses fichiers du code', async () => {
+    await mkdir(join(ws, 'notes'), { recursive: true });
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: normalizePath(join(ws, 'notes')),
+      projectKey: keyOf(join(ws, 'notes')),
+      kind: 'documents',
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    await executeTool(
+      fileWriteTool as never,
+      { path: 'notes/journal.md', content: '# Journal\n' },
+      ctx(),
+      opts,
+    );
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => [r.deliverableType, r.canonicalKey])).toEqual([
+      ['document', keyOf(join(ws, 'notes', 'journal.md'))],
+    ]);
+  });
+
+  it('file_edit suit la même règle que file_write', async () => {
+    await mkdir(join(ws, 'skills'), { recursive: true });
+    await writeFile(join(ws, 'skills', 'SKILL.md'), '# Titre\nancien\n');
+    const res = await executeTool(
+      fileEditTool as never,
+      { path: 'skills/SKILL.md', old_string: 'ancien', new_string: 'nouveau' },
+      ctx(),
+      // D1 : écraser un fichier EXISTANT du partagé demande une approbation.
+      autoApprove('file_edit'),
+    );
+    expect(res.outcome).toBe('success');
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => [r.deliverableType, r.canonicalKey])).toEqual([
+      ['document', keyOf(join(ws, 'skills', 'SKILL.md'))],
+    ]);
+  });
+
+  it('la carte du fichier écrit porte la clé du document — l’écran retrouve son état (P12)', async () => {
+    await mkdir(join(ws, 'skills'), { recursive: true });
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'skills/base.css', content: 'body{}' },
+      ctx(),
+      opts,
+    );
+    expect(res.outcome).toBe('success');
+    // Ce que l'écran lira : la charge utile persistée sur la ligne d'audit.
+    const [row] = await db
+      .select({ card: toolCalls.card, presented: toolCalls.presented })
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, jobId), eq(toolCalls.toolName, 'file_write')));
+    expect(row?.card).toBe('files');
+    const presented = row?.presented as { files: Array<{ deliverableKey?: string }> } | null;
+    expect(presented?.files[0]?.deliverableKey).toBe(keyOf(join(ws, 'skills', 'base.css')));
   });
 });
 
