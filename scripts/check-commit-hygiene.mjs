@@ -72,6 +72,18 @@ const STRAY_RULES = [
 /** Anything past this is almost certainly not source. */
 const MAX_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Les DONNÉES du portail qualité : écrites par la mesure nocturne (`qa.yml`),
+ * sur `main`, jamais à la main. `tests.ndjson` porte un enregistrement par
+ * test du dépôt — 7 372 lignes, 3,2 Mo le 12/09/2026 — et c'est voulu : c'est
+ * la mémoire qui rend l'instabilité visible. La première nuit l'a poussé, et
+ * ce contrôle a rougi TOUTES les PR qui suivaient, sur un fichier qu'aucune
+ * d'elles ne touchait. Un contenu borné (une ligne par test, pas par
+ * exécution), lisible, qui ne peut pas être « gitignoré » puisque le portail
+ * en ligne se rend depuis le dépôt. Les autres contrôles (NUL, UTF-16) restent.
+ */
+const SIZE_EXEMPT = /^apps\/qa\/data\/.*\.(ndjson|json)$/;
+
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
 }
@@ -123,7 +135,7 @@ for (const file of files) {
   if (BINARY_EXT.test(file)) continue;
 
   // ── Oversized ─────────────────────────────────────────────────────────────
-  if (stat.size > MAX_BYTES) {
+  if (stat.size > MAX_BYTES && !SIZE_EXEMPT.test(file)) {
     report(
       file,
       `${(stat.size / 1024 / 1024).toFixed(1)} MB — too large for a source file`,
