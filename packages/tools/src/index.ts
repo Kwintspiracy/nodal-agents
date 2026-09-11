@@ -197,3 +197,4 @@ export type { RoutineLintResult } from './builtin/meta-ops/routine-lint';
 // its workspace list with this label and the D1 overwrite gate keys off it —
 // exported so the two sides can never drift apart.
 export { SHARED_WORKSPACE_LABEL } from './builtin/file-ops/workspace';
+export { toolsNamedButAbsent } from './personality-tools';
