@@ -92,9 +92,17 @@ jobs:
       # donc le CLI tourne dans `packages/bench` et un chemin relatif visait
       # `packages/bench/apps/qa/data/` — un dossier qui n'existe pas. L'erreur
       # était avalée et aucun rapport n'arrivait au collecteur (revue Codex).
+      #
+      # Le rapport de la VEILLE est effacé d'abord. Il est versionné avec les
+      # données — donc présent même sur un runner neuf — et si le banc plante
+      # avant d'écrire, `|| true` laisse continuer et le collecteur relirait
+      # l'ancien : un vert d'hier présenté comme la mesure de cette nuit. Le
+      # rapport Playwright a déjà sa garde, dans « Normaliser le rapport »
+      # (revue Codex, 3e passe).
       - name: Banc d'essai
         run: |
           mkdir -p apps/qa/data
+          rm -f apps/qa/data/bench-run.json
           pnpm bench --json "$GITHUB_WORKSPACE/apps/qa/data/bench-run.json" || true
 
       - name: Install Playwright browsers
@@ -191,12 +199,19 @@ jobs:
       # On rejoue donc le commit de DONNÉES sur le main le plus récent, trois
       # fois au plus. Seul `apps/qa/data/` est réécrit, et personne d'autre n'y
       # touche : reposer les fichiers sur un main frais est sans ambiguïté.
+      #
+      # Le dossier est VIDÉ avant d'être reposé. `reset --hard` restaure les
+      # fichiers suivis et `cp` ne propage aucune suppression : un rapport
+      # Playwright effacé plus haut faute de résultat serait revenu dans le
+      # commit, et une collecte suivante l'aurait recompté (revue Codex, 3e
+      # passe). Le premier `git diff` compte aussi les fichiers NON SUIVIS :
+      # une première nuit n'écrit que des fichiers neufs.
       - name: Enregistrer la mesure
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- apps/qa/data; then
+          if git diff --quiet -- apps/qa/data && [ -z "$(git ls-files --others --exclude-standard apps/qa/data)" ]; then
             echo "rien de neuf à enregistrer"
             exit 0
           fi
@@ -207,9 +222,10 @@ jobs:
           for essai in 1 2 3; do
             git fetch origin main
             git reset --hard origin/main
+            rm -rf apps/qa/data
             mkdir -p apps/qa/data
             cp -r "$RUNNER_TEMP/mesure/." apps/qa/data/
-            git add apps/qa/data
+            git add --all apps/qa/data
             if git diff --cached --quiet; then
               echo "main porte déjà cette mesure"
               exit 0

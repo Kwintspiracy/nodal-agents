@@ -438,6 +438,20 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     expect(e.some((y) => /banc ont RÉGRESSÉ/.test(y.titre))).toBe(false);
   });
 
+  it('un banc qui n’a laissé AUCUN rapport remonte en haute — l’écran le disait, l’alerte se taisait', () => {
+    // Troisième passe Codex : `verdictDuBanc(null)` rendait `absent: true`, et
+    // `ecartsDe` ne lisait pas ce champ. Le banc pouvait planter avant d'écrire
+    // une ligne, et l'alerte fermait son billet comme si tout allait bien.
+    const e = ecartsDe(SNAP({ banc: { attendu: true, dernierRun: null } }), [{}, {}]);
+    const x = e.find((y) => /banc n'a laissé aucun rapport/.test(y.titre));
+    expect(x?.gravite).toBe('haute');
+    expect(alertes(e)).toContain(x);
+    // Mais seulement quand il était ATTENDU : un rendu local ne le lance pas,
+    // et « un banc jamais passé ne crie pas » (plus haut) reste vrai.
+    const local = ecartsDe(SNAP({ banc: { attendu: false, dernierRun: null } }), [{}, {}]);
+    expect(local.some((y) => /banc/.test(y.titre))).toBe(false);
+  });
+
   it('un banc jamais passé ne crie pas dans les écarts', () => {
     // Absent se dit à l'écran du banc, pas dans la liste des alertes : sinon
     // chaque dépôt neuf partirait avec une alerte permanente.
@@ -714,6 +728,22 @@ describe('fusionnerEssais — ce qui n’a pas tourné ne bouge pas', () => {
     expect(cleDuTest('a.spec.ts', 'ouvre')).toBe('a.spec.ts::ouvre');
   });
 
+  it('deux tests homonymes dans le MÊME fichier, dans la même salve, ne fusionnent pas non plus', () => {
+    // Troisième passe Codex : un `test.each` dont le titre ne distingue pas
+    // ses paramètres produit deux cas homonymes. Fusionnés, un cas toujours
+    // vert et un cas toujours rouge devenaient UN test « instable », avec une
+    // régression fraîche inventée à chaque nuit.
+    let r = fusionnerEssais([], [T('cas', 'vert', '2026-09-01'), T('cas', 'rouge', '2026-09-01')]);
+    expect(r).toHaveLength(2);
+    expect(r.map((e) => e.recents)).toEqual(['v', 'r']);
+    expect(r.every((e) => e.rougeDepuis === null)).toBe(true);
+
+    // Et la nuit suivante, chacun retrouve SON historique : la clé est stable.
+    r = fusionnerEssais(r, [T('cas', 'vert', '2026-09-02'), T('cas', 'rouge', '2026-09-02')]);
+    expect(r.map((e) => e.recents)).toEqual(['vv', 'rr']);
+    expect(r.map((e) => e.tours)).toEqual([2, 2]);
+  });
+
   it('rend une liste triée — le diff du fichier doit rester lisible', () => {
     const r = fusionnerEssais(
       [],
@@ -859,6 +889,27 @@ describe('titresDeTest — une étiquette ne compte que dans un TITRE', () => {
     ].join('\n');
     const slugs = titresDeTest(src).flatMap((t) => capacitesDunTitre(t));
     expect(slugs).toEqual(['celle-ci']);
+  });
+
+  it('un test COMMENTÉ ne revendique plus rien — sinon désactiver la preuve la laisse valide', () => {
+    // Troisième passe Codex : commenter l'unique test d'une capacité laissait
+    // sa revendication active, et la porte disait « prouvée » d'un test qui
+    // n'existe plus. Ligne commentée, bloc commenté : les deux formes.
+    const src = [
+      `// it('un ${E}:mort-en-ligne', () => {});`,
+      '/*',
+      `it('deux ${E}:mort-en-bloc', () => {});`,
+      '*/',
+      `it('trois ${E}:vivant', () => {});`,
+    ].join('\n');
+    expect(titresDeTest(src)).toEqual([`trois ${E}:vivant`]);
+  });
+
+  it('un titre qui contient une URL n’est pas coupé au « // »', () => {
+    // Le nettoyage des commentaires ne doit retirer que les LIGNES commentées :
+    // un `//` au milieu d'un titre est un morceau de titre.
+    const src = `it('ouvre http://localhost:3000 ${E}:x', () => {});`;
+    expect(titresDeTest(src)).toEqual([`ouvre http://localhost:3000 ${E}:x`]);
   });
 
   it('accepte les trois sortes de guillemets', () => {

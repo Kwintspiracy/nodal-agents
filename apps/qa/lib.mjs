@@ -340,6 +340,23 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
       quoi: banc.erreurs,
     });
   }
+  // `absent` n'est pas « tout va bien ». L'écran le disait ; l'alerte ne le
+  // lisait pas, et pouvait fermer son billet une nuit où le banc avait planté
+  // avant d'écrire une ligne (revue Codex, 3e passe). Haute, comme une section
+  // en panne : c'est la même panne, à l'échelle du banc entier.
+  //
+  // Seulement quand le banc était ATTENDU — la mesure nocturne le lance
+  // toujours. Un rendu local ou un dépôt neuf n'ont pas de rapport et n'ont
+  // rien à se reprocher : crier là ferait une alerte permanente que tout le
+  // monde apprendrait à ignorer.
+  if (banc.absent && s.banc?.attendu === true) {
+    out.push({
+      gravite: 'haute',
+      titre: `Le banc n'a laissé aucun rapport`,
+      detail: `Il a planté avant d'écrire, ou n'a pas tourné. Aucune de ses sections n'a mesuré quoi que ce soit cette nuit : ce n'est pas un vert, c'est un trou.`,
+      quoi: [],
+    });
+  }
 
   // ── Le dépôt. Réel, mais jamais au-dessus du produit.
   const nonJoues = (s.parcours ?? []).filter((p) => !p.jouParLaCi);
@@ -480,13 +497,25 @@ export function cleDuTest(fichier, titre) {
 export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {}) {
   const parCle = new Map((existants ?? []).map((e) => [e.cle, { ...e }]));
 
+  // Deux cas homonymes dans la MÊME salve sont deux tests — un `test.each`
+  // dont le titre ne distingue pas ses paramètres. Fusionnés, un cas toujours
+  // vert et un cas toujours rouge faisaient UN test « instable », avec une
+  // régression fraîche inventée chaque nuit (revue Codex, 3e passe). Le
+  // deuxième prend le rang `#2`, le troisième `#3` : l'ordre dans le fichier
+  // est stable d'une nuit à l'autre, donc la clé aussi. Le premier garde sa
+  // clé nue — aucun historique existant ne bouge.
+  const vus = new Map();
+
   for (const n of nouveaux ?? []) {
     const lettre = LETTRE[n.sort];
     // Un sort qu'on ne sait pas coder n'entre pas dans la mémoire : mieux vaut
     // un trou qu'une lettre inventée sur laquelle on calculera des taux.
     if (!lettre) continue;
 
-    const cle = n.cle ?? cleDuTest(n.fichier, n.titre);
+    const cleNue = n.cle ?? cleDuTest(n.fichier, n.titre);
+    const rang = (vus.get(cleNue) ?? 0) + 1;
+    vus.set(cleNue, rang);
+    const cle = rang === 1 ? cleNue : `${cleNue}#${rang}`;
     const e = parCle.get(cle) ?? {
       cle,
       fichier: n.fichier ?? null,
@@ -613,7 +642,13 @@ export function capacitesDunTitre(titre) {
  * prouve DANS SON TITRE, pas dans un commentaire ni dans une chaîne de test.
  */
 export function titresDeTest(texte) {
-  const t = String(texte ?? '');
+  // Un test COMMENTÉ n'est plus un test : commenter l'unique preuve d'une
+  // capacité la laissait « prouvée » (revue Codex, 3e passe). On retire les
+  // blocs `/* … */` et les LIGNES qui commencent par `//` — jamais un `//` en
+  // milieu de ligne, qui est le plus souvent le `//` d'une URL dans un titre.
+  const t = String(texte ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
   const out = [];
   // Le `(?:\(…\)\s*)?` optionnel absorbe le PREMIER appel de `test.each([…])(…)`,
   // dont le titre n'arrive qu'au second. Sans lui, tout un fichier bâti sur
