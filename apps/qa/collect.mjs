@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import {
   cartesDuTableau,
+  fusionnerEtats,
   sortDuCas,
   compterParcours,
   parcoursDunWorkflow,
@@ -317,12 +318,11 @@ function chantiers() {
   // fermé seulement pour ce qui vient d'être fait.
   const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url';
   const CHAMPS_PR = 'number,title,state,isDraft,createdAt,updatedAt,mergedAt,url,statusCheckRollup';
-  const deuxEtats = (famille, champs, limiteFermes) => {
-    const ouverts = j(`gh ${famille} list --state open --limit 1000 --json ${champs}`);
-    const fermes = j(`gh ${famille} list --state closed --limit ${limiteFermes} --json ${champs}`);
-    if (!ouverts || !fermes) return null;
-    return [...ouverts, ...fermes];
-  };
+  const deuxEtats = (famille, champs, limiteFermes) =>
+    fusionnerEtats(
+      j(`gh ${famille} list --state open --limit 1000 --json ${champs}`),
+      j(`gh ${famille} list --state closed --limit ${limiteFermes} --json ${champs}`),
+    );
   const issues = deuxEtats('issue', CHAMPS_ISSUE, 100);
   const pr = deuxEtats('pr', CHAMPS_PR, 50);
 

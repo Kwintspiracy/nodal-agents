@@ -14,6 +14,7 @@ import {
   etatCi,
   colonneDeCarte,
   cartesDuTableau,
+  fusionnerEtats,
   sortDuCas,
   compterParcours,
   parcoursDunWorkflow,
@@ -157,6 +158,28 @@ describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vi
     expect(c).toHaveLength(2);
     expect(c.find((x) => x.type === 'issue').colonne).toBe('En cours');
     expect(c.find((x) => x.type === 'pr').colonne).toBe('Fait');
+  });
+});
+
+describe('fusionnerEtats — deux requêtes, un seul chantier par numéro', () => {
+  const O = { number: 7, state: 'OPEN' };
+  const F = { number: 9, state: 'CLOSED' };
+
+  it('recolle ouverts et fermés', () => {
+    expect(fusionnerEtats([O], [F]).map((x) => x.number)).toEqual([7, 9]);
+  });
+
+  it('un chantier fermé ENTRE les deux requêtes ne fait pas deux cartes — le fermé l’emporte', () => {
+    // 4e passe Codex : il figurait dans les deux réponses, donc dans deux
+    // colonnes, « En cours » et « Fait ».
+    const r = fusionnerEtats([O], [{ number: 7, state: 'CLOSED' }, F]);
+    expect(r).toHaveLength(2);
+    expect(r.find((x) => x.number === 7).state).toBe('CLOSED');
+  });
+
+  it('une requête qui échoue rend null, jamais la moitié du tableau', () => {
+    expect(fusionnerEtats(null, [F])).toBeNull();
+    expect(fusionnerEtats([O], null)).toBeNull();
   });
 });
 
