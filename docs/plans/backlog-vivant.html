@@ -351,11 +351,12 @@
 <div class="wrap">
   <h1>Backlog vivant</h1>
   <p class="stamp">
-    Nodal-Agents · mis à jour le 09/09/2026 · une PR par chantier, remis à jour à chaque session ·
+    Nodal-Agents · mis à jour le 11/09/2026 · une PR par chantier, remis à jour à chaque session ·
     cap :
     <b
-      >publier la 0.8.9, alléger le coût d'un tour de chat, finir v7 « vérifier sans configurer »
-      (v7-B document et envoi, v7-D critères tirés de la demande)</b
+      >faire relire et merger #66 « Créer, c'est prouver » (dès le retour du quota Codex, 16/09),
+      publier la 0.8.9, poser les secrets Cloudflare du portail qualité, puis alléger le coût d'un
+      tour de chat</b
     >
   </p>
 
@@ -384,8 +385,31 @@
     <span class="step">#47 Routine · mergée</span><span class="arrow">→</span>
     <span class="step">#48 Le fil dit la vérité · mergée</span><span class="arrow">→</span>
     <span class="step">#49 Prouver sans configurer · mergée</span><span class="arrow">→</span>
+    <span class="step">#50 deux gardes · mergée</span><span class="arrow">→</span>
+    <span class="step">#51 Portail qualité · mergée</span><span class="arrow">→</span>
+    <span class="step">#66 Créer, c'est prouver · revue en attente</span
+    ><span class="arrow">→</span>
     <span class="step">0.8.9 · fix connexion LAN</span>
   </div>
+  <p class="pipenote">
+    <b>11/09 · deux PR en une journée, et la revue s'arrête sur un quota.</b>
+    <a href="https://github.com/Kwintspiracy/nodal-agents/pull/51">#51</a> «&nbsp;Un portail
+    qualité, et la CI qui le nourrit&nbsp;» est <b>mergée</b> (rebase, <code>c37885be</code>) après
+    <b>cinq passes</b> Codex — 24 capacités du produit, chacune prouvée par au moins un test, une
+    porte <code>capacites:check</code> bloquante, une mémoire test par test, une alerte qui ouvre
+    UNE issue quand quelque chose est rouge sur <code>main</code>. La première mesure nocturne
+    tourne à 03:17 UTC ; sans les secrets Cloudflare, elle mesure, pousse et alerte, mais ne publie
+    pas. <a href="https://github.com/Kwintspiracy/nodal-agents/pull/66">#66</a> «&nbsp;Créer, c'est
+    prouver&nbsp;» (plan&nbsp;:
+    <a href="https://claude.ai/code/artifact/cf176df0-f7ab-4f50-a79c-658e955b902d"
+      >Créer, c'est prouver</a
+    >) est <b>écrite et verte</b> — le nom du fichier se lit, la consigne se déplie, un fichier hors
+    projet est un document, et un document se vérifie sans pouvoir (existe · non vide · UTF-8 · bien
+    formé). <b>Elle attend sa revue Codex</b>&nbsp;: le quota de l'abonnement est épuisé jusqu'au
+    16/09, et la règle interdit de la remplacer par une relecture Claude. Pas de merge sans elle.
+    Deux défauts trouvés en sondant avant la revue&nbsp;: un parseur CSS qui acceptait un bloc
+    jamais refermé, et deux faux titres markdown.
+  </p>
   <p class="pipenote">
     <b>09/09 · plus aucune PR ouverte, et la vérification a enfin tourné.</b>
     <a href="https://github.com/Kwintspiracy/nodal-agents/pull/48">#48</a> «&nbsp;Le fil dit la
