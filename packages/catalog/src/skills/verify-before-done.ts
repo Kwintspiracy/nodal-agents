@@ -14,6 +14,8 @@ export const verifyBeforeDoneSkill: SystemSkill = {
     'Check the actual result before declaring success: re-read files you wrote, validate output format, confirm the result matches the request.',
   requiredBuiltins: [],
   kind: 'baseline',
+  // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
+  surfaces: ['job'],
   content: `## Verify before done
 
 Never declare a task complete without checking the actual result. Verification is a mandatory last step, not an optional quality nicety.

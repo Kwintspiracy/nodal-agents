@@ -14,6 +14,8 @@ export const safeToolUseSkill: SystemSkill = {
     'Read before writing. Confirm destructive actions. Respect anti-loop limits. Fail loud with a clear error rather than silently guessing.',
   requiredBuiltins: [],
   kind: 'baseline',
+  // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
+  surfaces: ['job'],
   content: `## Safe tool use
 
 Tools have side effects. Apply them with intent: read first, confirm before destroying, stop and report on failure.

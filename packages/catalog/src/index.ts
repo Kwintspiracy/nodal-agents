@@ -13,7 +13,7 @@
 // Adding a new system skill = a new file in skills/ + an entry below.
 // No SQL on live DBs.
 
-import type { SystemSkill, SkillKind } from './types';
+import type { SystemSkill, SkillKind, PromptSurface } from './types';
 
 import { obsidianSkill } from './skills/obsidian';
 import { researchScopeDisciplineSkill } from './skills/research-scope-discipline';
@@ -95,6 +95,14 @@ export const systemSkillSlugs: string[] = systemSkills.map((s) => s.slug);
 /** Effective kind of a skill (defaults to 'capability' when unset). */
 export function skillKind(s: SystemSkill): SkillKind {
   return s.kind ?? 'capability';
+}
+/**
+ * Le texte de cette skill peut-il être suivi sur cette surface ? Omis vaut
+ * `job` seulement : le défaut est prudent, une skill baseline qui ne dit rien
+ * est présumée écrite pour les outils d'un job (voir `SystemSkill.surfaces`).
+ */
+export function skillAppliesOn(s: SystemSkill, surface: PromptSurface): boolean {
+  return (s.surfaces ?? ['job']).includes(surface);
 }
 /** Kind of a system skill by slug; null when the slug is not a system skill. */
 export function skillKindOfSlug(slug: string): SkillKind | null {
@@ -179,4 +187,4 @@ export type {
   RecipeSkillMeta,
 } from './recipes/index';
 
-export type { SystemSkill, SkillKind };
+export type { SystemSkill, SkillKind, PromptSurface };
