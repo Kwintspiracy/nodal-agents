@@ -56,8 +56,23 @@ commentaire le prévoyait. Deux autres écrivaient dans un dossier sans manifest
 en attendant un `code_project` : ils reçoivent un `package.json`, parce que
 c'est bien un projet de code qu'ils voulaient prouver.
 
-**Trois parseurs entrent dans le runner** : `css-tree` 3.2.1, `parse5` 8.0.1,
-`@xmldom/xmldom` 0.9.12 — tous purs JS, bundlés par esbuild.
+**« Un CSS s'analyse » ne se vérifie pas avec un parseur CSS.** Sondé avant
+d'écrire le test : `css-tree` en mode tolérant acceptait `.a { color: red`
+(bloc jamais refermé) et refusait `.a { .b {} }` (l'imbrication moderne).
+Trop laxiste là où ça compte, trop strict là où ça ne compte pas. Le constat
+devient structurel — accolades, parenthèses et crochets se referment dans
+l'ordre, chaînes et commentaires aussi — et `css-tree` est ressorti du runner.
+Le premier test « CSS invalide » était vert pour la MAUVAISE raison (il rougissait
+sur l'imbrication, pas sur l'accolade) ; il exige maintenant la ligne de
+l'ouverture jamais refermée.
+
+**« Un markdown a un titre » acceptait deux faux titres**, trouvés en sondant :
+un en-tête YAML (`---` / `title: x` / `---`), dont la deuxième ligne passait
+pour un titre souligné, et une liste suivie d'un filet (`- item` / `---`).
+
+**Deux parseurs entrent dans le runner** : `parse5` 8.0.1 (son tokenizer, pour
+lire les balises) et `@xmldom/xmldom` 0.9.12 (SVG/XML) — purs JS, bundlés par
+esbuild.
 
 ## Ce que Quentin verra changer
 

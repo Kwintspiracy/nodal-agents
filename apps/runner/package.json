@@ -30,7 +30,6 @@
     "@slack/web-api": "^7.19.0",
     "@xmldom/xmldom": "0.9.12",
     "cron-parser": "^5.5.0",
-    "css-tree": "3.2.1",
     "discord.js": "^14.26.5",
     "fflate": "^0.8.3",
     "hono": "^4.12.18",
@@ -41,7 +40,6 @@
   },
   "devDependencies": {
     "@nodal-agents/test-kit": "workspace:*",
-    "@types/css-tree": "3.2.0",
     "ai": "^6.0.177",
     "esbuild": "^0.27.7",
     "tsx": "^4.19.2",
