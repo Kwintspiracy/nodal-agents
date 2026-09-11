@@ -24,6 +24,11 @@ import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
+import {
+  changedFileTargets,
+  observedDeliverableKeys,
+  snapshotFileTargets,
+} from './verification/observed';
 import { attachProductionToProject } from './projects/attach';
 
 // ─── Outils d'exécution de code ───────────────────────────────────────────────
@@ -647,6 +652,11 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   }
 
   // ── 3. Execute ─────────────────────────────────────────────────────────────
+  //
+  // L'état des fichiers VISÉS est pris AVANT l'outil (issue #60) : c'est la
+  // seule façon de constater, après, qu'il a réellement écrit. Une cible
+  // dossier n'est pas prise — elle reste déclarative, voir `observed.ts`.
+  const filesBefore = mutationTargets ? await snapshotFileTargets(mutationTargets) : null;
   try {
     const output = await tool.execute(validatedInput, ctx);
     const durationMs = Date.now() - startMs;
@@ -667,7 +677,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // La MÊME lecture du succès sert aux deux : ce qui a été nommé par cet
       // outil ET réellement écrit devient `produced`, la seule trace sur
       // laquelle `declare_verification` accepte de laisser déclarer une preuve.
-      await markDeliverablesProduced(ctx.db, ctx.jobId, mutationDeliverables);
+      //
+      // « Réellement écrit » se CONSTATE (issue #60) : un fichier visé dont
+      // l'empreinte n'a pas bougé n'est pas produit, quoi que l'outil ait dit.
+      const observed = observedDeliverableKeys({
+        changedFiles: await changedFileTargets(mutationTargets, filesBefore ?? new Map()),
+        dirTargets: mutationTargets.filter((t) => t.kind === 'dir'),
+        workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
+      });
+      await markDeliverablesProduced(ctx.db, ctx.jobId, mutationDeliverables, observed);
       await attachProductionToProject(
         {
           db: ctx.db,

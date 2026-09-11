@@ -41,15 +41,32 @@ export async function markDeliverablesProduced(
   db: AnyDrizzleDb,
   jobId: string,
   deliverables: readonly DirtiedDeliverable[],
+  /**
+   * Les clés qu'une écriture CONSTATÉE soutient (issue #60, `observed.ts`).
+   * Un livrable nommé mais dont aucun fichier n'a changé sur le disque n'est
+   * pas produit — et c'est dit par un code. Omis = tout ce qui est nommé
+   * (l'ancien contrat, gardé pour les appelants qui n'observent pas).
+   */
+  observedKeys?: ReadonlySet<string>,
 ): Promise<boolean> {
   const nommes = deliverables.filter((d) => d.addressed);
   if (!jobId || nommes.length === 0) return false;
+
+  const nonConstates = observedKeys ? nommes.filter((d) => !observedKeys.has(d.key)) : [];
+  if (nonConstates.length > 0) {
+    console.warn(
+      `[verification] VERIFICATION_PRODUCED_NOT_OBSERVED job=${jobId} ` +
+        `keys=${nonConstates.map((d) => `${d.deliverableType}:${d.key}`).join(',')}`,
+    );
+  }
+  const constates = observedKeys ? nommes.filter((d) => observedKeys.has(d.key)) : nommes;
+  if (constates.length === 0) return false;
 
   // Un UPDATE par TYPE : la clé d'unicité est (job, type, clé), et mélanger
   // les types dans un seul `inArray` de clés marquerait un office_file qui
   // partagerait par hasard la clé d'un projet.
   const parType = new Map<DeliverableType, string[]>();
-  for (const d of nommes) {
+  for (const d of constates) {
     const bucket = parType.get(d.deliverableType);
     if (bucket) bucket.push(d.key);
     else parType.set(d.deliverableType, [d.key]);
