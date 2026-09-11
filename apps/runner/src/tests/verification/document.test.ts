@@ -126,12 +126,42 @@ describe('document — bien formé, selon son type', () => {
     expect(verdict).toBe('green');
   });
 
-  it('un CSS invalide est rouge, avec la ligne', async () => {
-    const p = write('bad.css', 'body { color: red;\n.x { }\n'); // accolade jamais refermée
+  it('un CSS dont un bloc ne se referme pas est rouge, avec la ligne de l’ouverture', async () => {
+    const p = write('bad.css', 'body { color: red;\n.x { }\n'); // l'accolade de body jamais refermée
     const { verdict, records } = await prove(p);
     expect(verdict).toBe('red');
     expect(records.at(-1)).toMatchObject({ command: 'well-formed:css', verdict: 'red' });
-    expect(records.at(-1)?.stderrTail).toMatch(/line \d+/i);
+    expect(records.at(-1)?.stderrTail).toMatch(/'\{' opened at line 1 is never closed/);
+  });
+
+  it('un commentaire CSS jamais fermé est rouge ; l’imbrication moderne ne l’est pas', async () => {
+    // Sondé avant d'écrire : `css-tree` acceptait un bloc jamais refermé et
+    // refusait `.a { .b {} }`. La structure, elle, ne se trompe dans aucun des
+    // deux sens.
+    const comment = write('comment.css', 'a { color: red; } /* jamais fermé\n');
+    expect((await prove(comment)).records.at(-1)?.stderrTail).toMatch(/comment opened at line 1/);
+    const nesting = write(
+      'nesting.css',
+      '.a { color: red; .b { color: blue; } @media (min-width: 1px) { color: green; } }\n',
+    );
+    expect((await prove(nesting)).verdict).toBe('green');
+    const url = write('url.css', 'a { background: url("a)b.png"); content: "}"; }\n');
+    expect(
+      (await prove(url)).verdict,
+      'les parenthèses et accolades dans une chaîne ne comptent pas',
+    ).toBe('green');
+  });
+
+  it('un en-tête YAML et une liste suivie d’un filet ne sont pas des titres', async () => {
+    // Trouvés en sondant : la deuxième ligne de `---`/`title: x`/`---` passait
+    // pour un titre souligné, et `- item` suivi de `---` aussi.
+    const fm = write('frontmatter.md', '---\ntitle: x\n---\n\ncorps sans titre\n');
+    expect((await prove(fm)).verdict).toBe('red');
+    const liste = write('liste.md', '- item\n---\ntexte\n');
+    expect((await prove(liste)).verdict).toBe('red');
+    // Mais un vrai titre APRÈS l'en-tête compte.
+    const fmTitre = write('frontmatter-titre.md', '---\ntitle: x\n---\n\n# Titre\n');
+    expect((await prove(fmTitre)).verdict).toBe('green');
   });
 
   it('un HTML qui ne se referme pas est rouge', async () => {

@@ -10,8 +10,8 @@
 //
 // Ce que « vérifier un document » veut dire, et rien d'autre : il existe à
 // l'endroit annoncé, il n'est pas vide, il se décode en UTF-8, et il est bien
-// formé pour ce qu'il est — un markdown a un titre, un CSS s'analyse, un HTML
-// se referme, un JSON et un SVG se parsent. Rien de tout cela n'exécute quoi
+// formé pour ce qu'il est — un markdown a un titre, un CSS et un HTML se
+// referment, un JSON et un SVG se parsent. Rien de tout cela n'exécute quoi
 // que ce soit du dépôt : aucune approbation, aucune configuration, aucune
 // commande. `loadConfig` rend donc TOUJOURS `ready`, avec une séquence vide.
 //
@@ -28,7 +28,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
-import { parse as parseCss } from 'css-tree';
 import { Tokenizer, TokenizerMode, type Token } from 'parse5';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
@@ -81,26 +80,77 @@ const ko = (command: string, reason: string, durationMs = 0): Constat => ({
 /** `null` = bien formé ; sinon la raison, avec sa ligne quand on la connaît. */
 type FormCheck = (text: string) => string | null;
 
-/** Un markdown a un titre : `# …` (ATX) ou une ligne soulignée de `=`/`-` (setext). */
+/**
+ * Un markdown a un titre : `# …` (ATX), ou une ligne de texte soulignée de
+ * `=`/`-` (setext).
+ *
+ * Deux faux titres que la première version acceptait, trouvés en sondant :
+ * un en-tête YAML (`---` / `title: x` / `---`), dont la deuxième ligne passait
+ * pour un titre souligné ; et une liste suivie d'un filet (`- item` / `---`),
+ * qui est une liste puis une règle horizontale, jamais un titre. L'en-tête est
+ * retiré avant de chercher ; la ligne soulignée ne peut pas commencer par un
+ * marqueur de liste, de citation ou de titre.
+ */
 const markdownHasTitle: FormCheck = (text) => {
-  if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(text)) return null;
-  if (/^[ \t]{0,3}\S[^\n]*\n[ \t]{0,3}(=+|-+)[ \t]*$/m.test(text)) return null;
+  const body = text.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
+  if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(body)) return null;
+  if (/^[ \t]{0,3}(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n[ \t]{0,3}(=+|-+)[ \t]*$/m.test(body)) {
+    return null;
+  }
   return 'no title: expected a heading (`# Title` or an underlined line)';
 };
 
-/** Un CSS s'analyse : `css-tree` en mode tolérant, et la PREMIÈRE erreur fait foi. */
-const cssParses: FormCheck = (text) => {
-  let first: { message: string; line?: number; column?: number } | null = null;
-  parseCss(text, {
-    positions: true,
-    onParseError: (error) => {
-      if (first === null) first = error;
-    },
-  });
-  if (first === null) return null;
-  const e: { message: string; line?: number; column?: number } = first;
-  const where = e.line !== undefined ? ` (line ${e.line}, column ${e.column ?? '?'})` : '';
-  return `${e.message}${where}`;
+/**
+ * Un CSS se referme : chaque `{`, `(` et `[` trouve sa fermeture, dans l'ordre,
+ * et aucune chaîne ni aucun commentaire ne reste ouvert.
+ *
+ * Pourquoi pas un parseur CSS : sondé, `css-tree` en mode tolérant acceptait
+ * `.a { color: red` (bloc jamais refermé) et refusait `.a { .b {} }` (la
+ * syntaxe d'imbrication moderne). Trop laxiste là où ça compte, trop strict là
+ * où ça ne compte pas : la structure qui se referme est ce que « s'analyse »
+ * veut dire pour un document, et elle se vérifie sans grammaire.
+ */
+const cssCloses: FormCheck = (text) => {
+  const CLOSE: Readonly<Record<string, string>> = { '{': '}', '(': ')', '[': ']' };
+  const stack: Array<{ ch: string; line: number }> = [];
+  let line = 1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '\n') {
+      line += 1;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) return `comment opened at line ${line} is never closed`;
+      line += (text.slice(i, end).match(/\n/g) ?? []).length;
+      i = end + 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== c; j++) {
+        if (text[j] === '\\') j += 1;
+        else if (text[j] === '\n') return `string opened at line ${line} is never closed`;
+      }
+      if (j >= text.length) return `string opened at line ${line} is never closed`;
+      i = j;
+      continue;
+    }
+    if (c in CLOSE) {
+      stack.push({ ch: c, line });
+      continue;
+    }
+    if (c === '}' || c === ')' || c === ']') {
+      const top = stack.pop();
+      if (top === undefined) return `'${c}' at line ${line} closes nothing`;
+      if (CLOSE[top.ch] !== c) {
+        return `'${top.ch}' opened at line ${top.line} is closed by '${c}' at line ${line}`;
+      }
+    }
+  }
+  const left = stack[stack.length - 1];
+  return left === undefined ? null : `'${left.ch}' opened at line ${left.line} is never closed`;
 };
 
 /**
@@ -262,7 +312,7 @@ const xmlParses: FormCheck = (text) => {
 const FORM_RULES: Readonly<Record<string, { readonly name: string; readonly check: FormCheck }>> = {
   '.md': { name: 'markdown', check: markdownHasTitle },
   '.markdown': { name: 'markdown', check: markdownHasTitle },
-  '.css': { name: 'css', check: cssParses },
+  '.css': { name: 'css', check: cssCloses },
   '.html': { name: 'html', check: htmlCloses },
   '.htm': { name: 'html', check: htmlCloses },
   '.json': { name: 'json', check: jsonParses },
