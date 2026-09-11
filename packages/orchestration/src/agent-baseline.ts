@@ -13,7 +13,8 @@
 // these are universal, never user-edited, and the catalog is the code's source
 // of truth — so the prompt can never drift from a stale seed.
 
-import { systemSkills, skillKind } from '@nodal-agents/catalog';
+import { systemSkills, skillKind, skillAppliesOn } from '@nodal-agents/catalog';
+import type { PromptSurface } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
 /**
@@ -27,8 +28,10 @@ import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
  */
 const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/i;
 
-const contentOfKind = (kind: 'baseline' | 'channel'): string[] =>
-  systemSkills.filter((s) => skillKind(s) === kind).map((s) => s.content.trim());
+const contentOfKind = (kind: 'baseline' | 'channel', surface: PromptSurface = 'job'): string[] =>
+  systemSkills
+    .filter((s) => skillKind(s) === kind && skillAppliesOn(s, surface))
+    .map((s) => s.content.trim());
 
 /**
  * Memory discipline — every agent, orchestrator or worker. Injected as a
@@ -100,11 +103,21 @@ export function buildBaselineBlock(
      * agent orders it cannot follow, which is worse than not giving them.
      */
     nodalTools?: boolean;
+    /**
+     * La surface qui recevra ce bloc. `chat` a UN outil (`run_task`) : les
+     * skills baseline dont le texte prescrit des outils de fichiers n'y sont
+     * pas injectées (elles le déclarent, `SystemSkill.surfaces`), et la
+     * discipline de mémoire non plus — elle ordonne `save_memory`, que le chat
+     * n'a pas. Mesuré le 12/09/2026 : ~4 200 jetons d'ordres inexécutables par
+     * tour de chat, retirés par la même règle que pour `cli-runtime`.
+     */
+    surface?: PromptSurface;
   } = {},
 ): string {
   const nodalTools = opts.nodalTools !== false;
   if (!nodalTools) return '';
-  const parts = contentOfKind('baseline');
+  const surface = opts.surface ?? 'job';
+  const parts = contentOfKind('baseline', surface);
   const reinforcement =
     parts.length > 0 && NEEDS_FIRMER_VERIFY.test(model)
       ? '\n\n**Especially you — execution discipline:** ' +
@@ -123,7 +136,9 @@ export function buildBaselineBlock(
   const roleBlock =
     opts.role === 'orchestrator' ? DELEGATION_DISCIPLINE_BLOCK : WORKER_DISCOVERY_BLOCK;
 
-  return [catalogBlock, MEMORY_DISCIPLINE_BLOCK, roleBlock].filter(Boolean).join('\n\n');
+  // Le chat n'a pas `save_memory` : la discipline qui l'ordonne n'y va pas.
+  const memoryBlock = surface === 'chat' ? '' : MEMORY_DISCIPLINE_BLOCK;
+  return [catalogBlock, memoryBlock, roleBlock].filter(Boolean).join('\n\n');
 }
 
 /** Layer 2 — per-channel etiquette, only when the agent is bound to a channel. */

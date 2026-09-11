@@ -28,6 +28,14 @@
  */
 export type SkillKind = 'baseline' | 'channel' | 'capability' | 'agent-internal';
 
+/**
+ * Où un prompt s'exécute : un JOB (tous les outils de l'agent), le CHAT
+ * (un seul outil, `run_task`, qui escalade vers un job), un runtime CLI (les
+ * outils de la CLI, aucun de Nodal). Même vocabulaire que `JobContext.surface`
+ * côté orchestration, où `undefined` vaut `job`.
+ */
+export type PromptSurface = 'job' | 'chat' | 'cli-runtime';
+
 /** Skill that ships with the product. */
 export interface SystemSkill {
   /** Stable identifier used for tool naming + assignment lookups. */
@@ -42,6 +50,20 @@ export interface SystemSkill {
   requiredBuiltins?: string[];
   /** Behavior layer (see SkillKind). Defaults to 'capability' when omitted. */
   kind?: SkillKind;
+  /**
+   * Les SURFACES où le texte de cette skill peut être suivi. Omis = `job`
+   * seulement pour une `baseline` qui prescrit des outils ; les autres kinds ne
+   * lisent pas ce champ (une `capability` se charge à la demande, un `channel`
+   * suit son canal).
+   *
+   * Pourquoi c'est déclaré ICI et pas déduit par le runtime (invariant #3) :
+   * une skill baseline dit « `file_read` before `file_write` », « `save_memory`
+   * before finishing ». Sur la surface `chat`, l'agent a UN outil, `run_task`.
+   * Chaque « you MUST » de ce texte y est un ordre inexécutable — et il pesait
+   * ~3 900 jetons par tour, pour dire bonjour (mesuré le 12/09/2026). Seule la
+   * skill sait si ses règles dépendent d'un outil ; elle le dit.
+   */
+  surfaces?: readonly PromptSurface[];
   /**
    * Present this skill as a TOOL GROUP on the agent's Tools tab, and hide it
    * from every Skills surface.

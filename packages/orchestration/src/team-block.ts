@@ -51,6 +51,14 @@ export interface TeamBlockOptions {
    * team and saying so.
    */
   delegation?: boolean;
+  /**
+   * La surface `chat` : pas d'outil de délégation non plus, mais un chemin
+   * pour faire faire le travail — `run_task` lance un job, et c'est ce job
+   * qui délègue. Le roster reste une connaissance ; la phrase qui dit « il n'y
+   * a aucun moyen de leur confier du travail » serait FAUSSE ici, et un agent
+   * qui la croit répond « je ne peux pas » à une demande qu'il devait escalader.
+   */
+  escalation?: boolean;
 }
 
 export async function buildTeamBlock(
@@ -252,7 +260,15 @@ export async function buildTeamBlock(
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
   lines.push('## Your team\n');
-  if (!canDelegate) {
+  if (!canDelegate && options.escalation === true) {
+    // Roster as a FACT, plus the one path that gets work done from here.
+    lines.push(
+      'These agents exist in this workspace and are attached to you. In this chat you have ' +
+        'NO delegation tool — the job you start with `run_task` is where delegation happens, ' +
+        'and it will see this same team. Treat the list as knowledge (who exists, what each is ' +
+        'for) when you write the `run_task` instruction; never pretend to delegate from here.\n',
+    );
+  } else if (!canDelegate) {
     // Roster as a FACT, not a manual. See TeamBlockOptions.delegation.
     lines.push(
       'These agents exist in this workspace and are attached to you. On THIS surface you ' +

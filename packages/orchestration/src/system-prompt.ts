@@ -754,7 +754,13 @@ export async function buildSystemPrompt(
     // Build team block (data-driven from DB — empty string for workers)
     // A cli-runtime agent gets the roster as knowledge, never as instructions:
     // its session has no delegation tool at all (see TeamBlockOptions).
-    buildTeamBlock(agent.id, db, { delegation: jobContext?.surface !== 'cli-runtime' }),
+    // Le chat non plus n'a pas d'outil de délégation — il ESCALADE avec
+    // `run_task`, et c'est le job qui délègue. Le roster y est une
+    // connaissance, avec ce chemin-là pour faire faire le travail.
+    buildTeamBlock(agent.id, db, {
+      delegation: jobContext?.surface !== 'cli-runtime' && jobContext?.surface !== 'chat',
+      escalation: jobContext?.surface === 'chat',
+    }),
     // Build skills block — full content of each assigned skill, injected into
     // the system prompt so the agent ACTS on the skill's instructions, not just
     // sees a metadata label. (Pre-Brique 32 only `name + slug` were selected,
@@ -982,6 +988,7 @@ export async function buildSystemPrompt(
   const baselineBlock = buildBaselineBlock(agent.model, {
     role: agent.role,
     nodalTools: jobContext?.surface !== 'cli-runtime',
+    surface: jobContext?.surface ?? 'job',
   });
   const channelBlock = buildChannelBlock({
     channel: jobContext?.origin,

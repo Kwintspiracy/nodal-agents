@@ -32,6 +32,8 @@ export const workspaceHygieneSkill: SystemSkill = {
     'Reuse before recreating. One canonical folder per artifact kind. Parametrize scripts. Never write artifacts into a skill bundle.',
   requiredBuiltins: [],
   kind: 'baseline',
+  // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
+  surfaces: ['job'],
   content: `## Workspace hygiene
 
 This is how you keep the SHARED workspace usable. It is a durable, common asset — not a scratch pad — and everything below applies to what you put THERE.
