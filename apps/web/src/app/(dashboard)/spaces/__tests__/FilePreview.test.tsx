@@ -137,11 +137,11 @@ describe('P12 — l’aperçu du classeur sur la carte du fichier', () => {
 
   const KEY = 'd:/ws/report.xlsx';
 
-  it('not_configured : la carte dit qu’aucune vérification n’existe pour les documents', () => {
+  it('not_configured : la carte dit qu’aucune vérification n’est configurée pour ce fichier', () => {
     const html = render(cardWith({ preview: PREVIEW, deliverableKey: KEY }), [
       { canonicalKey: KEY, status: 'not_configured' },
     ]);
-    expect(html).toContain('Not verified: no checks exist for documents yet');
+    expect(html).toContain('Not verified: no checks configured for this file');
   });
 
   it('dirty : « Not yet verified »', () => {

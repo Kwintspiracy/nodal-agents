@@ -17,13 +17,47 @@ donné raison à Quentin.
 
 ## Suivi
 
-| # | Ce qui change | Pour qui l'utilise | Taille |
-|---|---|---|---|
-| 1 | Le nom du fichier se lit sur la carte | on voit enfin QUELS fichiers ont été écrits | S |
-| 2 | La consigne passée au travail se déplie | on voit ce que l'agent a vraiment demandé au job | S |
-| 3 | Un fichier créé est typé pour ce qu'il EST | un skill n'est plus un « projet de code » | M |
-| 4 | Un document se vérifie tout seul | « Vérifié » veut enfin dire quelque chose | M |
-| 5 | La page Approvals passe en anglais | le tableau de bord parle une seule langue | XS |
+> Écrit le 11/09/2026 sur `feat/creer-c-est-prouver`, une seule PR. Revue
+> Codex à suivre avant merge.
+
+| # | Ce qui change | Pour qui l'utilise | Taille | État |
+|---|---|---|---|---|
+| 1 | Le nom du fichier se lit sur la carte | on voit enfin QUELS fichiers ont été écrits | S | 🔄 écrit, en review |
+| 2 | La consigne passée au travail se déplie | on voit ce que l'agent a vraiment demandé au job | S | 🔄 écrit, en review |
+| 3 | Un fichier créé est typé pour ce qu'il EST | un skill n'est plus un « projet de code » | M | 🔄 écrit, en review |
+| 4 | Un document se vérifie tout seul | « Vérifié » veut enfin dire quelque chose | M | 🔄 écrit, en review |
+| 5 | La page Approvals passe en anglais | le tableau de bord parle une seule langue | XS | 🔄 écrit, en review |
+
+## Ce que la vérification a corrigé DANS CE PLAN
+
+**Le point 3 disait « sous un projet DÉCLARÉ ⇒ code ». Seul, c'était faux.**
+Le registre se remplit tout seul (P5b) à partir des cibles `code_project` qui
+portent un manifeste : ne regarder que la déclaration aurait typé `document` le
+premier `package.json` d'un dépôt neuf, et plus rien ne l'aurait jamais déclaré.
+La règle est donc : racine à MANIFESTE **ou** projet déclaré de `kind = 'code'`
+⇒ `code_project` ; sinon `document`. Et un projet déclaré de `kind =
+'documents'` ne fait pas de ses fichiers du code — le plan ne connaissait pas
+cette colonne.
+
+**Le point 4 disait « un HTML se referme », et le parseur HTML5 ne le dit
+pas.** La norme referme d'elle-même un `<div>` resté ouvert à `</body>`, et
+`parse5` ne signale rien. Le constat lit donc les balises une à une (le
+tokenizer de `parse5`) et tient la pile des éléments dont la fermeture est
+obligatoire — ni les vides, ni ceux dont la norme permet d'omettre la fin.
+Tolérances assumées : pas de doctype, et `<br/>`.
+
+**Le contrat des vérificateurs décrivait une séquence de commandes**, pas un
+constat sans commande : `ReadyConfig` gagne un champ `subject` (le fichier
+lui-même). `cwd` ne portait pas le nom du fichier.
+
+**Trois tests anciens affirmaient que `document` était REFUSÉ** (« réservé,
+sans canonicaliseur »). Ils ont été reportés sur `other`, comme leur propre
+commentaire le prévoyait. Deux autres écrivaient dans un dossier sans manifeste
+en attendant un `code_project` : ils reçoivent un `package.json`, parce que
+c'est bien un projet de code qu'ils voulaient prouver.
+
+**Trois parseurs entrent dans le runner** : `css-tree` 3.2.1, `parse5` 8.0.1,
+`@xmldom/xmldom` 0.9.12 — tous purs JS, bundlés par esbuild.
 
 ## Ce que Quentin verra changer
 

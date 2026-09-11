@@ -25,9 +25,10 @@ import ThinkingBlock from './ThinkingBlock.tsx';
 import ToolBlock from './ToolBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
-import FileDiff, { FILE_DOT, LineDelta } from './FileDiff.tsx';
+import FileDiff, { FILE_DOT, FileName, LineDelta } from './FileDiff.tsx';
 import HistoryGroup from './HistoryGroup.tsx';
 import DelegationDisclosure from './DelegationDisclosure.tsx';
+import Handoff from './Handoff.tsx';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
@@ -177,11 +178,7 @@ function FeedItemView({
     case 'handoff':
       // P7 — la consigne passée au travail. Repliée dans le style des notes :
       // la demande de l'utilisateur est juste au-dessus, écrite de sa main.
-      return (
-        <p className="mt-3 truncate text-mono-11 text-ink-4" title={item.text}>
-          Handed to the work · {item.text}
-        </p>
-      );
+      return <Handoff text={item.text} />;
     case 'failure':
       return (
         <div className="mt-6">
@@ -442,13 +439,25 @@ function TableBody({ entry, notes = [] }: { entry: TableEntry; notes?: readonly 
  * connaît pas rend `null` : pas de ligne, jamais un état inventé (invariant #4).
  */
 const VERIFICATION_NOTE: Readonly<Record<string, string>> = {
-  not_configured: 'Not verified: no checks exist for documents yet',
+  not_configured: 'Not verified: no checks configured for this file',
   dirty: 'Not yet verified',
   pending_approval: 'Checks await approval',
   green: 'Verified',
   red: 'Checks failed',
   infra_error: 'Checks could not run',
 };
+
+/**
+ * L'état de vérification d'un DOCUMENT sans aperçu — un `.md`, un `.css`, un
+ * `.html` écrit hors de tout projet (« Créer, c'est prouver », point 4). Le
+ * classeur a son aperçu et son état dessous ; un document n'a que son état,
+ * et il se lit au même endroit.
+ */
+function DeliverableNote({ status }: { status: string | undefined }) {
+  const note = status === undefined ? undefined : VERIFICATION_NOTE[status];
+  if (note === undefined) return null;
+  return <p className="border-t border-rule-2 px-4 py-2 text-mono-11 text-ink-4">{note}</p>;
+}
 
 /** L'aperçu d'un fichier écrit : ses premières lignes, ce qu'elles taisent, et son état. */
 function FilePreview({ entry, status }: { entry: TableEntry; status: string | undefined }) {
@@ -522,17 +531,18 @@ function FilesCard({
           // P12 — l'aperçu se pose SOUS la ligne du fichier, au-dessus du diff
           // de P11. L'état de vérification ne se lit que si l'outil a écrit la
           // clé du livrable ET que CE job porte une ligne pour elle.
+          const status =
+            f.deliverableKey === undefined
+              ? undefined
+              : deliverables.get(deliverableStatusKey(step.jobId, f.deliverableKey));
+          // Un document sans aperçu (un `.md`, un `.css`) montre quand même son
+          // état : c'est la seule chose que « Vérifié » a à dire de lui.
           const preview =
-            f.preview === undefined ? undefined : (
-              <FilePreview
-                entry={f.preview}
-                status={
-                  f.deliverableKey === undefined
-                    ? undefined
-                    : deliverables.get(deliverableStatusKey(step.jobId, f.deliverableKey))
-                }
-              />
-            );
+            f.preview !== undefined ? (
+              <FilePreview entry={f.preview} status={status} />
+            ) : status !== undefined ? (
+              <DeliverableNote status={status} />
+            ) : undefined;
           // P11 — un fichier ÉCRIT se déplie sur son diff. Un fichier `listed`
           // vient d'une lecture : il n'a pas d'avant, donc pas de bouton — une
           // pastille qui s'ouvrirait sur « aucun changement » serait pire que
@@ -562,7 +572,7 @@ function FilesCard({
                 <span
                   className={`h-1.5 w-1.5 shrink-0 rounded-full ${FILE_DOT[f.action] ?? 'bg-ink-4'}`}
                 />
-                <span className="min-w-0 flex-1 truncate text-mono-12 text-ink">{f.path}</span>
+                <FileName path={f.path} />
                 <LineDelta counts={counts} />
                 {f.bytes !== undefined && (
                   <span className="shrink-0 text-mono-11 text-ink-4">

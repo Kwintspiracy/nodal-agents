@@ -161,6 +161,31 @@ export function DiffBody({ view }: { view: FileDiffView }) {
   }
 }
 
+/**
+ * Le nom du fichier DEVANT, le dossier derrière — « Créer, c'est prouver »,
+ * point 1. Un chemin absolu tronqué à droite cachait toujours le nom : trois
+ * écritures dans un même dossier affichaient trois fois le même préfixe, et
+ * Quentin a cru voir trois diffs sur un seul fichier (07/09). Le dossier se
+ * tronque par la GAUCHE (`direction: rtl` sur le conteneur, texte remis en
+ * `ltr` à l'intérieur pour ne pas inverser la ponctuation) : c'est la fin d'un
+ * chemin qui porte le sens. Le chemin complet reste au survol.
+ */
+export function FileName({ path }: { path: string }) {
+  const cut = path.lastIndexOf('/');
+  const name = cut === -1 ? path : path.slice(cut + 1);
+  const dir = cut === -1 ? '' : path.slice(0, cut + 1);
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-left" title={path}>
+      <span className="shrink-0 text-mono-12 text-ink">{name}</span>
+      {dir !== '' && (
+        <span className="min-w-0 truncate text-mono-11 text-ink-4" dir="rtl">
+          <bdi dir="ltr">{dir}</bdi>
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function FileDiff({
   jobId,
   toolCallId,
@@ -210,7 +235,7 @@ export default function FileDiff({
     <li className="border-t border-rule-2 first:border-t-0">
       <DisclosureButton open={open} onClick={toggle} className="h-[42px] py-0 px-3.5">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${FILE_DOT[action] ?? 'bg-ink-4'}`} />
-        <span className="min-w-0 flex-1 truncate text-left text-mono-12 text-ink">{path}</span>
+        <FileName path={path} />
         <LineDelta counts={lineCounts} />
         {bytes !== undefined && <span className="shrink-0 text-mono-11 text-ink-4">{bytes}</span>}
         {detail !== undefined && (

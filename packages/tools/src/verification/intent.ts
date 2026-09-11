@@ -299,7 +299,12 @@ async function resolveDeliverables(
         }
         break;
       }
-      case 'office_file': {
+      case 'office_file':
+      case 'document': {
+        // Un DOCUMENT (plan « Créer, c'est prouver ») a la même identité qu'un
+        // classeur : le fichier lui-même, sous la même clé. Ce qui les
+        // distingue, c'est le vérificateur — pas la canonicalisation.
+        //
         // Un dossier n'est pas un document. Le cas n'existe pas aujourd'hui
         // (les outils Office ciblent tous un `path` de fichier) ; s'il
         // apparaissait, il serait DIT plutôt que rangé en silence.
@@ -317,7 +322,6 @@ async function resolveDeliverables(
         }
         break;
       }
-      case 'document':
       case 'outbound_action':
       case 'other': {
         // Réservés par le plan, sans règle de canonicalisation branchée. Une

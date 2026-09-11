@@ -432,3 +432,32 @@ describe('ConversationFeedView', () => {
     );
   });
 });
+
+// ─── « Créer, c'est prouver », point 2 — la consigne passée au travail se déplie ──
+
+describe('ConversationFeedView — le handoff', () => {
+  // La ligne « Handed to the work » était tronquée à une ligne. Or elle
+  // portait 1 649 caractères, et c'est là qu'on voyait qu'Alfred avait inventé
+  // des exigences que personne ne lui avait données. L'écran cachait la preuve.
+  const consigne = `Build a CSS/HTML base skill. Requirements: 1. ${'x'.repeat(1600)} END-OF-HANDOFF`;
+  const feedAvecHandoff: ConversationFeed = {
+    items: [
+      {
+        kind: 'request',
+        text: 'Crée un skill CSS',
+        origin: { channel: 'dashboard', scheduleName: null, chatId: null },
+        at: null,
+      },
+      { kind: 'handoff', text: consigne },
+    ],
+    totals: { toolCalls: 0, costUsd: null, durationMs: 0 } as never,
+  };
+
+  it('replié : un bouton de dépliage, et la consigne ENTIÈRE est dans la page (le clip est visuel)', () => {
+    const html = renderToStaticMarkup(<ConversationFeedView feed={feedAvecHandoff} />);
+    expect(html).toContain('Handed to the work');
+    expect(html).toContain('aria-expanded="false"');
+    // Plus de troncature par attribut `title` : le texte est dans le flux.
+    expect(html).toContain('END-OF-HANDOFF');
+  });
+});

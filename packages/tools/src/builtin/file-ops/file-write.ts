@@ -6,6 +6,8 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, writtenFile } from '../../presenters';
+import { deliverableTypeForWrittenFile } from '../../verification/written-file-type';
+import { fileDeliverableKey } from '../../verification/office-file-key';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
@@ -39,7 +41,19 @@ export const FileWriteInputSchema = z.object({
 
 export type FileWriteInput = z.infer<typeof FileWriteInputSchema>;
 export type FileWriteOutput =
-  | { ok: true; written: true; bytes: number; path: string }
+  | {
+      ok: true;
+      written: true;
+      bytes: number;
+      path: string;
+      /**
+       * La clé du DOCUMENT écrit, quand c'en est un — celle sous laquelle
+       * l'intention a rangé son état de vérification, pour que la carte du
+       * fil le retrouve (P12). Absente pour un fichier de projet : son état
+       * est celui du projet, lu ailleurs.
+       */
+      deliverable_key?: string;
+    }
   | { ok: false; reason: string };
 
 export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWriteOutput> = {
@@ -54,7 +68,12 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   card: 'files',
   present: ({ output }) =>
     output.ok
-      ? writtenFile(output.path, 'written', { bytes: output.bytes })
+      ? writtenFile(output.path, 'written', {
+          bytes: output.bytes,
+          ...(output.deliverable_key !== undefined
+            ? { deliverableKey: output.deliverable_key }
+            : {}),
+        })
       : failureText(output.reason),
   mutatesWorkspace: true,
   // The ONE file this call is about to write — the same resolution execute()
@@ -69,13 +88,16 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   resolveMutationTargets: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
-      // Cet outil écrit du TEXTE dans un dossier attaché : ce qu'il produit
-      // fait partie du projet, et le projet doit se reprouver. Aucune
-      // reconnaissance d'extension ici (v7-A) — `data/fixtures/x.csv` est du
-      // code, `rapport.csv` n'en est pas, et rien dans le chemin ne les
-      // distingue. Les outils Office, eux, produisent des DOCUMENTS sans
-      // ambiguïté : c'est leur hook qui déclare `office_file`.
-      return [{ kind: 'file', path, deliverableType: 'code_project' }];
+      // Ce que cet outil écrit est du CODE s'il tombe sous un projet de code
+      // (manifeste ou déclaration), un DOCUMENT sinon — la règle vit dans
+      // `written-file-type.ts`, mécanique et sans extension (v7-A :
+      // `data/fixtures/x.csv` est du code, `rapport.csv` n'en est pas, et
+      // rien dans le chemin ne les distingue). Les outils Office, eux,
+      // produisent des documents sans ambiguïté : leur hook déclare
+      // `office_file`.
+      return [
+        { kind: 'file', path, deliverableType: await deliverableTypeForWrittenFile(ctx, path) },
+      ];
     } catch {
       return [];
     }
@@ -123,7 +145,24 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
         await unlink(tmp).catch(() => undefined);
         throw err;
       }
-      return { ok: true, written: true, bytes, path };
+      // La clé du document, pour la carte (P12) — la même que celle posée
+      // par l'intention, calculée par la même fonction. Un fichier de projet
+      // n'en porte pas : son état est celui du projet.
+      const deliverableKey =
+        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
+          ? fileDeliverableKey(
+              path,
+              (ctx.workspaces ?? []).map((w) => w.path),
+              'document',
+            )
+          : null;
+      return {
+        ok: true,
+        written: true,
+        bytes,
+        path,
+        ...(deliverableKey !== null ? { deliverable_key: deliverableKey } : {}),
+      };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
       const code = (err as NodeJS.ErrnoException).code;

@@ -132,6 +132,7 @@ import {
 } from '@nodal-agents/db';
 import {
   deliverableStatuses,
+  FILE_DELIVERABLE_TYPES,
   groupVerificationRuns,
   mergeSkippedSurfaces,
   type DeliverableStatusView,
@@ -2622,7 +2623,9 @@ export async function getSpaceConversationAction(
                   'not_configured',
                   'pending_approval',
                 ]),
-                eq(jobDeliverableVerificationState.deliverableType, 'office_file'),
+                inArray(jobDeliverableVerificationState.deliverableType, [
+                  ...FILE_DELIVERABLE_TYPES,
+                ]),
               ),
             ),
           ),
