@@ -194,6 +194,27 @@ export function parcoursDunWorkflow(texte, tousLesParcours) {
 }
 
 /**
+ * Une famille de chantiers (issues ou PR), demandée en DEUX requêtes — les
+ * ouverts en entier, les fermés récents — et recollée sans doublon.
+ *
+ * Une seule requête `--state all` bornée évinçait un chantier ouvert ancien
+ * derrière cinquante fermés récents (revue Codex, 3e passe). Deux requêtes, et
+ * un chantier fermé ENTRE les deux apparaît dans les deux réponses : sans
+ * dédoublonnage il faisait deux cartes, « En cours » et « Fait » (4e passe).
+ * Le fermé l'emporte — c'est l'état le plus récent.
+ *
+ * `null` dès qu'une des deux n'a pas abouti, pour la même raison que
+ * `cartesDuTableau` : une absence n'est pas un zéro.
+ */
+export function fusionnerEtats(ouverts, fermes) {
+  if (!ouverts || !fermes) return null;
+  const parNumero = new Map();
+  for (const x of ouverts) parNumero.set(x.number, x);
+  for (const x of fermes) parNumero.set(x.number, x);
+  return [...parNumero.values()];
+}
+
+/**
  * Les cartes du tableau, à partir de ce que GitHub a répondu.
  *
  * Rend `null` — et non une liste vide — dès qu'une des deux requêtes n'a PAS
@@ -504,6 +525,11 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
   // deuxième prend le rang `#2`, le troisième `#3` : l'ordre dans le fichier
   // est stable d'une nuit à l'autre, donc la clé aussi. Le premier garde sa
   // clé nue — aucun historique existant ne bouge.
+  //
+  // Limite assumée : insérer un homonyme AVANT les autres décale leurs rangs,
+  // et chacun hérite de l'historique de son prédécesseur pour une nuit. C'est
+  // le prix d'une clé sans identifiant — un `test.each` qui met son paramètre
+  // dans le titre n'a pas ce problème, et c'est la forme à préférer.
   const vus = new Map();
 
   for (const n of nouveaux ?? []) {
