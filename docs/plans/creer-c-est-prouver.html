@@ -312,6 +312,12 @@
   </p>
 
   <h2>Suivi</h2>
+  <p style="font-size: 13.5px; color: var(--ink-3)">
+    <b>11/09/2026</b> — les cinq points sont écrits sur <code>feat/creer-c-est-prouver</code>,
+    <a href="https://github.com/Kwintspiracy/nodal-agents/pull/66">PR #66</a>, tests verts en local
+    (<code>pnpm test</code> complet). <b>La revue Codex n'a pas pu avoir lieu</b> : le quota de
+    l'abonnement est épuisé jusqu'au 16/09. Pas de merge sans elle.
+  </p>
   <div class="tablewrap">
     <table>
       <tr>
@@ -319,39 +325,70 @@
         <th>Ce qui change</th>
         <th>Pour qui l'utilise</th>
         <th>Taille</th>
+        <th>État</th>
       </tr>
       <tr>
         <td>1</td>
         <td>Le nom du fichier se lit sur la carte</td>
         <td>on voit enfin QUELS fichiers ont été écrits</td>
         <td><span class="pill s">S</span></td>
+        <td><span class="pill m">écrit · PR #66 · revue en attente</span></td>
       </tr>
       <tr>
         <td>2</td>
         <td>La consigne passée au travail se déplie</td>
         <td>on voit ce que l'agent a vraiment demandé au job</td>
         <td><span class="pill s">S</span></td>
+        <td><span class="pill m">écrit · PR #66 · revue en attente</span></td>
       </tr>
       <tr>
         <td>3</td>
         <td>Un fichier créé est typé pour ce qu'il EST</td>
         <td>un skill n'est plus un « projet de code »</td>
         <td><span class="pill m">M</span></td>
+        <td><span class="pill m">écrit · PR #66 · revue en attente</span></td>
       </tr>
       <tr>
         <td>4</td>
         <td>Un document se vérifie tout seul</td>
         <td>« Vérifié » veut enfin dire quelque chose</td>
         <td><span class="pill m">M</span></td>
+        <td><span class="pill m">écrit · PR #66 · revue en attente</span></td>
       </tr>
       <tr>
         <td>5</td>
         <td>La page Approvals passe en anglais</td>
         <td>le tableau de bord parle une seule langue</td>
         <td><span class="pill xs">XS</span></td>
+        <td><span class="pill m">écrit · PR #66 · revue en attente</span></td>
       </tr>
     </table>
   </div>
+
+  <h2>Ce que la vérification a corrigé dans ce plan</h2>
+  <p>
+    <b>Le point 3 disait « sous un projet déclaré ⇒ code ». Seul, c'était faux.</b> Le registre se
+    remplit tout seul à partir des fichiers de code qui portent un manifeste : ne regarder que la
+    déclaration aurait typé « document » le premier <code>package.json</code> d'un dépôt neuf, et
+    plus rien ne l'aurait jamais déclaré. La règle : racine à <b>manifeste</b> ou projet
+    <b>déclaré</b> de code ⇒ code ; sinon document. Un projet déclaré de documents ne fait pas de
+    ses fichiers du code.
+  </p>
+  <p>
+    <b>« Un HTML se referme », et le parseur HTML5 ne le dit pas.</b> La norme referme d'elle-même
+    un <code>&lt;div&gt;</code> resté ouvert à <code>&lt;/body&gt;</code>. Le constat lit donc les
+    balises une à une et tient la pile de celles dont la fermeture est obligatoire.
+  </p>
+  <p>
+    <b>« Un CSS s'analyse » ne se vérifie pas avec un parseur CSS.</b> Sondé : <code>css-tree</code>
+    acceptait un bloc jamais refermé et refusait l'imbrication moderne. Le constat est devenu
+    structurel (accolades, parenthèses, chaînes et commentaires se referment), et le premier test
+    était vert pour la mauvaise raison.
+  </p>
+  <p>
+    <b>« Un markdown a un titre » acceptait deux faux titres</b>, trouvés en sondant : un en-tête
+    YAML, et une liste suivie d'un filet.
+  </p>
 
   <h2>Ce que tu verras changer</h2>
   <p>
@@ -435,15 +472,11 @@
       <span class="pill m size">M</span>
     </h3>
     <p>
-      La règle devient mécanique, zéro LLM : le fichier est-il sous un projet <b>déclaré</b> ? Alors
-      « projet de code », comme aujourd'hui. Sinon « document ». C'est ce que le plan v7 disait déjà
-      — la brique avait déplacé la décision vers l'outil sans changer sa réponse.
-    </p>
-    <p class="warn">
-      <b>À faire dans la même PR</b> — le type « document » est aujourd'hui <b>refusé</b> : il n'a
-      pas de règle de nommage et lève une erreur. Il faut donc écrire la sienne ici, la même que
-      celle déjà partagée par la page Code et le fil. Sans cela, typer un skill en « document » le
-      ferait échouer au lieu d'être vérifié.
+      La règle est mécanique, zéro LLM : le fichier est-il sous une racine à <b>manifeste</b>, ou
+      sous un projet <b>déclaré</b> de code ? Alors « projet de code », comme aujourd'hui. Sinon «
+      document ». Le type « document » a désormais sa règle de nommage — le fichier lui-même, la
+      même que celle d'un classeur — et la carte du fichier porte sa clé pour que l'écran retrouve
+      son état.
     </p>
     <p class="proof">
       <b>Preuve</b> — un fichier écrit dans un projet déclaré reste « projet de code » ; le même
@@ -476,7 +509,9 @@
         </tr>
         <tr>
           <td>il est bien formé</td>
-          <td>un markdown a un titre · un CSS s'analyse · un HTML se referme</td>
+          <td>
+            un markdown a un titre · un CSS et un HTML se referment · un JSON et un SVG se parsent
+          </td>
         </tr>
       </table>
     </div>
@@ -486,9 +521,10 @@
       livraison et la barre d'état n'ont rien à apprendre.
     </p>
     <p class="proof">
-      <b>Preuve</b> — un markdown sans titre est rouge et dit pourquoi ; un CSS invalide est rouge ;
-      les trois fichiers du skill sont verts ; un fichier supprimé entre l'écriture et la
-      vérification est rouge, pas absent.
+      <b>Preuve</b> — un markdown sans titre est rouge et dit pourquoi ; un CSS dont un bloc ne se
+      referme pas est rouge, avec la ligne ; les trois fichiers du skill sont verts ; un fichier
+      supprimé entre l'écriture et la vérification est rouge, pas absent. 17 tests sur le
+      vérificateur, 2 de bout en bout par la vraie finalisation.
     </p>
   </div>
 
@@ -497,8 +533,8 @@
       <span class="num">5</span> La page Approvals en anglais <span class="pill xs size">XS</span>
     </h3>
     <p>
-      « Approuver une fois », « Toujours pour cet outil » dans un tableau de bord anglais. Vu hier,
-      jamais traité.
+      « Approuver une fois », « Toujours pour cet outil » dans un tableau de bord anglais. Fait :
+      boutons, toasts et dialogues de confirmation.
     </p>
   </div>
 
@@ -536,7 +572,7 @@
   </ul>
 
   <p class="foot">
-    Source versionnée : <code>docs/plans/creer-c-est-prouver.md</code>. Rien n'est codé avant ton
-    go.
+    Source versionnée : <code>docs/plans/creer-c-est-prouver.md</code>. Code sur
+    <code>feat/creer-c-est-prouver</code>, PR #66.
   </p>
 </div>
