@@ -1,0 +1,554 @@
+{
+  "run": {
+    "startedAt": "2026-09-11T16:30:52.479Z",
+    "gitSha": "c37885be",
+    "sections": [
+      {
+        "sectionId": "architecture",
+        "metrics": [
+          {
+            "id": "packages_scanned",
+            "label": "Packages scannés",
+            "value": 32,
+            "unit": "packages",
+            "direction": "higher-is-better"
+          },
+          {
+            "id": "agent_slug_violations",
+            "label": "Slugs d’agent en dur (invariant #1)",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "user_facing_violations",
+            "label": "Texte utilisateur en dur (invariant #2)",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "db_driver_violations",
+            "label": "Imports de driver DB hors packages/db",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "hardcoded_uuid_violations",
+            "label": "UUID par utilisateur en dur (invariant #6)",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "mutating_launcher_violations",
+            "label": "Écritures disque hors seam d’intention",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "terminal_write_violations",
+            "label": "Écritures terminales hors de la primitive (V&C)",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "terminal_send_violations",
+            "label": "Envois de canal hors de l’outbox (V&C)",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "deliverable_literal_violations",
+            "label": "Types de livrable en dur dans la primitive (V&C)",
+            "value": 0,
+            "unit": "violations",
+            "direction": "lower-is-better",
+            "detail": []
+          }
+        ],
+        "durationMs": 830
+      },
+      {
+        "sectionId": "gate",
+        "metrics": [
+          {
+            "id": "decisions_total",
+            "label": "Décisions mesurées",
+            "value": 20,
+            "unit": "décisions",
+            "direction": "exact"
+          },
+          {
+            "id": "asks_human",
+            "label": "Suspend pour approbation",
+            "value": 12,
+            "unit": "décisions",
+            "direction": "exact",
+            "detail": [
+              "mcp_ordinaire@défaut → demande",
+              "mcp_ordinaire@propose_confirm → demande",
+              "mcp_declare_destructeur@défaut → demande",
+              "mcp_declare_destructeur@propose_confirm → demande",
+              "mcp_declare_destructeur@destructive_gate → demande",
+              "run_command_anodin@défaut → demande",
+              "run_command_anodin@propose_confirm → demande",
+              "run_command_anodin@fully_autonomous → demande",
+              "run_command_destructeur@défaut → demande",
+              "run_command_destructeur@propose_confirm → demande",
+              "run_command_destructeur@destructive_gate → demande",
+              "run_command_destructeur@fully_autonomous → demande"
+            ]
+          },
+          {
+            "id": "runs_freely",
+            "label": "Passe sans demander",
+            "value": 8,
+            "unit": "décisions",
+            "direction": "exact",
+            "detail": [
+              "mcp_ordinaire@destructive_gate → passe",
+              "mcp_ordinaire@fully_autonomous → passe",
+              "mcp_declare_destructeur@fully_autonomous → passe",
+              "builtin_lecture@défaut → passe",
+              "builtin_lecture@propose_confirm → passe",
+              "builtin_lecture@destructive_gate → passe",
+              "builtin_lecture@fully_autonomous → passe",
+              "run_command_anodin@destructive_gate → passe"
+            ]
+          },
+          {
+            "id": "blocked",
+            "label": "Refusé d’emblée",
+            "value": 0,
+            "unit": "décisions",
+            "direction": "exact"
+          }
+        ],
+        "durationMs": 10
+      },
+      {
+        "sectionId": "trust-boundary",
+        "metrics": [
+          {
+            "id": "third_party_families_covered",
+            "label": "Familles tierces cadrées",
+            "value": 20,
+            "unit": "/20",
+            "direction": "higher-is-better",
+            "detail": []
+          },
+          {
+            "id": "own_tools_wrongly_framed",
+            "label": "Outils du produit cadrés à tort",
+            "value": 0,
+            "unit": "outils",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "payloads_lost",
+            "label": "Charges utiles perdues par l’enveloppe",
+            "value": 0,
+            "unit": "payloads",
+            "direction": "lower-is-better"
+          },
+          {
+            "id": "payloads_unframed",
+            "label": "Charges utiles sorties sans cadre",
+            "value": 0,
+            "unit": "payloads",
+            "direction": "lower-is-better"
+          },
+          {
+            "id": "delimiter_escapes",
+            "label": "Délimiteurs contrefaits non neutralisés",
+            "value": 0,
+            "unit": "évasions",
+            "direction": "lower-is-better"
+          }
+        ],
+        "durationMs": 0
+      },
+      {
+        "sectionId": "catalog",
+        "metrics": [
+          {
+            "id": "providers",
+            "label": "Fournisseurs au catalogue",
+            "value": 9,
+            "unit": "fournisseurs",
+            "direction": "higher-is-better"
+          },
+          {
+            "id": "models",
+            "label": "Modèles au catalogue",
+            "value": 55,
+            "unit": "modèles",
+            "direction": "higher-is-better"
+          },
+          {
+            "id": "models_with_tools",
+            "label": "Modèles déclarant les outils",
+            "value": 55,
+            "unit": "modèles",
+            "direction": "higher-is-better"
+          },
+          {
+            "id": "models_reasoning",
+            "label": "Modèles à raisonnement",
+            "value": 32,
+            "unit": "modèles",
+            "direction": "higher-is-better"
+          },
+          {
+            "id": "missing_context_window",
+            "label": "Sans fenêtre de contexte",
+            "value": 0,
+            "unit": "modèles",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "missing_pricing",
+            "label": "Sans tarif",
+            "value": 2,
+            "unit": "modèles",
+            "direction": "lower-is-better",
+            "detail": [
+              "groq/llama-3.3-70b-versatile",
+              "mistral/mistral-large-latest"
+            ]
+          },
+          {
+            "id": "duplicate_ids",
+            "label": "Identifiants dupliqués chez un fournisseur",
+            "value": 0,
+            "unit": "doublons",
+            "direction": "lower-is-better",
+            "detail": []
+          },
+          {
+            "id": "context_on_fallback",
+            "label": "Contexte laissé sur la valeur par défaut",
+            "value": 2,
+            "unit": "modèles",
+            "direction": "lower-is-better",
+            "detail": [
+              "deepseek/deepseek-chat",
+              "deepseek/deepseek-reasoner"
+            ]
+          }
+        ],
+        "durationMs": 1
+      }
+    ]
+  },
+  "diffs": [
+    {
+      "sectionId": "architecture",
+      "label": "Invariants d’architecture",
+      "diffs": [
+        {
+          "metricId": "packages_scanned",
+          "label": "Packages scannés",
+          "unit": "packages",
+          "before": 32,
+          "after": 32,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "agent_slug_violations",
+          "label": "Slugs d’agent en dur (invariant #1)",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "user_facing_violations",
+          "label": "Texte utilisateur en dur (invariant #2)",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "db_driver_violations",
+          "label": "Imports de driver DB hors packages/db",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "hardcoded_uuid_violations",
+          "label": "UUID par utilisateur en dur (invariant #6)",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "mutating_launcher_violations",
+          "label": "Écritures disque hors seam d’intention",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "terminal_write_violations",
+          "label": "Écritures terminales hors de la primitive (V&C)",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "terminal_send_violations",
+          "label": "Envois de canal hors de l’outbox (V&C)",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "deliverable_literal_violations",
+          "label": "Types de livrable en dur dans la primitive (V&C)",
+          "unit": "violations",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        }
+      ],
+      "regressed": false
+    },
+    {
+      "sectionId": "gate",
+      "label": "Matrice de décision du gate",
+      "diffs": [
+        {
+          "metricId": "decisions_total",
+          "label": "Décisions mesurées",
+          "unit": "décisions",
+          "before": 20,
+          "after": 20,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "asks_human",
+          "label": "Suspend pour approbation",
+          "unit": "décisions",
+          "before": 12,
+          "after": 12,
+          "delta": 0,
+          "verdict": "unchanged",
+          "detail": [
+            "mcp_ordinaire@défaut → demande",
+            "mcp_ordinaire@propose_confirm → demande",
+            "mcp_declare_destructeur@défaut → demande",
+            "mcp_declare_destructeur@propose_confirm → demande",
+            "mcp_declare_destructeur@destructive_gate → demande",
+            "run_command_anodin@défaut → demande",
+            "run_command_anodin@propose_confirm → demande",
+            "run_command_anodin@fully_autonomous → demande",
+            "run_command_destructeur@défaut → demande",
+            "run_command_destructeur@propose_confirm → demande",
+            "run_command_destructeur@destructive_gate → demande",
+            "run_command_destructeur@fully_autonomous → demande"
+          ]
+        },
+        {
+          "metricId": "runs_freely",
+          "label": "Passe sans demander",
+          "unit": "décisions",
+          "before": 8,
+          "after": 8,
+          "delta": 0,
+          "verdict": "unchanged",
+          "detail": [
+            "mcp_ordinaire@destructive_gate → passe",
+            "mcp_ordinaire@fully_autonomous → passe",
+            "mcp_declare_destructeur@fully_autonomous → passe",
+            "builtin_lecture@défaut → passe",
+            "builtin_lecture@propose_confirm → passe",
+            "builtin_lecture@destructive_gate → passe",
+            "builtin_lecture@fully_autonomous → passe",
+            "run_command_anodin@destructive_gate → passe"
+          ]
+        },
+        {
+          "metricId": "blocked",
+          "label": "Refusé d’emblée",
+          "unit": "décisions",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        }
+      ],
+      "regressed": false
+    },
+    {
+      "sectionId": "trust-boundary",
+      "label": "Frontières de confiance",
+      "diffs": [
+        {
+          "metricId": "third_party_families_covered",
+          "label": "Familles tierces cadrées",
+          "unit": "/20",
+          "before": 20,
+          "after": 20,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "own_tools_wrongly_framed",
+          "label": "Outils du produit cadrés à tort",
+          "unit": "outils",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "payloads_lost",
+          "label": "Charges utiles perdues par l’enveloppe",
+          "unit": "payloads",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "payloads_unframed",
+          "label": "Charges utiles sorties sans cadre",
+          "unit": "payloads",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "delimiter_escapes",
+          "label": "Délimiteurs contrefaits non neutralisés",
+          "unit": "évasions",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        }
+      ],
+      "regressed": false
+    },
+    {
+      "sectionId": "catalog",
+      "label": "Catalogue de modèles — intégrité",
+      "diffs": [
+        {
+          "metricId": "providers",
+          "label": "Fournisseurs au catalogue",
+          "unit": "fournisseurs",
+          "before": 9,
+          "after": 9,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "models",
+          "label": "Modèles au catalogue",
+          "unit": "modèles",
+          "before": 55,
+          "after": 55,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "models_with_tools",
+          "label": "Modèles déclarant les outils",
+          "unit": "modèles",
+          "before": 55,
+          "after": 55,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "models_reasoning",
+          "label": "Modèles à raisonnement",
+          "unit": "modèles",
+          "before": 32,
+          "after": 32,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "missing_context_window",
+          "label": "Sans fenêtre de contexte",
+          "unit": "modèles",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "missing_pricing",
+          "label": "Sans tarif",
+          "unit": "modèles",
+          "before": 2,
+          "after": 2,
+          "delta": 0,
+          "verdict": "unchanged",
+          "detail": [
+            "groq/llama-3.3-70b-versatile",
+            "mistral/mistral-large-latest"
+          ]
+        },
+        {
+          "metricId": "duplicate_ids",
+          "label": "Identifiants dupliqués chez un fournisseur",
+          "unit": "doublons",
+          "before": 0,
+          "after": 0,
+          "delta": 0,
+          "verdict": "unchanged"
+        },
+        {
+          "metricId": "context_on_fallback",
+          "label": "Contexte laissé sur la valeur par défaut",
+          "unit": "modèles",
+          "before": 2,
+          "after": 2,
+          "delta": 0,
+          "verdict": "unchanged",
+          "detail": [
+            "deepseek/deepseek-chat",
+            "deepseek/deepseek-reasoner"
+          ]
+        }
+      ],
+      "regressed": false
+    }
+  ]
+}
