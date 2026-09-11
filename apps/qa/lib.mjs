@@ -678,6 +678,12 @@ export function titresDeTest(texte) {
   // : rejoué sur les 587 fichiers de test du dépôt, le retrait naïf partait de
   // ce glob jusqu'au `*/` suivant, six cents lignes plus loin, et tout ce qui
   // vivait entre les deux disparaissait du scan.
+  //
+  // Limite assumée : un bloc ouvert en FIN de ligne (`code(); /* it('mort…') */`)
+  // n'est pas retiré, et le test qu'il contient est lu comme vivant. Aucune
+  // occurrence dans les 588 fichiers de test suivis (revue Codex, 5e passe) ;
+  // la lever demanderait un vrai tokenizer, et une regex de plus rouvrirait le
+  // cas du glob. Commenter un test, c'est commenter sa ligne.
   const t = String(texte ?? '')
     .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, '')
     .replace(/^[ \t]*\/\/.*$/gm, '');
