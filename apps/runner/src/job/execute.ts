@@ -75,6 +75,7 @@ import {
   DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
   SHARED_WORKSPACE_LABEL,
   CODE_EXECUTION_TOOL_NAMES,
+  toolsNamedButAbsent,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -1702,6 +1703,24 @@ async function runJob(
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
     await failJob(db, jobId as string, errorCode, runStats(), messages);
     return { status: 'failed', error: errorCode };
+  }
+
+  // La personnalité contredit-elle la liste ? (issue #62) Dev C disait « via
+  // code_task » et n'avait pas `code_task` : il a improvisé avec `file_write`
+  // et personne ne l'a su. Un désaccord entre la couche « ce que je suis » et
+  // la couche « ce que j'ai » se DIT au démarrage, avec les noms, jamais
+  // laissé à l'agent. Le job n'est PAS refusé : l'outil manquant peut être un
+  // choix (une skill retirée exprès), et l'agent sait improviser — mais le
+  // propriétaire doit pouvoir le lire dans le journal du runner.
+  const namedButAbsent = toolsNamedButAbsent({
+    personality: agentRow.personality,
+    available: toolDefs.map((t) => t.name),
+    known: registry.list().map((t) => t.name),
+  });
+  if (namedButAbsent.length > 0) {
+    console.warn(
+      `[execute] PERSONALITY_NAMES_ABSENT_TOOLS agent=${agentRow.slug} job=${jobId} tools=${namedButAbsent.join(',')}`,
+    );
   }
 
   // ── 8. Load approval rules ────────────────────────────────────────────────────

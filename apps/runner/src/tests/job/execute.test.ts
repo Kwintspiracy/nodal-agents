@@ -555,6 +555,59 @@ describe('executeJob', () => {
     expect(JSON.stringify(row?.messages ?? [])).toContain('delegation_depth_exceeded');
   });
 
+  it('une personnalité qui nomme un outil absent de la liste est DITE au démarrage, et le job tourne (#62)', async () => {
+    // Dev C : « via code_task » sans `code_task` dans sa liste. L'agent avait
+    // improvisé avec file_write et personne ne l'avait su. Le désaccord entre
+    // la personnalité et la liste calculée est journalisé avec les NOMS — le
+    // job n'est pas refusé.
+    const ts = Date.now();
+    const [agent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Dev sans code_task',
+        slug: `dev-sans-code-task-${ts}`,
+        personality: 'Tu fais le travail de code demandé **via code_task** (provider "claude").',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: agent!.id,
+        channel: 'api',
+        task: 'écris un fichier',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('job insert failed');
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+      const lignes = warn.mock.calls.map((c) => String(c[0]));
+      const ligne = lignes.find((l) => l.includes('PERSONALITY_NAMES_ABSENT_TOOLS'));
+      expect(ligne, `journal : ${lignes.join(' | ')}`).toBeDefined();
+      expect(ligne).toContain('tools=code_task');
+      expect(ligne).toContain(`agent=dev-sans-code-task-${ts}`);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('a job BELOW the delegation depth max (0) is not blocked by the depth guard', async () => {
     const [job] = await db
       .insert(agentJobs)
