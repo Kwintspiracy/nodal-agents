@@ -1,6 +1,6 @@
 {
-  "genereLe": "2026-09-12T07:10:20.283Z",
-  "commit": "175685cc",
+  "genereLe": "2026-09-12T08:22:45.441Z",
+  "commit": "58bcd0aa",
   "branche": "main",
   "paquets": [
     {
@@ -1619,69 +1619,69 @@
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
-        "tours": 3,
-        "echecs": 2,
-        "recents": "vrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 3,
+        "recents": "vrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": "2026-09-11T16:44:25.687Z",
-        "dureeMs": 35243,
+        "dureeMs": 35036,
         "verdict": "instable",
-        "tauxEchec": 66.7,
-        "fenetre": 3,
-        "rouges": 2,
+        "tauxEchec": 75,
+        "fenetre": 4,
+        "rouges": 3,
         "verts": 1
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Sheets and Docs disclose their reach too",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
-        "tours": 3,
-        "echecs": 2,
-        "recents": "vrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 3,
+        "recents": "vrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": "2026-09-11T16:44:25.687Z",
-        "dureeMs": 35057,
+        "dureeMs": 35172,
         "verdict": "instable",
-        "tauxEchec": 66.7,
-        "fenetre": 3,
-        "rouges": 2,
+        "tauxEchec": 75,
+        "fenetre": 4,
+        "rouges": 3,
         "verts": 1
       },
       {
         "cle": "apps/web/tests/e2e/settings-verification-surfaces.spec.ts::Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
         "fichier": "apps/web/tests/e2e/settings-verification-surfaces.spec.ts",
         "titre": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
-        "tours": 3,
+        "tours": 4,
         "echecs": 1,
-        "recents": "rvv",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
+        "recents": "rvvv",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
         "dernierEchecLe": "2026-09-10T16:12:16.972Z",
         "rougeDepuis": null,
-        "dureeMs": 942,
+        "dureeMs": 952,
         "verdict": "instable",
-        "tauxEchec": 33.3,
-        "fenetre": 3,
+        "tauxEchec": 25,
+        "fenetre": 4,
         "rouges": 1,
-        "verts": 2
+        "verts": 3
       },
       {
         "cle": "apps/web/tests/e2e/telegram-allowlist.spec.ts::A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
         "fichier": "apps/web/tests/e2e/telegram-allowlist.spec.ts",
         "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
-        "tours": 3,
+        "tours": 4,
         "echecs": 1,
-        "recents": "rvv",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
+        "recents": "rvvv",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
         "dernierEchecLe": "2026-09-10T16:12:16.972Z",
         "rougeDepuis": null,
-        "dureeMs": 8842,
+        "dureeMs": 9204,
         "verdict": "instable",
-        "tauxEchec": 33.3,
-        "fenetre": 3,
+        "tauxEchec": 25,
+        "fenetre": 4,
         "rouges": 1,
-        "verts": 2
+        "verts": 3
       }
     ],
     "regressions": [
@@ -1689,34 +1689,34 @@
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
-        "tours": 3,
-        "echecs": 2,
-        "recents": "vrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 3,
+        "recents": "vrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": "2026-09-11T16:44:25.687Z",
-        "dureeMs": 35243,
+        "dureeMs": 35036,
         "verdict": "instable",
-        "tauxEchec": 66.7,
-        "fenetre": 3,
-        "rouges": 2,
+        "tauxEchec": 75,
+        "fenetre": 4,
+        "rouges": 3,
         "verts": 1
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Sheets and Docs disclose their reach too",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
-        "tours": 3,
-        "echecs": 2,
-        "recents": "vrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 3,
+        "recents": "vrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": "2026-09-11T16:44:25.687Z",
-        "dureeMs": 35057,
+        "dureeMs": 35172,
         "verdict": "instable",
-        "tauxEchec": 66.7,
-        "fenetre": 3,
-        "rouges": 2,
+        "tauxEchec": 75,
+        "fenetre": 4,
+        "rouges": 3,
         "verts": 1
       }
     ],
@@ -1742,17 +1742,17 @@
         "cle": "apps/web/tests/e2e/agent-recipes.spec.ts::agent recipes @cap:configurer-agent a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
         "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
         "titre": "agent recipes @cap:configurer-agent a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 21381,
+        "dureeMs": 21640,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -1776,17 +1776,17 @@
         "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils Scenario A — Tools & Connectors section renders with the test connector",
         "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
         "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils Scenario A — Tools & Connectors section renders with the test connector",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -1810,17 +1810,17 @@
         "cle": "apps/web/tests/e2e/agents-redesign.spec.ts::Agents page redesign @cap:organiser-equipe render, dark mode, add-worker modal, keyboard drag round-trip",
         "fichier": "apps/web/tests/e2e/agents-redesign.spec.ts",
         "titre": "Agents page redesign @cap:organiser-equipe render, dark mode, add-worker modal, keyboard drag round-trip",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 17811,
+        "dureeMs": 17808,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -1844,68 +1844,68 @@
         "cle": "apps/web/tests/e2e/airtable-oauth.spec.ts::Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
         "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
         "titre": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 34797,
+        "dureeMs": 35347,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/apify-apikey.spec.ts::Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
         "fichier": "apps/web/tests/e2e/apify-apikey.spec.ts",
         "titre": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 37851,
+        "dureeMs": 37705,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 34071,
+        "dureeMs": 34874,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test B — Agent edit picks LLM provider change LLM provider dropdown on agent edit → model field updates → save → toast",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test B — Agent edit picks LLM provider change LLM provider dropdown on agent edit → model field updates → save → toast",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 14556,
+        "dureeMs": 14137,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
@@ -1929,34 +1929,34 @@
         "cle": "apps/web/tests/e2e/connector-multi-instance.spec.ts::Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
         "fichier": "apps/web/tests/e2e/connector-multi-instance.spec.ts",
         "titre": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 37736,
+        "dureeMs": 37699,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/credentials-reuse.spec.ts::Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
         "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
         "titre": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 32860,
+        "dureeMs": 32658,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
@@ -1980,34 +1980,34 @@
         "cle": "apps/web/tests/e2e/help-guides.spec.ts::Help guides — api_key connector (Apify) @cap:consulter-l-aide \"Where do I get this?\" expander reveals console.apify.com link",
         "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
         "titre": "Help guides — api_key connector (Apify) @cap:consulter-l-aide \"Where do I get this?\" expander reveals console.apify.com link",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 32588,
+        "dureeMs": 32760,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/help-guides.spec.ts::Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide wizard shows 4 Google API links and format hint",
         "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
         "titre": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide wizard shows 4 Google API links and format hint",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 32628,
+        "dureeMs": 32552,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -2031,51 +2031,51 @@
         "cle": "apps/web/tests/e2e/mcp-connectors.spec.ts::MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
         "fichier": "apps/web/tests/e2e/mcp-connectors.spec.ts",
         "titre": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
         "dureeMs": 0,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/notion-internal.spec.ts::Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
         "fichier": "apps/web/tests/e2e/notion-internal.spec.ts",
         "titre": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 32550,
+        "dureeMs": 32829,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/notion-oauth.spec.ts::Notion OAuth flow (wizard-driven) @cap:connecter-un-service connect via wizard → callback → connected status (no Refresh button)",
         "fichier": "apps/web/tests/e2e/notion-oauth.spec.ts",
         "titre": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service connect via wizard → callback → connected status (no Refresh button)",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 32727,
+        "dureeMs": 32756,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -2099,17 +2099,17 @@
         "cle": "apps/web/tests/e2e/oauth-flow.spec.ts::Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service connect via wizard → callback → connected status and toast",
         "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
         "titre": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service connect via wizard → callback → connected status and toast",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 32701,
+        "dureeMs": 32715,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -2133,51 +2133,51 @@
         "cle": "apps/web/tests/e2e/tools-tab.spec.ts::Step 2 — Tools tab lists both native tool groups",
         "fichier": "apps/web/tests/e2e/tools-tab.spec.ts",
         "titre": "Step 2 — Tools tab lists both native tool groups",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 11091,
+        "dureeMs": 10684,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/user-menu.spec.ts::UserMenu — sign-out + re-login round-trip shows email in sidebar, signs out, redirects to /login, re-logs in",
         "fichier": "apps/web/tests/e2e/user-menu.spec.ts",
         "titre": "UserMenu — sign-out + re-login round-trip shows email in sidebar, signs out, redirects to /login, re-logs in",
-        "tours": 3,
-        "echecs": 3,
-        "recents": "rrr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 4,
+        "echecs": 4,
+        "recents": "rrrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 36516,
+        "dureeMs": 39097,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 3,
-        "rouges": 3,
+        "fenetre": 4,
+        "rouges": 4,
         "verts": 0
       },
       {
         "cle": "apps/web/tests/e2e/webhooks-flows.spec.ts::Webhooks section — full click flow @cap:declencher-sur-evenement create, copy URL, toggle, rotate, delete, empty state",
         "fichier": "apps/web/tests/e2e/webhooks-flows.spec.ts",
         "titre": "Webhooks section — full click flow @cap:declencher-sur-evenement create, copy URL, toggle, rotate, delete, empty state",
-        "tours": 2,
-        "echecs": 2,
-        "recents": "rr",
-        "dernierTourLe": "2026-09-12T07:10:20.283Z",
-        "dernierEchecLe": "2026-09-12T07:10:20.283Z",
+        "tours": 3,
+        "echecs": 3,
+        "recents": "rrr",
+        "dernierTourLe": "2026-09-12T08:22:45.441Z",
+        "dernierEchecLe": "2026-09-12T08:22:45.441Z",
         "rougeDepuis": null,
-        "dureeMs": 8280,
+        "dureeMs": 8264,
         "verdict": "cassé",
         "tauxEchec": 100,
-        "fenetre": 2,
-        "rouges": 2,
+        "fenetre": 3,
+        "rouges": 3,
         "verts": 0
       },
       {
@@ -2449,8 +2449,8 @@
     ],
     "dernierRun": {
       "run": {
-        "startedAt": "2026-09-12T06:56:52.628Z",
-        "gitSha": "175685cc",
+        "startedAt": "2026-09-12T08:09:05.343Z",
+        "gitSha": "58bcd0aa",
         "sections": [
           {
             "sectionId": "architecture",
@@ -2527,7 +2527,7 @@
                 "detail": []
               }
             ],
-            "durationMs": 811
+            "durationMs": 807
           },
           {
             "sectionId": "gate",
@@ -2585,7 +2585,7 @@
                 "direction": "exact"
               }
             ],
-            "durationMs": 9
+            "durationMs": 10
           },
           {
             "sectionId": "trust-boundary",
@@ -2628,7 +2628,7 @@
                 "direction": "lower-is-better"
               }
             ],
-            "durationMs": 1
+            "durationMs": 0
           },
           {
             "sectionId": "catalog",
@@ -2700,7 +2700,7 @@
                 ]
               }
             ],
-            "durationMs": 0
+            "durationMs": 1
           }
         ]
       },
@@ -3143,19 +3143,19 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 22827,
+        "dureeMs": 23105,
         "cas": [
           {
             "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "titreComplet": "agent recipes @cap:configurer-agent a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "sort": "rouge",
-            "dureeMs": 21381
+            "dureeMs": 21640
           },
           {
             "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
             "titreComplet": "agent recipes @cap:configurer-agent \"Customize a new agent\" is selected by default and Next opens the empty form",
             "sort": "vert",
-            "dureeMs": 1446
+            "dureeMs": 1465
           }
         ]
       },
@@ -3215,13 +3215,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 17811,
+        "dureeMs": 17808,
         "cas": [
           {
             "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
             "titreComplet": "Agents page redesign @cap:organiser-equipe render, dark mode, add-worker modal, keyboard drag round-trip",
             "sort": "rouge",
-            "dureeMs": 17811
+            "dureeMs": 17808
           }
         ]
       },
@@ -3239,13 +3239,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 34797,
+        "dureeMs": 35347,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status",
             "titreComplet": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
             "sort": "rouge",
-            "dureeMs": 34797
+            "dureeMs": 35347
           }
         ]
       },
@@ -3263,13 +3263,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 37851,
+        "dureeMs": 37705,
         "cas": [
           {
             "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
             "titreComplet": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
             "sort": "rouge",
-            "dureeMs": 37851
+            "dureeMs": 37705
           }
         ]
       },
@@ -3287,25 +3287,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11626,
+        "dureeMs": 11821,
         "cas": [
           {
             "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
             "titreComplet": "Scenario A — Garde-fou: Telegram notify warning for bot-less agent shows warning when notify checked + bot-less agent; hides on uncheck",
             "sort": "vert",
-            "dureeMs": 3817
+            "dureeMs": 4062
           },
           {
             "titre": "creates a schedule then clicks Run now and sees success toast",
             "titreComplet": "Scenario B — Run now button shows success toast creates a schedule then clicks Run now and sees success toast",
             "sort": "vert",
-            "dureeMs": 3655
+            "dureeMs": 3633
           },
           {
             "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "titreComplet": "Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "sort": "vert",
-            "dureeMs": 4154
+            "dureeMs": 4126
           }
         ]
       },
@@ -3323,31 +3323,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 15637,
+        "dureeMs": 15118,
         "cas": [
           {
             "titre": "find an existing agent to navigate to",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie find an existing agent to navigate to",
             "sort": "vert",
-            "dureeMs": 1507
+            "dureeMs": 1471
           },
           {
             "titre": "Autonomy tab is visible in the agent editor",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie Autonomy tab is visible in the agent editor",
             "sort": "vert",
-            "dureeMs": 10075
+            "dureeMs": 9572
           },
           {
             "titre": "Autonomy tab renders without errors (empty state or tool list)",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie Autonomy tab renders without errors (empty state or tool list)",
             "sort": "vert",
-            "dureeMs": 2032
+            "dureeMs": 2083
           },
           {
             "titre": "3-way control is present and interactive when write tools exist",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie 3-way control is present and interactive when write tools exist",
             "sort": "ignoré",
-            "dureeMs": 2023
+            "dureeMs": 1992
           }
         ]
       },
@@ -3365,37 +3365,37 @@
         "rouge": 2,
         "ignoré": 3,
         "instable": 0,
-        "dureeMs": 48970,
+        "dureeMs": 49362,
         "cas": [
           {
             "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
             "titreComplet": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
             "sort": "rouge",
-            "dureeMs": 34071
+            "dureeMs": 34874
           },
           {
             "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
             "titreComplet": "Test B — Agent edit picks LLM provider change LLM provider dropdown on agent edit → model field updates → save → toast",
             "sort": "rouge",
-            "dureeMs": 14556
+            "dureeMs": 14137
           },
           {
             "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "titreComplet": "Test C — Send-task with Telegram checkbox (Brique 31 acceptance) job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "sort": "ignoré",
-            "dureeMs": 135
+            "dureeMs": 142
           },
           {
             "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
             "titreComplet": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
             "sort": "ignoré",
-            "dureeMs": 107
+            "dureeMs": 117
           },
           {
             "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "titreComplet": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "sort": "ignoré",
-            "dureeMs": 101
+            "dureeMs": 92
           }
         ]
       },
@@ -3413,43 +3413,43 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 9653,
+        "dureeMs": 9542,
         "cas": [
           {
             "titre": "A — configurer puis approuver, hash écrit EN BASE",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable A — configurer puis approuver, hash écrit EN BASE",
             "sort": "vert",
-            "dureeMs": 3497
+            "dureeMs": 3742
           },
           {
             "titre": "B — éditer une commande approuvée retire l’approbation",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable B — éditer une commande approuvée retire l’approbation",
             "sort": "vert",
-            "dureeMs": 1687
+            "dureeMs": 1674
           },
           {
             "titre": "C — le cap de cinq est visible : l’ajout disparaît",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable C — le cap de cinq est visible : l’ajout disparaît",
             "sort": "vert",
-            "dureeMs": 1301
+            "dureeMs": 1133
           },
           {
             "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "sort": "ignoré",
-            "dureeMs": 849
+            "dureeMs": 844
           },
           {
             "titre": "E — un échec serveur ne ment pas",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable E — un échec serveur ne ment pas",
             "sort": "vert",
-            "dureeMs": 1460
+            "dureeMs": 1372
           },
           {
             "titre": "F — le tiroir Other sessions n’a aucun panneau",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable F — le tiroir Other sessions n’a aucun panneau",
             "sort": "vert",
-            "dureeMs": 859
+            "dureeMs": 777
           }
         ]
       },
@@ -3467,13 +3467,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 37736,
+        "dureeMs": 37699,
         "cas": [
           {
             "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
             "titreComplet": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
             "sort": "rouge",
-            "dureeMs": 37736
+            "dureeMs": 37699
           }
         ]
       },
@@ -3491,25 +3491,25 @@
         "rouge": 2,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 71844,
+        "dureeMs": 71787,
         "cas": [
           {
             "titre": "Google Drive states it reaches the ENTIRE Drive",
             "titreComplet": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
             "sort": "rouge",
-            "dureeMs": 35243
+            "dureeMs": 35036
           },
           {
             "titre": "Google Sheets and Docs disclose their reach too",
             "titreComplet": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
             "sort": "rouge",
-            "dureeMs": 35057
+            "dureeMs": 35172
           },
           {
             "titre": "a connector whose reach matches its name shows NO disclosure",
             "titreComplet": "Connector scope disclosure a connector whose reach matches its name shows NO disclosure",
             "sort": "vert",
-            "dureeMs": 1544
+            "dureeMs": 1579
           }
         ]
       },
@@ -3527,13 +3527,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 32860,
+        "dureeMs": 32658,
         "cas": [
           {
             "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
             "titreComplet": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
             "sort": "rouge",
-            "dureeMs": 32860
+            "dureeMs": 32658
           }
         ]
       },
@@ -3551,19 +3551,19 @@
         "rouge": 2,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 65216,
+        "dureeMs": 65312,
         "cas": [
           {
             "titre": "wizard shows 4 Google API links and format hint",
             "titreComplet": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide wizard shows 4 Google API links and format hint",
             "sort": "rouge",
-            "dureeMs": 32628
+            "dureeMs": 32552
           },
           {
             "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
             "titreComplet": "Help guides — api_key connector (Apify) @cap:consulter-l-aide \"Where do I get this?\" expander reveals console.apify.com link",
             "sort": "rouge",
-            "dureeMs": 32588
+            "dureeMs": 32760
           }
         ]
       },
@@ -3581,31 +3581,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 16761,
+        "dureeMs": 16621,
         "cas": [
           {
             "titre": "the section lists the built-in tools, always — no fixtures needed",
             "titreComplet": "Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
             "sort": "vert",
-            "dureeMs": 3378
+            "dureeMs": 3171
           },
           {
             "titre": "return_result is shown but locked, with the reason",
             "titreComplet": "Built-in tools — per-tool controls return_result is shown but locked, with the reason",
             "sort": "vert",
-            "dureeMs": 3277
+            "dureeMs": 3403
           },
           {
             "titre": "blocking a built-in tool persists across a reload",
             "titreComplet": "Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
             "sort": "vert",
-            "dureeMs": 5158
+            "dureeMs": 5023
           },
           {
             "titre": "and can be handed back — the restriction is reversible",
             "titreComplet": "Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
             "sort": "vert",
-            "dureeMs": 4948
+            "dureeMs": 5024
           }
         ]
       },
@@ -3623,31 +3623,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4862,
+        "dureeMs": 4948,
         "cas": [
           {
             "titre": "renders the Learned Skills page at /learned-skills",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill renders the Learned Skills page at /learned-skills",
             "sort": "vert",
-            "dureeMs": 2754
+            "dureeMs": 2692
           },
           {
             "titre": "toggle switches the reflection_enabled flag (UI responds)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill toggle switches the reflection_enabled flag (UI responds)",
             "sort": "vert",
-            "dureeMs": 891
+            "dureeMs": 1036
           },
           {
             "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 490
+            "dureeMs": 470
           },
           {
             "titre": "assignment-mode control renders both options and is interactive",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill assignment-mode control renders both options and is interactive",
             "sort": "vert",
-            "dureeMs": 727
+            "dureeMs": 750
           }
         ]
       },
@@ -3695,31 +3695,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 10642,
+        "dureeMs": 10198,
         "cas": [
           {
             "titre": "create with explicit Telegram channel, persists across reload + edit",
             "titreComplet": "Scenario 1 — Schedule form: Notify via lists only the agent's real active channels create with explicit Telegram channel, persists across reload + edit",
             "sort": "ignoré",
-            "dureeMs": 2418
+            "dureeMs": 2409
           },
           {
             "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "titreComplet": "Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "sort": "vert",
-            "dureeMs": 4192
+            "dureeMs": 4174
           },
           {
             "titre": "warns for a channel-less agent, clears when switching to a connected one",
             "titreComplet": "Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent warns for a channel-less agent, clears when switching to a connected one",
             "sort": "vert",
-            "dureeMs": 1859
+            "dureeMs": 1554
           },
           {
             "titre": "schedule form notify controls render correctly in both themes",
             "titreComplet": "Scenario 4 — Dark mode: notify controls stay theme-aware schedule form notify controls render correctly in both themes",
             "sort": "vert",
-            "dureeMs": 2173
+            "dureeMs": 2061
           }
         ]
       },
@@ -3737,13 +3737,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 32550,
+        "dureeMs": 32829,
         "cas": [
           {
             "titre": "connect with api_key shows connected status and persists",
             "titreComplet": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
             "sort": "rouge",
-            "dureeMs": 32550
+            "dureeMs": 32829
           }
         ]
       },
@@ -3761,13 +3761,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 32727,
+        "dureeMs": 32756,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status (no Refresh button)",
             "titreComplet": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service connect via wizard → callback → connected status (no Refresh button)",
             "sort": "rouge",
-            "dureeMs": 32727
+            "dureeMs": 32756
           }
         ]
       },
@@ -3785,13 +3785,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 32701,
+        "dureeMs": 32715,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status and toast",
             "titreComplet": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service connect via wizard → callback → connected status and toast",
             "sort": "rouge",
-            "dureeMs": 32701
+            "dureeMs": 32715
           }
         ]
       },
@@ -3809,19 +3809,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5367,
+        "dureeMs": 5588,
         "cas": [
           {
             "titre": "is present with a default of 5 on the New schedule form",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache is present with a default of 5 on the New schedule form",
             "sort": "vert",
-            "dureeMs": 1527
+            "dureeMs": 1732
           },
           {
             "titre": "persists a custom value on create, and an edit updates it",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache persists a custom value on create, and an edit updates it",
             "sort": "vert",
-            "dureeMs": 3840
+            "dureeMs": 3856
           }
         ]
       },
@@ -3839,31 +3839,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 7931,
+        "dureeMs": 8012,
         "cas": [
           {
             "titre": "Network section renders with radio buttons and read-only URL fields",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter Network section renders with radio buttons and read-only URL fields",
             "sort": "vert",
-            "dureeMs": 2897
+            "dureeMs": 3054
           },
           {
             "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "sort": "vert",
-            "dureeMs": 931
+            "dureeMs": 1113
           },
           {
             "titre": "re-saving the mode already in force reports no restart needed",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter re-saving the mode already in force reports no restart needed",
             "sort": "vert",
-            "dureeMs": 1638
+            "dureeMs": 1468
           },
           {
             "titre": "saving the other mode persists it, demands a restart, and is put back",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter saving the other mode persists it, demands a restart, and is put back",
             "sort": "vert",
-            "dureeMs": 2465
+            "dureeMs": 2377
           }
         ]
       },
@@ -3881,25 +3881,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2782,
+        "dureeMs": 2771,
         "cas": [
           {
             "titre": "la section rend ses quatre cases et la pilule owner only",
             "titreComplet": "Verification surfaces — /settings la section rend ses quatre cases et la pilule owner only",
             "sort": "vert",
-            "dureeMs": 723
+            "dureeMs": 733
           },
           {
             "titre": "décocher demande confirmation, annuler laisse la case cochée",
             "titreComplet": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
             "sort": "vert",
-            "dureeMs": 942
+            "dureeMs": 952
           },
           {
             "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "titreComplet": "Verification surfaces — /settings décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "sort": "vert",
-            "dureeMs": 1117
+            "dureeMs": 1086
           }
         ]
       },
@@ -3917,37 +3917,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 27234,
+        "dureeMs": 27566,
         "cas": [
           {
             "titre": "the root page IS the dashboard — no login form, no redirect away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer the root page IS the dashboard — no login form, no redirect away",
             "sort": "vert",
-            "dureeMs": 670
+            "dureeMs": 663
           },
           {
             "titre": "sidebar links every dashboard section",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer sidebar links every dashboard section",
             "sort": "vert",
-            "dureeMs": 793
+            "dureeMs": 770
           },
           {
             "titre": "creates an agent, sends a task, and shows the job in the list",
             "titreComplet": "agent → task → job flow @cap:creer-agent @cap:parler-a-un-agent creates an agent, sends a task, and shows the job in the list",
             "sort": "vert",
-            "dureeMs": 9007
+            "dureeMs": 9068
           },
           {
             "titre": "every (dashboard) route returns 200 and renders an h1",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer every (dashboard) route returns 200 and renders an h1",
             "sort": "vert",
-            "dureeMs": 14957
+            "dureeMs": 15286
           },
           {
             "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer les routes à paramètre rendent, atteintes par les liens de l’app",
             "sort": "vert",
-            "dureeMs": 1807
+            "dureeMs": 1779
           }
         ]
       },
@@ -3965,25 +3965,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 16855,
+        "dureeMs": 17901,
         "cas": [
           {
             "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
             "titreComplet": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
             "sort": "vert",
-            "dureeMs": 8842
+            "dureeMs": 9204
           },
           {
             "titre": "B — Approve a pending chat activates it",
             "titreComplet": "B — Approve a pending chat activates it",
             "sort": "vert",
-            "dureeMs": 4205
+            "dureeMs": 4190
           },
           {
             "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "titreComplet": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 3808
+            "dureeMs": 4507
           }
         ]
       },
@@ -4001,31 +4001,31 @@
         "rouge": 0,
         "ignoré": 4,
         "instable": 0,
-        "dureeMs": 2609,
+        "dureeMs": 2475,
         "cas": [
           {
             "titre": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution",
             "titreComplet": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution",
             "sort": "ignoré",
-            "dureeMs": 656
+            "dureeMs": 667
           },
           {
             "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "titreComplet": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "sort": "ignoré",
-            "dureeMs": 639
+            "dureeMs": 696
           },
           {
             "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "titreComplet": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "sort": "ignoré",
-            "dureeMs": 679
+            "dureeMs": 552
           },
           {
             "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas",
             "titreComplet": "B — remonter dans l’historique tient : on n’est pas ramené en bas",
             "sort": "ignoré",
-            "dureeMs": 635
+            "dureeMs": 560
           }
         ]
       },
@@ -4043,19 +4043,19 @@
         "rouge": 1,
         "ignoré": 4,
         "instable": 0,
-        "dureeMs": 12829,
+        "dureeMs": 12476,
         "cas": [
           {
             "titre": "Step 1 — find an existing agent (skip suite if none)",
             "titreComplet": "Step 1 — find an existing agent (skip suite if none)",
             "sort": "vert",
-            "dureeMs": 1404
+            "dureeMs": 1462
           },
           {
             "titre": "Step 2 — Tools tab lists both native tool groups",
             "titreComplet": "Step 2 — Tools tab lists both native tool groups",
             "sort": "rouge",
-            "dureeMs": 11091
+            "dureeMs": 10684
           },
           {
             "titre": "Step 3 — disclosure expands to show the gated tool names as chips",
@@ -4073,13 +4073,13 @@
             "titre": "Step 5 — office-editing and command-execution are absent from the agent's Skills tab",
             "titreComplet": "Step 5 — office-editing and command-execution are absent from the agent's Skills tab",
             "sort": "ignoré",
-            "dureeMs": 73
+            "dureeMs": 87
           },
           {
             "titre": "Step 6 — command-execution assigned to this agent is still absent from /skills Assigned",
             "titreComplet": "Step 6 — command-execution assigned to this agent is still absent from /skills Assigned",
             "sort": "ignoré",
-            "dureeMs": 92
+            "dureeMs": 74
           }
         ]
       },
@@ -4097,13 +4097,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 36516,
+        "dureeMs": 39097,
         "cas": [
           {
             "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
             "titreComplet": "UserMenu — sign-out + re-login round-trip shows email in sidebar, signs out, redirects to /login, re-logs in",
             "sort": "rouge",
-            "dureeMs": 36516
+            "dureeMs": 39097
           }
         ]
       },
@@ -4121,13 +4121,13 @@
         "rouge": 1,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8280,
+        "dureeMs": 8264,
         "cas": [
           {
             "titre": "create, copy URL, toggle, rotate, delete, empty state",
             "titreComplet": "Webhooks section — full click flow @cap:declencher-sur-evenement create, copy URL, toggle, rotate, delete, empty state",
             "sort": "rouge",
-            "dureeMs": 8280
+            "dureeMs": 8264
           }
         ]
       },
@@ -4165,7 +4165,7 @@
         "number": 71,
         "state": "OPEN",
         "title": "Portail : ce qui est rouge",
-        "updatedAt": "2026-09-11T16:44:32Z",
+        "updatedAt": "2026-09-12T07:10:27Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/71"
       },
       {
@@ -4530,6 +4530,65 @@
       }
     ],
     "pr": [
+      {
+        "createdAt": "2026-09-12T08:11:46Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 78,
+        "state": "OPEN",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-12T08:12:52Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34682647238/job/103524004338",
+            "name": "ci",
+            "startedAt": "2026-09-12T08:11:52Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-12T08:13:25Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34682647238/job/103524004409",
+            "name": "ci-windows",
+            "startedAt": "2026-09-12T08:11:52Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-12T08:15:00Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34682647238/job/103524004461",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-12T08:11:52Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-12T08:14:36Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34682647238/job/103524004245",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-12T08:11:53Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-12T08:11:56Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/bd0a2e2c-c91b-46ef-9223-5bd73d502f16"
+          }
+        ],
+        "title": "Portail : chaque page explique ce qu'elle montre, comment la lire et quand agir",
+        "updatedAt": "2026-09-12T08:11:46Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/78"
+      },
       {
         "createdAt": "2026-09-11T22:12:35Z",
         "isDraft": false,
@@ -7828,7 +7887,7 @@
         "etiquettes": [
           "test"
         ],
-        "majLe": "2026-09-11T16:44:32Z",
+        "majLe": "2026-09-12T07:10:27Z",
         "creeLe": "2026-09-11T16:44:32Z",
         "colonne": "À tester"
       },
@@ -8077,6 +8136,19 @@
         "majLe": "2026-09-11T16:34:45Z",
         "creeLe": "2026-09-10T08:39:10Z",
         "colonne": "Fait"
+      },
+      {
+        "type": "pr",
+        "numero": 78,
+        "titre": "Portail : chaque page explique ce qu'elle montre, comment la lire et quand agir",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/78",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-12T08:11:46Z",
+        "creeLe": "2026-09-12T08:11:46Z",
+        "ci": "rouge",
+        "colonne": "En review"
       },
       {
         "type": "pr",
