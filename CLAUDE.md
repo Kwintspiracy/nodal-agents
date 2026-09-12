@@ -131,6 +131,11 @@ test devrait vérifier (`ecranAttendu` / `preuveAttendue`), et `apps/qa/lib.test
 refuse cette phrase sur un niveau déjà prouvé — un plan périmé ne vaut pas mieux
 qu'un trou anonyme.
 
+⚠️ Le niveau doit FINIR là : `@cap:x/ecranXYZ`, `@cap:y/moteur-bis` et
+`@cap:z/Ecran` ne sont PAS des niveaux — ils retombent dans « non dit », donc
+sous les yeux de quelqu'un. Une faute de frappe ne devient jamais un niveau en
+silence.
+
 ⚠️ Une étiquette SANS niveau (`@cap:<slug>`) est encore lue, mais elle ne compte
 pour aucune des deux colonnes — la ranger d'office dans « écran » peindrait en
 vert un moteur que personne n'a testé. `pnpm capacites:check` la signale en

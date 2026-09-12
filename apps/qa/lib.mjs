@@ -955,12 +955,20 @@ export const NIVEAUX = ['ecran', 'moteur'];
  * `null`, et la porte le signale en avertissement. Un suffixe qui n'est ni
  * `ecran` ni `moteur` (une faute de frappe) n'est pas lu comme un niveau — il
  * tombe dans le même `null`, donc sous les yeux de quelqu'un.
+ *
+ * Le `(?![\w-])` n'est pas décoratif : sans lui, l'alternative s'arrêtait au
+ * bon PRÉFIXE et laissait le reste par terre. `@cap:x/ecranXYZ` se déclarait
+ * preuve d'écran et `@cap:y/moteur-bis` preuve de moteur — la faute de frappe
+ * devenait un niveau, en silence, et le paragraphe ci-dessus mentait. Trouvé
+ * par la revue Codex du 13/09, en SONDANT la fonction, pas en la lisant.
  */
 export function capacitesDunTitre(titre) {
-  return [...String(titre ?? '').matchAll(/@cap:([a-z0-9-]+)(?:\/(ecran|moteur))?/g)].map((m) => ({
-    slug: m[1],
-    niveau: m[2] ?? null,
-  }));
+  return [...String(titre ?? '').matchAll(/@cap:([a-z0-9-]+)(?:\/(ecran|moteur)(?![\w-]))?/g)].map(
+    (m) => ({
+      slug: m[1],
+      niveau: m[2] ?? null,
+    }),
+  );
 }
 
 /**
@@ -1195,7 +1203,14 @@ export function croiserPreuves({ declarees, joues } = {}) {
   const jouees = [];
   const remplaces = new Set();
   for (const c of joues ?? []) {
+    // Dédupliqué DANS le cas : un `describe` étiqueté qui contient un cas
+    // étiqueté pareil écrit deux fois la même étiquette dans le titre complet.
+    // Sans ce Set, la même vérification comptait pour deux (revue Codex, 13/09).
+    const vus = new Set();
     for (const { slug, niveau } of capacitesDunTitre(c.titreComplet ?? c.titre)) {
+      const cle = `${slug}::${niveau ?? ''}`;
+      if (vus.has(cle)) continue;
+      vus.add(cle);
       // Un cas par preuve, jamais un fichier : quand une capacité tombe, la
       // seule information utile est QUEL test exact l'a lâchée.
       jouees.push({ capacite: slug, niveau, origine: c.fichier, titre: c.titre, sort: c.sort });

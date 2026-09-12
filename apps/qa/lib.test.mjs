@@ -951,6 +951,20 @@ describe('capacitesDunTitre — ce qu’un test dit prouver, et à quel niveau',
     ]);
   });
 
+  it('le niveau doit FINIR là — « /ecranXYZ » et « /moteur-bis » n’en sont pas', () => {
+    // Trouvé par la revue Codex du 13/09, qui a sondé la fonction plutôt que de
+    // la lire : `(ecran|moteur)` s'arrêtait au bon préfixe et laissait la suite
+    // tomber par terre. `@cap:x/ecranXYZ` se déclarait donc preuve d'écran, et
+    // `@cap:y/moteur-bis` preuve de moteur — une faute de frappe devenait un
+    // niveau, silencieusement, ce que le commentaire de la fonction jurait
+    // qu'elle ne ferait pas.
+    expect(capacitesDunTitre('@cap:x/ecranXYZ')).toEqual([{ slug: 'x', niveau: null }]);
+    expect(capacitesDunTitre('@cap:y/moteur-bis')).toEqual([{ slug: 'y', niveau: null }]);
+    // Ce qui SUIT légitimement un niveau — ponctuation, espace, fin — tient.
+    expect(capacitesDunTitre('@cap:w/ecran, puis')).toEqual([{ slug: 'w', niveau: 'ecran' }]);
+    expect(capacitesDunTitre('(@cap:w/moteur)')).toEqual([{ slug: 'w', niveau: 'moteur' }]);
+  });
+
   it('en lit PLUSIEURS, chacune avec son propre niveau', () => {
     // Refuser la seconde forcerait à couper des parcours utiles en morceaux
     // pour satisfaire le registre. C'est le registre qui doit s'adapter.
@@ -1383,6 +1397,42 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
     expect(p.every((x) => x.capacite === 'installer-et-demarrer')).toBe(true);
     expect(p.every((x) => x.niveau === 'ecran')).toBe(true);
     expect(p.map((x) => x.sort)).toEqual(['vert', 'rouge']);
+  });
+
+  it('une étiquette RÉPÉTÉE dans un titre ne compte qu’une fois', () => {
+    // Revue Codex du 13/09. Un titre qui porte deux fois la même étiquette —
+    // le cas normal quand un `describe` étiqueté contient un cas étiqueté
+    // pareil — produisait deux preuves identiques. Le compte affiché gonflait
+    // sans qu'aucun test de plus n'existe, et « 2 preuves » se lisait comme
+    // deux vérifications.
+    const p = croiserPreuves({
+      declarees: [],
+      joues: [
+        {
+          fichier: 'f.test.ts',
+          titre: `cas ${E}:choisir-modele/moteur`,
+          titreComplet: `bloc ${E}:choisir-modele/moteur cas ${E}:choisir-modele/moteur`,
+          sort: 'vert',
+        },
+      ],
+    });
+    expect(p).toHaveLength(1);
+  });
+
+  it('deux NIVEAUX dans un même titre restent deux preuves', () => {
+    // La déduplication ne doit pas avaler le second niveau : un parcours peut
+    // légitimement prouver l'écran ET le moteur.
+    const p = croiserPreuves({
+      declarees: [],
+      joues: [
+        {
+          fichier: 'f.test.ts',
+          titre: `cas ${E}:se-souvenir/ecran ${E}:se-souvenir/moteur`,
+          sort: 'vert',
+        },
+      ],
+    });
+    expect(p.map((x) => x.niveau)).toEqual(['ecran', 'moteur']);
   });
 
   it('un cas par preuve — pas un fichier', () => {
