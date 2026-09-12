@@ -163,6 +163,114 @@ export function cadenceDe(declencheurs) {
   return 'à la main';
 }
 
+// ─── Ce qu'une PR coûte en contrôles ──────────────────────────────────────────
+//
+// La question de Quentin, et elle est la bonne : combien de minutes chaque PR
+// coûte en contrôles, et est-ce que ça dérive. C'est ce chiffre-là qui décide
+// du sort des tests — le jour où attendre son merge devient insupportable,
+// personne ne demande la permission avant de désactiver une suite.
+//
+// Le chiffre n'est donc pas une curiosité de performance : c'est l'indicateur
+// AVANCÉ de la prochaine porte qu'on va retirer.
+
+/** La médiane d'une liste DÉJÀ TRIÉE. `null` sur une liste vide — jamais zéro. */
+export function medianeDe(triee) {
+  const l = triee ?? [];
+  if (l.length === 0) return null;
+  const mi = Math.floor(l.length / 2);
+  return l.length % 2 === 1 ? l[mi] : Number(((l[mi - 1] + l[mi]) / 2).toFixed(2));
+}
+
+/** Au-delà de ce pourcentage entre les deux moitiés de la fenêtre, la durée BOUGE. */
+const SEUIL_TENDANCE_PRIX = 15;
+
+/**
+ * Ce qu'une PR coûte, lu dans les exécutions passées de la CI.
+ *
+ * Durée = `updatedAt` − `createdAt`, c'est-à-dire la durée MUR À MUR du run,
+ * file d'attente comprise, et non la somme des durées de ses jobs. C'est un
+ * choix : la somme des jobs mesure ce que la CI consomme, la durée mur à mur
+ * mesure ce que quelqu'un ATTEND devant sa PR. Le second est le seul qui
+ * explique pourquoi on finit par désactiver des tests.
+ *
+ * Seuls les runs VERTS comptent. Un run rouge s'arrête au premier job qui
+ * tombe — souvent en trois minutes — et le compter ferait baisser la médiane
+ * chaque fois que la CI va mal, c'est-à-dire exactement quand on veut la
+ * regarder.
+ *
+ * `null` quand GitHub n'a pas répondu : une absence n'est pas un coût de zéro.
+ */
+export function prixDeLaCi(runs) {
+  if (!Array.isArray(runs)) return null;
+
+  const verts = runs
+    .filter((r) => String(r?.conclusion ?? '').toLowerCase() === 'success')
+    .map((r) => {
+      const de = Date.parse(r?.createdAt);
+      const a = Date.parse(r?.updatedAt);
+      if (!Number.isFinite(de) || !Number.isFinite(a) || a < de) return null;
+      return { le: r.createdAt, valeur: Number(((a - de) / 60000).toFixed(1)), url: r.url ?? null };
+    })
+    .filter(Boolean)
+    // Du plus ancien au plus récent : c'est l'ordre d'une courbe, et l'ordre
+    // dans lequel se lit une dérive. `gh` rend l'inverse.
+    .sort((x, y) => Date.parse(x.le) - Date.parse(y.le));
+
+  const vide = {
+    runs: 0,
+    serie: [],
+    mediane: null,
+    medianeRecente: null,
+    dernier: null,
+    pire: null,
+    hausse: null,
+    deltaMin: null,
+    tendance: null,
+  };
+  if (verts.length === 0) return vide;
+
+  const vals = verts.map((v) => v.valeur);
+  const tri = [...vals].sort((a, b) => a - b);
+  // Les DIX derniers, et pas toute la fenêtre, pour l'alerte : trente runs
+  // remontent à plusieurs semaines, et une CI qui vient de doubler resterait
+  // masquée par vingt mesures d'avant.
+  const dixDerniers = [...vals.slice(-10)].sort((a, b) => a - b);
+
+  // Première moitié contre seconde moitié, médiane contre médiane. Le point du
+  // milieu est écarté sur un nombre impair : il appartiendrait aux deux.
+  let hausse = null;
+  let deltaMin = null;
+  if (vals.length >= 2) {
+    const avant = medianeDe([...vals.slice(0, Math.floor(vals.length / 2))].sort((a, b) => a - b));
+    const apres = medianeDe([...vals.slice(Math.ceil(vals.length / 2))].sort((a, b) => a - b));
+    deltaMin = Number((apres - avant).toFixed(1));
+    if (avant > 0) hausse = Number((((apres - avant) / avant) * 100).toFixed(1));
+  }
+
+  return {
+    runs: verts.length,
+    serie: verts.map(({ le, valeur }) => ({ le, valeur })),
+    mediane: medianeDe(tri),
+    medianeRecente: medianeDe(dixDerniers),
+    dernier: verts.at(-1).valeur,
+    pire: Math.max(...vals),
+    hausse,
+    // Le même écart en minutes : un pourcentage ne dit pas si on parle de
+    // trente secondes ou d'un quart d'heure.
+    deltaMin,
+    // Sur un seul run vert, pas de tendance. « Stable » serait une affirmation
+    // qu'on ne peut pas faire — la même règle que `tendance()`.
+    tendance:
+      hausse == null
+        ? null
+        : hausse > SEUIL_TENDANCE_PRIX
+          ? 'monte'
+          : hausse < -SEUIL_TENDANCE_PRIX
+            ? 'descend'
+            : 'stable',
+  };
+}
+
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
 /**
@@ -275,6 +383,12 @@ const JEUNE_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** Au-delà de deux semaines, un rouge n'est plus une régression : c'est un choix. */
 const VIEUX_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Au-delà de ce nombre de minutes par PR, l'attente devient le sujet. */
+const SEUIL_PRIX_MIN = 25;
+
+/** Et au-delà de cette hausse sur la fenêtre, la dérive est dite avant d'être subie. */
+const SEUIL_HAUSSE_PRIX = 25;
 
 export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const out = [];
@@ -430,6 +544,31 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     });
   }
 
+  // ── Le prix d'une PR. Pas une curiosité de performance : le jour où
+  // attendre son merge devient insupportable, quelqu'un désactive une suite,
+  // et personne ne demande la permission avant. Le coût est donc l'indicateur
+  // AVANCÉ de la prochaine porte qu'on va retirer.
+  //
+  // `null` (GitHub sans réponse) ne pose RIEN : une absence de mesure n'est pas
+  // une CI gratuite.
+  const prix = s.prixCi ?? null;
+  if (prix?.medianeRecente != null && prix.medianeRecente > SEUIL_PRIX_MIN) {
+    out.push({
+      gravite: 'haute',
+      titre: `La CI coûte ${prix.medianeRecente} min par PR`,
+      detail: `Médiane des ${Math.min(prix.runs, 10)} dernières exécutions vertes, attente en file comprise. Au-delà d'une vingtaine de minutes, l'attente cesse d'être supportable et c'est le contenu de la CI qu'on finit par raboter, pas le temps qu'elle prend.`,
+      quoi: [],
+    });
+  }
+  if (prix?.hausse != null && prix.hausse > SEUIL_HAUSSE_PRIX) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `La CI a pris ${prix.hausse} % de plus sur la fenêtre`,
+      detail: `Première moitié des exécutions contre seconde moitié. Une dérive se répare pendant qu'elle est petite ; une fois installée, elle devient la normale que personne ne discute plus.`,
+      quoi: [],
+    });
+  }
+
   if (ci.length > 0 && !ci.some((w) => w.lanceCouverture)) {
     out.push({
       gravite: 'moyenne',
@@ -534,7 +673,11 @@ export function cleDuTest(fichier, titre) {
  *     exactement ce qui arrive quand une exécution ne joue qu'une partie de la
  *     suite, ce qui est le cas normal ici.
  */
-export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {}) {
+export function fusionnerEssais(
+  existants,
+  nouveaux,
+  { max = 30, le = null, execution = null } = {},
+) {
   const parCle = new Map((existants ?? []).map((e) => [e.cle, { ...e }]));
 
   // Deux cas homonymes dans la MÊME salve sont deux tests — un `test.each`
@@ -575,6 +718,10 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
       // s'est arrêté. Les deux, sinon la durée ne se calcule pas.
       dernierRougeDepuis: null,
       repareLe: null,
+      // L'exécution qui a VU ce test rouge la dernière fois. C'est le seul
+      // chemin entre un nom de test dans un tableau et ce que l'utilisateur
+      // aurait vu : le rapport du run, sa trace et sa capture d'écran.
+      dernierRougeExecution: null,
     };
 
     // Le sort du tour PRÉCÉDENT, lu avant d'écrire celui-ci : c'est lui qui
@@ -589,6 +736,11 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
     if (n.sort === 'rouge') {
       e.echecs += 1;
       e.dernierEchecLe = e.dernierTourLe;
+      // Où aller voir. Un tour rouge joué SANS exécution connue (une mesure
+      // locale) ne pose rien et n'efface rien : mieux vaut le dernier lien
+      // vivant qu'un lien mort, et un rendu local ne doit pas faire disparaître
+      // la piste laissée par la mesure nocturne.
+      e.dernierRougeExecution = n.execution ?? execution ?? e.dernierRougeExecution ?? null;
       // L'âge du problème COURANT, pas celui du premier échec de l'histoire :
       // un test cassé en juillet, réparé, recassé hier a un problème d'un jour.
       //
@@ -700,11 +852,7 @@ export function dureesDeReparation(memoire) {
     .filter((d) => d != null)
     .sort((a, b) => a - b);
 
-  if (durees.length === 0) return { durees: [], mediane: null };
-  const mi = Math.floor(durees.length / 2);
-  const mediane =
-    durees.length % 2 === 1 ? durees[mi] : Number(((durees[mi - 1] + durees[mi]) / 2).toFixed(2));
-  return { durees, mediane };
+  return { durees, mediane: medianeDe(durees) };
 }
 
 /**
