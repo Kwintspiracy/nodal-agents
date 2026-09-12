@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ecartsDe, verdictDuBanc } from './lib.mjs';
+import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const DATA = join(ICI, 'data');
@@ -31,6 +32,46 @@ const historique = existsSync(join(DATA, 'history.ndjson'))
       })
       .filter(Boolean)
   : [];
+
+/**
+ * L'en-tête d'une page : son titre, deux phrases qui disent pourquoi elle
+ * existe, et le bouton qui ouvre l'explication complète. Quentin, 12/09 :
+ * « je ne sais pas ce que je regarde ». Un titre seul ne suffit à personne.
+ */
+const entete = (id, titre) => {
+  const x = EXPLICATIONS[id];
+  if (!x) throw new Error(`page sans explication : ${id}`);
+  return `<div class="entete-page">
+    <h2 class="titre-vue">${esc(titre)}</h2>
+    <button type="button" class="btn-comprendre" data-explique="${id}">Comprendre cette page</button>
+  </div>
+  <p class="pourquoi">${esc(x.enBref)}</p>`;
+};
+
+/** Une phrase au-dessus d'un tableau ou d'un cadre : ce qu'on est en train de regarder. */
+const repere = (id, bloc) => {
+  const t = EXPLICATIONS[id]?.blocs?.[bloc];
+  if (!t) throw new Error(`bloc sans repère : ${id}.${bloc}`);
+  return `<p class="repere">${esc(t)}</p>`;
+};
+
+/** La modale, une seule, remplie au clic depuis les explications embarquées. */
+const modaleExplications = () => `<dialog id="explication" class="modale">
+  <div class="modale__cadre">
+    <header class="modale__tete">
+      <h2 id="explication-titre"></h2>
+      <button type="button" class="modale__fermer" data-fermer aria-label="Fermer">Fermer</button>
+    </header>
+    <div id="explication-corps" class="modale__corps"></div>
+  </div>
+</dialog>
+<script>
+  window.__EXPLICATIONS = ${JSON.stringify(
+    Object.fromEntries(
+      Object.entries(EXPLICATIONS).map(([k, v]) => [k, { titre: v.titre, parties: v.parties }]),
+    ),
+  ).replace(/</g, '\u003c')};
+</script>`;
 
 const esc = (v) =>
   String(v ?? '').replace(
@@ -76,9 +117,10 @@ function vueEnsemble() {
 
   return `
 <section id="vue" class="vue">
-  <h2 class="titre-vue">Vue d'ensemble</h2>
+  ${entete('vue', "Tests — vue d'ensemble")}
   <p class="chapo">Ce que le dépôt sait de ses propres tests, mesuré — et ce qu'il ne sait pas encore, dit comme tel.</p>
 
+  ${repere('vue', 'cartes')}
   <div class="cartes">
     <article class="carte carte--phare">
       <h3>Couverture réelle des lignes</h3>
@@ -110,6 +152,7 @@ function vueEnsemble() {
   </div>
 
   <h3 class="sous-titre">Couverture par paquet</h3>
+  ${repere('vue', 'paquets')}
   <p class="note-section">Trié par nombre de lignes non couvertes : ce qui est en haut est ce qui coûte le plus à ignorer. Un paquet non mesuré est hachuré — il n'a pas zéro, il n'a rien.</p>
   <div class="tableau">
     <table>
@@ -211,8 +254,9 @@ function vueParcours() {
   const bloque = (parCadence.get('chaque PR') ?? []).length;
   return `
 <section id="parcours" class="vue">
-  <h2 class="titre-vue">Parcours</h2>
+  ${entete('parcours', 'Parcours')}
   <p class="chapo">Les scénarios bout en bout : ce qu'un utilisateur fait réellement. ${s.parcours.length} versionnés, et <b>${bloque} seulement gardent une PR</b> — les autres constatent après coup, ou jamais.</p>
+  ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
 </section>`;
 }
@@ -220,7 +264,7 @@ function vueParcours() {
 function vueBanc() {
   return `
 <section id="banc" class="vue">
-  <h2 class="titre-vue">Banc d'essai</h2>
+  ${entete('banc', "Banc d'essai")}
   <p class="chapo">Le banc ne répond pas « est-ce cassé ? » mais « qu'est-ce qui a CHANGÉ, et de combien ». Chaque section porte une baseline acceptée ; un écart fait sortir la commande en erreur.</p>
   ${
     s.ci.some((w) => w.lanceBanc)
@@ -251,6 +295,7 @@ function vueBanc() {
     }
     return `<div class="alerte">${bouts.join('<br>')}<br><span class="dim">Passage du ${esc(dateFr(v.mesureLe))}.</span></div>`;
   })()}
+  ${repere('banc', 'sections')}
   <div class="grille-banc">
     ${s.banc.sections
       .map(
@@ -273,7 +318,7 @@ function vueBanc() {
 function vueCi() {
   return `
 <section id="ci" class="vue">
-  <h2 class="titre-vue">Ce qui déclenche quoi</h2>
+  ${entete('ci', 'Ce qui déclenche quoi')}
   <p class="chapo">Lu dans les fichiers de workflow, pas dans une intention. C'est la réponse à « qu'est-ce qui lance les tests, et quand ».</p>
   <div class="grille-ci">
     ${s.ci
@@ -307,7 +352,7 @@ const PASTILLE_CAPACITE = {
 function vueCapacites() {
   const reg = s.capacites?.registre ?? [];
   if (reg.length === 0) {
-    return `<section id="capacites" class="vue"><h2 class="titre-vue">Capacités</h2>
+    return `<section id="capacites" class="vue">${entete('capacites', 'Ce que le produit sait faire')}
       <p class="chapo">Aucun registre dans cette collecte.</p></section>`;
   }
 
@@ -344,9 +389,10 @@ function vueCapacites() {
 
   return `
 <section id="capacites" class="vue">
-  <h2 class="titre-vue">Ce que le produit sait faire</h2>
+  ${entete('capacites', 'Ce que le produit sait faire')}
   <p class="chapo">Une ligne par capacité, et ce qui la prouve. La question n'est pas « quel pourcentage de <code>apps/web</code> est couvert » mais « un utilisateur peut-il connecter Notion ce matin, et qu'est-ce qui le montre ».</p>
 
+  ${repere('capacites', 'compteurs')}
   <div class="cartes">
     <article class="carte carte--phare ${jamais.length > 0 ? 'carte--alerte' : ''}">
       <h3>Jamais prouvées</h3>
@@ -373,6 +419,7 @@ function vueCapacites() {
       <p class="sous">le test qui les tient échoue</p>
     </article>
   </div>
+  ${repere('capacites', 'registre')}
 
   ${domaines
     .map(
@@ -403,7 +450,7 @@ function ruban(recents) {
 function vueMemoire() {
   const m = s.memoire;
   if (!m || m.total === 0) {
-    return `<section id="memoire" class="vue"><h2 class="titre-vue">Mémoire des tests</h2>
+    return `<section id="memoire" class="vue">${entete('memoire', 'Mémoire des tests')}
       <p class="chapo">Aucun test suivi pour l'instant. La mémoire se remplit à chaque mesure ; elle a besoin de plusieurs passages avant de savoir dire quoi que ce soit d'utile.</p></section>`;
   }
 
@@ -424,7 +471,7 @@ function vueMemoire() {
 
   return `
 <section id="memoire" class="vue">
-  <h2 class="titre-vue">Mémoire des tests</h2>
+  ${entete('memoire', 'Mémoire des tests')}
   <p class="chapo">Un enregistrement par test, pas par exécution. C'est la seule forme qui sache répondre « combien de fois ça tourne, et combien de fois ça tombe ».</p>
 
   <div class="cartes">
@@ -451,6 +498,7 @@ function vueMemoire() {
   ${
     (m.pires ?? []).length > 0
       ? `<h3 class="sous-titre">Les plus nuisibles <span class="compte">${m.pires.length}</span></h3>
+  ${repere('memoire', 'nuisibles')}
   <p class="note-section">Triés par taux d'échec. Le ruban se lit de gauche à droite, du plus ancien au plus récent.</p>
   <table class="tableau">
     <thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead>
@@ -458,7 +506,7 @@ function vueMemoire() {
   </table>`
       : `<p class="note-section">Aucun test instable détecté. C'est peut-être vrai — ou la mémoire est encore trop courte pour le voir : l'instabilité demande plusieurs passages avant d'apparaître, et elle en compte ${(m.pires ?? []).length === 0 && m.total > 0 ? 'peu' : 'aucun'} pour l'instant.</p>`
   }
-  ${casses.length > 0 ? `<h3 class="sous-titre">Cassés</h3><table class="tableau"><thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead><tbody>${lignes(casses, true)}</tbody></table>` : ''}
+  ${casses.length > 0 ? `<h3 class="sous-titre">Cassés</h3>${repere('memoire', 'casses')}<table class="tableau"><thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead><tbody>${lignes(casses, true)}</tbody></table>` : ''}
 </section>`;
 }
 
@@ -466,7 +514,7 @@ function vueEcarts() {
   const list = ecarts();
   return `
 <section id="ecarts" class="vue">
-  <h2 class="titre-vue">Écarts</h2>
+  ${entete('ecarts', 'Écarts')}
   <p class="chapo">Ce que la mesure d'aujourd'hui reproche au dépôt, classé par ce que ça coûte de l'ignorer. Cette liste est calculée, pas rédigée : elle change quand le dépôt change.</p>
   <ol class="ecarts">
     ${list
@@ -501,7 +549,7 @@ const TONS_ETIQUETTE = {
 function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
-    return `<section id="chantiers" class="vue actif"><h2 class="titre-vue">Chantiers</h2>
+    return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Chantiers')}
       <div class="alerte">GitHub n'a pas répondu — le portail ne montre rien plutôt qu'une liste périmée.</div></section>`;
   }
 
@@ -543,7 +591,7 @@ function vueChantiers() {
 
   return `
 <section id="chantiers" class="vue actif">
-  <h2 class="titre-vue">Chantiers</h2>
+  ${entete('chantiers', 'Chantiers')}
   <p class="chapo">Le travail en cours, lu depuis GitHub. Les colonnes sont DÉDUITES — une PR ouverte est en review, une issue fermée est faite, une décision attend Quentin. Rien ne se range à la main, donc rien ne peut mentir par oubli.</p>
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} décision${aFaire > 1 ? 's' : ''} t'attend${aFaire > 1 ? 'ent' : ''}</b> — elles bloquent le reste tant qu'elles ne sont pas tranchées.${enReview > 0 ? ` Et ${enReview} PR ${enReview > 1 ? 'attendent' : 'attend'} ton merge.` : ''}</div>` : ''}
   <div class="kanban">${colonnes}</div>
@@ -552,14 +600,14 @@ function vueChantiers() {
 
 function vueHistorique() {
   if (historique.length === 0) {
-    return `<section id="historique" class="vue"><h2 class="titre-vue">Historique</h2>
+    return `<section id="historique" class="vue">${entete('historique', 'Historique')}
       <div class="alerte">Aucune collecte enregistrée.</div></section>`;
   }
   const derniers = historique.slice(-40);
   const max = Math.max(...derniers.map((h) => h.casDeTest ?? 0), 1);
   return `
 <section id="historique" class="vue">
-  <h2 class="titre-vue">Historique</h2>
+  ${entete('historique', 'Historique')}
   <p class="chapo">Une ligne par collecte. C'est cet historique — et lui seul — qui rendra répondables « combien de fois ça tourne » et « à quelle régularité ». Il commence aujourd'hui.</p>
   <div class="sparkline" role="img" aria-label="évolution du nombre de cas de test">
     ${derniers.map((h) => `<i style="height:${Math.max(4, ((h.casDeTest ?? 0) / max) * 100).toFixed(1)}%" title="${esc(dateFr(h.le))} — ${n(h.casDeTest)} cas"></i>`).join('')}
@@ -665,6 +713,26 @@ nav a b{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;op
 .compte{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--encre3);
   background:var(--panneau2);padding:1px 8px;border-radius:99px}
 .note-section{color:var(--encre3);font-size:13px;margin:0 0 12px;max-width:80ch}
+.entete-page{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.btn-comprendre{background:var(--panneau);color:var(--accent);border:1px solid var(--regle);border-radius:999px;padding:6px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.btn-comprendre:hover{border-color:var(--accent)}
+.btn-comprendre:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pourquoi{color:var(--encre2);font-size:14.5px;line-height:1.55;max-width:80ch;margin:0 0 10px;padding:10px 14px;border-left:3px solid var(--accent);background:var(--accent-doux);border-radius:0 8px 8px 0}
+.repere{color:var(--encre3);font-size:13px;margin:0 0 10px;max-width:80ch}
+.modale{border:0;padding:0;background:transparent;max-width:none;max-height:none;width:100vw;height:100vh}
+.modale::backdrop{background:rgba(0,0,0,.45)}
+.modale__cadre{background:var(--panneau);color:var(--encre);border:1px solid var(--regle);border-radius:14px;width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 48px);margin:24px auto;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.modale__tete{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;border-bottom:1px solid var(--regle)}
+.modale__tete h2{font-size:22px;margin:0}
+.modale__fermer{background:transparent;color:var(--encre2);border:1px solid var(--regle);border-radius:999px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
+.modale__corps{overflow:auto;padding:8px 24px 24px;font-size:15px;line-height:1.6}
+.modale__partie{padding:16px 0;border-bottom:1px solid var(--regle)}
+.modale__partie:last-child{border-bottom:0}
+.modale__partie h3{font-size:12.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--encre3);margin:0 0 8px}
+.modale__partie p,.modale__partie li{color:var(--encre2);max-width:76ch}
+.modale__partie ul{padding-left:20px;margin:8px 0}
+.modale__partie li{margin:4px 0}
+.modale__partie code{font-size:.92em}
 
 /* ── Cartes ── */
 .cartes{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px;margin-bottom:8px}
@@ -827,6 +895,7 @@ tr:last-child td{border-bottom:0}
     ${vueHistorique()}
   </main>
 </div>
+${modaleExplications()}
 <script>
 (function(){
   var vues = document.querySelectorAll('.vue');
@@ -840,6 +909,30 @@ tr:last-child td{border-bottom:0}
   }
   window.addEventListener('hashchange', function(){ montrer(location.hash); });
   montrer(location.hash || '#chantiers');
+
+  // « Comprendre cette page » : une seule modale, remplie depuis les
+  // explications embarquées. Un <dialog> natif du document, pas window.alert :
+  // il se ferme à Échap, au clic sur le fond, ou au bouton.
+  var modale = document.getElementById('explication');
+  var titre = document.getElementById('explication-titre');
+  var corps = document.getElementById('explication-corps');
+  function ouvrir(id){
+    var x = (window.__EXPLICATIONS || {})[id];
+    if(!x || !modale) return;
+    titre.textContent = x.titre;
+    corps.innerHTML = x.parties.map(function(p){
+      return '<section class="modale__partie"><h3>' + p.titre + '</h3>' + p.texte + '</section>';
+    }).join('');
+    modale.showModal();
+    corps.scrollTop = 0;
+  }
+  document.querySelectorAll('[data-explique]').forEach(function(b){
+    b.addEventListener('click', function(){ ouvrir(b.getAttribute('data-explique')); });
+  });
+  if(modale){
+    modale.querySelector('[data-fermer]').addEventListener('click', function(){ modale.close(); });
+    modale.addEventListener('click', function(e){ if(e.target === modale) modale.close(); });
+  }
 })();
 </script>
 </body>
