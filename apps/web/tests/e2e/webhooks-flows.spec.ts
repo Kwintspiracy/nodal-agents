@@ -70,14 +70,23 @@ test.describe('Webhooks section — full click flow @cap:declencher-sur-evenemen
     await page.getByRole('button', { name: /^create webhook$/i }).click();
 
     // ── Success toast + success panel with the full URL ─────────────────────
-    await expect(page.getByText(/^webhook created$/i)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { name: /^webhook created$/i })).toBeVisible({
+    // « Webhook created » est écrit DEUX fois au même instant : dans le toast
+    // Sonner, et dans le titre de la modale qui bascule en mode succès. Une
+    // recherche par texte nu attrapait les deux et Playwright refusait de
+    // choisir — c'est le seul cas rouge de la mesure du 11/09 qui ne venait pas
+    // d'une refonte, mais du parcours lui-même :
+    //
+    //   Error: strict mode violation: getByText(/^webhook created$/i)
+    //   resolved to 2 elements
+    //
+    // Chaque moitié est donc désignée par ce qu'elle EST.
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: /^webhook created$/i }),
+    ).toBeVisible({ timeout: 10_000 });
+    const successPanel = page.getByRole('dialog');
+    await expect(successPanel.getByRole('heading', { name: /^webhook created$/i })).toBeVisible({
       timeout: 5_000,
     });
-    const successPanel = page
-      .locator('.rounded-xl')
-      .filter({ has: page.getByRole('heading', { name: /^webhook created$/i }) });
-    await expect(successPanel).toBeVisible();
     const successUrlText = await successPanel.locator('.font-mono').first().textContent();
     expect(successUrlText).toMatch(/^https?:\/\/.+:3001\/webhooks\/.+\/[0-9a-f]{32}$/);
     await expect(successPanel.getByRole('button', { name: /^copy$/i })).toBeVisible();
