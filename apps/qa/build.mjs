@@ -11,7 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe, verdictDuBanc } from './lib.mjs';
+import { ecartsDe, verdictDuBanc, tendance } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -80,6 +80,9 @@ const esc = (v) =>
   );
 const n = (v) => (typeof v === 'number' ? v.toLocaleString('fr-FR') : '—');
 const pct = (v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : null);
+/** Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien. */
+const jourFr = (iso) =>
+  iso ? new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—';
 const dateFr = (iso) =>
   iso
     ? new Date(iso).toLocaleString('fr-FR', {
@@ -109,8 +112,99 @@ function barre(valeur, libelle) {
       <i style="width:${Math.max(0, Math.min(100, valeur)).toFixed(1)}%"></i><span>${valeur.toFixed(1)}%</span></div>`;
 }
 
+/** L'âge d'une date en jours pleins, compté depuis la collecte — jamais depuis l'ouverture de la page. */
+const joursDepuis = (iso, reference = s.genereLe) => {
+  if (!iso) return null;
+  const de = Date.parse(iso);
+  const a = Date.parse(reference);
+  if (!Number.isFinite(de) || !Number.isFinite(a)) return null;
+  return Math.max(0, Math.floor((a - de) / 86400000));
+};
+
+/**
+ * Une courbe, en SVG écrit à la main.
+ *
+ * Aucune bibliothèque : le portail est un fichier HTML qui doit s'ouvrir sans
+ * réseau et se déployer sur GitHub Pages tel quel. Une ligne, une aire légère,
+ * le dernier point marqué, et l'axe des valeurs à l'échelle des données —
+ * partir de zéro écraserait une variation de deux points de couverture au point
+ * de la rendre invisible, ce qui est exactement ce qu'on vient regarder.
+ *
+ * Un seul point ne donne pas de tendance, et la page le DIT plutôt que de
+ * tracer une ligne horizontale qui ressemblerait à « stable ».
+ */
+function courbe(t, { titre, libelle, fmt = (v) => v.toFixed(1) }) {
+  const pts = t.valeurs ?? [];
+  if (pts.length === 0) {
+    return `<article class="courbe">
+      <h4>${esc(titre)}</h4>
+      <p class="courbe__vide">Aucune collecte mesurée sur la fenêtre. Rien à tracer — et rien n'est tracé.</p>
+    </article>`;
+  }
+
+  // Un viewBox proche de la largeur rendue (une carte sur trois d'une grille) :
+  // un viewBox deux fois trop large écrase les libellés à cinq pixels, ce que la
+  // première capture a montré sans appel.
+  const W = 360;
+  const H = 170;
+  const [mg, md, mh, mb] = [46, 12, 18, 26];
+  const vals = pts.map((p) => p.valeur);
+  let bas = Math.min(...vals);
+  let haut = Math.max(...vals);
+  if (haut === bas) {
+    // Une série parfaitement plate : on l'entoure, sinon la division par zéro.
+    bas -= 1;
+    haut += 1;
+  } else {
+    const marge = (haut - bas) * 0.15;
+    bas -= marge;
+    haut += marge;
+  }
+  const x = (i) =>
+    pts.length === 1 ? (mg + (W - md)) / 2 : mg + (i * (W - mg - md)) / (pts.length - 1);
+  const y = (v) => mh + (1 - (v - bas) / (haut - bas)) * (H - mh - mb);
+
+  const ligne = pts.map((p, i) => `${x(i).toFixed(1)},${y(p.valeur).toFixed(1)}`).join(' ');
+  const dernier = pts.at(-1);
+  const aire =
+    pts.length > 1
+      ? `<polygon class="courbe__aire" points="${x(0).toFixed(1)},${(H - mb).toFixed(1)} ${ligne} ${x(pts.length - 1).toFixed(1)},${(H - mb).toFixed(1)}"></polygon>`
+      : '';
+
+  const fleche = { monte: '↗', descend: '↘', stable: '→' }[t.direction] ?? '';
+  const resume =
+    t.delta == null
+      ? 'une seule collecte, pas encore de tendance'
+      : `${fleche} ${t.delta > 0 ? '+' : ''}${fmt(t.delta)} depuis le ${jourFr(pts[0].le)}`;
+
+  return `<article class="courbe">
+  <h4>${esc(titre)} <span class="courbe__resume courbe__resume--${t.direction ?? 'seule'}">${esc(resume)}</span></h4>
+  <svg viewBox="0 0 ${W} ${H}" class="courbe__trace" role="img" aria-label="${esc(libelle)} : ${esc(resume)}">
+    <line class="courbe__axe" x1="${mg}" y1="${mh}" x2="${W - md}" y2="${mh}"></line>
+    <line class="courbe__axe" x1="${mg}" y1="${H - mb}" x2="${W - md}" y2="${H - mb}"></line>
+    <text class="courbe__graduation" x="${mg - 8}" y="${mh + 4}" text-anchor="end">${esc(fmt(haut))}</text>
+    <text class="courbe__graduation" x="${mg - 8}" y="${H - mb + 4}" text-anchor="end">${esc(fmt(bas))}</text>
+    ${aire}
+    ${pts.length > 1 ? `<polyline class="courbe__ligne" points="${ligne}"></polyline>` : ''}
+    <circle class="courbe__point" cx="${x(pts.length - 1).toFixed(1)}" cy="${y(dernier.valeur).toFixed(1)}" r="4"></circle>
+    <text class="courbe__valeur" x="${Math.min(x(pts.length - 1) + 10, W - md).toFixed(1)}" y="${(y(dernier.valeur) - 9).toFixed(1)}" text-anchor="end">${esc(fmt(dernier.valeur))}</text>
+    <text class="courbe__date" x="${mg}" y="${H - 6}">${esc(jourFr(pts[0].le))}</text>
+    <text class="courbe__date" x="${W - md}" y="${H - 6}" text-anchor="end">${esc(jourFr(dernier.le))}</text>
+  </svg>
+</article>`;
+}
+
 function vueEnsemble() {
   const r = s.resume;
+  // Sept jours, et pas trente : sous ce chiffre, la question est « est-ce qu'on
+  // vient d'ajouter du code sans test », pas « où en était-on ce mois-ci ».
+  const tCouv = tendance(historique, 'couvertureLignes', { jours: 7 });
+  const phraseCouv =
+    tCouv.delta == null
+      ? `Pas encore de tendance : ${tCouv.valeurs.length} collecte(s) mesurée(s) sur les 7 derniers jours, il en faut deux.`
+      : tCouv.direction === 'stable'
+        ? 'Stable sur 7 jours.'
+        : `En ${tCouv.direction === 'monte' ? 'hausse' : 'baisse'} de ${Math.abs(tCouv.delta)} point(s) sur 7 jours.`;
   const couvert = pct(r.couvertureLignes);
   const partMesuree = r.paquets > 0 ? Math.round((r.paquetsMesures / r.paquets) * 100) : 0;
   const partJouee = r.specsE2e > 0 ? Math.round((r.specsE2eJoueesParLaCi / r.specsE2e) * 100) : 0;
@@ -128,6 +222,7 @@ function vueEnsemble() {
       <p class="sous">${n(r.lignesCouvertes)} lignes couvertes sur ${n(r.lignesTotal)}<br>
         <b>sur ${r.paquetsMesures} paquets mesurés / ${r.paquets}</b></p>
       ${barre(r.couvertureLignes, 'couverture des lignes')}
+      <p class="tendance tendance--${tCouv.direction ?? 'seule'}">${esc(phraseCouv)}</p>
       <p class="avertissement">Ce chiffre ne vaut que pour la part mesurée. ${r.paquets - r.paquetsMesures} paquets n'ont jamais été instrumentés — ils ne sont ni comptés dans le numérateur ni dans le dénominateur.</p>
     </article>
 
@@ -454,20 +549,26 @@ function vueMemoire() {
       <p class="chapo">Aucun test suivi pour l'instant. La mémoire se remplit à chaque mesure ; elle a besoin de plusieurs passages avant de savoir dire quoi que ce soit d'utile.</p></section>`;
   }
 
-  const lignes = (liste, colonneAge) =>
+  // `colonneJours` n'est posée que sur les cassés : l'âge d'un rouge ne veut
+  // rien dire pour un test instable, qui est vert une fois sur deux.
+  const lignes = (liste, colonneAge, colonneJours = false) =>
     liste
-      .map(
-        (e) => `<tr>
+      .map((e) => {
+        const jours = joursDepuis(e.rougeDepuis);
+        return `<tr>
       <td><span class="intention">${esc(e.fichier ?? '')}</span><br><b>${esc(e.titre ?? e.cle)}</b></td>
       <td class="mono">${ruban(e.recents)}</td>
       <td class="num">${e.echecs}/${e.tours}</td>
       <td class="num">${e.tauxEchec != null ? e.tauxEchec + ' %' : '—'}</td>
       <td>${esc(dateFr(colonneAge ? e.rougeDepuis : e.dernierTourLe))}</td>
-    </tr>`,
-      )
+      ${colonneJours ? `<td class="num ${jours != null && jours > 14 ? 'dette' : ''}">${jours != null ? `${jours} j` : '<span class="dim">bascule jamais vue</span>'}</td>` : ''}
+    </tr>`;
+      })
       .join('');
 
   const casses = (m.casses ?? 0) > 0 ? (m.listeCasses ?? []) : [];
+  // Écrit par la collecte, pas recalculé ici : le portail ne juge rien, il rend.
+  const rep = m.reparations ?? { durees: [], mediane: null };
 
   return `
 <section id="memoire" class="vue">
@@ -493,6 +594,21 @@ function vueMemoire() {
       <p class="chiffre">${n(m.total)}</p>
       <p class="sous">${n(m.joues)} joués lors de la dernière mesure</p>
     </article>
+
+    <article class="carte">
+      <h3>Réparé en (médiane)</h3>
+      <p class="chiffre">${rep.mediane != null ? `${rep.mediane} <span class="sur">j</span>` : '—'}</p>
+      <p class="sous">${
+        rep.mediane != null
+          ? `sur ${rep.durees.length} réparation(s) observée(s) de bout en bout`
+          : "aucune réparation observée pour l'instant"
+      }</p>
+      ${
+        rep.mediane == null
+          ? `<p class="avertissement">Il faut avoir vu un test tomber PUIS repasser au vert pour mesurer une durée. Aucun des ${n(m.total)} tests suivis n'a encore fait ce chemin sous nos yeux.</p>`
+          : ''
+      }
+    </article>
   </div>
 
   ${
@@ -506,7 +622,7 @@ function vueMemoire() {
   </table>`
       : `<p class="note-section">Aucun test instable détecté. C'est peut-être vrai — ou la mémoire est encore trop courte pour le voir : l'instabilité demande plusieurs passages avant d'apparaître, et elle en compte ${(m.pires ?? []).length === 0 && m.total > 0 ? 'peu' : 'aucun'} pour l'instant.</p>`
   }
-  ${casses.length > 0 ? `<h3 class="sous-titre">Cassés</h3>${repere('memoire', 'casses')}<table class="tableau"><thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead><tbody>${lignes(casses, true)}</tbody></table>` : ''}
+  ${casses.length > 0 ? `<h3 class="sous-titre">Cassés</h3>${repere('memoire', 'casses')}<table class="tableau"><thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th><th class="num">Âge</th></tr></thead><tbody>${lignes(casses, true, true)}</tbody></table>` : ''}
 </section>`;
 }
 
@@ -605,10 +721,35 @@ function vueHistorique() {
   }
   const derniers = historique.slice(-40);
   const max = Math.max(...derniers.map((h) => h.casDeTest ?? 0), 1);
+  // Trente jours : assez pour voir une dérive, assez court pour qu'un chiffre
+  // d'il y a trois mois ne fasse pas passer une baisse récente pour une hausse.
+  const f = { jours: 30 };
   return `
 <section id="historique" class="vue">
   ${entete('historique', 'Historique')}
   <p class="chapo">Une ligne par collecte. C'est cet historique — et lui seul — qui rendra répondables « combien de fois ça tourne » et « à quelle régularité ». Il commence aujourd'hui.</p>
+
+  <h3 class="sous-titre">Ce qui bouge</h3>
+  ${repere('historique', 'courbes')}
+  <div class="courbes">
+    ${courbe(tendance(historique, 'couvertureLignes', f), {
+      titre: 'Couverture des lignes',
+      libelle: 'couverture des lignes en pourcentage',
+      fmt: (v) => `${v.toFixed(1)} %`,
+    })}
+    ${courbe(tendance(historique, 'capacitesProuvees', f), {
+      titre: 'Capacités prouvées',
+      libelle: 'capacités du produit prouvées par un test joué',
+      fmt: (v) => `${Math.round(v)}`,
+    })}
+    ${courbe(tendance(historique, 'testsCasses', f), {
+      titre: 'Tests cassés',
+      libelle: 'nombre de tests rouges à chacun de leurs derniers passages',
+      fmt: (v) => `${Math.round(v)}`,
+    })}
+  </div>
+
+  <h3 class="sous-titre">Chaque collecte</h3>
   <div class="sparkline" role="img" aria-label="évolution du nombre de cas de test">
     ${derniers.map((h) => `<i style="height:${Math.max(4, ((h.casDeTest ?? 0) / max) * 100).toFixed(1)}%" title="${esc(dateFr(h.le))} — ${n(h.casDeTest)} cas"></i>`).join('')}
   </div>
@@ -735,7 +876,9 @@ nav a b{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;op
 .modale__partie code{font-size:.92em}
 
 /* ── Cartes ── */
-.cartes{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px;margin-bottom:8px}
+/* 200px et non 215 : la Mémoire porte quatre cartes plus une en double largeur,
+   soit cinq colonnes — à 215 la dernière tombait seule sur une deuxième ligne. */
+.cartes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:8px}
 .carte{background:var(--panneau);border:1px solid var(--regle);border-radius:12px;padding:16px 18px;
   box-shadow:var(--ombre);display:flex;flex-direction:column;gap:6px}
 .carte--phare{grid-column:span 2;border-top:3px solid var(--accent)}
@@ -852,6 +995,31 @@ tr:last-child td{border-bottom:0}
 .alerte{background:var(--ko-doux);border:1px solid var(--ko);border-radius:10px;padding:12px 15px;
   color:var(--encre2);font-size:13.5px;margin:0 0 18px}
 .alerte b{color:var(--ko)}
+/* Les courbes : SVG écrit à la main, couleurs par variables pour que les deux
+   thèmes restent lisibles sans une seconde feuille de style. */
+.courbes{display:grid;gap:14px;margin:0 0 18px}
+@media (min-width:1100px){.courbes{grid-template-columns:repeat(3,1fr)}}
+.courbe{background:var(--panneau);border:1px solid var(--regle);border-radius:10px;padding:12px 14px}
+.courbe h4{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--encre);
+  display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.courbe__resume{font-weight:500;font-size:12px;color:var(--encre2)}
+.courbe__resume--monte{color:var(--ok)}
+.courbe__resume--descend{color:var(--ko)}
+.courbe__resume--seule{color:var(--encre3);font-style:italic}
+.courbe__vide{margin:0;font-size:12.5px;color:var(--encre3)}
+.courbe__trace{display:block;width:100%;height:auto;overflow:visible}
+.courbe__axe{stroke:var(--regle);stroke-width:1}
+.courbe__ligne{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.courbe__aire{fill:var(--accent-doux);stroke:none}
+.courbe__point{fill:var(--accent);stroke:var(--panneau);stroke-width:2}
+.courbe__graduation,.courbe__date{fill:var(--encre3);font-size:12px;font-family:inherit}
+.courbe__valeur{fill:var(--encre);font-size:13px;font-weight:600;font-family:inherit}
+.tendance{margin:6px 0 0;font-size:12.5px;color:var(--encre2)}
+.tendance--monte{color:var(--ok)}
+.tendance--descend{color:var(--ko)}
+.tendance--seule{color:var(--encre3);font-style:italic}
+/* Un rouge de plus de deux semaines : ce n'est plus une régression, c'est une dette. */
+td.dette{color:var(--ko);font-weight:600}
 .sparkline{display:flex;align-items:flex-end;gap:3px;height:70px;background:var(--panneau);
   border:1px solid var(--regle);border-radius:12px;padding:12px;margin-bottom:16px}
 .sparkline i{flex:1;min-width:3px;background:var(--accent-doux);border-top:2px solid var(--accent);border-radius:2px 2px 0 0}
