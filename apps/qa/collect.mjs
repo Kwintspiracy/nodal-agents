@@ -585,8 +585,18 @@ function main() {
       couvertureLignes:
         lignesTotal > 0 ? Number(((lignesCouvertes / lignesTotal) * 100).toFixed(2)) : null,
       capacites: cap.registre.length,
-      capacitesProuvees: cap.registre.filter((c) => c.etat === 'prouvée').length,
-      capacitesJamaisProuvees: cap.registre.filter((c) => c.etat === 'jamais prouvée').length,
+      // Clés NEUVES, et pas `capacitesProuvees` recalculée : l'historique
+      // porte l'ancienne depuis des semaines, avec l'ancien sens (« un test
+      // étiqueté passe », tous niveaux confondus). Réutiliser le nom ferait
+      // une courbe dont la moitié gauche ne mesure pas la même chose que la
+      // droite, et personne ne le verrait jamais.
+      capacitesVerifiees: cap.registre.filter(
+        (c) => c.ecran.etat === 'passee' && c.moteur.etat === 'passee',
+      ).length,
+      capacitesSansMoteur: cap.registre.filter((c) => c.moteur.etat === 'absente').length,
+      capacitesSansPreuve: cap.registre.filter(
+        (c) => c.ecran.etat === 'absente' && c.moteur.etat === 'absente' && c.nonDit.length === 0,
+      ).length,
       testsEnMemoire: mem.total,
       testsInstables: mem.instables,
       testsCasses: mem.casses,
@@ -627,7 +637,7 @@ function main() {
     `couverture: ${r.paquetsMesures}/${r.paquets} paquets mesurés · ${r.couvertureLignes ?? '—'}% des lignes mesurées`,
   );
   console.log(
-    `capacités: ${r.capacites} nommées · ${r.capacitesProuvees} prouvées · ${r.capacitesJamaisProuvees} jamais prouvées`,
+    `capacités: ${r.capacites} nommées · ${r.capacitesVerifiees} vérifiées aux deux niveaux · ${r.capacitesSansMoteur} sans moteur · ${r.capacitesSansPreuve} sans aucune preuve`,
   );
   console.log(
     `mémoire: ${r.testsEnMemoire} tests suivis (${mem.joues} joués cette fois) · ${r.testsInstables} instables · ${r.testsCasses} cassés`,

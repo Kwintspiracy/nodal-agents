@@ -95,17 +95,48 @@ pnpm deps:check   # dependency-cruiser
 
 ### Ce qu'un test PROUVE — l'étiquette `@cap:`
 
-Un test dit quelle capacité du produit il prouve, en écrivant `@cap:<slug>` dans
-son titre. Vitest et Playwright n'ont rien à comprendre : le titre voyage tel
-quel jusqu'au rapport.
+Un test dit quelle capacité du produit il prouve, ET À QUEL NIVEAU, en écrivant
+`@cap:<slug>/<niveau>` dans son titre. Vitest et Playwright n'ont rien à
+comprendre : le titre voyage tel quel jusqu'au rapport.
+
+Deux niveaux, et un seul ne suffit jamais :
+
+| Niveau | Ce que c'est | Ce qu'il prouve | Ce qu'il NE prouve PAS |
+|---|---|---|---|
+| `/ecran` | un parcours Playwright, ou un test de composant / d'action web | que les boutons existent, s'enchaînent et affichent ce qu'il faut | que quoi que ce soit se passe derrière — un écran peut être vert devant un moteur débranché |
+| `/moteur` | un test du runner, des outils, de l'orchestration, de la base | que la chose promise EST FAITE : l'outil hors liste refusé, la mémoire relue, l'approbation qui bloque | qu'un utilisateur sache y arriver — un moteur parfait derrière un bouton introuvable ne sert à personne |
 
 ```ts
-test.describe('Notion OAuth flow @cap:connecter-un-service', () => { … });
-test('Check 8 — inline Approve @cap:approuver-une-action', async ({ page }) => { … });
+// écran : le parcours navigateur
+test.describe('Notion OAuth flow @cap:connecter-un-service/ecran', () => { … });
+// moteur : ce qui fait la chose
+describe('computeToolWhitelist @cap:assigner-outils/moteur', () => { … });
 ```
 
-Posée sur un `describe`, elle vaut pour tous ses cas — c'est la forme la moins
-verbeuse, et donc la seule qui tienne dans le temps.
+Posée sur un `describe`, l'étiquette vaut pour tous ses cas — c'est la forme la
+moins verbeuse, et donc la seule qui tienne dans le temps.
+
+**Une capacité n'est vraiment vérifiée que si les DEUX niveaux existent et
+passent.** La distinction est née d'une question de Quentin (12/09/2026) :
+« quand c'est vert, ça veut dire que le runner fonctionne vraiment, ou
+simplement que cocher les boutons fonctionne ? ». Elle était fondée :
+« Donner des outils » s'affichait *prouvée* sur la foi de trois parcours d'écran,
+alors que `whitelist.test.ts` et `resolve-agent-tools.test.ts` — les tests qui
+prouvent la promesse — n'étaient étiquetés nulle part. Le portail ne rend donc
+plus un verdict : il rend deux faits, par niveau, et une absence s'affiche en
+gris et se dit, jamais en rouge.
+
+Quand un niveau n'a aucun test, le registre porte en une phrase ce qu'un tel
+test devrait vérifier (`ecranAttendu` / `preuveAttendue`), et `apps/qa/lib.test.mjs`
+refuse cette phrase sur un niveau déjà prouvé — un plan périmé ne vaut pas mieux
+qu'un trou anonyme.
+
+⚠️ Une étiquette SANS niveau (`@cap:<slug>`) est encore lue, mais elle ne compte
+pour aucune des deux colonnes — la ranger d'office dans « écran » peindrait en
+vert un moteur que personne n'a testé. `pnpm capacites:check` la signale en
+AVERTISSEMENT sans bloquer, le temps de la transition ; il n'en reste aucune
+aujourd'hui, et le jour où ce sera encore vrai un moment, ce cas deviendra
+bloquant.
 
 Le registre des capacités est `apps/qa/capacites.mjs`. Il est DÉRIVÉ des
 parcours et des écrans réels, jamais imaginé : un registre d'imagination décrit
