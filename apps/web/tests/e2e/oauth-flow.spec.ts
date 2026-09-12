@@ -15,7 +15,14 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
+import {
+  requireLiveStack,
+  cleanCredentialsByType,
+  openConnectorLibrary,
+  connectorCard,
+  openInstalledConnectors,
+  installedConnectorRow,
+} from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -56,33 +63,26 @@ test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service
       });
     });
 
-    // ── 3. Navigate to /connectors ───────────────────────────────────────────
-    await page.goto('/connectors');
-
-    // Find the Google Drive card.
-    const driveCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
+    // ── 3. Le catalogue, derrière l'onglet « Library » ───────────────
+    //
+    // La page ouvre sur « Installed », où aucune carte de catalogue n'existe.
+    // Le parcours cliquait « Connect with Google » sur une carte qu'il ne
+    // pouvait pas voir, et la mesure du 11/09 expirait dessus :
+    //
+    //   TimeoutError: locator.click: Timeout 10000ms exceeded.
+    //   waiting for locator('[data-marketplace-card]').filter({ has:
+    //     getByRole('heading', { name: 'Google Drive', level: 3 }) })
+    //     .getByRole('button', { name: /connect with google/i })
+    //
+    // Le bouton s'appelle désormais « Install », et comme `beforeAll` a
+    // supprimé les identifiants Google, la carte ouvre DIRECTEMENT le
+    // CredentialWizard (ConnectorsMarketplaceGrid, `needsWizard`).
+    await openConnectorLibrary(page);
+    const driveCard = connectorCard(page, 'Google Drive');
     await expect(driveCard).toBeVisible({ timeout: 10_000 });
 
-    // If already connected, disconnect first.
-    if (await driveCard.getByRole('button', { name: /disconnect/i }).isVisible()) {
-      await driveCard
-        .getByRole('button', { name: /disconnect/i })
-        .first()
-        .click();
-      await page
-        .getByRole('button', { name: /disconnect/i })
-        .last()
-        .click();
-      await page.waitForTimeout(1_000);
-      await page.reload();
-      await expect(driveCard).toBeVisible({ timeout: 10_000 });
-    }
-
-    // ── 4. Click "Connect with Google" to open the wizard modal ─────────────
-    const connectBtn = driveCard.getByRole('button', { name: /connect with google/i });
-    await connectBtn.click();
+    // ── 4. Ouvrir l'assistant ───────────────────────────────────
+    await driveCard.getByRole('button', { name: /^(install|add account)$/i }).click();
 
     // Wizard should appear as a dialog.
     const wizard = page.getByRole('dialog');
@@ -126,10 +126,10 @@ test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service
     const continueBtn = wizard.getByRole('button', { name: /continue with google/i });
     await continueBtn.click();
 
-    await page.waitForTimeout(2_000);
-
-    // ── 8. Navigate to the callback URL with mock code ────────────────────────
-    expect(capturedRedirectUri).toBeTruthy();
+    // ── 8. L'aller-retour /start intercepté ──────────────────────────────────
+    // On attend la VALEUR, pas deux secondes : une pause fixe est verte ou
+    // rouge selon la charge de la machine, jamais selon le produit.
+    await expect.poll(() => capturedRedirectUri, { timeout: 15_000 }).toBeTruthy();
     expect(capturedState).toBeTruthy();
 
     const callbackUrl = `${capturedRedirectUri}?code=mock-google-code&state=${encodeURIComponent(capturedState)}`;
@@ -138,17 +138,13 @@ test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service
     // ── 9. Should land back on /connectors (via auto-assignment redirect) ────
     await page.waitForURL(/\/connectors/, { timeout: 15_000 });
 
-    // ── 10. Assert toast or connected status ─────────────────────────────────
-    // Either a success toast appears, or the card shows "connected".
-    await expect(page.getByText(/google drive/i).first()).toBeVisible({ timeout: 10_000 });
-
-    await expect(
-      page
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) })
-        .getByText(/connected/i)
-        .first(),
-    ).toBeVisible({ timeout: 10_000 });
+    // ── 10. Le connecteur est installé et connecté ──────────────────
+    // Ce n'est plus une carte qui porte l'état mais une LIGNE de l'onglet
+    // « Installed » (ConnectorsInstalledTable).
+    await openInstalledConnectors(page);
+    const row = installedConnectorRow(page, 'Google Drive').first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByText('Connected')).toBeVisible({ timeout: 10_000 });
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     await context.unrouteAll();
