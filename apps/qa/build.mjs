@@ -79,6 +79,21 @@ const esc = (v) =>
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
   );
 const n = (v) => (typeof v === 'number' ? v.toLocaleString('fr-FR') : '—');
+
+/**
+ * Le chemin entre un rouge et sa CAUSE.
+ *
+ * Un nom de test rouge dans un tableau est un cul-de-sac : on sait que ça casse,
+ * jamais ce que l'utilisateur aurait vu. Ce lien mène au run qui l'a vu rouge,
+ * donc à son rapport, ses traces et ses captures d'écran.
+ *
+ * Rien du tout quand l'adresse manque — une mesure locale n'a pas de run à
+ * montrer, et un lien mort coûte plus cher que pas de lien.
+ */
+const lienRun = (url) =>
+  url
+    ? `<a class="lien-run" href="${esc(url)}" target="_blank" rel="noopener">voir le run</a>`
+    : '';
 const pct = (v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : null);
 /** Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien. */
 const jourFr = (iso) =>
@@ -320,7 +335,8 @@ function vueParcours() {
       etat = bouts.join(' ') || '<span class="pastille pastille--inconnu">rien à dire</span>';
     }
     return `<tr>
-      <td><span class="mono">${esc(p.nom)}</span>${p.intention ? `<br><span class="intention">${esc(p.intention)}</span>` : ''}</td>
+      <td><span class="mono">${esc(p.nom)}</span>${p.intention ? `<br><span class="intention">${esc(p.intention)}</span>` : ''}
+        ${r?.rouge ? lienRun(s.execution?.url) : ''}</td>
       <td class="num">${p.cas}</td>
       <td>${etat}</td>
       <td class="num dim">${r?.dureeMs ? `${(r.dureeMs / 1000).toFixed(1)} s` : '—'}</td>
@@ -410,11 +426,62 @@ function vueBanc() {
 </section>`;
 }
 
+/**
+ * Le prix d'une PR : combien de minutes on attend ses contrôles.
+ *
+ * En TÊTE de la page, avant la mécanique des workflows, parce que c'est la
+ * seule chose de cette page qui se subit tous les jours. Et parce que ce chiffre
+ * décide du sort des tests : quand l'attente devient insupportable, c'est la
+ * suite qu'on raccourcit, jamais la machine.
+ *
+ * Absent quand GitHub n'a pas répondu — jamais un zéro, qui ferait croire à une
+ * CI gratuite.
+ */
+function cadrePrix() {
+  const p = s.prixCi;
+  if (!p) {
+    return `<article class="prix prix--absent">
+      <h3>Prix d'une PR</h3>
+      <p class="avertissement">GitHub n'a pas répondu. Le coût des contrôles n'est pas mesuré pour cette collecte — ce n'est pas zéro minute, c'est aucune mesure.</p>
+    </article>`;
+  }
+  if (p.runs === 0) {
+    return `<article class="prix prix--absent">
+      <h3>Prix d'une PR</h3>
+      <p class="avertissement">Aucune exécution VERTE dans les trente dernières. On ne mesure une attente que sur un run qui est allé au bout : un run rouge s'arrête au premier échec et donnerait une durée flatteuse.</p>
+    </article>`;
+  }
+  const min = (v) => (typeof v === 'number' ? `${v.toFixed(1)} min` : '—');
+  return `<article class="prix">
+  <h3>Prix d'une PR <span class="dim">${p.runs} exécution(s) verte(s) sur les 30 dernières</span></h3>
+  <div class="prix__chiffres">
+    <div class="prix__bloc prix__bloc--phare"><span class="prix__valeur">${min(p.mediane)}</span><span class="prix__quoi">médiane</span></div>
+    <div class="prix__bloc"><span class="prix__valeur">${min(p.dernier)}</span><span class="prix__quoi">dernière</span></div>
+    <div class="prix__bloc"><span class="prix__valeur">${min(p.pire)}</span><span class="prix__quoi">la pire</span></div>
+    <div class="prix__bloc"><span class="prix__valeur prix__valeur--${p.tendance ?? 'seule'}">${
+      p.tendance == null
+        ? '—'
+        : `${{ monte: '↗', descend: '↘', stable: '→' }[p.tendance]} ${p.hausse > 0 ? '+' : ''}${p.hausse} %`
+    }</span><span class="prix__quoi">tendance</span></div>
+  </div>
+  ${courbe(
+    { valeurs: p.serie, delta: p.deltaMin, direction: p.tendance },
+    {
+      titre: 'Durée des exécutions vertes',
+      libelle: "Minutes d'attente par exécution de la CI",
+      fmt: (v) => `${v.toFixed(1)} min`,
+    },
+  )}
+</article>`;
+}
+
 function vueCi() {
   return `
 <section id="ci" class="vue">
   ${entete('ci', 'Ce qui déclenche quoi')}
-  <p class="chapo">Lu dans les fichiers de workflow, pas dans une intention. C'est la réponse à « qu'est-ce qui lance les tests, et quand ».</p>
+  <p class="chapo">Lu dans les fichiers de workflow, pas dans une intention. C'est la réponse à « qu'est-ce qui lance les tests, et quand » — et à ce que ça coûte d'attendre.</p>
+  ${repere('ci', 'prix')}
+  ${cadrePrix()}
   <div class="grille-ci">
     ${s.ci
       .map(
@@ -473,11 +540,14 @@ function vueCapacites() {
             : [...new Set(c.preuves.map((p) => p.origine.split('/').pop()))]
                 .map((f) => `<span class="jeton">${esc(f)}</span>`)
                 .join(' ');
+        // Seulement quand elle TOMBE : sur une capacité verte, le lien
+        // n'emmène nulle part d'utile et ne ferait que du bruit.
+        const cause = c.etat === 'rouge' || c.etat === 'instable' ? lienRun(s.execution?.url) : '';
         return `<tr>
         <td><b>${esc(c.nom)}</b>${c.exigee ? ' <span class="jeton">exigée</span>' : ''}<br>
           <span class="intention">${esc(c.question)}</span></td>
         <td><span class="pastille pastille--${cls}">${esc(c.etat)}</span></td>
-        <td>${preuves}</td>
+        <td>${preuves} ${cause}</td>
       </tr>`;
       })
       .join('');
@@ -556,7 +626,8 @@ function vueMemoire() {
       .map((e) => {
         const jours = joursDepuis(e.rougeDepuis);
         return `<tr>
-      <td><span class="intention">${esc(e.fichier ?? '')}</span><br><b>${esc(e.titre ?? e.cle)}</b></td>
+      <td><span class="intention">${esc(e.fichier ?? '')}</span><br><b>${esc(e.titre ?? e.cle)}</b>
+        ${lienRun(e.dernierRougeExecution)}</td>
       <td class="mono">${ruban(e.recents)}</td>
       <td class="num">${e.echecs}/${e.tours}</td>
       <td class="num">${e.tauxEchec != null ? e.tauxEchec + ' %' : '—'}</td>
@@ -1000,6 +1071,35 @@ tr:last-child td{border-bottom:0}
 .alerte{background:var(--ko-doux);border:1px solid var(--ko);border-radius:10px;padding:12px 15px;
   color:var(--encre2);font-size:13.5px;margin:0 0 18px}
 .alerte b{color:var(--ko)}
+/* Le prix d'une PR : le seul chiffre de cette page qui se subit tous les jours,
+   donc en tête et en gros. La courbe reprend les conventions des autres. */
+.prix{background:var(--panneau);border:1px solid var(--regle);border-radius:10px;padding:14px 16px;margin:0 0 18px}
+.prix h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--encre);
+  display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.prix h3 .dim{font-size:12px;font-weight:400}
+.prix__chiffres{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.prix__bloc{flex:1 1 120px;border:1px solid var(--regle);border-radius:8px;padding:8px 12px;
+  display:flex;flex-direction:column;gap:2px}
+.prix__bloc--phare{border-color:var(--accent);background:var(--accent-doux)}
+.prix__valeur{font-size:19px;font-weight:600;color:var(--encre);font-variant-numeric:tabular-nums}
+.prix__valeur--monte{color:var(--ko)}
+.prix__valeur--descend{color:var(--ok)}
+.prix__valeur--seule{color:var(--encre3)}
+.prix__quoi{font-size:11.5px;color:var(--encre3)}
+.prix--absent .avertissement{border-top:0;padding-top:0;font-size:13px}
+.prix .courbe{border:0;padding:0;background:none;max-width:420px}
+/* Ici, DESCENDRE est une bonne nouvelle — c'est moins d'attente. L'inverse des
+   autres courbes du portail, où une baisse est une perte : les couleurs du
+   résumé sont donc retournées, sinon une CI qui accélère s'affiche en rouge. */
+.prix .courbe__resume--descend{color:var(--ok)}
+.prix .courbe__resume--monte{color:var(--ko)}
+
+/* « voir le run » : le chemin entre un rouge et ce que l'utilisateur aurait vu.
+   Discret par défaut — il ne doit pas concurrencer le nom du test. */
+.lien-run{display:inline-block;font-size:11px;margin-top:3px;color:var(--accent);
+  text-decoration:none;border-bottom:1px dotted var(--accent)}
+.lien-run:hover{border-bottom-style:solid}
+
 /* Les courbes : SVG écrit à la main, couleurs par variables pour que les deux
    thèmes restent lisibles sans une seconde feuille de style. */
 .courbes{display:grid;gap:14px;margin:0 0 18px}
