@@ -138,7 +138,7 @@ beforeAll(async () => {
   seed = await seedMinimal(db);
 });
 
-describe('selectMemoriesForInjection — DB', () => {
+describe('selectMemoriesForInjection — DB @cap:se-souvenir/moteur', () => {
   it('returns [] when budget is 0', async () => {
     const out = await selectMemoriesForInjection(db, { entityId: seed.entityId, maxChars: 0 });
     expect(out).toEqual([]);

@@ -32,7 +32,7 @@ beforeEach(() => {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('computeToolWhitelist', () => {
+describe('computeToolWhitelist @cap:assigner-outils/moteur', () => {
   it('returns only the configured tools in the correct order', () => {
     const result = computeToolWhitelist(
       {

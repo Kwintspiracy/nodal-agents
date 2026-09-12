@@ -27,7 +27,7 @@ beforeAll(async () => {
   seed = await seedMinimal(db);
 });
 
-describe('resolveAgentToolNames — plain worker agent', () => {
+describe('resolveAgentToolNames — plain worker agent @cap:assigner-outils/moteur', () => {
   it('returns the always-on set and nothing MCP/meta-tool related', async () => {
     const names = await resolveAgentToolNames(db, seed.agentId);
     expect(names.has('save_memory')).toBe(true);

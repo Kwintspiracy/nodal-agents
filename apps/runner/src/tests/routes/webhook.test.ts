@@ -211,7 +211,7 @@ describe('POST /webhooks/:slug/:secret — 404 uniformity', () => {
 
 // ─── Happy path ─────────────────────────────────────────────────────────────
 
-describe('POST /webhooks/:slug/:secret — happy path', () => {
+describe('POST /webhooks/:slug/:secret — happy path @cap:declencher-sur-evenement/moteur', () => {
   it('creates an agent_jobs row, increments trigger_count, and fires triggerWorker', async () => {
     const trigger = await makeTrigger();
 

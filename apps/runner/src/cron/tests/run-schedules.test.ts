@@ -235,7 +235,7 @@ async function insertScheduleJob(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('runScheduleTick', () => {
+describe('runScheduleTick @cap:planifier-une-tache/moteur', () => {
   it('fires an active schedule with next_run NULL and marks success', async () => {
     const sched = await createSchedule({ nextRun: null });
 
