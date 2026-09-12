@@ -47,10 +47,16 @@ export function revendicationsDuDepot(fichiers, lire) {
       // Suivi par git mais absent de cette branche : rien à en dire.
       continue;
     }
-    const slugs = new Set(titresDeTest(texte).flatMap((t) => capacitesDunTitre(t)));
-    for (const slug of slugs) {
-      preuves.push({ capacite: slug, origine: f });
+    // Dédupliqué par couple (capacité, NIVEAU) : un fichier qui prouve une
+    // capacité à l'écran ET au moteur compte pour deux, sans quoi le second
+    // niveau disparaîtrait du portail derrière le premier.
+    const vus = new Map();
+    for (const t of titresDeTest(texte)) {
+      for (const { slug, niveau } of capacitesDunTitre(t)) {
+        vus.set(`${slug}::${niveau ?? ''}`, { capacite: slug, niveau, origine: f });
+      }
     }
+    preuves.push(...vus.values());
   }
   return preuves;
 }
@@ -65,12 +71,18 @@ function main() {
   const registre = regrouperParCapacite({ capacites: CAPACITES, preuves });
 
   const exigees = registre.filter((c) => c.exigee);
-  const jamais = registre.filter((c) => c.etat === 'jamais prouvée');
+  const jamais = registre.filter(
+    (c) => c.ecran.etat === 'absente' && c.moteur.etat === 'absente' && c.nonDit.length === 0,
+  );
+  const sansMoteur = registre.filter((c) => c.moteur.etat === 'absente');
+  const sansEcran = registre.filter((c) => c.ecran.etat === 'absente');
 
   console.log(`Capacités du produit : ${registre.length}`);
   console.log(`  exigées            : ${exigees.length}`);
   console.log(`  revendications     : ${preuves.length} dans le dépôt`);
-  console.log(`  jamais prouvées    : ${jamais.length}`);
+  console.log(`  sans preuve écran  : ${sansEcran.length}`);
+  console.log(`  sans preuve moteur : ${sansMoteur.length}`);
+  console.log(`  aucune preuve      : ${jamais.length}`);
   if (jamais.length > 0) {
     // Affiché sans faire échouer : c'est la liste de ce qu'on croit livré, et
     // elle est censée rétrécir. La transformer en échec dès aujourd'hui ferait
