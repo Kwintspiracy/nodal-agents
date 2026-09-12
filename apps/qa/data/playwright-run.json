@@ -12,24 +12,24 @@
     "maxFailures": 0,
     "metadata": {
       "ci": {
-        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/c37885be75121fd724ebebdfab3cd6391282e4ea",
-        "commitHash": "c37885be75121fd724ebebdfab3cd6391282e4ea",
-        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34620978364"
+        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/175685ccd9f66c9db5364658cd6ada150bc3b4e2",
+        "commitHash": "175685ccd9f66c9db5364658cd6ada150bc3b4e2",
+        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34678829327"
       },
       "gitCommit": {
-        "shortHash": "c37885be",
-        "hash": "c37885be75121fd724ebebdfab3cd6391282e4ea",
-        "subject": "docs(qa): la 5e passe ne trouve qu'une forme que personne n'écrit — limite assumée, boucle close",
-        "body": "docs(qa): la 5e passe ne trouve qu'une forme que personne n'écrit — limite assumée, boucle close\n\nUn bloc `/* … */` ouvert en FIN de ligne et contenant un `it(…)` est lu comme\nun test vivant. Zéro occurrence dans les 588 fichiers de test suivis. La lever\ndemanderait un tokenizer ; une regex de plus rouvrirait le cas du glob corrigé\nen `daf9421c`. Écrit au-dessus du code, comme la limite des clés `#n`.\n\nLes deux autres questions tiennent : un bloc jamais fermé n'avale rien, et\nissues et PR sont fusionnées séparément.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01SQY7YUPXj5sftJLmm4XtGN\n",
+        "shortHash": "175685cc",
+        "hash": "175685ccd9f66c9db5364658cd6ada150bc3b4e2",
+        "subject": "chore(qa): mesure du 2026-09-11 [skip ci]",
+        "body": "chore(qa): mesure du 2026-09-11 [skip ci]\n",
         "author": {
-          "name": "Kwintspiracy",
-          "email": "quentinbeau@gmail.com",
-          "time": 1789135312000
+          "name": "github-actions[bot]",
+          "email": "41898282+github-actions[bot]@users.noreply.github.com",
+          "time": 1789145069000
         },
         "committer": {
-          "name": "Quentin Beau de Loménie",
-          "email": "quentinbeau@gmail.com",
-          "time": 1789135694000
+          "name": "github-actions[bot]",
+          "email": "41898282+github-actions[bot]@users.noreply.github.com",
+          "time": 1789145069000
         },
         "branch": "main"
       },
@@ -43,24 +43,24 @@
         "retries": 2,
         "metadata": {
           "ci": {
-            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/c37885be75121fd724ebebdfab3cd6391282e4ea",
-            "commitHash": "c37885be75121fd724ebebdfab3cd6391282e4ea",
-            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34620978364"
+            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/175685ccd9f66c9db5364658cd6ada150bc3b4e2",
+            "commitHash": "175685ccd9f66c9db5364658cd6ada150bc3b4e2",
+            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34678829327"
           },
           "gitCommit": {
-            "shortHash": "c37885be",
-            "hash": "c37885be75121fd724ebebdfab3cd6391282e4ea",
-            "subject": "docs(qa): la 5e passe ne trouve qu'une forme que personne n'écrit — limite assumée, boucle close",
-            "body": "docs(qa): la 5e passe ne trouve qu'une forme que personne n'écrit — limite assumée, boucle close\n\nUn bloc `/* … */` ouvert en FIN de ligne et contenant un `it(…)` est lu comme\nun test vivant. Zéro occurrence dans les 588 fichiers de test suivis. La lever\ndemanderait un tokenizer ; une regex de plus rouvrirait le cas du glob corrigé\nen `daf9421c`. Écrit au-dessus du code, comme la limite des clés `#n`.\n\nLes deux autres questions tiennent : un bloc jamais fermé n'avale rien, et\nissues et PR sont fusionnées séparément.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01SQY7YUPXj5sftJLmm4XtGN\n",
+            "shortHash": "175685cc",
+            "hash": "175685ccd9f66c9db5364658cd6ada150bc3b4e2",
+            "subject": "chore(qa): mesure du 2026-09-11 [skip ci]",
+            "body": "chore(qa): mesure du 2026-09-11 [skip ci]\n",
             "author": {
-              "name": "Kwintspiracy",
-              "email": "quentinbeau@gmail.com",
-              "time": 1789135312000
+              "name": "github-actions[bot]",
+              "email": "41898282+github-actions[bot]@users.noreply.github.com",
+              "time": 1789145069000
             },
             "committer": {
-              "name": "Quentin Beau de Loménie",
-              "email": "quentinbeau@gmail.com",
-              "time": 1789135694000
+              "name": "github-actions[bot]",
+              "email": "41898282+github-actions[bot]@users.noreply.github.com",
+              "time": 1789145069000
             },
             "branch": "main"
           },
@@ -126,7 +126,7 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 7256,
+                      "duration": 6890,
                       "error": {
                         "message": "TypeError: db.delete is not a function",
                         "stack": "TypeError: db.delete is not a function\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agent-recipes.spec.ts:150:22",
@@ -150,7 +150,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:31:53.131Z",
+                      "startTime": "2026-09-12T06:57:53.303Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -174,7 +174,7 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 7620,
+                      "duration": 7580,
                       "error": {
                         "message": "TypeError: db.delete is not a function",
                         "stack": "TypeError: db.delete is not a function\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agent-recipes.spec.ts:150:22",
@@ -198,7 +198,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:01.875Z",
+                      "startTime": "2026-09-12T06:58:01.721Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -227,7 +227,7 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 6756,
+                      "duration": 6911,
                       "error": {
                         "message": "TypeError: db.delete is not a function",
                         "stack": "TypeError: db.delete is not a function\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agent-recipes.spec.ts:150:22",
@@ -251,7 +251,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:32:11.279Z",
+                      "startTime": "2026-09-12T06:58:11.153Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -298,12 +298,12 @@
                       "workerIndex": 3,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1371,
+                      "duration": 1446,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:19.518Z",
+                      "startTime": "2026-09-12T06:58:19.583Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -375,7 +375,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:21.063Z",
+                      "startTime": "2026-09-12T06:58:21.208Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -423,7 +423,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:22.468Z",
+                      "startTime": "2026-09-12T06:58:22.636Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -476,7 +476,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:32:23.913Z",
+                      "startTime": "2026-09-12T06:58:24.065Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -528,7 +528,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:21.166Z",
+                      "startTime": "2026-09-12T06:58:21.322Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -541,7 +541,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:22.592Z",
+                      "startTime": "2026-09-12T06:58:22.756Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -554,7 +554,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:32:24.038Z",
+                      "startTime": "2026-09-12T06:58:24.177Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -590,7 +590,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:21.166Z",
+                      "startTime": "2026-09-12T06:58:21.322Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -603,7 +603,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:22.592Z",
+                      "startTime": "2026-09-12T06:58:22.756Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -616,7 +616,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:32:24.038Z",
+                      "startTime": "2026-09-12T06:58:24.177Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -652,7 +652,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:21.166Z",
+                      "startTime": "2026-09-12T06:58:21.322Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -665,7 +665,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:22.592Z",
+                      "startTime": "2026-09-12T06:58:22.756Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -678,7 +678,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:32:24.038Z",
+                      "startTime": "2026-09-12T06:58:24.177Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -726,7 +726,7 @@
                       "workerIndex": 6,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 5735,
+                      "duration": 5728,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agents-redesign.spec.ts:177:37",
@@ -750,7 +750,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:24.599Z",
+                      "startTime": "2026-09-12T06:58:24.726Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -774,7 +774,7 @@
                       "workerIndex": 7,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 6361,
+                      "duration": 6218,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agents-redesign.spec.ts:177:37",
@@ -798,7 +798,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:31.034Z",
+                      "startTime": "2026-09-12T06:58:31.132Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -827,7 +827,7 @@
                       "workerIndex": 8,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 5746,
+                      "duration": 5865,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-orchestrator-card]').first().locator('[aria-label=\"Drag row\"]').first()\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/agents-redesign.spec.ts:177:37",
@@ -851,7 +851,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:32:38.138Z",
+                      "startTime": "2026-09-12T06:58:38.104Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -913,7 +913,7 @@
                       "workerIndex": 9,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12803,
+                      "duration": 12792,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with airtable/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with airtable/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/airtable-oauth.spec.ts:71:80",
@@ -937,7 +937,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:32:45.313Z",
+                      "startTime": "2026-09-12T06:58:45.397Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -961,7 +961,7 @@
                       "workerIndex": 10,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11245,
+                      "duration": 11284,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with airtable/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with airtable/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/airtable-oauth.spec.ts:71:80",
@@ -985,7 +985,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:32:59.659Z",
+                      "startTime": "2026-09-12T06:58:59.730Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1014,7 +1014,7 @@
                       "workerIndex": 11,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10767,
+                      "duration": 10721,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with airtable/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with airtable/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/airtable-oauth.spec.ts:71:80",
@@ -1038,7 +1038,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:33:12.549Z",
+                      "startTime": "2026-09-12T06:59:12.588Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1100,7 +1100,7 @@
                       "workerIndex": 12,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12477,
+                      "duration": 12271,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/apify-apikey.spec.ts:70:38",
@@ -1124,7 +1124,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:33:24.845Z",
+                      "startTime": "2026-09-12T06:59:24.833Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1148,7 +1148,7 @@
                       "workerIndex": 13,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 13192,
+                      "duration": 13247,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/apify-apikey.spec.ts:70:38",
@@ -1172,7 +1172,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:33:38.823Z",
+                      "startTime": "2026-09-12T06:59:38.606Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1201,7 +1201,7 @@
                       "workerIndex": 14,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12272,
+                      "duration": 12333,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/apify-apikey.spec.ts:70:38",
@@ -1225,7 +1225,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:33:53.656Z",
+                      "startTime": "2026-09-12T06:59:53.466Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1287,12 +1287,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4016,
+                      "duration": 3817,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:07.432Z",
+                      "startTime": "2026-09-12T07:00:07.343Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1329,12 +1329,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3699,
+                      "duration": 3655,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:11.601Z",
+                      "startTime": "2026-09-12T07:00:11.311Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1371,12 +1371,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4187,
+                      "duration": 4154,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:15.317Z",
+                      "startTime": "2026-09-12T07:00:14.978Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1424,12 +1424,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1520,
+                      "duration": 1507,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:19.527Z",
+                      "startTime": "2026-09-12T07:00:19.153Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1460,12 +1460,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9686,
+                      "duration": 10075,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:21.084Z",
+                      "startTime": "2026-09-12T07:00:20.693Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1496,12 +1496,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2110,
+                      "duration": 2032,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:30.782Z",
+                      "startTime": "2026-09-12T07:00:30.779Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1542,12 +1542,12 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 1974,
+                      "duration": 2023,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:32.906Z",
+                      "startTime": "2026-09-12T07:00:32.825Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1603,7 +1603,7 @@
                       "workerIndex": 15,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12615,
+                      "duration": 12628,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /add provider/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /add provider/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/brique31-flows.spec.ts:65:63",
@@ -1627,7 +1627,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:34:34.926Z",
+                      "startTime": "2026-09-12T07:00:34.877Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1651,7 +1651,7 @@
                       "workerIndex": 16,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10938,
+                      "duration": 10896,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /add provider/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /add provider/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/brique31-flows.spec.ts:65:63",
@@ -1675,7 +1675,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:34:48.939Z",
+                      "startTime": "2026-09-12T07:00:48.908Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1704,7 +1704,7 @@
                       "workerIndex": 17,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10571,
+                      "duration": 10547,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /add provider/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /add provider/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/brique31-flows.spec.ts:65:63",
@@ -1728,7 +1728,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:35:01.470Z",
+                      "startTime": "2026-09-12T07:01:01.393Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1781,7 +1781,7 @@
                       "workerIndex": 18,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 4393,
+                      "duration": 4542,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/no active llm providers/i)\nExpected: visible\nTimeout: 3000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 3000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/no active llm providers/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/no active llm providers/i)\nExpected: visible\nTimeout: 3000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 3000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/no active llm providers/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/brique31-flows.spec.ts:153:64",
@@ -1805,7 +1805,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:13.561Z",
+                      "startTime": "2026-09-12T07:01:13.465Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1829,7 +1829,7 @@
                       "workerIndex": 19,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 5365,
+                      "duration": 5702,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/no active llm providers/i)\nExpected: visible\nTimeout: 3000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 3000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/no active llm providers/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/no active llm providers/i)\nExpected: visible\nTimeout: 3000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 3000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/no active llm providers/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/brique31-flows.spec.ts:153:64",
@@ -1853,7 +1853,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:35:19.612Z",
+                      "startTime": "2026-09-12T07:01:19.859Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1882,7 +1882,7 @@
                       "workerIndex": 20,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 4332,
+                      "duration": 4312,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/no active llm providers/i)\nExpected: visible\nTimeout: 3000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 3000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/no active llm providers/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/no active llm providers/i)\nExpected: visible\nTimeout: 3000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 3000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/no active llm providers/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/brique31-flows.spec.ts:153:64",
@@ -1906,7 +1906,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:35:26.600Z",
+                      "startTime": "2026-09-12T07:01:27.174Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -1969,12 +1969,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 134,
+                      "duration": 135,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:32.525Z",
+                      "startTime": "2026-09-12T07:01:33.059Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2031,12 +2031,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 100,
+                      "duration": 107,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:32.813Z",
+                      "startTime": "2026-09-12T07:01:33.345Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2093,12 +2093,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 99,
+                      "duration": 101,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:32.926Z",
+                      "startTime": "2026-09-12T07:01:33.466Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2156,12 +2156,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3637,
+                      "duration": 3497,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:33.050Z",
+                      "startTime": "2026-09-12T07:01:33.594Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2192,12 +2192,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1722,
+                      "duration": 1687,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:36.807Z",
+                      "startTime": "2026-09-12T07:01:37.203Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2228,12 +2228,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1383,
+                      "duration": 1301,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:38.541Z",
+                      "startTime": "2026-09-12T07:01:38.906Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2274,12 +2274,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 757,
+                      "duration": 849,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:39.937Z",
+                      "startTime": "2026-09-12T07:01:40.217Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2320,12 +2320,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1311,
+                      "duration": 1460,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:40.711Z",
+                      "startTime": "2026-09-12T07:01:41.082Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2356,12 +2356,12 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 760,
+                      "duration": 859,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:42.038Z",
+                      "startTime": "2026-09-12T07:01:42.556Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2407,7 +2407,7 @@
                       "workerIndex": 21,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12195,
+                      "duration": 12324,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-multi-instance.spec.ts:88:38",
@@ -2431,7 +2431,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:35:42.860Z",
+                      "startTime": "2026-09-12T07:01:43.477Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2455,7 +2455,7 @@
                       "workerIndex": 22,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 13228,
+                      "duration": 13116,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-multi-instance.spec.ts:88:38",
@@ -2479,7 +2479,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:35:56.466Z",
+                      "startTime": "2026-09-12T07:01:57.167Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2508,7 +2508,7 @@
                       "workerIndex": 23,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12323,
+                      "duration": 12296,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for locator('section').filter({ has: getByRole('heading', { name: 'Marketplace', level: 2 }) })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-multi-instance.spec.ts:88:38",
@@ -2532,7 +2532,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:36:11.304Z",
+                      "startTime": "2026-09-12T07:02:11.908Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2594,7 +2594,7 @@
                       "workerIndex": 24,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11519,
+                      "duration": 11670,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-scope-disclosure.spec.ts:64:70",
@@ -2618,7 +2618,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:36:25.126Z",
+                      "startTime": "2026-09-12T07:02:25.715Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2642,7 +2642,7 @@
                       "workerIndex": 25,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12079,
+                      "duration": 12036,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-scope-disclosure.spec.ts:64:70",
@@ -2666,7 +2666,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:36:38.156Z",
+                      "startTime": "2026-09-12T07:02:38.882Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2695,7 +2695,7 @@
                       "workerIndex": 26,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11554,
+                      "duration": 11537,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-scope-disclosure.spec.ts:64:70",
@@ -2719,7 +2719,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:36:51.872Z",
+                      "startTime": "2026-09-12T07:02:52.567Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2764,7 +2764,7 @@
                       "workerIndex": 27,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11498,
+                      "duration": 11540,
                       "error": {
                         "message": "Error: Google Sheets shows no disclosure\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Google Sheets shows no disclosure with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n",
                         "stack": "Error: Google Sheets shows no disclosure\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Google Sheets shows no disclosure with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-scope-disclosure.spec.ts:78:9",
@@ -2788,7 +2788,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:37:04.916Z",
+                      "startTime": "2026-09-12T07:03:05.603Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2812,7 +2812,7 @@
                       "workerIndex": 28,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12002,
+                      "duration": 11971,
                       "error": {
                         "message": "Error: Google Sheets shows no disclosure\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Google Sheets shows no disclosure with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n",
                         "stack": "Error: Google Sheets shows no disclosure\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Google Sheets shows no disclosure with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-scope-disclosure.spec.ts:78:9",
@@ -2836,7 +2836,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:37:17.887Z",
+                      "startTime": "2026-09-12T07:03:18.679Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2865,7 +2865,7 @@
                       "workerIndex": 29,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11530,
+                      "duration": 11546,
                       "error": {
                         "message": "Error: Google Sheets shows no disclosure\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Google Sheets shows no disclosure with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n",
                         "stack": "Error: Google Sheets shows no disclosure\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('dialog').getByText(/what this connector can reach/i)\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Google Sheets shows no disclosure with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('dialog').getByText(/what this connector can reach/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/connector-scope-disclosure.spec.ts:78:9",
@@ -2889,7 +2889,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:37:31.534Z",
+                      "startTime": "2026-09-12T07:03:32.290Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -2934,12 +2934,12 @@
                       "workerIndex": 30,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1765,
+                      "duration": 1544,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:37:44.554Z",
+                      "startTime": "2026-09-12T07:03:45.357Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2985,7 +2985,7 @@
                       "workerIndex": 30,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10657,
+                      "duration": 10632,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/credentials-reuse.spec.ts:85:75",
@@ -3009,7 +3009,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:37:46.489Z",
+                      "startTime": "2026-09-12T07:03:47.075Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3033,7 +3033,7 @@
                       "workerIndex": 31,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11368,
+                      "duration": 11449,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/credentials-reuse.spec.ts:85:75",
@@ -3057,7 +3057,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:37:58.572Z",
+                      "startTime": "2026-09-12T07:03:59.128Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3086,7 +3086,7 @@
                       "workerIndex": 32,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10797,
+                      "duration": 10779,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/credentials-reuse.spec.ts:85:75",
@@ -3110,7 +3110,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:38:11.524Z",
+                      "startTime": "2026-09-12T07:04:12.138Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3174,7 +3174,7 @@
                       "workerIndex": 33,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10721,
+                      "duration": 10726,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:45:22",
@@ -3198,7 +3198,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:38:23.859Z",
+                      "startTime": "2026-09-12T07:04:24.461Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3222,7 +3222,7 @@
                       "workerIndex": 34,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11254,
+                      "duration": 11207,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:45:22",
@@ -3246,7 +3246,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:38:36.120Z",
+                      "startTime": "2026-09-12T07:04:36.730Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3275,7 +3275,7 @@
                       "workerIndex": 35,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10712,
+                      "duration": 10695,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:45:22",
@@ -3299,7 +3299,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:38:48.964Z",
+                      "startTime": "2026-09-12T07:04:49.533Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3354,7 +3354,7 @@
                       "workerIndex": 36,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10744,
+                      "duration": 10679,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Apify', level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Apify', level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:96:65",
@@ -3378,7 +3378,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:01.232Z",
+                      "startTime": "2026-09-12T07:05:01.775Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3402,7 +3402,7 @@
                       "workerIndex": 37,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11234,
+                      "duration": 11219,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Apify', level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Apify', level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:96:65",
@@ -3426,7 +3426,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:39:13.495Z",
+                      "startTime": "2026-09-12T07:05:13.988Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3455,7 +3455,7 @@
                       "workerIndex": 38,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10883,
+                      "duration": 10690,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Apify', level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Apify', level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:96:65",
@@ -3479,7 +3479,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:39:26.341Z",
+                      "startTime": "2026-09-12T07:05:26.822Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3541,12 +3541,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3270,
+                      "duration": 3378,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:38.778Z",
+                      "startTime": "2026-09-12T07:05:39.033Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3575,12 +3575,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3347,
+                      "duration": 3277,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:42.225Z",
+                      "startTime": "2026-09-12T07:05:42.568Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3609,12 +3609,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5378,
+                      "duration": 5158,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:45.588Z",
+                      "startTime": "2026-09-12T07:05:45.879Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3643,12 +3643,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4970,
+                      "duration": 4948,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:50.988Z",
+                      "startTime": "2026-09-12T07:05:51.051Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3696,12 +3696,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2740,
+                      "duration": 2754,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:55.982Z",
+                      "startTime": "2026-09-12T07:05:56.020Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3732,12 +3732,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 985,
+                      "duration": 891,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:58.771Z",
+                      "startTime": "2026-09-12T07:05:58.836Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3768,12 +3768,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 793,
+                      "duration": 490,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:39:59.771Z",
+                      "startTime": "2026-09-12T07:05:59.743Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3804,12 +3804,12 @@
                       "workerIndex": 39,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 725,
+                      "duration": 727,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:00.578Z",
+                      "startTime": "2026-09-12T07:06:00.243Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3879,7 +3879,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:01.324Z",
+                      "startTime": "2026-09-12T07:06:00.994Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3927,7 +3927,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:40:02.746Z",
+                      "startTime": "2026-09-12T07:06:02.773Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -3980,7 +3980,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:40:04.189Z",
+                      "startTime": "2026-09-12T07:06:04.203Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4030,7 +4030,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:01.417Z",
+                      "startTime": "2026-09-12T07:06:01.425Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -4043,7 +4043,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:40:02.873Z",
+                      "startTime": "2026-09-12T07:06:02.891Z",
                       "annotations": [],
                       "attachments": []
                     },
@@ -4056,7 +4056,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:40:04.303Z",
+                      "startTime": "2026-09-12T07:06:04.315Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4112,12 +4112,12 @@
                       "workerIndex": 42,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2462,
+                      "duration": 2418,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:05.624Z",
+                      "startTime": "2026-09-12T07:06:05.627Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -4164,12 +4164,12 @@
                       "workerIndex": 42,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4460,
+                      "duration": 4192,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:08.245Z",
+                      "startTime": "2026-09-12T07:06:08.206Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4206,12 +4206,12 @@
                       "workerIndex": 42,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1675,
+                      "duration": 1859,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:12.721Z",
+                      "startTime": "2026-09-12T07:06:12.413Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4248,12 +4248,12 @@
                       "workerIndex": 42,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2091,
+                      "duration": 2173,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:14.405Z",
+                      "startTime": "2026-09-12T07:06:14.282Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4299,7 +4299,7 @@
                       "workerIndex": 42,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10636,
+                      "duration": 10619,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion', exact: true, level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion', exact: true, level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/notion-internal.spec.ts:45:66",
@@ -4323,7 +4323,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:16.516Z",
+                      "startTime": "2026-09-12T07:06:16.472Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4347,7 +4347,7 @@
                       "workerIndex": 43,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11260,
+                      "duration": 11221,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion', exact: true, level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion', exact: true, level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/notion-internal.spec.ts:45:66",
@@ -4371,7 +4371,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:40:28.575Z",
+                      "startTime": "2026-09-12T07:06:28.619Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4400,7 +4400,7 @@
                       "workerIndex": 44,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10742,
+                      "duration": 10710,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion', exact: true, level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion', exact: true, level: 3 }) }).getByRole('button', { name: /^connect$/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/notion-internal.spec.ts:45:66",
@@ -4424,7 +4424,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:40:41.420Z",
+                      "startTime": "2026-09-12T07:06:41.480Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4488,7 +4488,7 @@
                       "workerIndex": 45,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10772,
+                      "duration": 10752,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with notion/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with notion/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/notion-oauth.spec.ts:77:22",
@@ -4512,7 +4512,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:40:53.655Z",
+                      "startTime": "2026-09-12T07:06:53.816Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4536,7 +4536,7 @@
                       "workerIndex": 46,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11300,
+                      "duration": 11267,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with notion/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with notion/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/notion-oauth.spec.ts:77:22",
@@ -4560,7 +4560,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:41:05.949Z",
+                      "startTime": "2026-09-12T07:07:06.195Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4589,7 +4589,7 @@
                       "workerIndex": 47,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10766,
+                      "duration": 10708,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with notion/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) }).getByRole('button', { name: /connect with notion/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/notion-oauth.spec.ts:77:22",
@@ -4613,7 +4613,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:41:18.846Z",
+                      "startTime": "2026-09-12T07:07:19.075Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4677,7 +4677,7 @@
                       "workerIndex": 48,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10731,
+                      "duration": 10730,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:85:22",
@@ -4701,7 +4701,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:41:31.134Z",
+                      "startTime": "2026-09-12T07:07:31.324Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4725,7 +4725,7 @@
                       "workerIndex": 49,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 11258,
+                      "duration": 11250,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:85:22",
@@ -4749,7 +4749,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:41:43.401Z",
+                      "startTime": "2026-09-12T07:07:43.572Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4778,7 +4778,7 @@
                       "workerIndex": 50,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10730,
+                      "duration": 10721,
                       "error": {
                         "message": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n",
                         "stack": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-marketplace-card]').filter({ has: getByRole('heading', { name: 'Google Drive', level: 3 }) }).getByRole('button', { name: /connect with google/i })\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:85:22",
@@ -4802,7 +4802,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:41:56.260Z",
+                      "startTime": "2026-09-12T07:07:56.403Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -4866,12 +4866,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1545,
+                      "duration": 1527,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:08.552Z",
+                      "startTime": "2026-09-12T07:08:08.674Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4902,12 +4902,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4132,
+                      "duration": 3840,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:10.253Z",
+                      "startTime": "2026-09-12T07:08:10.363Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4955,12 +4955,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2922,
+                      "duration": 2897,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:14.419Z",
+                      "startTime": "2026-09-12T07:08:14.236Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -4991,12 +4991,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 941,
+                      "duration": 931,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:17.378Z",
+                      "startTime": "2026-09-12T07:08:17.165Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5027,12 +5027,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1739,
+                      "duration": 1638,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:18.331Z",
+                      "startTime": "2026-09-12T07:08:18.109Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5063,12 +5063,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2463,
+                      "duration": 2465,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:20.084Z",
+                      "startTime": "2026-09-12T07:08:19.758Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5114,12 +5114,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 744,
+                      "duration": 723,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:22.566Z",
+                      "startTime": "2026-09-12T07:08:22.241Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5148,12 +5148,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 968,
+                      "duration": 942,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:23.346Z",
+                      "startTime": "2026-09-12T07:08:22.997Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5182,12 +5182,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1130,
+                      "duration": 1117,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:24.322Z",
+                      "startTime": "2026-09-12T07:08:23.947Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5235,12 +5235,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 682,
+                      "duration": 670,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:25.475Z",
+                      "startTime": "2026-09-12T07:08:25.083Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5271,12 +5271,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 783,
+                      "duration": 793,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:26.189Z",
+                      "startTime": "2026-09-12T07:08:25.782Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5316,12 +5316,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8991,
+                      "duration": 9007,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:26.982Z",
+                      "startTime": "2026-09-12T07:08:26.584Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5360,12 +5360,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 15410,
+                      "duration": 14957,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:35.988Z",
+                      "startTime": "2026-09-12T07:08:35.605Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -5401,12 +5401,12 @@
                       "workerIndex": 51,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1621,
+                      "duration": 1807,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:42:51.419Z",
+                      "startTime": "2026-09-12T07:08:50.575Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -5450,12 +5450,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 9061,
+                  "duration": 8842,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:42:53.068Z",
+                  "startTime": "2026-09-12T07:08:52.401Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -5484,12 +5484,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4136,
+                  "duration": 4205,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:02.229Z",
+                  "startTime": "2026-09-12T07:09:01.328Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -5518,12 +5518,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3790,
+                  "duration": 3808,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:06.398Z",
+                  "startTime": "2026-09-12T07:09:05.551Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -5572,12 +5572,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 620,
+                  "duration": 656,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:10.262Z",
+                  "startTime": "2026-09-12T07:09:09.416Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -5626,12 +5626,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 632,
+                  "duration": 639,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:10.954Z",
+                  "startTime": "2026-09-12T07:09:10.126Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -5680,12 +5680,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 657,
+                  "duration": 679,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:11.599Z",
+                  "startTime": "2026-09-12T07:09:10.781Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -5734,12 +5734,12 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 687,
+                  "duration": 635,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:12.272Z",
+                  "startTime": "2026-09-12T07:09:11.482Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -5786,16 +5786,16 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 1457,
+                  "duration": 1404,
                   "errors": [],
                   "stdout": [
                     {
-                      "text": "[Step 1] Using agent: /agents/1ad72342-055c-459d-9826-28bbf2824142/edit\n"
+                      "text": "[Step 1] Using agent: /agents/0b06ecd2-eba8-43c0-a564-788c6f23ae87/edit\n"
                     }
                   ],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:12.981Z",
+                  "startTime": "2026-09-12T07:09:12.138Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -5834,7 +5834,7 @@
                   "workerIndex": 51,
                   "parallelIndex": 0,
                   "status": "failed",
-                  "duration": 10615,
+                  "duration": 10964,
                   "error": {
                     "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"tool-group-card-command-execution\"]')\nExpected: visible\nTimeout: 8000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 8000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"tool-group-card-command-execution\"]')\u001b[22m\n",
                     "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('[data-testid=\"tool-group-card-command-execution\"]')\nExpected: visible\nTimeout: 8000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 8000ms\u001b[22m\n\u001b[2m  - waiting for locator('[data-testid=\"tool-group-card-command-execution\"]')\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/tools-tab.spec.ts:88:25",
@@ -5858,7 +5858,7 @@
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:14.469Z",
+                  "startTime": "2026-09-12T07:09:13.574Z",
                   "annotations": [],
                   "attachments": [
                     {
@@ -5882,12 +5882,12 @@
                   "workerIndex": 52,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 138,
+                  "duration": 127,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 1,
-                  "startTime": "2026-09-11T16:43:26.423Z",
+                  "startTime": "2026-09-12T07:09:25.943Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -5942,12 +5942,12 @@
                   "workerIndex": 52,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 97,
+                  "duration": 81,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:26.742Z",
+                  "startTime": "2026-09-12T07:09:26.250Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -5996,12 +5996,12 @@
                   "workerIndex": 52,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 86,
+                  "duration": 88,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:26.852Z",
+                  "startTime": "2026-09-12T07:09:26.345Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -6050,12 +6050,12 @@
                   "workerIndex": 52,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 90,
+                  "duration": 73,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:26.950Z",
+                  "startTime": "2026-09-12T07:09:26.443Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -6104,12 +6104,12 @@
                   "workerIndex": 52,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 91,
+                  "duration": 92,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-11T16:43:27.050Z",
+                  "startTime": "2026-09-12T07:09:26.525Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -6163,7 +6163,7 @@
                       "workerIndex": 52,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 19600,
+                      "duration": 15226,
                       "error": {
                         "message": "TimeoutError: locator.fill: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"email-input\"]')\u001b[22m\n",
                         "stack": "TimeoutError: locator.fill: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"email-input\"]')\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/user-menu.spec.ts:29:55",
@@ -6187,7 +6187,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:43:27.166Z",
+                      "startTime": "2026-09-12T07:09:26.642Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -6211,7 +6211,7 @@
                       "workerIndex": 53,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10924,
+                      "duration": 10779,
                       "error": {
                         "message": "TimeoutError: locator.fill: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"email-input\"]')\u001b[22m\n",
                         "stack": "TimeoutError: locator.fill: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"email-input\"]')\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/user-menu.spec.ts:29:55",
@@ -6235,7 +6235,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:43:48.446Z",
+                      "startTime": "2026-09-12T07:09:43.360Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -6264,7 +6264,7 @@
                       "workerIndex": 54,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 10513,
+                      "duration": 10511,
                       "error": {
                         "message": "TimeoutError: locator.fill: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"email-input\"]')\u001b[22m\n",
                         "stack": "TimeoutError: locator.fill: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-testid=\"email-input\"]')\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/user-menu.spec.ts:29:55",
@@ -6288,7 +6288,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:44:01.029Z",
+                      "startTime": "2026-09-12T07:09:56.039Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -6352,7 +6352,7 @@
                       "workerIndex": 55,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2572,
+                      "duration": 2569,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/^webhook created$/i)\nExpected: visible\nError: strict mode violation: getByText(/^webhook created$/i) resolved to 2 elements:\n    1) <div class=\"\" data-title=\"\">Webhook created</div> aka getByLabel('Notifications alt+T').getByText('Webhook created')\n    2) <h3 class=\"text-sm font-semibold text-ink\">Webhook created</h3> aka getByRole('heading', { name: 'Webhook created' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/^webhook created$/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/^webhook created$/i)\nExpected: visible\nError: strict mode violation: getByText(/^webhook created$/i) resolved to 2 elements:\n    1) <div class=\"\" data-title=\"\">Webhook created</div> aka getByLabel('Notifications alt+T').getByText('Webhook created')\n    2) <h3 class=\"text-sm font-semibold text-ink\">Webhook created</h3> aka getByRole('heading', { name: 'Webhook created' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/^webhook created$/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/webhooks-flows.spec.ts:73:56",
@@ -6376,7 +6376,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-11T16:44:13.067Z",
+                      "startTime": "2026-09-12T07:10:08.096Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -6400,7 +6400,7 @@
                       "workerIndex": 56,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 3251,
+                      "duration": 3170,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/^webhook created$/i)\nExpected: visible\nError: strict mode violation: getByText(/^webhook created$/i) resolved to 2 elements:\n    1) <div class=\"\" data-title=\"\">Webhook created</div> aka getByLabel('Notifications alt+T').getByText('Webhook created')\n    2) <h3 class=\"text-sm font-semibold text-ink\">Webhook created</h3> aka getByRole('heading', { name: 'Webhook created' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/^webhook created$/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/^webhook created$/i)\nExpected: visible\nError: strict mode violation: getByText(/^webhook created$/i) resolved to 2 elements:\n    1) <div class=\"\" data-title=\"\">Webhook created</div> aka getByLabel('Notifications alt+T').getByText('Webhook created')\n    2) <h3 class=\"text-sm font-semibold text-ink\">Webhook created</h3> aka getByRole('heading', { name: 'Webhook created' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/^webhook created$/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/webhooks-flows.spec.ts:73:56",
@@ -6424,7 +6424,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 1,
-                      "startTime": "2026-09-11T16:44:17.191Z",
+                      "startTime": "2026-09-12T07:10:12.179Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -6453,7 +6453,7 @@
                       "workerIndex": 57,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 2817,
+                      "duration": 2541,
                       "error": {
                         "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/^webhook created$/i)\nExpected: visible\nError: strict mode violation: getByText(/^webhook created$/i) resolved to 2 elements:\n    1) <div class=\"\" data-title=\"\">Webhook created</div> aka getByLabel('Notifications alt+T').getByText('Webhook created')\n    2) <h3 class=\"text-sm font-semibold text-ink\">Webhook created</h3> aka getByRole('heading', { name: 'Webhook created' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/^webhook created$/i)\u001b[22m\n",
                         "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/^webhook created$/i)\nExpected: visible\nError: strict mode violation: getByText(/^webhook created$/i) resolved to 2 elements:\n    1) <div class=\"\" data-title=\"\">Webhook created</div> aka getByLabel('Notifications alt+T').getByText('Webhook created')\n    2) <h3 class=\"text-sm font-semibold text-ink\">Webhook created</h3> aka getByRole('heading', { name: 'Webhook created' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/^webhook created$/i)\u001b[22m\n\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/webhooks-flows.spec.ts:73:56",
@@ -6477,7 +6477,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 2,
-                      "startTime": "2026-09-11T16:44:22.076Z",
+                      "startTime": "2026-09-12T07:10:16.982Z",
                       "annotations": [],
                       "attachments": [
                         {
@@ -6513,8 +6513,8 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-09-11T16:31:41.820Z",
-    "duration": 763294.826,
+    "startTime": "2026-09-12T06:57:42.093Z",
+    "duration": 757657.559,
     "expected": 42,
     "skipped": 18,
     "unexpected": 19,
