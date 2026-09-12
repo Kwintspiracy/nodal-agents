@@ -160,6 +160,38 @@ test.describe('Agents page redesign @cap:organiser-equipe', () => {
     await page.goto('/agents');
     await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
 
+    // ── 0. CE PARCOURS A BESOIN D'UNE ÉQUIPE, ET LE DIT ────────────────────
+    //
+    // Tout ce qu'il éprouve — la poignée de déplacement, le glisser d'un
+    // groupe à l'autre, le vivier de la modale « Add worker » — suppose un
+    // orchestrateur ayant DÉJÀ au moins un worker. Il a été écrit contre la
+    // base vivante d'une seule machine (les commentaires plus bas nomment
+    // « Alfred » et parlent de « restaurer les données de Quentin »), or une
+    // installation neuve n'a qu'un agent et aucune affectation : la mesure
+    // nocturne du 11/09 échouait donc sur la toute première poignée,
+    //
+    //   expect(locator).toBeVisible() failed
+    //   Locator: locator('[data-orchestrator-card]').first()
+    //     .locator('[aria-label="Drag row"]').first()
+    //   Error: element(s) not found
+    //
+    // sans qu'aucune fonctionnalité soit cassée. Un parcours qui exige une
+    // donnée que l'environnement n'a pas se DÉCLARE ignoré ; il ne rougit pas.
+    // (Le pré-remplir en base est exclu : on ne sème pas les données qu'on
+    // affirme. Le rendre autonome demande de construire l'équipe par les vrais
+    // gestes — un chantier à part, signalé dans l'issue #55.)
+    const teamSizes = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-orchestrator-card]'))
+        .filter((c) => !(c.getAttribute('data-testid') ?? '').endsWith('unassigned'))
+        .map((c) => c.querySelectorAll('[data-worker-row]').length),
+    );
+    test.skip(
+      teamSizes.every((n) => n === 0),
+      "Aucun orchestrateur n'a de worker sur cette installation : il n'y a rien à " +
+        'déplacer, et le vivier de « Add worker » est vide. Ce parcours demande une ' +
+        'équipe déjà constituée (orchestrateur + au moins un worker).',
+    );
+
     // ── 1. RENDU ──────────────────────────────────────────────────────────
     // Une carte d'orchestrateur, désignée par son ANCRE et non par son texte.
     // Ce test s'accrochait au mot « Orchestrator » puis remontait au premier

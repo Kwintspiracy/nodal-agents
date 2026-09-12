@@ -17,13 +17,32 @@ test.describe('UserMenu — sign-out + re-login round-trip', () => {
     // ── Sign in via the login form ──────────────────────────────────────────
     // Skip the test in local-trust mode — no /login form, no sign-out flow.
     await page.goto('/login');
+
+    // La garde de mode existait déjà — elle ne pouvait simplement jamais se
+    // déclencher. Elle cherchait « local trust mode », avec une ESPACE ; la
+    // page écrit « local-trust », avec un trait d'union (LocalTrustBanner), et
+    // le mot « mode » y est séparé du terme par une balise <code>. Le parcours
+    // continuait donc sur une page sans formulaire, et la mesure nocturne
+    // rougissait au lieu d'ignorer :
+    //
+    //   TimeoutError: locator.fill: Timeout 10000ms exceeded.
+    //   waiting for locator('[data-testid="email-input"]')
+    //
+    // On s'accroche maintenant au TITRE de la bannière, qui est ce que la page
+    // affirme d'elle-même. En local-trust il n'y a ni /login, ni déconnexion,
+    // ni re-connexion : ce parcours n'a pas d'objet, et le dit.
     if (
       await page
-        .getByText(/local trust mode/i)
-        .isVisible({ timeout: 1_000 })
+        .getByRole('heading', { name: /local mode active/i })
+        .isVisible({ timeout: 5_000 })
         .catch(() => false)
     ) {
-      test.skip(true, 'AUTH_MODE=local-trust — UserMenu sign-out flow not applicable');
+      test.skip(
+        true,
+        "AUTH_MODE=local-trust : le dashboard est ouvert par conception, il n'y a ni " +
+          'formulaire de connexion ni déconnexion à éprouver. Rejouer ce parcours demande ' +
+          'une pile en local-auth (nodal-agents init → LAN).',
+      );
     }
 
     await page.locator('[data-testid="email-input"]').fill(E2E_EMAIL);
