@@ -16,7 +16,14 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
+import {
+  requireLiveStack,
+  cleanCredentialsByType,
+  openConnectorLibrary,
+  connectorCard,
+  openInstalledConnectors,
+  installedConnectorRow,
+} from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -49,32 +56,22 @@ test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service', () 
       });
     });
 
-    // ── 2. Navigate to /connectors ───────────────────────────────────────────
-    await page.goto('/connectors');
-
-    const notionCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) });
+    // Le catalogue vit derrière l'onglet « Library » : la page ouvre sur
+    // « Installed », où aucune carte de catalogue n'existe. Le parcours
+    // cliquait « Connect with Notion » sur une carte invisible, et la mesure
+    // du 11/09 expirait dessus :
+    //
+    //   TimeoutError: locator.click: Timeout 10000ms exceeded.
+    //   waiting for locator('[data-marketplace-card]').filter({ has:
+    //     getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) })
+    //     .getByRole('button', { name: /connect with notion/i })
+    //
+    // `beforeAll` ayant supprimé les identifiants notion-oauth, la carte ouvre
+    // DIRECTEMENT le CredentialWizard (`needsWizard`).
+    await openConnectorLibrary(page);
+    const notionCard = connectorCard(page, 'Notion (OAuth)');
     await expect(notionCard).toBeVisible({ timeout: 10_000 });
-
-    // Disconnect if already connected.
-    if (await notionCard.getByRole('button', { name: /disconnect/i }).isVisible()) {
-      await notionCard
-        .getByRole('button', { name: /disconnect/i })
-        .first()
-        .click();
-      await page
-        .getByRole('button', { name: /disconnect/i })
-        .last()
-        .click();
-      await page.waitForTimeout(1_000);
-      await page.reload();
-      await expect(notionCard).toBeVisible({ timeout: 10_000 });
-    }
-
-    // ── 3. Click "Connect with Notion" to open the wizard modal ─────────────
-    const connectBtn = notionCard.getByRole('button', { name: /connect with notion/i });
-    await connectBtn.click();
+    await notionCard.getByRole('button', { name: /^(install|add account)$/i }).click();
 
     const wizard = page.getByRole('dialog');
     await expect(wizard).toBeVisible({ timeout: 5_000 });
@@ -110,10 +107,10 @@ test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service', () 
 
     // ── 6. Submit ─────────────────────────────────────────────────────────────
     await wizard.getByRole('button', { name: /continue with notion/i }).click();
-    await page.waitForTimeout(2_000);
 
     // ── 7. Navigate to callback with mock code ────────────────────────────────
-    expect(capturedRedirectUri).toBeTruthy();
+    // On attend la valeur capturée, pas deux secondes de montre.
+    await expect.poll(() => capturedRedirectUri, { timeout: 15_000 }).toBeTruthy();
     expect(capturedState).toBeTruthy();
 
     const callbackUrl = `${capturedRedirectUri}?code=mock-notion-code&state=${encodeURIComponent(capturedState)}`;
@@ -122,21 +119,24 @@ test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service', () 
     // ── 8. Should land on /connectors ────────────────────────────────────────
     await page.waitForURL(/\/connectors/, { timeout: 15_000 });
 
-    // ── 9. Assert connected status ────────────────────────────────────────────
-    await expect(
-      page
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) })
-        .getByText(/connected/i)
-        .first(),
-    ).toBeVisible({ timeout: 10_000 });
+    // ── 9. L'instance installée dit « Connected » ──────────────────
+    await openInstalledConnectors(page);
+    const row = installedConnectorRow(page, 'Notion (OAuth)').first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByText('Connected')).toBeVisible({ timeout: 10_000 });
 
-    // ── 10. Refresh button must NOT appear (Notion supportsRefresh: false) ────
-    const refreshBtn = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) })
-      .getByRole('button', { name: /refresh now/i });
-    await expect(refreshBtn).not.toBeVisible();
+    // ── 10. Aucun bouton de rafraîchissement (Notion : supportsRefresh false)
+    //
+    // L'absence se vérifie LÀ OÙ le bouton vivrait : dans la modale d'édition
+    // de l'instance (ConnectorForm), pas sur la ligne du tableau — où aucun
+    // connecteur n'en a jamais, donc où l'assertion serait vraie sans rien
+    // prouver. « Reconnect » sert de témoin : la modale est bien à l'écran.
+    await row.getByRole('button', { name: 'Edit' }).click();
+    const editModal = page.getByRole('dialog');
+    await expect(editModal.getByRole('button', { name: /^reconnect$/i })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(editModal.getByRole('button', { name: /refresh now/i })).toHaveCount(0);
 
     await context.unrouteAll();
   });
