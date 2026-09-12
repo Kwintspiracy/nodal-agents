@@ -85,7 +85,7 @@ describe('CRUD: entities', () => {
   });
 });
 
-describe('CRUD: agents', () => {
+describe('CRUD: agents @cap:creer-agent/moteur', () => {
   it('insert + select + update + delete', async () => {
     const [a] = await db
       .insert(schema.agents)

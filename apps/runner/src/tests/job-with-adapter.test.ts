@@ -260,7 +260,7 @@ function makeDeps(client: RunnerDeps['llmClient']): RunnerDeps {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('job-with-adapter: Drive connector fully enabled (enabledOperations=null)', () => {
+describe('job-with-adapter: Drive connector fully enabled (enabledOperations=null) @cap:connecter-un-service/moteur', () => {
   it('tool_calls row is written for drive_list_files when LLM calls it', async () => {
     // Assign the Drive connector to the agent — null = all operations enabled
     await db

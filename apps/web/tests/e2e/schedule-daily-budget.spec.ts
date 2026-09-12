@@ -61,7 +61,7 @@ async function deleteScheduleIfPresent(
   }
 }
 
-test.describe('Daily budget field on ScheduleForm @cap:planifier-une-tache', () => {
+test.describe('Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran', () => {
   test('is present with a default of 5 on the New schedule form', async ({ page }) => {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');

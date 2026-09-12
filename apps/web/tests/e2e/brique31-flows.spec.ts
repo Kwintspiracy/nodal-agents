@@ -120,7 +120,7 @@ test.describe('Test A — LLM key add + test connection + save', () => {
 
 // ─── Test B — Agent edit picks LLM provider ──────────────────────────────────
 
-test.describe('Test B — Agent edit picks LLM provider', () => {
+test.describe('Test B — Agent edit picks LLM provider @cap:choisir-modele/ecran', () => {
   test('change LLM provider dropdown on agent edit → model field updates → save → toast', async ({
     page,
   }) => {

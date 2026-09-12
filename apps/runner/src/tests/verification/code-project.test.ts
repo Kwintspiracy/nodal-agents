@@ -160,7 +160,7 @@ describe('code-project — loadConfig', () => {
   });
 });
 
-describe('code-project — runProof', () => {
+describe('code-project — runProof @cap:verifier-un-livrable/moteur', () => {
   const readyOf = (commands: VerifyCommand[]): ReadyConfig => ({
     kind: 'ready',
     manifestHash: manifestHashOf(commands, projectKey(projectPath)),

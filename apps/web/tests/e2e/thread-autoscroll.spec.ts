@@ -76,7 +76,9 @@ async function openScrollableThread(page: Page): Promise<number> {
   return best;
 }
 
-test('A — un fil long s’ouvre sur son dernier message @cap:suivre-execution', async ({ page }) => {
+test('A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran', async ({
+  page,
+}) => {
   test.skip((await openScrollableThread(page)) <= 200, 'aucun fil assez long dans cette base');
 
   const m = await scrollMetrics(page);
@@ -147,7 +149,9 @@ test('D — remonter PENDANT qu’un défilement automatique est en vol', async 
   expect(m!.scrollTop, 'le lecteur a été ramené en bas malgré sa remontée').toBeLessThan(64);
 });
 
-test('B — remonter dans l’historique tient : on n’est pas ramené en bas', async ({ page }) => {
+test('B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran', async ({
+  page,
+}) => {
   test.skip((await openScrollableThread(page)) <= 200, 'aucun fil assez long dans cette base');
 
   // Remonter franchement, puis laisser le fil vivre (LiveRefresh recharge).

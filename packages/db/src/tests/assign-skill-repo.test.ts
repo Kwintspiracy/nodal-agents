@@ -163,7 +163,7 @@ describe('assignSkillRepo — system skill squat closure (P2b, F-6 follow-up)', 
   });
 });
 
-describe('assignSkillRepo — dedup (DB-2, audit #2) @cap:assigner-skill', () => {
+describe('assignSkillRepo — dedup (DB-2, audit #2) @cap:assigner-skill/moteur', () => {
   it('repeated assignment of the same (agent, skill) leaves exactly ONE row', async () => {
     const first = await assignSkillRepo(db, entityId, { agentId, skillId }, []);
     expect(first).toEqual({ ok: true });
