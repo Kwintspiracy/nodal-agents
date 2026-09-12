@@ -112,6 +112,7 @@ export const EXPLICATIONS = {
       {
         titre: 'Comment le lire',
         texte: `<p><b>Couverture des lignes</b> : sur 100 lignes de code, combien au moins un test a exécutées. 81 % veut dire que 19 lignes sur 100 ne sont traversées par aucun test — si l'une d'elles casse, rien ne le dira avant un utilisateur. Ce n'est PAS « 81 % du code est correct » : une ligne exécutée par un test peut être fausse si le test ne vérifie pas le bon résultat.</p>
+<p>Sous la jauge, une phrase dit où va ce chiffre : « en hausse de 2 points sur 7 jours », « en baisse », ou « stable ». Sept jours, parce que la question sous ce chiffre est « est-ce qu'on vient d'ajouter du code sans test », pas « où en était-on ce mois-ci ». Il faut deux collectes dans la semaine pour qu'une tendance existe ; sinon la phrase le dit et n'invente rien. L'historique complet, sur 30 jours et en courbes, est dans la page Historique.</p>
 <p><b>Branches</b> : à chaque « si », il y a deux chemins ; ce pourcentage dit combien des deux ont été empruntés par un test. Toujours plus bas que les lignes, et plus honnête.</p>
 <p><b>Cas de test</b> : le nombre de <code>it(…)</code> dans le dépôt. Un chiffre de vanité s'il est seul — il ne dit rien de ce qu'ils vérifient.</p>
 <p><b>Parcours joués par la CI</b> : les scénarios bout en bout (un vrai navigateur, une vraie page) que l'intégration continue exécute réellement. C'est le chiffre qui a fait construire ce portail : 28 sur 30 n'étaient jamais joués.</p>
@@ -295,7 +296,9 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'Comment le lire',
-        texte: `<p>Trois compteurs : <b>instables</b> (verts ET rouges dans leur fenêtre récente), <b>cassés</b> (rouges à leurs derniers passages), <b>suivis</b> (tous ceux qu'on a vus au moins une fois).</p>
+        texte: `<p>Quatre compteurs : <b>instables</b> (verts ET rouges dans leur fenêtre récente), <b>cassés</b> (rouges à leurs derniers passages), <b>suivis</b> (tous ceux qu'on a vus au moins une fois), et <b>réparé en (médiane)</b>.</p>
+<p><b>Réparé en (médiane) N jours</b> répond à « quand un test casse, combien de temps reste-t-il cassé ». Un dépôt avec vingt rouges réparés en un jour et un dépôt avec vingt rouges réparés en quarante ne sont pas du tout dans le même état, et le nombre de rouges ne fait pas la différence. Ne comptent que les réparations vues de bout en bout : le test était vert, on l'a vu tomber, on l'a vu revenir. Un test déjà rouge avant la première mesure n'a pas de point de départ, donc pas de durée.</p>
+<p>La <b>médiane</b> et pas la moyenne : c'est la valeur qui coupe les réparations en deux moitiés. Une seule réparation oubliée six mois tire une moyenne vers le haut et fait croire que c'est la normale ; la médiane ne bouge pas d'un accident. Tant qu'aucune réparation n'a été observée, la case affiche « — » : aucune absence n'est peinte en zéro.</p>
 <p>Dans les tableaux, le <b>ruban</b> se lit de gauche à droite, du plus ancien au plus récent : une lettre par passage, vert, rouge, ignoré, instable. <b>Taux</b> = échecs sur passages. <b>Rouge depuis</b> = la date où on l'a VU basculer de vert à rouge — jamais la date où on a commencé à regarder, sinon la première collecte aurait présenté vingt-deux rouges anciens comme des régressions du jour.</p>
 <p>Le premier tableau, « Les plus nuisibles », est trié par taux d'échec.</p>`,
       },
@@ -305,7 +308,8 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'Quand agir',
-        texte: `<p>Un <b>rouge frais</b> (dans les deux derniers jours) se comprend le jour même : c'est une régression datée. Un test <b>instable</b> se répare ou se retire — jamais ignoré, il empoisonne la confiance dans les autres. Un rouge <b>ancien</b> se décide : le réparer, ou le supprimer avec sa capacité.</p>
+        texte: `<p>Un <b>rouge frais</b> (dans les deux derniers jours) se comprend le jour même : c'est une régression datée. Un test <b>instable</b> se répare ou se retire — jamais ignoré, il empoisonne la confiance dans les autres.</p>
+<p>Au-delà de <b>14 jours</b>, la colonne « Âge » passe en rouge et la page Écarts nomme ces tests. Le seuil n'est pas une science : deux semaines, c'est le moment où plus personne ne se souvient de ce qui a cassé, et où un rouge cesse d'être une régression pour devenir une décision qu'on n'a pas prise. Ces lignes-là ne réveillent personne (elles ne bougent plus) mais elles sont nommées, sinon elles finissent invisibles à force d'être là. Deux issues seulement : réparer, ou supprimer le test avec la capacité qu'il prouvait.</p>
 <p>Cette page ne vaut rien les premiers jours : il lui faut plusieurs passages avant de savoir dire quoi que ce soit. Elle a commencé le 10/09/2026.</p>`,
       },
       {
@@ -317,7 +321,7 @@ export const EXPLICATIONS = {
       nuisibles:
         "Les tests qui tombent le plus souvent par rapport à leurs passages. Un taux de 30 % sur dix passages est pire qu'un test toujours rouge : on ne sait jamais s'il faut le croire.",
       casses:
-        "Rouges à leurs derniers passages. « Rouge depuis » ne date que les bascules vues : un test rouge depuis avant la première mesure n'a pas de date, et c'est honnête.",
+        "Rouges à leurs derniers passages. « Rouge depuis » ne date que les bascules vues : un test rouge depuis avant la première mesure n'a pas de date, et c'est honnête. « Âge » compte les jours à la date de la collecte, pas à celle où tu ouvres la page ; au-delà de 14 jours il vire au rouge.",
     },
   },
 
@@ -333,22 +337,28 @@ export const EXPLICATIONS = {
       {
         titre: 'Comment le lire',
         texte: `<p>Une ligne par collecte, la plus récente en haut. <b>Déclencheur</b> dit d'où elle vient : <code>schedule</code> (la nuit, toute seule), <code>workflow_dispatch</code> (lancée à la main sur GitHub), <code>local</code> (lancée sur un poste — ces lignes-là ne devraient pas être poussées sur main). <b>Commit</b> est ce qui a été mesuré. Les chiffres sont ceux de la Vue d'ensemble, figés à ce moment.</p>
-<p>Deux collectes par jour ou deux par semaine, ça se lit ici : c'est la régularité réelle, pas celle du cron.</p>`,
+<p>Deux collectes par jour ou deux par semaine, ça se lit ici : c'est la régularité réelle, pas celle du cron.</p>
+<p>Les <b>trois courbes</b> en haut tracent les mêmes chiffres sur 30 jours : la couverture des lignes, les capacités prouvées (sur 24), les tests cassés. Le chiffre à côté du titre est le <b>delta</b> : la différence entre la première et la dernière collecte de la fenêtre. « +2,1 % » veut dire que la couverture a gagné 2,1 points sur la période, pas qu'elle vaut 2,1 %.</p>
+<p>L'axe vertical est à l'échelle des données, pas à partir de zéro : une variation de deux points de couverture est ce qu'on vient regarder, et partir de zéro la rendrait invisible. Avec une seule collecte dans la fenêtre, le point est dessiné et la courbe dit « pas encore de tendance » — deux photos font une tendance, une seule n'en fait pas.</p>`,
       },
       {
         titre: "D'où ça vient",
-        texte: `<p>Du fichier <code>apps/qa/data/history.ndjson</code>, une ligne ajoutée à la fin de chaque collecte par <code>collect.mjs</code>.</p>`,
+        texte: `<p>Du fichier <code>apps/qa/data/history.ndjson</code>, une ligne ajoutée à la fin de chaque collecte par <code>collect.mjs</code>.</p>
+<p>Les courbes en écartent deux choses. Les collectes <code>local</code> d'abord : lancées depuis un poste, sur un arbre qui n'est pas main et souvent sur une partie des tests seulement. Mélangées aux mesures nocturnes, elles font des décrochages qui ne correspondent à aucun changement du dépôt. Les valeurs absentes ensuite : une couverture qui n'a pas pu être mesurée n'est pas une couverture de zéro, et la tracer comme telle inventerait une chute. Le tableau, lui, montre tout, <code>local</code> compris.</p>`,
       },
       {
         titre: 'Quand agir',
-        texte: `<p>Quand les lignes <code>schedule</code> manquent : la mesure nocturne ne tourne pas. Quand un chiffre glisse plusieurs collectes de suite dans le mauvais sens.</p>`,
+        texte: `<p>Quand les lignes <code>schedule</code> manquent : la mesure nocturne ne tourne pas. Quand un chiffre glisse plusieurs collectes de suite dans le mauvais sens : une couverture qui baisse, c'est du code ajouté sans test ; des capacités prouvées qui baissent, c'est une promesse du produit qui n'est plus tenue par aucun test joué. Un seul point de bascule ne veut rien dire, la pente de trois collectes si.</p>`,
       },
       {
         titre: 'Ce que ça ne dit pas',
         texte: `<p>Rien de plus fin qu'une collecte. Le détail test par test est dans la Mémoire des tests.</p>`,
       },
     ],
-    blocs: {},
+    blocs: {
+      courbes:
+        "Les mêmes chiffres que la Vue d'ensemble, mais sur 30 jours. Le nombre à côté du titre est l'écart entre la première et la dernière collecte de la fenêtre. Les collectes lancées depuis un poste sont écartées : elles ne mesurent pas main.",
+    },
   },
 };
 

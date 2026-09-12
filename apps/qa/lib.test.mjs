@@ -34,6 +34,8 @@ import {
   instabiliteDe,
   regressionsFraiches,
   dernierSort,
+  dureesDeReparation,
+  tendance,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -1308,5 +1310,241 @@ describe('le registre lui-même', () => {
       expect(c.domaine, c.slug).toBeTruthy();
       expect(c.question, c.slug).toMatch(/\?$/);
     }
+  });
+});
+
+// ─── Le temps de réparation ───────────────────────────────────────────────────
+
+/** Un jour donné, à midi — les dates de collecte sont des instants, pas des jours. */
+const jour = (n) => new Date(Date.UTC(2026, 8, n, 12, 0, 0)).toISOString();
+
+describe('fusionnerEssais — un test réparé garde la trace de ce qu’il a coûté', () => {
+  it('une bascule vert → rouge → vert pose `repareLe` et conserve le rouge de départ', () => {
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(2) });
+    expect(m[0].rougeDepuis).toBe(jour(2));
+
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(5) });
+    expect(m[0].repareLe).toBe(jour(5));
+    expect(m[0].dernierRougeDepuis).toBe(jour(2));
+    // Le problème courant est clos : sans ça, le test resterait « rouge depuis ».
+    expect(m[0].rougeDepuis).toBeNull();
+  });
+
+  it('un test qui n’a jamais été rouge n’a pas de réparation à raconter', () => {
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(2) });
+    expect(m[0].repareLe ?? null).toBeNull();
+    expect(dureesDeReparation(m).durees).toEqual([]);
+  });
+
+  it('un rouge dont la bascule n’a jamais été VUE ne donne pas de durée en repassant vert', () => {
+    // Le cas de la première collecte : vingt-deux tests déjà rouges, jamais vus
+    // verts. `rougeDepuis` est null — leur réparation n'a pas de point de départ,
+    // et la dater depuis la première observation mesurerait notre propre retard
+    // à regarder, pas le leur à réparer.
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], {
+      le: jour(1),
+    });
+    expect(m[0].rougeDepuis).toBeNull();
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(9) });
+    expect(m[0].repareLe ?? null).toBeNull();
+    expect(dureesDeReparation(m).durees).toEqual([]);
+  });
+
+  it('une deuxième casse puis une deuxième réparation remplacent la durée précédente', () => {
+    // La mémoire garde UNE réparation par test, la dernière. Garder toute la
+    // suite ferait grossir le fichier sans rien ajouter au chiffre qu'on lit.
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(2) });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(3) });
+    expect(dureesDeReparation(m).durees).toEqual([1]);
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(10) });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(16) });
+    expect(dureesDeReparation(m).durees).toEqual([6]);
+  });
+});
+
+describe('dureesDeReparation — la médiane, parce qu’une seule réparation longue n’est pas la normale', () => {
+  const repare = (cle, deLe, aLe) => ({ cle, dernierRougeDepuis: deLe, repareLe: aLe });
+
+  it('aucune réparation observée : pas de médiane, et ça se DIT', () => {
+    const r = dureesDeReparation([]);
+    expect(r.durees).toEqual([]);
+    expect(r.mediane).toBeNull();
+  });
+
+  it('une seule réparation : la médiane est cette durée', () => {
+    const r = dureesDeReparation([repare('a', jour(1), jour(4))]);
+    expect(r.durees).toEqual([3]);
+    expect(r.mediane).toBe(3);
+  });
+
+  it('deux réparations : la médiane est la moyenne des deux', () => {
+    const r = dureesDeReparation([repare('a', jour(1), jour(2)), repare('b', jour(1), jour(5))]);
+    expect(r.durees).toEqual([1, 4]);
+    expect(r.mediane).toBe(2.5);
+  });
+
+  it('trois réparations : la médiane est celle du milieu, pas la moyenne', () => {
+    // 1, 2, 30 → moyenne 11, médiane 2. Le 30 est l'accident qu'on ne veut pas
+    // voir déguisé en normale : c'est toute la raison du choix.
+    const r = dureesDeReparation([
+      repare('a', jour(1), jour(2)),
+      repare('b', jour(1), jour(31)),
+      repare('c', jour(1), jour(3)),
+    ]);
+    expect(r.durees).toEqual([1, 2, 30]);
+    expect(r.mediane).toBe(2);
+  });
+
+  it('une réparation incomplète ou incohérente n’entre pas dans le calcul', () => {
+    const r = dureesDeReparation([
+      { cle: 'a', repareLe: jour(4), dernierRougeDepuis: null },
+      { cle: 'b', repareLe: null, dernierRougeDepuis: jour(1) },
+      // Réparé AVANT d'être cassé : une donnée abîmée, pas une durée négative.
+      repare('c', jour(9), jour(2)),
+      repare('d', jour(1), jour(6)),
+    ]);
+    expect(r.durees).toEqual([5]);
+    expect(r.mediane).toBe(5);
+  });
+
+  it('les demi-journées comptent : une réparation de douze heures n’est pas zéro jour', () => {
+    const r = dureesDeReparation([
+      {
+        cle: 'a',
+        dernierRougeDepuis: '2026-09-01T00:00:00.000Z',
+        repareLe: '2026-09-01T12:00:00.000Z',
+      },
+    ]);
+    expect(r.durees).toEqual([0.5]);
+  });
+});
+
+describe('ecartsDe — un rouge de plus de quinze jours est une dette, pas une alarme', () => {
+  const maintenant = Date.parse('2026-09-30T12:00:00.000Z');
+  const base = { resume: {}, capacites: { registre: [] } };
+
+  it('compte les rouges datés de plus de 14 jours et les nomme', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [
+          { cle: 'a', titre: 'vieux rouge', rougeDepuis: '2026-09-01T12:00:00.000Z' },
+          { cle: 'b', titre: 'rouge d’hier', rougeDepuis: '2026-09-29T12:00:00.000Z' },
+        ],
+      },
+    };
+    const e = ecartsDe(s, [], maintenant).find((x) => /plus de 14 jours/.test(x.titre));
+    expect(e).toBeTruthy();
+    expect(e.gravite).toBe('moyenne');
+    expect(e.titre).toContain('1 test(s)');
+    expect(e.quoi).toEqual(['vieux rouge']);
+  });
+
+  it('ne compte QUE les rouges datés — un rouge sans bascule vue n’a pas d’âge', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [{ cle: 'a', titre: 'rouge sans date', rougeDepuis: null }],
+      },
+    };
+    expect(ecartsDe(s, [], maintenant).some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+  });
+
+  it('ne réveille personne — seule la gravité haute le fait', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [{ cle: 'a', titre: 'vieux rouge', rougeDepuis: '2026-08-01T12:00:00.000Z' }],
+      },
+    };
+    const hautes = alertes(ecartsDe(s, [], maintenant));
+    expect(hautes.some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+  });
+});
+
+describe('tendance — deux photos disent ce qu’une seule ne peut pas', () => {
+  const l = (le, valeur, declencheur = 'schedule') => ({
+    le,
+    couvertureLignes: valeur,
+    declencheur,
+  });
+
+  it('aucune collecte : pas de delta, et pas de direction inventée', () => {
+    const t = tendance([], 'couvertureLignes');
+    expect(t.valeurs).toEqual([]);
+    expect(t.delta).toBeNull();
+    expect(t.direction).toBeNull();
+  });
+
+  it('une seule collecte : le point existe, la tendance non', () => {
+    const t = tendance([l(jour(1), 80)], 'couvertureLignes', { maintenant: Date.parse(jour(2)) });
+    expect(t.valeurs).toEqual([{ le: jour(1), valeur: 80 }]);
+    expect(t.delta).toBeNull();
+    expect(t.direction).toBeNull();
+  });
+
+  it('deux collectes : le delta est la différence, du plus ancien au plus récent', () => {
+    const t = tendance([l(jour(1), 80), l(jour(3), 82.5)], 'couvertureLignes', {
+      maintenant: Date.parse(jour(4)),
+    });
+    expect(t.delta).toBe(2.5);
+    expect(t.direction).toBe('monte');
+  });
+
+  it('une baisse descend, une égalité est stable', () => {
+    const m = { maintenant: Date.parse(jour(4)) };
+    expect(tendance([l(jour(1), 82), l(jour(3), 79)], 'couvertureLignes', m).direction).toBe(
+      'descend',
+    );
+    expect(tendance([l(jour(1), 82), l(jour(3), 82)], 'couvertureLignes', m).direction).toBe(
+      'stable',
+    );
+  });
+
+  it('les collectes locales sont exclues : un poste ne mesure pas main', () => {
+    const t = tendance(
+      [l(jour(1), 80), l(jour(2), 20, 'local'), l(jour(3), 81)],
+      'couvertureLignes',
+      { maintenant: Date.parse(jour(4)) },
+    );
+    expect(t.valeurs.map((v) => v.valeur)).toEqual([80, 81]);
+    expect(t.delta).toBe(1);
+  });
+
+  it('une valeur absente n’est pas un zéro — la collecte est ignorée pour ce champ', () => {
+    const t = tendance([l(jour(1), 80), l(jour(2), null), l(jour(3), 84)], 'couvertureLignes', {
+      maintenant: Date.parse(jour(4)),
+    });
+    expect(t.valeurs.map((v) => v.valeur)).toEqual([80, 84]);
+    expect(t.delta).toBe(4);
+  });
+
+  it('la fenêtre coupe : une collecte hors des N jours ne pèse pas sur le delta', () => {
+    const hist = [l(jour(1), 50), l(jour(25), 80), l(jour(29), 83)];
+    const m = Date.parse(jour(30));
+    expect(tendance(hist, 'couvertureLignes', { jours: 7, maintenant: m }).delta).toBe(3);
+    expect(tendance(hist, 'couvertureLignes', { jours: 30, maintenant: m }).delta).toBe(33);
+  });
+
+  it('un autre champ se lit pareil — la fonction ne sait rien de la couverture', () => {
+    const hist = [
+      { le: jour(1), testsCasses: 22, declencheur: 'schedule' },
+      { le: jour(2), testsCasses: 19, declencheur: 'schedule' },
+    ];
+    const t = tendance(hist, 'testsCasses', { maintenant: Date.parse(jour(3)) });
+    expect(t.delta).toBe(-3);
+    expect(t.direction).toBe('descend');
   });
 });
