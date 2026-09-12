@@ -91,7 +91,8 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'Ce que ça ne dit pas',
-        texte: `<p>Qu'un test qui passe prouve BIEN la capacité. Un test peut porter l'étiquette et ne vérifier qu'un détail. La qualité de la preuve reste une question de relecture, pas de portail.</p>`,
+        texte: `<p>Qu'un test qui passe prouve BIEN la capacité. Un test peut porter l'étiquette et ne vérifier qu'un détail. La qualité de la preuve reste une question de relecture, pas de portail.</p>
+<p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
       },
     ],
     blocs: {
@@ -207,7 +208,8 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'Ce que ça ne dit pas',
-        texte: `<p>La cause d'un rouge. Pour elle : le rapport Playwright du run (traces, captures), ou rejouer le parcours en local avec <code>pnpm --filter @nodal-agents/web exec playwright test &lt;fichier&gt;</code> sur une stack qui tourne.</p>`,
+        texte: `<p>La cause d'un rouge. Pour elle : le rapport Playwright du run (traces, captures), ou rejouer le parcours en local avec <code>pnpm --filter @nodal-agents/web exec playwright test &lt;fichier&gt;</code> sur une stack qui tourne.</p>
+<p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
       },
     ],
     blocs: {
@@ -268,7 +270,15 @@ export const EXPLICATIONS = {
 <li><b>Qualité — publier le portail</b> — après chaque mesure : rend ce site et le publie (Cloudflare Pages, dès que les secrets sont posés).</li>
 <li><b>Deploy Docs</b> — la documentation publique.</li>
 </ul>
-<p>Les <b>déclencheurs</b> sont les événements qui lancent le workflow ; les <b>jobs</b> ses parties parallèles ; « Parcours joués » les scénarios qu'il exécute nommément.</p>`,
+<p>Les <b>déclencheurs</b> sont les événements qui lancent le workflow ; les <b>jobs</b> ses parties parallèles ; « Parcours joués » les scénarios qu'il exécute nommément.</p>
+<p><b>Le prix d'une PR</b>, en tête de page, est le temps qu'on attend ses contrôles. Quatre chiffres :</p>
+<ul>
+<li><b>Médiane</b> — la durée du milieu. Pas la moyenne : une exécution qui a attendu une heure dans la file tire une moyenne vers le haut et fait croire que c'est la normale. La médiane dit ce qui arrive une fois sur deux, et ne bouge pas d'un accident.</li>
+<li><b>Dernière</b> et <b>la pire</b> — le cas d'hier, et le cas extrême qu'on peut encore tomber.</li>
+<li><b>Tendance</b> — la première moitié des exécutions comparée à la seconde. Au-delà de 15 % d'écart, elle dit « monte » ou « descend » ; en dessous, « stable ».</li>
+</ul>
+<p>La durée comptée est celle du <b>mur à mur</b> : de la création du run à sa fin, file d'attente comprise. C'est ce qu'on attend réellement, et pas la somme du temps de calcul des jobs, qui décrit ce que la CI consomme et pas ce qu'elle fait subir.</p>
+<p>Seules les exécutions <b>vertes</b> comptent. Une rouge s'arrête au premier contrôle qui tombe, souvent en trois minutes : les compter ferait baisser le chiffre chaque fois que la CI va mal, c'est-à-dire précisément quand on vient le regarder.</p>`,
       },
       {
         titre: "D'où ça vient",
@@ -276,14 +286,19 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'Quand agir',
-        texte: `<p>Quand un workflow annonce une cadence que GitHub ne tient pas : la mesure nocturne n'a pas tourné d'elle-même les deux premières nuits (issue #69). Quand un parcours qu'on croit protecteur est « à la main ». Quand le banc n'est lancé par aucun workflow.</p>`,
+        texte: `<p>Quand un workflow annonce une cadence que GitHub ne tient pas : la mesure nocturne n'a pas tourné d'elle-même les deux premières nuits (issue #69). Quand un parcours qu'on croit protecteur est « à la main ». Quand le banc n'est lancé par aucun workflow.</p>
+<p><b>Au-delà de 25 minutes de médiane</b>, la page ouvre un écart de gravité haute, et voici pourquoi ce seuil et pas un autre : sous un quart d'heure, on attend son merge sans y penser ; au-delà d'une vingtaine de minutes, on part faire autre chose et on revient. À partir de là, ce qui se raccourcit n'est jamais la machine — c'est le contenu de la CI. Quelqu'un retire une suite, met un test en <code>skip</code>, sort les parcours de la porte. Le coût d'une PR est donc l'indicateur avancé de la prochaine garde qu'on va perdre, et c'est à ce moment-là qu'il faut découper la CI ou la paralléliser, pendant qu'on a encore le choix.</p>
+<p><b>Une hausse de plus de 25 %</b> sur la fenêtre ouvre un écart moyen. Une dérive se répare tant qu'elle est petite ; installée, elle devient la normale que plus personne ne discute.</p>`,
       },
       {
         titre: 'Ce que ça ne dit pas',
-        texte: `<p>Si les workflows ont RÉELLEMENT tourné, ni leur résultat : ça, c'est l'onglet Actions de GitHub, et l'Historique de ce portail pour la mesure nocturne.</p>`,
+        texte: `<p>Si les workflows ont RÉELLEMENT tourné, ni leur résultat : ça, c'est l'onglet Actions de GitHub, et l'Historique de ce portail pour la mesure nocturne.</p>
+<p>Le prix, lui, ne dit pas OÙ passe le temps. Il mesure l'attente, jamais sa cause : une file d'attente GitHub saturée et une suite de tests qui a doublé donnent le même chiffre. Pour savoir laquelle des deux, il faut ouvrir un run et regarder la durée de ses jobs.</p>`,
       },
     ],
-    blocs: {},
+    blocs: {
+      prix: "Le temps qu'on attend les contrôles d'une PR, sur les trente dernières exécutions vertes de la CI. C'est ce chiffre qui décide du sort des tests : quand l'attente devient insupportable, c'est la suite qu'on raccourcit.",
+    },
   },
 
   memoire: {
@@ -316,7 +331,8 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'Ce que ça ne dit pas',
-        texte: `<p>Pourquoi un test est instable. Les causes habituelles : un délai trop court, un ordre d'exécution qui compte, un service externe qui répond parfois. Le portail nomme le test ; la cause se trouve en le rejouant.</p>`,
+        texte: `<p>Pourquoi un test est instable. Les causes habituelles : un délai trop court, un ordre d'exécution qui compte, un service externe qui répond parfois. Le portail nomme le test ; la cause se trouve en le rejouant.</p>
+<p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
       },
     ],
     blocs: {
