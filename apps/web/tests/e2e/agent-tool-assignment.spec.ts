@@ -19,44 +19,21 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, makeDbClient, pollDb } from './helpers.ts';
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-/** E2E sentinel user email — matches global-setup.ts. */
-const E2E_EMAIL = 'e2e-playwright@nodalai.local';
+import { requireLiveStack, makeDbClient, pollDb, resolveActingUser } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Resolve the e2e user's userId and entityId from the DB.
- * Returns { userId, entityId } for the sentinel e2e user.
+ * L'utilisateur et l'espace au nom desquels le dashboard agit.
+ *
+ * Cette fonction cherchait `e2e-playwright@nodalai.local` en dur. Ce compte
+ * n'existe QUE si la pile tourne en local-auth ; en local-trust — le mode par
+ * défaut, et celui de la mesure nocturne — le seed pose `local@nodalai.local`,
+ * et le parcours mourait sur « E2E user e2e-playwright@nodalai.local not found
+ * in DB » sans qu'aucune fonctionnalité soit en cause.
  */
 async function resolveE2eUserContext(): Promise<{ userId: string; entityId: string }> {
-  const { users, entities, eq } = await import('@nodal-agents/db');
-  const { db, close } = makeDbClient();
-  try {
-    const userRows = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, E2E_EMAIL))
-      .limit(1);
-    const userId = userRows[0]?.id;
-    if (!userId) throw new Error(`E2E user ${E2E_EMAIL} not found in DB`);
-
-    // Each user owns exactly one entity (created on sign-up). entity.userId = owner.
-    const entityRows = await db
-      .select({ id: entities.id })
-      .from(entities)
-      .where(eq(entities.userId, userId))
-      .limit(1);
-    const entityId = entityRows[0]?.id;
-    if (!entityId) throw new Error(`No entity found for e2e user ${E2E_EMAIL}`);
-
-    return { userId, entityId };
-  } finally {
-    await close();
-  }
+  return resolveActingUser();
 }
 
 /** Insert a fake Google Drive connector + credential; return their IDs.
@@ -207,19 +184,23 @@ async function pollAssignment(
 let testConnectorId: string;
 let testAgentId: string;
 
+// Le second argument de `beforeAll`/`afterAll` est un TITRE, pas un budget de
+// temps : le `15_000` passé ici n'a jamais rien allongé, et TypeScript le
+// refusait (TS2345) sans que personne le voie — `tsconfig.json` exclut
+// `tests/`. Retiré plutôt que corrigé : le budget par défaut suffit.
 test.beforeAll(async () => {
   await requireLiveStack();
   const { userId, entityId } = await resolveE2eUserContext();
   const { connectorId } = await insertTestConnector(userId, entityId);
   testConnectorId = connectorId;
   testAgentId = await findAgentId(entityId);
-}, 15_000);
+});
 
 test.afterAll(async () => {
   if (testConnectorId) {
     await deleteTestConnector(testConnectorId);
   }
-}, 10_000);
+});
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
