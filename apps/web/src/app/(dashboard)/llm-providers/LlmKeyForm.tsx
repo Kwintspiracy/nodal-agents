@@ -339,13 +339,27 @@ export default function LlmKeyForm(props: Props) {
       />
 
       {/* Test result inline */}
+      {/* `data-testid` + `data-state` : l'ANCRE du verdict de test.
+          Le parcours e2e le cherchait par ses classes utilitaires
+          (`.bg-emerald-500/10` / `.bg-red-500/10`), qui n'existent plus depuis
+          le passage aux jetons du design system — il attendait donc un badge
+          qui ne pouvait plus apparaître. Une classe de mise en forme n'est pas
+          un contrat. */}
       {testResult.state === 'pass' && (
-        <div className="rounded-md border border-ok/30 bg-ok-bg px-3 py-2 text-body-13 text-ok">
+        <div
+          data-testid="llm-test-result"
+          data-state="pass"
+          className="rounded-md border border-ok/30 bg-ok-bg px-3 py-2 text-body-13 text-ok"
+        >
           {testResult.message}
         </div>
       )}
       {testResult.state === 'fail' && (
-        <div className="rounded-md border border-err/30 bg-warn-bg px-3 py-2 text-body-13 text-err break-all">
+        <div
+          data-testid="llm-test-result"
+          data-state="fail"
+          className="rounded-md border border-err/30 bg-warn-bg px-3 py-2 text-body-13 text-err break-all"
+        >
           {testResult.message}
         </div>
       )}
