@@ -243,7 +243,7 @@ async function fillCommand(panel: Locator, index: number, command: string, timeo
 
 const addButton = (panel: Locator): Locator => panel.getByRole('button', { name: 'Add a command' });
 
-test.describe('Proof commands — onglet Code @cap:verifier-un-livrable', () => {
+test.describe('Proof commands — onglet Code @cap:verifier-un-livrable/ecran', () => {
   test('A — configurer puis approuver, hash écrit EN BASE', async ({ page }) => {
     const panel = await openProjectPanel(page);
     // « Nothing declared yet » et non « Not configured » : l'écran ne reproche

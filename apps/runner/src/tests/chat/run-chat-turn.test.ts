@@ -638,7 +638,7 @@ describe('runChatTurn — le projet courant de la conversation (P6)', () => {
   });
 });
 
-describe("runChatTurn — le tour appartient à l'agent DU fil", () => {
+describe("runChatTurn — le tour appartient à l'agent DU fil @cap:parler-a-un-agent/moteur", () => {
   it("un agentId qui n'est pas celui de la conversation est refusé, et RIEN n'est écrit", async () => {
     // Le cas réel : le ROOT change pour B, l'utilisateur répond dans l'ancien
     // fil de A. Sans cette garde, le message de B s'écrivait chez A et B

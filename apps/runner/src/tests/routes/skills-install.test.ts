@@ -188,7 +188,7 @@ describe('POST /api/skills/install — validation', () => {
 
 // ─── L'allowlist d'hôtes ─────────────────────────────────────────────────────
 
-describe('POST /api/skills/install — provenance du code installé', () => {
+describe('POST /api/skills/install — provenance du code installé @cap:apprendre-une-skill/moteur', () => {
   it('refuse un hôte hors allowlist AVANT tout téléchargement', async () => {
     // La garde qui compte : la route installe du code tiers, et la liste des
     // origines acceptables est la seule chose qui décide de qui.

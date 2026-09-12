@@ -17,7 +17,7 @@ test.beforeAll(async () => {
   await cleanCredentialsByType('google-oauth');
 });
 
-test.describe('Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide', () => {
+test.describe('Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran', () => {
   test('wizard shows 4 Google API links and format hint', async ({ page }) => {
     await page.goto('/connectors');
 
@@ -69,7 +69,7 @@ test.describe('Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide
   });
 });
 
-test.describe('Help guides — api_key connector (Apify) @cap:consulter-l-aide', () => {
+test.describe('Help guides — api_key connector (Apify) @cap:consulter-l-aide/ecran', () => {
   test('"Where do I get this?" expander reveals console.apify.com link', async ({ page }) => {
     await page.goto('/connectors');
 

@@ -5,7 +5,18 @@
 // utilisateur peut connecter Notion ce matin, et qu'est-ce qui le prouve ».
 //
 // Ce fichier est la réponse à la première moitié. Chaque test répond à la
-// seconde en écrivant `@cap:<slug>` dans son titre.
+// seconde en écrivant `@cap:<slug>/ecran` ou `@cap:<slug>/moteur` dans son
+// titre — deux niveaux, parce qu'un seul mot mentait : « Donner des outils »
+// s'affichait « prouvée » sur la foi de trois parcours de NAVIGATEUR, quand
+// les tests qui prouvent la promesse (la whitelist, l'exécution d'un outil)
+// n'étaient étiquetés nulle part.
+//
+// ─── `ecranAttendu` / `preuveAttendue` ────────────────────────────────────────
+//
+// Quand un niveau n'a AUCUN test, la capacité porte en une phrase ce qu'un tel
+// test devrait vérifier. C'est le plan de travail, écrit là où il se lit, et il
+// est tenu par un test : `apps/qa/lib.test.mjs` refuse une phrase posée sur un
+// niveau déjà prouvé (elle serait périmée) comme un niveau vide sans phrase.
 //
 // ─── D'où vient cette liste ───────────────────────────────────────────────────
 //
@@ -27,7 +38,7 @@
 // Ajouter une capacité ici sans l'étiqueter nulle part casse la porte, et c'est
 // voulu : c'est le seul moment où quelqu'un se demande encore ce qui la prouve.
 
-/** @typedef {{ slug: string, domaine: string, nom: string, question: string, exigee: boolean }} Capacite */
+/** @typedef {{ slug: string, domaine: string, nom: string, question: string, exigee: boolean, ecranAttendu?: string, preuveAttendue?: string }} Capacite */
 
 /** @type {Capacite[]} */
 export const CAPACITES = [
@@ -121,6 +132,8 @@ export const CAPACITES = [
     nom: 'Donner un savoir-faire',
     question: 'Puis-je lui attacher une skill, et la lui retirer ?',
     exigee: true,
+    ecranAttendu:
+      "Qu'attacher une skill depuis l'onglet Skills d'un agent, puis la retirer, se voie dans la liste ET dans la ligne d'assignation en base.",
   },
   {
     slug: 'apprendre-une-skill',
@@ -158,6 +171,8 @@ export const CAPACITES = [
     nom: 'Approuver ou refuser',
     question: "Est-ce qu'il m'attend vraiment quand il doit m'attendre ?",
     exigee: true,
+    ecranAttendu:
+      "Qu'une action en attente s'affiche dans le fil avec Approuver et Refuser, que le clic débloque l'agent, et que refuser l'arrête.",
   },
   {
     slug: 'executer-une-commande',
@@ -165,6 +180,8 @@ export const CAPACITES = [
     nom: 'Exécuter une commande',
     question: 'Puis-je le laisser lancer une commande sur ma machine ?',
     exigee: true,
+    ecranAttendu:
+      "Qu'un agent autorisé à lancer une commande le montre dans l'écran, demande la permission quand il le doit, et rende sa sortie dans le fil.",
   },
   {
     slug: 'travailler-sur-des-fichiers',
@@ -172,6 +189,8 @@ export const CAPACITES = [
     nom: 'Travailler sur mes fichiers',
     question: 'Puis-je lui donner un dossier et retrouver ce qu’il y a écrit ?',
     exigee: true,
+    ecranAttendu:
+      "Qu'on désigne un dossier de travail depuis l'écran et qu'on y retrouve, dans l'onglet Code, le fichier que l'agent vient d'écrire.",
   },
   {
     slug: 'verifier-un-livrable',
@@ -204,6 +223,8 @@ export const CAPACITES = [
     nom: 'Voir ce que ça coûte',
     question: 'Puis-je savoir ce que ce tour de chat vient de me coûter ?',
     exigee: true,
+    ecranAttendu:
+      "Que le coût et les jetons du tour qui vient d'avoir lieu s'affichent dans le fil, et qu'ils correspondent à ce que la base a enregistré.",
   },
   {
     slug: 'consulter-l-aide',
@@ -211,6 +232,8 @@ export const CAPACITES = [
     nom: 'Trouver comment faire',
     question: "Quand je bloque, est-ce que le produit sait me l'expliquer ?",
     exigee: true,
+    preuveAttendue:
+      "Qu'un guide servi au client décrit bien le connecteur demandé — ses étapes, ses champs et ses portées lues depuis le catalogue, et non une page écrite en dur.",
   },
 ];
 

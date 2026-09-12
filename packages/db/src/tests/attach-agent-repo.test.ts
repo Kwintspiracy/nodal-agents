@@ -34,7 +34,7 @@ beforeAll(async () => {
   orchestratorId = orch.id;
 });
 
-describe('attachAgentToOrchestrator', () => {
+describe('attachAgentToOrchestrator @cap:organiser-equipe/moteur', () => {
   it('creates a real agent_assignments row when resolved by slug', async () => {
     // Create the target agent
     const worker = await createAgentRepo(db, entityId, {

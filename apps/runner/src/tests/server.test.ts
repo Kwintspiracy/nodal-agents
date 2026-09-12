@@ -114,7 +114,7 @@ afterAll(async () => {
   // cleanup is handled by pglite
 });
 
-describe('server boot', () => {
+describe('server boot @cap:installer-et-demarrer/moteur', () => {
   it('GET /api/health returns 200', async () => {
     const res = await app.fetch(new Request('http://localhost/api/health'));
     expect(res.status).toBe(200);
@@ -154,7 +154,7 @@ describe('server boot', () => {
 // bearer or a wrong bearer, and pass through to the handler when the correct
 // WORKER_SECRET is supplied.  We assert real HTTP status codes, not call counts.
 
-describe('requireRunnerAuth — local-auth mode', () => {
+describe('requireRunnerAuth — local-auth mode @cap:se-connecter/moteur', () => {
   let localAuthApp: ReturnType<typeof createApp>;
   const localAuthEnv: RunnerEnv = { ...testEnv, AUTH_MODE: 'local-auth' };
 
