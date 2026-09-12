@@ -273,6 +273,9 @@ const RANG = { haute: 0, moyenne: 1, basse: 2 };
 /** Un rouge de moins de deux jours est une régression ; au-delà, c'est une dette. */
 const JEUNE_MS = 2 * 24 * 60 * 60 * 1000;
 
+/** Au-delà de deux semaines, un rouge n'est plus une régression : c'est un choix. */
+const VIEUX_MS = 14 * 24 * 60 * 60 * 1000;
+
 export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const out = [];
   if (!s) return out;
@@ -339,6 +342,22 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
       titre: `${frais.length} test(s) sont passés au rouge dans les deux derniers jours`,
       detail: `Un rouge frais est une régression : quelque chose a bougé, et on sait quand. Un rouge ancien est une dette qu'on a appris à ne plus voir — les deux ne se traitent pas pareil.`,
       quoi: frais.map((e) => e.titre ?? e.cle),
+    });
+  }
+
+  // Le pendant du précédent, et sa raison d'être : le rouge qui traîne ne
+  // déclenche rien parce qu'il ne bouge plus. Il ne réveille donc personne
+  // (gravité moyenne, jamais haute — c'est `alertes()` qui trie), mais il est
+  // NOMMÉ, sans quoi ces tests-là finissent invisibles à force d'être là.
+  const vieux = (mem?.regressions ?? []).filter(
+    (e) => e.rougeDepuis && maintenant - Date.parse(e.rougeDepuis) > VIEUX_MS,
+  );
+  if (vieux.length > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${vieux.length} test(s) rouges depuis plus de 14 jours`,
+      detail: `Deux semaines sans réparation, ce n'est plus une régression : c'est une décision qui n'a pas été prise. Réparer, ou supprimer le test avec la capacité qu'il prouvait.`,
+      quoi: vieux.map((e) => e.titre ?? e.cle),
     });
   }
 
@@ -552,6 +571,10 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
       dernierTourLe: null,
       dernierEchecLe: null,
       rougeDepuis: null,
+      // La dernière réparation observée : quand le rouge a commencé, quand il
+      // s'est arrêté. Les deux, sinon la durée ne se calcule pas.
+      dernierRougeDepuis: null,
+      repareLe: null,
     };
 
     // Le sort du tour PRÉCÉDENT, lu avant d'écrire celui-ci : c'est lui qui
@@ -579,6 +602,17 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
         e.rougeDepuis = e.dernierTourLe;
       }
     } else if (n.sort === 'vert') {
+      // Un rouge DATÉ qui repasse au vert est une réparation observée de bout
+      // en bout : on a vu la casse et on voit la remise en état. C'est la seule
+      // forme qui donne une durée honnête — d'où la conservation du point de
+      // départ, que `rougeDepuis` s'apprête à perdre.
+      //
+      // Une seule réparation gardée, la dernière : garder toute la suite
+      // ferait grossir `tests.ndjson` sans rien ajouter au chiffre qu'on lit.
+      if (e.rougeDepuis) {
+        e.dernierRougeDepuis = e.rougeDepuis;
+        e.repareLe = e.dernierTourLe;
+      }
       e.rougeDepuis = null;
     }
 
@@ -635,6 +669,69 @@ export function regressionsFraiches(enregistrements) {
 export function dernierSort(enr) {
   const recents = String(enr?.recents ?? '');
   return SORT_DE_LETTRE[recents.at(-1)] ?? null;
+}
+
+const JOUR_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Combien de temps un test reste cassé, quand il finit par être réparé.
+ *
+ * Le chiffre qui manquait : « 22 tests rouges » ne dit pas si on répare en un
+ * jour ou jamais. Deux dépôts avec le même nombre de rouges et des temps de
+ * réparation de 1 et de 40 jours ne sont pas du tout dans le même état.
+ *
+ * La MÉDIANE et pas la moyenne : une seule réparation oubliée pendant six mois
+ * tire une moyenne vers le haut et fait croire que c'est la normale. La médiane
+ * dit ce qui arrive à la moitié des cas, et ne bouge pas d'un accident.
+ *
+ * N'entrent ici que les réparations observées de bout en bout — casse VUE puis
+ * remise en état vue. Une durée partant de la première fois qu'on a regardé
+ * mesurerait notre retard à installer la mesure, pas le leur à réparer.
+ */
+export function dureesDeReparation(memoire) {
+  const durees = (memoire ?? [])
+    .map((e) => {
+      if (!e?.repareLe || !e?.dernierRougeDepuis) return null;
+      const de = Date.parse(e.dernierRougeDepuis);
+      const a = Date.parse(e.repareLe);
+      if (!Number.isFinite(de) || !Number.isFinite(a) || a < de) return null;
+      return Number(((a - de) / JOUR_MS).toFixed(2));
+    })
+    .filter((d) => d != null)
+    .sort((a, b) => a - b);
+
+  if (durees.length === 0) return { durees: [], mediane: null };
+  const mi = Math.floor(durees.length / 2);
+  const mediane =
+    durees.length % 2 === 1 ? durees[mi] : Number(((durees[mi - 1] + durees[mi]) / 2).toFixed(2));
+  return { durees, mediane };
+}
+
+/**
+ * L'évolution d'un chiffre de l'historique sur une fenêtre de jours.
+ *
+ * Deux exclusions, et les deux sont des refus de mentir :
+ *   - les collectes `local` — lancées sur un poste, sur un arbre qui n'est pas
+ *     main, souvent partielles. Mélangées aux mesures nocturnes, elles font des
+ *     décrochages qui ne correspondent à aucun changement du dépôt ;
+ *   - les valeurs absentes — une couverture qui n'a pas pu être mesurée n'est
+ *     pas une couverture de zéro, et la peindre ainsi inventerait une chute.
+ *
+ * Moins de deux points : pas de delta et pas de direction. « Stable » sur un
+ * seul point serait une affirmation qu'on ne peut pas faire.
+ */
+export function tendance(historique, champ, { jours = 30, maintenant = Date.now() } = {}) {
+  const depuis = maintenant - jours * JOUR_MS;
+  const valeurs = (historique ?? [])
+    .filter((h) => h?.declencheur !== 'local' && typeof h?.[champ] === 'number')
+    .map((h) => ({ le: h.le, valeur: h[champ], t: Date.parse(h.le) }))
+    .filter((v) => Number.isFinite(v.t) && v.t >= depuis && v.t <= maintenant)
+    .sort((a, b) => a.t - b.t)
+    .map(({ le, valeur }) => ({ le, valeur }));
+
+  if (valeurs.length < 2) return { valeurs, delta: null, direction: null };
+  const delta = Number((valeurs.at(-1).valeur - valeurs[0].valeur).toFixed(2));
+  return { valeurs, delta, direction: delta > 0 ? 'monte' : delta < 0 ? 'descend' : 'stable' };
 }
 
 // ─── Les capacités du produit ─────────────────────────────────────────────────
