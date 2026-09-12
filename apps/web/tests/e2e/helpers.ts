@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { test as base } from '@playwright/test';
+import { test as base, expect, type Locator, type Page } from '@playwright/test';
 import { createClient } from '@nodal-agents/db';
 import type { CredentialType } from '@nodal-agents/shared';
 
@@ -54,6 +54,104 @@ export async function requireLiveStack(): Promise<void> {
  */
 export function testSlugSuffix(): string {
   return `e2e-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ─── La page Connecteurs ──────────────────────────────────────────────────────
+//
+// Huit parcours tapaient encore sur l'ancienne page : une `<section>` intitulée
+// « Marketplace » (niveau 2), une autre « Active Connectors », et un bouton
+// « Connect with Google » par carte. Plus rien de tout cela n'existe depuis la
+// refonte : la page ouvre sur l'onglet « Installed » (un TABLEAU, pas des
+// cartes), le catalogue vit derrière l'onglet « Library », et la carte porte un
+// seul bouton, « Install » ou « Add account » selon qu'une instance existe déjà.
+//
+// Ces trois gestes sont donc écrits UNE fois ici. Un parcours qui les recopie
+// est un parcours qui redeviendra rouge à la prochaine refonte sans que
+// personne ne s'en aperçoive — c'est très exactement ce qui s'est passé.
+
+/** Ouvre /connecteurs sur l'onglet catalogue (« Library »). */
+export async function openConnectorLibrary(page: Page): Promise<void> {
+  await page.goto('/connectors');
+  await page.waitForLoadState('networkidle', { timeout: 15_000 });
+  // PAS /^library$/ : l'onglet DS replie un compteur dans son libellé, donc le
+  // nom accessible est « Library · 15 » et grandit avec le catalogue.
+  await page.getByRole('tab', { name: /library/i }).click();
+}
+
+/** Ouvre /connecteurs sur l'onglet des instances installées. */
+export async function openInstalledConnectors(page: Page): Promise<void> {
+  await page.goto('/connectors');
+  await page.waitForLoadState('networkidle', { timeout: 15_000 });
+  await page.getByRole('tab', { name: /installed/i }).click();
+}
+
+/**
+ * La carte catalogue d'un connecteur, désignée par son ANCRE (`data-testid`
+ * dérivé du libellé dans MarketplaceCard) et non par une classe de mise en
+ * forme — le `rounded-xl` devenu `rounded-2xl` avait rendu huit parcours
+ * rouges d'un coup, en silence, sans qu'une fonctionnalité soit cassée.
+ */
+export function connectorCard(page: Page, label: string): Locator {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return page.getByTestId(`marketplace-card-${slug}`);
+}
+
+/**
+ * Ouvre la modale d'installation d'un connecteur depuis le catalogue et rend
+ * la main quand un dialogue est à l'écran.
+ *
+ * ⚠️ ce dialogue n'est pas toujours le même : pour un connecteur OAuth dont
+ * AUCUN identifiant compatible n'existe encore, la carte ouvre directement le
+ * CredentialWizard (ConnectorsMarketplaceGrid, `needsWizard`). C'est le cas sur
+ * une installation neuve — donc sur le runner.
+ */
+export async function openConnectorInstallDialog(page: Page, label: string): Promise<void> {
+  await openConnectorLibrary(page);
+  const card = connectorCard(page, label);
+  await expect(card, `aucune carte catalogue pour « ${label} »`).toBeVisible({ timeout: 15_000 });
+  await card.getByRole('button', { name: /^(install|add account)$/i }).click();
+  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
+}
+
+/**
+ * La LIGNE d'une instance installée. Ce n'est plus une carte depuis la refonte
+ * mais une ligne de tableau (ConnectorsInstalledTable) : colonne « Account » =
+ * le nom du compte de l'identifiant, à défaut le nom de l'instance.
+ */
+export function installedConnectorRow(page: Page, instanceName: string): Locator {
+  return page.getByRole('row').filter({ hasText: instanceName });
+}
+
+/**
+ * Supprime une instance installée si elle est là, par les VRAIS gestes (bouton
+ * de ligne + ConfirmDialog) ; ne fait rien si elle n'existe pas. Sert de
+ * nettoyage d'avant-course, jamais d'assertion.
+ */
+export async function removeInstalledConnectorIfPresent(
+  page: Page,
+  instanceName: string,
+): Promise<void> {
+  await openInstalledConnectors(page);
+  const row = installedConnectorRow(page, instanceName);
+  if (
+    !(await row
+      .first()
+      .isVisible()
+      .catch(() => false))
+  )
+    return;
+  // Le titre du bouton est « Disconnect » pour un OAuth, « Delete » sinon.
+  await row
+    .first()
+    .getByRole('button', { name: /^(delete|disconnect)$/i })
+    .click();
+  const confirm = page.getByRole('dialog');
+  await confirm.waitFor({ state: 'visible', timeout: 5_000 });
+  await confirm.getByRole('button', { name: /^(delete|disconnect)$/i }).click();
+  await expect(page.getByText(`${instanceName} removed`)).toBeVisible({ timeout: 10_000 });
 }
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -297,6 +395,89 @@ export async function cleanEntityMemories(
   }
 }
 
+/** L'adresse que `seedLocalUser` (packages/auth) pose en mode local-trust. */
+const LOCAL_TRUST_EMAIL = 'local@nodalai.local';
+
+/**
+ * L'utilisateur au nom de qui le dashboard agit, et son espace.
+ *
+ * Il n'y a PAS un utilisateur e2e : il y en a deux, selon le mode d'auth de la
+ * pile, exactement comme `global-setup.ts` le découvre déjà pour la session du
+ * navigateur.
+ *
+ *  - `local-auth` : le compte sentinelle de global-setup
+ *    (`e2e-playwright@nodalai.local`, surchargeable par `E2E_EMAIL`).
+ *  - `local-trust` : le mode PAR DÉFAUT, et celui de la mesure nocturne. Il n'y
+ *    a alors aucun compte sentinelle — `seedLocalUser` pose
+ *    `local@nodalai.local` sur des UUID fixes, et c'est cet utilisateur-là que
+ *    le serveur voit à chaque requête.
+ *
+ * Deux parcours résolvaient l'utilisateur par l'adresse sentinelle en dur et
+ * mouraient donc sur « E2E user e2e-playwright@nodalai.local not found in DB »
+ * à chaque mesure nocturne, sans qu'aucune fonctionnalité soit en cause.
+ *
+ * La sonde est comportementale (on demande au SERVEUR ce qu'il fait), pas
+ * déclarative : le process Playwright ne partage pas forcément l'environnement
+ * de la pile. Si aucune des deux lignes ne rend de ligne en base, on échoue
+ * bruyamment avec les deux pistes essayées — jamais de repli silencieux.
+ */
+export async function resolveActingUser(): Promise<{ userId: string; entityId: string }> {
+  const baseURL = base.info().project.use.baseURL ?? 'http://localhost:3000';
+  const sentinelEmail = process.env['E2E_EMAIL'] ?? 'e2e-playwright@nodalai.local';
+
+  let betterAuthAvailable = false;
+  try {
+    const probe = await fetch(`${baseURL}/api/auth/get-session`, {
+      headers: { Origin: baseURL },
+      signal: AbortSignal.timeout(10_000),
+    });
+    betterAuthAvailable = probe.ok;
+  } catch {
+    betterAuthAvailable = false;
+  }
+
+  const { users, entities, eq } = await import('@nodal-agents/db');
+  const { db, close } = makeDbClient();
+  try {
+    const userId = betterAuthAvailable
+      ? (
+          await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, sentinelEmail))
+            .limit(1)
+        )[0]?.id
+      : (
+          await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, LOCAL_TRUST_EMAIL))
+            .limit(1)
+        )[0]?.id;
+
+    if (!userId) {
+      throw new Error(
+        `Aucun utilisateur en base pour la pile de ${baseURL}. ` +
+          `Mode détecté : ${betterAuthAvailable ? 'local-auth' : 'local-trust'}, ` +
+          `adresse cherchée : ${betterAuthAvailable ? sentinelEmail : LOCAL_TRUST_EMAIL}.`,
+      );
+    }
+
+    const entityId = (
+      await db
+        .select({ id: entities.id })
+        .from(entities)
+        .where(eq(entities.userId, userId))
+        .limit(1)
+    )[0]?.id;
+    if (!entityId) throw new Error(`Aucun espace (entity) pour l'utilisateur ${userId}.`);
+
+    return { userId, entityId };
+  } finally {
+    await close();
+  }
+}
+
 // ─── LM Studio + runner guards ────────────────────────────────────────────────
 
 /** Base URL for the local LM Studio server. */
@@ -347,34 +528,28 @@ export async function waitForNoProcessingJobs(timeoutMs = 60_000): Promise<void>
 }
 
 /**
- * Delete all credentials of the given type for the e2e sentinel user.
+ * Supprime les identifiants d'UN type pour l'utilisateur au nom duquel le
+ * dashboard agit.
  *
- * FOR CLEANUP / FIXTURE RESET ONLY — removes stale test artifacts from previous
- * runs so subsequent runs start with a clean slate. The credential type is the
- * OAUTH provider type (e.g. 'google-oauth', 'notion-oauth', 'airtable-oauth').
+ * POUR NETTOYAGE / REMISE À ZÉRO SEULEMENT — jamais pour supprimer un
+ * identifiant qu'un test affirme ensuite avoir été créé par le parcours.
  *
- * Do NOT use this to delete credentials that a test is asserting were created
- * by the flow under test — only call this in beforeAll setup/teardown.
+ * Deux corrections ici, toutes deux silencieuses jusqu'à la mesure nocturne :
+ *  - le propriétaire était le compte sentinelle en dur, donc en local-trust la
+ *    fonction ne trouvait personne et ne nettoyait RIEN (`return` muet) ;
+ *  - le filtre sur le type avait été retiré volontairement, ce qui faisait de
+ *    ce nettoyage une purge de TOUS les identifiants du propriétaire. Sur la
+ *    machine d'un développeur en local-trust, c'est son vrai compte Google que
+ *    `beforeAll` effaçait. Le filtre est rétabli : il suffit au besoin réel.
  */
-export async function cleanCredentialsByType(
-  type: CredentialType,
-  ownerEmail: string = 'e2e-playwright@nodalai.local',
-): Promise<void> {
-  const { credentials, users, eq } = await import('@nodal-agents/db');
+export async function cleanCredentialsByType(type: CredentialType): Promise<void> {
+  const { credentials, eq, and } = await import('@nodal-agents/db');
+  const { userId } = await resolveActingUser();
   const { db, close } = makeDbClient();
   try {
-    // Look up the user id by email.
-    const userRows = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, ownerEmail))
-      .limit(1);
-    if (!userRows[0]) return; // User doesn't exist yet — nothing to clean.
-    const userId = userRows[0].id;
-    await db.delete(credentials).where(eq(credentials.ownerUserId, userId));
-    // Note: credentials.type filter omitted intentionally — clean ALL types for this user
-    // to avoid stale credentials from any provider interfering with the test run.
-    void type; // type param kept for API clarity / future narrowing
+    await db
+      .delete(credentials)
+      .where(and(eq(credentials.ownerUserId, userId), eq(credentials.type, type)));
   } finally {
     await close();
   }
