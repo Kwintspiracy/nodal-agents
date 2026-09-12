@@ -37,6 +37,8 @@ export const EXPLICATIONS = {
 <li><b>Fait</b> — issue fermée, PR mergée. Borné aux plus récents.</li>
 <li><b>Abandonné</b> — une PR fermée sans être mergée.</li>
 </ul>
+<p>La barre de gauche suit le même ordre que le regard : Chantiers, Capacités, Écarts, Parcours, Mémoire des tests. Ces cinq pages sont celles qu'on pilote, et elles se lisent dans cet ordre.</p>
+<p>Sous la rubrique « Comment ça tourne » se rangent les quatre pages de plomberie : la vue d'ensemble des tests, le banc d'essai, les déclencheurs et l'historique. On les ouvre quand on doute d'un chiffre, pas tous les jours.</p>
 <p>Sur une carte de PR, la pastille CI dit si ses contrôles sont verts, rouges ou en cours. « CI verte » ne veut pas dire « relue » : une PR se merge après relecture ET contrôles verts.</p>`,
       },
       {
