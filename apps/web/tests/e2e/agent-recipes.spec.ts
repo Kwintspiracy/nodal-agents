@@ -41,7 +41,12 @@ test.describe('agent recipes @cap:configurer-agent', () => {
   test('a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules', async ({
     page,
   }) => {
-    const db = makeDbClient();
+    // `makeDbClient()` rend `{ db, close }`, pas le handle Drizzle. Pris pour
+    // le handle, TOUTE requête de ce parcours échouait — et l'échec visible
+    // était celui du `finally` (« db.delete is not a function »), qui masquait
+    // le vrai premier `db.select is not a function`. Le pool restait aussi
+    // ouvert : Playwright ne rendait la main qu'au timeout.
+    const { db, close } = makeDbClient();
     const suffix = testSlugSuffix();
     const slug = `code-reviewer-${suffix}`;
     const name = `Code reviewer ${suffix}`;
@@ -148,6 +153,7 @@ test.describe('agent recipes @cap:configurer-agent', () => {
       expect(withSuffix).toHaveLength(1);
     } finally {
       await db.delete(agents).where(eq(agents.slug, slug));
+      await close();
     }
   });
 
