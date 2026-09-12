@@ -61,45 +61,51 @@ export const EXPLICATIONS = {
   capacites: {
     titre: 'Ce que le produit sait faire',
     enBref:
-      "La seule page qui parle du PRODUIT et non du code : une ligne par chose qu'un utilisateur croit pouvoir faire (créer un agent, connecter Notion, approuver une action…), et ce qui le prouve. Une capacité sans test qui la prouve n'est qu'une promesse.",
+      "La seule page qui parle du PRODUIT et non du code : une ligne par chose qu'un utilisateur croit pouvoir faire (créer un agent, connecter Notion, approuver une action…), et ce qui le prouve — à deux niveaux, l'écran et le moteur. Elle ne rend pas un verdict : elle dit quelles preuves existent et ce que la dernière mesure en a dit.",
     parties: [
       {
         titre: 'À quoi ça sert',
-        texte: `<p>« <code>apps/web</code> est couvert à 78 % » ne répond à aucune question qu'on se pose vraiment. « Un utilisateur peut-il connecter Notion ce matin, et qu'est-ce qui le montre ? » — si. Cette page relie chaque capacité du produit aux tests qui la prouvent, et dit dans quel état est cette preuve.</p>
+        texte: `<p>« <code>apps/web</code> est couvert à 78 % » ne répond à aucune question qu'on se pose vraiment. « Un utilisateur peut-il connecter Notion ce matin, et qu'est-ce qui le montre ? » — si. Cette page relie chaque capacité du produit aux tests qui la prouvent.</p>
+<p>Elle rendait un mot jusqu'au 12/09 — « prouvée », « cassée » — et ce mot mentait par omission. « Donner des outils » s'affichait <i>prouvée</i> parce que trois parcours de NAVIGATEUR passaient ; les tests qui prouvent la promesse (un agent ne peut appeler que les outils qu'on lui a donnés) n'étaient étiquetés nulle part. Et <i>cassée</i> ne disait pas si c'était le produit ou le navigateur qui avait lâché.</p>
 <p>C'est ce qu'un responsable produit appelle une <i>matrice de traçabilité</i> : le lien entre ce qu'on promet et ce qu'on vérifie. La plupart des équipes ne l'ont pas, et découvrent une promesse rompue quand un utilisateur s'en plaint.</p>`,
       },
       {
         titre: 'Comment le lire',
-        texte: `<p>Quatre états, du pire au meilleur :</p>
+        texte: `<p>Deux colonnes par capacité, et elles ne prouvent pas la même chose :</p>
 <ul>
-<li><b>Cassée</b> — un test qui la prouve ÉCHOUE. Ce n'est pas une ligne non couverte : c'est quelque chose qu'un utilisateur croit pouvoir faire et qui ne marche pas. C'est la ligne la plus grave du portail.</li>
-<li><b>La preuve dort</b> — un test la revendique mais n'a pas tourné (ignoré, ou jamais joué par aucune CI). La preuve existe et personne ne la regarde.</li>
-<li><b>Jamais prouvée</b> — aucun test ne la revendique. C'est la liste de ce qu'on croit livré sans en avoir la preuve. Elle est censée rétrécir.</li>
-<li><b>Prouvée</b> — au moins un test la revendique et passe.</li>
+<li><b>Écran</b> — un parcours dans un vrai navigateur, ou un test de composant. Il prouve que les boutons existent, qu'ils s'enchaînent, et que la page affiche ce qu'il faut. Il ne prouve PAS que quoi que ce soit se passe derrière : un écran peut être vert devant un moteur débranché.</li>
+<li><b>Moteur</b> — un test du runner, des outils, de l'orchestration ou de la base. Il prouve que la chose promise EST FAITE : que l'outil hors liste est refusé, que la mémoire est relue, que l'approbation bloque vraiment. Il ne prouve PAS qu'un utilisateur sait y arriver : un moteur parfait derrière un bouton introuvable ne sert à personne.</li>
 </ul>
-<p>La colonne « Ce qui la prouve » nomme les tests. Cliquer une capacité devrait un jour ouvrir ses tests ; aujourd'hui elle les liste.</p>`,
+<p>D'où la règle : <b>une capacité n'est vraiment vérifiée que si les deux existent et passent</b>. Un seul niveau vert est une moitié de réponse, et la page le dit en toutes lettres plutôt que de l'arrondir.</p>
+<p>Dans chaque colonne, un résultat et rien d'autre : <b>passé</b>, <b>échoué</b>, <b>instable</b> (vert et rouge selon les jours), <b>ignoré</b> (quelqu'un l'a sauté, on peut le rouvrir), <b>jamais joué</b> (le test existe, aucune exécution ne l'a atteint), <b>non testé</b> (personne n'a écrit ce niveau). Sous le résultat, les tests qui le portent ; au-delà de trois, le reste se déplie.</p>
+<p><b>Le rouge n'apparaît que sur une preuve qui a ÉCHOUÉ.</b> Une absence est grise, et elle est dite : la peindre en rouge enverrait chercher une panne là où personne n'a écrit de test.</p>
+<p>Sous le nom de la capacité, une phrase résume la ligne — « écran passé · moteur non testé ». C'est deux faits, jamais un verdict.</p>`,
       },
       {
         titre: "D'où ça vient",
         texte: `<p>Le registre des capacités est le fichier <code>apps/qa/capacites.mjs</code> — 24 lignes, chacune avec la question que l'utilisateur se pose. Il est DÉRIVÉ des parcours et des écrans réels, jamais imaginé.</p>
-<p>Un test dit quelle capacité il prouve en écrivant <code>@cap:&lt;slug&gt;</code> dans son titre. Posée sur un <code>describe</code>, l'étiquette vaut pour tous ses cas. Le portail lit les TITRES des tests versionnés (jamais un commentaire, jamais une chaîne), puis croise avec les résultats de la dernière mesure pour dire si la preuve a tourné, et comment.</p>`,
+<p>Un test dit ce qu'il prouve, et à quel niveau, en écrivant <code>@cap:&lt;slug&gt;/ecran</code> ou <code>@cap:&lt;slug&gt;/moteur</code> dans son titre. Posée sur un <code>describe</code>, l'étiquette vaut pour tous ses cas. Le portail lit les TITRES des tests versionnés (jamais un commentaire, jamais une chaîne), puis croise avec les résultats de la dernière mesure pour dire si la preuve a tourné, et comment.</p>
+<p>Une étiquette écrite sans niveau (l'ancienne forme, <code>@cap:&lt;slug&gt;</code>) est encore lue, mais elle ne compte pour aucune des deux colonnes : la ranger d'office dans « écran » peindrait en vert un moteur que personne n'a testé. Elle est affichée à part, sous la ligne, et la porte la signale — c'est temporaire.</p>
+<p>Quand une capacité n'a aucun test moteur, le registre porte en une phrase ce qu'un tel test <i>devrait</i> vérifier. C'est le plan de travail, écrit là où il se lit.</p>`,
       },
       {
         titre: 'Quand agir',
-        texte: `<p>Une capacité <b>cassée</b> passe avant tout le reste : c'est un utilisateur qui ne peut pas faire ce qu'on lui a promis. Une capacité <b>jamais prouvée</b> est un test à écrire — ou une promesse à retirer du registre si elle n'existe plus.</p>
-<p>La porte <code>pnpm capacites:check</code> tourne sur chaque PR et refuse deux choses : une étiquette qui ne désigne aucune capacité (une faute de frappe, un slug renommé), et une capacité exigée que plus aucun test ne revendique (le test supprimé qui emporte la preuve avec lui). Elle ne juge aucun résultat — ça, c'est la mesure nocturne.</p>`,
+        texte: `<p>Une <b>preuve échouée</b> passe avant tout le reste, et le niveau dit quoi chercher : un ÉCRAN tombé, c'est le parcours qui ne s'enchaîne plus — souvent un sélecteur, parfois l'environnement du navigateur ; un MOTEUR tombé, c'est la chose promise qui n'est plus faite, et là un utilisateur est vraiment touché.</p>
+<p>Une capacité <b>sans preuve moteur</b> est le trou que l'ancien mot cachait : on vérifie la façade tous les jours sans jamais vérifier ce qu'il y a derrière. Ce n'est pas une panne, c'est un test à écrire. Une capacité <b>sans aucune preuve</b> est une promesse à prouver — ou à retirer du registre si elle n'existe plus.</p>
+<p>La porte <code>pnpm capacites:check</code> tourne sur chaque PR et refuse deux choses : une étiquette qui ne désigne aucune capacité (une faute de frappe, un slug renommé), et une capacité exigée que plus aucun test ne revendique. Elle SIGNALE sans bloquer une étiquette sans niveau. Elle ne juge aucun résultat — ça, c'est la mesure nocturne.</p>`,
       },
       {
         titre: 'Ce que ça ne dit pas',
-        texte: `<p>Qu'un test qui passe prouve BIEN la capacité. Un test peut porter l'étiquette et ne vérifier qu'un détail. La qualité de la preuve reste une question de relecture, pas de portail.</p>
+        texte: `<p>Qu'un test qui passe prouve BIEN la capacité. <b>Un test vert vérifie ce que ce test vérifie, pas la promesse entière.</b> Un parcours d'écran peut porter l'étiquette et ne cliquer qu'un bouton ; un test moteur peut vérifier une fonction et manquer le chemin par lequel le produit l'appelle. Deux niveaux verts réduisent le mensonge, ils ne le suppriment pas : la qualité d'une preuve reste une question de relecture, pas de portail.</p>
+<p>Elle ne dit pas non plus que les deux niveaux se valent. Ils répondent à deux questions différentes, et aucune ne remplace l'autre.</p>
 <p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
       },
     ],
     blocs: {
       compteurs:
-        "Les quatre compteurs se lisent de droite à gauche : « Cassées » d'abord — c'est ce qui fait mal à un utilisateur aujourd'hui —, puis ce qui dort, puis ce qu'on n'a jamais prouvé.",
+        "Chaque carte dit un FAIT, pas un verdict. « Preuves échouées » est la seule qui parle d'une panne ; les trois autres comptent des preuves qui n'ont jamais été écrites — un plan de travail, pas une alarme.",
       registre:
-        "Une ligne par capacité, groupée par domaine du produit. « Ce qui la prouve » nomme les tests étiquetés ; l'état vient de leur dernier résultat mesuré.",
+        "Une ligne par capacité, groupée par domaine du produit. Deux colonnes : ce que l'ÉCRAN a dit, ce que le MOTEUR a dit. Sous chaque résultat, les tests qui le portent.",
     },
   },
 

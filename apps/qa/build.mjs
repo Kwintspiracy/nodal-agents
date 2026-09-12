@@ -11,7 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe, verdictDuBanc, tendance } from './lib.mjs';
+import { ecartsDe, verdictDuBanc, tendance, MOT_ETAT } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -501,15 +501,28 @@ function vueCi() {
 
 // La seule vue qui parle du PRODUIT. Toutes les autres parlent du dépôt :
 // « @nodal-agents/web à 78 % » ne dit rien à personne. Ici la ligne est une
-// phrase qu'un humain reconnaît, et la colonne qui compte est la dernière —
-// celle de ce que personne n'a jamais prouvé.
-const PASTILLE_CAPACITE = {
-  prouvée: 'ok',
-  rouge: 'ko',
+// phrase qu'un humain reconnaît, et elle ne rend plus un VERDICT.
+//
+// Elle en rendait un jusqu'au 12/09 — « prouvée », « cassée » — et Quentin a
+// posé les deux questions auxquelles ce mot ne répondait pas : « quand c'est
+// vert, ça veut dire que le runner fonctionne, ou juste que cocher les boutons
+// fonctionne ? Et quand c'est rouge, c'est le test ou les boutons ? ». Deux
+// colonnes, deux faits : ce que l'ÉCRAN a dit, ce que le MOTEUR a dit.
+//
+// Le rouge n'apparaît que sur une preuve qui a ÉCHOUÉ. Une absence est grise et
+// DITE — la peindre en rouge enverrait chercher une panne là où personne n'a
+// écrit de test, et la peindre en vert serait le mensonge qu'on répare ici.
+const PASTILLE_NIVEAU = {
+  passee: 'ok',
+  echouee: 'ko',
   instable: 'moyen',
-  'non jouée': 'moyen',
-  'jamais prouvée': 'inconnu',
+  ignoree: 'moyen',
+  'jamais jouee': 'moyen',
+  absente: 'inconnu',
 };
+
+/** Au-delà, la liste des tests devient un mur : le reste se replie. */
+const TESTS_VISIBLES = 3;
 
 function vueCapacites() {
   const reg = s.capacites?.registre ?? [];
@@ -518,10 +531,12 @@ function vueCapacites() {
       <p class="chapo">Aucun registre dans cette collecte.</p></section>`;
   }
 
-  const prouvees = reg.filter((c) => c.etat === 'prouvée').length;
-  const jamais = reg.filter((c) => c.etat === 'jamais prouvée');
-  const dorment = reg.filter((c) => c.etat === 'non jouée');
-  const cassees = reg.filter((c) => c.etat === 'rouge' || c.etat === 'instable');
+  const tombees = reg.filter((c) => c.ecran.etat === 'echouee' || c.moteur.etat === 'echouee');
+  const sansMoteur = reg.filter((c) => c.moteur.etat === 'absente');
+  const sansEcran = reg.filter((c) => c.ecran.etat === 'absente');
+  const rien = reg.filter(
+    (c) => c.ecran.etat === 'absente' && c.moteur.etat === 'absente' && c.nonDit.length === 0,
+  );
 
   const domaines = [];
   for (const c of reg) {
@@ -530,58 +545,108 @@ function vueCapacites() {
     else domaines.push({ nom: c.domaine, capacites: [c] });
   }
 
+  /** Le nom court d'un test : le fichier, et le titre du cas quand on l'a. */
+  const nomsDe = (preuves) => [
+    ...new Set(
+      preuves.map(
+        (x) =>
+          x.titre ||
+          String(x.origine ?? '?')
+            .split('/')
+            .pop(),
+      ),
+    ),
+  ];
+
+  const cellule = (n) => {
+    const mot = MOT_ETAT[n.etat];
+    const cls = PASTILLE_NIVEAU[n.etat] ?? 'inconnu';
+    if (n.etat === 'absente') {
+      return `<td><span class="pastille pastille--${cls}">${esc(mot)}</span>
+        <div class="dim petit">aucun test à ce niveau</div></td>`;
+    }
+    const noms = nomsDe(n.preuves);
+    const tete = noms.slice(0, TESTS_VISIBLES);
+    const reste = noms.slice(TESTS_VISIBLES);
+    // Seulement quand elle TOMBE : sur une preuve verte, le lien n'emmène
+    // nulle part d'utile et ne ferait que du bruit.
+    const cause = n.etat === 'echouee' ? ` ${lienRun(s.execution?.url)}` : '';
+    return `<td><span class="pastille pastille--${cls}">${esc(mot)}</span>${cause}
+      <div class="preuves">${tete.map((t) => `<div>${esc(t)}</div>`).join('')}${
+        reste.length > 0
+          ? `<details><summary>${reste.length} autre${reste.length > 1 ? 's' : ''}</summary>${reste
+              .map((t) => `<div>${esc(t)}</div>`)
+              .join('')}</details>`
+          : ''
+      }</div></td>`;
+  };
+
   const lignes = (caps) =>
     caps
-      .map((c) => {
-        const cls = PASTILLE_CAPACITE[c.etat] ?? 'inconnu';
-        const preuves =
-          c.preuves.length === 0
-            ? '<span class="dim">personne</span>'
-            : [...new Set(c.preuves.map((p) => p.origine.split('/').pop()))]
-                .map((f) => `<span class="jeton">${esc(f)}</span>`)
-                .join(' ');
-        // Seulement quand elle TOMBE : sur une capacité verte, le lien
-        // n'emmène nulle part d'utile et ne ferait que du bruit.
-        const cause = c.etat === 'rouge' || c.etat === 'instable' ? lienRun(s.execution?.url) : '';
-        return `<tr>
+      .map(
+        (c) => `<tr>
         <td><b>${esc(c.nom)}</b>${c.exigee ? ' <span class="jeton">exigée</span>' : ''}<br>
-          <span class="intention">${esc(c.question)}</span></td>
-        <td><span class="pastille pastille--${cls}">${esc(c.etat)}</span></td>
-        <td>${preuves} ${cause}</td>
-      </tr>`;
-      })
+          <span class="intention">${esc(c.question)}</span>
+          <div class="phrase-cap">${esc(c.phrase)}</div>
+          ${
+            c.nonDit.length > 0
+              ? `<div class="dim petit preuves"><details><summary>${
+                  c.nonDit.length
+                } étiquette(s) sans niveau</summary>${nomsDe(c.nonDit)
+                  .map((t) => `<div>${esc(t)}</div>`)
+                  .join('')}</details></div>`
+              : ''
+          }
+          ${
+            c.ecran.etat === 'absente' && c.ecranAttendu
+              ? `<div class="dim petit">Ce qu'un test d'écran devrait vérifier : ${esc(
+                  c.ecranAttendu,
+                )}</div>`
+              : ''
+          }
+          ${
+            c.moteur.etat === 'absente' && c.preuveAttendue
+              ? `<div class="dim petit">Ce qu'un test moteur devrait vérifier : ${esc(
+                  c.preuveAttendue,
+                )}</div>`
+              : ''
+          }</td>
+        ${cellule(c.ecran)}
+        ${cellule(c.moteur)}
+      </tr>`,
+      )
       .join('');
 
   return `
 <section id="capacites" class="vue">
   ${entete('capacites', 'Ce que le produit sait faire')}
-  <p class="chapo">Une ligne par capacité, et ce qui la prouve. La question n'est pas « quel pourcentage de <code>apps/web</code> est couvert » mais « un utilisateur peut-il connecter Notion ce matin, et qu'est-ce qui le montre ».</p>
+  <p class="chapo">Une ligne par capacité, et ce qui la prouve — à deux niveaux. L'<b>écran</b> dit que les boutons s'enchaînent ; le <b>moteur</b> dit que la chose est faite derrière. Une capacité n'est vraiment vérifiée que si les deux existent et passent.</p>
 
   ${repere('capacites', 'compteurs')}
   <div class="cartes">
-    <article class="carte carte--phare ${jamais.length > 0 ? 'carte--alerte' : ''}">
-      <h3>Jamais prouvées</h3>
-      <p class="chiffre">${jamais.length}</p>
+    <article class="carte carte--phare ${tombees.length > 0 ? 'carte--alerte' : ''}">
+      <h3>Preuves échouées</h3>
+      <p class="chiffre">${tombees.length}</p>
       <p class="sous">sur ${reg.length} capacités nommées</p>
-      <p class="avertissement">Aucun test ne les revendique. C'est la liste de ce qu'on croit livré.</p>
+      <p class="avertissement">Un test qui les prouvait a échoué. C'est la seule carte qui parle d'une panne.</p>
+    </article>
+
+    <article class="carte ${sansMoteur.length > 0 ? 'carte--alerte' : ''}">
+      <h3>Sans preuve moteur</h3>
+      <p class="chiffre">${sansMoteur.length}</p>
+      <p class="sous">la façade est peut-être vérifiée, le moteur non</p>
     </article>
 
     <article class="carte">
-      <h3>Prouvées</h3>
-      <p class="chiffre">${prouvees}</p>
-      <p class="sous">un test vert les tient</p>
+      <h3>Sans preuve écran</h3>
+      <p class="chiffre">${sansEcran.length}</p>
+      <p class="sous">rien ne dit qu'un utilisateur y arrive par l'interface</p>
     </article>
 
-    <article class="carte ${dorment.length > 0 ? 'carte--alerte' : ''}">
-      <h3>La preuve dort</h3>
-      <p class="chiffre">${dorment.length}</p>
-      <p class="sous">un test les revendique, il n'a pas tourné</p>
-    </article>
-
-    <article class="carte ${cassees.length > 0 ? 'carte--alerte' : ''}">
-      <h3>Cassées</h3>
-      <p class="chiffre">${cassees.length}</p>
-      <p class="sous">le test qui les tient échoue</p>
+    <article class="carte">
+      <h3>Aucune preuve</h3>
+      <p class="chiffre">${rien.length}</p>
+      <p class="sous">ni écran ni moteur — ce qu'on croit livré</p>
     </article>
   </div>
   ${repere('capacites', 'registre')}
@@ -590,14 +655,14 @@ function vueCapacites() {
     .map(
       (d) => `
   <h3 class="sous-titre">${esc(d.nom)} <span class="compte">${d.capacites.length}</span></h3>
-  <table class="tableau">
-    <thead><tr><th>Capacité</th><th>État</th><th>Ce qui la prouve</th></tr></thead>
+  <table class="tableau tableau--capacites">
+    <thead><tr><th>Capacité</th><th>Écran</th><th>Moteur</th></tr></thead>
     <tbody>${lignes(d.capacites)}</tbody>
   </table>`,
     )
     .join('')}
 
-  <p class="note-section">L'étiquette <code>@cap:</code> se pose dans le titre d'un <code>describe</code> ou d'un test, et vaut pour tous les cas qu'il contient. <code>node apps/qa/porte.mjs</code> refuse une étiquette qui ne désigne rien, et une capacité exigée que plus aucun test ne revendique.</p>
+  <p class="note-section">L'étiquette <code>@cap:&lt;slug&gt;/ecran</code> ou <code>@cap:&lt;slug&gt;/moteur</code> se pose dans le titre d'un <code>describe</code> ou d'un test, et vaut pour tous les cas qu'il contient. <code>node apps/qa/porte.mjs</code> refuse une étiquette qui ne désigne rien, et une capacité exigée que plus aucun test ne revendique ; une étiquette sans niveau est signalée sans bloquer, le temps de la transition.</p>
 </section>`;
 }
 
@@ -808,9 +873,9 @@ function vueHistorique() {
       libelle: 'couverture des lignes en pourcentage',
       fmt: (v) => `${v.toFixed(1)} %`,
     })}
-    ${courbe(tendance(historique, 'capacitesProuvees', f), {
-      titre: 'Capacités prouvées',
-      libelle: 'capacités du produit prouvées par un test joué',
+    ${courbe(tendance(historique, 'capacitesVerifiees', f), {
+      titre: 'Capacités vérifiées aux deux niveaux',
+      libelle: 'capacités dont la preuve écran ET la preuve moteur sont passées',
       fmt: (v) => `${Math.round(v)}`,
     })}
     ${courbe(tendance(historique, 'testsCasses', f), {
@@ -1000,6 +1065,13 @@ tr:last-child td{border-bottom:0}
 .pastille--ko{background:var(--ko-doux);color:var(--ko)}
 .pastille--inconnu{background:var(--panneau2);color:var(--inconnu)}
 .pastille--moyen{background:var(--moyen-doux);color:var(--moyen)}
+.petit{font-size:11px;margin-top:3px}
+.phrase-cap{font-size:11.5px;color:var(--encre2);margin-top:4px;font-variant-numeric:tabular-nums}
+.tableau--capacites th:nth-child(2),.tableau--capacites th:nth-child(3),
+.tableau--capacites td:nth-child(2),.tableau--capacites td:nth-child(3){width:23%;vertical-align:top}
+.preuves{font-size:11px;color:var(--encre3);margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
+.preuves details{margin-top:2px}
+.preuves summary{cursor:pointer;color:var(--encre3)}
 .jeton{display:inline-block;font-size:11px;padding:1px 7px;border:1px solid var(--regle);
   border-radius:99px;color:var(--encre3);white-space:nowrap}
 
@@ -1141,7 +1213,11 @@ td.dette{color:var(--ko);font-weight:600}
     </div>
     <nav id="nav">
       <a href="#chantiers" class="actif">Chantiers <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Fait').length}</b></a>
-      <a href="#capacites">Capacités <b>${(s.capacites?.registre ?? []).filter((c) => c.etat === 'jamais prouvée').length}</b></a>
+      <a href="#capacites">Capacités <b>${
+        (s.capacites?.registre ?? []).filter(
+          (c) => c.ecran?.etat === 'echouee' || c.moteur?.etat === 'echouee',
+        ).length
+      }</b></a>
       <a href="#ecarts">Écarts <b>${ecarts().length}</b></a>
       <a href="#parcours">Parcours <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
       <a href="#memoire">Mémoire des tests <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
