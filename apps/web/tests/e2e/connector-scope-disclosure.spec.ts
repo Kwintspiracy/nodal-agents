@@ -19,8 +19,8 @@
  * are anchored on ROLES and TEXT, never on utility classes.
  */
 
-import { test, expect, type Page } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import { test, expect } from '@playwright/test';
+import { requireLiveStack, openConnectorInstallDialog } from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -28,33 +28,11 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 60_000 });
 
-/** Open a connector's install dialog from the marketplace grid. */
-async function openConnectorDialog(page: Page, label: string): Promise<void> {
-  await page.goto('/connectors');
-  await page.waitForLoadState('networkidle', { timeout: 15_000 });
-
-  // The catalogue lives behind the "Library" tab — the page opens on
-  // "Installed", where none of these cards exist yet. Measured, not assumed:
-  // the freshly loaded page contains ZERO <h3>, so any locator hunting for a
-  // card heading finds nothing and reports the connector as missing. That is
-  // the real reason oauth-flow.spec.ts has been claiming Google Drive
-  // disappeared (its stale `.rounded-xl` filter was only the second problem).
-  // NOT /^library$/ — the DS Tabs primitive folds a count into the tab label,
-  // so the accessible name is "Library · 15" and grows with the catalogue. An
-  // anchored match would break the day a connector is added.
-  await page.getByRole('tab', { name: /library/i }).click();
-
-  const card = page
-    .locator('div')
-    .filter({ has: page.getByRole('heading', { name: label, level: 3 }) })
-    .last();
-  await expect(card, `no marketplace card for ${label}`).toBeVisible({ timeout: 15_000 });
-
-  // "Install" on a fresh connector, "Add account" once one exists — the same
-  // button either way (MarketplaceCardActions).
-  await card.getByRole('button', { name: /^(install|add account)$/i }).click();
-  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
-}
+// Les trois gestes de la page Connecteurs (onglet « Library », carte par son
+// ancre, bouton « Install » / « Add account ») vivent désormais dans
+// `helpers.ts` : ce fichier les avait écrits le premier, huit autres parcours
+// en avaient besoin.
+const openConnectorDialog = openConnectorInstallDialog;
 
 test.describe('Connector scope disclosure', () => {
   test('Google Drive states it reaches the ENTIRE Drive', async ({ page }) => {
