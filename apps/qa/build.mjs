@@ -211,7 +211,7 @@ function vueEnsemble() {
 
   return `
 <section id="vue" class="vue">
-  ${entete('vue', "Tests — vue d'ensemble")}
+  ${entete('vue', "Tests, vue d'ensemble")}
   <p class="chapo">Ce que le dépôt sait de ses propres tests, mesuré — et ce qu'il ne sait pas encore, dit comme tel.</p>
 
   ${repere('vue', 'cartes')}
@@ -842,6 +842,11 @@ nav a{display:flex;align-items:center;justify-content:space-between;gap:8px;
 nav a:hover{background:rgba(255,255,255,.06);color:#fff}
 nav a.actif{background:var(--accent);color:#fff;font-weight:600}
 nav a b{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;opacity:.8}
+nav .rubrique{margin:14px 0 2px;padding:0 11px;font-family:"JetBrains Mono",monospace;
+  font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#6d7679}
+nav a.discret{font-size:12.5px;color:#9aa3a7}
+nav a.discret:hover{color:#fff}
+nav a.discret.actif{color:#fff}
 .rail footer{margin-top:auto;font-family:"JetBrains Mono",monospace;font-size:10.5px;color:#6d7679;line-height:1.7}
 .contenu{padding:34px 34px 90px;max-width:1220px}
 
@@ -1037,13 +1042,14 @@ td.dette{color:var(--ko);font-weight:600}
     <nav id="nav">
       <a href="#chantiers" class="actif">Chantiers <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Fait').length}</b></a>
       <a href="#capacites">Capacités <b>${(s.capacites?.registre ?? []).filter((c) => c.etat === 'jamais prouvée').length}</b></a>
-      <a href="#vue">Tests — vue d'ensemble</a>
       <a href="#ecarts">Écarts <b>${ecarts().length}</b></a>
       <a href="#parcours">Parcours <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
-      <a href="#banc">Banc d'essai <b>${s.banc.sections.length}</b></a>
-      <a href="#ci">Déclencheurs <b>${s.ci.length}</b></a>
       <a href="#memoire">Mémoire des tests <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
-      <a href="#historique">Historique <b>${historique.length}</b></a>
+      <p class="rubrique">Comment ça tourne</p>
+      <a href="#vue" class="discret">Tests, vue d'ensemble</a>
+      <a href="#banc" class="discret">Banc d'essai <b>${s.banc.sections.length}</b></a>
+      <a href="#ci" class="discret">Déclencheurs <b>${s.ci.length}</b></a>
+      <a href="#historique" class="discret">Historique <b>${historique.length}</b></a>
     </nav>
     <footer>
       ${esc(s.branche ?? '')}<br>
