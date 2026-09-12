@@ -14,32 +14,19 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, makeDbClient, pollDb } from './helpers.ts';
+import { requireLiveStack, makeDbClient, pollDb, resolveActingUser } from './helpers.ts';
 
-const E2E_EMAIL = 'e2e-playwright@nodalai.local';
-
+/**
+ * L'espace au nom duquel le dashboard agit — résolu par `resolveActingUser`,
+ * qui demande son mode au serveur au lieu de supposer le compte sentinelle.
+ * Cette fonction cherchait `e2e-playwright@nodalai.local` en dur : en
+ * local-trust (le mode par défaut, celui de la mesure nocturne) ce compte
+ * n'existe pas, et le parcours mourait sur « E2E user
+ * e2e-playwright@nodalai.local not found in DB ».
+ */
 async function resolveE2eEntityId(): Promise<string> {
-  const { users, entities, eq } = await import('@nodal-agents/db');
-  const { db, close } = makeDbClient();
-  try {
-    const userRows = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, E2E_EMAIL))
-      .limit(1);
-    const userId = userRows[0]?.id;
-    if (!userId) throw new Error(`E2E user ${E2E_EMAIL} not found in DB`);
-    const entityRows = await db
-      .select({ id: entities.id })
-      .from(entities)
-      .where(eq(entities.userId, userId))
-      .limit(1);
-    const entityId = entityRows[0]?.id;
-    if (!entityId) throw new Error(`No entity found for e2e user ${E2E_EMAIL}`);
-    return entityId;
-  } finally {
-    await close();
-  }
+  const { entityId } = await resolveActingUser();
+  return entityId;
 }
 
 /** Seed a connected mcp_servers row (no live connection needed). */
@@ -89,17 +76,21 @@ async function deleteTestMcpServer(id: string): Promise<void> {
 
 let testMcpServerId: string;
 
+// Le second argument de `beforeAll`/`afterAll` est un TITRE, pas un budget de
+// temps : le `15_000` passé ici n'a jamais rien allongé, et TypeScript le
+// refusait (TS2345) sans que personne le voie — `tsconfig.json` exclut
+// `tests/`. Retiré plutôt que corrigé : le budget par défaut suffit.
 test.beforeAll(async () => {
   await requireLiveStack();
   const entityId = await resolveE2eEntityId();
   testMcpServerId = await insertTestMcpServer(entityId);
   // Settle so the force-dynamic /mcp page reads the seeded row.
   await pollDb(async () => true, { timeoutMs: 1000, intervalMs: 200 });
-}, 15_000);
+});
 
 test.afterAll(async () => {
   if (testMcpServerId) await deleteTestMcpServer(testMcpServerId);
-}, 10_000);
+});
 
 test.describe('MCP Connectors page', () => {
   test.describe.configure({ timeout: 30_000 });
