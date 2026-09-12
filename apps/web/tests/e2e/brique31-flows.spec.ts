@@ -14,34 +14,19 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, testSlugSuffix, makeDbClient } from './helpers.ts';
-
-// ─── E2E sentinel user ────────────────────────────────────────────────────────
-const E2E_EMAIL = 'e2e-playwright@nodalai.local';
+import { requireLiveStack, testSlugSuffix, makeDbClient, resolveActingUser } from './helpers.ts';
 
 /**
- * Resolve the e2e user's entity ID from the DB.
- * Returns null if the user doesn't exist yet (global-setup hasn't run).
+ * L'espace au nom duquel le dashboard agit.
+ *
+ * Cherchait `e2e-playwright@nodalai.local` en dur, donc rendait `null` en
+ * local-trust (le mode par défaut) : les cas C, D et E se déclaraient
+ * « ignorés, espace e2e introuvable » sur toutes les mesures nocturnes, pour
+ * une raison qui n'était pas la bonne.
  */
 async function getE2eEntityId(): Promise<string | null> {
-  const { users, entities, eq } = await import('@nodal-agents/db');
-  const { db, close } = makeDbClient();
-  try {
-    const userRows = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, E2E_EMAIL))
-      .limit(1);
-    if (!userRows[0]) return null;
-    const entityRows = await db
-      .select({ id: entities.id })
-      .from(entities)
-      .where(eq(entities.userId, userRows[0].id))
-      .limit(1);
-    return entityRows[0]?.id ?? null;
-  } finally {
-    await close();
-  }
+  const { entityId } = await resolveActingUser();
+  return entityId;
 }
 
 // ─── Suite guards ─────────────────────────────────────────────────────────────
@@ -56,65 +41,48 @@ test.describe('Test A — LLM key add + test connection + save', () => {
   test('navigate to /llm-providers, add a provider, test connection, save, row appears', async ({
     page,
   }) => {
-    // LLM providers moved out of /settings into their own first-class
-    // sidebar entry — the form is rendered by the same `LlmKeysList`
-    // component, just on a new page.
     await page.goto('/llm-providers');
 
-    // Click "+ Add provider" button (inside LlmKeysList)
-    await page.getByRole('button', { name: /add provider/i }).click();
+    // Le bouton de la barre d'outils s'appelle « + New provider ».
+    // « Add provider » est le bouton de SOUMISSION du formulaire, qui n'existe
+    // qu'une fois le formulaire ouvert : le parcours attendait donc, sur une
+    // page au repos, un bouton qui ne pouvait pas y être. Message du 11/09 :
+    //
+    //   TimeoutError: locator.click: Timeout 10000ms exceeded.
+    //   waiting for getByRole('button', { name: /add provider/i })
+    await page.getByRole('button', { name: /new provider/i }).click();
 
-    // The LlmKeyForm is now visible — select provider = anthropic (default)
     const providerSelect = page.locator('#llm-provider');
     await providerSelect.waitFor({ state: 'visible', timeout: 5_000 });
     await providerSelect.selectOption('anthropic');
 
-    // Fill nickname
-    const nickname = `E2E Test Key ${testSlugSuffix()}`;
-    await page.locator('#llm-nickname').fill(nickname);
-
-    // Fill base URL (Anthropic canonical)
     await page.locator('#llm-base-url').fill('https://api.anthropic.com/v1');
-
-    // Fill API key (dummy value — test will fail with a real "fail" badge)
     await page.locator('#llm-api-key').fill('sk-ant-e2e-test-key-placeholder'); // secrets:allow (fake placeholder)
 
-    // Fill default model
-    await page.locator('#llm-default-model').fill('claude-haiku-4-5-20251001');
-
-    // Click "Test connection" — the server action calls the real LLM.
-    // With a dummy key it will return a failure badge; with a real key it returns pass.
-    // Either way, the badge MUST appear within 15s (proving the UI handles both outcomes).
+    // Le verdict du test de connexion, désigné par son ancre. Le parcours le
+    // cherchait par ses classes (`.bg-emerald-500/10` / `.bg-red-500/10`), qui
+    // n'existent plus depuis le passage aux jetons du design system.
     await page.getByRole('button', { name: /test connection/i }).click();
+    const verdict = page.getByTestId('llm-test-result');
+    await expect(verdict).toBeVisible({ timeout: 20_000 });
 
-    // Wait for either success or failure badge to appear
-    const passBadge = page.locator('.bg-emerald-500\\/10');
-    const failBadge = page.locator('.bg-red-500\\/10');
+    // Le verdict dit quelque chose — l'UI sait rendre les deux issues. Avec une
+    // fausse clé c'est un échec, et c'est une réponse valable : ce qui est
+    // prouvé ici, c'est que la chaîne formulaire → action serveur → rendu
+    // fonctionne, pas que la clé est bonne.
+    const state = await verdict.getAttribute('data-state');
+    expect(['pass', 'fail']).toContain(state);
+    expect((await verdict.innerText()).trim().length).toBeGreaterThan(0);
 
-    await Promise.race([
-      passBadge.waitFor({ state: 'visible', timeout: 15_000 }),
-      failBadge.waitFor({ state: 'visible', timeout: 15_000 }),
-    ]);
-
-    // One of the two result badges MUST be visible — proves the flow works end-to-end
-    const passVisible = await passBadge.isVisible().catch(() => false);
-    const failVisible = await failBadge.isVisible().catch(() => false);
-    expect(
-      passVisible || failVisible,
-      'Test result badge should appear after clicking Test connection',
-    ).toBe(true);
-
-    // Selector path used: #llm-provider (select), #llm-nickname, #llm-base-url,
-    // #llm-api-key, #llm-default-model, button[Test connection], .bg-emerald-500/10 or .bg-red-500/10
-    // Network mock: none — calls real testLlmKeyAction server action
-
-    // If test passed (real key env), click Save and assert row appears
-    if (passVisible) {
-      await page.getByRole('button', { name: /add provider/i }).click();
-      await expect(page.getByText(nickname)).toBeVisible({ timeout: 10_000 });
+    const submit = page.getByRole('button', { name: /add provider/i });
+    if (state === 'pass') {
+      await submit.click();
+      await expect(page.getByText(/anthropic/i).first()).toBeVisible({ timeout: 10_000 });
+    } else {
+      // Échec du test → l'enregistrement est refusé. C'est le comportement
+      // voulu (« Test the connection before saving »), et il se vérifie.
+      await expect(submit).toBeDisabled();
     }
-    // If test failed (dummy key) — the save button is disabled. That's correct behavior.
-    // Test A passes in both cases since we asserted the UI responded.
   });
 });
 
@@ -124,83 +92,82 @@ test.describe('Test B — Agent edit picks LLM provider', () => {
   test('change LLM provider dropdown on agent edit → model field updates → save → toast', async ({
     page,
   }) => {
-    // Navigate to /agents and pick the first Edit link
+    // ⚠️ Ce cas visait une page qui n'existe plus. L'éditeur d'agent est
+    // devenu `AgentComposer` à onglets : ni `#agent-llm-key` ni la phrase
+    // « No active LLM providers » n'y figurent (ces deux ancres vivent dans
+    // `AgentForm`, la modale de création). Les DEUX branches du parcours
+    // pointaient donc dans le vide, et c'est la branche de repli qui a rougi :
+    //
+    //   expect(locator).toBeVisible() failed
+    //   Locator: getByText(/no active llm providers/i)
+    //   Error: element(s) not found
+    //
+    // Le réglage vit désormais dans l'onglet « Settings », champ
+    // « LLM provider », et le message de repli dit « No active LLM keys. ».
     await page.goto('/agents');
+    await page.waitForLoadState('networkidle', { timeout: 15_000 });
 
-    const editLinks = page.getByRole('link', { name: /edit/i });
-    const count = await editLinks.count();
-    if (count === 0) {
-      test.skip(true, 'No agents visible for e2e user — create one via smoke test first');
+    const editLinks = page.locator('a[href*="/agents/"][href$="/edit"]');
+    if ((await editLinks.count()) === 0) {
+      test.skip(true, 'Aucun agent sur cette installation — rien à éditer.');
       return;
     }
-
     const href = await editLinks.first().getAttribute('href');
     if (!href) {
-      test.skip(true, 'No agents found with edit links');
+      test.skip(true, "Le premier agent n'expose pas de lien d'édition.");
       return;
     }
 
     await page.goto(href);
     await page.waitForURL(/\/agents\/.*\/edit/, { timeout: 10_000 });
+    const settingsTab = page.getByRole('tab', { name: /^settings/i }).first();
+    await settingsTab.click();
+    await expect(settingsTab).toHaveAttribute('aria-selected', 'true', { timeout: 8_000 });
 
-    // Check whether the LLM key select is rendered (it's hidden when no LLM keys exist)
-    const llmKeySelect = page.locator('#agent-llm-key');
-    const llmKeySelectVisible = await llmKeySelect.isVisible().catch(() => false);
-
-    if (!llmKeySelectVisible) {
-      // No active LLM providers — expected for a fresh e2e entity
-      // Verify that the "No active LLM providers" message is shown instead
-      await expect(page.getByText(/no active llm providers/i)).toBeVisible({ timeout: 3_000 });
-      // Test B passes: the fallback UI renders correctly
+    const noKeys = page.getByText('No active LLM keys.', { exact: false });
+    if (await noKeys.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      // Repli légitime d'une installation sans clé : le produit doit dire où
+      // en ajouter une, pas laisser un menu vide.
+      await expect(page.getByRole('link', { name: /add one/i })).toHaveAttribute(
+        'href',
+        '/llm-providers',
+      );
       return;
     }
 
-    // LLM key select IS visible — test the full provider-switch flow
-    const options = await llmKeySelect.locator('option').all();
-    if (options.length < 2) {
-      // Only one provider — can still verify the model field is non-empty
-      const modelInput = page.locator('#agent-model');
-      await expect(modelInput).toBeVisible({ timeout: 3_000 });
-      const modelValue = await modelInput.inputValue();
-      // Model field must have a value (either from the key's defaultModel or agent.model)
-      expect(
-        modelValue.length,
-        'Model field should be non-empty with one LLM key configured',
-      ).toBeGreaterThan(0);
+    // `Field` rend son libellé en `<label>` FRÈRE du contrôle (pas parent, et
+    // sans `htmlFor`) : on descend donc par le sélecteur de frère adjacent.
+    const providerSelect = page.locator('label:has-text("LLM provider") + div select');
+    await expect(providerSelect).toBeVisible({ timeout: 8_000 });
+
+    const optionValues = await providerSelect
+      .locator('option')
+      .evaluateAll((els) => els.map((e) => (e as HTMLOptionElement).value));
+    expect(optionValues.length).toBeGreaterThan(0);
+
+    // Le modèle est renseigné : menu si le catalogue en connaît, champ libre
+    // sinon — jamais vide, c'est ce que le cas doit prouver.
+    const modelControl = page.locator('label:has-text("Model") + div').first();
+    await expect(modelControl).toBeVisible({ timeout: 8_000 });
+    const modelSelect = modelControl.locator('select').first();
+    const modelValue = (await modelSelect.count())
+      ? await modelSelect.inputValue()
+      : await modelControl.locator('input').first().inputValue();
+    expect(modelValue.trim().length).toBeGreaterThan(0);
+
+    if (optionValues.length < 2) {
+      // Un seul fournisseur : le basculement n'est pas observable, mais le
+      // réglage l'est — et c'est déjà plus que ce que ce cas prouvait.
       return;
     }
 
-    // Multiple providers — test the switch
-    const currentValue = await llmKeySelect.inputValue();
-    const secondOption = options.find(
-      async (o) => (await o.getAttribute('value')) !== currentValue,
-    );
-    const secondValue = secondOption ? await secondOption.getAttribute('value') : null;
+    const current = await providerSelect.inputValue();
+    const other = optionValues.find((v) => v !== current)!;
+    await providerSelect.selectOption(other);
+    await expect(providerSelect).toHaveValue(other);
 
-    if (!secondValue || secondValue === currentValue) {
-      test.skip(true, 'Could not find a different provider option to switch to');
-      return;
-    }
-
-    await llmKeySelect.selectOption(secondValue);
-
-    // After changing provider, model field should update (auto-fill with defaultModel)
-    const modelInput = page.locator('#agent-model');
-    await expect(modelInput).toBeVisible({ timeout: 3_000 });
-    const modelValue = await modelInput.inputValue();
-    expect(
-      modelValue.length,
-      'Model field should be non-empty after provider switch',
-    ).toBeGreaterThan(0);
-
-    // Save the form
     await page.getByRole('button', { name: /save changes/i }).click();
-
-    // Assert toast "Agent updated"
     await expect(page.getByText(/agent updated/i)).toBeVisible({ timeout: 10_000 });
-
-    // Selector path: #agent-llm-key (select), #agent-model (input), button[Save changes]
-    // Sonner toast text: "Agent updated"
   });
 });
 
