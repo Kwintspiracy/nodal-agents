@@ -1,28 +1,41 @@
 /**
- * connector-multi-instance.spec.ts — e2e regression for the multi-instance connectors brique.
+ * connector-multi-instance.spec.ts — régression de la brique multi-instances.
  *
- * Guards that the UNIQUE(entity_id, slug) constraint was dropped on `connectors`
- * and that the UI correctly supports creating two instances of the same api_key
- * connector type.
+ * Garde que la contrainte UNIQUE(entity_id, slug) a bien été levée sur
+ * `connectors` et que l'UI laisse créer DEUX instances du même connecteur
+ * api_key. Connecteur d'essai : `tavily` (api_key, aucun appel externe).
  *
- * Connector under test: `tavily` (api_key, no external verify call)
+ * Le parcours :
+ *  1. Catalogue → « Install » sur Tavily → nom + clé → Connect.
+ *  2. Catalogue à nouveau : la carte porte désormais « Add account », preuve
+ *     que le catalogue ne retire pas un connecteur déjà installé.
+ *  3. Deuxième instance, autre nom, autre clé.
+ *  4. Les DEUX apparaissent dans « Installed ».
+ *  5. Ménage : les deux se suppriment, et ne reviennent pas.
  *
- * Steps:
- *  1. Navigate to /connectors.
- *  2. In the Marketplace, click "+ Add" on Tavily.
- *  3. Fill name="Tavily — perso", apiKey="test-key-1". Submit.
- *  4. Wait for success toast + Active Connectors list update.
- *  5. Click "+ Add" on Tavily again.
- *  6. Fill name="Tavily — boulot", apiKey="test-key-2". Submit.
- *  7. Wait for success toast + Active Connectors list update.
- *  8. Assert BOTH instances appear in Active Connectors by name.
- *  9. (Bonus) Delete both, assert the empty-state message returns.
+ * ⚠️ Il visait l'ancienne page (`<section>` « Marketplace » / « Active
+ * Connectors », bouton « + Add », formulaire DANS la carte). La mesure du
+ * 11/09 le disait mot pour mot :
  *
- * Requires a running Nodal-Agents stack (port 3000). Skipped if not reachable.
+ *   expect(locator).toBeVisible() failed
+ *   Locator: locator('section').filter({ has: getByRole('heading',
+ *     { name: 'Marketplace', level: 2 }) })
+ *   Error: element(s) not found
+ *
+ * Les trois `waitForTimeout(300)` qui rattrapaient les rafraîchissements ont
+ * disparu avec : on attend le toast, qui est le VRAI signal.
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import {
+  requireLiveStack,
+  openConnectorInstallDialog,
+  openInstalledConnectors,
+  installedConnectorRow,
+  removeInstalledConnectorIfPresent,
+  connectorCard,
+  openConnectorLibrary,
+} from './helpers.ts';
 
 const CONNECTOR_LABEL = 'Tavily';
 const INSTANCE_A = 'Tavily — perso';
@@ -36,178 +49,54 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 60_000 });
 
+/** Remplit la modale d'installation api_key et valide. */
+async function connectApiKeyInstance(
+  page: import('@playwright/test').Page,
+  name: string,
+  apiKey: string,
+): Promise<void> {
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.locator('input[name="name"]')).toBeVisible({ timeout: 5_000 });
+  await dialog.locator('input[name="name"]').fill(name);
+  await dialog.locator('input[name="apiKey"]').fill(apiKey);
+  await dialog.getByRole('button', { name: /^connect$/i }).click();
+  await expect(page.getByText(`${name} connected`)).toBeVisible({ timeout: 10_000 });
+  await expect(dialog).not.toBeVisible({ timeout: 5_000 });
+}
+
 test.describe('Connector multi-instance', () => {
   test('can create two instances of the same api_key connector and both appear in Active Connectors', async ({
     page,
   }) => {
-    // ── 0. Pre-cleanup: delete any leftover instances from a prior run ──────────
-    await page.goto('/connectors');
-    await page.waitForLoadState('networkidle');
+    // ── 0. Restes d'une course précédente ───────────────────────────────────
+    await removeInstalledConnectorIfPresent(page, INSTANCE_A);
+    await removeInstalledConnectorIfPresent(page, INSTANCE_B);
 
-    // Helper: delete a named active connector if it exists.
-    async function deleteIfPresent(name: string) {
-      const activeSectionEl = page.locator('section').filter({
-        has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-      });
-      if (!(await activeSectionEl.isVisible().catch(() => false))) return;
+    // ── 1. Première instance ────────────────────────────────────────────────
+    await openConnectorInstallDialog(page, CONNECTOR_LABEL);
+    await connectApiKeyInstance(page, INSTANCE_A, API_KEY_A);
 
-      // Use exact: true + first() to avoid strict-mode errors when multiple instances exist.
-      const instanceCard = activeSectionEl
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
-        .first();
+    // ── 2. La carte reste au catalogue, avec « Add account » ────────────────
+    await openConnectorLibrary(page);
+    const card = connectorCard(page, CONNECTOR_LABEL);
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    await expect(card.getByRole('button', { name: /^add account$/i })).toBeVisible();
 
-      if (!(await instanceCard.isVisible().catch(() => false))) return;
+    // ── 3. Deuxième instance ────────────────────────────────────────────────
+    await card.getByRole('button', { name: /^add account$/i }).click();
+    await connectApiKeyInstance(page, INSTANCE_B, API_KEY_B);
 
-      const deleteBtn = instanceCard.getByRole('button', { name: /^delete$/i });
-      if (!(await deleteBtn.isVisible().catch(() => false))) return;
+    // ── 4. Les deux sont installées ─────────────────────────────────────────
+    await openInstalledConnectors(page);
+    await expect(installedConnectorRow(page, INSTANCE_A).first()).toBeVisible({ timeout: 10_000 });
+    await expect(installedConnectorRow(page, INSTANCE_B).first()).toBeVisible({ timeout: 10_000 });
 
-      await deleteBtn.click();
-      // ConfirmDialog appears — click the confirm button (labelled "Delete")
-      const dialog = page.getByRole('dialog');
-      await dialog.waitFor({ state: 'visible', timeout: 5_000 });
-      await dialog.getByRole('button', { name: /^delete$/i }).click();
-      await expect(page.getByText(`${name} removed`)).toBeVisible({ timeout: 10_000 });
-      await page.waitForTimeout(300);
-    }
+    // ── 5. Ménage, puis vérification qu'elles ne reviennent pas ─────────────
+    await removeInstalledConnectorIfPresent(page, INSTANCE_A);
+    await removeInstalledConnectorIfPresent(page, INSTANCE_B);
 
-    await deleteIfPresent(INSTANCE_A);
-    await deleteIfPresent(INSTANCE_B);
-
-    // Reload so the page reflects the clean state.
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-
-    // ── 1. Find the Tavily Marketplace card ─────────────────────────────────────
-    // Scope to the Marketplace <section> so we never accidentally match Active
-    // Connector cards whose names start with "Tavily — …" (substring match).
-    const marketplaceSection = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Marketplace', level: 2 }),
-    });
-
-    await expect(marketplaceSection).toBeVisible({ timeout: 10_000 });
-
-    // Within Marketplace, pick the card whose h3 is exactly "Tavily".
-    const marketplaceCard = marketplaceSection
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
-
-    await expect(marketplaceCard).toBeVisible({ timeout: 10_000 });
-
-    // ── 2. Add first instance ────────────────────────────────────────────────────
-    await marketplaceCard.getByRole('button', { name: /^\+ add$/i }).click();
-
-    const nameInputA = marketplaceCard.locator('input[name="name"]');
-    const apiKeyInputA = marketplaceCard.locator('input[name="apiKey"]');
-
-    await expect(nameInputA).toBeVisible({ timeout: 5_000 });
-    await expect(apiKeyInputA).toBeVisible({ timeout: 5_000 });
-
-    await nameInputA.fill(INSTANCE_A);
-    await apiKeyInputA.fill(API_KEY_A);
-
-    await marketplaceCard.getByRole('button', { name: /^connect$/i }).click();
-
-    // Toast: "{name} connected"
-    await expect(page.getByText(`${INSTANCE_A} connected`)).toBeVisible({ timeout: 10_000 });
-
-    // Wait for form to close (open = false after success).
-    await expect(nameInputA).not.toBeVisible({ timeout: 5_000 });
-
-    // ── 3. Page reload to reflect the new Active Connector ───────────────────────
-    // The connectors page is force-dynamic but the active list is rendered
-    // server-side; a reload is the canonical way to see DB changes.
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-
-    // ── 4. Add second instance ───────────────────────────────────────────────────
-    // The Marketplace card is still present (multi-instance: never disappears).
-    // Re-query the marketplace section after reload.
-    const marketplaceSectionB = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Marketplace', level: 2 }),
-    });
-    const marketplaceCardB = marketplaceSectionB
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
-
-    await expect(marketplaceCardB).toBeVisible({ timeout: 10_000 });
-    await marketplaceCardB.getByRole('button', { name: /^\+ add$/i }).click();
-
-    const nameInputB = marketplaceCardB.locator('input[name="name"]');
-    const apiKeyInputB = marketplaceCardB.locator('input[name="apiKey"]');
-
-    await expect(nameInputB).toBeVisible({ timeout: 5_000 });
-    await expect(apiKeyInputB).toBeVisible({ timeout: 5_000 });
-
-    await nameInputB.fill(INSTANCE_B);
-    await apiKeyInputB.fill(API_KEY_B);
-
-    await marketplaceCardB.getByRole('button', { name: /^connect$/i }).click();
-
-    await expect(page.getByText(`${INSTANCE_B} connected`)).toBeVisible({ timeout: 10_000 });
-    await expect(nameInputB).not.toBeVisible({ timeout: 5_000 });
-
-    // ── 5. Reload and assert BOTH instances appear in Active Connectors ──────────
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-
-    const activeSection = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-    });
-
-    await expect(activeSection).toBeVisible({ timeout: 10_000 });
-
-    // Both instance names should appear inside the active section.
-    await expect(activeSection.getByRole('heading', { name: INSTANCE_A, level: 3 })).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await expect(activeSection.getByRole('heading', { name: INSTANCE_B, level: 3 })).toBeVisible({
-      timeout: 10_000,
-    });
-
-    // ── 6. (Bonus) Delete both instances — cleanup ───────────────────────────────
-    async function deleteActiveConnector(name: string) {
-      // Re-locate inside activeSection each time since the DOM updates after
-      // each deletion (React removes the card from the list).
-      const sectionLoc = page.locator('section').filter({
-        has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-      });
-      const card = sectionLoc
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
-        .first();
-
-      await card.getByRole('button', { name: /^delete$/i }).click();
-
-      const dialog = page.getByRole('dialog');
-      await dialog.waitFor({ state: 'visible', timeout: 5_000 });
-      await dialog.getByRole('button', { name: /^delete$/i }).click();
-
-      await expect(page.getByText(`${name} removed`)).toBeVisible({ timeout: 10_000 });
-      // Wait for optimistic UI to settle before deleting the next one.
-      await page.waitForTimeout(300);
-    }
-
-    await deleteActiveConnector(INSTANCE_A);
-    await deleteActiveConnector(INSTANCE_B);
-
-    // After both deletions, reload and verify neither test instance is present.
-    // NOTE: other connectors from the e2e user may still exist — we only assert
-    // that OUR two test instances are gone, not the global empty state.
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-
-    const activeSectionAfter = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-    });
-
-    await expect(
-      activeSectionAfter.getByRole('heading', { name: INSTANCE_A, level: 3, exact: true }),
-    ).not.toBeVisible({ timeout: 10_000 });
-
-    await expect(
-      activeSectionAfter.getByRole('heading', { name: INSTANCE_B, level: 3, exact: true }),
-    ).not.toBeVisible({ timeout: 10_000 });
+    await openInstalledConnectors(page);
+    await expect(installedConnectorRow(page, INSTANCE_A)).toHaveCount(0);
+    await expect(installedConnectorRow(page, INSTANCE_B)).toHaveCount(0);
   });
 });
