@@ -168,8 +168,14 @@ test.describe('agent recipes @cap:configurer-agent/ecran', () => {
       // 4. Ordinary agent: nothing on the row says "profile". Asserted on the
       // column set, so a future provenance column fails here instead of
       // slipping in.
+      // `template` ne fait PAS partie des mots cherchés : `taskContextTemplate`
+      // existe depuis l'orchestration et ne dit rien de la provenance d'un
+      // agent. Le motif d'origine l'attrapait et rendait ce garde-fou
+      // impossible à satisfaire — invisible jusqu'ici, puisque le cas mourait
+      // avant d'arriver à cette ligne.
       const columns = Object.keys(agent);
-      expect(columns.some((c) => /recipe|profile|template/i.test(c))).toBe(false);
+      const saysProvenance = columns.filter((c) => /recipe|profile/i.test(c));
+      expect(saysProvenance).toEqual([]);
 
       // Only ONE agent was created by the click.
       const withSuffix = await db
