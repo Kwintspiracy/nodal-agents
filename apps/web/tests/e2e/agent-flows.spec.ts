@@ -1,4 +1,6 @@
 /**
+ * An agent remembers what the user tells it, and finds it again on a later turn.
+ *
  * agent-flows.spec.ts — End-to-end tests for the agent → save_memory / query_memory
  * flow fixed in the current brique (Brique 16c continuation).
  *

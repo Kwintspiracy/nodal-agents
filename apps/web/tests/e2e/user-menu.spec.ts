@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { requireLiveStack } from './helpers.ts';
 
+// A user signs out from the sidebar menu and signs back in.
+//
 // Independent storageState — this file tests the full login/logout cycle
 // from scratch and must NOT share auth state with other specs.
 test.use({ storageState: { cookies: [], origins: [] } });

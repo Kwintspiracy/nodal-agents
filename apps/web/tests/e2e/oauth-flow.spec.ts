@@ -1,4 +1,6 @@
 /**
+ * An owner connects Google Drive through its consent screen and comes back to a connected account.
+ *
  * Playwright e2e — OAuth flow for Google Drive (Brique 34 v3).
  *
  * In v3, the flow is:

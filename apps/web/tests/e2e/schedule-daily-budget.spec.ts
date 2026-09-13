@@ -1,4 +1,6 @@
 /**
+ * An owner caps what a scheduled task may spend in a day.
+ *
  * schedule-daily-budget.spec.ts
  *
  * Event Triggers, Brique 3 (F1) — the "Daily budget ($)" field on the

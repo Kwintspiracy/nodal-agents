@@ -1,4 +1,6 @@
 /**
+ * An owner installs Apify by pasting an API key, and names the account.
+ *
  * Playwright e2e — connecteur Apify (auth api_key), parcours complet.
  *
  * Ce que le parcours prouve :

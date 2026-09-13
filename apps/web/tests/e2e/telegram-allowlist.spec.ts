@@ -1,4 +1,6 @@
 /**
+ * An owner says which Telegram chats may talk to an agent, approves one, and revokes another.
+ *
  * telegram-allowlist.spec.ts — e2e for the H-1 inbound-chat allowlist UI on the
  * agent Telegram page (/agents/<id>/telegram → "Authorized chats").
  *

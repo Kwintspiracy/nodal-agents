@@ -1,4 +1,6 @@
 /**
+ * An owner sees which tools an agent may use, and which ones a skill brings with it.
+ *
  * Playwright e2e — l'onglet Tools de l'éditeur d'agent.
  *
  * Un « groupe d'outils » est un skill système dont la valeur EST le paquet de

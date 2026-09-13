@@ -1,4 +1,6 @@
 /**
+ * An owner creates an inbound webhook, copies its URL, rotates its secret, and deletes it.
+ *
  * webhooks-flows.spec.ts
  *
  * Full click-through of the "Webhooks" section on /automations (Brique 5 —

@@ -1,4 +1,6 @@
 /**
+ * An owner blocks one built-in tool for one agent, and hands it back.
+ *
  * Playwright e2e — per-tool control over the always-on built-in tools.
  *
  * The sixteen built-in tools every agent gets used to be invisible in the
