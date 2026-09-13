@@ -447,6 +447,7 @@ export default function ConnectorForm({
         <CredentialWizard
           initialType={credentialType}
           returnToConnectorSlug={catalogEntry.slug}
+          scopeDisclosure={catalogEntry.scopeDisclosure}
           onClose={() => setWizardOpen(false)}
         />
       )}

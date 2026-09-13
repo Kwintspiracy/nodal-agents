@@ -135,6 +135,7 @@ function ConnectorMarketCard({
         <CredentialWizard
           initialType={catalogItem.credentialType as CredentialWizardType}
           returnToConnectorSlug={catalogItem.slug}
+          scopeDisclosure={catalogItem.scopeDisclosure}
           onClose={() => setWizardOpen(false)}
         />
       )}
