@@ -9,6 +9,7 @@
 // trompe sur un verdict est pire que pas de portail : il fait croire qu'on
 // regarde.
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   etatCi,
@@ -34,6 +35,9 @@ import {
   instabiliteDe,
   regressionsFraiches,
   dernierSort,
+  dureesDeReparation,
+  tendance,
+  prixDeLaCi,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -1268,5 +1272,503 @@ describe('le registre lui-même', () => {
       expect(c.domaine, c.slug).toBeTruthy();
       expect(c.question, c.slug).toMatch(/\?$/);
     }
+  });
+});
+
+// ─── Le temps de réparation ───────────────────────────────────────────────────
+
+/** Un jour donné, à midi — les dates de collecte sont des instants, pas des jours. */
+const jour = (n) => new Date(Date.UTC(2026, 8, n, 12, 0, 0)).toISOString();
+
+describe('fusionnerEssais — un test réparé garde la trace de ce qu’il a coûté', () => {
+  it('une bascule vert → rouge → vert pose `repareLe` et conserve le rouge de départ', () => {
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(2) });
+    expect(m[0].rougeDepuis).toBe(jour(2));
+
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(5) });
+    expect(m[0].repareLe).toBe(jour(5));
+    expect(m[0].dernierRougeDepuis).toBe(jour(2));
+    // Le problème courant est clos : sans ça, le test resterait « rouge depuis ».
+    expect(m[0].rougeDepuis).toBeNull();
+  });
+
+  it('un test qui n’a jamais été rouge n’a pas de réparation à raconter', () => {
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(2) });
+    expect(m[0].repareLe ?? null).toBeNull();
+    expect(dureesDeReparation(m).durees).toEqual([]);
+  });
+
+  it('un rouge dont la bascule n’a jamais été VUE ne donne pas de durée en repassant vert', () => {
+    // Le cas de la première collecte : vingt-deux tests déjà rouges, jamais vus
+    // verts. `rougeDepuis` est null — leur réparation n'a pas de point de départ,
+    // et la dater depuis la première observation mesurerait notre propre retard
+    // à regarder, pas le leur à réparer.
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], {
+      le: jour(1),
+    });
+    expect(m[0].rougeDepuis).toBeNull();
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(9) });
+    expect(m[0].repareLe ?? null).toBeNull();
+    expect(dureesDeReparation(m).durees).toEqual([]);
+  });
+
+  it('une deuxième casse puis une deuxième réparation remplacent la durée précédente', () => {
+    // La mémoire garde UNE réparation par test, la dernière. Garder toute la
+    // suite ferait grossir le fichier sans rien ajouter au chiffre qu'on lit.
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(2) });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(3) });
+    expect(dureesDeReparation(m).durees).toEqual([1]);
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(10) });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(16) });
+    expect(dureesDeReparation(m).durees).toEqual([6]);
+  });
+});
+
+describe('dureesDeReparation — la médiane, parce qu’une seule réparation longue n’est pas la normale', () => {
+  const repare = (cle, deLe, aLe) => ({ cle, dernierRougeDepuis: deLe, repareLe: aLe });
+
+  it('aucune réparation observée : pas de médiane, et ça se DIT', () => {
+    const r = dureesDeReparation([]);
+    expect(r.durees).toEqual([]);
+    expect(r.mediane).toBeNull();
+  });
+
+  it('une seule réparation : la médiane est cette durée', () => {
+    const r = dureesDeReparation([repare('a', jour(1), jour(4))]);
+    expect(r.durees).toEqual([3]);
+    expect(r.mediane).toBe(3);
+  });
+
+  it('deux réparations : la médiane est la moyenne des deux', () => {
+    const r = dureesDeReparation([repare('a', jour(1), jour(2)), repare('b', jour(1), jour(5))]);
+    expect(r.durees).toEqual([1, 4]);
+    expect(r.mediane).toBe(2.5);
+  });
+
+  it('trois réparations : la médiane est celle du milieu, pas la moyenne', () => {
+    // 1, 2, 30 → moyenne 11, médiane 2. Le 30 est l'accident qu'on ne veut pas
+    // voir déguisé en normale : c'est toute la raison du choix.
+    const r = dureesDeReparation([
+      repare('a', jour(1), jour(2)),
+      repare('b', jour(1), jour(31)),
+      repare('c', jour(1), jour(3)),
+    ]);
+    expect(r.durees).toEqual([1, 2, 30]);
+    expect(r.mediane).toBe(2);
+  });
+
+  it('une réparation incomplète ou incohérente n’entre pas dans le calcul', () => {
+    const r = dureesDeReparation([
+      { cle: 'a', repareLe: jour(4), dernierRougeDepuis: null },
+      { cle: 'b', repareLe: null, dernierRougeDepuis: jour(1) },
+      // Réparé AVANT d'être cassé : une donnée abîmée, pas une durée négative.
+      repare('c', jour(9), jour(2)),
+      repare('d', jour(1), jour(6)),
+    ]);
+    expect(r.durees).toEqual([5]);
+    expect(r.mediane).toBe(5);
+  });
+
+  it('les demi-journées comptent : une réparation de douze heures n’est pas zéro jour', () => {
+    const r = dureesDeReparation([
+      {
+        cle: 'a',
+        dernierRougeDepuis: '2026-09-01T00:00:00.000Z',
+        repareLe: '2026-09-01T12:00:00.000Z',
+      },
+    ]);
+    expect(r.durees).toEqual([0.5]);
+  });
+});
+
+describe('ecartsDe — un rouge de plus de quinze jours est une dette, pas une alarme', () => {
+  const maintenant = Date.parse('2026-09-30T12:00:00.000Z');
+  const base = { resume: {}, capacites: { registre: [] } };
+
+  it('compte les rouges datés de plus de 14 jours et les nomme', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [
+          { cle: 'a', titre: 'vieux rouge', rougeDepuis: '2026-09-01T12:00:00.000Z' },
+          { cle: 'b', titre: 'rouge d’hier', rougeDepuis: '2026-09-29T12:00:00.000Z' },
+        ],
+      },
+    };
+    const e = ecartsDe(s, [], maintenant).find((x) => /plus de 14 jours/.test(x.titre));
+    expect(e).toBeTruthy();
+    expect(e.gravite).toBe('moyenne');
+    expect(e.titre).toContain('1 test(s)');
+    expect(e.quoi).toEqual(['vieux rouge']);
+  });
+
+  it('ne compte QUE les rouges datés — un rouge sans bascule vue n’a pas d’âge', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [{ cle: 'a', titre: 'rouge sans date', rougeDepuis: null }],
+      },
+    };
+    expect(ecartsDe(s, [], maintenant).some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+  });
+
+  it('ne réveille personne — seule la gravité haute le fait', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [{ cle: 'a', titre: 'vieux rouge', rougeDepuis: '2026-08-01T12:00:00.000Z' }],
+      },
+    };
+    const hautes = alertes(ecartsDe(s, [], maintenant));
+    expect(hautes.some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+  });
+});
+
+describe('tendance — deux photos disent ce qu’une seule ne peut pas', () => {
+  const l = (le, valeur, declencheur = 'schedule') => ({
+    le,
+    couvertureLignes: valeur,
+    declencheur,
+  });
+
+  it('aucune collecte : pas de delta, et pas de direction inventée', () => {
+    const t = tendance([], 'couvertureLignes');
+    expect(t.valeurs).toEqual([]);
+    expect(t.delta).toBeNull();
+    expect(t.direction).toBeNull();
+  });
+
+  it('une seule collecte : le point existe, la tendance non', () => {
+    const t = tendance([l(jour(1), 80)], 'couvertureLignes', { maintenant: Date.parse(jour(2)) });
+    expect(t.valeurs).toEqual([{ le: jour(1), valeur: 80 }]);
+    expect(t.delta).toBeNull();
+    expect(t.direction).toBeNull();
+  });
+
+  it('deux collectes : le delta est la différence, du plus ancien au plus récent', () => {
+    const t = tendance([l(jour(1), 80), l(jour(3), 82.5)], 'couvertureLignes', {
+      maintenant: Date.parse(jour(4)),
+    });
+    expect(t.delta).toBe(2.5);
+    expect(t.direction).toBe('monte');
+  });
+
+  it('une baisse descend, une égalité est stable', () => {
+    const m = { maintenant: Date.parse(jour(4)) };
+    expect(tendance([l(jour(1), 82), l(jour(3), 79)], 'couvertureLignes', m).direction).toBe(
+      'descend',
+    );
+    expect(tendance([l(jour(1), 82), l(jour(3), 82)], 'couvertureLignes', m).direction).toBe(
+      'stable',
+    );
+  });
+
+  it('les collectes locales sont exclues : un poste ne mesure pas main', () => {
+    const t = tendance(
+      [l(jour(1), 80), l(jour(2), 20, 'local'), l(jour(3), 81)],
+      'couvertureLignes',
+      { maintenant: Date.parse(jour(4)) },
+    );
+    expect(t.valeurs.map((v) => v.valeur)).toEqual([80, 81]);
+    expect(t.delta).toBe(1);
+  });
+
+  it('une valeur absente n’est pas un zéro — la collecte est ignorée pour ce champ', () => {
+    const t = tendance([l(jour(1), 80), l(jour(2), null), l(jour(3), 84)], 'couvertureLignes', {
+      maintenant: Date.parse(jour(4)),
+    });
+    expect(t.valeurs.map((v) => v.valeur)).toEqual([80, 84]);
+    expect(t.delta).toBe(4);
+  });
+
+  it('la fenêtre coupe : une collecte hors des N jours ne pèse pas sur le delta', () => {
+    const hist = [l(jour(1), 50), l(jour(25), 80), l(jour(29), 83)];
+    const m = Date.parse(jour(30));
+    expect(tendance(hist, 'couvertureLignes', { jours: 7, maintenant: m }).delta).toBe(3);
+    expect(tendance(hist, 'couvertureLignes', { jours: 30, maintenant: m }).delta).toBe(33);
+  });
+
+  it('un autre champ se lit pareil — la fonction ne sait rien de la couverture', () => {
+    const hist = [
+      { le: jour(1), testsCasses: 22, declencheur: 'schedule' },
+      { le: jour(2), testsCasses: 19, declencheur: 'schedule' },
+    ];
+    const t = tendance(hist, 'testsCasses', { maintenant: Date.parse(jour(3)) });
+    expect(t.delta).toBe(-3);
+    expect(t.direction).toBe('descend');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le prix d'une PR. Ce chiffre ne décrit pas une performance : il annonce la
+// prochaine porte qu'on va retirer. Le jour où attendre son merge devient
+// insupportable, personne ne demande la permission avant de mettre une suite
+// en `skip` — d'où le seuil, et d'où ces tests.
+
+describe('prixDeLaCi — ce qu’on attend, pas ce que la CI consomme', () => {
+  /** Un run, décrit par sa durée en minutes. */
+  const run = (minutes, { conclusion = 'success', jour = 1 } = {}) => {
+    const de = new Date(Date.UTC(2026, 8, jour, 8, 0, 0));
+    return {
+      conclusion,
+      createdAt: de.toISOString(),
+      updatedAt: new Date(de.getTime() + minutes * 60000).toISOString(),
+      url: `https://github.com/o/r/actions/runs/${jour}`,
+    };
+  };
+  const suite = (minutes) => minutes.map((m, i) => run(m, { jour: i + 1 }));
+
+  it('aucun run : tout est null, et surtout pas zéro — une CI non mesurée n’est pas gratuite', () => {
+    const p = prixDeLaCi([]);
+    expect(p.runs).toBe(0);
+    expect(p.mediane).toBeNull();
+    expect(p.dernier).toBeNull();
+    expect(p.pire).toBeNull();
+    expect(p.tendance).toBeNull();
+  });
+
+  it('un seul run : la médiane est sa durée, et il n’y a PAS de tendance', () => {
+    const p = prixDeLaCi(suite([12]));
+    expect(p.mediane).toBe(12);
+    expect(p.dernier).toBe(12);
+    expect(p.pire).toBe(12);
+    // « Stable » sur un point serait une affirmation qu'on ne peut pas faire.
+    expect(p.tendance).toBeNull();
+    expect(p.hausse).toBeNull();
+  });
+
+  it('deux runs : la médiane est leur moyenne', () => {
+    expect(prixDeLaCi(suite([10, 20])).mediane).toBe(15);
+  });
+
+  it('trois runs : la médiane est celui du milieu, jamais la moyenne', () => {
+    // 10, 12, 50 : moyenne 24, médiane 12. Une exécution partie en vrille ne
+    // doit pas devenir « la normale ».
+    const p = prixDeLaCi(suite([10, 12, 50]));
+    expect(p.mediane).toBe(12);
+    expect(p.pire).toBe(50);
+  });
+
+  it('un run ROUGE ne compte pas — il s’arrête tôt et flatterait le chiffre', () => {
+    const runs = [
+      run(20, { jour: 1 }),
+      run(2, { conclusion: 'failure', jour: 2 }),
+      run(22, { jour: 3 }),
+    ];
+    const p = prixDeLaCi(runs);
+    expect(p.runs).toBe(2);
+    // Sans l'exclusion, la médiane tomberait à 20 : la CI paraîtrait plus
+    // rapide précisément quand elle va mal.
+    expect(p.mediane).toBe(21);
+    expect(p.dernier).toBe(22);
+  });
+
+  it('une exécution annulée ne compte pas davantage — seul `success` est allé au bout', () => {
+    expect(prixDeLaCi([run(30, { conclusion: 'cancelled' })]).runs).toBe(0);
+  });
+
+  it('la durée est celle du MUR À MUR, file d’attente comprise', () => {
+    // 90 minutes entre la création et la fin : c'est ce que quelqu'un attend,
+    // quelle qu'ait été la part passée en file.
+    expect(prixDeLaCi([run(90)]).mediane).toBe(90);
+  });
+
+  it('la tendance MONTE quand la seconde moitié dépasse la première de plus de 15 %', () => {
+    const p = prixDeLaCi(suite([10, 10, 14, 14]));
+    expect(p.hausse).toBe(40);
+    expect(p.tendance).toBe('monte');
+    expect(p.deltaMin).toBe(4);
+  });
+
+  it('elle DESCEND symétriquement', () => {
+    expect(prixDeLaCi(suite([20, 20, 10, 10])).tendance).toBe('descend');
+  });
+
+  it('elle reste STABLE sous le seuil — 10 % de variation n’est pas une dérive', () => {
+    const p = prixDeLaCi(suite([10, 10, 11, 11]));
+    expect(p.hausse).toBe(10);
+    expect(p.tendance).toBe('stable');
+  });
+
+  it('la série va du plus ANCIEN au plus récent — `gh` rend l’inverse', () => {
+    const p = prixDeLaCi([run(30, { jour: 3 }), run(10, { jour: 1 }), run(20, { jour: 2 })]);
+    expect(p.serie.map((x) => x.valeur)).toEqual([10, 20, 30]);
+    expect(p.dernier).toBe(30);
+  });
+
+  it('`medianeRecente` ne regarde que les DIX derniers — une CI qui vient de doubler ne doit pas être noyée', () => {
+    const vieux = Array.from({ length: 20 }, (_, i) => run(5, { jour: i + 1 }));
+    const recents = Array.from({ length: 10 }, (_, i) => run(40, { jour: i + 21 }));
+    const p = prixDeLaCi([...vieux, ...recents]);
+    expect(p.medianeRecente).toBe(40);
+    expect(p.mediane).toBe(5);
+  });
+
+  it('GitHub sans réponse ⇒ `null`, et non un objet à zéro', () => {
+    expect(prixDeLaCi(null)).toBeNull();
+    expect(prixDeLaCi(undefined)).toBeNull();
+  });
+
+  it('un run aux dates illisibles est écarté plutôt que compté zéro minute', () => {
+    const p = prixDeLaCi([
+      { conclusion: 'success', createdAt: 'illisible', updatedAt: 'x' },
+      run(10),
+    ]);
+    expect(p.runs).toBe(1);
+    expect(p.mediane).toBe(10);
+  });
+});
+
+describe('ecartsDe — le prix d’une PR décide du sort des tests', () => {
+  const SNAP = (prixCi) => ({
+    resume: { specsE2e: 0 },
+    capacites: { registre: [] },
+    parcours: [],
+    paquets: [],
+    ci: [],
+    prixCi,
+  });
+  const prixDe = (o) => ({
+    runs: 12,
+    serie: [],
+    mediane: null,
+    medianeRecente: null,
+    dernier: null,
+    pire: null,
+    hausse: null,
+    deltaMin: null,
+    tendance: null,
+    ...o,
+  });
+
+  it('au-delà de 25 min de médiane récente, c’est HAUTE — sous le seuil, rien', () => {
+    const cher = ecartsDe(SNAP(prixDe({ medianeRecente: 32 })), [{}, {}]);
+    const e = cher.find((x) => /coûte/.test(x.titre));
+    expect(e).toBeTruthy();
+    expect(e.gravite).toBe('haute');
+    expect(e.titre).toContain('32');
+    expect(alertes(cher)).toContain(e);
+
+    const ok = ecartsDe(SNAP(prixDe({ medianeRecente: 25 })), [{}, {}]);
+    expect(ok.some((x) => /coûte/.test(x.titre))).toBe(false);
+  });
+
+  it('une hausse de plus de 25 % est MOYENNE — elle ne réveille personne mais elle est dite', () => {
+    const liste = ecartsDe(SNAP(prixDe({ hausse: 40 })), [{}, {}]);
+    const e = liste.find((x) => /de plus/.test(x.titre));
+    expect(e.gravite).toBe('moyenne');
+    // Moyenne, donc hors des alertes : une dérive n'est pas une panne.
+    expect(alertes(liste)).not.toContain(e);
+
+    expect(
+      ecartsDe(SNAP(prixDe({ hausse: 25 })), [{}, {}]).some((x) => /de plus/.test(x.titre)),
+    ).toBe(false);
+  });
+
+  it('une baisse ne dit rien — une CI qui accélère n’est pas un écart', () => {
+    expect(
+      ecartsDe(SNAP(prixDe({ hausse: -60 })), [{}, {}]).some((x) => /de plus/.test(x.titre)),
+    ).toBe(false);
+  });
+
+  it('`prixCi` absent ⇒ AUCUN écart : une mesure manquante n’est pas une CI gratuite', () => {
+    const e = ecartsDe(SNAP(null), [{}, {}]);
+    expect(e.some((x) => /coûte|de plus/.test(x.titre))).toBe(false);
+    expect(
+      ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]).some((x) => /coûte|de plus/.test(x.titre)),
+    ).toBe(false);
+  });
+});
+
+// Un nom de test rouge dans un tableau est un cul-de-sac : on sait QUE ça
+// casse, jamais ce que l'utilisateur aurait vu. La mémoire garde donc l'adresse
+// du run qui l'a vu tomber la dernière fois.
+
+describe('fusionnerEssais — chaque rouge garde l’adresse du run qui l’a vu', () => {
+  const RUN = 'https://github.com/o/r/actions/runs/1';
+  const RUN2 = 'https://github.com/o/r/actions/runs/2';
+  const ROUGE = [{ fichier: 'a.spec.ts', titre: 't', sort: 'rouge' }];
+  const VERT = [{ fichier: 'a.spec.ts', titre: 't', sort: 'vert' }];
+
+  it('un tour rouge mémorise l’exécution passée en option', () => {
+    const [e] = fusionnerEssais([], ROUGE, { le: '2026-09-12T00:00:00Z', execution: RUN });
+    expect(e.dernierRougeExecution).toBe(RUN);
+  });
+
+  it('un tour VERT ne l’efface pas — la dernière piste connue reste la piste', () => {
+    const avant = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z', execution: RUN });
+    const [e] = fusionnerEssais(avant, VERT, { le: '2026-09-12T00:00:00Z', execution: RUN2 });
+    expect(e.dernierRougeExecution).toBe(RUN);
+  });
+
+  it('un rouge SANS exécution connue ne pose rien, et n’écrase pas ce qui est posé', () => {
+    const vierge = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z' });
+    expect(vierge[0].dernierRougeExecution).toBeNull();
+
+    // Un rendu local ne doit pas faire disparaître la piste laissée par la nuit.
+    const avecPiste = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z', execution: RUN });
+    const [e] = fusionnerEssais(avecPiste, ROUGE, { le: '2026-09-12T00:00:00Z' });
+    expect(e.dernierRougeExecution).toBe(RUN);
+  });
+
+  it('un rouge PLUS RÉCENT remplace l’adresse : on veut la dernière fois qu’on l’a vu tomber', () => {
+    const avant = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z', execution: RUN });
+    const [e] = fusionnerEssais(avant, ROUGE, { le: '2026-09-12T00:00:00Z', execution: RUN2 });
+    expect(e.dernierRougeExecution).toBe(RUN2);
+  });
+
+  it('l’option est facultative — l’appel d’avant ce lot rend exactement la même chose', () => {
+    const [e] = fusionnerEssais([], VERT, { le: '2026-09-12T00:00:00Z' });
+    expect(e.dernierRougeExecution).toBeNull();
+    expect(e.tours).toBe(1);
+  });
+});
+
+// Le lien n'existe que s'il mène quelque part. Un lien mort coûte plus cher que
+// pas de lien : il use la seule chose qui fait qu'on clique.
+
+describe('le rendu mène à la cause, et seulement quand elle existe', () => {
+  const source = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
+  /** Le corps d'une fonction de vue, du `function vueX()` à la suivante. */
+  const vue = (nom) => {
+    const i = source.indexOf(`function ${nom}(`);
+    const j = source.indexOf('\nfunction ', i + 1);
+    return source.slice(i, j < 0 ? undefined : j);
+  };
+
+  it('« voir le run » est posé dans la Mémoire, les Capacités et les Parcours', () => {
+    expect(vue('vueMemoire')).toContain('lienRun(');
+    expect(vue('vueCapacites')).toContain('lienRun(');
+    expect(vue('vueParcours')).toContain('lienRun(');
+  });
+
+  it('la Mémoire suit le test, pas la collecte : chaque ligne pointe SON dernier rouge', () => {
+    expect(vue('vueMemoire')).toContain('lienRun(e.dernierRougeExecution)');
+  });
+
+  it('le lien est CONDITIONNEL — sans adresse, il n’est pas rendu du tout', () => {
+    expect(source).toMatch(/const lienRun = \(url\) =>\s*\n?\s*url\s*\n?\s*\?/);
+  });
+
+  it('un parcours vert ne porte pas de lien : il n’y a rien à aller voir', () => {
+    expect(vue('vueParcours')).toContain("r?.rouge ? lienRun(s.execution?.url) : ''");
+  });
+
+  it('le cadre « Prix d’une PR » dit l’absence plutôt qu’un zéro', () => {
+    const cadre = vue('cadrePrix');
+    expect(cadre).toContain("GitHub n'a pas répondu");
+    expect(cadre).toContain('prix--absent');
   });
 });

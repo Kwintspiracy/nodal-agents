@@ -163,6 +163,114 @@ export function cadenceDe(declencheurs) {
   return 'à la main';
 }
 
+// ─── Ce qu'une PR coûte en contrôles ──────────────────────────────────────────
+//
+// La question de Quentin, et elle est la bonne : combien de minutes chaque PR
+// coûte en contrôles, et est-ce que ça dérive. C'est ce chiffre-là qui décide
+// du sort des tests — le jour où attendre son merge devient insupportable,
+// personne ne demande la permission avant de désactiver une suite.
+//
+// Le chiffre n'est donc pas une curiosité de performance : c'est l'indicateur
+// AVANCÉ de la prochaine porte qu'on va retirer.
+
+/** La médiane d'une liste DÉJÀ TRIÉE. `null` sur une liste vide — jamais zéro. */
+export function medianeDe(triee) {
+  const l = triee ?? [];
+  if (l.length === 0) return null;
+  const mi = Math.floor(l.length / 2);
+  return l.length % 2 === 1 ? l[mi] : Number(((l[mi - 1] + l[mi]) / 2).toFixed(2));
+}
+
+/** Au-delà de ce pourcentage entre les deux moitiés de la fenêtre, la durée BOUGE. */
+const SEUIL_TENDANCE_PRIX = 15;
+
+/**
+ * Ce qu'une PR coûte, lu dans les exécutions passées de la CI.
+ *
+ * Durée = `updatedAt` − `createdAt`, c'est-à-dire la durée MUR À MUR du run,
+ * file d'attente comprise, et non la somme des durées de ses jobs. C'est un
+ * choix : la somme des jobs mesure ce que la CI consomme, la durée mur à mur
+ * mesure ce que quelqu'un ATTEND devant sa PR. Le second est le seul qui
+ * explique pourquoi on finit par désactiver des tests.
+ *
+ * Seuls les runs VERTS comptent. Un run rouge s'arrête au premier job qui
+ * tombe — souvent en trois minutes — et le compter ferait baisser la médiane
+ * chaque fois que la CI va mal, c'est-à-dire exactement quand on veut la
+ * regarder.
+ *
+ * `null` quand GitHub n'a pas répondu : une absence n'est pas un coût de zéro.
+ */
+export function prixDeLaCi(runs) {
+  if (!Array.isArray(runs)) return null;
+
+  const verts = runs
+    .filter((r) => String(r?.conclusion ?? '').toLowerCase() === 'success')
+    .map((r) => {
+      const de = Date.parse(r?.createdAt);
+      const a = Date.parse(r?.updatedAt);
+      if (!Number.isFinite(de) || !Number.isFinite(a) || a < de) return null;
+      return { le: r.createdAt, valeur: Number(((a - de) / 60000).toFixed(1)), url: r.url ?? null };
+    })
+    .filter(Boolean)
+    // Du plus ancien au plus récent : c'est l'ordre d'une courbe, et l'ordre
+    // dans lequel se lit une dérive. `gh` rend l'inverse.
+    .sort((x, y) => Date.parse(x.le) - Date.parse(y.le));
+
+  const vide = {
+    runs: 0,
+    serie: [],
+    mediane: null,
+    medianeRecente: null,
+    dernier: null,
+    pire: null,
+    hausse: null,
+    deltaMin: null,
+    tendance: null,
+  };
+  if (verts.length === 0) return vide;
+
+  const vals = verts.map((v) => v.valeur);
+  const tri = [...vals].sort((a, b) => a - b);
+  // Les DIX derniers, et pas toute la fenêtre, pour l'alerte : trente runs
+  // remontent à plusieurs semaines, et une CI qui vient de doubler resterait
+  // masquée par vingt mesures d'avant.
+  const dixDerniers = [...vals.slice(-10)].sort((a, b) => a - b);
+
+  // Première moitié contre seconde moitié, médiane contre médiane. Le point du
+  // milieu est écarté sur un nombre impair : il appartiendrait aux deux.
+  let hausse = null;
+  let deltaMin = null;
+  if (vals.length >= 2) {
+    const avant = medianeDe([...vals.slice(0, Math.floor(vals.length / 2))].sort((a, b) => a - b));
+    const apres = medianeDe([...vals.slice(Math.ceil(vals.length / 2))].sort((a, b) => a - b));
+    deltaMin = Number((apres - avant).toFixed(1));
+    if (avant > 0) hausse = Number((((apres - avant) / avant) * 100).toFixed(1));
+  }
+
+  return {
+    runs: verts.length,
+    serie: verts.map(({ le, valeur }) => ({ le, valeur })),
+    mediane: medianeDe(tri),
+    medianeRecente: medianeDe(dixDerniers),
+    dernier: verts.at(-1).valeur,
+    pire: Math.max(...vals),
+    hausse,
+    // Le même écart en minutes : un pourcentage ne dit pas si on parle de
+    // trente secondes ou d'un quart d'heure.
+    deltaMin,
+    // Sur un seul run vert, pas de tendance. « Stable » serait une affirmation
+    // qu'on ne peut pas faire — la même règle que `tendance()`.
+    tendance:
+      hausse == null
+        ? null
+        : hausse > SEUIL_TENDANCE_PRIX
+          ? 'monte'
+          : hausse < -SEUIL_TENDANCE_PRIX
+            ? 'descend'
+            : 'stable',
+  };
+}
+
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
 /**
@@ -273,6 +381,15 @@ const RANG = { haute: 0, moyenne: 1, basse: 2 };
 /** Un rouge de moins de deux jours est une régression ; au-delà, c'est une dette. */
 const JEUNE_MS = 2 * 24 * 60 * 60 * 1000;
 
+/** Au-delà de deux semaines, un rouge n'est plus une régression : c'est un choix. */
+const VIEUX_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Au-delà de ce nombre de minutes par PR, l'attente devient le sujet. */
+const SEUIL_PRIX_MIN = 25;
+
+/** Et au-delà de cette hausse sur la fenêtre, la dérive est dite avant d'être subie. */
+const SEUIL_HAUSSE_PRIX = 25;
+
 export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const out = [];
   if (!s) return out;
@@ -342,6 +459,22 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     });
   }
 
+  // Le pendant du précédent, et sa raison d'être : le rouge qui traîne ne
+  // déclenche rien parce qu'il ne bouge plus. Il ne réveille donc personne
+  // (gravité moyenne, jamais haute — c'est `alertes()` qui trie), mais il est
+  // NOMMÉ, sans quoi ces tests-là finissent invisibles à force d'être là.
+  const vieux = (mem?.regressions ?? []).filter(
+    (e) => e.rougeDepuis && maintenant - Date.parse(e.rougeDepuis) > VIEUX_MS,
+  );
+  if (vieux.length > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${vieux.length} test(s) rouges depuis plus de 14 jours`,
+      detail: `Deux semaines sans réparation, ce n'est plus une régression : c'est une décision qui n'a pas été prise. Réparer, ou supprimer le test avec la capacité qu'il prouvait.`,
+      quoi: vieux.map((e) => e.titre ?? e.cle),
+    });
+  }
+
   // ── Le banc. Il DÉTECTE déjà les régressions et les écrit ; il ne manquait
   // que quelqu'un pour les lire.
   const banc = verdictDuBanc(s.banc?.dernierRun);
@@ -408,6 +541,31 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
       titre: `Aucun workflow ne lance le banc d'essai`,
       detail: `Le banc sort déjà en erreur sur une régression de métrique — c'est une porte qui fonctionne et que personne ne franchit. Une régression du gate d'approbation peut donc partir en production sans un mot.`,
       quoi: (s.banc?.sections ?? []).map((b) => b.id),
+    });
+  }
+
+  // ── Le prix d'une PR. Pas une curiosité de performance : le jour où
+  // attendre son merge devient insupportable, quelqu'un désactive une suite,
+  // et personne ne demande la permission avant. Le coût est donc l'indicateur
+  // AVANCÉ de la prochaine porte qu'on va retirer.
+  //
+  // `null` (GitHub sans réponse) ne pose RIEN : une absence de mesure n'est pas
+  // une CI gratuite.
+  const prix = s.prixCi ?? null;
+  if (prix?.medianeRecente != null && prix.medianeRecente > SEUIL_PRIX_MIN) {
+    out.push({
+      gravite: 'haute',
+      titre: `La CI coûte ${prix.medianeRecente} min par PR`,
+      detail: `Médiane des ${Math.min(prix.runs, 10)} dernières exécutions vertes, attente en file comprise. Au-delà d'une vingtaine de minutes, l'attente cesse d'être supportable et c'est le contenu de la CI qu'on finit par raboter, pas le temps qu'elle prend.`,
+      quoi: [],
+    });
+  }
+  if (prix?.hausse != null && prix.hausse > SEUIL_HAUSSE_PRIX) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `La CI a pris ${prix.hausse} % de plus sur la fenêtre`,
+      detail: `Première moitié des exécutions contre seconde moitié. Une dérive se répare pendant qu'elle est petite ; une fois installée, elle devient la normale que personne ne discute plus.`,
+      quoi: [],
     });
   }
 
@@ -515,7 +673,11 @@ export function cleDuTest(fichier, titre) {
  *     exactement ce qui arrive quand une exécution ne joue qu'une partie de la
  *     suite, ce qui est le cas normal ici.
  */
-export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {}) {
+export function fusionnerEssais(
+  existants,
+  nouveaux,
+  { max = 30, le = null, execution = null } = {},
+) {
   const parCle = new Map((existants ?? []).map((e) => [e.cle, { ...e }]));
 
   // Deux cas homonymes dans la MÊME salve sont deux tests — un `test.each`
@@ -552,6 +714,14 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
       dernierTourLe: null,
       dernierEchecLe: null,
       rougeDepuis: null,
+      // La dernière réparation observée : quand le rouge a commencé, quand il
+      // s'est arrêté. Les deux, sinon la durée ne se calcule pas.
+      dernierRougeDepuis: null,
+      repareLe: null,
+      // L'exécution qui a VU ce test rouge la dernière fois. C'est le seul
+      // chemin entre un nom de test dans un tableau et ce que l'utilisateur
+      // aurait vu : le rapport du run, sa trace et sa capture d'écran.
+      dernierRougeExecution: null,
     };
 
     // Le sort du tour PRÉCÉDENT, lu avant d'écrire celui-ci : c'est lui qui
@@ -566,6 +736,11 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
     if (n.sort === 'rouge') {
       e.echecs += 1;
       e.dernierEchecLe = e.dernierTourLe;
+      // Où aller voir. Un tour rouge joué SANS exécution connue (une mesure
+      // locale) ne pose rien et n'efface rien : mieux vaut le dernier lien
+      // vivant qu'un lien mort, et un rendu local ne doit pas faire disparaître
+      // la piste laissée par la mesure nocturne.
+      e.dernierRougeExecution = n.execution ?? execution ?? e.dernierRougeExecution ?? null;
       // L'âge du problème COURANT, pas celui du premier échec de l'histoire :
       // un test cassé en juillet, réparé, recassé hier a un problème d'un jour.
       //
@@ -579,6 +754,17 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
         e.rougeDepuis = e.dernierTourLe;
       }
     } else if (n.sort === 'vert') {
+      // Un rouge DATÉ qui repasse au vert est une réparation observée de bout
+      // en bout : on a vu la casse et on voit la remise en état. C'est la seule
+      // forme qui donne une durée honnête — d'où la conservation du point de
+      // départ, que `rougeDepuis` s'apprête à perdre.
+      //
+      // Une seule réparation gardée, la dernière : garder toute la suite
+      // ferait grossir `tests.ndjson` sans rien ajouter au chiffre qu'on lit.
+      if (e.rougeDepuis) {
+        e.dernierRougeDepuis = e.rougeDepuis;
+        e.repareLe = e.dernierTourLe;
+      }
       e.rougeDepuis = null;
     }
 
@@ -635,6 +821,65 @@ export function regressionsFraiches(enregistrements) {
 export function dernierSort(enr) {
   const recents = String(enr?.recents ?? '');
   return SORT_DE_LETTRE[recents.at(-1)] ?? null;
+}
+
+const JOUR_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Combien de temps un test reste cassé, quand il finit par être réparé.
+ *
+ * Le chiffre qui manquait : « 22 tests rouges » ne dit pas si on répare en un
+ * jour ou jamais. Deux dépôts avec le même nombre de rouges et des temps de
+ * réparation de 1 et de 40 jours ne sont pas du tout dans le même état.
+ *
+ * La MÉDIANE et pas la moyenne : une seule réparation oubliée pendant six mois
+ * tire une moyenne vers le haut et fait croire que c'est la normale. La médiane
+ * dit ce qui arrive à la moitié des cas, et ne bouge pas d'un accident.
+ *
+ * N'entrent ici que les réparations observées de bout en bout — casse VUE puis
+ * remise en état vue. Une durée partant de la première fois qu'on a regardé
+ * mesurerait notre retard à installer la mesure, pas le leur à réparer.
+ */
+export function dureesDeReparation(memoire) {
+  const durees = (memoire ?? [])
+    .map((e) => {
+      if (!e?.repareLe || !e?.dernierRougeDepuis) return null;
+      const de = Date.parse(e.dernierRougeDepuis);
+      const a = Date.parse(e.repareLe);
+      if (!Number.isFinite(de) || !Number.isFinite(a) || a < de) return null;
+      return Number(((a - de) / JOUR_MS).toFixed(2));
+    })
+    .filter((d) => d != null)
+    .sort((a, b) => a - b);
+
+  return { durees, mediane: medianeDe(durees) };
+}
+
+/**
+ * L'évolution d'un chiffre de l'historique sur une fenêtre de jours.
+ *
+ * Deux exclusions, et les deux sont des refus de mentir :
+ *   - les collectes `local` — lancées sur un poste, sur un arbre qui n'est pas
+ *     main, souvent partielles. Mélangées aux mesures nocturnes, elles font des
+ *     décrochages qui ne correspondent à aucun changement du dépôt ;
+ *   - les valeurs absentes — une couverture qui n'a pas pu être mesurée n'est
+ *     pas une couverture de zéro, et la peindre ainsi inventerait une chute.
+ *
+ * Moins de deux points : pas de delta et pas de direction. « Stable » sur un
+ * seul point serait une affirmation qu'on ne peut pas faire.
+ */
+export function tendance(historique, champ, { jours = 30, maintenant = Date.now() } = {}) {
+  const depuis = maintenant - jours * JOUR_MS;
+  const valeurs = (historique ?? [])
+    .filter((h) => h?.declencheur !== 'local' && typeof h?.[champ] === 'number')
+    .map((h) => ({ le: h.le, valeur: h[champ], t: Date.parse(h.le) }))
+    .filter((v) => Number.isFinite(v.t) && v.t >= depuis && v.t <= maintenant)
+    .sort((a, b) => a.t - b.t)
+    .map(({ le, valeur }) => ({ le, valeur }));
+
+  if (valeurs.length < 2) return { valeurs, delta: null, direction: null };
+  const delta = Number((valeurs.at(-1).valeur - valeurs[0].valeur).toFixed(2));
+  return { valeurs, delta, direction: delta > 0 ? 'monte' : delta < 0 ? 'descend' : 'stable' };
 }
 
 // ─── Les capacités du produit ─────────────────────────────────────────────────

@@ -151,6 +151,34 @@ jobs:
           npx playwright test "${specs[@]}" --reporter=json > playwright-raw.json || true
         working-directory: apps/web
 
+      # Ce que l'utilisateur aurait VU au moment où ça a cassé.
+      #
+      # Le portail sait dire quel test est rouge et depuis quand ; il s'arrêtait
+      # là, et un nom de test dans un tableau est un cul-de-sac. Playwright
+      # écrit ses traces et ses captures dans `apps/web/test-results`
+      # (`outputDir` par défaut, relatif à la config) : les publier fait du lien
+      # « voir le run » un vrai chemin vers le symptôme.
+      #
+      # `screenshot: 'only-on-failure'` et `trace: 'on-first-retry'` dans
+      # `playwright.config.ts` : il n'y a donc rien pour un test vert, et c'est
+      # exactement ce qu'on veut — un artefact de 30 parcours verts pèserait
+      # lourd pour ne rien montrer.
+      #
+      # `if: always()` : l'étape des parcours se termine par `|| true`, mais une
+      # étape suivante peut échouer, et c'est précisément une nuit qui tourne
+      # mal qu'on veut pouvoir regarder. 14 jours : au-delà, un rouge non traité
+      # n'est plus une régression qu'on diagnostique, c'est une dette.
+      - name: Publier les traces des parcours en échec
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parcours-en-echec
+          path: apps/web/test-results
+          retention-days: 14
+          # Rien à publier = tous les parcours sont verts. Ce n'est pas une
+          # anomalie, et l'avertissement par défaut ferait chercher une panne.
+          if-no-files-found: ignore
+
       # La sortie JSON de Playwright peut être précédée d'une ligne du
       # global-setup ; on repart de la première accolade.
       # Si Playwright n'émet aucun rapport, l'ANCIEN est effacé.
