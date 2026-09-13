@@ -1245,3 +1245,131 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
     return { ...c, ...niveaux, phrase: phraseDeCapacite(niveaux), preuves: siennes };
   });
 }
+
+/**
+ * La description d'un parcours : la première phrase UTILE de son fichier.
+ *
+ * Le cas réel (Quentin, 13/09) : la page Parcours affichait, sous chaque
+ * parcours, `── Constants ───────────`. La collecte prenait la première ligne
+ * `//` du fichier ; or la plupart des specs ouvrent sur un bloc encadré, et
+ * le premier `//` arrive cent lignes plus bas, sur un séparateur décoratif.
+ * Une description qui n'est qu'un trait ne dit rien à personne.
+ *
+ * Trois sources, dans cet ordre :
+ *  (a) le bloc de commentaire d'EN-TÊTE — le premier commentaire du fichier,
+ *      imports mis à part. Les lignes purement décoratives sont sautées, et la
+ *      lecture s'arrête à la première ligne vide : la suite est presque
+ *      toujours une liste de scénarios, pas une description ;
+ *  (b) à défaut, le titre du premier `describe` ;
+ *  (c) à défaut, `null` — et le rendu dit « aucune description », ce qui est
+ *      une information, là où un blanc n'en est pas une.
+ *
+ * Un commentaire qui suit du CODE n'est pas un en-tête : c'est ce qui
+ * distingue cette fonction de la regex qu'elle remplace.
+ */
+export function intentionDunParcours(texte) {
+  const lignes = String(texte ?? '').split(/\r?\n/);
+
+  // ── L'en-tête : on saute le vide et les imports, et on s'arrête au premier
+  // code. `import … from '…'` tient parfois sur plusieurs lignes ; on reste
+  // dedans jusqu'au `from`.
+  let i = 0;
+  let dansImport = false;
+  const brut = [];
+  for (; i < lignes.length; i++) {
+    const l = lignes[i].trim();
+    if (dansImport) {
+      if (/\bfrom\b/.test(l)) dansImport = false;
+      continue;
+    }
+    if (l === '') continue;
+    if (/^import\b/.test(l)) {
+      if (!/\bfrom\b/.test(l)) dansImport = true;
+      continue;
+    }
+    if (l.startsWith('/*')) {
+      for (; i < lignes.length; i++) {
+        const m = lignes[i];
+        brut.push(
+          m
+            .replace(/^\s*\/\*+/, '')
+            .replace(/\*+\/\s*$/, '')
+            .replace(/^\s*\*+/, ''),
+        );
+        if (/\*+\/\s*$/.test(m.trim())) break;
+      }
+      break;
+    }
+    if (l.startsWith('//')) {
+      for (; i < lignes.length && lignes[i].trim().startsWith('//'); i++)
+        brut.push(lignes[i].trim().replace(/^\/\/+/, ''));
+      break;
+    }
+    break; // du code : il n'y a pas d'en-tête
+  }
+
+  const phrase = premierePhrase(brut);
+  if (phrase) return phrase;
+
+  const d = String(texte ?? '').match(/\btest\.describe(?:\.\w+)*\s*\(\s*(['"`])([\s\S]*?)\1/);
+  if (d) {
+    const titre = sansEtiquettes(d[2]);
+    if (titre) return couper(titre);
+  }
+  return null;
+}
+
+/** Une ligne qui n'est QUE de la décoration, ou un titre de section encadré de traits. */
+function decorative(ligne) {
+  const l = ligne.trim();
+  if (l === '') return false;
+  if (/^[\s\-─═━=*_#·•~+|]+$/.test(l)) return true;
+  // Le nom du fichier, seul sur sa ligne : cinq specs ouvrent ainsi. Ce n'est
+  // pas une description — c'est déjà la colonne d'à côté.
+  if (/^\S+\.(spec|test)\.[a-z]+$/.test(l)) return true;
+  // `── Constants ───────` : encadré des deux côtés par un trait. C'est un
+  // séparateur de code, pas une phrase.
+  return /^[-─═━=]{2,}\s.*\s[-─═━=]{2,}$/.test(l);
+}
+
+/** Les lignes utiles consécutives d'un bloc, jointes, nettoyées, coupées. */
+function premierePhrase(lignesDuBloc) {
+  const utiles = [];
+  let commence = false;
+  for (const ligne of lignesDuBloc) {
+    const l = ligne.trim();
+    if (decorative(l)) continue;
+    if (l === '') {
+      if (commence) break;
+      continue;
+    }
+    commence = true;
+    utiles.push(l);
+  }
+  let t = sansEtiquettes(utiles.join(' '));
+  // « oauth-flow.spec.ts — … » : le nom du fichier est déjà la colonne d'à
+  // côté, le répéter mange la largeur utile.
+  t = t.replace(/^\S+\.(spec|test)\.[a-z]+\s*[—–-]+\s*/, '').trim();
+  return t ? couper(t) : null;
+}
+
+function sansEtiquettes(s) {
+  return String(s)
+    .replace(/@cap:[a-z0-9-]+(?:\/[a-z-]+)?/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Coupé à ~200 caractères, sur une fin de phrase quand il y en a une. */
+function couper(t, max = 200) {
+  const fin = /[.!?](?=\s|$)/g;
+  let dernier = -1;
+  for (const m of t.matchAll(fin)) {
+    if (m.index + 1 <= max) dernier = m.index + 1;
+    else break;
+  }
+  if (dernier > 0 && dernier < t.length) return t.slice(0, dernier).trim();
+  if (t.length <= max) return t;
+  const espace = t.lastIndexOf(' ', max);
+  return `${t.slice(0, espace > 0 ? espace : max).trim()}…`;
+}

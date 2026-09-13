@@ -335,7 +335,11 @@ function vueParcours() {
       etat = bouts.join(' ') || '<span class="pastille pastille--inconnu">rien à dire</span>';
     }
     return `<tr>
-      <td><span class="mono">${esc(p.nom)}</span>${p.intention ? `<br><span class="intention">${esc(p.intention)}</span>` : ''}
+      <td><span class="mono">${esc(p.nom)}</span><br>${
+        p.intention
+          ? `<span class="intention">${esc(p.intention)}</span>`
+          : '<span class="intention intention--absente">aucune description</span>'
+      }
         ${r?.rouge ? lienRun(s.execution?.url) : ''}</td>
       <td class="num">${p.cas}</td>
       <td>${etat}</td>
@@ -1057,6 +1061,7 @@ tr:last-child td{border-bottom:0}
 .num{text-align:right}
 .dim{color:var(--encre3)}
 .intention{font-size:11.5px;color:var(--encre3);display:inline-block;margin-top:2px;max-width:62ch}
+.intention--absente{font-style:italic;opacity:.65}
 
 /* ── Pastilles et jetons ── */
 .pastille{display:inline-block;font-family:"JetBrains Mono",monospace;font-size:10.5px;

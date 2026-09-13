@@ -9,9 +9,8 @@
 // trompe sur un verdict est pire que pas de portail : il fait croire qu'on
 // regarde.
 
-import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
@@ -46,6 +45,7 @@ import {
   dureesDeReparation,
   tendance,
   prixDeLaCi,
+  intentionDunParcours,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -2171,5 +2171,104 @@ describe('le rendu mène à la cause, et seulement quand elle existe', () => {
     const cadre = vue('cadrePrix');
     expect(cadre).toContain("GitHub n'a pas répondu");
     expect(cadre).toContain('prix--absent');
+  });
+});
+
+describe('intentionDunParcours — la description d’un parcours, pas son bandeau', () => {
+  // Le cas réel (Quentin, 13/09) : sur la page Parcours, chaque description
+  // était une suite de tirets. La collecte prenait la PREMIÈRE ligne `//` du
+  // fichier — qui, dans la plupart des specs, arrive bien après l'en-tête et
+  // n'est qu'un séparateur décoratif.
+  const CAP = '@' + 'cap';
+
+  it('un bandeau décoratif n’est pas une description', () => {
+    const texte = `// ─────────────────────────────────────────\n// Un propriétaire connecte Google Drive.\n// ─────────────────────────────────────────\n\nimport { test } from '@playwright/test';\n`;
+    expect(intentionDunParcours(texte)).toBe('Un propriétaire connecte Google Drive.');
+  });
+
+  it('un titre de section entre tirets non plus — c’est LE cas qui a été vu', () => {
+    const texte = `import { test } from '@playwright/test';\n\nconst a = 1;\n\n// ── Constants ───────────────────────\nconst B = 2;\n`;
+    expect(intentionDunParcours(texte)).toBe(null);
+  });
+
+  it('un titre de section encadré DANS l’en-tête est sauté lui aussi', () => {
+    const texte = `// ── Constants ───────────────
+// Le propriétaire ouvre la page Connecteurs.
+`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire ouvre la page Connecteurs.');
+  });
+
+  it('un en-tête sur plusieurs lignes est joint en une phrase', () => {
+    const texte = `/**\n * Le propriétaire ouvre la page Connecteurs\n * et voit jusqu'où va le jeton.\n *\n * Scénarios :\n *  A — ...\n */\n`;
+    expect(intentionDunParcours(texte)).toBe(
+      "Le propriétaire ouvre la page Connecteurs et voit jusqu'où va le jeton.",
+    );
+  });
+
+  it('la ligne vide arrête la lecture : le reste de l’en-tête n’entre pas', () => {
+    const texte = `/**\n * Une phrase.\n *\n * Une autre chose, qui ne doit pas suivre.\n */\n`;
+    expect(intentionDunParcours(texte)).toBe('Une phrase.');
+  });
+
+  it('trop long ⇒ coupé sur une fin de phrase, jamais au milieu d’un mot', () => {
+    const un = `Le propriétaire ouvre la page et vérifie que tout est là. ${'x'.repeat(40)} fin de la deuxième phrase qui déborde largement des deux cents caractères annoncés et continue encore un peu.`;
+    const rendu = intentionDunParcours(`// ${un}\n`);
+    expect(rendu).toBe('Le propriétaire ouvre la page et vérifie que tout est là.');
+    expect(rendu.length).toBeLessThanOrEqual(200);
+  });
+
+  it('le nom du fichier en tête d’en-tête est retiré : il est déjà dans la colonne d’à côté', () => {
+    const texte = `/**\n * oauth-flow.spec.ts — Le propriétaire connecte Google Drive.\n */\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire connecte Google Drive.');
+  });
+
+  it('le nom du fichier SEUL sur sa ligne est sauté — cinq specs ouvrent ainsi', () => {
+    const texte = `/**
+ * webhooks-flows.spec.ts
+ *
+ * Le propriétaire crée un webhook entrant.
+ */
+`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire crée un webhook entrant.');
+  });
+
+  it('sans en-tête, on se rabat sur le titre du premier describe', () => {
+    const texte = `import { test } from '@playwright/test';\n\ntest.describe('Notion OAuth flow', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Notion OAuth flow');
+  });
+
+  it('le repli retire les étiquettes du titre — une étiquette n’est pas une description', () => {
+    const texte = `test.describe('Notion OAuth flow ${CAP}:connecter-un-service/ecran', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Notion OAuth flow');
+  });
+
+  it('ni en-tête ni describe ⇒ null, pour que le rendu puisse dire « aucune description »', () => {
+    expect(
+      intentionDunParcours(`import { test } from '@playwright/test';\ntest('a', () => {});\n`),
+    ).toBe(null);
+  });
+
+  it('un commentaire posé APRÈS les imports compte encore comme en-tête', () => {
+    const texte = `import { test } from '@playwright/test';\nimport path from 'node:path';\n\n// Le propriétaire renomme son agent depuis la liste.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire renomme son agent depuis la liste.');
+  });
+
+  it('un commentaire posé après du CODE n’est plus un en-tête', () => {
+    const texte = `const a = 1;\n\n// Ceci commente la ligne suivante, pas le fichier.\nconst b = 2;\n`;
+    expect(intentionDunParcours(texte)).toBe(null);
+  });
+
+  it('le rendu dit « aucune description » quand il n’y en a pas', () => {
+    const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
+    expect(build).toContain('aucune description');
+    expect(build).toContain('intention--absente');
+  });
+
+  it('les trente parcours du dépôt ont tous une description', () => {
+    const dossier = join(RACINE, 'apps', 'web', 'tests', 'e2e');
+    const sans = readdirSync(dossier)
+      .filter((f) => f.endsWith('.spec.ts'))
+      .filter((f) => !intentionDunParcours(readFileSync(join(dossier, f), 'utf8')));
+    expect(sans).toEqual([]);
   });
 });
