@@ -26,7 +26,7 @@ function makeMockClient(provider: ProviderName = 'anthropic') {
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('createLlmClient @cap:choisir-modele', () => {
+describe('createLlmClient @cap:choisir-modele/moteur', () => {
   it('throws ProviderConfigError when provider is empty', () => {
     expect(() =>
       // @ts-expect-error intentional bad input

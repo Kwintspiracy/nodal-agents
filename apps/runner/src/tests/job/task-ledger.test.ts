@@ -75,7 +75,7 @@ async function insertTask(opts: {
   return row.id;
 }
 
-describe('loadTaskLedger', () => {
+describe('loadTaskLedger @cap:suivre-execution/moteur', () => {
   it('returns an empty map for an empty/null id list', async () => {
     expect(await loadTaskLedger(db, [])).toEqual(new Map());
     expect(await loadTaskLedger(db, [null, null])).toEqual(new Map());

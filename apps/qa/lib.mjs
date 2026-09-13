@@ -163,6 +163,114 @@ export function cadenceDe(declencheurs) {
   return 'à la main';
 }
 
+// ─── Ce qu'une PR coûte en contrôles ──────────────────────────────────────────
+//
+// La question de Quentin, et elle est la bonne : combien de minutes chaque PR
+// coûte en contrôles, et est-ce que ça dérive. C'est ce chiffre-là qui décide
+// du sort des tests — le jour où attendre son merge devient insupportable,
+// personne ne demande la permission avant de désactiver une suite.
+//
+// Le chiffre n'est donc pas une curiosité de performance : c'est l'indicateur
+// AVANCÉ de la prochaine porte qu'on va retirer.
+
+/** La médiane d'une liste DÉJÀ TRIÉE. `null` sur une liste vide — jamais zéro. */
+export function medianeDe(triee) {
+  const l = triee ?? [];
+  if (l.length === 0) return null;
+  const mi = Math.floor(l.length / 2);
+  return l.length % 2 === 1 ? l[mi] : Number(((l[mi - 1] + l[mi]) / 2).toFixed(2));
+}
+
+/** Au-delà de ce pourcentage entre les deux moitiés de la fenêtre, la durée BOUGE. */
+const SEUIL_TENDANCE_PRIX = 15;
+
+/**
+ * Ce qu'une PR coûte, lu dans les exécutions passées de la CI.
+ *
+ * Durée = `updatedAt` − `createdAt`, c'est-à-dire la durée MUR À MUR du run,
+ * file d'attente comprise, et non la somme des durées de ses jobs. C'est un
+ * choix : la somme des jobs mesure ce que la CI consomme, la durée mur à mur
+ * mesure ce que quelqu'un ATTEND devant sa PR. Le second est le seul qui
+ * explique pourquoi on finit par désactiver des tests.
+ *
+ * Seuls les runs VERTS comptent. Un run rouge s'arrête au premier job qui
+ * tombe — souvent en trois minutes — et le compter ferait baisser la médiane
+ * chaque fois que la CI va mal, c'est-à-dire exactement quand on veut la
+ * regarder.
+ *
+ * `null` quand GitHub n'a pas répondu : une absence n'est pas un coût de zéro.
+ */
+export function prixDeLaCi(runs) {
+  if (!Array.isArray(runs)) return null;
+
+  const verts = runs
+    .filter((r) => String(r?.conclusion ?? '').toLowerCase() === 'success')
+    .map((r) => {
+      const de = Date.parse(r?.createdAt);
+      const a = Date.parse(r?.updatedAt);
+      if (!Number.isFinite(de) || !Number.isFinite(a) || a < de) return null;
+      return { le: r.createdAt, valeur: Number(((a - de) / 60000).toFixed(1)), url: r.url ?? null };
+    })
+    .filter(Boolean)
+    // Du plus ancien au plus récent : c'est l'ordre d'une courbe, et l'ordre
+    // dans lequel se lit une dérive. `gh` rend l'inverse.
+    .sort((x, y) => Date.parse(x.le) - Date.parse(y.le));
+
+  const vide = {
+    runs: 0,
+    serie: [],
+    mediane: null,
+    medianeRecente: null,
+    dernier: null,
+    pire: null,
+    hausse: null,
+    deltaMin: null,
+    tendance: null,
+  };
+  if (verts.length === 0) return vide;
+
+  const vals = verts.map((v) => v.valeur);
+  const tri = [...vals].sort((a, b) => a - b);
+  // Les DIX derniers, et pas toute la fenêtre, pour l'alerte : trente runs
+  // remontent à plusieurs semaines, et une CI qui vient de doubler resterait
+  // masquée par vingt mesures d'avant.
+  const dixDerniers = [...vals.slice(-10)].sort((a, b) => a - b);
+
+  // Première moitié contre seconde moitié, médiane contre médiane. Le point du
+  // milieu est écarté sur un nombre impair : il appartiendrait aux deux.
+  let hausse = null;
+  let deltaMin = null;
+  if (vals.length >= 2) {
+    const avant = medianeDe([...vals.slice(0, Math.floor(vals.length / 2))].sort((a, b) => a - b));
+    const apres = medianeDe([...vals.slice(Math.ceil(vals.length / 2))].sort((a, b) => a - b));
+    deltaMin = Number((apres - avant).toFixed(1));
+    if (avant > 0) hausse = Number((((apres - avant) / avant) * 100).toFixed(1));
+  }
+
+  return {
+    runs: verts.length,
+    serie: verts.map(({ le, valeur }) => ({ le, valeur })),
+    mediane: medianeDe(tri),
+    medianeRecente: medianeDe(dixDerniers),
+    dernier: verts.at(-1).valeur,
+    pire: Math.max(...vals),
+    hausse,
+    // Le même écart en minutes : un pourcentage ne dit pas si on parle de
+    // trente secondes ou d'un quart d'heure.
+    deltaMin,
+    // Sur un seul run vert, pas de tendance. « Stable » serait une affirmation
+    // qu'on ne peut pas faire — la même règle que `tendance()`.
+    tendance:
+      hausse == null
+        ? null
+        : hausse > SEUIL_TENDANCE_PRIX
+          ? 'monte'
+          : hausse < -SEUIL_TENDANCE_PRIX
+            ? 'descend'
+            : 'stable',
+  };
+}
+
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
 /**
@@ -273,6 +381,15 @@ const RANG = { haute: 0, moyenne: 1, basse: 2 };
 /** Un rouge de moins de deux jours est une régression ; au-delà, c'est une dette. */
 const JEUNE_MS = 2 * 24 * 60 * 60 * 1000;
 
+/** Au-delà de deux semaines, un rouge n'est plus une régression : c'est un choix. */
+const VIEUX_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Au-delà de ce nombre de minutes par PR, l'attente devient le sujet. */
+const SEUIL_PRIX_MIN = 25;
+
+/** Et au-delà de cette hausse sur la fenêtre, la dérive est dite avant d'être subie. */
+const SEUIL_HAUSSE_PRIX = 25;
+
 export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const out = [];
   if (!s) return out;
@@ -281,35 +398,74 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const mem = s.memoire ?? null;
 
   // ── Le produit d'abord. Un paquet mal couvert est une question d'ingénieur ;
-  // une capacité cassée est une promesse rompue.
-  const exigeesCassees = registre.filter((c) => c.exigee && c.etat === 'rouge');
-  if (exigeesCassees.length > 0) {
+  // une preuve de capacité tombée est une promesse rompue.
+  //
+  // Trois familles, et la hiérarchie entre elles est tout le lot : un ÉCHEC
+  // réveille, une ABSENCE informe. Confondre les deux — ce que faisait le mot
+  // « cassée » — envoyait chercher un bug là où personne n'avait écrit de test.
+  const MOT_NIVEAU = { ecran: 'écran', moteur: 'moteur' };
+  const tombees = [];
+  for (const c of registre) {
+    if (!c.exigee) continue;
+    for (const n of ['ecran', 'moteur']) {
+      if (c[n]?.etat === 'echouee') tombees.push(`${c.nom} — ${MOT_NIVEAU[n]}`);
+    }
+  }
+  if (tombees.length > 0) {
     out.push({
       gravite: 'haute',
-      titre: `${exigeesCassees.length} capacité(s) exigée(s) du produit sont cassées`,
-      detail: `Le test qui les prouve échoue. Ce ne sont pas des lignes non couvertes : ce sont des choses qu'un utilisateur croit pouvoir faire.`,
-      quoi: exigeesCassees.map((c) => c.nom),
+      titre: `${tombees.length} preuve(s) de capacité ont ÉCHOUÉ à la dernière mesure`,
+      detail: `Le niveau est nommé parce qu'il change tout : un ÉCRAN tombé veut dire que le parcours ne s'enchaîne plus — les boutons ; un MOTEUR tombé veut dire que la chose promise n'est plus faite.`,
+      quoi: tombees,
     });
   }
 
-  const dorment = registre.filter((c) => c.exigee && c.etat === 'non jouée');
+  // Le trou que le mot « prouvée » cachait : la façade est vérifiée, le moteur
+  // n'est testé par personne. Moyenne, jamais haute — rien n'est cassé.
+  const sansMoteur = registre.filter(
+    (c) => c.exigee && c.moteur?.etat === 'absente' && c.ecran?.etat !== 'absente',
+  );
+  if (sansMoteur.length > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${sansMoteur.length} capacité(s) exigée(s) sans preuve de MOTEUR`,
+      detail: `Un parcours d'écran passe : les boutons s'enchaînent. Rien ne dit que la chose est faite derrière. C'est exactement ce que le mot « prouvée » laissait croire.`,
+      quoi: sansMoteur.map((c) => c.nom),
+    });
+  }
+
+  const dorment = [];
+  for (const c of registre) {
+    if (!c.exigee) continue;
+    for (const n of ['ecran', 'moteur']) {
+      if (c[n]?.etat === 'ignoree' || c[n]?.etat === 'jamais jouee') {
+        dorment.push(`${c.nom} — ${MOT_NIVEAU[n]}`);
+      }
+    }
+  }
   if (dorment.length > 0) {
     out.push({
       gravite: 'moyenne',
-      titre: `${dorment.length} capacité(s) exigée(s) ne sont prouvées que sur le papier`,
-      detail: `Un test les revendique, aucune exécution ne l'a joué. La preuve existe et dort — c'est un trou dans la mesure, pas dans le produit.`,
-      quoi: dorment.map((c) => c.nom),
+      titre: `${dorment.length} preuve(s) de capacité n’ont pas tourné`,
+      detail: `Un test les revendique, aucune exécution ne l'a joué — sauté, ou jamais atteint. La preuve existe et dort : c'est un trou dans la mesure, pas dans le produit.`,
+      quoi: dorment,
     });
   }
 
-  const jamais = registre.filter((c) => c.etat === 'jamais prouvée');
+  // L'instabilité d'une preuve n'a pas son écart à elle : la section mémoire
+  // la remonte déjà, test par test, et la répéter ici doublerait la même ligne
+  // sous deux titres.
+
+  const jamais = registre.filter(
+    (c) => c.ecran?.etat === 'absente' && c.moteur?.etat === 'absente' && !(c.nonDit?.length > 0),
+  );
   if (jamais.length > 0) {
     out.push({
       // Basse à dessein : c'est un plan de travail, pas une alerte. La monter
       // en haute noierait les vraies régressions sous une liste qui ne bouge
       // que lentement.
       gravite: 'basse',
-      titre: `${jamais.length} capacité(s) sur ${registre.length} ne sont revendiquées par aucun test`,
+      titre: `${jamais.length} capacité(s) sur ${registre.length} n’ont aucune preuve, ni écran ni moteur`,
       detail: `C'est la liste de ce qu'on croit livré. Elle est censée rétrécir.`,
       quoi: jamais.map((c) => c.nom),
     });
@@ -339,6 +495,22 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
       titre: `${frais.length} test(s) sont passés au rouge dans les deux derniers jours`,
       detail: `Un rouge frais est une régression : quelque chose a bougé, et on sait quand. Un rouge ancien est une dette qu'on a appris à ne plus voir — les deux ne se traitent pas pareil.`,
       quoi: frais.map((e) => e.titre ?? e.cle),
+    });
+  }
+
+  // Le pendant du précédent, et sa raison d'être : le rouge qui traîne ne
+  // déclenche rien parce qu'il ne bouge plus. Il ne réveille donc personne
+  // (gravité moyenne, jamais haute — c'est `alertes()` qui trie), mais il est
+  // NOMMÉ, sans quoi ces tests-là finissent invisibles à force d'être là.
+  const vieux = (mem?.regressions ?? []).filter(
+    (e) => e.rougeDepuis && maintenant - Date.parse(e.rougeDepuis) > VIEUX_MS,
+  );
+  if (vieux.length > 0) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `${vieux.length} test(s) rouges depuis plus de 14 jours`,
+      detail: `Deux semaines sans réparation, ce n'est plus une régression : c'est une décision qui n'a pas été prise. Réparer, ou supprimer le test avec la capacité qu'il prouvait.`,
+      quoi: vieux.map((e) => e.titre ?? e.cle),
     });
   }
 
@@ -408,6 +580,31 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
       titre: `Aucun workflow ne lance le banc d'essai`,
       detail: `Le banc sort déjà en erreur sur une régression de métrique — c'est une porte qui fonctionne et que personne ne franchit. Une régression du gate d'approbation peut donc partir en production sans un mot.`,
       quoi: (s.banc?.sections ?? []).map((b) => b.id),
+    });
+  }
+
+  // ── Le prix d'une PR. Pas une curiosité de performance : le jour où
+  // attendre son merge devient insupportable, quelqu'un désactive une suite,
+  // et personne ne demande la permission avant. Le coût est donc l'indicateur
+  // AVANCÉ de la prochaine porte qu'on va retirer.
+  //
+  // `null` (GitHub sans réponse) ne pose RIEN : une absence de mesure n'est pas
+  // une CI gratuite.
+  const prix = s.prixCi ?? null;
+  if (prix?.medianeRecente != null && prix.medianeRecente > SEUIL_PRIX_MIN) {
+    out.push({
+      gravite: 'haute',
+      titre: `La CI coûte ${prix.medianeRecente} min par PR`,
+      detail: `Médiane des ${Math.min(prix.runs, 10)} dernières exécutions vertes, attente en file comprise. Au-delà d'une vingtaine de minutes, l'attente cesse d'être supportable et c'est le contenu de la CI qu'on finit par raboter, pas le temps qu'elle prend.`,
+      quoi: [],
+    });
+  }
+  if (prix?.hausse != null && prix.hausse > SEUIL_HAUSSE_PRIX) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `La CI a pris ${prix.hausse} % de plus sur la fenêtre`,
+      detail: `Première moitié des exécutions contre seconde moitié. Une dérive se répare pendant qu'elle est petite ; une fois installée, elle devient la normale que personne ne discute plus.`,
+      quoi: [],
     });
   }
 
@@ -515,7 +712,11 @@ export function cleDuTest(fichier, titre) {
  *     exactement ce qui arrive quand une exécution ne joue qu'une partie de la
  *     suite, ce qui est le cas normal ici.
  */
-export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {}) {
+export function fusionnerEssais(
+  existants,
+  nouveaux,
+  { max = 30, le = null, execution = null } = {},
+) {
   const parCle = new Map((existants ?? []).map((e) => [e.cle, { ...e }]));
 
   // Deux cas homonymes dans la MÊME salve sont deux tests — un `test.each`
@@ -552,6 +753,14 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
       dernierTourLe: null,
       dernierEchecLe: null,
       rougeDepuis: null,
+      // La dernière réparation observée : quand le rouge a commencé, quand il
+      // s'est arrêté. Les deux, sinon la durée ne se calcule pas.
+      dernierRougeDepuis: null,
+      repareLe: null,
+      // L'exécution qui a VU ce test rouge la dernière fois. C'est le seul
+      // chemin entre un nom de test dans un tableau et ce que l'utilisateur
+      // aurait vu : le rapport du run, sa trace et sa capture d'écran.
+      dernierRougeExecution: null,
     };
 
     // Le sort du tour PRÉCÉDENT, lu avant d'écrire celui-ci : c'est lui qui
@@ -566,6 +775,11 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
     if (n.sort === 'rouge') {
       e.echecs += 1;
       e.dernierEchecLe = e.dernierTourLe;
+      // Où aller voir. Un tour rouge joué SANS exécution connue (une mesure
+      // locale) ne pose rien et n'efface rien : mieux vaut le dernier lien
+      // vivant qu'un lien mort, et un rendu local ne doit pas faire disparaître
+      // la piste laissée par la mesure nocturne.
+      e.dernierRougeExecution = n.execution ?? execution ?? e.dernierRougeExecution ?? null;
       // L'âge du problème COURANT, pas celui du premier échec de l'histoire :
       // un test cassé en juillet, réparé, recassé hier a un problème d'un jour.
       //
@@ -579,6 +793,17 @@ export function fusionnerEssais(existants, nouveaux, { max = 30, le = null } = {
         e.rougeDepuis = e.dernierTourLe;
       }
     } else if (n.sort === 'vert') {
+      // Un rouge DATÉ qui repasse au vert est une réparation observée de bout
+      // en bout : on a vu la casse et on voit la remise en état. C'est la seule
+      // forme qui donne une durée honnête — d'où la conservation du point de
+      // départ, que `rougeDepuis` s'apprête à perdre.
+      //
+      // Une seule réparation gardée, la dernière : garder toute la suite
+      // ferait grossir `tests.ndjson` sans rien ajouter au chiffre qu'on lit.
+      if (e.rougeDepuis) {
+        e.dernierRougeDepuis = e.rougeDepuis;
+        e.repareLe = e.dernierTourLe;
+      }
       e.rougeDepuis = null;
     }
 
@@ -637,21 +862,113 @@ export function dernierSort(enr) {
   return SORT_DE_LETTRE[recents.at(-1)] ?? null;
 }
 
+const JOUR_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Combien de temps un test reste cassé, quand il finit par être réparé.
+ *
+ * Le chiffre qui manquait : « 22 tests rouges » ne dit pas si on répare en un
+ * jour ou jamais. Deux dépôts avec le même nombre de rouges et des temps de
+ * réparation de 1 et de 40 jours ne sont pas du tout dans le même état.
+ *
+ * La MÉDIANE et pas la moyenne : une seule réparation oubliée pendant six mois
+ * tire une moyenne vers le haut et fait croire que c'est la normale. La médiane
+ * dit ce qui arrive à la moitié des cas, et ne bouge pas d'un accident.
+ *
+ * N'entrent ici que les réparations observées de bout en bout — casse VUE puis
+ * remise en état vue. Une durée partant de la première fois qu'on a regardé
+ * mesurerait notre retard à installer la mesure, pas le leur à réparer.
+ */
+export function dureesDeReparation(memoire) {
+  const durees = (memoire ?? [])
+    .map((e) => {
+      if (!e?.repareLe || !e?.dernierRougeDepuis) return null;
+      const de = Date.parse(e.dernierRougeDepuis);
+      const a = Date.parse(e.repareLe);
+      if (!Number.isFinite(de) || !Number.isFinite(a) || a < de) return null;
+      return Number(((a - de) / JOUR_MS).toFixed(2));
+    })
+    .filter((d) => d != null)
+    .sort((a, b) => a - b);
+
+  return { durees, mediane: medianeDe(durees) };
+}
+
+/**
+ * L'évolution d'un chiffre de l'historique sur une fenêtre de jours.
+ *
+ * Deux exclusions, et les deux sont des refus de mentir :
+ *   - les collectes `local` — lancées sur un poste, sur un arbre qui n'est pas
+ *     main, souvent partielles. Mélangées aux mesures nocturnes, elles font des
+ *     décrochages qui ne correspondent à aucun changement du dépôt ;
+ *   - les valeurs absentes — une couverture qui n'a pas pu être mesurée n'est
+ *     pas une couverture de zéro, et la peindre ainsi inventerait une chute.
+ *
+ * Moins de deux points : pas de delta et pas de direction. « Stable » sur un
+ * seul point serait une affirmation qu'on ne peut pas faire.
+ */
+export function tendance(historique, champ, { jours = 30, maintenant = Date.now() } = {}) {
+  const depuis = maintenant - jours * JOUR_MS;
+  const valeurs = (historique ?? [])
+    .filter((h) => h?.declencheur !== 'local' && typeof h?.[champ] === 'number')
+    .map((h) => ({ le: h.le, valeur: h[champ], t: Date.parse(h.le) }))
+    .filter((v) => Number.isFinite(v.t) && v.t >= depuis && v.t <= maintenant)
+    .sort((a, b) => a.t - b.t)
+    .map(({ le, valeur }) => ({ le, valeur }));
+
+  if (valeurs.length < 2) return { valeurs, delta: null, direction: null };
+  const delta = Number((valeurs.at(-1).valeur - valeurs[0].valeur).toFixed(2));
+  return { valeurs, delta, direction: delta > 0 ? 'monte' : delta < 0 ? 'descend' : 'stable' };
+}
+
 // ─── Les capacités du produit ─────────────────────────────────────────────────
 //
 // Un test déclare ce qu'il prouve en écrivant `@cap:<slug>` dans son titre. La
 // convention tient pour Vitest comme pour Playwright parce qu'aucun des deux
 // n'a besoin de la comprendre : le titre voyage tel quel jusqu'au rapport.
 
+/** Les deux niveaux de preuve. Il n'y en a pas de troisième, et c'est le sujet. */
+export const NIVEAUX = ['ecran', 'moteur'];
+
 /**
- * Les capacités qu'un titre revendique.
+ * Les capacités qu'un titre revendique, et à QUEL NIVEAU chacune.
+ *
+ * `@cap:<slug>/ecran` — un parcours navigateur, ou un test de composant ou
+ * d'action web. Il prouve que les boutons existent, s'enchaînent et affichent
+ * ce qu'il faut.
+ *
+ * `@cap:<slug>/moteur` — un test du runner, des outils, de l'orchestration ou
+ * de la base. Il prouve que la chose EST FAITE, pas qu'elle est affichée.
+ *
+ * La distinction vient d'une question de Quentin (12/09) : « quand c'est vert,
+ * ça veut dire que le runner fonctionne vraiment, ou simplement que cocher les
+ * boutons fonctionne ? ». Un seul mot ne pouvait pas répondre, parce que
+ * « Donner des outils » était tenue par trois parcours d'ÉCRAN quand les tests
+ * qui prouvent la promesse — la whitelist, l'exécution d'un outil — n'étaient
+ * étiquetés nulle part.
  *
  * Un titre peut en revendiquer plusieurs — un parcours de bout en bout traverse
  * souvent deux ou trois capacités, et prétendre le contraire forcerait à couper
  * des parcours utiles en morceaux pour satisfaire le registre.
+ *
+ * Le niveau est OPTIONNEL le temps de la transition : `niveau` vaut alors
+ * `null`, et la porte le signale en avertissement. Un suffixe qui n'est ni
+ * `ecran` ni `moteur` (une faute de frappe) n'est pas lu comme un niveau — il
+ * tombe dans le même `null`, donc sous les yeux de quelqu'un.
+ *
+ * Le `(?![\w-])` n'est pas décoratif : sans lui, l'alternative s'arrêtait au
+ * bon PRÉFIXE et laissait le reste par terre. `@cap:x/ecranXYZ` se déclarait
+ * preuve d'écran et `@cap:y/moteur-bis` preuve de moteur — la faute de frappe
+ * devenait un niveau, en silence, et le paragraphe ci-dessus mentait. Trouvé
+ * par la revue Codex du 13/09, en SONDANT la fonction, pas en la lisant.
  */
 export function capacitesDunTitre(titre) {
-  return [...String(titre ?? '').matchAll(/@cap:([a-z0-9-]+)/g)].map((m) => m[1]);
+  return [...String(titre ?? '').matchAll(/@cap:([a-z0-9-]+)(?:\/(ecran|moteur)(?![\w-]))?/g)].map(
+    (m) => ({
+      slug: m[1],
+      niveau: m[2] ?? null,
+    }),
+  );
 }
 
 /**
@@ -700,26 +1017,86 @@ export function titresDeTest(texte) {
 }
 
 /**
- * Ce qu'on peut dire d'une capacité, au vu des tests qui la revendiquent.
+ * Ce qu'on SAIT d'une capacité, niveau par niveau.
  *
- * Cinq états, et les deux derniers sont des trous DIFFÉRENTS qu'il ne faut
- * surtout pas confondre :
- *   - `jamais prouvée` : aucun test ne la revendique. Personne n'a écrit la
- *     preuve. C'est la colonne qui compte — la liste de ce qu'on croit livré ;
- *   - `non jouée` : un test la revendique, mais il n'a pas tourné (ignoré, ou
- *     jamais exécuté par aucune CI). La preuve existe et dort.
+ * L'ancien `etatDuneCapacite` rendait un mot — « prouvée », « cassée » — et ce
+ * mot mentait par omission. « Donner des outils » s'affichait *prouvée* parce
+ * que trois parcours d'écran passaient ; les tests qui prouvent la promesse
+ * (la whitelist, l'exécution d'un outil) n'étaient étiquetés nulle part. Et
+ * *cassée* ne disait pas si c'était le produit ou le navigateur qui avait
+ * lâché. Quentin a posé les deux questions le 12/09 ; ce qui suit y répond en
+ * faits plutôt qu'en verdict.
  *
- * Le rouge l'emporte sur tout le reste : une capacité tenue par trois tests
- * dont un échoue est cassée, pas « majoritairement verte ».
+ * Pour chaque niveau, un état et rien d'autre :
+ *   - `absente`      — aucun test de ce niveau. Ce n'est PAS un échec, et ça ne
+ *                      doit jamais s'afficher en rouge : personne n'a écrit la
+ *                      preuve, voilà tout ;
+ *   - `echouee`      — au moins une preuve a échoué à la dernière mesure. Le
+ *                      rouge l'emporte sur le vert DANS SON NIVEAU : une
+ *                      capacité tenue par trois écrans dont un tombe a un écran
+ *                      cassé, pas « majoritairement vert » ;
+ *   - `instable`     — verte et rouge selon les jours ;
+ *   - `passee`       — au moins une preuve verte, aucune tombée ;
+ *   - `ignoree`      — sautée (`test.skip`) : quelqu'un l'a désactivée, et on
+ *                      peut la rouvrir ;
+ *   - `jamais jouee` — déclarée dans le dépôt, jamais atteinte par une
+ *                      exécution. Deux trous DIFFÉRENTS qu'on ne répare pas
+ *                      pareil, là où l'ancien code n'avait qu'un « non jouée ».
+ *
+ * `nonDit` reçoit les preuves dont l'étiquette ne porte pas de niveau. Les
+ * ranger d'office dans « écran » peindrait en vert un moteur que personne n'a
+ * testé — exactement le mensonge que ce lot supprime.
  */
-export function etatDuneCapacite(preuves) {
+const RANG_NIVEAU = ['echouee', 'instable', 'passee', 'ignoree', 'jamais jouee'];
+
+function etatDunNiveau(preuves) {
+  if (preuves.length === 0) return 'absente';
+  const etats = new Set(
+    preuves.map((p) => {
+      if (p?.sort === 'rouge') return 'echouee';
+      if (p?.sort === 'instable') return 'instable';
+      if (p?.sort === 'vert') return 'passee';
+      if (p?.sort === 'ignoré') return 'ignoree';
+      return 'jamais jouee';
+    }),
+  );
+  return RANG_NIVEAU.find((e) => etats.has(e));
+}
+
+export function preuvesDuneCapacite(preuves) {
   const p = preuves ?? [];
-  if (p.length === 0) return 'jamais prouvée';
-  const sorts = p.map((x) => x?.sort ?? null);
-  if (sorts.some((s) => s === 'rouge')) return 'rouge';
-  if (sorts.some((s) => s === 'instable')) return 'instable';
-  if (sorts.some((s) => s === 'vert')) return 'prouvée';
-  return 'non jouée';
+  const par = (niveau) => p.filter((x) => x?.niveau === niveau);
+  // Tout ce qui n'est ni l'un ni l'autre : `null`, absent, ou un suffixe mal
+  // orthographié. L'ordre d'origine est conservé — c'est celui du rapport.
+  const out = { nonDit: p.filter((x) => !NIVEAUX.includes(x?.niveau)) };
+  for (const n of NIVEAUX) {
+    const siennes = par(n);
+    out[n] = { etat: etatDunNiveau(siennes), preuves: siennes };
+  }
+  return out;
+}
+
+/** Le mot qu'on affiche pour un état, à l'intérieur d'un niveau. */
+export const MOT_ETAT = {
+  absente: 'non testé',
+  echouee: 'échoué',
+  instable: 'instable',
+  passee: 'passé',
+  ignoree: 'ignoré',
+  'jamais jouee': 'jamais joué',
+};
+
+/**
+ * La ligne d'une capacité, en une phrase de deux faits.
+ *
+ * Jamais un verdict : « écran passé · moteur non testé » dit ce qu'on sait et
+ * ce qu'on ignore, là où « prouvée » affirmait les deux.
+ */
+export function phraseDeCapacite(r) {
+  const e = r?.ecran?.etat ?? 'absente';
+  const m = r?.moteur?.etat ?? 'absente';
+  if (e === 'absente' && m === 'absente') return 'aucune preuve';
+  return `écran ${MOT_ETAT[e]} · moteur ${MOT_ETAT[m]}`;
 }
 
 /**
@@ -732,10 +1109,21 @@ export function etatDuneCapacite(preuves) {
  *   2. une capacité `exigee` que plus AUCUN test ne revendique — le cas du test
  *      supprimé ou renommé qui emporte la preuve avec lui.
  *
+ * Et une TROISIÈME qui ne bloque pas : une étiquette sans niveau
+ * (`@cap:x` au lieu de `@cap:x/ecran`). Elle est rendue avec `bloquant: false`
+ * — un avertissement, le temps de la conversion des titres existants. Bloquer
+ * dès le premier jour ferait rougir des centaines de titres d'un coup et la
+ * porte se ferait désactiver le jour même ; ne rien dire laisserait la moitié
+ * du dépôt sans niveau pour toujours. **Temporaire : quand `pnpm
+ * capacites:check` n'affiche plus aucun avertissement, ce cas devient
+ * bloquant et le `bloquant: false` disparaît.**
+ *
  * Ce qu'elle ne refuse PAS, et c'est délibéré : une capacité dont les tests
- * ÉCHOUENT. Cette porte garde le LIEN entre le produit et ses preuves ; la
- * gravité d'un rouge est le sujet de l'issue #65. Écrire ici qu'elle protège du
- * rouge en ferait une garde imaginaire, exactement ce que ce portail dénonce.
+ * ÉCHOUENT, et une capacité prouvée au seul niveau écran. Cette porte garde le
+ * LIEN entre le produit et ses preuves ; la gravité d'un rouge est le sujet de
+ * l'issue #65, et « moteur non testé » est un écart qu'on lit sur la page, pas
+ * une PR qu'on refuse. Écrire ici qu'elle protège du rouge en ferait une garde
+ * imaginaire, exactement ce que ce portail dénonce.
  */
 export function fautesDuRegistre({ capacites, preuves } = {}) {
   const registre = capacites ?? [];
@@ -753,6 +1141,7 @@ export function fautesDuRegistre({ capacites, preuves } = {}) {
     if (slugs.has(slug)) continue;
     fautes.push({
       type: 'étiquette inconnue',
+      bloquant: true,
       slug,
       origines: [...new Set(origines)].sort(),
     });
@@ -760,10 +1149,30 @@ export function fautesDuRegistre({ capacites, preuves } = {}) {
 
   for (const c of registre) {
     if (!c.exigee) continue;
+    // La LONGUEUR, pas l'état par niveau : une preuve sans niveau reste une
+    // preuve. Sinon le premier commit de la transition ferait tomber les
+    // vingt-quatre capacités exigées d'un coup, alors que rien n'a été supprimé.
     const siennes = toutes.filter((p) => p.capacite === c.slug);
-    if (etatDuneCapacite(siennes) === 'jamais prouvée') {
-      fautes.push({ type: 'capacité exigée sans preuve', slug: c.slug, nom: c.nom });
+    if (siennes.length === 0) {
+      fautes.push({
+        type: 'capacité exigée sans preuve',
+        bloquant: true,
+        slug: c.slug,
+        nom: c.nom,
+      });
     }
+  }
+
+  // Avertissement, pas refus. Voir l'en-tête : temporaire.
+  for (const c of registre) {
+    const sansNiveau = toutes.filter((p) => p.capacite === c.slug && !NIVEAUX.includes(p?.niveau));
+    if (sansNiveau.length === 0) continue;
+    fautes.push({
+      type: 'étiquette sans niveau',
+      bloquant: false,
+      slug: c.slug,
+      origines: [...new Set(sansNiveau.map((p) => p.origine ?? '?'))].sort(),
+    });
   }
 
   return fautes;
@@ -794,14 +1203,27 @@ export function croiserPreuves({ declarees, joues } = {}) {
   const jouees = [];
   const remplaces = new Set();
   for (const c of joues ?? []) {
-    for (const slug of capacitesDunTitre(c.titreComplet ?? c.titre)) {
+    // Dédupliqué DANS le cas : un `describe` étiqueté qui contient un cas
+    // étiqueté pareil écrit deux fois la même étiquette dans le titre complet.
+    // Sans ce Set, la même vérification comptait pour deux (revue Codex, 13/09).
+    const vus = new Set();
+    for (const { slug, niveau } of capacitesDunTitre(c.titreComplet ?? c.titre)) {
+      const cle = `${slug}::${niveau ?? ''}`;
+      if (vus.has(cle)) continue;
+      vus.add(cle);
       // Un cas par preuve, jamais un fichier : quand une capacité tombe, la
       // seule information utile est QUEL test exact l'a lâchée.
-      jouees.push({ capacite: slug, origine: c.fichier, titre: c.titre, sort: c.sort });
-      remplaces.add(`${c.fichier}::${slug}`);
+      jouees.push({ capacite: slug, niveau, origine: c.fichier, titre: c.titre, sort: c.sort });
+      // La clé inclut le NIVEAU : un même fichier peut porter un `describe`
+      // d'écran et un `describe` de moteur. Effacer sa déclaration sur le seul
+      // nom du fichier ferait disparaître le niveau que l'exécution n'a pas
+      // joué, et la capacité paraîtrait sans moteur alors que le test existe.
+      remplaces.add(`${c.fichier}::${slug}::${niveau ?? ''}`);
     }
   }
-  const restantes = (declarees ?? []).filter((d) => !remplaces.has(`${d.origine}::${d.capacite}`));
+  const restantes = (declarees ?? []).filter(
+    (d) => !remplaces.has(`${d.origine}::${d.capacite}::${d.niveau ?? ''}`),
+  );
   return [...restantes, ...jouees];
 }
 
@@ -817,6 +1239,9 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
   const toutes = preuves ?? [];
   return (capacites ?? []).map((c) => {
     const siennes = toutes.filter((p) => p.capacite === c.slug);
-    return { ...c, etat: etatDuneCapacite(siennes), preuves: siennes };
+    const niveaux = preuvesDuneCapacite(siennes);
+    // `phrase` est calculée ICI et pas dans le rendu : c'est la ligne que
+    // l'écran affiche, et elle se teste.
+    return { ...c, ...niveaux, phrase: phraseDeCapacite(niveaux), preuves: siennes };
   });
 }

@@ -194,7 +194,7 @@ function tgReply(userTask: string, ...sends: string[]): unknown[] {
 
 // Tests ───────────────────────────────────────────────────────────────────────
 
-describe('loadThreadHistory @cap:reprendre-conversation', () => {
+describe('loadThreadHistory @cap:reprendre-conversation/moteur', () => {
   it('returns [] when there are no prior jobs in the thread', async () => {
     const history = await loadThreadHistory({
       db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],

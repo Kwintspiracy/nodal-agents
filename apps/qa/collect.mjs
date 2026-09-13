@@ -34,8 +34,10 @@ import {
   regrouperParCapacite,
   fautesDuRegistre,
   fusionnerEssais,
+  prixDeLaCi,
   instabiliteDe,
   regressionsFraiches,
+  dureesDeReparation,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -339,6 +341,65 @@ function chantiers() {
   return { issues, pr, cartes };
 }
 
+// ─── 7 bis. Ce qu'une PR coûte en contrôles ───────────────────────────────────
+
+/**
+ * Les trente dernières exécutions de la CI sur une PR.
+ *
+ * `--event pull_request` et rien d'autre : une exécution sur `push` ne fait
+ * attendre personne devant son merge, et la mélanger ferait une moyenne qui ne
+ * décrit aucune situation vécue.
+ *
+ * `null` — jamais `[]` — quand `gh` n'a pas répondu, et DIT à voix haute, comme
+ * `chantiers()`. Une absence de mesure n'est pas une CI gratuite, et c'est
+ * précisément le genre de zéro silencieux que ce portail existe pour refuser.
+ */
+function prixCi() {
+  const champs = 'databaseId,createdAt,updatedAt,conclusion,headBranch,url';
+  const out = sh(
+    `gh run list --workflow ci.yml --event pull_request --status completed --limit 30 --json ${champs}`,
+  );
+  let runs = null;
+  if (out) {
+    try {
+      runs = JSON.parse(out);
+    } catch {
+      runs = null;
+    }
+  }
+  if (!runs) {
+    console.warn("[qa] GitHub sans réponse sur les exécutions — le prix d'une PR est ABSENT.");
+    return null;
+  }
+  return prixDeLaCi(runs);
+}
+
+/**
+ * L'exécution qui a produit cette collecte, et son adresse.
+ *
+ * C'est le chemin de retour : un rouge dans le portail mène au run qui l'a vu,
+ * donc au rapport, aux traces et aux captures d'écran. Sans lui, chaque nom de
+ * test rouge est un cul-de-sac — on sait QUE ça casse, jamais ce que
+ * l'utilisateur aurait vu.
+ *
+ * `null` en local : il n'y a pas de run à montrer, et un lien inventé serait
+ * pire qu'aucun lien.
+ */
+function execution() {
+  const id = process.env['GITHUB_RUN_ID'] ?? null;
+  if (!id) return null;
+  let depot = null;
+  try {
+    depot = JSON.parse(sh('gh repo view --json nameWithOwner') || 'null')?.nameWithOwner ?? null;
+  } catch {
+    depot = null;
+  }
+  // Le dépôt vient aussi de l'environnement d'Actions : `gh` peut échouer, pas
+  // `GITHUB_REPOSITORY`.
+  depot = depot ?? process.env['GITHUB_REPOSITORY'] ?? null;
+  return { id, url: depot ? `https://github.com/${depot}/actions/runs/${id}` : null };
+}
+
 // ─── 8. Les capacités du produit, et ce qui les prouve ────────────────────────
 //
 // La seule section qui parle du PRODUIT et non du dépôt. « @nodal-agents/web à
@@ -412,7 +473,7 @@ function essaisDeLaCollecte(e2e, listePaquets) {
   return essais;
 }
 
-function memoire(essais, le) {
+function memoire(essais, le, execution) {
   const chemin = join(DATA, 'tests.ndjson');
   const existants = existsSync(chemin)
     ? readFileSync(chemin, 'utf8')
@@ -428,7 +489,7 @@ function memoire(essais, le) {
         .filter(Boolean)
     : [];
 
-  const fusionnes = fusionnerEssais(existants, essais, { le });
+  const fusionnes = fusionnerEssais(existants, essais, { le, execution });
 
   // Une ligne par test, triée : le diff nocturne reste lisible à l'œil.
   writeFileSync(chemin, fusionnes.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -436,6 +497,10 @@ function memoire(essais, le) {
   const avecVerdict = fusionnes.map((e) => ({ ...e, ...instabiliteDe(e) }));
   return {
     total: fusionnes.length,
+    // Combien de temps un test reste cassé quand il finit par être réparé. Le
+    // chiffre qui manquait : « 22 rouges » ne dit pas si on répare en un jour
+    // ou jamais.
+    reparations: dureesDeReparation(fusionnes),
     joues: essais.length,
     instables: avecVerdict.filter((e) => e.verdict === 'instable').length,
     casses: avecVerdict.filter((e) => e.verdict === 'cassé').length,
@@ -482,7 +547,8 @@ function main() {
   const essais = essaisDeLaCollecte(e2e, listePaquets);
   const cap = capacites(fichiers, essais);
   const genereLe = new Date().toISOString();
-  const mem = memoire(essais, genereLe);
+  const exec = execution();
+  const mem = memoire(essais, genereLe, exec?.url ?? null);
 
   const paquetsEnrichis = listePaquets.map((p) => ({
     ...p,
@@ -500,6 +566,9 @@ function main() {
 
   const snapshot = {
     genereLe,
+    // Le run qui a produit cette collecte. C'est par lui qu'un rouge du portail
+    // mène au rapport et aux captures d'écran ; `null` en local, jamais inventé.
+    execution: exec,
     commit: sh('git rev-parse HEAD').slice(0, 8) || null,
     branche: sh('git rev-parse --abbrev-ref HEAD') || null,
     paquets: paquetsEnrichis,
@@ -516,8 +585,18 @@ function main() {
       couvertureLignes:
         lignesTotal > 0 ? Number(((lignesCouvertes / lignesTotal) * 100).toFixed(2)) : null,
       capacites: cap.registre.length,
-      capacitesProuvees: cap.registre.filter((c) => c.etat === 'prouvée').length,
-      capacitesJamaisProuvees: cap.registre.filter((c) => c.etat === 'jamais prouvée').length,
+      // Clés NEUVES, et pas `capacitesProuvees` recalculée : l'historique
+      // porte l'ancienne depuis des semaines, avec l'ancien sens (« un test
+      // étiqueté passe », tous niveaux confondus). Réutiliser le nom ferait
+      // une courbe dont la moitié gauche ne mesure pas la même chose que la
+      // droite, et personne ne le verrait jamais.
+      capacitesVerifiees: cap.registre.filter(
+        (c) => c.ecran.etat === 'passee' && c.moteur.etat === 'passee',
+      ).length,
+      capacitesSansMoteur: cap.registre.filter((c) => c.moteur.etat === 'absente').length,
+      capacitesSansPreuve: cap.registre.filter(
+        (c) => c.ecran.etat === 'absente' && c.moteur.etat === 'absente' && c.nonDit.length === 0,
+      ).length,
       testsEnMemoire: mem.total,
       testsInstables: mem.instables,
       testsCasses: mem.casses,
@@ -526,6 +605,10 @@ function main() {
     memoire: mem,
     banc: banc(),
     ci: workflows,
+    // À côté de `ci` et non dedans : `ci` est la LISTE des workflows, et y
+    // glisser une clé en ferait un tableau qui porte un objet — la première
+    // chose qu'un lecteur comprendrait de travers.
+    prixCi: prixCi(),
     parcours: e2e,
     chantiers: chantiers(),
   };
@@ -554,7 +637,7 @@ function main() {
     `couverture: ${r.paquetsMesures}/${r.paquets} paquets mesurés · ${r.couvertureLignes ?? '—'}% des lignes mesurées`,
   );
   console.log(
-    `capacités: ${r.capacites} nommées · ${r.capacitesProuvees} prouvées · ${r.capacitesJamaisProuvees} jamais prouvées`,
+    `capacités: ${r.capacites} nommées · ${r.capacitesVerifiees} vérifiées aux deux niveaux · ${r.capacitesSansMoteur} sans moteur · ${r.capacitesSansPreuve} sans aucune preuve`,
   );
   console.log(
     `mémoire: ${r.testsEnMemoire} tests suivis (${mem.joues} joués cette fois) · ${r.testsInstables} instables · ${r.testsCasses} cassés`,

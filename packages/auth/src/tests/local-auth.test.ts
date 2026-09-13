@@ -23,7 +23,7 @@ beforeAll(async () => {
   db = result.db;
 });
 
-describe('createLocalAuthProvider', () => {
+describe('createLocalAuthProvider @cap:se-connecter/moteur', () => {
   it('returns a LocalAuthProvider instance', () => {
     const provider = createLocalAuthProvider({
       db,

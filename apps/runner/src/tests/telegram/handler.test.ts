@@ -207,7 +207,7 @@ async function claimOwner(agentId: string, update: TelegramUpdate): Promise<void
     );
 }
 
-describe('handleTelegramUpdate — private chats', () => {
+describe('handleTelegramUpdate — private chats @cap:parler-par-canal-externe/moteur', () => {
   it('creates a telegram-channel job for the receiving agent', async () => {
     const result = await handleTelegramUpdate({
       update: privateMessage('hello world', 999),

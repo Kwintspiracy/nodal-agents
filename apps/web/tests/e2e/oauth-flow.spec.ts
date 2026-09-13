@@ -23,7 +23,7 @@ test.beforeAll(async () => {
   await cleanCredentialsByType('google-oauth');
 });
 
-test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service', () => {
+test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran', () => {
   test('connect via wizard → callback → connected status and toast', async ({ page, context }) => {
     const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
     const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
