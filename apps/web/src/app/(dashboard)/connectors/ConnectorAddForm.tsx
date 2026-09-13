@@ -14,30 +14,8 @@ import TextInput from '@/components/ui/TextInput';
 import Select from '@/components/ui/Select';
 import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
-import Banner from '@/components/ui/Banner.tsx';
+import ScopeDisclosure from '@/components/ScopeDisclosure.tsx';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
-
-/**
- * CONNECTOR-001 (audit vague D): say how far the token reaches BEFORE sending
- * the user to the provider's consent screen.
- *
- * Four Google connectors request the widest scope in their family because
- * their tools need it — `drive.file` cannot open a file the user already has,
- * and the `.readonly` variants cannot write. The scope is defensible; letting
- * "connect Google Drive" read as "the files it needs" is not. Google's own
- * screen does say it, in Google's words, at the moment the user is already
- * committed. This says it in ours, while they can still walk away.
- *
- * Renders nothing when a connector's reach matches its name.
- */
-function ScopeDisclosure({ catalogItem }: { catalogItem: ConnectorCatalogItem }) {
-  if (!catalogItem.scopeDisclosure) return null;
-  return (
-    <Banner variant="warn" title="What this connector can reach">
-      {catalogItem.scopeDisclosure}
-    </Banner>
-  );
-}
 
 interface Props {
   catalogItem: ConnectorCatalogItem;
@@ -166,7 +144,7 @@ export default function ConnectorAddForm({
   if (isOAuth && compatibleCredentials.length > 0) {
     return (
       <div className="space-y-3">
-        <ScopeDisclosure catalogItem={catalogItem} />
+        <ScopeDisclosure disclosure={catalogItem.scopeDisclosure} />
         <div>
           <FieldLabel>Use existing credential</FieldLabel>
           <Select
@@ -208,7 +186,7 @@ export default function ConnectorAddForm({
   // guard defensively). Show a prompt to create a credential.
   return (
     <div className="space-y-3">
-      <ScopeDisclosure catalogItem={catalogItem} />
+      <ScopeDisclosure disclosure={catalogItem.scopeDisclosure} />
       <p className="text-xs text-ink-3">{catalogItem.docsHint}</p>
       <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
         {onCancel && (

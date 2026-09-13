@@ -9,6 +9,7 @@ import { OptionRadio } from '@/components/ui/OptionRadio';
 import TextInput from '@/components/ui/TextInput';
 import FieldLabel from '@/components/ui/FieldLabel';
 import CopyButton from '@/components/ui/CopyButton';
+import ScopeDisclosure from '@/components/ScopeDisclosure.tsx';
 
 export type CredentialWizardType =
   | 'google-oauth'
@@ -93,10 +94,25 @@ interface Props {
    * If unset, the callback redirects to /credentials?created={id}.
    */
   returnToConnectorSlug?: string;
+  /**
+   * How far the connector's token reaches, in the product's own words — the
+   * `scopeDisclosure` of the catalog entry the user clicked, passed straight
+   * through (the wizard never decides which provider is wide; the connector
+   * declares it). Undefined when the wizard is opened from the Credentials
+   * page, where no connector is in play. Issue #83: on a fresh install this
+   * wizard IS the first connection, so it is the only screen where the
+   * warning can still change the user's mind.
+   */
+  scopeDisclosure?: string | null;
   onClose: () => void;
 }
 
-export default function CredentialWizard({ initialType, returnToConnectorSlug, onClose }: Props) {
+export default function CredentialWizard({
+  initialType,
+  returnToConnectorSlug,
+  scopeDisclosure,
+  onClose,
+}: Props) {
   const [step, setStep] = useState<'type' | 'setup'>(initialType ? 'setup' : 'type');
   const [selectedType, setSelectedType] = useState<CredentialWizardType | null>(
     initialType ?? null,
@@ -153,6 +169,14 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
         ) : undefined
       }
     >
+      {/* The reach is stated on BOTH steps: whichever one the user landed on,
+          it is read before the submit button hands them to the provider. */}
+      {scopeDisclosure && (
+        <div className="mb-4">
+          <ScopeDisclosure disclosure={scopeDisclosure} />
+        </div>
+      )}
+
       {/* Step 1 — Type selection */}
       {step === 'type' && (
         <div className="space-y-3">
