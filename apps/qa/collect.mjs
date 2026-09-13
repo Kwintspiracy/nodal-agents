@@ -38,6 +38,7 @@ import {
   instabiliteDe,
   regressionsFraiches,
   dureesDeReparation,
+  intentionDunParcours,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -294,9 +295,10 @@ function parcours(fichiers, workflows) {
       jouParLaCi: cadenceParParcours.has(nom),
       cadence: cadenceParParcours.get(nom) ?? null,
       resultat: r,
-      // La première ligne de commentaire du fichier, quand il y en a une :
-      // c'est ce que l'auteur a jugé utile de dire du parcours.
-      intention: (texte.match(/^\/\/\s*(.+)$/m)?.[1] ?? '').trim() || null,
+      // La première phrase UTILE du fichier — voir `intentionDunParcours`.
+      // La regex d'avant prenait la première ligne `//` du fichier, et rendait
+      // `── Constants ─────` sous la moitié des parcours (Quentin, 13/09).
+      intention: intentionDunParcours(texte),
     };
   });
 }

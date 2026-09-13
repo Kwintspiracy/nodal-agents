@@ -201,11 +201,12 @@ export const EXPLICATIONS = {
 <li><b>Chaque nuit</b> — joué par la mesure nocturne : il CONSTATE une régression après coup, sans la bloquer.</li>
 <li><b>À la main</b> — versionné, jamais joué par aucune CI. Il n'existe que sur le papier.</li>
 </ul>
+<p>Sous le nom du fichier, la <b>description</b> : la première phrase de son en-tête, celle que son auteur a écrite pour dire ce que le parcours fait. Quand le fichier n'en porte aucune, la ligne dit « aucune description » plutôt que rien — c'est une chose à corriger dans le fichier, pas dans le portail.</p>
 <p>Chaque ligne porte son dernier résultat, cas par cas : <b>vert</b>, <b>rouge</b>, <b>ignoré</b> (le test s'est désactivé lui-même — souvent parce qu'un service externe manque), <b>instable</b> (passé au second essai — ce n'est pas un vert). Un parcours « rouge » n'est pas forcément un défaut du produit : sur un runner neuf, sans Google ni Notion configurés, un parcours qui les attend échoue pour une raison d'environnement.</p>`,
       },
       {
         titre: "D'où ça vient",
-        texte: `<p>Des fichiers <code>apps/web/tests/e2e/*.spec.ts</code> (Playwright). La cadence est LUE dans les fichiers de workflow de la CI, pas déclarée : si personne ne lance un parcours, le portail le dit. Le dernier résultat vient du rapport JSON de Playwright, produit par la mesure nocturne qui joue 29 parcours sur 30 (<code>agent-flows</code> est exclu : il attend un LM Studio sur la machine de Quentin).</p>`,
+        texte: `<p>Des fichiers <code>apps/web/tests/e2e/*.spec.ts</code> (Playwright). La description est lue dans le fichier lui-même : le premier bloc de commentaire, imports mis à part, jusqu'à sa première ligne vide — les bandeaux décoratifs (<code>── Constants ───</code>) sont sautés, et à défaut d'en-tête c'est le titre du premier <code>describe</code>. La cadence est LUE dans les fichiers de workflow de la CI, pas déclarée : si personne ne lance un parcours, le portail le dit. Le dernier résultat vient du rapport JSON de Playwright, produit par la mesure nocturne qui joue 29 parcours sur 30 (<code>agent-flows</code> est exclu : il attend un LM Studio sur la machine de Quentin).</p>`,
       },
       {
         titre: 'Quand agir',
