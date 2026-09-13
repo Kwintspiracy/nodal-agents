@@ -1,4 +1,6 @@
 /**
+ * An owner creates an inbound webhook, copies its URL, rotates its secret, and deletes it.
+ *
  * webhooks-flows.spec.ts
  *
  * Full click-through of the "Webhooks" section on /automations (Brique 5 —
@@ -27,7 +29,7 @@ test.beforeAll(async () => {
 
 test.describe.configure({ timeout: 90_000 });
 
-test.describe('Webhooks section — full click flow @cap:declencher-sur-evenement', () => {
+test.describe('Webhooks section — full click flow @cap:declencher-sur-evenement/ecran', () => {
   test('create, copy URL, toggle, rotate, delete, empty state', async ({ page }) => {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');

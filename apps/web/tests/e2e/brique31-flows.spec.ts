@@ -1,4 +1,6 @@
 /**
+ * An owner adds an LLM key, tests it, and chooses the model an agent will speak with.
+ *
  * brique31-flows.spec.ts — Playwright e2e tests for Brique 31
  *
  * Tests:
@@ -120,7 +122,7 @@ test.describe('Test A — LLM key add + test connection + save', () => {
 
 // ─── Test B — Agent edit picks LLM provider ──────────────────────────────────
 
-test.describe('Test B — Agent edit picks LLM provider', () => {
+test.describe('Test B — Agent edit picks LLM provider @cap:choisir-modele/ecran', () => {
   test('change LLM provider dropdown on agent edit → model field updates → save → toast', async ({
     page,
   }) => {

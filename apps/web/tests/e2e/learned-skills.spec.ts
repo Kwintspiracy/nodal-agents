@@ -1,3 +1,5 @@
+// An owner sees the skills an agent learned on its own, and chooses whether it keeps learning.
+
 import { test, expect } from '@playwright/test';
 import { requireLiveStack } from './helpers.ts';
 
@@ -5,7 +7,7 @@ test.beforeAll(async () => {
   await requireLiveStack();
 });
 
-test.describe('learned-skills page @cap:apprendre-une-skill', () => {
+test.describe('learned-skills page @cap:apprendre-une-skill/ecran', () => {
   test('renders the Learned Skills page at /learned-skills', async ({ page }) => {
     await page.goto('/learned-skills');
     await expect(page.getByRole('heading', { name: 'Learned Skills', level: 1 })).toBeVisible({

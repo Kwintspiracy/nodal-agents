@@ -1,4 +1,6 @@
 /**
+ * An owner sees which tools an agent may use, and which ones a skill brings with it.
+ *
  * Playwright e2e — Tools tab on the agent editor (added 17/07).
  *
  * `office-editing` and `command-execution` are "tool group" system skills

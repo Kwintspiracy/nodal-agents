@@ -69,7 +69,7 @@ async function assignChild(
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('buildTeamBlock', () => {
+describe('buildTeamBlock @cap:organiser-equipe/moteur', () => {
   it('returns empty string for agent with no children (worker)', async () => {
     const { entityId } = await seedContext(db);
     const worker = await seedAgent(db, entityId, `test-worker-tb-${Date.now()}`, 'agent');

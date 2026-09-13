@@ -1,4 +1,6 @@
 /**
+ * An owner gives an agent a connector from the agent's edit page, and takes it back.
+ *
  * agent-tool-assignment.spec.ts — e2e: Tools & Connectors section on agent edit page.
  *
  * Scenarios:
@@ -223,7 +225,7 @@ test.afterAll(async () => {
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
-test.describe('Agent edit page — Tools & Connectors section @cap:assigner-outils', () => {
+test.describe('Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran', () => {
   test.describe.configure({ timeout: 30_000 });
 
   test('Scenario A — Tools & Connectors section renders with the test connector', async ({

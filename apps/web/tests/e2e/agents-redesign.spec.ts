@@ -2,6 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// An owner sees their team on the /agents page: orchestrators as cards, workers as rows they can reorder.
+//
 // Temporary regression spec for the /agents card-based redesign
 // (AgentsList.tsx). Validates: render (orchestrator cards, worker rows,
 // Add worker, Unassigned, New orchestrator CTA), dark mode theming, the
@@ -148,7 +150,7 @@ async function dragWorkerByKeyboardUntil(
   return null;
 }
 
-test.describe('Agents page redesign @cap:organiser-equipe', () => {
+test.describe('Agents page redesign @cap:organiser-equipe/ecran', () => {
   test('render, dark mode, add-worker modal, keyboard drag round-trip', async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];

@@ -1,4 +1,6 @@
 /**
+ * An owner caps what a scheduled task may spend in a day.
+ *
  * schedule-daily-budget.spec.ts
  *
  * Event Triggers, Brique 3 (F1) — the "Daily budget ($)" field on the
@@ -61,7 +63,7 @@ async function deleteScheduleIfPresent(
   }
 }
 
-test.describe('Daily budget field on ScheduleForm @cap:planifier-une-tache', () => {
+test.describe('Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran', () => {
   test('is present with a default of 5 on the New schedule form', async ({ page }) => {
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');

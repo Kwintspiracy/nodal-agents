@@ -9,7 +9,14 @@
 // trompe sur un verdict est pire que pas de portail : il fait croire qu'on
 // regarde.
 
+import { execSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
+
+/** La racine du dépôt — les deux contrôles « preuve attendue » lisent le VRAI arbre. */
+const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 import {
   etatCi,
   colonneDeCarte,
@@ -22,7 +29,8 @@ import {
   cadenceDe,
   capacitesDunTitre,
   titresDeTest,
-  etatDuneCapacite,
+  preuvesDuneCapacite,
+  phraseDeCapacite,
   fautesDuRegistre,
   regrouperParCapacite,
   croiserPreuves,
@@ -34,6 +42,10 @@ import {
   instabiliteDe,
   regressionsFraiches,
   dernierSort,
+  dureesDeReparation,
+  tendance,
+  prixDeLaCi,
+  intentionDunParcours,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -340,11 +352,14 @@ describe('parcoursDunWorkflow — nommés et balayés', () => {
 // ─── La gravité (issue #65) ───────────────────────────────────────────────────
 
 describe('ecartsDe — le produit passe avant le dépôt', () => {
-  const CAP = (etat, exigee = true) => ({
+  const N = (etat) => ({ etat, preuves: [] });
+  const CAP = (ecran, moteur, exigee = true) => ({
     slug: 'x',
     nom: 'Connecter un service',
-    etat,
     exigee,
+    ecran: N(ecran),
+    moteur: N(moteur),
+    nonDit: [],
     preuves: [],
   });
   const SNAP = (extra = {}) => ({
@@ -356,26 +371,84 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     ...extra,
   });
 
-  it('une capacité EXIGÉE cassée est haute — c’est une promesse rompue', () => {
-    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('rouge')] } }), [{}, {}]);
+  it('une preuve d’ÉCRAN qui échoue est haute, et le titre dit QUEL niveau', () => {
+    // La question de Quentin, mot pour mot : « quand c'est rouge, c'est le test
+    // qui ne marche pas ou les boutons ? ». Un écart qui ne nomme pas le niveau
+    // ne répond pas.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('echouee', 'passee')] } }), [{}, {}]);
     expect(e[0].gravite).toBe('haute');
-    expect(e[0].titre).toMatch(/capacité\(s\) exigée\(s\) du produit sont cassées/);
+    expect(e[0].titre).toMatch(/preuve\(s\) de capacité ont ÉCHOUÉ/);
+    expect(e[0].quoi).toEqual(['Connecter un service — écran']);
+  });
+
+  it('une preuve de MOTEUR qui échoue est haute aussi, et dite comme telle', () => {
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'echouee')] } }), [{}, {}]);
+    expect(e[0].gravite).toBe('haute');
+    expect(e[0].quoi).toEqual(['Connecter un service — moteur']);
+  });
+
+  it('les deux niveaux tombés sont NOMMÉS tous les deux', () => {
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('echouee', 'echouee')] } }), [{}, {}]);
+    expect(e[0].quoi).toEqual(['Connecter un service — écran', 'Connecter un service — moteur']);
+  });
+
+  it('un moteur ABSENT sur une capacité exigée est MOYEN — façade vérifiée, moteur inconnu', () => {
+    // Et surtout PAS haute : rien n'est cassé. C'est un trou de preuve, et le
+    // peindre en rouge noierait les vraies pannes. Mais ce n'est pas rien non
+    // plus : c'est exactement ce que le mot « prouvée » cachait.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'absente')] } }), [{}, {}]);
+    expect(e).toHaveLength(1);
+    expect(e[0].gravite).toBe('moyenne');
+    expect(e[0].titre).toMatch(/sans preuve de MOTEUR/);
     expect(e[0].quoi).toEqual(['Connecter un service']);
   });
 
-  it('les capacités JAMAIS prouvées restent basses — c’est un plan, pas une alerte', () => {
-    // Les monter en haute noierait les vraies régressions sous une liste qui
-    // ne bouge que lentement. Le bruit décourage d'ouvrir la page.
-    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('jamais prouvée', false)] } }), [{}, {}]);
-    expect(e).toHaveLength(1);
-    expect(e[0].gravite).toBe('basse');
+  it('une ABSENCE n’est jamais haute, même sur une capacité exigée', () => {
+    // Mutation de contrôle : si l'absence remontait en haute, `alertes()`
+    // réveillerait quelqu'un pour un test qui n'a jamais existé.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'absente')] } }), [{}, {}]);
+    expect(alertes(e)).toEqual([]);
   });
 
-  it('une capacité exigée dont la preuve DORT est moyenne, pas haute', () => {
-    // Trou dans la mesure, pas dans le produit : le traiter comme une
-    // régression enverrait chercher un bug qui n'existe pas.
-    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('non jouée')] } }), [{}, {}]);
-    expect(e[0].gravite).toBe('moyenne');
+  it('aucune preuve du tout reste BASSE — c’est un plan, pas une alerte', () => {
+    // Les monter en haute noierait les vraies régressions sous une liste qui
+    // ne bouge que lentement. Le bruit décourage d'ouvrir la page.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('absente', 'absente', false)] } }), [
+      {},
+      {},
+    ]);
+    expect(e).toHaveLength(1);
+    expect(e[0].gravite).toBe('basse');
+    expect(e[0].titre).toMatch(/aucune preuve/);
+  });
+
+  it('une capacité sans aucune preuve ne compte PAS aussi comme « sans moteur »', () => {
+    // Sinon la même capacité apparaîtrait dans deux écarts, et le compte de
+    // « moteur manquant » gonflerait de tout ce qui n'est pas testé du tout.
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('absente', 'absente')] } }), [{}, {}]);
+    expect(e.filter((x) => /MOTEUR/.test(x.titre))).toEqual([]);
+  });
+
+  it('une preuve qui n’a pas tourné est MOYENNE — trou dans la mesure, pas dans le produit', () => {
+    // Le traiter comme une régression enverrait chercher un bug qui n'existe
+    // pas. Ignoré et jamais joué entrent tous deux ici.
+    const dort = ecartsDe(SNAP({ capacites: { registre: [CAP('jamais jouee', 'passee')] } }), [
+      {},
+      {},
+    ]);
+    expect(dort[0].gravite).toBe('moyenne');
+    expect(dort[0].titre).toMatch(/n’(?:a|ont) pas tourné/);
+
+    const ignore = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'ignoree')] } }), [
+      {},
+      {},
+    ]);
+    expect(ignore[0].gravite).toBe('moyenne');
+  });
+
+  it('les deux niveaux verts ne produisent AUCUN écart', () => {
+    const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'passee')] } }), [{}, {}]);
+    expect(e).toEqual([]);
   });
 
   it('un rouge FRAIS est haut, un rouge ancien ne l’est pas', () => {
@@ -484,7 +557,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
   it('à gravité égale, le PRODUIT est listé avant le dépôt', () => {
     const e = ecartsDe(
       SNAP({
-        capacites: { registre: [CAP('rouge')] },
+        capacites: { registre: [CAP('echouee', 'passee')] },
         parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: false }],
       }),
       [{}, {}],
@@ -497,7 +570,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
   it('trie par gravité, toutes catégories confondues', () => {
     const e = ecartsDe(
       SNAP({
-        capacites: { registre: [CAP('jamais prouvée', false), CAP('rouge')] },
+        capacites: { registre: [CAP('absente', 'absente', false), CAP('echouee', 'passee')] },
         paquets: [{ nom: 'p', tests: { cas: 0, e2e: 0 } }],
       }),
       [{}, {}],
@@ -850,19 +923,66 @@ describe('instabiliteDe — l’instabilité ne se voit QUE dans le temps', () =
 
 // ─── Les capacités du produit (issue #63) ─────────────────────────────────────
 
-describe('capacitesDunTitre — ce qu’un test dit prouver', () => {
-  it('lit une étiquette dans un titre de test', () => {
-    expect(capacitesDunTitre('crée un agent depuis la page vide @cap:creer-agent')).toEqual([
-      'creer-agent',
+describe('capacitesDunTitre — ce qu’un test dit prouver, et à quel niveau', () => {
+  it('lit une étiquette et son NIVEAU', () => {
+    expect(capacitesDunTitre('crée un agent depuis la page vide @cap:creer-agent/ecran')).toEqual([
+      { slug: 'creer-agent', niveau: 'ecran' },
+    ]);
+    expect(capacitesDunTitre('createAgentRepo insère la ligne @cap:creer-agent/moteur')).toEqual([
+      { slug: 'creer-agent', niveau: 'moteur' },
     ]);
   });
 
-  it('en lit PLUSIEURS — un parcours traverse souvent deux capacités', () => {
+  it('une étiquette SANS niveau reste lue — le niveau est simplement « non dit »', () => {
+    // La transition dure le temps qu'elle dure. Refuser la forme historique
+    // ferait rougir la porte sur des centaines de titres d'un coup, et la
+    // porte se ferait désactiver le jour même.
+    expect(capacitesDunTitre('crée un agent @cap:creer-agent')).toEqual([
+      { slug: 'creer-agent', niveau: null },
+    ]);
+  });
+
+  it('un suffixe qui n’est NI ecran NI moteur ne devient pas un niveau', () => {
+    // `@cap:x/ecrna` est une faute de frappe. La lire comme un niveau inventerait
+    // une troisième colonne ; la lire comme « non dit » la fait apparaître dans
+    // l'avertissement de la porte, où quelqu'un la verra.
+    expect(capacitesDunTitre('@cap:creer-agent/ecrna')).toEqual([
+      { slug: 'creer-agent', niveau: null },
+    ]);
+  });
+
+  it('le niveau doit FINIR là — « /ecranXYZ » et « /moteur-bis » n’en sont pas', () => {
+    // Trouvé par la revue Codex du 13/09, qui a sondé la fonction plutôt que de
+    // la lire : `(ecran|moteur)` s'arrêtait au bon préfixe et laissait la suite
+    // tomber par terre. `@cap:x/ecranXYZ` se déclarait donc preuve d'écran, et
+    // `@cap:y/moteur-bis` preuve de moteur — une faute de frappe devenait un
+    // niveau, silencieusement, ce que le commentaire de la fonction jurait
+    // qu'elle ne ferait pas.
+    expect(capacitesDunTitre('@cap:x/ecranXYZ')).toEqual([{ slug: 'x', niveau: null }]);
+    expect(capacitesDunTitre('@cap:y/moteur-bis')).toEqual([{ slug: 'y', niveau: null }]);
+    // Ce qui SUIT légitimement un niveau — ponctuation, espace, fin — tient.
+    expect(capacitesDunTitre('@cap:w/ecran, puis')).toEqual([{ slug: 'w', niveau: 'ecran' }]);
+    expect(capacitesDunTitre('(@cap:w/moteur)')).toEqual([{ slug: 'w', niveau: 'moteur' }]);
+  });
+
+  it('en lit PLUSIEURS, chacune avec son propre niveau', () => {
     // Refuser la seconde forcerait à couper des parcours utiles en morceaux
     // pour satisfaire le registre. C'est le registre qui doit s'adapter.
     expect(
-      capacitesDunTitre('@cap:connecter-un-service puis @cap:assigner-outils sur le même agent'),
-    ).toEqual(['connecter-un-service', 'assigner-outils']);
+      capacitesDunTitre(
+        '@cap:connecter-un-service/ecran puis @cap:assigner-outils/moteur sur le même agent',
+      ),
+    ).toEqual([
+      { slug: 'connecter-un-service', niveau: 'ecran' },
+      { slug: 'assigner-outils', niveau: 'moteur' },
+    ]);
+  });
+
+  it('mélange les deux formes dans un même titre sans en perdre une', () => {
+    expect(capacitesDunTitre('@cap:se-souvenir @cap:parler-a-un-agent/ecran')).toEqual([
+      { slug: 'se-souvenir', niveau: null },
+      { slug: 'parler-a-un-agent', niveau: 'ecran' },
+    ]);
   });
 
   it('un titre sans étiquette n’en revendique aucune', () => {
@@ -872,9 +992,13 @@ describe('capacitesDunTitre — ce qu’un test dit prouver', () => {
     expect(capacitesDunTitre(undefined)).toEqual([]);
   });
 
-  it('s’arrête au slug et ne mange pas la ponctuation qui suit', () => {
-    expect(capacitesDunTitre('@cap:creer-agent, puis autre chose')).toEqual(['creer-agent']);
-    expect(capacitesDunTitre('(@cap:voir-le-cout)')).toEqual(['voir-le-cout']);
+  it('s’arrête au slug ou au niveau et ne mange pas la ponctuation qui suit', () => {
+    expect(capacitesDunTitre('@cap:creer-agent, puis autre chose')).toEqual([
+      { slug: 'creer-agent', niveau: null },
+    ]);
+    expect(capacitesDunTitre('(@cap:voir-le-cout/moteur)')).toEqual([
+      { slug: 'voir-le-cout', niveau: 'moteur' },
+    ]);
   });
 
   it('« @cap: » sans slug ne revendique rien', () => {
@@ -910,7 +1034,7 @@ describe('titresDeTest — une étiquette ne compte que dans un TITRE', () => {
       `expect(capacitesDunTitre('${E}:dans-un-argument')).toEqual([]);`,
       `it('le vrai ${E}:celle-ci', () => {});`,
     ].join('\n');
-    const slugs = titresDeTest(src).flatMap((t) => capacitesDunTitre(t));
+    const slugs = titresDeTest(src).flatMap((t) => capacitesDunTitre(t).map((x) => x.slug));
     expect(slugs).toEqual(['celle-ci']);
   });
 
@@ -959,7 +1083,7 @@ describe('titresDeTest — une étiquette ne compte que dans un TITRE', () => {
     // pour de vrai dans la suite : couper à l'apostrophe perdrait l'étiquette
     // qui vit après elle.
     const src = `it('l\\'agent ${E}:x', () => {});`;
-    expect(capacitesDunTitre(titresDeTest(src)[0])).toEqual(['x']);
+    expect(capacitesDunTitre(titresDeTest(src)[0])).toEqual([{ slug: 'x', niveau: null }]);
   });
 
   it('ne confond pas un identifiant qui FINIT par test ou it', () => {
@@ -974,35 +1098,110 @@ describe('titresDeTest — une étiquette ne compte que dans un TITRE', () => {
   });
 });
 
-describe('etatDuneCapacite — deux trous différents, jamais confondus', () => {
-  it('aucun test ne la revendique ⇒ JAMAIS PROUVÉE', () => {
-    // La colonne qui compte : la liste de ce qu'on croit livré.
-    expect(etatDuneCapacite([])).toBe('jamais prouvée');
-    expect(etatDuneCapacite(null)).toBe('jamais prouvée');
+describe('preuvesDuneCapacite — deux niveaux, et l’absence n’est pas un échec', () => {
+  const P = (niveau, sort, extra = {}) => ({ capacite: 'x', niveau, sort, ...extra });
+
+  it('aucune preuve ⇒ les deux niveaux sont ABSENTS, et rien n’est rouge', () => {
+    // C'est le cas que l'ancien `etatDuneCapacite` appelait « jamais prouvée ».
+    // Il reste ici, sous un mot qui ne ressemble plus à un verdict.
+    const r = preuvesDuneCapacite([]);
+    expect(r.ecran.etat).toBe('absente');
+    expect(r.moteur.etat).toBe('absente');
+    expect(r.nonDit).toEqual([]);
+    expect(preuvesDuneCapacite(null).ecran.etat).toBe('absente');
   });
 
-  it('un test la revendique mais n’a pas tourné ⇒ NON JOUÉE, pas « jamais prouvée »', () => {
-    // La preuve existe et dort. C'est un trou dans la MESURE, pas dans le
-    // produit — les confondre ferait réécrire un test qui existe déjà.
-    expect(etatDuneCapacite([{ capacite: 'x', origine: 'a.spec.ts' }])).toBe('non jouée');
-    expect(etatDuneCapacite([{ sort: 'ignoré' }])).toBe('non jouée');
+  it('écran vert et moteur absent ⇒ « façade vérifiée, moteur inconnu »', () => {
+    // C'est exactement la question de Quentin : vert voulait dire « prouvée »,
+    // alors que seuls trois parcours d'ÉCRAN avaient tourné. Le mot cachait
+    // que le moteur n'était testé par personne.
+    const r = preuvesDuneCapacite([P('ecran', 'vert')]);
+    expect(r.ecran.etat).toBe('passee');
+    expect(r.moteur.etat).toBe('absente');
+    expect(phraseDeCapacite(r)).toBe('écran passé · moteur non testé');
   });
 
-  it('un test vert ⇒ prouvée, même accompagné d’un test qui n’a pas tourné', () => {
-    expect(etatDuneCapacite([{ sort: 'vert' }])).toBe('prouvée');
-    expect(etatDuneCapacite([{ sort: null }, { sort: 'vert' }])).toBe('prouvée');
+  it('écran rouge et moteur vert ⇒ chaque niveau garde SON résultat', () => {
+    // L'ancien état n'en rendait qu'un seul : « rouge ». On ne savait pas si
+    // c'était le produit ou les boutons — la moitié de la question posée.
+    const r = preuvesDuneCapacite([P('ecran', 'rouge'), P('moteur', 'vert')]);
+    expect(r.ecran.etat).toBe('echouee');
+    expect(r.moteur.etat).toBe('passee');
+    expect(phraseDeCapacite(r)).toBe('écran échoué · moteur passé');
   });
 
-  it('le ROUGE l’emporte sur le vert — pas de moyenne', () => {
-    // Une capacité tenue par trois tests dont un échoue est cassée, pas
-    // « majoritairement verte ». Une moyenne ici cacherait la seule chose
-    // qu'on cherche.
-    expect(etatDuneCapacite([{ sort: 'vert' }, { sort: 'vert' }, { sort: 'rouge' }])).toBe('rouge');
+  it('le ROUGE l’emporte sur le vert DANS SON NIVEAU, et n’éclabousse pas l’autre', () => {
+    // Une capacité tenue par trois parcours d'écran dont un échoue a un écran
+    // cassé, pas « majoritairement vert ». Mais son moteur, lui, va bien.
+    const r = preuvesDuneCapacite([
+      P('ecran', 'vert'),
+      P('ecran', 'vert'),
+      P('ecran', 'rouge'),
+      P('moteur', 'vert'),
+    ]);
+    expect(r.ecran.etat).toBe('echouee');
+    expect(r.moteur.etat).toBe('passee');
   });
 
   it('l’instabilité l’emporte sur le vert, mais pas sur le rouge', () => {
-    expect(etatDuneCapacite([{ sort: 'vert' }, { sort: 'instable' }])).toBe('instable');
-    expect(etatDuneCapacite([{ sort: 'instable' }, { sort: 'rouge' }])).toBe('rouge');
+    expect(preuvesDuneCapacite([P('moteur', 'vert'), P('moteur', 'instable')]).moteur.etat).toBe(
+      'instable',
+    );
+    expect(preuvesDuneCapacite([P('moteur', 'instable'), P('moteur', 'rouge')]).moteur.etat).toBe(
+      'echouee',
+    );
+  });
+
+  it('un test IGNORÉ et un test JAMAIS JOUÉ sont deux trous différents', () => {
+    // L'ancien état les fondait tous deux dans « non jouée ». Le premier a été
+    // sauté par quelqu'un (un `test.skip` qu'on peut rouvrir), le second n'a
+    // jamais été atteint par une exécution — on ne répare pas la même chose.
+    expect(preuvesDuneCapacite([P('ecran', 'ignoré')]).ecran.etat).toBe('ignoree');
+    expect(preuvesDuneCapacite([P('ecran', null)]).ecran.etat).toBe('jamais jouee');
+    expect(
+      preuvesDuneCapacite([{ capacite: 'x', niveau: 'ecran', origine: 'a.spec.ts' }]).ecran.etat,
+    ).toBe('jamais jouee');
+  });
+
+  it('un vert l’emporte sur un voisin qui n’a pas tourné', () => {
+    expect(preuvesDuneCapacite([P('moteur', null), P('moteur', 'vert')]).moteur.etat).toBe(
+      'passee',
+    );
+  });
+
+  it('une étiquette SANS niveau ne compte pour aucun des deux, et elle est NOMMÉE', () => {
+    // Le piège de la transition : la ranger d'office dans « écran » peindrait
+    // en vert un moteur que personne n'a testé — précisément le mensonge que
+    // ce lot supprime. Elle est donc mise à part, et dite.
+    const orpheline = P(null, 'vert', { origine: 'apps/web/tests/e2e/smoke.spec.ts' });
+    const r = preuvesDuneCapacite([orpheline]);
+    expect(r.ecran.etat).toBe('absente');
+    expect(r.moteur.etat).toBe('absente');
+    expect(r.nonDit).toEqual([orpheline]);
+  });
+
+  it('chaque niveau garde la LISTE de ses preuves — on veut savoir laquelle a lâché', () => {
+    const rouge = P('moteur', 'rouge', { titre: 'refuse un outil hors whitelist' });
+    const r = preuvesDuneCapacite([P('ecran', 'vert', { titre: 'coche un outil' }), rouge]);
+    expect(r.moteur.preuves).toEqual([rouge]);
+    expect(r.ecran.preuves).toHaveLength(1);
+  });
+});
+
+describe('phraseDeCapacite — une ligne qui dit deux faits, jamais un verdict', () => {
+  const R = (e, m) => ({ ecran: { etat: e, preuves: [] }, moteur: { etat: m, preuves: [] } });
+
+  it('nomme chaque niveau et son résultat', () => {
+    expect(phraseDeCapacite(R('passee', 'passee'))).toBe('écran passé · moteur passé');
+    expect(phraseDeCapacite(R('absente', 'passee'))).toBe('écran non testé · moteur passé');
+    expect(phraseDeCapacite(R('ignoree', 'jamais jouee'))).toBe(
+      'écran ignoré · moteur jamais joué',
+    );
+    expect(phraseDeCapacite(R('instable', 'echouee'))).toBe('écran instable · moteur échoué');
+  });
+
+  it('les deux absents se disent en toutes lettres, pas en silence', () => {
+    expect(phraseDeCapacite(R('absente', 'absente'))).toBe('aucune preuve');
   });
 });
 
@@ -1012,15 +1211,15 @@ describe('fautesDuRegistre — la porte garde le LIEN, pas le résultat', () => 
     { slug: 'voir-le-cout', nom: 'Voir ce que ça coûte', exigee: false },
   ];
 
-  it('une étiquette qui ne désigne rien est une faute, et elle est SITUÉE', () => {
+  it('une étiquette qui ne désigne rien est une faute BLOQUANTE, et elle est SITUÉE', () => {
     // Une faute de frappe, ou un slug renommé sans que les tests suivent. Sans
     // ce contrôle l'étiquetage pourrit en trois semaines sans que rien ne le
     // dise — le test continue de passer, il ne prouve simplement plus rien.
     const fautes = fautesDuRegistre({
       capacites: REGISTRE,
       preuves: [
-        { capacite: 'creer-agnet', origine: 'agents.spec.ts' },
-        { capacite: 'creer-agnet', origine: 'smoke.spec.ts' },
+        { capacite: 'creer-agnet', niveau: 'ecran', origine: 'agents.spec.ts' },
+        { capacite: 'creer-agnet', niveau: 'ecran', origine: 'smoke.spec.ts' },
       ],
     });
     // Elle en produit DEUX, et c'est ce qu'il faut : le slug ne désigne rien,
@@ -1029,10 +1228,16 @@ describe('fautesDuRegistre — la porte garde le LIEN, pas le résultat', () => 
     expect(fautes).toEqual([
       {
         type: 'étiquette inconnue',
+        bloquant: true,
         slug: 'creer-agnet',
         origines: ['agents.spec.ts', 'smoke.spec.ts'],
       },
-      { type: 'capacité exigée sans preuve', slug: 'creer-agent', nom: 'Créer un agent' },
+      {
+        type: 'capacité exigée sans preuve',
+        bloquant: true,
+        slug: 'creer-agent',
+        nom: 'Créer un agent',
+      },
     ]);
   });
 
@@ -1040,7 +1245,44 @@ describe('fautesDuRegistre — la porte garde le LIEN, pas le résultat', () => 
     // Le cas du test supprimé ou renommé qui emporte la preuve avec lui.
     const fautes = fautesDuRegistre({ capacites: REGISTRE, preuves: [] });
     expect(fautes).toEqual([
-      { type: 'capacité exigée sans preuve', slug: 'creer-agent', nom: 'Créer un agent' },
+      {
+        type: 'capacité exigée sans preuve',
+        bloquant: true,
+        slug: 'creer-agent',
+        nom: 'Créer un agent',
+      },
+    ]);
+  });
+
+  it('une preuve SANS NIVEAU compte toujours comme une preuve pour la porte', () => {
+    // Sinon le premier commit de la transition ferait tomber les vingt-quatre
+    // capacités exigées d'un coup, alors que rien n'a été supprimé.
+    const fautes = fautesDuRegistre({
+      capacites: REGISTRE,
+      preuves: [{ capacite: 'creer-agent', niveau: null, origine: 'a.spec.ts' }],
+    });
+    expect(fautes.filter((f) => f.type === 'capacité exigée sans preuve')).toEqual([]);
+  });
+
+  it('… mais elle est signalée en AVERTISSEMENT, et située', () => {
+    // Temporaire, le temps de la conversion. Bloquer dès le premier jour ferait
+    // désactiver la porte le deuxième ; ne rien dire laisserait la moitié du
+    // dépôt sans niveau pour toujours.
+    const fautes = fautesDuRegistre({
+      capacites: REGISTRE,
+      preuves: [
+        { capacite: 'creer-agent', niveau: null, origine: 'b.spec.ts' },
+        { capacite: 'creer-agent', niveau: null, origine: 'a.spec.ts' },
+        { capacite: 'creer-agent', niveau: 'moteur', origine: 'c.test.ts' },
+      ],
+    });
+    expect(fautes).toEqual([
+      {
+        type: 'étiquette sans niveau',
+        bloquant: false,
+        slug: 'creer-agent',
+        origines: ['a.spec.ts', 'b.spec.ts'],
+      },
     ]);
   });
 
@@ -1049,7 +1291,7 @@ describe('fautesDuRegistre — la porte garde le LIEN, pas le résultat', () => 
     // qui exige tout le premier jour se fait désactiver le deuxième.
     const fautes = fautesDuRegistre({
       capacites: REGISTRE,
-      preuves: [{ capacite: 'creer-agent', origine: 'a.spec.ts' }],
+      preuves: [{ capacite: 'creer-agent', niveau: 'ecran', origine: 'a.spec.ts' }],
     });
     expect(fautes).toEqual([]);
   });
@@ -1061,7 +1303,18 @@ describe('fautesDuRegistre — la porte garde le LIEN, pas le résultat', () => 
     // est le sujet de l'issue #65.
     const fautes = fautesDuRegistre({
       capacites: REGISTRE,
-      preuves: [{ capacite: 'creer-agent', origine: 'a.spec.ts', sort: 'rouge' }],
+      preuves: [{ capacite: 'creer-agent', niveau: 'moteur', origine: 'a.spec.ts', sort: 'rouge' }],
+    });
+    expect(fautes).toEqual([]);
+  });
+
+  it('une capacité exigée prouvée au seul niveau ÉCRAN ne fait pas faute ICI non plus', () => {
+    // C'est le sujet de la page, pas de la porte : « moteur non testé » est un
+    // écart qu'on lit, pas une PR qu'on refuse. Bloquer là-dessus aujourd'hui
+    // fermerait le dépôt.
+    const fautes = fautesDuRegistre({
+      capacites: REGISTRE,
+      preuves: [{ capacite: 'creer-agent', niveau: 'ecran', origine: 'a.spec.ts' }],
     });
     expect(fautes).toEqual([]);
   });
@@ -1073,19 +1326,32 @@ describe('fautesDuRegistre — la porte garde le LIEN, pas le résultat', () => 
 });
 
 describe('regrouperParCapacite — l’ordre du registre est l’écran', () => {
-  it('attache son état et ses preuves à chaque capacité, dans l’ordre', () => {
+  it('attache ses DEUX niveaux et ses preuves à chaque capacité, dans l’ordre', () => {
     const r = regrouperParCapacite({
       capacites: [
         { slug: 'a', domaine: 'X', exigee: true },
         { slug: 'b', domaine: 'X', exigee: false },
       ],
-      preuves: [{ capacite: 'a', origine: 'un.spec.ts', sort: 'vert' }],
+      preuves: [
+        { capacite: 'a', niveau: 'ecran', origine: 'un.spec.ts', sort: 'vert' },
+        { capacite: 'a', niveau: 'moteur', origine: 'un.test.ts', sort: 'rouge' },
+      ],
     });
     expect(r.map((c) => c.slug)).toEqual(['a', 'b']);
-    expect(r[0].etat).toBe('prouvée');
-    expect(r[0].preuves).toHaveLength(1);
-    expect(r[1].etat).toBe('jamais prouvée');
+    expect(r[0].ecran.etat).toBe('passee');
+    expect(r[0].moteur.etat).toBe('echouee');
+    expect(r[0].preuves).toHaveLength(2);
+    expect(r[1].ecran.etat).toBe('absente');
+    expect(r[1].moteur.etat).toBe('absente');
     expect(r[1].preuves).toEqual([]);
+  });
+
+  it('porte la phrase de la ligne, pour que le rendu n’ait pas à la recalculer', () => {
+    const r = regrouperParCapacite({
+      capacites: [{ slug: 'a', domaine: 'X' }],
+      preuves: [{ capacite: 'a', niveau: 'ecran', sort: 'vert' }],
+    });
+    expect(r[0].phrase).toBe('écran passé · moteur non testé');
   });
 
   it('ne trie PAS par état — sinon la page cesse de dire ce que le produit sait faire', () => {
@@ -1095,8 +1361,8 @@ describe('regrouperParCapacite — l’ordre du registre est l’écran', () => 
         { slug: 'casse', domaine: 'X' },
       ],
       preuves: [
-        { capacite: 'vert', sort: 'vert' },
-        { capacite: 'casse', sort: 'rouge' },
+        { capacite: 'vert', niveau: 'ecran', sort: 'vert' },
+        { capacite: 'casse', niveau: 'ecran', sort: 'rouge' },
       ],
     });
     expect(r.map((c) => c.slug)).toEqual(['vert', 'casse']);
@@ -1111,25 +1377,62 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
     {
       fichier: 'apps/web/tests/e2e/smoke.spec.ts',
       titre: 'ouvre le tableau de bord',
-      titreComplet: `nav ${E}:installer-et-demarrer ouvre le tableau de bord`,
+      titreComplet: `nav ${E}:installer-et-demarrer/ecran ouvre le tableau de bord`,
       sort: 'vert',
     },
     {
       fichier: 'apps/web/tests/e2e/smoke.spec.ts',
       titre: 'liste les sections',
-      titreComplet: `nav ${E}:installer-et-demarrer liste les sections`,
+      titreComplet: `nav ${E}:installer-et-demarrer/ecran liste les sections`,
       sort: 'rouge',
     },
   ];
 
-  it('lit l’étiquette posée sur le DESCRIBE, héritée par chaque cas', () => {
+  it('lit l’étiquette posée sur le DESCRIBE, héritée par chaque cas, NIVEAU compris', () => {
     // C'est la façon la moins verbeuse d'étiqueter : une ligne pour tout un
     // bloc. Ne lire que le titre du cas obligerait à répéter l'étiquette
     // partout, et personne ne le ferait.
     const p = croiserPreuves({ declarees: [], joues: JOUES });
     expect(p).toHaveLength(2);
     expect(p.every((x) => x.capacite === 'installer-et-demarrer')).toBe(true);
+    expect(p.every((x) => x.niveau === 'ecran')).toBe(true);
     expect(p.map((x) => x.sort)).toEqual(['vert', 'rouge']);
+  });
+
+  it('une étiquette RÉPÉTÉE dans un titre ne compte qu’une fois', () => {
+    // Revue Codex du 13/09. Un titre qui porte deux fois la même étiquette —
+    // le cas normal quand un `describe` étiqueté contient un cas étiqueté
+    // pareil — produisait deux preuves identiques. Le compte affiché gonflait
+    // sans qu'aucun test de plus n'existe, et « 2 preuves » se lisait comme
+    // deux vérifications.
+    const p = croiserPreuves({
+      declarees: [],
+      joues: [
+        {
+          fichier: 'f.test.ts',
+          titre: `cas ${E}:choisir-modele/moteur`,
+          titreComplet: `bloc ${E}:choisir-modele/moteur cas ${E}:choisir-modele/moteur`,
+          sort: 'vert',
+        },
+      ],
+    });
+    expect(p).toHaveLength(1);
+  });
+
+  it('deux NIVEAUX dans un même titre restent deux preuves', () => {
+    // La déduplication ne doit pas avaler le second niveau : un parcours peut
+    // légitimement prouver l'écran ET le moteur.
+    const p = croiserPreuves({
+      declarees: [],
+      joues: [
+        {
+          fichier: 'f.test.ts',
+          titre: `cas ${E}:se-souvenir/ecran ${E}:se-souvenir/moteur`,
+          sort: 'vert',
+        },
+      ],
+    });
+    expect(p.map((x) => x.niveau)).toEqual(['ecran', 'moteur']);
   });
 
   it('un cas par preuve — pas un fichier', () => {
@@ -1139,12 +1442,16 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
     expect(p.map((x) => x.titre)).toEqual(['ouvre le tableau de bord', 'liste les sections']);
   });
 
-  it('la déclaration DISPARAÎT quand le même fichier a tourné', () => {
+  it('la déclaration DISPARAÎT quand le même fichier a tourné, au MÊME niveau', () => {
     // Sinon la même preuve compterait deux fois, dont une sans résultat : la
-    // capacité s'afficherait « non jouée » à côté d'elle-même.
+    // capacité s'afficherait « jamais joué » à côté d'elle-même.
     const p = croiserPreuves({
       declarees: [
-        { capacite: 'installer-et-demarrer', origine: 'apps/web/tests/e2e/smoke.spec.ts' },
+        {
+          capacite: 'installer-et-demarrer',
+          niveau: 'ecran',
+          origine: 'apps/web/tests/e2e/smoke.spec.ts',
+        },
       ],
       joues: JOUES,
     });
@@ -1152,34 +1459,64 @@ describe('croiserPreuves — l’exécution l’emporte sur la déclaration', ()
     expect(p.every((x) => x.sort)).toBe(true);
   });
 
+  it('un MÊME fichier qui prouve les deux niveaux ne perd pas celui qui n’a pas tourné', () => {
+    // Un fichier peut porter un `describe` d'écran et un `describe` de moteur.
+    // Effacer sa déclaration sur le seul nom du fichier ferait disparaître le
+    // niveau que l'exécution n'a pas joué — et la capacité paraîtrait sans
+    // moteur alors que le test existe.
+    const p = croiserPreuves({
+      declarees: [
+        {
+          capacite: 'installer-et-demarrer',
+          niveau: 'moteur',
+          origine: 'apps/web/tests/e2e/smoke.spec.ts',
+        },
+      ],
+      joues: JOUES,
+    });
+    const r = preuvesDuneCapacite(p);
+    expect(r.ecran.etat).toBe('echouee');
+    expect(r.moteur.etat).toBe('jamais jouee');
+  });
+
   it('une déclaration que rien n’a jouée SURVIT — c’est une preuve qui dort', () => {
     const p = croiserPreuves({
-      declarees: [{ capacite: 'approuver-une-action', origine: 'packages/tools/x.test.ts' }],
+      declarees: [
+        { capacite: 'approuver-une-action', niveau: 'moteur', origine: 'packages/tools/x.test.ts' },
+      ],
       joues: JOUES,
     });
     expect(p).toHaveLength(3);
-    expect(etatDuneCapacite(p.filter((x) => x.capacite === 'approuver-une-action'))).toBe(
-      'non jouée',
-    );
+    expect(
+      preuvesDuneCapacite(p.filter((x) => x.capacite === 'approuver-une-action')).moteur.etat,
+    ).toBe('jamais jouee');
   });
 
-  it('un test UNITAIRE joué prouve sa capacité, et son échec la casse', () => {
+  it('un test UNITAIRE joué prouve sa capacité au niveau MOTEUR, et son échec la casse', () => {
     // Revue Codex du 11/09, P2. Seuls les résultats Playwright entraient ici,
     // alors que la mesure nocturne collecte aussi les rapports Vitest. Les
     // capacités tenues UNIQUEMENT par de l'unitaire — choisir un modèle,
     // attacher une skill, voir le coût — seraient restées « non jouée » à
     // jamais, et une preuve unitaire rouge n'aurait jamais rougi sa capacité.
     const p = croiserPreuves({
-      declarees: [{ capacite: 'choisir-modele', origine: 'packages/llm/src/tests/client.test.ts' }],
+      declarees: [
+        {
+          capacite: 'choisir-modele',
+          niveau: 'moteur',
+          origine: 'packages/llm/src/tests/client.test.ts',
+        },
+      ],
       joues: [
         {
           fichier: 'packages/llm/src/tests/client.test.ts',
-          titre: `createLlmClient ${E}:choisir-modele résout le fournisseur`,
+          titre: `createLlmClient ${E}:choisir-modele/moteur résout le fournisseur`,
           sort: 'rouge',
         },
       ],
     });
-    expect(etatDuneCapacite(p.filter((x) => x.capacite === 'choisir-modele'))).toBe('rouge');
+    expect(preuvesDuneCapacite(p.filter((x) => x.capacite === 'choisir-modele')).moteur.etat).toBe(
+      'echouee',
+    );
   });
 
   it('un parcours joué SANS étiquette ne prouve rien', () => {
@@ -1206,8 +1543,8 @@ describe('revendicationsDuDepot — ce que la porte lit dans le dépôt', () => 
     'README.md',
   ];
   const CONTENU = {
-    'apps/web/tests/e2e/smoke.spec.ts': `describe('nav ${E}:installer-et-demarrer')`,
-    'packages/tools/src/tests/execute.test.ts': `describe('a ${E}:approuver-une-action'); it('b ${E}:approuver-une-action')`,
+    'apps/web/tests/e2e/smoke.spec.ts': `describe('nav ${E}:installer-et-demarrer/ecran')`,
+    'packages/tools/src/tests/execute.test.ts': `describe('a ${E}:approuver-une-action/moteur'); it('b ${E}:approuver-une-action/moteur')`,
     // Le code de production PARLE des capacités sans rien prouver : un
     // commentaire, une constante. Le compter reviendrait à laisser un fichier
     // se déclarer sa propre preuve.
@@ -1230,8 +1567,26 @@ describe('revendicationsDuDepot — ce que la porte lit dans le dépôt', () => 
     // portail confondrait le volume avec la couverture.
     const p = revendicationsDuDepot(['packages/tools/src/tests/execute.test.ts'], lire);
     expect(p).toEqual([
-      { capacite: 'approuver-une-action', origine: 'packages/tools/src/tests/execute.test.ts' },
+      {
+        capacite: 'approuver-une-action',
+        niveau: 'moteur',
+        origine: 'packages/tools/src/tests/execute.test.ts',
+      },
     ]);
+  });
+
+  it('un fichier qui prouve les DEUX niveaux compte pour deux', () => {
+    // Le piège de la déduplication : dédupliquer par capacité seule ferait
+    // disparaître le moteur derrière l'écran, et la page dirait « moteur non
+    // testé » alors que le test est dans le même fichier.
+    const p = revendicationsDuDepot(
+      ['a.test.ts'],
+      () => `
+      describe('écran ${E}:creer-agent/ecran', () => {});
+      describe('moteur ${E}:creer-agent/moteur', () => {});
+    `,
+    );
+    expect(p.map((x) => x.niveau).sort()).toEqual(['ecran', 'moteur']);
   });
 
   it('un fichier illisible est ignoré, il ne fait pas tomber la porte', () => {
@@ -1256,7 +1611,57 @@ describe('le registre lui-même', () => {
     // la capacité resterait « jamais prouvée » pour toujours, en silence, alors
     // qu'un test la revendique.
     for (const c of CAPACITES) {
-      expect(capacitesDunTitre(`@cap:${c.slug}`), c.slug).toEqual([c.slug]);
+      expect(capacitesDunTitre(`@cap:${c.slug}/moteur`), c.slug).toEqual([
+        { slug: c.slug, niveau: 'moteur' },
+      ]);
+    }
+  });
+
+  it('nomme la preuve attendue exactement là où le dépôt n’en a aucune', () => {
+    // Le champ vaut par sa fraîcheur : une phrase « ce qu'un test devrait
+    // vérifier » posée sur un niveau DÉJÀ prouvé est un plan périmé, et un
+    // niveau vide SANS phrase est un trou que personne ne nomme. Les deux sens
+    // sont donc gardés, contre le dépôt réel et pas contre une fixture.
+    const fichiers = execSync('git ls-files', {
+      cwd: RACINE,
+      encoding: 'utf8',
+      maxBuffer: 64e6,
+    })
+      .split('\n')
+      .filter(Boolean);
+    const preuves = revendicationsDuDepot(fichiers, (f) => readFileSync(join(RACINE, f), 'utf8'));
+    const registre = regrouperParCapacite({ capacites: CAPACITES, preuves });
+
+    for (const c of registre) {
+      expect(
+        Boolean(c.ecranAttendu),
+        `${c.slug} : ecranAttendu ${c.ecran.etat === 'absente' ? 'manque' : 'est périmé'}`,
+      ).toBe(c.ecran.etat === 'absente');
+      expect(
+        Boolean(c.preuveAttendue),
+        `${c.slug} : preuveAttendue ${c.moteur.etat === 'absente' ? 'manque' : 'est périmée'}`,
+      ).toBe(c.moteur.etat === 'absente');
+    }
+  });
+
+  it('chaque capacité est prouvée à AU MOINS un niveau — plus aucune étiquette muette', () => {
+    // La transition est finie : il ne reste aucune étiquette sans niveau, donc
+    // aucune preuve qui ne compte pour rien.
+    const fichiers = execSync('git ls-files', {
+      cwd: RACINE,
+      encoding: 'utf8',
+      maxBuffer: 64e6,
+    })
+      .split('\n')
+      .filter(Boolean);
+    const preuves = revendicationsDuDepot(fichiers, (f) => readFileSync(join(RACINE, f), 'utf8'));
+    const sansNiveau = preuves.filter((x) => x.niveau === null);
+    expect(sansNiveau.map((x) => `${x.capacite} dans ${x.origine}`)).toEqual([]);
+    for (const c of regrouperParCapacite({ capacites: CAPACITES, preuves })) {
+      expect(
+        c.ecran.etat !== 'absente' || c.moteur.etat !== 'absente',
+        `${c.slug} n'a aucune preuve`,
+      ).toBe(true);
     }
   });
 
@@ -1268,5 +1673,615 @@ describe('le registre lui-même', () => {
       expect(c.domaine, c.slug).toBeTruthy();
       expect(c.question, c.slug).toMatch(/\?$/);
     }
+  });
+});
+
+// ─── Le temps de réparation ───────────────────────────────────────────────────
+
+/** Un jour donné, à midi — les dates de collecte sont des instants, pas des jours. */
+const jour = (n) => new Date(Date.UTC(2026, 8, n, 12, 0, 0)).toISOString();
+
+describe('fusionnerEssais — un test réparé garde la trace de ce qu’il a coûté', () => {
+  it('une bascule vert → rouge → vert pose `repareLe` et conserve le rouge de départ', () => {
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(2) });
+    expect(m[0].rougeDepuis).toBe(jour(2));
+
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(5) });
+    expect(m[0].repareLe).toBe(jour(5));
+    expect(m[0].dernierRougeDepuis).toBe(jour(2));
+    // Le problème courant est clos : sans ça, le test resterait « rouge depuis ».
+    expect(m[0].rougeDepuis).toBeNull();
+  });
+
+  it('un test qui n’a jamais été rouge n’a pas de réparation à raconter', () => {
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(2) });
+    expect(m[0].repareLe ?? null).toBeNull();
+    expect(dureesDeReparation(m).durees).toEqual([]);
+  });
+
+  it('un rouge dont la bascule n’a jamais été VUE ne donne pas de durée en repassant vert', () => {
+    // Le cas de la première collecte : vingt-deux tests déjà rouges, jamais vus
+    // verts. `rougeDepuis` est null — leur réparation n'a pas de point de départ,
+    // et la dater depuis la première observation mesurerait notre propre retard
+    // à regarder, pas le leur à réparer.
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], {
+      le: jour(1),
+    });
+    expect(m[0].rougeDepuis).toBeNull();
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(9) });
+    expect(m[0].repareLe ?? null).toBeNull();
+    expect(dureesDeReparation(m).durees).toEqual([]);
+  });
+
+  it('une deuxième casse puis une deuxième réparation remplacent la durée précédente', () => {
+    // La mémoire garde UNE réparation par test, la dernière. Garder toute la
+    // suite ferait grossir le fichier sans rien ajouter au chiffre qu'on lit.
+    let m = fusionnerEssais([], [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], {
+      le: jour(1),
+    });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(2) });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(3) });
+    expect(dureesDeReparation(m).durees).toEqual([1]);
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'rouge' }], { le: jour(10) });
+    m = fusionnerEssais(m, [{ fichier: 'a.test.ts', titre: 'T', sort: 'vert' }], { le: jour(16) });
+    expect(dureesDeReparation(m).durees).toEqual([6]);
+  });
+});
+
+describe('dureesDeReparation — la médiane, parce qu’une seule réparation longue n’est pas la normale', () => {
+  const repare = (cle, deLe, aLe) => ({ cle, dernierRougeDepuis: deLe, repareLe: aLe });
+
+  it('aucune réparation observée : pas de médiane, et ça se DIT', () => {
+    const r = dureesDeReparation([]);
+    expect(r.durees).toEqual([]);
+    expect(r.mediane).toBeNull();
+  });
+
+  it('une seule réparation : la médiane est cette durée', () => {
+    const r = dureesDeReparation([repare('a', jour(1), jour(4))]);
+    expect(r.durees).toEqual([3]);
+    expect(r.mediane).toBe(3);
+  });
+
+  it('deux réparations : la médiane est la moyenne des deux', () => {
+    const r = dureesDeReparation([repare('a', jour(1), jour(2)), repare('b', jour(1), jour(5))]);
+    expect(r.durees).toEqual([1, 4]);
+    expect(r.mediane).toBe(2.5);
+  });
+
+  it('trois réparations : la médiane est celle du milieu, pas la moyenne', () => {
+    // 1, 2, 30 → moyenne 11, médiane 2. Le 30 est l'accident qu'on ne veut pas
+    // voir déguisé en normale : c'est toute la raison du choix.
+    const r = dureesDeReparation([
+      repare('a', jour(1), jour(2)),
+      repare('b', jour(1), jour(31)),
+      repare('c', jour(1), jour(3)),
+    ]);
+    expect(r.durees).toEqual([1, 2, 30]);
+    expect(r.mediane).toBe(2);
+  });
+
+  it('une réparation incomplète ou incohérente n’entre pas dans le calcul', () => {
+    const r = dureesDeReparation([
+      { cle: 'a', repareLe: jour(4), dernierRougeDepuis: null },
+      { cle: 'b', repareLe: null, dernierRougeDepuis: jour(1) },
+      // Réparé AVANT d'être cassé : une donnée abîmée, pas une durée négative.
+      repare('c', jour(9), jour(2)),
+      repare('d', jour(1), jour(6)),
+    ]);
+    expect(r.durees).toEqual([5]);
+    expect(r.mediane).toBe(5);
+  });
+
+  it('les demi-journées comptent : une réparation de douze heures n’est pas zéro jour', () => {
+    const r = dureesDeReparation([
+      {
+        cle: 'a',
+        dernierRougeDepuis: '2026-09-01T00:00:00.000Z',
+        repareLe: '2026-09-01T12:00:00.000Z',
+      },
+    ]);
+    expect(r.durees).toEqual([0.5]);
+  });
+});
+
+describe('ecartsDe — un rouge de plus de quinze jours est une dette, pas une alarme', () => {
+  const maintenant = Date.parse('2026-09-30T12:00:00.000Z');
+  const base = { resume: {}, capacites: { registre: [] } };
+
+  it('compte les rouges datés de plus de 14 jours et les nomme', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [
+          { cle: 'a', titre: 'vieux rouge', rougeDepuis: '2026-09-01T12:00:00.000Z' },
+          { cle: 'b', titre: 'rouge d’hier', rougeDepuis: '2026-09-29T12:00:00.000Z' },
+        ],
+      },
+    };
+    const e = ecartsDe(s, [], maintenant).find((x) => /plus de 14 jours/.test(x.titre));
+    expect(e).toBeTruthy();
+    expect(e.gravite).toBe('moyenne');
+    expect(e.titre).toContain('1 test(s)');
+    expect(e.quoi).toEqual(['vieux rouge']);
+  });
+
+  it('ne compte QUE les rouges datés — un rouge sans bascule vue n’a pas d’âge', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [{ cle: 'a', titre: 'rouge sans date', rougeDepuis: null }],
+      },
+    };
+    expect(ecartsDe(s, [], maintenant).some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+  });
+
+  it('ne réveille personne — seule la gravité haute le fait', () => {
+    const s = {
+      ...base,
+      memoire: {
+        instables: 0,
+        regressions: [{ cle: 'a', titre: 'vieux rouge', rougeDepuis: '2026-08-01T12:00:00.000Z' }],
+      },
+    };
+    const hautes = alertes(ecartsDe(s, [], maintenant));
+    expect(hautes.some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+  });
+});
+
+describe('tendance — deux photos disent ce qu’une seule ne peut pas', () => {
+  const l = (le, valeur, declencheur = 'schedule') => ({
+    le,
+    couvertureLignes: valeur,
+    declencheur,
+  });
+
+  it('aucune collecte : pas de delta, et pas de direction inventée', () => {
+    const t = tendance([], 'couvertureLignes');
+    expect(t.valeurs).toEqual([]);
+    expect(t.delta).toBeNull();
+    expect(t.direction).toBeNull();
+  });
+
+  it('une seule collecte : le point existe, la tendance non', () => {
+    const t = tendance([l(jour(1), 80)], 'couvertureLignes', { maintenant: Date.parse(jour(2)) });
+    expect(t.valeurs).toEqual([{ le: jour(1), valeur: 80 }]);
+    expect(t.delta).toBeNull();
+    expect(t.direction).toBeNull();
+  });
+
+  it('deux collectes : le delta est la différence, du plus ancien au plus récent', () => {
+    const t = tendance([l(jour(1), 80), l(jour(3), 82.5)], 'couvertureLignes', {
+      maintenant: Date.parse(jour(4)),
+    });
+    expect(t.delta).toBe(2.5);
+    expect(t.direction).toBe('monte');
+  });
+
+  it('une baisse descend, une égalité est stable', () => {
+    const m = { maintenant: Date.parse(jour(4)) };
+    expect(tendance([l(jour(1), 82), l(jour(3), 79)], 'couvertureLignes', m).direction).toBe(
+      'descend',
+    );
+    expect(tendance([l(jour(1), 82), l(jour(3), 82)], 'couvertureLignes', m).direction).toBe(
+      'stable',
+    );
+  });
+
+  it('les collectes locales sont exclues : un poste ne mesure pas main', () => {
+    const t = tendance(
+      [l(jour(1), 80), l(jour(2), 20, 'local'), l(jour(3), 81)],
+      'couvertureLignes',
+      { maintenant: Date.parse(jour(4)) },
+    );
+    expect(t.valeurs.map((v) => v.valeur)).toEqual([80, 81]);
+    expect(t.delta).toBe(1);
+  });
+
+  it('une valeur absente n’est pas un zéro — la collecte est ignorée pour ce champ', () => {
+    const t = tendance([l(jour(1), 80), l(jour(2), null), l(jour(3), 84)], 'couvertureLignes', {
+      maintenant: Date.parse(jour(4)),
+    });
+    expect(t.valeurs.map((v) => v.valeur)).toEqual([80, 84]);
+    expect(t.delta).toBe(4);
+  });
+
+  it('la fenêtre coupe : une collecte hors des N jours ne pèse pas sur le delta', () => {
+    const hist = [l(jour(1), 50), l(jour(25), 80), l(jour(29), 83)];
+    const m = Date.parse(jour(30));
+    expect(tendance(hist, 'couvertureLignes', { jours: 7, maintenant: m }).delta).toBe(3);
+    expect(tendance(hist, 'couvertureLignes', { jours: 30, maintenant: m }).delta).toBe(33);
+  });
+
+  it('un autre champ se lit pareil — la fonction ne sait rien de la couverture', () => {
+    const hist = [
+      { le: jour(1), testsCasses: 22, declencheur: 'schedule' },
+      { le: jour(2), testsCasses: 19, declencheur: 'schedule' },
+    ];
+    const t = tendance(hist, 'testsCasses', { maintenant: Date.parse(jour(3)) });
+    expect(t.delta).toBe(-3);
+    expect(t.direction).toBe('descend');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le prix d'une PR. Ce chiffre ne décrit pas une performance : il annonce la
+// prochaine porte qu'on va retirer. Le jour où attendre son merge devient
+// insupportable, personne ne demande la permission avant de mettre une suite
+// en `skip` — d'où le seuil, et d'où ces tests.
+
+describe('prixDeLaCi — ce qu’on attend, pas ce que la CI consomme', () => {
+  /** Un run, décrit par sa durée en minutes. */
+  const run = (minutes, { conclusion = 'success', jour = 1 } = {}) => {
+    const de = new Date(Date.UTC(2026, 8, jour, 8, 0, 0));
+    return {
+      conclusion,
+      createdAt: de.toISOString(),
+      updatedAt: new Date(de.getTime() + minutes * 60000).toISOString(),
+      url: `https://github.com/o/r/actions/runs/${jour}`,
+    };
+  };
+  const suite = (minutes) => minutes.map((m, i) => run(m, { jour: i + 1 }));
+
+  it('aucun run : tout est null, et surtout pas zéro — une CI non mesurée n’est pas gratuite', () => {
+    const p = prixDeLaCi([]);
+    expect(p.runs).toBe(0);
+    expect(p.mediane).toBeNull();
+    expect(p.dernier).toBeNull();
+    expect(p.pire).toBeNull();
+    expect(p.tendance).toBeNull();
+  });
+
+  it('un seul run : la médiane est sa durée, et il n’y a PAS de tendance', () => {
+    const p = prixDeLaCi(suite([12]));
+    expect(p.mediane).toBe(12);
+    expect(p.dernier).toBe(12);
+    expect(p.pire).toBe(12);
+    // « Stable » sur un point serait une affirmation qu'on ne peut pas faire.
+    expect(p.tendance).toBeNull();
+    expect(p.hausse).toBeNull();
+  });
+
+  it('deux runs : la médiane est leur moyenne', () => {
+    expect(prixDeLaCi(suite([10, 20])).mediane).toBe(15);
+  });
+
+  it('trois runs : la médiane est celui du milieu, jamais la moyenne', () => {
+    // 10, 12, 50 : moyenne 24, médiane 12. Une exécution partie en vrille ne
+    // doit pas devenir « la normale ».
+    const p = prixDeLaCi(suite([10, 12, 50]));
+    expect(p.mediane).toBe(12);
+    expect(p.pire).toBe(50);
+  });
+
+  it('un run ROUGE ne compte pas — il s’arrête tôt et flatterait le chiffre', () => {
+    const runs = [
+      run(20, { jour: 1 }),
+      run(2, { conclusion: 'failure', jour: 2 }),
+      run(22, { jour: 3 }),
+    ];
+    const p = prixDeLaCi(runs);
+    expect(p.runs).toBe(2);
+    // Sans l'exclusion, la médiane tomberait à 20 : la CI paraîtrait plus
+    // rapide précisément quand elle va mal.
+    expect(p.mediane).toBe(21);
+    expect(p.dernier).toBe(22);
+  });
+
+  it('une exécution annulée ne compte pas davantage — seul `success` est allé au bout', () => {
+    expect(prixDeLaCi([run(30, { conclusion: 'cancelled' })]).runs).toBe(0);
+  });
+
+  it('la durée est celle du MUR À MUR, file d’attente comprise', () => {
+    // 90 minutes entre la création et la fin : c'est ce que quelqu'un attend,
+    // quelle qu'ait été la part passée en file.
+    expect(prixDeLaCi([run(90)]).mediane).toBe(90);
+  });
+
+  it('la tendance MONTE quand la seconde moitié dépasse la première de plus de 15 %', () => {
+    const p = prixDeLaCi(suite([10, 10, 14, 14]));
+    expect(p.hausse).toBe(40);
+    expect(p.tendance).toBe('monte');
+    expect(p.deltaMin).toBe(4);
+  });
+
+  it('elle DESCEND symétriquement', () => {
+    expect(prixDeLaCi(suite([20, 20, 10, 10])).tendance).toBe('descend');
+  });
+
+  it('elle reste STABLE sous le seuil — 10 % de variation n’est pas une dérive', () => {
+    const p = prixDeLaCi(suite([10, 10, 11, 11]));
+    expect(p.hausse).toBe(10);
+    expect(p.tendance).toBe('stable');
+  });
+
+  it('la série va du plus ANCIEN au plus récent — `gh` rend l’inverse', () => {
+    const p = prixDeLaCi([run(30, { jour: 3 }), run(10, { jour: 1 }), run(20, { jour: 2 })]);
+    expect(p.serie.map((x) => x.valeur)).toEqual([10, 20, 30]);
+    expect(p.dernier).toBe(30);
+  });
+
+  it('`medianeRecente` ne regarde que les DIX derniers — une CI qui vient de doubler ne doit pas être noyée', () => {
+    const vieux = Array.from({ length: 20 }, (_, i) => run(5, { jour: i + 1 }));
+    const recents = Array.from({ length: 10 }, (_, i) => run(40, { jour: i + 21 }));
+    const p = prixDeLaCi([...vieux, ...recents]);
+    expect(p.medianeRecente).toBe(40);
+    expect(p.mediane).toBe(5);
+  });
+
+  it('GitHub sans réponse ⇒ `null`, et non un objet à zéro', () => {
+    expect(prixDeLaCi(null)).toBeNull();
+    expect(prixDeLaCi(undefined)).toBeNull();
+  });
+
+  it('un run aux dates illisibles est écarté plutôt que compté zéro minute', () => {
+    const p = prixDeLaCi([
+      { conclusion: 'success', createdAt: 'illisible', updatedAt: 'x' },
+      run(10),
+    ]);
+    expect(p.runs).toBe(1);
+    expect(p.mediane).toBe(10);
+  });
+});
+
+describe('ecartsDe — le prix d’une PR décide du sort des tests', () => {
+  const SNAP = (prixCi) => ({
+    resume: { specsE2e: 0 },
+    capacites: { registre: [] },
+    parcours: [],
+    paquets: [],
+    ci: [],
+    prixCi,
+  });
+  const prixDe = (o) => ({
+    runs: 12,
+    serie: [],
+    mediane: null,
+    medianeRecente: null,
+    dernier: null,
+    pire: null,
+    hausse: null,
+    deltaMin: null,
+    tendance: null,
+    ...o,
+  });
+
+  it('au-delà de 25 min de médiane récente, c’est HAUTE — sous le seuil, rien', () => {
+    const cher = ecartsDe(SNAP(prixDe({ medianeRecente: 32 })), [{}, {}]);
+    const e = cher.find((x) => /coûte/.test(x.titre));
+    expect(e).toBeTruthy();
+    expect(e.gravite).toBe('haute');
+    expect(e.titre).toContain('32');
+    expect(alertes(cher)).toContain(e);
+
+    const ok = ecartsDe(SNAP(prixDe({ medianeRecente: 25 })), [{}, {}]);
+    expect(ok.some((x) => /coûte/.test(x.titre))).toBe(false);
+  });
+
+  it('une hausse de plus de 25 % est MOYENNE — elle ne réveille personne mais elle est dite', () => {
+    const liste = ecartsDe(SNAP(prixDe({ hausse: 40 })), [{}, {}]);
+    const e = liste.find((x) => /de plus/.test(x.titre));
+    expect(e.gravite).toBe('moyenne');
+    // Moyenne, donc hors des alertes : une dérive n'est pas une panne.
+    expect(alertes(liste)).not.toContain(e);
+
+    expect(
+      ecartsDe(SNAP(prixDe({ hausse: 25 })), [{}, {}]).some((x) => /de plus/.test(x.titre)),
+    ).toBe(false);
+  });
+
+  it('une baisse ne dit rien — une CI qui accélère n’est pas un écart', () => {
+    expect(
+      ecartsDe(SNAP(prixDe({ hausse: -60 })), [{}, {}]).some((x) => /de plus/.test(x.titre)),
+    ).toBe(false);
+  });
+
+  it('`prixCi` absent ⇒ AUCUN écart : une mesure manquante n’est pas une CI gratuite', () => {
+    const e = ecartsDe(SNAP(null), [{}, {}]);
+    expect(e.some((x) => /coûte|de plus/.test(x.titre))).toBe(false);
+    expect(
+      ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]).some((x) => /coûte|de plus/.test(x.titre)),
+    ).toBe(false);
+  });
+});
+
+// Un nom de test rouge dans un tableau est un cul-de-sac : on sait QUE ça
+// casse, jamais ce que l'utilisateur aurait vu. La mémoire garde donc l'adresse
+// du run qui l'a vu tomber la dernière fois.
+
+describe('fusionnerEssais — chaque rouge garde l’adresse du run qui l’a vu', () => {
+  const RUN = 'https://github.com/o/r/actions/runs/1';
+  const RUN2 = 'https://github.com/o/r/actions/runs/2';
+  const ROUGE = [{ fichier: 'a.spec.ts', titre: 't', sort: 'rouge' }];
+  const VERT = [{ fichier: 'a.spec.ts', titre: 't', sort: 'vert' }];
+
+  it('un tour rouge mémorise l’exécution passée en option', () => {
+    const [e] = fusionnerEssais([], ROUGE, { le: '2026-09-12T00:00:00Z', execution: RUN });
+    expect(e.dernierRougeExecution).toBe(RUN);
+  });
+
+  it('un tour VERT ne l’efface pas — la dernière piste connue reste la piste', () => {
+    const avant = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z', execution: RUN });
+    const [e] = fusionnerEssais(avant, VERT, { le: '2026-09-12T00:00:00Z', execution: RUN2 });
+    expect(e.dernierRougeExecution).toBe(RUN);
+  });
+
+  it('un rouge SANS exécution connue ne pose rien, et n’écrase pas ce qui est posé', () => {
+    const vierge = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z' });
+    expect(vierge[0].dernierRougeExecution).toBeNull();
+
+    // Un rendu local ne doit pas faire disparaître la piste laissée par la nuit.
+    const avecPiste = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z', execution: RUN });
+    const [e] = fusionnerEssais(avecPiste, ROUGE, { le: '2026-09-12T00:00:00Z' });
+    expect(e.dernierRougeExecution).toBe(RUN);
+  });
+
+  it('un rouge PLUS RÉCENT remplace l’adresse : on veut la dernière fois qu’on l’a vu tomber', () => {
+    const avant = fusionnerEssais([], ROUGE, { le: '2026-09-11T00:00:00Z', execution: RUN });
+    const [e] = fusionnerEssais(avant, ROUGE, { le: '2026-09-12T00:00:00Z', execution: RUN2 });
+    expect(e.dernierRougeExecution).toBe(RUN2);
+  });
+
+  it('l’option est facultative — l’appel d’avant ce lot rend exactement la même chose', () => {
+    const [e] = fusionnerEssais([], VERT, { le: '2026-09-12T00:00:00Z' });
+    expect(e.dernierRougeExecution).toBeNull();
+    expect(e.tours).toBe(1);
+  });
+});
+
+// Le lien n'existe que s'il mène quelque part. Un lien mort coûte plus cher que
+// pas de lien : il use la seule chose qui fait qu'on clique.
+
+describe('le rendu mène à la cause, et seulement quand elle existe', () => {
+  const source = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
+  /** Le corps d'une fonction de vue, du `function vueX()` à la suivante. */
+  const vue = (nom) => {
+    const i = source.indexOf(`function ${nom}(`);
+    const j = source.indexOf('\nfunction ', i + 1);
+    return source.slice(i, j < 0 ? undefined : j);
+  };
+
+  it('« voir le run » est posé dans la Mémoire, les Capacités et les Parcours', () => {
+    expect(vue('vueMemoire')).toContain('lienRun(');
+    expect(vue('vueCapacites')).toContain('lienRun(');
+    expect(vue('vueParcours')).toContain('lienRun(');
+  });
+
+  it('la Mémoire suit le test, pas la collecte : chaque ligne pointe SON dernier rouge', () => {
+    expect(vue('vueMemoire')).toContain('lienRun(e.dernierRougeExecution)');
+  });
+
+  it('le lien est CONDITIONNEL — sans adresse, il n’est pas rendu du tout', () => {
+    expect(source).toMatch(/const lienRun = \(url\) =>\s*\n?\s*url\s*\n?\s*\?/);
+  });
+
+  it('un parcours vert ne porte pas de lien : il n’y a rien à aller voir', () => {
+    expect(vue('vueParcours')).toContain("r?.rouge ? lienRun(s.execution?.url) : ''");
+  });
+
+  it('le cadre « Prix d’une PR » dit l’absence plutôt qu’un zéro', () => {
+    const cadre = vue('cadrePrix');
+    expect(cadre).toContain("GitHub n'a pas répondu");
+    expect(cadre).toContain('prix--absent');
+  });
+});
+
+describe('intentionDunParcours — la description d’un parcours, pas son bandeau', () => {
+  // Le cas réel (Quentin, 13/09) : sur la page Parcours, chaque description
+  // était une suite de tirets. La collecte prenait la PREMIÈRE ligne `//` du
+  // fichier — qui, dans la plupart des specs, arrive bien après l'en-tête et
+  // n'est qu'un séparateur décoratif.
+  const CAP = '@' + 'cap';
+
+  it('un bandeau décoratif n’est pas une description', () => {
+    const texte = `// ─────────────────────────────────────────\n// Un propriétaire connecte Google Drive.\n// ─────────────────────────────────────────\n\nimport { test } from '@playwright/test';\n`;
+    expect(intentionDunParcours(texte)).toBe('Un propriétaire connecte Google Drive.');
+  });
+
+  it('un titre de section entre tirets non plus — c’est LE cas qui a été vu', () => {
+    const texte = `import { test } from '@playwright/test';\n\nconst a = 1;\n\n// ── Constants ───────────────────────\nconst B = 2;\n`;
+    expect(intentionDunParcours(texte)).toBe(null);
+  });
+
+  it('un titre de section encadré DANS l’en-tête est sauté lui aussi', () => {
+    const texte = `// ── Constants ───────────────
+// Le propriétaire ouvre la page Connecteurs.
+`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire ouvre la page Connecteurs.');
+  });
+
+  it('un en-tête sur plusieurs lignes est joint en une phrase', () => {
+    const texte = `/**\n * Le propriétaire ouvre la page Connecteurs\n * et voit jusqu'où va le jeton.\n *\n * Scénarios :\n *  A — ...\n */\n`;
+    expect(intentionDunParcours(texte)).toBe(
+      "Le propriétaire ouvre la page Connecteurs et voit jusqu'où va le jeton.",
+    );
+  });
+
+  it('la ligne vide arrête la lecture : le reste de l’en-tête n’entre pas', () => {
+    const texte = `/**\n * Une phrase.\n *\n * Une autre chose, qui ne doit pas suivre.\n */\n`;
+    expect(intentionDunParcours(texte)).toBe('Une phrase.');
+  });
+
+  it('trop long ⇒ coupé sur une fin de phrase, jamais au milieu d’un mot', () => {
+    const un = `Le propriétaire ouvre la page et vérifie que tout est là. ${'x'.repeat(40)} fin de la deuxième phrase qui déborde largement des deux cents caractères annoncés et continue encore un peu.`;
+    const rendu = intentionDunParcours(`// ${un}\n`);
+    expect(rendu).toBe('Le propriétaire ouvre la page et vérifie que tout est là.');
+    expect(rendu.length).toBeLessThanOrEqual(200);
+  });
+
+  it('le nom du fichier en tête d’en-tête est retiré : il est déjà dans la colonne d’à côté', () => {
+    const texte = `/**\n * oauth-flow.spec.ts — Le propriétaire connecte Google Drive.\n */\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire connecte Google Drive.');
+  });
+
+  it('le nom du fichier SEUL sur sa ligne est sauté — cinq specs ouvrent ainsi', () => {
+    const texte = `/**
+ * webhooks-flows.spec.ts
+ *
+ * Le propriétaire crée un webhook entrant.
+ */
+`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire crée un webhook entrant.');
+  });
+
+  it('sans en-tête, on se rabat sur le titre du premier describe', () => {
+    const texte = `import { test } from '@playwright/test';\n\ntest.describe('Notion OAuth flow', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Notion OAuth flow');
+  });
+
+  it('le repli retire les étiquettes du titre — une étiquette n’est pas une description', () => {
+    const texte = `test.describe('Notion OAuth flow ${CAP}:connecter-un-service/ecran', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Notion OAuth flow');
+  });
+
+  it('ni en-tête ni describe ⇒ null, pour que le rendu puisse dire « aucune description »', () => {
+    expect(
+      intentionDunParcours(`import { test } from '@playwright/test';\ntest('a', () => {});\n`),
+    ).toBe(null);
+  });
+
+  it('un commentaire posé APRÈS les imports compte encore comme en-tête', () => {
+    const texte = `import { test } from '@playwright/test';\nimport path from 'node:path';\n\n// Le propriétaire renomme son agent depuis la liste.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire renomme son agent depuis la liste.');
+  });
+
+  it('un commentaire posé après du CODE n’est plus un en-tête', () => {
+    const texte = `const a = 1;\n\n// Ceci commente la ligne suivante, pas le fichier.\nconst b = 2;\n`;
+    expect(intentionDunParcours(texte)).toBe(null);
+  });
+
+  it('le rendu dit « aucune description » quand il n’y en a pas', () => {
+    const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
+    expect(build).toContain('aucune description');
+    expect(build).toContain('intention--absente');
+  });
+
+  it('les trente parcours du dépôt ont tous une description', () => {
+    const dossier = join(RACINE, 'apps', 'web', 'tests', 'e2e');
+    const sans = readdirSync(dossier)
+      .filter((f) => f.endsWith('.spec.ts'))
+      .filter((f) => !intentionDunParcours(readFileSync(join(dossier, f), 'utf8')));
+    expect(sans).toEqual([]);
+  });
+});
+
+describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
+  // Le cas réel : `pnpm --filter @nodal-agents/qa build` sortait en erreur dans
+  // la CI de TOUTE PR de la chaîne, parce que le snapshot committé datait
+  // d'avant les niveaux écran/moteur et que le rendu lisait `c.ecran.etat`
+  // sans regarder si la clé existait.
+  const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
+
+  it('un registre sans niveaux est reconnu, et le portail le DIT', () => {
+    expect(build).toContain('!reg[0]?.ecran || !reg[0]?.moteur');
+    expect(build).toContain('antérieure aux niveaux écran / moteur');
   });
 });

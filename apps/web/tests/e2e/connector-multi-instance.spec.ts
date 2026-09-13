@@ -1,4 +1,6 @@
 /**
+ * An owner installs the same connector twice, one account for each side of their work.
+ *
  * connector-multi-instance.spec.ts — e2e regression for the multi-instance connectors brique.
  *
  * Guards that the UNIQUE(entity_id, slug) constraint was dropped on `connectors`

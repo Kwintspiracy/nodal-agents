@@ -63,7 +63,7 @@ function makeAgent(
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('buildSystemPrompt', () => {
+describe('buildSystemPrompt @cap:configurer-agent/moteur', () => {
   it('includes personality verbatim (never modified)', async () => {
     const { entityId } = await seedContext(db);
     const [agentRow] = await db

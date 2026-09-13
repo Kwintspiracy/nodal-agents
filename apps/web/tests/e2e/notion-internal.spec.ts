@@ -1,4 +1,6 @@
 /**
+ * An owner connects Notion with an internal integration key, alongside the OAuth path.
+ *
  * Playwright e2e — regression test for Notion Internal Integration (api_key path).
  *
  * Asserts that the original Notion api_key flow still works after Brique 34

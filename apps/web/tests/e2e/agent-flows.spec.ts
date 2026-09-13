@@ -1,4 +1,6 @@
 /**
+ * An agent remembers what the user tells it, and finds it again on a later turn.
+ *
  * agent-flows.spec.ts — End-to-end tests for the agent → save_memory / query_memory
  * flow fixed in the current brique (Brique 16c continuation).
  *
@@ -71,7 +73,7 @@ test.beforeAll(async () => {
 
 // ─── Scenario A — Proactive save_memory ──────────────────────────────────────
 
-test.describe('Scenario A — Proactive save_memory @cap:se-souvenir', () => {
+test.describe('Scenario A — Proactive save_memory @cap:se-souvenir/ecran', () => {
   test.describe.configure({ timeout: DESCRIBE_TIMEOUT_MS });
 
   let testStartMs: number;
@@ -249,7 +251,7 @@ test.describe('Scenario C — Planner save_memory', () => {
 
 // ─── Scenario D — query_memory ────────────────────────────────────────────────
 
-test.describe('Scenario D — query_memory @cap:se-souvenir', () => {
+test.describe('Scenario D — query_memory @cap:se-souvenir/ecran', () => {
   // Two sequential LLM jobs (save + query) → double the timeout budget
   test.describe.configure({ timeout: DESCRIBE_TIMEOUT_MS * 2 });
 
@@ -336,7 +338,7 @@ test.describe('Scenario D — query_memory @cap:se-souvenir', () => {
 
 // ─── Scenario E — Telegram channel ───────────────────────────────────────────
 
-test.describe('Scenario E — Telegram channel @cap:parler-par-canal-externe', () => {
+test.describe('Scenario E — Telegram channel @cap:parler-par-canal-externe/ecran', () => {
   test.describe.configure({ timeout: DESCRIBE_TIMEOUT_MS });
 
   let testStartMs: number;

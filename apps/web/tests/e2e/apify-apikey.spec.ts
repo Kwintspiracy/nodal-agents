@@ -1,4 +1,6 @@
 /**
+ * An owner installs Apify by pasting an API key, and names the account.
+ *
  * Playwright e2e — Apify api_key connector smoke test (multi-instance UI).
  *
  * Apify uses the simple api_key auth flow. This test confirms:

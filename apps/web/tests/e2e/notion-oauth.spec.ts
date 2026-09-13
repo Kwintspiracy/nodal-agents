@@ -1,4 +1,6 @@
 /**
+ * An owner connects Notion through its consent screen and comes back to a connected account.
+ *
  * Playwright e2e — OAuth flow for Notion (OAuth / Public Integration) — Brique 34 v3.
  *
  * In v3, the flow uses the credential wizard modal:
@@ -24,7 +26,7 @@ test.beforeAll(async () => {
   await cleanCredentialsByType('notion-oauth');
 });
 
-test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service', () => {
+test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran', () => {
   test('connect via wizard → callback → connected status (no Refresh button)', async ({
     page,
     context,

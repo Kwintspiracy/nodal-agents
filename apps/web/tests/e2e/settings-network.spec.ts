@@ -1,4 +1,6 @@
 /**
+ * An owner opens the dashboard to the local network, and is told which address to use and that a restart is needed.
+ *
  * Brique 35 — NetworkForm e2e tests
  *
  * Covers the interactive network-settings section on /settings:
@@ -37,7 +39,7 @@ function networkSection(
     .first();
 }
 
-test.describe('NetworkForm — /settings @cap:se-connecter', () => {
+test.describe('NetworkForm — /settings @cap:se-connecter/ecran', () => {
   // ── Test 1 — Section renders correctly ────────────────────────────────────
   test('Network section renders with radio buttons and read-only URL fields', async ({ page }) => {
     await page.goto('/settings');

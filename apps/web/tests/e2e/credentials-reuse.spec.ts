@@ -1,4 +1,6 @@
 /**
+ * An owner reuses one Google credential for a second connector instead of pasting it again.
+ *
  * Playwright e2e — Credential reuse across multiple connectors (Brique 34 v3).
  *
  * Scenario:

@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { requireLiveStack } from './helpers.ts';
 
+// A user signs out from the sidebar menu and signs back in.
+//
 // Independent storageState — this file tests the full login/logout cycle
 // from scratch and must NOT share auth state with other specs.
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -12,7 +14,7 @@ test.beforeAll(async () => {
   await requireLiveStack();
 });
 
-test.describe('UserMenu — sign-out + re-login round-trip', () => {
+test.describe('UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran', () => {
   test('shows email in sidebar, signs out, redirects to /login, re-logs in', async ({ page }) => {
     // ── Sign in via the login form ──────────────────────────────────────────
     // Skip the test in local-trust mode — no /login form, no sign-out flow.
