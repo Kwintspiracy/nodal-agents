@@ -592,7 +592,9 @@ describe('l’intention de mutation, posée par executeTool', () => {
     }
   });
 
-  it('une écriture RÉELLE est constatée, et produit', async () => {
+  // Hors d’un projet à manifeste, un fichier écrit est typé `document` (#66) ; l’observation
+  // de l’écriture sur le disque (#75) ne dépend pas, elle, du type du livrable.
+  it('une écriture RÉELLE d’un DOCUMENT est constatée, et produit', async () => {
     await mkdir(join(ws, 'notes'), { recursive: true });
     const res = await executeTool(
       fileWriteTool as never,
@@ -602,7 +604,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
     );
     expect(res.outcome).toBe('success');
     const rows = await statesOf(jobId);
-    expect(rows.map((r) => [r.deliverableType, r.produced])).toEqual([['code_project', true]]);
+    expect(rows.map((r) => [r.deliverableType, r.produced])).toEqual([['document', true]]);
   });
 
   it('file_edit pose l’intention sur le projet du fichier édité', async () => {
