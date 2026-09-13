@@ -221,7 +221,6 @@ function vueEnsemble() {
         ? 'Stable sur 7 jours.'
         : `En ${tCouv.direction === 'monte' ? 'hausse' : 'baisse'} de ${Math.abs(tCouv.delta)} point(s) sur 7 jours.`;
   const couvert = pct(r.couvertureLignes);
-  const partMesuree = r.paquets > 0 ? Math.round((r.paquetsMesures / r.paquets) * 100) : 0;
   const partJouee = r.specsE2e > 0 ? Math.round((r.specsE2eJoueesParLaCi / r.specsE2e) * 100) : 0;
 
   return `
