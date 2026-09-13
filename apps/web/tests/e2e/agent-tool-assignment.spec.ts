@@ -20,7 +20,7 @@
  * Requires a running Nodal-Agents stack (port 3000). Skipped automatically if not reachable.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import { requireLiveStack, makeDbClient, pollDb, resolveActingUser } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -206,110 +206,126 @@ test.afterAll(async () => {
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
+/**
+ * Attend que la liste blanche d'opérations de l'assignation satisfasse `pick`,
+ * et rend ce que `pick` a retourné. Remplace le `waitForTimeout(800)` qui
+ * pariait sur la durée du debounce (300 ms) plutôt que sur son effet.
+ */
+async function pollAssignmentOperations<T>(
+  agentId: string,
+  connectorId: string,
+  pick: (ops: string[] | null) => T | null,
+): Promise<T> {
+  const { agentConnectorAssignments, eq, and } = await import('@nodal-agents/db');
+  const { db, close } = makeDbClient();
+  try {
+    return await pollDb(
+      async () => {
+        const rows = await db
+          .select({ enabledOperations: agentConnectorAssignments.enabledOperations })
+          .from(agentConnectorAssignments)
+          .where(
+            and(
+              eq(agentConnectorAssignments.agentId, agentId),
+              eq(agentConnectorAssignments.connectorId, connectorId),
+            ),
+          );
+        if (rows.length !== 1) return null;
+        return pick(rows[0]!.enabledOperations);
+      },
+      { timeoutMs: 10_000, intervalMs: 400 },
+    );
+  } finally {
+    await close();
+  }
+}
+/**
+ * L'onglet Connecteurs de la page d'édition (`ConnectorsTabContent.tsx`).
+ *
+ * Ce parcours cherchait un `<label>Tools</label>` et une case à cocher par
+ * connecteur — la forme de `AgentForm`. L'édition est passée à
+ * `AgentComposer`, où les connecteurs vivent dans un onglet à part
+ * (`?tab=connectors`) : une section « Connected · N », un bouton
+ * « + Attach connectors » qui ouvre une modale listant la bibliothèque du
+ * workspace, et par ligne deux boutons d'icône (« Attach », « Detach »)
+ * au lieu d'une case. D'où l'erreur d'origine :
+ * `locator('label').filter({ hasText: 'Tools' }).first()` → element(s) not
+ * found, puis `getByText('E2E Google Drive')` → element(s) not found.
+ */
+
+/** La ligne `EdRow` qui porte ce nom, dans la page ou dans la modale. */
+function edRow(scope: Page | Locator, name: string): Locator {
+  return scope.locator('[class*="rounded-[10px]"]').filter({ hasText: name });
+}
+
+/** Ouvre l'onglet Connecteurs de l'agent de test. */
+async function openConnectorsTab(page: Page): Promise<void> {
+  await page.goto(`/agents/${testAgentId}/edit?tab=connectors`);
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: '+ Attach connectors' })).toBeVisible();
+}
+
+/** Attache le connecteur de test par le geste réel : la modale, puis « Attach ». */
+async function attachTestConnector(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '+ Attach connectors' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await edRow(dialog, 'E2E Google Drive').getByRole('button', { name: 'Attach' }).click();
+  await pollAssignment(testAgentId, testConnectorId, { expect: 'present', timeoutMs: 10_000 });
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
+}
+
+/** Amène la page dans l'état « connecteur attaché », quel que soit l'état de départ. */
+async function ensureAttached(page: Page): Promise<void> {
+  await openConnectorsTab(page);
+  if ((await edRow(page, 'E2E Google Drive').count()) === 0) {
+    await attachTestConnector(page);
+  }
+  await expect(edRow(page, 'E2E Google Drive')).toBeVisible();
+}
+
+/** Détache le connecteur s'il l'est, pour que chaque cas parte du même état. */
+async function detachIfAttached(page: Page): Promise<void> {
+  await openConnectorsTab(page);
+  const row = edRow(page, 'E2E Google Drive');
+  if ((await row.count()) > 0) {
+    await row.getByRole('button', { name: 'Detach' }).click();
+    await pollAssignment(testAgentId, testConnectorId, { expect: 'absent', timeoutMs: 10_000 });
+  }
+}
+
 test.describe('Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran', () => {
-  test.describe.configure({ timeout: 30_000 });
+  test.describe.configure({ timeout: 45_000 });
 
   test('Scenario A — Tools & Connectors section renders with the test connector', async ({
     page,
   }) => {
-    await page.goto(`/agents/${testAgentId}/edit`);
-    // Wait for page content to fully load (server component)
-    await page.waitForLoadState('networkidle');
+    await openConnectorsTab(page);
 
-    // The section heading — the & in JSX renders as literal & in DOM
-    await expect(page.locator('label', { hasText: 'Tools' }).first()).toBeVisible();
+    // La section des connecteurs attachés, avec son compte.
+    await expect(page.getByText(/^Connected · \d+$/)).toBeVisible();
 
-    // The E2E connector appears in the list
-    await expect(page.getByText('E2E Google Drive')).toBeVisible();
+    // Le connecteur de test est offert par la bibliothèque du workspace.
+    await page.getByRole('button', { name: '+ Attach connectors' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('E2E Google Drive')).toBeVisible();
+    await expect(
+      edRow(dialog, 'E2E Google Drive').getByRole('button', { name: 'Attach' }),
+    ).toBeVisible();
   });
 
   test('Scenario B — checking connector checkbox creates assignment row in DB', async ({
     page,
   }) => {
-    await page.goto(`/agents/${testAgentId}/edit`);
-    await page.waitForLoadState('networkidle');
+    await detachIfAttached(page);
+    await attachTestConnector(page);
 
-    // Locate the connector container that holds "E2E Google Drive".
-    // The structure: div.rounded-lg > div.flex > input[checkbox] + button > span(name)
-    // Find the div that contains the text and get its first checkbox.
-    const connectorLabel = page.getByText('E2E Google Drive');
-    await expect(connectorLabel).toBeVisible({ timeout: 10_000 });
+    // La ligne a rejoint « Connected », et l'assignation vaut « toutes les ops ».
+    const row = edRow(page, 'E2E Google Drive');
+    await expect(row).toBeVisible();
+    await expect(row.getByText(/^all \d+ ops$/)).toBeVisible();
 
-    // The checkbox is a sibling of the button that holds the label text.
-    // Navigate up to the flex row, then find the checkbox.
-    const connectorFlexRow = connectorLabel.locator('..').locator('..');
-    const checkbox = connectorFlexRow.locator('input[type="checkbox"]').first();
-
-    // Ensure starting state is unchecked (no prior assignment)
-    const isChecked = await checkbox.isChecked({ timeout: 5_000 });
-    if (isChecked) {
-      await checkbox.click();
-      await pollAssignment(testAgentId, testConnectorId, { expect: 'absent', timeoutMs: 8_000 });
-    }
-
-    // Check the connector
-    await checkbox.click();
-    await expect(checkbox).toBeChecked();
-
-    // The server action is debounced (~400 ms). Poll DB for the assignment.
-    await pollAssignment(testAgentId, testConnectorId, { expect: 'present', timeoutMs: 8_000 });
-
-    // Summary text updates to "all enabled" (enabledOperations=null)
-    await expect(page.getByText('all enabled')).toBeVisible({ timeout: 5_000 });
-  });
-
-  test('Scenario C — unchecking connector removes assignment from DB', async ({ page }) => {
-    await page.goto(`/agents/${testAgentId}/edit`);
-    await page.waitForLoadState('networkidle');
-
-    const connectorLabel = page.getByText('E2E Google Drive');
-    await expect(connectorLabel).toBeVisible({ timeout: 10_000 });
-    const connectorFlexRow = connectorLabel.locator('..').locator('..');
-    const checkbox = connectorFlexRow.locator('input[type="checkbox"]').first();
-
-    // Ensure it is checked first
-    if (!(await checkbox.isChecked({ timeout: 5_000 }))) {
-      await checkbox.click();
-      await pollAssignment(testAgentId, testConnectorId, { expect: 'present', timeoutMs: 8_000 });
-    }
-
-    // Uncheck the connector
-    await checkbox.click();
-    await expect(checkbox).not.toBeChecked();
-
-    // DB row should be deleted
-    await pollAssignment(testAgentId, testConnectorId, { expect: 'absent', timeoutMs: 8_000 });
-  });
-
-  test('Scenario D — Enable all button keeps enabledOperations=null in DB', async ({ page }) => {
-    await page.goto(`/agents/${testAgentId}/edit`);
-    await page.waitForLoadState('networkidle');
-
-    const connectorLabel = page.getByText('E2E Google Drive');
-    await expect(connectorLabel).toBeVisible({ timeout: 10_000 });
-    const connectorFlexRow = connectorLabel.locator('..').locator('..');
-    const checkbox = connectorFlexRow.locator('input[type="checkbox"]').first();
-
-    // Assign the connector
-    if (!(await checkbox.isChecked({ timeout: 5_000 }))) {
-      await checkbox.click();
-      await pollAssignment(testAgentId, testConnectorId, { expect: 'present', timeoutMs: 8_000 });
-    }
-
-    // Expand the connector to show the operation grid (click the expand button)
-    const expandBtn = connectorFlexRow.locator('button').first();
-    await expandBtn.click();
-
-    // The "Enable all" button should be visible
-    await expect(page.getByRole('button', { name: 'Enable all' })).toBeVisible();
-
-    // Click "Enable all"
-    await page.getByRole('button', { name: 'Enable all' }).click();
-
-    // Wait for debounce to fire (~600ms)
-    await page.waitForTimeout(800);
-
-    // DB row should have enabledOperations=null (all enabled)
     const { agentConnectorAssignments, eq, and } = await import('@nodal-agents/db');
     const { db, close } = makeDbClient();
     try {
@@ -327,5 +343,40 @@ test.describe('Agent edit page — Tools & Connectors section @cap:assigner-outi
     } finally {
       await close();
     }
+  });
+
+  test('Scenario C — unchecking connector removes assignment from DB', async ({ page }) => {
+    await ensureAttached(page);
+
+    await edRow(page, 'E2E Google Drive').getByRole('button', { name: 'Detach' }).click();
+
+    // La ligne quitte « Connected »…
+    await expect(edRow(page, 'E2E Google Drive')).toHaveCount(0);
+    // …et la ligne d'assignation disparaît de la base.
+    await pollAssignment(testAgentId, testConnectorId, { expect: 'absent', timeoutMs: 10_000 });
+  });
+
+  test('Scenario D — Enable all button keeps enabledOperations=null in DB', async ({ page }) => {
+    await ensureAttached(page);
+
+    const row = edRow(page, 'E2E Google Drive');
+    await row.getByRole('button', { name: 'Configure' }).click();
+
+    // On retire une opération : la liste blanche cesse d'être « tout ».
+    const firstOp = row.locator('input[type="checkbox"]').first();
+    await expect(firstOp).toBeChecked();
+    await firstOp.click();
+    const narrowed = await pollAssignmentOperations(testAgentId, testConnectorId, (ops) =>
+      Array.isArray(ops) ? ops : null,
+    );
+    expect(narrowed.length).toBeGreaterThan(0);
+
+    // « Enable all » la ramène à null — « tout », pas « la liste complète ».
+    await row.getByRole('button', { name: 'Enable all' }).click();
+    await pollAssignmentOperations(testAgentId, testConnectorId, (ops) =>
+      ops === null ? ([] as string[]) : null,
+    );
+
+    await expect(row.getByText(/^all \d+ ops$/)).toBeVisible();
   });
 });
