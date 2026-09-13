@@ -102,9 +102,21 @@ test.describe('MCP Connectors page', () => {
     await page.waitForLoadState('networkidle');
 
     await expect(page.getByRole('heading', { name: 'MCP Connectors' })).toBeVisible();
-    await expect(page.getByText('Cogni Cortex').first()).toBeVisible();
-    await expect(page.getByText('connected').first()).toBeVisible();
-    await expect(page.getByText(/2 tools discovered/)).toBeVisible();
+
+    // La page liste les serveurs installés dans un tableau (`McpInstalledTable`) :
+    // Server · Tools · Transport · Status · Actions. La phrase « 2 tools
+    // discovered » n'a pas disparu, elle a déménagé dans la modale d'édition
+    // (`McpServerRow`) — d'où l'erreur d'origine, `getByText(/2 tools
+    // discovered/)` → element(s) not found.
+    const row = page.getByRole('row').filter({ hasText: 'Cogni Cortex' });
+    await expect(row).toHaveCount(1);
+    await expect(row.getByText('2', { exact: true })).toBeVisible();
+    await expect(row.getByText('Connected', { exact: true })).toBeVisible();
+
+    // Et la phrase complète, là où elle vit maintenant.
+    await row.getByRole('button', { name: 'Edit' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText(/2 tools discovered/)).toBeVisible();
   });
 
   test('Scenario B — sidebar shows API Connectors and MCP Connectors', async ({ page }) => {
