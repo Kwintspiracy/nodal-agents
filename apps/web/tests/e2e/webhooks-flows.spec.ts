@@ -128,7 +128,13 @@ test.describe('Webhooks section — full click flow @cap:declencher-sur-evenemen
 
     // ── Rotate secret (ConfirmDialog) ────────────────────────────────────────
     const urlBefore = await webhookCard.locator('.font-mono').first().textContent();
-    await webhookCard.getByRole('button', { name: /^rotate$/i }).click();
+    // Le bouton de la ligne s'appelle « Rotate secret » (`RowActionButton`,
+    // dont le `title` sert d'`aria-label`) ; seul le bouton de confirmation de
+    // la ConfirmDialog s'appelle « Rotate ». Le parcours cherchait le second
+    // dans la ligne, avec une expression ancrée — d'où l'échec d'origine,
+    // `locator.click: Timeout 10000ms exceeded` en attendant
+    // `getByRole('button', { name: /^rotate$/i })` dans la carte.
+    await webhookCard.getByRole('button', { name: 'Rotate secret' }).click();
     const rotateDialog = page.getByRole('dialog');
     await expect(rotateDialog).toBeVisible({ timeout: 5_000 });
     await expect(rotateDialog.getByText(/rotate webhook secret/i)).toBeVisible();
