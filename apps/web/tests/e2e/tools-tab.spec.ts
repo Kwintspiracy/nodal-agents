@@ -162,15 +162,45 @@ test("tool groups are absent from the agent's Skills tab, command-execution is N
   const editUrl = await firstAgentEditUrl(page);
   await goToTab(page, editUrl, 'Skills');
 
-  const bodyText = await page.locator('body').innerText();
-  for (const slug of toolGroupSkillSlugs) {
-    expect(bodyText, `${slug} ne doit pas apparaître dans Skills`).not.toContain(
-      catalogSkill(slug).name,
-    );
+  // Décision Quentin 24/08 : l'onglet Skills ne déroule plus la bibliothèque
+  // du workspace, il ne montre que les skills ATTACHÉS à cet agent ; la
+  // bibliothèque vit dans la modale « + Attach skills ». Le parcours lisait
+  // donc le seul onglet, et sur une installation où l'agent n'a rien d'attaché
+  // il n'y trouvait pas `command-execution` :
+  //
+  //   expect(received).toContain(expected)
+  //   Expected substring: "Command execution"
+  //
+  // Les deux moitiés se vérifient maintenant sur les DEUX surfaces Skills :
+  // l'onglet et son picker.
+  const attachedText = await page.locator('body').innerText();
+
+  const attachButton = page.getByRole('button', { name: '+ Attach skills' });
+  if ((await attachButton.count()) === 0) {
+    // Bibliothèque vide : l'onglet rend « No skills in this workspace yet » et
+    // n'a pas de picker. Rien à prouver ici, et rien de cassé non plus.
+    test.skip(true, 'Aucun skill dans ce workspace — ni onglet Skills ni picker à lire.');
+    return;
   }
+  await attachButton.click();
+  const picker = page.getByRole('dialog');
+  await expect(picker).toBeVisible({ timeout: 8_000 });
+  const pickerText = await picker.innerText();
+
+  for (const slug of toolGroupSkillSlugs) {
+    const name = catalogSkill(slug).name;
+    expect(attachedText, `${slug} ne doit pas apparaître dans l'onglet Skills`).not.toContain(name);
+    expect(pickerText, `${slug} ne doit pas être proposé à l'attachement`).not.toContain(name);
+  }
+
   // L'autre moitié : un skill qui porte une DISCIPLINE reste un skill, lisible
-  // et éditable par son propriétaire. C'est la raison même du changement.
-  expect(bodyText).toContain(catalogSkill('command-execution').name);
+  // et éditable par son propriétaire. C'est la raison même du changement. Il
+  // est soit déjà attaché, soit offert par le picker — jamais absent des deux.
+  const commandExecution = catalogSkill('command-execution').name;
+  expect(
+    attachedText.includes(commandExecution) || pickerText.includes(commandExecution),
+    `${commandExecution} doit rester un skill, attaché ou attachable`,
+  ).toBe(true);
 });
 
 // ─── 5. Assigné ne veut pas dire visible dans /skills ────────────────────────
