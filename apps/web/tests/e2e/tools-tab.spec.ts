@@ -83,7 +83,7 @@ test.beforeAll(async () => {
 
 // ─── 1. Les groupes du catalogue sont tous là ────────────────────────────────
 
-test('Tools tab lists every tool group the catalogue declares @cap:assigner-outils', async ({
+test('Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran', async ({
   page,
 }) => {
   const editUrl = await firstAgentEditUrl(page);
