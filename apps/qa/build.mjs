@@ -533,6 +533,14 @@ function vueCapacites() {
     return `<section id="capacites" class="vue">${entete('capacites', 'Ce que le produit sait faire')}
       <p class="chapo">Aucun registre dans cette collecte.</p></section>`;
   }
+  // Une collecte antérieure aux niveaux écran/moteur n'a pas ces clés. Le
+  // rendu plantait dessus — et `apps/qa build` sortait en erreur dans la CI
+  // de toute PR, tant que la mesure nocturne n'avait pas réécrit les données.
+  // On le DIT, on ne devine pas : deviner afficherait un registre faux.
+  if (!reg[0]?.ecran || !reg[0]?.moteur) {
+    return `<section id="capacites" class="vue">${entete('capacites', 'Ce que le produit sait faire')}
+      <p class="chapo">Cette collecte est antérieure aux niveaux écran / moteur : son registre ne dit pas à quel niveau chaque capacité est prouvée. La prochaine mesure la remplacera.</p></section>`;
+  }
 
   const tombees = reg.filter((c) => c.ecran.etat === 'echouee' || c.moteur.etat === 'echouee');
   const sansMoteur = reg.filter((c) => c.moteur.etat === 'absente');

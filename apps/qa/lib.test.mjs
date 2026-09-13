@@ -2272,3 +2272,16 @@ describe('intentionDunParcours — la description d’un parcours, pas son bande
     expect(sans).toEqual([]);
   });
 });
+
+describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
+  // Le cas réel : `pnpm --filter @nodal-agents/qa build` sortait en erreur dans
+  // la CI de TOUTE PR de la chaîne, parce que le snapshot committé datait
+  // d'avant les niveaux écran/moteur et que le rendu lisait `c.ecran.etat`
+  // sans regarder si la clé existait.
+  const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
+
+  it('un registre sans niveaux est reconnu, et le portail le DIT', () => {
+    expect(build).toContain('!reg[0]?.ecran || !reg[0]?.moteur');
+    expect(build).toContain('antérieure aux niveaux écran / moteur');
+  });
+});
