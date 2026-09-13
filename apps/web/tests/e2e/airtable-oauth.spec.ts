@@ -8,7 +8,14 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
+import {
+  requireLiveStack,
+  cleanCredentialsByType,
+  openConnectorLibrary,
+  connectorCard,
+  openInstalledConnectors,
+  installedConnectorRow,
+} from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -44,31 +51,20 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
       });
     });
 
-    // ── 3. Navigate to /connectors ───────────────────────────────────────────
-    await page.goto('/connectors');
-
-    const airtableCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) });
+    // ── 3-4. Le catalogue, derrière l'onglet « Library » ─────────────
+    //
+    // La page ouvre sur « Installed », où aucune carte de catalogue n'existe,
+    // et le bouton ne s'appelle plus « Connect with Airtable ». La mesure du
+    // 11/09 expirait exactement là :
+    //
+    //   TimeoutError: locator.click: Timeout 10000ms exceeded.
+    //   waiting for locator('[data-marketplace-card]').filter({ has:
+    //     getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) })
+    //     .getByRole('button', { name: /connect with airtable/i })
+    await openConnectorLibrary(page);
+    const airtableCard = connectorCard(page, 'Airtable (OAuth)');
     await expect(airtableCard).toBeVisible({ timeout: 10_000 });
-
-    // Disconnect if already connected.
-    if (await airtableCard.getByRole('button', { name: /disconnect/i }).isVisible()) {
-      await airtableCard
-        .getByRole('button', { name: /disconnect/i })
-        .first()
-        .click();
-      await page
-        .getByRole('button', { name: /disconnect/i })
-        .last()
-        .click();
-      await page.waitForTimeout(1_000);
-      await page.reload();
-      await expect(airtableCard).toBeVisible({ timeout: 10_000 });
-    }
-
-    // ── 4. Click "Connect with Airtable" to open the wizard modal ───────────
-    await airtableCard.getByRole('button', { name: /connect with airtable/i }).click();
+    await airtableCard.getByRole('button', { name: /^(install|add account)$/i }).click();
 
     const wizard = page.getByRole('dialog');
     await expect(wizard).toBeVisible({ timeout: 5_000 });
@@ -108,10 +104,11 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
 
     // ── 7. Submit wizard ──────────────────────────────────────────────────────
     await wizard.getByRole('button', { name: /continue with airtable/i }).click();
-    await page.waitForTimeout(2_000);
+
+    // On attend la valeur capturée, pas deux secondes de montre.
+    await expect.poll(() => capturedRedirectUri, { timeout: 15_000 }).toBeTruthy();
 
     // ── 8. Navigate to callback with mock code ────────────────────────────────
-    expect(capturedRedirectUri).toBeTruthy();
     expect(capturedState).toBeTruthy();
 
     const callbackUrl = `${capturedRedirectUri}?code=mock-airtable-code&state=${encodeURIComponent(capturedState)}`;
@@ -120,23 +117,19 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
     // ── 9. Should land on /connectors ────────────────────────────────────────
     await page.waitForURL(/\/connectors/, { timeout: 15_000 });
 
-    // ── 10. Assert connected status ───────────────────────────────────────────
-    // Use exact text match to avoid matching the substring "connected" inside "disconnected".
-    await expect(
-      page
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) })
-        .getByText('connected', { exact: true })
-        .first(),
-    ).toBeVisible({ timeout: 10_000 });
+    // ── 10. L'instance installée dit « Connected » ─────────────────
+    await openInstalledConnectors(page);
+    const row = installedConnectorRow(page, 'Airtable (OAuth)').first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByText('Connected')).toBeVisible({ timeout: 10_000 });
 
-    // Airtable supports refresh — check the "Refresh now" button appears.
-    await expect(
-      page
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name: 'Airtable (OAuth)', level: 3 }) })
-        .getByRole('button', { name: /refresh now/i }),
-    ).toBeVisible({ timeout: 5_000 });
+    // Airtable sait rafraîchir son jeton : le bouton vit dans la modale
+    // d'édition de l'instance (ConnectorForm), pas sur la ligne du tableau.
+    await row.getByRole('button', { name: 'Edit' }).click();
+    const editModal = page.getByRole('dialog');
+    await expect(editModal.getByRole('button', { name: /refresh now/i })).toBeVisible({
+      timeout: 10_000,
+    });
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     await context.unrouteAll();

@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
+import { requireLiveStack, cleanCredentialsByType, openConnectorInstallDialog } from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -19,30 +19,11 @@ test.beforeAll(async () => {
 
 test.describe('Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide', () => {
   test('wizard shows 4 Google API links and format hint', async ({ page }) => {
-    await page.goto('/connectors');
-
-    // Find the Google Drive card.
-    const driveCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
-    await expect(driveCard).toBeVisible({ timeout: 10_000 });
-
-    // If already connected, disconnect first so the wizard button appears.
-    const disconnectBtn = driveCard.getByRole('button', { name: /disconnect/i });
-    if (await disconnectBtn.isVisible()) {
-      await disconnectBtn.click();
-      await page
-        .getByRole('button', { name: /disconnect/i })
-        .last()
-        .click();
-      await page.waitForTimeout(1_000);
-      await page.reload();
-      await expect(driveCard).toBeVisible({ timeout: 10_000 });
-    }
-
-    // Click "Connect with Google" to open the wizard.
-    const connectBtn = driveCard.getByRole('button', { name: /connect with google/i });
-    await connectBtn.click();
+    // Le catalogue est derrière l'onglet « Library », et le bouton s'appelle
+    // « Install » depuis la refonte — la mesure du 11/09 expirait sur l'ancien
+    // libellé « Connect with Google ». Aucun identifiant google-oauth
+    // n'existant (beforeAll), la carte ouvre bien le CredentialWizard.
+    await openConnectorInstallDialog(page, 'Google Drive');
 
     const wizard = page.getByRole('dialog');
     await expect(wizard).toBeVisible({ timeout: 5_000 });
@@ -63,47 +44,33 @@ test.describe('Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide
     // ── Assert the format hint contains apps.googleusercontent.com ────────────
     await expect(wizard.getByText(/apps\.googleusercontent\.com/)).toBeVisible();
 
-    // Close the wizard via Escape key (close button may be off-screen due to tall guide).
-    await page.keyboard.press('Escape');
+    // Fermeture par le bouton Cancel, PAS par Échap : l'assistant est ouvert
+    // avec un type imposé, donc à l'étape « formulaire », et cette étape est
+    // délibérément non-dismissable (elle contient un brouillon d'identifiants,
+    // règle UX-B7). Échap n'y ferme rien.
+    await wizard.getByRole('button', { name: /^cancel$/i }).click();
     await expect(wizard).not.toBeVisible({ timeout: 3_000 });
   });
 });
 
 test.describe('Help guides — api_key connector (Apify) @cap:consulter-l-aide', () => {
   test('"Where do I get this?" expander reveals console.apify.com link', async ({ page }) => {
-    await page.goto('/connectors');
-
-    // Find the Apify card.
-    const apifyCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Apify', level: 3 }) });
-    await expect(apifyCard).toBeVisible({ timeout: 10_000 });
-
-    // Disconnect if already connected so the Connect form is available.
-    const disconnectBtn = apifyCard.getByRole('button', { name: /disconnect/i });
-    if (await disconnectBtn.isVisible()) {
-      await disconnectBtn.click();
-      await page
-        .getByRole('button', { name: /disconnect/i })
-        .last()
-        .click();
-      await page.waitForTimeout(1_000);
-      await page.reload();
-      await expect(apifyCard).toBeVisible({ timeout: 10_000 });
-    }
-
-    // Click Connect to open the api_key form.
-    await apifyCard.getByRole('button', { name: /^connect$/i }).click();
+    // Même refonte côté api_key : « Install », et le formulaire s'ouvre dans
+    // une MODALE, plus dans la carte. La mesure du 11/09 expirait sur
+    //   .getByRole('button', { name: /^connect$/i }) — un bouton qui n'a
+    // jamais existé sur la carte.
+    await openConnectorInstallDialog(page, 'Apify');
+    const apifyDialog = page.getByRole('dialog');
 
     // The api_key input should be visible.
-    await expect(apifyCard.locator('input[name="apiKey"]')).toBeVisible({ timeout: 5_000 });
+    await expect(apifyDialog.locator('input[name="apiKey"]')).toBeVisible({ timeout: 5_000 });
 
     // The details summary should be present (collapsed by default — link not yet visible).
-    const summary = apifyCard.getByText(/where do i get this\?/i);
+    const summary = apifyDialog.getByText(/where do i get this\?/i);
     await expect(summary).toBeVisible();
 
     // The apify link should NOT be visible before expanding.
-    const apifyLink = apifyCard.getByRole('link', { name: /console\.apify\.com/i });
+    const apifyLink = apifyDialog.getByRole('link', { name: /console\.apify\.com/i });
     await expect(apifyLink).not.toBeVisible();
 
     // Click the summary to expand the details.

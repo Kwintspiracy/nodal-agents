@@ -1,18 +1,33 @@
 /**
- * Playwright e2e — Apify api_key connector smoke test (multi-instance UI).
+ * Playwright e2e — connecteur Apify (auth api_key), parcours complet.
  *
- * Apify uses the simple api_key auth flow. This test confirms:
- *  1. The Apify card appears in the Marketplace section.
- *  2. Clicking "Install" (or "Add account") opens a Modal dialog with name +
- *     apiKey fields directly visible — no secondary expand step.
- *  3. Submitting creates an Active Connector instance with the given name.
- *  4. The instance is cleaned up via the Active list's Delete button + ConfirmDialog.
+ * Ce que le parcours prouve :
+ *  1. La carte Apify est dans le catalogue (onglet « Library »).
+ *  2. « Install » ouvre une modale avec les champs name + apiKey visibles
+ *     d'emblée — pas d'étape d'ouverture secondaire.
+ *  3. Valider crée une instance, qui apparaît dans « Installed ».
+ *  4. L'instance se supprime par le bouton de ligne + ConfirmDialog.
  *
- * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
+ * ⚠️ Il visait l'ancienne page : une `<section>` « Marketplace » de niveau 2 et
+ * une `<section>` « Active Connectors ». Aucune des deux n'existe depuis la
+ * refonte, et l'erreur de la mesure nocturne le disait mot pour mot :
+ *
+ *   expect(locator).toBeVisible() failed
+ *   Locator: locator('section').filter({ has: getByRole('heading',
+ *     { name: 'Marketplace', level: 2 }) })
+ *   Error: element(s) not found
+ *
+ * Les trois gestes de la page vivent maintenant dans `helpers.ts`.
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import {
+  requireLiveStack,
+  openConnectorInstallDialog,
+  openInstalledConnectors,
+  installedConnectorRow,
+  removeInstalledConnectorIfPresent,
+} from './helpers.ts';
 
 const CONNECTOR_LABEL = 'Apify';
 const INSTANCE_NAME = 'Apify — e2e smoke';
@@ -28,107 +43,41 @@ test.describe('Apify api_key connector smoke test', () => {
   test('marketplace card opens modal; connect with name + apiKey creates active instance', async ({
     page,
   }) => {
-    // ── 0. Pre-cleanup: delete any leftover instance from a prior run ────────────
-    await page.goto('/connectors');
-    await page.waitForLoadState('networkidle');
+    // ── 0. Reste d'une course précédente ────────────────────────────────────
+    await removeInstalledConnectorIfPresent(page, INSTANCE_NAME);
 
-    async function deleteIfPresent(name: string) {
-      const activeSectionEl = page.locator('section').filter({
-        has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-      });
-      if (!(await activeSectionEl.isVisible().catch(() => false))) return;
-
-      const instanceCard = activeSectionEl
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
-        .first();
-
-      if (!(await instanceCard.isVisible().catch(() => false))) return;
-
-      const deleteBtn = instanceCard.getByRole('button', { name: /^delete$/i });
-      if (!(await deleteBtn.isVisible().catch(() => false))) return;
-
-      await deleteBtn.click();
-      const dialog = page.getByRole('dialog');
-      await dialog.waitFor({ state: 'visible', timeout: 5_000 });
-      await dialog.getByRole('button', { name: /^delete$/i }).click();
-      await expect(page.getByText(`${name} removed`)).toBeVisible({ timeout: 10_000 });
-      await page.waitForTimeout(300);
-    }
-
-    await deleteIfPresent(INSTANCE_NAME);
-
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-
-    // ── 1. Find the Apify Marketplace card ──────────────────────────────────────
-    // Scope to the Marketplace <section> to avoid matching Active Connector cards.
-    const marketplaceSection = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Marketplace', level: 2 }),
-    });
-
-    await expect(marketplaceSection).toBeVisible({ timeout: 10_000 });
-
-    const marketplaceCard = marketplaceSection
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
-
-    await expect(marketplaceCard).toBeVisible({ timeout: 10_000 });
-
-    // ── 2. Click "Install" — opens the Modal portal ──────────────────────────────
-    await marketplaceCard.getByRole('button', { name: /^install$/i }).click();
+    // ── 1-2. La carte du catalogue, puis « Install » ────────────────────────
+    await openConnectorInstallDialog(page, CONNECTOR_LABEL);
 
     const dialog = page.getByRole('dialog');
-    await dialog.waitFor({ state: 'visible', timeout: 5_000 });
-
     const nameInput = dialog.locator('input[name="name"]');
     const apiKeyInput = dialog.locator('input[name="apiKey"]');
 
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
     await expect(apiKeyInput).toBeVisible({ timeout: 5_000 });
 
-    // ── 3. Fill name + api key ───────────────────────────────────────────────────
+    // ── 3. Nom + clé ────────────────────────────────────────────────────────
     await nameInput.fill(INSTANCE_NAME);
     await apiKeyInput.fill(TEST_API_KEY);
 
-    // ── 4. Submit ────────────────────────────────────────────────────────────────
+    // ── 4. Valider ──────────────────────────────────────────────────────────
     await dialog.getByRole('button', { name: /^connect$/i }).click();
 
-    // ── 5. Assert success toast ──────────────────────────────────────────────────
-    // ConnectorAddForm toasts "${name} connected" on success.
+    // ── 5. Le toast de ConnectorAddForm ─────────────────────────────────────
     await expect(page.getByText(`${INSTANCE_NAME} connected`)).toBeVisible({ timeout: 10_000 });
-
-    // Wait for the modal portal to unmount (onDone closes the Modal).
     await expect(dialog).not.toBeVisible({ timeout: 5_000 });
 
-    // ── 6. Reload and assert instance appears in Active Connectors ───────────────
-    await page.reload();
-    await page.waitForLoadState('networkidle');
+    // ── 6. L'instance est dans « Installed », et elle est connectée ─────────
+    await openInstalledConnectors(page);
+    const row = installedConnectorRow(page, INSTANCE_NAME).first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByText('Connected')).toBeVisible();
 
-    const activeSection = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-    });
-
-    await expect(activeSection).toBeVisible({ timeout: 10_000 });
-    await expect(activeSection.getByRole('heading', { name: INSTANCE_NAME, level: 3 })).toBeVisible(
-      { timeout: 10_000 },
-    );
-
-    // ── 7. Clean up: delete the created instance ─────────────────────────────────
-    const activeSectionLoc = page.locator('section').filter({
-      has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
-    });
-    const instanceCard = activeSectionLoc
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: INSTANCE_NAME, level: 3, exact: true }) })
-      .first();
-
-    await instanceCard.getByRole('button', { name: /^delete$/i }).click();
-
-    const dialog2 = page.getByRole('dialog');
-    await dialog2.waitFor({ state: 'visible', timeout: 5_000 });
-    await dialog2.getByRole('button', { name: /^delete$/i }).click();
-
+    // ── 7. Ménage, par les vrais gestes ─────────────────────────────────────
+    await row.getByRole('button', { name: /^delete$/i }).click();
+    const confirm = page.getByRole('dialog');
+    await confirm.waitFor({ state: 'visible', timeout: 5_000 });
+    await confirm.getByRole('button', { name: /^delete$/i }).click();
     await expect(page.getByText(`${INSTANCE_NAME} removed`)).toBeVisible({ timeout: 10_000 });
   });
 });

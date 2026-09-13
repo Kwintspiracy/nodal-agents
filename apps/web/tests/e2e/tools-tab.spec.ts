@@ -1,218 +1,205 @@
 /**
- * Playwright e2e — Tools tab on the agent editor (added 17/07).
+ * Playwright e2e — l'onglet Tools de l'éditeur d'agent.
  *
- * `office-editing` and `command-execution` are "tool group" system skills
- * (see apps/web/src/lib/skill-tool-groups.ts: systemKind non-null AND
- * requiredBuiltins.length > 0) — they no longer appear as skills anywhere;
- * instead they surface as toggleable tool-group cards on the agent editor's
- * TOOLS tab. This spec validates that surface directly. The Command
- * execution → Autonomy tab Yolo-gate flow (enable via Tools tab → Yolo
- * section appears → ConfirmDialog → persistence) lives in the sibling spec
- * `command-execution-yolo.spec.ts`.
+ * Un « groupe d'outils » est un skill système dont la valeur EST le paquet de
+ * builtins qu'il débloque : il se présente comme un interrupteur ici, et il
+ * est masqué de toutes les surfaces Skills.
  *
- * Flow:
- *   Step 1 — Find an existing agent (skip suite if none).
- *   Step 2 — Tools tab lists both native tool groups (office-editing, command-execution).
- *   Step 3 — Disclosure "N tools" expands to chips of the gated builtin names
- *            (singular "1 tool" for command-execution, plural "24 tools" for office-editing).
- *   Step 4 — "Includes guidance" badge opens a read-only, dismissable modal with the
- *            skill's full content.
- *   Step 5 — Neither tool group appears on the agent's own Skills tab.
- *   Step 6 — Even once assigned to this agent, neither tool group appears in
- *            /skills → Assigned (the exclusion holds despite assignmentCount > 0).
+ * ⚠️ CE FICHIER DISAIT LE CONTRAIRE DU PRODUIT. Il tenait `command-execution`
+ * pour un groupe d'outils — c'était vrai jusqu'au 25/08/2026, où la règle est
+ * passée de DÉDUITE (« un skill système qui garde ≥1 builtin ») à DÉCLARÉE
+ * (`toolGroup: true` dans le catalogue), précisément pour rendre à
+ * `command-execution` son statut de skill : sa charge utile est une
+ * discipline (« n'installe jamais de logiciel lourd de ta propre initiative »),
+ * et rangée sous Tools son propriétaire ne pouvait plus ni la lire ni l'éditer.
+ * La mesure du 11/09 le disait :
  *
- * Requires a running Nodal-Agents stack (port 3000). Skipped automatically if not reachable.
+ *   expect(locator).toBeVisible() failed
+ *   Locator: locator('[data-testid="tool-group-card-command-execution"]')
+ *   Error: element(s) not found
+ *
+ * Les cinq groupes ne sont donc plus écrits en dur : ils viennent du CATALOGUE
+ * (`toolGroupSkillSlugs`), seule source qui ne peut pas mentir. Un skill qui
+ * change de camp fait bouger ce parcours tout seul, et l'étape 5 prouve
+ * désormais l'autre moitié de la décision : `command-execution` EST un skill.
+ *
+ * Second défaut, invisible dans le rapport : `agentEditUrl` était une variable
+ * de module remplie par l'étape 1. À la reprise d'un cas rouge, Playwright
+ * recharge le fichier sans rejouer l'étape 1 — la variable était vide, l'étape
+ * se déclarait « ignorée », et le cas ressortait « flaky » alors que rien
+ * n'était intermittent. Chaque cas résout désormais son agent lui-même.
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { toolGroupSkillSlugs, systemSkills } from '@nodal-agents/catalog';
 import { requireLiveStack } from './helpers.ts';
 
 test.describe.configure({ timeout: 60_000 });
 
-/** Populated by Step 1 — the href of the first agent edit page found. */
-let agentEditUrl: string | null = null;
+/** Le skill du catalogue portant ce slug — sa source de vérité pour le nom. */
+function catalogSkill(slug: string) {
+  const s = systemSkills.find((x) => x.slug === slug);
+  if (!s) throw new Error(`slug ${slug} absent du catalogue`);
+  return s;
+}
+
+/** Un groupe d'outils au hasard mais stable : le premier du catalogue. */
+const FIRST_GROUP = toolGroupSkillSlugs[0]!;
 
 /**
- * Navigate to the agent edit page and click the tab whose label starts with
- * `label`. The TabsBar (`@/components/ui/Tabs`) renders each tab as a
- * `<div role="tab">` inside a `role="tablist"` (not a `<button>`) — the
- * label may be immediately followed by a mono count with no space (e.g.
- * "Skills1"), hence the prefix match instead of an exact one.
+ * L'URL d'édition du premier agent visible, résolue à CHAQUE cas (plus de
+ * variable de module partagée entre les cas et perdue à la reprise).
  */
-async function goToTab(page: Page, editUrl: string, label: string) {
+async function firstAgentEditUrl(page: Page): Promise<string> {
+  await page.goto('/agents');
+  await page.waitForLoadState('networkidle', { timeout: 15_000 });
+  const editLinks = page.locator('a[href*="/agents/"][href$="/edit"]');
+  const count = await editLinks.count();
+  if (count === 0) {
+    test.skip(true, 'Aucun agent sur cette installation — rien à éditer.');
+  }
+  const href = await editLinks.first().getAttribute('href');
+  if (!href) test.skip(true, "Le premier agent n'expose pas de lien d'édition.");
+  return href!;
+}
+
+/**
+ * Ouvre l'onglet dont le libellé COMMENCE par `label`. La TabsBar rend chaque
+ * onglet en `<div role="tab">`, et le libellé peut être suivi d'un compteur
+ * mono sans espace (« Skills1 ») — d'où le préfixe.
+ */
+async function goToTab(page: Page, editUrl: string, label: string): Promise<void> {
   await page.goto(editUrl);
   await page.waitForLoadState('networkidle', { timeout: 15_000 });
-  await page
-    .getByRole('tab', { name: new RegExp(`^${label}`, 'i') })
-    .first()
-    .click();
-  await page.waitForTimeout(600);
+  const tab = page.getByRole('tab', { name: new RegExp(`^${label}`, 'i') }).first();
+  await tab.click();
+  // On attend que l'onglet SOIT sélectionné, pas 600 ms de montre.
+  await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 8_000 });
 }
 
 test.beforeAll(async () => {
   await requireLiveStack();
 });
 
-// ─── Step 1: Find an existing agent ──────────────────────────────────────────
+// ─── 1. Les groupes du catalogue sont tous là ────────────────────────────────
 
-test('Step 1 — find an existing agent (skip suite if none)', async ({ page }) => {
-  await page.goto('/agents');
-  await page.waitForLoadState('networkidle', { timeout: 15_000 });
-
-  const editLinks = page.locator('a[href*="/agents/"][href$="/edit"]');
-  const count = await editLinks.count();
-
-  if (count === 0) {
-    test.skip(true, 'No agents found — Tools tab tests skipped');
-    return;
-  }
-
-  agentEditUrl = await editLinks.first().getAttribute('href');
-  expect(agentEditUrl).toBeTruthy();
-  console.log(`[Step 1] Using agent: ${agentEditUrl}`);
-});
-
-// ─── Step 2: Tools tab lists both native tool groups ─────────────────────────
-
-test('Step 2 — Tools tab lists both native tool groups', async ({ page }) => {
-  if (!agentEditUrl) {
-    test.skip(true, 'No agent edit URL (Step 1 did not find an agent)');
-    return;
-  }
-
-  await goToTab(page, agentEditUrl, 'Tools');
-
-  const officeCard = page.locator('[data-testid="tool-group-card-office-editing"]');
-  const cmdCard = page.locator('[data-testid="tool-group-card-command-execution"]');
-  await expect(officeCard).toBeVisible({ timeout: 8_000 });
-  await expect(cmdCard).toBeVisible({ timeout: 8_000 });
-  await expect(officeCard.getByText('Office editing', { exact: true })).toBeVisible();
-  await expect(cmdCard.getByText('Command execution', { exact: true })).toBeVisible();
-
-  console.log('[Step 2] PASS — both tool-group cards render on the Tools tab');
-});
-
-// ─── Step 3: Disclosure expands to gated tool chips ──────────────────────────
-
-test('Step 3 — disclosure expands to show the gated tool names as chips', async ({ page }) => {
-  if (!agentEditUrl) {
-    test.skip(true, 'No agent edit URL');
-    return;
-  }
-
-  await goToTab(page, agentEditUrl, 'Tools');
-
-  // command-execution gates exactly 1 builtin — exercises the singular "1 tool" label.
-  const cmdCard = page.locator('[data-testid="tool-group-card-command-execution"]');
-  const cmdDisclosure = cmdCard.getByText(/^1 tool$/);
-  await expect(cmdDisclosure).toBeVisible({ timeout: 8_000 });
-  await cmdDisclosure.click();
-  await expect(cmdCard.locator('code', { hasText: 'run_command' })).toBeVisible({
-    timeout: 4_000,
-  });
-
-  // office-editing gates 24 builtins — exercises the plural label + a real count.
-  const officeCard = page.locator('[data-testid="tool-group-card-office-editing"]');
-  const officeDisclosure = officeCard.getByText(/^24 tools$/);
-  await expect(officeDisclosure).toBeVisible({ timeout: 8_000 });
-  await officeDisclosure.click();
-  await expect(officeCard.locator('code', { hasText: 'xlsx_read' })).toBeVisible({
-    timeout: 4_000,
-  });
-  await expect(officeCard.locator('code', { hasText: 'pptx_replace_text' })).toBeVisible();
-
-  const chipCount = await officeCard.locator('code').count();
-  expect(chipCount).toBe(24);
-
-  console.log('[Step 3] PASS — disclosures expand to the correct chip counts (1 / 24)');
-});
-
-// ─── Step 4: Guidance badge opens read-only modal ────────────────────────────
-
-test('Step 4 — "Includes guidance" badge opens a read-only modal with the skill content', async ({
+test('Tools tab lists every tool group the catalogue declares @cap:assigner-outils', async ({
   page,
 }) => {
-  if (!agentEditUrl) {
-    test.skip(true, 'No agent edit URL');
-    return;
+  const editUrl = await firstAgentEditUrl(page);
+  await goToTab(page, editUrl, 'Tools');
+
+  expect(toolGroupSkillSlugs.length).toBeGreaterThan(0);
+  for (const slug of toolGroupSkillSlugs) {
+    const card = page.locator(`[data-testid="tool-group-card-${slug}"]`);
+    await expect(card, `pas de carte pour le groupe ${slug}`).toBeVisible({ timeout: 8_000 });
+    await expect(card.getByText(catalogSkill(slug).name, { exact: true })).toBeVisible();
   }
 
-  await goToTab(page, agentEditUrl, 'Tools');
+  // Et rien d'autre : un skill ordinaire n'a pas d'interrupteur ici.
+  await expect(page.locator('[data-testid="tool-group-card-command-execution"]')).toHaveCount(0);
+});
 
-  const cmdCard = page.locator('[data-testid="tool-group-card-command-execution"]');
-  await cmdCard.getByRole('button', { name: /includes guidance/i }).click();
+// ─── 2. La divulgation liste les vrais builtins ──────────────────────────────
+
+test('disclosure expands to show the gated tool names as chips', async ({ page }) => {
+  const editUrl = await firstAgentEditUrl(page);
+  await goToTab(page, editUrl, 'Tools');
+
+  const skill = catalogSkill(FIRST_GROUP);
+  const builtins = skill.requiredBuiltins ?? [];
+  expect(builtins.length).toBeGreaterThan(0);
+
+  const card = page.locator(`[data-testid="tool-group-card-${FIRST_GROUP}"]`);
+  const label = builtins.length === 1 ? '1 tool' : `${builtins.length} tools`;
+  const disclosure = card.getByText(new RegExp(`^${label}$`));
+  await expect(disclosure).toBeVisible({ timeout: 8_000 });
+  await disclosure.click();
+
+  // Les puces sont les noms RÉELS du catalogue, pas un décompte.
+  await expect(card.locator('code')).toHaveCount(builtins.length, { timeout: 6_000 });
+  for (const name of builtins) {
+    await expect(card.locator('code', { hasText: name }).first()).toBeVisible();
+  }
+});
+
+// ─── 3. La guidance s'ouvre en lecture seule ─────────────────────────────────
+
+test('"Includes guidance" badge opens a read-only modal with the skill content', async ({
+  page,
+}) => {
+  const editUrl = await firstAgentEditUrl(page);
+  await goToTab(page, editUrl, 'Tools');
+
+  const skill = catalogSkill(FIRST_GROUP);
+  const card = page.locator(`[data-testid="tool-group-card-${FIRST_GROUP}"]`);
+  await card.getByRole('button', { name: /includes guidance/i }).click();
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible({ timeout: 6_000 });
-  await expect(dialog.locator('h3')).toHaveText('Command execution');
-  await expect(dialog.getByText(/this skill unlocks the/i)).toBeVisible({ timeout: 4_000 });
+  await expect(dialog.locator('h3')).toHaveText(skill.name);
 
-  // Read-only + dismissable (default Modal behaviour) — closes via the corner
-  // ✕ button, no Save/Cancel ModalFooter (nothing to edit here).
+  // Le contenu affiché est bien CELUI du skill : on vérifie sa première ligne
+  // de titre markdown, pas une phrase recopiée à la main.
+  const firstHeading = (skill.content ?? '').split('\n').find((l) => l.startsWith('## '));
+  if (firstHeading) {
+    await expect(
+      dialog.getByText(firstHeading.replace(/^##\s+/, ''), { exact: false }),
+    ).toBeVisible({ timeout: 4_000 });
+  }
+
   await dialog.getByRole('button', { name: /close/i }).click();
   await expect(dialog).not.toBeVisible({ timeout: 4_000 });
-
-  console.log('[Step 4] PASS — guidance modal shows the skill content and is dismissable');
 });
 
-// ─── Step 5: Absent from the agent's own Skills tab ──────────────────────────
+// ─── 4. Les deux moitiés de la décision du 25/08 ─────────────────────────────
 
-test("Step 5 — office-editing and command-execution are absent from the agent's Skills tab", async ({
+test("tool groups are absent from the agent's Skills tab, command-execution is NOT", async ({
   page,
 }) => {
-  if (!agentEditUrl) {
-    test.skip(true, 'No agent edit URL');
-    return;
-  }
-
-  await goToTab(page, agentEditUrl, 'Skills');
+  const editUrl = await firstAgentEditUrl(page);
+  await goToTab(page, editUrl, 'Skills');
 
   const bodyText = await page.locator('body').innerText();
-  expect(bodyText).not.toContain('Office editing');
-  expect(bodyText).not.toContain('Command execution');
-
-  console.log('[Step 5] PASS — neither tool group appears on the agent Skills tab');
+  for (const slug of toolGroupSkillSlugs) {
+    expect(bodyText, `${slug} ne doit pas apparaître dans Skills`).not.toContain(
+      catalogSkill(slug).name,
+    );
+  }
+  // L'autre moitié : un skill qui porte une DISCIPLINE reste un skill, lisible
+  // et éditable par son propriétaire. C'est la raison même du changement.
+  expect(bodyText).toContain(catalogSkill('command-execution').name);
 });
 
-// ─── Step 6: Absent from /skills Assigned even when assigned ────────────────
+// ─── 5. Assigné ne veut pas dire visible dans /skills ────────────────────────
 
-test('Step 6 — command-execution assigned to this agent is still absent from /skills Assigned', async ({
+test('a tool group assigned to this agent is still absent from /skills Assigned', async ({
   page,
 }) => {
-  if (!agentEditUrl) {
-    test.skip(true, 'No agent edit URL');
-    return;
-  }
+  const editUrl = await firstAgentEditUrl(page);
+  const skill = catalogSkill(FIRST_GROUP);
 
-  // Ensure it's actually assigned somewhere so the exclusion below is a real
-  // test, not a vacuous pass — turn the Tools toggle ON for our agent if off.
-  await goToTab(page, agentEditUrl, 'Tools');
-  const toolSwitch = page.getByRole('switch', { name: /toggle command execution/i });
+  // On l'allume pour de vrai, sinon l'exclusion plus bas serait vraie sans
+  // rien prouver (assignmentCount = 0).
+  await goToTab(page, editUrl, 'Tools');
+  // Chaîne littérale et non RegExp : le nom d'un groupe peut contenir des
+  // parenthèses (« Office editing (all formats) »), qui sont des
+  // métacaractères. `getByRole` fait une comparaison exacte sur une chaîne.
+  const toolSwitch = page.getByRole('switch', { name: `Toggle ${skill.name}` });
   await toolSwitch.waitFor({ state: 'visible', timeout: 8_000 });
   if ((await toolSwitch.getAttribute('aria-checked')) !== 'true') {
     await toolSwitch.click();
-    await page
-      .locator('[data-sonner-toast]')
-      .filter({ hasText: /command execution enabled/i })
-      .waitFor({ state: 'visible', timeout: 8_000 })
-      .catch(() => {});
-    await expect(toolSwitch).toHaveAttribute('aria-checked', 'true', { timeout: 5_000 });
+    await expect(toolSwitch).toHaveAttribute('aria-checked', 'true', { timeout: 8_000 });
   }
 
   await page.goto('/skills');
   await page.waitForLoadState('networkidle', { timeout: 15_000 });
-
   const assignedTab = page.getByRole('tab', { name: /^assigned/i });
   if (await assignedTab.isVisible({ timeout: 3_000 }).catch(() => false)) {
     await assignedTab.click();
-    await page.waitForTimeout(400);
+    await expect(assignedTab).toHaveAttribute('aria-selected', 'true', { timeout: 5_000 });
   }
 
   const bodyText = await page.locator('body').innerText();
-  expect(bodyText).not.toContain('Office editing');
-  expect(bodyText).not.toContain('Command execution');
-
-  console.log(
-    '[Step 6] PASS — command-execution is assigned (assignmentCount > 0) yet absent from /skills Assigned',
-  );
+  expect(bodyText).not.toContain(skill.name);
 });

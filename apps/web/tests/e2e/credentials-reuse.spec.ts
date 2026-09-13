@@ -11,7 +11,15 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
+import {
+  requireLiveStack,
+  cleanCredentialsByType,
+  openConnectorLibrary,
+  connectorCard,
+  openInstalledConnectors,
+  installedConnectorRow,
+  removeInstalledConnectorIfPresent,
+} from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -55,34 +63,27 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
       });
     });
 
-    // ── 2. Navigate to /connectors, disconnect Drive + Gmail if connected ──
-    await page.goto('/connectors');
-
-    for (const name of ['Google Drive', 'Gmail']) {
-      const card = page
-        .locator('[data-marketplace-card]')
-        .filter({ has: page.getByRole('heading', { name, level: 3 }) });
-      if (await card.getByRole('button', { name: /disconnect/i }).isVisible()) {
-        await card
-          .getByRole('button', { name: /disconnect/i })
-          .first()
-          .click();
-        await page
-          .getByRole('button', { name: /disconnect/i })
-          .last()
-          .click();
-        await page.waitForTimeout(800);
-        await page.reload();
-      }
+    // ── 2. Repartir d'une page propre ──────────────────────────
+    for (const label of ['Google Drive', 'Gmail']) {
+      await removeInstalledConnectorIfPresent(page, label);
     }
 
-    // ── 3. Connect Google Drive via wizard ────────────────────────────────
-    const driveCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
+    // ── 3. Connecter Google Drive par l'assistant ──────────────────
+    //
+    // Le catalogue est derrière l'onglet « Library » et le bouton s'appelle
+    // « Install » : la mesure du 11/09 expirait sur l'ancien libellé,
+    //
+    //   TimeoutError: locator.click: Timeout 10000ms exceeded.
+    //   waiting for locator('[data-marketplace-card]').filter({ has:
+    //     getByRole('heading', { name: 'Google Drive', level: 3 }) })
+    //     .getByRole('button', { name: /connect with google/i })
+    //
+    // et comme aucun identifiant google-oauth n'existe (beforeAll), la carte
+    // ouvre directement le CredentialWizard.
+    await openConnectorLibrary(page);
+    const driveCard = connectorCard(page, 'Google Drive');
     await expect(driveCard).toBeVisible({ timeout: 10_000 });
-
-    await driveCard.getByRole('button', { name: /connect with google/i }).click();
+    await driveCard.getByRole('button', { name: /^(install|add account)$/i }).click();
 
     const wizard = page.getByRole('dialog');
     await expect(wizard).toBeVisible({ timeout: 5_000 });
@@ -120,9 +121,9 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
     });
 
     await wizard.getByRole('button', { name: /continue with google/i }).click();
-    await page.waitForTimeout(2_000);
 
-    expect(capturedRedirectUri).toBeTruthy();
+    // On attend la valeur capturée, pas deux secondes de montre.
+    await expect.poll(() => capturedRedirectUri, { timeout: 15_000 }).toBeTruthy();
     expect(capturedState).toBeTruthy();
 
     // ── 5. Complete Drive callback ────────────────────────────────────────
@@ -130,24 +131,28 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
     await page.goto(callbackUrl);
     await page.waitForURL(/\/connectors/, { timeout: 15_000 });
 
-    // Drive must now be connected.
-    await expect(driveCard.getByText(/connected/i).first()).toBeVisible({ timeout: 10_000 });
+    // Drive est installé et connecté — c'est une LIGNE du tableau
+    // « Installed » depuis la refonte, plus une carte.
+    await openInstalledConnectors(page);
+    await expect(
+      installedConnectorRow(page, 'Google Drive').first().getByText('Connected'),
+    ).toBeVisible({ timeout: 10_000 });
 
-    // ── 6. Connect Gmail using the EXISTING credential (dropdown) ──────────
-    const gmailCard = page
-      .locator('[data-marketplace-card]')
-      .filter({ has: page.getByRole('heading', { name: 'Gmail', level: 3 }) });
+    // ── 6. Connecter Gmail avec l'identifiant DÉJÀ créé ──────────────
+    //
+    // C'est tout l'objet du parcours : un identifiant Google compatible
+    // existant, la carte n'ouvre plus l'assistant mais la modale avec le menu
+    // « Use existing credential » (ConnectorAddForm, branche oauth2 avec
+    // identifiants).
+    await openConnectorLibrary(page);
+    const gmailCard = connectorCard(page, 'Gmail');
     await expect(gmailCard).toBeVisible({ timeout: 10_000 });
+    await gmailCard.getByRole('button', { name: /^(install|add account)$/i }).click();
 
-    // Gmail should show "Connect" since there's now a compatible credential.
-    const gmailConnectBtn = gmailCard.getByRole('button', { name: /^connect$/i });
-    await gmailConnectBtn.click();
-
-    // The credential dropdown should appear (not the wizard).
-    const credentialSelect = gmailCard.locator('select');
+    const gmailDialog = page.getByRole('dialog');
+    const credentialSelect = gmailDialog.locator('select');
     await expect(credentialSelect).toBeVisible({ timeout: 5_000 });
 
-    // It should contain the credential we just created.
     const credentialNames = await credentialSelect.locator('option').allTextContents();
     expect(
       credentialNames.some(
@@ -155,11 +160,17 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
       ),
     ).toBe(true);
 
-    // Select the first option (our credential) and save.
-    await gmailCard.getByRole('button', { name: /^save$/i }).click();
+    await gmailDialog.getByRole('button', { name: /^connect$/i }).click();
+    await expect(page.getByText('Gmail connected')).toBeVisible({ timeout: 10_000 });
 
-    // ── 7. Gmail must now show connected ──────────────────────────────────
-    await expect(gmailCard.getByText(/connected/i).first()).toBeVisible({ timeout: 10_000 });
+    // ── 7. Les DEUX connecteurs partagent le même identifiant ──────────
+    await openInstalledConnectors(page);
+    await expect(installedConnectorRow(page, 'Gmail').first().getByText('Connected')).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(
+      installedConnectorRow(page, 'Google Drive').first().getByText('Connected'),
+    ).toBeVisible();
 
     // ── Cleanup ───────────────────────────────────────────────────────────
     await context.unrouteAll();
