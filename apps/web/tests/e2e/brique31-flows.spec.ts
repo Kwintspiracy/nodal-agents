@@ -435,18 +435,15 @@ test.describe('Test E — Skill delete with ConfirmDialog (invariant #10)', () =
     // Wait for the skill list to load (the skill name should be present)
     await expect(page.getByText(skillName)).toBeVisible({ timeout: 10_000 });
 
-    // Each skill card is a div.bg-neutral-900 containing the skill name.
-    // SkillRow renders: expand button (text) + Edit link + Delete button in a flex row.
-    // We locate the card by finding the element that contains our skillName text,
-    // then look for the Delete button within it.
-    // Strategy: get the expand button (which contains the skill name), then navigate
-    // to its parent card container, then find the Delete button sibling.
-    const skillNameEl = page.getByText(skillName).first();
-    // The Delete button is in the same card — use closest ancestor approach via locator chain
-    const skillCard = page.locator('[class*="bg-neutral-900"]').filter({ has: skillNameEl });
-    // Use exact 'Delete' to avoid matching the expand button whose accessible name contains
-    // the skill name (e.g. "▸ E2E Delete Skill …" also contains "delete").
-    const deleteBtn = skillCard.getByRole('button', { name: 'Delete', exact: true });
+    // Les skills ne sont plus des cartes `div.bg-neutral-900` mais les lignes
+    // d'un tableau (`SkillsAssignedTable`), dont les actions sont des
+    // `RowActionButton` carrés : leur `title` sert d'`aria-label`. L'ancien
+    // sélecteur `[class*="bg-neutral-900"]` ne désignait plus rien — d'où
+    // l'échec d'origine, `locator.click: Timeout 10000ms exceeded` en
+    // attendant le bouton « Delete » dans une carte qui n'existe pas.
+    const skillRow = page.getByRole('row').filter({ hasText: skillName });
+    await expect(skillRow).toHaveCount(1);
+    const deleteBtn = skillRow.getByRole('button', { name: 'Delete', exact: true });
 
     // Click Delete — must open ConfirmDialog, NOT a native browser dialog
     await deleteBtn.click();
@@ -476,7 +473,7 @@ test.describe('Test E — Skill delete with ConfirmDialog (invariant #10)', () =
     await expect(page.getByText(skillName)).not.toBeVisible({ timeout: 5_000 });
 
     // Selector path:
-    //   /skills page → [class*="bg-neutral-900"]:has(text(skillName)) → button[Delete]
+    //   /skills page → row:has-text(skillName) → button[aria-label="Delete"]
     //   dialog: [role="dialog"][aria-modal="true"] → #confirm-dialog-title
     //   Cancel: dialog button[Cancel]
     //   Confirm: dialog button[Delete]
