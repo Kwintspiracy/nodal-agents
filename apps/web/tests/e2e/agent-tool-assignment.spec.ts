@@ -272,7 +272,9 @@ async function attachTestConnector(page: Page): Promise<void> {
   await expect(dialog).toBeVisible();
   await edRow(dialog, 'E2E Google Drive').getByRole('button', { name: 'Attach' }).click();
   await pollAssignment(testAgentId, testConnectorId, { expect: 'present', timeoutMs: 10_000 });
-  await dialog.getByRole('button', { name: 'Close' }).click();
+  // Deux boutons portent ce nom : la croix de l'en-tête et le bouton du pied
+  // de modale. C'est le second que l'utilisateur vise.
+  await dialog.getByRole('button', { name: 'Close' }).last().click();
   await expect(dialog).toBeHidden();
 }
 
