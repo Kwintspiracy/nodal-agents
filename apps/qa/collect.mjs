@@ -36,6 +36,7 @@ import {
   fusionnerEssais,
   instabiliteDe,
   regressionsFraiches,
+  dureesDeReparation,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -439,6 +440,10 @@ function memoire(essais, le) {
   const avecVerdict = fusionnes.map((e) => ({ ...e, ...instabiliteDe(e) }));
   return {
     total: fusionnes.length,
+    // Combien de temps un test reste cassé quand il finit par être réparé. Le
+    // chiffre qui manquait : « 22 rouges » ne dit pas si on répare en un jour
+    // ou jamais.
+    reparations: dureesDeReparation(fusionnes),
     joues: essais.length,
     instables: avecVerdict.filter((e) => e.verdict === 'instable').length,
     casses: avecVerdict.filter((e) => e.verdict === 'cassé').length,
