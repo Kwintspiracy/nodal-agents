@@ -1,4 +1,6 @@
 /**
+ * An owner settles, tool by tool, what an agent may do alone and what it must ask for first.
+ *
  * Playwright e2e — Autonomy / Approvals tab in the agent editor.
  *
  * Strategy: navigate to the existing /agents list, find the first existing agent

@@ -1,4 +1,6 @@
 /**
+ * An owner finds their MCP servers on a page of their own, next to the API connectors.
+ *
  * mcp-connectors.spec.ts — e2e: the /mcp page and the MCP Connectors nav entry.
  *
  * Scenarios:

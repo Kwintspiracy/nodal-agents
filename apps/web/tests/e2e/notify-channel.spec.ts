@@ -1,4 +1,6 @@
 /**
+ * An owner chooses which channel an automation reports to when it succeeds.
+ *
  * notify-channel.spec.ts
  *
  * Validates the shared NotifyChannelFields controls (B1/B2, notify-channel-

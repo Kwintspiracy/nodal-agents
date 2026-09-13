@@ -1,4 +1,6 @@
 /**
+ * An owner connects Airtable through its consent screen and comes back to a connected account.
+ *
  * Playwright e2e — Airtable OAuth flow (Brique 34 v3).
  *
  * Airtable uses PKCE S256 + Basic auth on the token endpoint.

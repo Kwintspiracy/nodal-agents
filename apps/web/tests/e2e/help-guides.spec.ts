@@ -1,4 +1,6 @@
 /**
+ * An owner who does not know where to find a key follows the in-page guide to the right console.
+ *
  * Playwright e2e — Brique 34 v3.1: help guide smoke tests.
  *
  * Scenario A: Google Drive wizard shows all 4 API direct links + format hint.
