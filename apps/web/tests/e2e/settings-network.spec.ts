@@ -1,4 +1,6 @@
 /**
+ * An owner opens the dashboard to the local network, and is told which address to use and that a restart is needed.
+ *
  * Brique 35 — NetworkForm e2e tests
  *
  * Covers the interactive network-settings section on /settings:

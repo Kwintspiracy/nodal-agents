@@ -1,4 +1,6 @@
 /**
+ * An owner schedules an automation, asks to be told when it succeeds, and runs it once by hand.
+ *
  * automations-notify-runnow.spec.ts
  *
  * Validates two features on the /automations dashboard page:

@@ -1,4 +1,6 @@
 /**
+ * An owner connects Notion with an internal integration key, alongside the OAuth path.
+ *
  * Playwright e2e — régression du connecteur Notion « Internal Integration »
  * (chemin api_key).
  *

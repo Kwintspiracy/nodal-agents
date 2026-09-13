@@ -1,3 +1,5 @@
+// An owner sees the skills an agent learned on its own, and chooses whether it keeps learning.
+
 import { test, expect } from '@playwright/test';
 import { requireLiveStack } from './helpers.ts';
 

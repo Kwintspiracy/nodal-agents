@@ -1,4 +1,6 @@
 /**
+ * An owner installs the same connector twice, one account for each side of their work.
+ *
  * connector-multi-instance.spec.ts — régression de la brique multi-instances.
  *
  * Garde que la contrainte UNIQUE(entity_id, slug) a bien été levée sur

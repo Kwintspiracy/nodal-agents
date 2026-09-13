@@ -1,4 +1,6 @@
 /**
+ * An owner adds an LLM key, tests it, and chooses the model an agent will speak with.
+ *
  * brique31-flows.spec.ts — Playwright e2e tests for Brique 31
  *
  * Tests:

@@ -1,4 +1,6 @@
 /**
+ * An owner connects Notion through its consent screen and comes back to a connected account.
+ *
  * Playwright e2e — OAuth flow for Notion (OAuth / Public Integration) — Brique 34 v3.
  *
  * In v3, the flow uses the credential wizard modal:
