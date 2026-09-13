@@ -18,7 +18,7 @@
  * Cleanup deletes the agent it created (cascade removes assignments + rules).
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Locator } from '@playwright/test';
 // `eq`/`sql` viennent de `@nodal-agents/db`, qui les réexporte : seul ce paquet
 // importe le pilote (règle `only-db-imports-pg` de dependency-cruiser). La
 // violation n'est apparue qu'à la fusion des deux PR, le scan couvrant alors
@@ -32,6 +32,23 @@ import {
   approvalRules,
 } from '@nodal-agents/db';
 import { requireLiveStack, makeDbClient, testSlugSuffix } from './helpers';
+
+/**
+ * Choisit un modèle dans le formulaire de création, sans en coder aucun en dur :
+ * la première option du catalogue du fournisseur sélectionné, ou — s'il n'y a
+ * pas de catalogue du tout — l'identifiant que le champ libre propose lui-même.
+ */
+async function chooseFirstModel(form: Locator): Promise<void> {
+  const select = form.locator('select#agent-model');
+  if ((await select.count()) > 0) {
+    await select.selectOption({ index: 0 });
+    return;
+  }
+  const custom = form.locator('input#agent-model, input#agent-model-custom').first();
+  const suggested = await custom.getAttribute('placeholder');
+  if (!suggested) throw new Error('No model catalog and no suggested model id to fall back on');
+  await custom.fill(suggested);
+}
 
 test.describe('agent recipes @cap:configurer-agent/ecran', () => {
   test.beforeAll(async () => {
@@ -108,6 +125,15 @@ test.describe('agent recipes @cap:configurer-agent/ecran', () => {
       await form.getByLabel('Slug').fill(slug);
       await form.getByLabel('Name').fill(name);
       await form.getByLabel(/Personality/).fill('e2e profile test agent');
+
+      // Le modèle n'a AUCUNE valeur par défaut à la création : `model` part de
+      // la chaîne vide, donc `modelInDropdown` est faux et c'est le champ
+      // « Custom model id » — `required` — qui porte la valeur. Le parcours ne
+      // le remplissait pas : la validation native du navigateur refusait
+      // l'envoi, sans message applicatif, et la modale restait ouverte. C'est
+      // l'échec d'origine, `expect(getByRole('dialog')).toHaveCount(0)`
+      // Expected 0 / Received 1 pendant 5 s.
+      await chooseFirstModel(form);
 
       // 3. Submit → one agent, skill attached, write tools blocked.
       await form.getByRole('button', { name: 'Create agent' }).click();
