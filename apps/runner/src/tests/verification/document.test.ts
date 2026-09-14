@@ -164,6 +164,31 @@ describe('document — bien formé, selon son type', () => {
     expect((await prove(fmTitre)).verdict).toBe('green');
   });
 
+  it('un en-tête YAML en CRLF n’est pas un titre non plus — la fin de ligne ne décide pas', async () => {
+    // Revue Codex de la PR #66, constat C5 : l'en-tête n'était retiré qu'avec
+    // des fins de ligne LF. Le MÊME fichier écrit par un éditeur Windows
+    // passait au vert, sa deuxième ligne lue comme un titre souligné.
+    const crlf = write('frontmatter-crlf.md', '---\r\ntitle: x\r\n---\r\ncorps sans titre\r\n');
+    expect((await prove(crlf)).verdict).toBe('red');
+    const crlfTitre = write(
+      'frontmatter-crlf-titre.md',
+      '---\r\ntitle: x\r\n---\r\n\r\n# Titre\r\n',
+    );
+    expect((await prove(crlfTitre)).verdict).toBe('green');
+  });
+
+  it('un titre dans un bloc de code clôturé n’est pas le titre du document', async () => {
+    // Revue Codex de la PR #66, constat C5 : un fichier qui ne contient qu'un
+    // exemple passait au vert parce que l'exemple contenait un `#`.
+    const fence = write('fence.md', '```\n# faux titre\n```\n');
+    expect((await prove(fence)).verdict).toBe('red');
+    const fenceTilde = write('fence-tilde.md', '~~~md\n# faux titre\n~~~\n');
+    expect((await prove(fenceTilde)).verdict).toBe('red');
+    // Un vrai titre hors du bloc compte, et le bloc ne le mange pas.
+    const vrai = write('fence-vrai.md', '# Titre\n\n```\n# exemple\n```\n');
+    expect((await prove(vrai)).verdict).toBe('green');
+  });
+
   it('un HTML qui ne se referme pas est rouge', async () => {
     const p = write('open.html', '<!doctype html><html><body><div><p>texte</body></html>');
     const { verdict, records } = await prove(p);
