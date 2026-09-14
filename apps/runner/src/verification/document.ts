@@ -309,13 +309,22 @@ const jsonParses: FormCheck = (text) => {
   }
 };
 
-/** Un SVG est du XML : `@xmldom/xmldom` lève à la première faute fatale. */
+/**
+ * Un SVG est du XML : `@xmldom/xmldom` lève à la première faute fatale.
+ *
+ * Mais toutes les fautes ne sont pas fatales, et c'est le constat C6 de la
+ * revue Codex de la PR #66 : une entité inconnue (`&undefined;`) est rapportée
+ * au niveau `error`, le parseur rend quand même un document, et le fichier
+ * passait au vert. Un document qui référence une entité qui n'existe pas n'est
+ * pas bien formé. On retient donc `error` autant que `fatalError` ; `warning`
+ * reste ignoré — sondé, aucun SVG valide n'émet l'un des deux premiers.
+ */
 const xmlParses: FormCheck = (text) => {
   try {
     let reported: string | null = null;
     new DOMParser({
       onError: (level, message) => {
-        if (level === 'fatalError' && reported === null) reported = message;
+        if ((level === 'fatalError' || level === 'error') && reported === null) reported = message;
       },
     }).parseFromString(text, 'text/xml');
     return reported;
