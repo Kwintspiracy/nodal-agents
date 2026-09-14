@@ -187,7 +187,7 @@ export async function postgresProcessesForDataDir(
  * here, so a refusal cannot be walked around. No workers are claimed: with no
  * table there is no ancestry to walk.
  */
-function unconfirmedReading(dataDir: string): ProcessTableReading {
+export function unconfirmedReading(dataDir: string): ProcessTableReading {
   const claim = readPostmasterClaim(dataDir);
   if (claim === null || livePostmasterPid(dataDir) !== claim.pid) return { read: false, owned: [] };
   // Liveness is NOT confirmation. Without a start time, a stale lockfile whose
@@ -225,17 +225,27 @@ export function processStartedAtMs(pid: number): number | null {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
     // Field 2 is the executable name in parentheses and may itself contain
     // spaces or parentheses; everything after the LAST ')' is unambiguous.
+    // Counting from there, `starttime` (field 22) is index 19.
     const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    const ticksSinceBoot = Number.parseInt(after[19] ?? '', 10); // field 22, 0-based 19 here
+    const ticksSinceBoot = Number.parseInt(after[19] ?? '', 10);
     if (!Number.isFinite(ticksSinceBoot)) return null;
-    const btimeLine = readFileSync('/proc/stat', 'utf-8')
-      .split('\n')
-      .find((l) => l.startsWith('btime '));
-    const btime = Number.parseInt(btimeLine?.slice('btime '.length).trim() ?? '', 10);
-    if (!Number.isFinite(btime)) return null;
-    // USER_HZ is 100 on every Linux this runs on; it is not exposed to a
-    // process, and getconf CLK_TCK would mean spawning a shell to learn it.
-    return (btime + ticksSinceBoot / 100) * 1000;
+    // `/proc/uptime`, NOT `/proc/stat`'s `btime`. `btime` is derived from
+    // `getboottime64`, which Linux SHIFTS when the wall clock is set: a clock
+    // that moves after the postmaster started moves our computed start with
+    // it, and can land it back on a stranger's — a coincidence the two-second
+    // window would then wave through. Anchoring on the CURRENT clock instead
+    // means a clock jump pushes the estimate AWAY from the recorded value, so
+    // the answer is a refusal. Wrong in the safe direction is the requirement.
+    const uptimeSeconds = Number.parseFloat(
+      readFileSync('/proc/uptime', 'utf-8').split(' ')[0] ?? '',
+    );
+    if (!Number.isFinite(uptimeSeconds)) return null;
+    // USER_HZ is 100 on every Linux this runs on; a process cannot read it, and
+    // `getconf CLK_TCK` would mean spawning a shell. If it were anything else,
+    // the elapsed time comes out scaled, the comparison misses, and the pid is
+    // refused — again the safe direction, never a false match.
+    const elapsedSeconds = uptimeSeconds - ticksSinceBoot / 100;
+    return Date.now() - elapsedSeconds * 1000;
   } catch {
     return null;
   }

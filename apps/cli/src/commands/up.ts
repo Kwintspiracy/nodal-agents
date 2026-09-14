@@ -310,11 +310,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       // to identify still holds the shared-memory block.
       console.log(
         chalk.yellow(
-          `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which is alive but could NOT be
+          `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which is alive. Its identity
 ` +
-            `    confirmed as ours (its start time does not match the one recorded). Nothing was
+            `    could NOT be confirmed — either its start time differs from the one recorded, or
 ` +
-            `    stopped. If Postgres then fails to start, check that pid yourself before killing it.`,
+            `    no start time could be read at all. Nothing was stopped. If Postgres then fails to
+` +
+            `    start, check that pid yourself (its executable, its start time, which cluster it
+` +
+            `    serves) and stop it through its owner rather than killing the number.`,
         ),
       );
     }
@@ -328,10 +332,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // still holding the shared-memory block, so `up` sailed past this pre-flight
   // and died on the opaque FATAL while reporting no orphan at all. The process
   // table is the one thing that cannot be erased by whatever killed it.
-  if (!orphans.some((o) => o.name === 'postgres')) {
-    for (const pid of ownedPgPids) {
-      orphans.push({ name: 'postgres', port: measuredPort(pid, listeners), pid });
-    }
+  // Every CONFIRMED postgres pid joins the list, not just when the two probes
+  // above came up empty. Guarding this on "no postgres orphan yet" meant that a
+  // postmaster found by its port or its lockfile brought none of its workers
+  // with it: a worker surviving the stop was then neither killed nor checked,
+  // while "Orphans cleaned up" was printed because no port was left held
+  // (pass-6 finding R2).
+  for (const pid of ownedPgPids) {
+    if (orphans.some((o) => o.pid === pid)) continue;
+    orphans.push({ name: 'postgres', port: measuredPort(pid, listeners), pid });
   }
 
   if (orphans.length > 0) {
