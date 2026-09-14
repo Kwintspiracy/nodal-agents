@@ -41,6 +41,7 @@ import { mkdtemp, writeFile, rm, symlink, mkdir, realpath } from 'node:fs/promis
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { outsideEveryRootDir } from './outside-roots';
 import {
   resolveBotToken,
   resolveRecipientChatId,
@@ -538,11 +539,14 @@ describe('assertLocalSourceAllowed', () => {
     // d'écriture. macOS ferait pareil (/var → /private/var).
     rootDir = await realpath(await mkdtemp(path.join(tmpdir(), 'dg-confinement-')));
 
-    // workspaceDir/skillStoreDir live OUTSIDE the OS temp dir (inside the
-    // package's own checkout) — tmpdir() is unconditionally an allowed root,
-    // so nesting them under it would make the "outside every root" and
-    // "prefix trick" tests trivially pass for the wrong reason.
-    outsideDir = path.join(process.cwd(), '.dg-confinement-outside-fixture');
+    // workspaceDir/skillStoreDir vivent HORS du dossier temporaire — tmpdir()
+    // est une racine autorisée inconditionnellement, donc les y nicher ferait
+    // passer « hors de toute racine » et « piège de préfixe » pour la
+    // mauvaise raison. Le chemin venait de `process.cwd()` : dans un clone
+    // situé sous %TEMP% il tombait DANS tmpdir() et ces tests rougissaient
+    // (issue #90). `outsideEveryRootDir` le choisit explicitement hors de
+    // tmpdir(), sans rien devoir à l'emplacement du clone.
+    outsideDir = outsideEveryRootDir('dg-confinement');
     workspaceDir = path.join(outsideDir, 'workspace');
     skillStoreDir = path.join(outsideDir, 'skills');
     await mkdir(workspaceDir, { recursive: true });

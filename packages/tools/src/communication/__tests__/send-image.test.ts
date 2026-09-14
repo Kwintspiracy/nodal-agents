@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSendImageTool } from '../send-image';
 import type { ToolContext } from '../../types';
+import { syntheticOutsideSource } from './outside-roots';
 
 // ─── Mock @nodal-agents/delivery ─────────────────────────────────────────────
 // S3: the tool dispatches through getAdapter(...).sendMedia — mocked here as
@@ -273,7 +274,7 @@ describe('createSendImageTool', () => {
     const ctx = makeCtx({ jobChatId: '12345' });
 
     await expect(
-      tool.execute({ source: path.join(process.cwd(), '..', 'outside.png') }, ctx),
+      tool.execute({ source: syntheticOutsideSource('outside.png') }, ctx),
     ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
 
     expect(readFileMock).not.toHaveBeenCalled();

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSendVideoTool, createSendAudioTool, createSendVoiceTool } from '../send-media';
 import type { ToolContext } from '../../types';
+import { syntheticOutsideSource } from './outside-roots';
 
 // S3: the tools dispatch through getAdapter(...).sendMedia — mocked here as
 // the tool-layer boundary. The adapter's own Telegram wire-format translation
@@ -208,7 +209,7 @@ describe('send media tools', () => {
     const ctx = makeCtx({ jobChatId: '4242' });
 
     await expect(
-      createSendVideoTool().execute({ source: path.join(process.cwd(), '..', 'outside.mp4') }, ctx),
+      createSendVideoTool().execute({ source: syntheticOutsideSource('outside.mp4') }, ctx),
     ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
 
     expect(readFileMock).not.toHaveBeenCalled();
