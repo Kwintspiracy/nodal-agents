@@ -3,6 +3,11 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
+import {
+  classifyPostgresProcesses,
+  formatForeignSkip,
+  type PostgresProcessRow,
+} from './orphans.ts';
 
 /**
  * The postmaster PID recorded in `<dataDir>/postmaster.pid`, or null when the
@@ -76,44 +81,41 @@ export async function postgresPidsForDataDir(dataDir: string = PG_DATA_DIR): Pro
         // is what ties a bare `postgres.exe` to OUR cluster rather than to some
         // other Postgres the user runs.
         'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
-          'Select-Object -ExpandProperty ProcessId,CommandLine | Out-Null; ' +
-          'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
-          'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }',
+          'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CommandLine)" }',
       ],
       { reject: false, timeout: 10_000 },
     );
-    // TWO ways to recognise one of ours, and the second is the one that
-    // matters in practice.
+    // ONE way to recognise one of ours: the DATA DIR.
     //
-    //   · the data dir — present only on the POSTMASTER's command line
-    //     (`postgres.exe -D <dataDir>`).
-    //   · the embedded binary path — present on EVERY process of the cluster.
+    // It is present on the POSTMASTER's command line (`postgres.exe -D <dir>`)
+    // and nowhere else, so a `--forkchild="io_worker"` (PostgreSQL 18, seen
+    // live 2026-08-21 surviving a crash with no data dir on its command line)
+    // is judged by its ancestry instead — see classifyPostgresProcesses.
     //
-    // Matching the data dir alone missed the case that actually blocks a boot.
-    // Seen live on 2026-08-21: the survivor was
-    //     postgres.exe --forkchild="io_worker" 5856
-    // an internal I/O worker of PostgreSQL 18. No data dir on its command line,
-    // so the probe returned [] and `up` died on the opaque FATAL with no orphan
-    // reported — the very failure this function was written to prevent.
-    //
-    // The binary path cannot be spoofed by accident: it points inside this
-    // install's node_modules, so anything running from it is ours by
-    // construction, postmaster or worker.
-    const dataNeedle = dataDir.toLowerCase().replace(/\\/g, '/');
-    const binNeedle = '@embedded-postgres';
-    const pids: number[] = [];
+    // The embedded binary path used to be accepted as a second proof, on the
+    // claim that it points inside THIS install's node_modules. Two installs
+    // sharing one node_modules — a junctioned worktree — make that false, and
+    // on 2026-09-14 the probe claimed, and killed, another install's postmaster
+    // (pid 41956, listening on :25444). The path proves nothing; the data dir
+    // does.
+    const rows: PostgresProcessRow[] = [];
     for (const line of stdout.split(/\r?\n/)) {
-      const tab = line.indexOf('\t');
-      if (tab < 0) continue;
-      const pid = Number.parseInt(line.slice(0, tab), 10);
+      const first = line.indexOf('|');
+      const second = line.indexOf('|', first + 1);
+      if (first < 0 || second < 0) continue;
+      const pid = Number.parseInt(line.slice(0, first), 10);
+      const ppid = Number.parseInt(line.slice(first + 1, second), 10);
       if (!Number.isInteger(pid) || pid <= 0) continue;
-      const cmd = line
-        .slice(tab + 1)
-        .toLowerCase()
-        .replace(/\\/g, '/');
-      if (cmd.includes(dataNeedle) || cmd.includes(binNeedle)) pids.push(pid);
+      rows.push({
+        pid,
+        ppid: Number.isInteger(ppid) ? ppid : 0,
+        commandLine: line.slice(second + 1),
+      });
     }
-    return pids;
+    const { owned, skipped } = classifyPostgresProcesses(rows, dataDir);
+    // Loud, not silent: a candidate left alone is reported with a code.
+    for (const entry of skipped) process.stderr.write(`${formatForeignSkip(entry)}\n`);
+    return owned;
   } catch {
     return [];
   }

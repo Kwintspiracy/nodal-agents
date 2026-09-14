@@ -23,6 +23,7 @@ import {
   resolveAuthMode,
 } from '../lib/env.ts';
 import { isPortBindable, findFreePort } from '../lib/ports.ts';
+import { measuredPort } from '../lib/orphans.ts';
 import {
   spawnRunner,
   spawnWeb,
@@ -235,19 +236,36 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     for (const rec of walkDescendants(snapshot, root)) ourPids.add(rec.pid);
   }
 
-  const orphans: Array<{ name: string; port: number; pid: number }> = [];
-  const strangers: Array<{ name: string; port: number; pid: number }> = [];
+  // A pid is attributed to a port only where a listener probe MEASURED it.
+  // Until 2026-09-14 the data-dir probe stapled `config.ports.postgres` to
+  // every pid it returned; the boot that killed another install's postmaster
+  // printed thirteen lines claiming :25450 for processes listening elsewhere or
+  // on nothing at all (issue #97).
+  const listeners: Array<{ name: string; port: number; pid: number }> = [];
   for (const [name, port] of [
     ['web', config.ports.web],
     ['runner', config.ports.runner],
     ['postgres', config.ports.postgres],
   ] as const) {
     const pid = await pidListeningOnPort(port);
-    if (pid === null) continue;
-    // Postgres is judged separately, by data dir, further down: its postmaster
-    // is not in our pid file (pg_ctl owns it), so the ownership test above
-    // cannot speak for it.
-    if (ourPids.has(pid) || name === 'postgres') orphans.push({ name, port, pid });
+    if (pid !== null) listeners.push({ name, port, pid });
+  }
+
+  // Which postgres processes belong to THIS data dir. Asked once: the answer
+  // decides both whether a listener on our configured port may be killed and
+  // what the last-resort probe below may report.
+  const ownedPgPids = new Set<number>(await postgresPidsForDataDir());
+
+  const orphans: Array<{ name: string; port: number | null; pid: number }> = [];
+  const strangers: Array<{ name: string; port: number; pid: number }> = [];
+  for (const { name, port, pid } of listeners) {
+    // Postgres is not in our pid file (pg_ctl owns the postmaster), so the
+    // ownership test above cannot speak for it — the DATA DIR does. Holding
+    // our configured port proves nothing: another install can sit there, and
+    // killing it is exactly the incident of 2026-09-14.
+    const ours =
+      name === 'postgres' ? ownedPgPids.has(pid) || livePostmasterPid() === pid : ourPids.has(pid);
+    if (ours) orphans.push({ name, port, pid });
     else strangers.push({ name, port, pid });
   }
 
@@ -274,7 +292,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   if (!orphans.some((o) => o.name === 'postgres')) {
     const pgPid = livePostmasterPid();
     if (pgPid !== null) {
-      orphans.push({ name: 'postgres', port: config.ports.postgres, pid: pgPid });
+      orphans.push({ name: 'postgres', port: measuredPort(pgPid, listeners), pid: pgPid });
     }
   }
 
@@ -287,8 +305,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // and died on the opaque FATAL while reporting no orphan at all. The process
   // table is the one thing that cannot be erased by whatever killed it.
   if (!orphans.some((o) => o.name === 'postgres')) {
-    for (const pid of await postgresPidsForDataDir()) {
-      orphans.push({ name: 'postgres', port: config.ports.postgres, pid });
+    for (const pid of ownedPgPids) {
+      orphans.push({ name: 'postgres', port: measuredPort(pid, listeners), pid });
     }
   }
 
@@ -299,7 +317,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       ),
     );
     for (const o of orphans) {
-      console.log(chalk.gray(`  - ${o.name} on :${o.port} (pid ${o.pid})`));
+      console.log(
+        chalk.gray(
+          o.port === null
+            ? `  - ${o.name} for our data dir (pid ${o.pid}, listening on none of our ports)`
+            : `  - ${o.name} on :${o.port} (pid ${o.pid})`,
+        ),
+      );
     }
     console.log(chalk.yellow('Cleaning up before starting…'));
 
@@ -370,6 +394,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     while (Date.now() < deadline) {
       stillHeld = [];
       for (const o of orphans) {
+        // Nothing to wait for when no port was ever measured for this pid.
+        if (o.port === null) continue;
         const pid = await pidListeningOnPort(o.port);
         if (pid !== null) stillHeld.push({ ...o, pid });
       }
