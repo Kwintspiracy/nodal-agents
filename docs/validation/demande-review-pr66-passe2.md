@@ -16,15 +16,15 @@ dit le constat, la preuve, et la mutation.
 
 | Constat | Commit | Ce qui a changé |
 |---|---|---|
-| C1 (bloquant) | `793aeef1` | `manifestHash` d'un document = règles + empreinte du fichier (taille, mtimeNs). La comparaison existante de `finalize.ts` refuse alors le vert si le fichier a bougé pendant la preuve. |
-| C2 | `08a6f747` | `VerifierTarget.displayPath` (depuis `display_path_snapshot`) : la preuve ouvre le chemin réel, la clé reste l'identité. |
-| C3 | `a3f84cc0` | `file_write` / `file_edit` lisent le type AVANT d'écrire, comme le hook. |
-| C4 | `41fb8a66` | `projects/declared.ts` : une racine déclarée vaut manifeste, pour la clé comme pour le type — partagé par l'intention ET l'observation (#75). |
-| C5 | `fb153d29` | Markdown ramené au LF ; blocs de code clôturés retirés avant de chercher le titre. |
-| C6 | `6b1da443` | XML : le niveau `error` compte autant que `fatalError`. |
-| C7 | `fec04208` | CSS : un antislash échappe le caractère suivant. |
-| C8 | `4afb5abf` | HTML : `<script>` et `<style>` restent du texte brut DANS un `<svg>`. |
-| C9 | `702add24` | Un handoff vide ne rend rien. |
+| C1 (bloquant) | `4a3db3af` | `manifestHash` d'un document = règles + empreinte du fichier (taille, mtimeNs). La comparaison existante de `finalize.ts` refuse alors le vert si le fichier a bougé pendant la preuve. |
+| C2 | `49bfda17` | `VerifierTarget.displayPath` (depuis `display_path_snapshot`) : la preuve ouvre le chemin réel, la clé reste l'identité. |
+| C3 | `7464ffed` | `file_write` / `file_edit` lisent le type AVANT d'écrire, comme le hook. |
+| C4 | `95934310` | `projects/declared.ts` : une racine déclarée vaut manifeste, pour la clé comme pour le type — partagé par l'intention ET l'observation (#75). |
+| C5 | `63560f3c` | Markdown ramené au LF ; blocs de code clôturés retirés avant de chercher le titre. |
+| C6 | `01c0b0c4` | XML : le niveau `error` compte autant que `fatalError`. |
+| C7 | `de995eb0` | CSS : un antislash échappe le caractère suivant. |
+| C8 | `1eda2fb6` | HTML : `<script>` et `<style>` restent du texte brut DANS un `<svg>`. |
+| C9 | `9794adcf` | Un handoff vide ne rend rien. |
 
 **Un constat de la passe 1 était inexact et c'est dit dans le commit C8** : le
 rapport affirmait que la sonde `<svg><style>…</style></svg>` passait et que
