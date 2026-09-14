@@ -669,9 +669,9 @@
     "registre": [
       {
         "slug": "installer-et-demarrer",
-        "domaine": "Entrer",
-        "nom": "Installer et démarrer",
-        "question": "Puis-je installer Nodal et arriver sur un écran qui répond ?",
+        "domaine": "Getting in",
+        "nom": "Install and start",
+        "question": "Can I install Nodal and land on a screen that answers?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -733,7 +733,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "installer-et-demarrer",
@@ -788,9 +788,9 @@
       },
       {
         "slug": "se-connecter",
-        "domaine": "Entrer",
-        "nom": "Protéger et se connecter",
-        "question": "Puis-je fermer mon instance et y revenir avec mon compte ?",
+        "domaine": "Getting in",
+        "nom": "Protect and sign in",
+        "question": "Can I close my instance and come back to it with my account?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -950,7 +950,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "se-connecter",
@@ -1103,9 +1103,9 @@
       },
       {
         "slug": "creer-agent",
-        "domaine": "Composer une équipe",
-        "nom": "Créer un agent",
-        "question": "Puis-je créer un agent et lui donner un rôle ?",
+        "domaine": "Building a team",
+        "nom": "Create an agent",
+        "question": "Can I create an agent and give it a role?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -1132,7 +1132,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "creer-agent",
@@ -1152,9 +1152,9 @@
       },
       {
         "slug": "configurer-agent",
-        "domaine": "Composer une équipe",
-        "nom": "Configurer un agent",
-        "question": "Puis-je changer son profil, sa personnalité, ses réglages ?",
+        "domaine": "Building a team",
+        "nom": "Configure an agent",
+        "question": "Can I change its profile, its personality, its settings?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -1258,7 +1258,7 @@
             }
           ]
         },
-        "phrase": "écran échoué · moteur passé",
+        "phrase": "screen failed · engine passed",
         "preuves": [
           {
             "capacite": "configurer-agent",
@@ -1355,9 +1355,9 @@
       },
       {
         "slug": "organiser-equipe",
-        "domaine": "Composer une équipe",
-        "nom": "Organiser une équipe",
-        "question": "Puis-je rattacher des agents à un orchestrateur ?",
+        "domaine": "Building a team",
+        "nom": "Organise a team",
+        "question": "Can I attach agents to an orchestrator?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -1482,7 +1482,7 @@
             }
           ]
         },
-        "phrase": "écran ignoré · moteur passé",
+        "phrase": "screen skipped · engine passed",
         "preuves": [
           {
             "capacite": "organiser-equipe",
@@ -1600,9 +1600,9 @@
       },
       {
         "slug": "choisir-modele",
-        "domaine": "Composer une équipe",
-        "nom": "Choisir un modèle",
-        "question": "Puis-je décider quel modèle fait tourner quel agent ?",
+        "domaine": "Building a team",
+        "nom": "Choose a model",
+        "question": "Can I decide which model runs which agent?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -1685,7 +1685,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "choisir-modele",
@@ -1761,9 +1761,9 @@
       },
       {
         "slug": "parler-a-un-agent",
-        "domaine": "Parler et suivre",
-        "nom": "Parler à un agent",
-        "question": "Puis-je écrire à un agent et obtenir une réponse ?",
+        "domaine": "Talking and following",
+        "nom": "Talk to an agent",
+        "question": "Can I write to an agent and get an answer?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -1797,7 +1797,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "parler-a-un-agent",
@@ -1824,9 +1824,9 @@
       },
       {
         "slug": "suivre-execution",
-        "domaine": "Parler et suivre",
-        "nom": "Suivre ce qu'il fait",
-        "question": "Puis-je voir, pendant qu'il travaille, ce qu'il fait vraiment ?",
+        "domaine": "Talking and following",
+        "nom": "Follow what it does",
+        "question": "Can I see, while it works, what it is really doing?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -1923,7 +1923,7 @@
             }
           ]
         },
-        "phrase": "écran ignoré · moteur passé",
+        "phrase": "screen skipped · engine passed",
         "preuves": [
           {
             "capacite": "suivre-execution",
@@ -2013,9 +2013,9 @@
       },
       {
         "slug": "reprendre-conversation",
-        "domaine": "Parler et suivre",
-        "nom": "Reprendre une conversation",
-        "question": "Puis-je revenir demain et repartir de là où on en était ?",
+        "domaine": "Talking and following",
+        "nom": "Resume a conversation",
+        "question": "Can I come back tomorrow and pick up where we left off?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -2231,7 +2231,7 @@
             }
           ]
         },
-        "phrase": "écran ignoré · moteur passé",
+        "phrase": "screen skipped · engine passed",
         "preuves": [
           {
             "capacite": "reprendre-conversation",
@@ -2440,9 +2440,9 @@
       },
       {
         "slug": "parler-par-canal-externe",
-        "domaine": "Parler et suivre",
-        "nom": "Parler depuis ailleurs",
-        "question": "Puis-je lui parler depuis Telegram plutôt que depuis l'écran ?",
+        "domaine": "Talking and following",
+        "nom": "Talk from elsewhere",
+        "question": "Can I talk to it from Telegram rather than from the screen?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -2481,7 +2481,7 @@
             }
           ]
         },
-        "phrase": "écran jamais joué · moteur passé",
+        "phrase": "screen never run · engine passed",
         "preuves": [
           {
             "capacite": "parler-par-canal-externe",
@@ -2513,9 +2513,9 @@
       },
       {
         "slug": "assigner-outils",
-        "domaine": "Donner des capacités",
-        "nom": "Donner des outils",
-        "question": "Puis-je décider exactement ce que cet agent a le droit de faire ?",
+        "domaine": "Granting capabilities",
+        "nom": "Give tools",
+        "question": "Can I decide exactly what this agent is allowed to do?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -2654,7 +2654,7 @@
             }
           ]
         },
-        "phrase": "écran échoué · moteur passé",
+        "phrase": "screen failed · engine passed",
         "preuves": [
           {
             "capacite": "assigner-outils",
@@ -2786,9 +2786,9 @@
       },
       {
         "slug": "assigner-skill",
-        "domaine": "Donner des capacités",
-        "nom": "Donner un savoir-faire",
-        "question": "Puis-je lui attacher une skill, et la lui retirer ?",
+        "domaine": "Granting capabilities",
+        "nom": "Give a skill",
+        "question": "Can I attach a skill to it, and take it back?",
         "exigee": true,
         "ecranAttendu": "Qu'attacher une skill depuis l'onglet Skills d'un agent, puis la retirer, se voie dans la liste ET dans la ligne d'assignation en base.",
         "nonDit": [],
@@ -2815,7 +2815,7 @@
             }
           ]
         },
-        "phrase": "écran non testé · moteur passé",
+        "phrase": "screen not tested · engine passed",
         "preuves": [
           {
             "capacite": "assigner-skill",
@@ -2835,9 +2835,9 @@
       },
       {
         "slug": "apprendre-une-skill",
-        "domaine": "Donner des capacités",
-        "nom": "Installer une skill du catalogue",
-        "question": "Puis-je prendre une skill de la communauté et la tenir à jour ?",
+        "domaine": "Granting capabilities",
+        "nom": "Install a skill from the catalogue",
+        "question": "Can I take a community skill and keep it up to date?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -2906,7 +2906,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "apprendre-une-skill",
@@ -2968,9 +2968,9 @@
       },
       {
         "slug": "connecter-un-service",
-        "domaine": "Donner des capacités",
-        "nom": "Connecter un service",
-        "question": "Puis-je connecter Notion, Google, Airtable — et voir ce que je cède ?",
+        "domaine": "Granting capabilities",
+        "nom": "Connect a service",
+        "question": "Can I connect Notion, Google, Airtable — and see what I am handing over?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -3004,7 +3004,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "connecter-un-service",
@@ -3031,9 +3031,9 @@
       },
       {
         "slug": "se-souvenir",
-        "domaine": "Donner des capacités",
-        "nom": "Se souvenir",
-        "question": "Est-ce qu'il retient ce que je lui ai appris ?",
+        "domaine": "Granting capabilities",
+        "nom": "Remember",
+        "question": "Does it hold on to what I taught it?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -3093,7 +3093,7 @@
             }
           ]
         },
-        "phrase": "écran jamais joué · moteur passé",
+        "phrase": "screen never run · engine passed",
         "preuves": [
           {
             "capacite": "se-souvenir",
@@ -3146,9 +3146,9 @@
       },
       {
         "slug": "regler-autonomie",
-        "domaine": "Garder la main",
-        "nom": "Régler l'autonomie",
-        "question": "Puis-je choisir ce qui passe seul et ce qui me demande ?",
+        "domaine": "Staying in control",
+        "nom": "Set the autonomy",
+        "question": "Can I choose what goes through alone and what asks me first?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -3238,7 +3238,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "regler-autonomie",
@@ -3321,9 +3321,9 @@
       },
       {
         "slug": "approuver-une-action",
-        "domaine": "Garder la main",
-        "nom": "Approuver ou refuser",
-        "question": "Est-ce qu'il m'attend vraiment quand il doit m'attendre ?",
+        "domaine": "Staying in control",
+        "nom": "Approve or refuse",
+        "question": "Does it really wait for me when it is supposed to wait?",
         "exigee": true,
         "ecranAttendu": "Qu'une action en attente s'affiche dans le fil avec Approuver et Refuser, que le clic débloque l'agent, et que refuser l'arrête.",
         "nonDit": [],
@@ -3392,7 +3392,7 @@
             }
           ]
         },
-        "phrase": "écran non testé · moteur passé",
+        "phrase": "screen not tested · engine passed",
         "preuves": [
           {
             "capacite": "approuver-une-action",
@@ -3454,9 +3454,9 @@
       },
       {
         "slug": "executer-une-commande",
-        "domaine": "Garder la main",
-        "nom": "Exécuter une commande",
-        "question": "Puis-je le laisser lancer une commande sur ma machine ?",
+        "domaine": "Staying in control",
+        "nom": "Run a command",
+        "question": "Can I let it run a command on my machine?",
         "exigee": true,
         "ecranAttendu": "Qu'un agent autorisé à lancer une commande le montre dans l'écran, demande la permission quand il le doit, et rende sa sortie dans le fil.",
         "nonDit": [],
@@ -3553,7 +3553,7 @@
             }
           ]
         },
-        "phrase": "écran non testé · moteur passé",
+        "phrase": "screen not tested · engine passed",
         "preuves": [
           {
             "capacite": "executer-une-commande",
@@ -3643,9 +3643,9 @@
       },
       {
         "slug": "travailler-sur-des-fichiers",
-        "domaine": "Garder la main",
-        "nom": "Travailler sur mes fichiers",
-        "question": "Puis-je lui donner un dossier et retrouver ce qu’il y a écrit ?",
+        "domaine": "Staying in control",
+        "nom": "Work on my files",
+        "question": "Can I hand it a folder and find what it wrote there?",
         "exigee": true,
         "ecranAttendu": "Qu'on désigne un dossier de travail depuis l'écran et qu'on y retrouve, dans l'onglet Code, le fichier que l'agent vient d'écrire.",
         "nonDit": [],
@@ -3707,7 +3707,7 @@
             }
           ]
         },
-        "phrase": "écran non testé · moteur passé",
+        "phrase": "screen not tested · engine passed",
         "preuves": [
           {
             "capacite": "travailler-sur-des-fichiers",
@@ -3762,9 +3762,9 @@
       },
       {
         "slug": "verifier-un-livrable",
-        "domaine": "Garder la main",
-        "nom": "Vérifier un livrable",
-        "question": "Est-ce que ce qu'il annonce avoir produit est vraiment là ?",
+        "domaine": "Staying in control",
+        "nom": "Verify a deliverable",
+        "question": "Is what it claims to have produced really there?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -3854,7 +3854,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "verifier-un-livrable",
@@ -3937,9 +3937,9 @@
       },
       {
         "slug": "planifier-une-tache",
-        "domaine": "Automatiser",
-        "nom": "Planifier une tâche",
-        "question": "Puis-je lui demander de faire ça tous les matins ?",
+        "domaine": "Automating",
+        "nom": "Schedule a task",
+        "question": "Can I ask it to do that every morning?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -4148,7 +4148,7 @@
             }
           ]
         },
-        "phrase": "écran passé · moteur passé",
+        "phrase": "screen passed · engine passed",
         "preuves": [
           {
             "capacite": "planifier-une-tache",
@@ -4350,9 +4350,9 @@
       },
       {
         "slug": "declencher-sur-evenement",
-        "domaine": "Automatiser",
-        "nom": "Déclencher sur un événement",
-        "question": "Puis-je le faire réagir à quelque chose qui arrive de l'extérieur ?",
+        "domaine": "Automating",
+        "nom": "Trigger on an event",
+        "question": "Can I make it react to something happening outside?",
         "exigee": true,
         "nonDit": [],
         "ecran": {
@@ -4386,7 +4386,7 @@
             }
           ]
         },
-        "phrase": "écran échoué · moteur passé",
+        "phrase": "screen failed · engine passed",
         "preuves": [
           {
             "capacite": "declencher-sur-evenement",
@@ -4413,9 +4413,9 @@
       },
       {
         "slug": "voir-le-cout",
-        "domaine": "Piloter",
-        "nom": "Voir ce que ça coûte",
-        "question": "Puis-je savoir ce que ce tour de chat vient de me coûter ?",
+        "domaine": "Steering",
+        "nom": "See what it costs",
+        "question": "Can I know what this chat turn just cost me?",
         "exigee": true,
         "ecranAttendu": "Que le coût et les jetons du tour qui vient d'avoir lieu s'affichent dans le fil, et qu'ils correspondent à ce que la base a enregistré.",
         "nonDit": [],
@@ -4456,7 +4456,7 @@
             }
           ]
         },
-        "phrase": "écran non testé · moteur passé",
+        "phrase": "screen not tested · engine passed",
         "preuves": [
           {
             "capacite": "voir-le-cout",
@@ -4490,9 +4490,9 @@
       },
       {
         "slug": "consulter-l-aide",
-        "domaine": "Piloter",
-        "nom": "Trouver comment faire",
-        "question": "Quand je bloque, est-ce que le produit sait me l'expliquer ?",
+        "domaine": "Steering",
+        "nom": "Find out how",
+        "question": "When I get stuck, can the product explain it to me?",
         "exigee": true,
         "preuveAttendue": "Qu'un guide servi au client décrit bien le connecteur demandé — ses étapes, ses champs et ses portées lues depuis le catalogue, et non une page écrite en dur.",
         "nonDit": [],
@@ -4519,7 +4519,7 @@
           "etat": "absente",
           "preuves": []
         },
-        "phrase": "écran passé · moteur non testé",
+        "phrase": "screen passed · engine not tested",
         "preuves": [
           {
             "capacite": "consulter-l-aide",
@@ -6123,7 +6123,7 @@
       ],
       "balayeLesParcours": false,
       "parcoursExclus": [],
-      "cadence": "chaque PR",
+      "cadence": "every pull request",
       "lanceBanc": true,
       "lanceCouverture": false
     },
@@ -6132,7 +6132,7 @@
       "nom": "Deploy Docs to GitHub Pages",
       "declencheurs": [
         "push",
-        "manuel"
+        "manual"
       ],
       "jobs": [
         "push",
@@ -6143,16 +6143,16 @@
       "specsNommees": [],
       "balayeLesParcours": false,
       "parcoursExclus": [],
-      "cadence": "chaque push sur main",
+      "cadence": "every push to main",
       "lanceBanc": false,
       "lanceCouverture": false
     },
     {
       "fichier": ".github/workflows/qa-pages.yml",
-      "nom": "Qualité — publier le portail",
+      "nom": "Quality — publish the portal",
       "declencheurs": [
         "push",
-        "manuel"
+        "manual"
       ],
       "jobs": [
         "workflow_run",
@@ -6163,16 +6163,16 @@
       "specsNommees": [],
       "balayeLesParcours": false,
       "parcoursExclus": [],
-      "cadence": "chaque push sur main",
+      "cadence": "every push to main",
       "lanceBanc": false,
       "lanceCouverture": false
     },
     {
       "fichier": ".github/workflows/qa.yml",
-      "nom": "Qualité — mesure complète",
+      "nom": "Quality — full measurement",
       "declencheurs": [
         "schedule",
-        "manuel"
+        "manual"
       ],
       "jobs": [
         "schedule",
@@ -6214,7 +6214,7 @@
       "parcoursExclus": [
         "agent-flows.spec.ts"
       ],
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "lanceBanc": true,
       "lanceCouverture": true
     }
@@ -6330,7 +6330,7 @@
       "nom": "agent-recipes.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 2,
         "vert": 1,
@@ -6360,7 +6360,7 @@
       "nom": "agent-tool-assignment.spec.ts",
       "cas": 8,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 4,
         "vert": 0,
@@ -6402,7 +6402,7 @@
       "nom": "agents-redesign.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -6426,7 +6426,7 @@
       "nom": "airtable-oauth.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6450,7 +6450,7 @@
       "nom": "apify-apikey.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6474,7 +6474,7 @@
       "nom": "automations-notify-runnow.spec.ts",
       "cas": 12,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 3,
         "vert": 3,
@@ -6510,7 +6510,7 @@
       "nom": "autonomy-approvals.spec.ts",
       "cas": 12,
       "jouParLaCi": true,
-      "cadence": "chaque PR",
+      "cadence": "every pull request",
       "resultat": {
         "total": 4,
         "vert": 3,
@@ -6552,7 +6552,7 @@
       "nom": "brique31-flows.spec.ts",
       "cas": 19,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 5,
         "vert": 3,
@@ -6600,7 +6600,7 @@
       "nom": "code-verification.spec.ts",
       "cas": 11,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 6,
         "vert": 5,
@@ -6654,7 +6654,7 @@
       "nom": "connector-multi-instance.spec.ts",
       "cas": 4,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6678,7 +6678,7 @@
       "nom": "connector-scope-disclosure.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 3,
         "vert": 1,
@@ -6714,7 +6714,7 @@
       "nom": "credentials-reuse.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6738,7 +6738,7 @@
       "nom": "help-guides.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 2,
         "vert": 2,
@@ -6768,7 +6768,7 @@
       "nom": "internal-tool-toggles.spec.ts",
       "cas": 11,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -6810,7 +6810,7 @@
       "nom": "learned-skills.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -6852,7 +6852,7 @@
       "nom": "mcp-connectors.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 2,
         "vert": 1,
@@ -6882,7 +6882,7 @@
       "nom": "notify-channel.spec.ts",
       "cas": 14,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 4,
         "vert": 3,
@@ -6924,7 +6924,7 @@
       "nom": "notion-internal.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6948,7 +6948,7 @@
       "nom": "notion-oauth.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6972,7 +6972,7 @@
       "nom": "oauth-flow.spec.ts",
       "cas": 3,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 1,
@@ -6996,7 +6996,7 @@
       "nom": "schedule-daily-budget.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 2,
         "vert": 2,
@@ -7026,7 +7026,7 @@
       "nom": "settings-network.spec.ts",
       "cas": 6,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 4,
         "vert": 4,
@@ -7068,7 +7068,7 @@
       "nom": "settings-verification-surfaces.spec.ts",
       "cas": 7,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 3,
         "vert": 3,
@@ -7104,7 +7104,7 @@
       "nom": "smoke.spec.ts",
       "cas": 10,
       "jouParLaCi": true,
-      "cadence": "chaque PR",
+      "cadence": "every pull request",
       "resultat": {
         "total": 5,
         "vert": 5,
@@ -7152,7 +7152,7 @@
       "nom": "telegram-allowlist.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 3,
         "vert": 3,
@@ -7188,7 +7188,7 @@
       "nom": "thread-autoscroll.spec.ts",
       "cas": 9,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 4,
         "vert": 0,
@@ -7230,7 +7230,7 @@
       "nom": "tools-tab.spec.ts",
       "cas": 8,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 5,
         "vert": 4,
@@ -7278,7 +7278,7 @@
       "nom": "user-menu.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -7302,7 +7302,7 @@
       "nom": "webhooks-flows.spec.ts",
       "cas": 5,
       "jouParLaCi": true,
-      "cadence": "chaque nuit",
+      "cadence": "every night",
       "resultat": {
         "total": 1,
         "vert": 0,
@@ -10764,7 +10764,7 @@
         "majLe": "2026-09-13T16:51:03Z",
         "creeLe": "2026-09-13T16:51:03Z",
         "parPr": null,
-        "colonne": "À tester"
+        "colonne": "To test"
       },
       {
         "type": "issue",
@@ -10773,12 +10773,12 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/83",
         "etiquettes": [
-          "produit"
+          "product"
         ],
         "majLe": "2026-09-12T16:04:45Z",
         "creeLe": "2026-09-12T16:04:45Z",
         "parPr": null,
-        "colonne": "En cours"
+        "colonne": "In progress"
       },
       {
         "type": "issue",
@@ -10792,7 +10792,7 @@
         "majLe": "2026-09-12T16:04:56Z",
         "creeLe": "2026-09-11T16:45:40Z",
         "parPr": null,
-        "colonne": "À tester"
+        "colonne": "To test"
       },
       {
         "type": "issue",
@@ -10806,7 +10806,7 @@
         "majLe": "2026-09-13T08:45:53Z",
         "creeLe": "2026-09-11T16:44:32Z",
         "parPr": null,
-        "colonne": "À tester"
+        "colonne": "To test"
       },
       {
         "type": "issue",
@@ -10815,12 +10815,12 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/68",
         "etiquettes": [
-          "décision"
+          "decision"
         ],
         "majLe": "2026-09-11T16:34:20Z",
         "creeLe": "2026-09-11T16:34:20Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10829,12 +10829,12 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/67",
         "etiquettes": [
-          "décision"
+          "decision"
         ],
         "majLe": "2026-09-11T16:34:19Z",
         "creeLe": "2026-09-11T16:34:19Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10843,13 +10843,13 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/61",
         "etiquettes": [
-          "décision",
-          "sécurité"
+          "decision",
+          "security"
         ],
         "majLe": "2026-09-10T08:39:40Z",
         "creeLe": "2026-09-10T08:39:40Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10858,13 +10858,13 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/59",
         "etiquettes": [
-          "décision",
-          "produit"
+          "decision",
+          "product"
         ],
         "majLe": "2026-09-11T22:00:41Z",
         "creeLe": "2026-09-10T08:39:37Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10878,7 +10878,7 @@
         "majLe": "2026-09-10T08:39:14Z",
         "creeLe": "2026-09-10T08:39:14Z",
         "parPr": null,
-        "colonne": "À tester"
+        "colonne": "To test"
       },
       {
         "type": "issue",
@@ -10888,12 +10888,12 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/55",
         "etiquettes": [
           "test",
-          "dette"
+          "debt"
         ],
         "majLe": "2026-09-12T16:09:37Z",
         "creeLe": "2026-09-10T08:39:08Z",
         "parPr": null,
-        "colonne": "À tester"
+        "colonne": "To test"
       },
       {
         "type": "issue",
@@ -10902,13 +10902,13 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/54",
         "etiquettes": [
-          "décision",
-          "coût"
+          "decision",
+          "cost"
         ],
         "majLe": "2026-09-10T08:38:40Z",
         "creeLe": "2026-09-10T08:38:40Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10917,13 +10917,13 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/53",
         "etiquettes": [
-          "décision",
-          "coût"
+          "decision",
+          "cost"
         ],
         "majLe": "2026-09-10T08:38:38Z",
         "creeLe": "2026-09-10T08:38:38Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10932,13 +10932,13 @@
         "etat": "OPEN",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/52",
         "etiquettes": [
-          "décision",
-          "sécurité"
+          "decision",
+          "security"
         ],
         "majLe": "2026-09-10T08:38:36Z",
         "creeLe": "2026-09-10T08:38:36Z",
         "parPr": null,
-        "colonne": "À faire"
+        "colonne": "To do"
       },
       {
         "type": "issue",
@@ -10947,13 +10947,13 @@
         "etat": "CLOSED",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/70",
         "etiquettes": [
-          "coût",
-          "produit"
+          "cost",
+          "product"
         ],
         "majLe": "2026-09-13T04:43:42Z",
         "creeLe": "2026-09-11T16:34:24Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -10967,7 +10967,7 @@
         "majLe": "2026-09-13T16:21:28Z",
         "creeLe": "2026-09-11T16:34:22Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -10977,12 +10977,12 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/65",
         "etiquettes": [
           "test",
-          "produit"
+          "product"
         ],
         "majLe": "2026-09-11T16:34:41Z",
         "creeLe": "2026-09-10T14:17:45Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -10992,12 +10992,12 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/64",
         "etiquettes": [
           "test",
-          "dette"
+          "debt"
         ],
         "majLe": "2026-09-11T16:34:39Z",
         "creeLe": "2026-09-10T14:17:39Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -11007,12 +11007,12 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/63",
         "etiquettes": [
           "test",
-          "produit"
+          "product"
         ],
         "majLe": "2026-09-11T16:34:36Z",
         "creeLe": "2026-09-10T14:17:34Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -11021,12 +11021,12 @@
         "etat": "CLOSED",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/62",
         "etiquettes": [
-          "produit"
+          "product"
         ],
         "majLe": "2026-09-13T04:45:07Z",
         "creeLe": "2026-09-10T08:39:42Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -11035,13 +11035,13 @@
         "etat": "CLOSED",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/60",
         "etiquettes": [
-          "dette",
-          "produit"
+          "debt",
+          "product"
         ],
         "majLe": "2026-09-13T04:46:31Z",
         "creeLe": "2026-09-10T08:39:39Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -11051,12 +11051,12 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/57",
         "etiquettes": [
           "test",
-          "dette"
+          "debt"
         ],
         "majLe": "2026-09-11T16:34:43Z",
         "creeLe": "2026-09-10T08:39:12Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "issue",
@@ -11070,7 +11070,7 @@
         "majLe": "2026-09-11T16:34:45Z",
         "creeLe": "2026-09-10T08:39:10Z",
         "parPr": null,
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11083,7 +11083,7 @@
         "majLe": "2026-09-13T14:06:36Z",
         "creeLe": "2026-09-13T05:16:16Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11096,7 +11096,7 @@
         "majLe": "2026-09-13T16:50:14Z",
         "creeLe": "2026-09-13T04:24:14Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11109,7 +11109,7 @@
         "majLe": "2026-09-13T15:24:23Z",
         "creeLe": "2026-09-12T16:14:19Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11122,7 +11122,7 @@
         "majLe": "2026-09-13T16:20:29Z",
         "creeLe": "2026-09-12T16:07:28Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11135,7 +11135,7 @@
         "majLe": "2026-09-13T15:48:01Z",
         "creeLe": "2026-09-12T15:49:58Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11148,7 +11148,7 @@
         "majLe": "2026-09-13T14:37:53Z",
         "creeLe": "2026-09-12T14:34:48Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11161,7 +11161,7 @@
         "majLe": "2026-09-13T14:33:38Z",
         "creeLe": "2026-09-12T14:22:22Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11174,7 +11174,7 @@
         "majLe": "2026-09-13T14:28:20Z",
         "creeLe": "2026-09-12T14:17:53Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11187,7 +11187,7 @@
         "majLe": "2026-09-13T04:49:20Z",
         "creeLe": "2026-09-12T08:11:46Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11200,7 +11200,7 @@
         "majLe": "2026-09-13T04:16:31Z",
         "creeLe": "2026-09-11T22:12:35Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11213,7 +11213,7 @@
         "majLe": "2026-09-13T04:47:55Z",
         "creeLe": "2026-09-11T22:09:45Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11226,7 +11226,7 @@
         "majLe": "2026-09-13T04:46:30Z",
         "creeLe": "2026-09-11T22:07:59Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11239,7 +11239,7 @@
         "majLe": "2026-09-13T04:45:06Z",
         "creeLe": "2026-09-11T22:03:51Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11252,7 +11252,7 @@
         "majLe": "2026-09-13T04:43:41Z",
         "creeLe": "2026-09-11T22:00:02Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11265,7 +11265,7 @@
         "majLe": "2026-09-13T04:42:17Z",
         "creeLe": "2026-09-11T14:46:18Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11278,7 +11278,7 @@
         "majLe": "2026-09-11T14:08:15Z",
         "creeLe": "2026-09-10T07:18:59Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11291,7 +11291,7 @@
         "majLe": "2026-09-10T15:31:16Z",
         "creeLe": "2026-09-09T17:01:51Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11304,7 +11304,7 @@
         "majLe": "2026-09-09T07:08:05Z",
         "creeLe": "2026-09-08T16:28:56Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11317,7 +11317,7 @@
         "majLe": "2026-09-09T07:08:03Z",
         "creeLe": "2026-09-08T08:44:30Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11330,7 +11330,7 @@
         "majLe": "2026-09-08T03:25:54Z",
         "creeLe": "2026-09-08T02:27:16Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11343,7 +11343,7 @@
         "majLe": "2026-09-07T17:15:56Z",
         "creeLe": "2026-09-04T06:54:35Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11356,7 +11356,7 @@
         "majLe": "2026-09-07T16:19:02Z",
         "creeLe": "2026-08-29T17:26:49Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11369,7 +11369,7 @@
         "majLe": "2026-08-29T07:05:03Z",
         "creeLe": "2026-08-28T15:47:16Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11382,7 +11382,7 @@
         "majLe": "2026-08-28T14:46:00Z",
         "creeLe": "2026-08-28T14:25:41Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11395,7 +11395,7 @@
         "majLe": "2026-08-28T13:49:56Z",
         "creeLe": "2026-08-28T06:42:50Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11408,7 +11408,7 @@
         "majLe": "2026-08-28T13:44:54Z",
         "creeLe": "2026-08-28T06:20:47Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11421,7 +11421,7 @@
         "majLe": "2026-08-28T04:47:18Z",
         "creeLe": "2026-08-28T04:06:20Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11434,7 +11434,7 @@
         "majLe": "2026-08-27T14:50:47Z",
         "creeLe": "2026-08-25T08:24:13Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11447,7 +11447,7 @@
         "majLe": "2026-08-25T07:31:04Z",
         "creeLe": "2026-08-25T06:29:23Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11460,7 +11460,7 @@
         "majLe": "2026-08-25T05:21:30Z",
         "creeLe": "2026-08-25T05:02:02Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11473,7 +11473,7 @@
         "majLe": "2026-08-25T02:47:00Z",
         "creeLe": "2026-08-25T01:54:56Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11486,7 +11486,7 @@
         "majLe": "2026-08-25T01:39:40Z",
         "creeLe": "2026-08-25T01:16:49Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11499,7 +11499,7 @@
         "majLe": "2026-08-24T18:52:10Z",
         "creeLe": "2026-08-24T17:36:02Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11512,7 +11512,7 @@
         "majLe": "2026-08-24T17:25:16Z",
         "creeLe": "2026-08-24T17:05:00Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11525,7 +11525,7 @@
         "majLe": "2026-08-24T15:16:37Z",
         "creeLe": "2026-08-24T14:58:03Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11538,7 +11538,7 @@
         "majLe": "2026-08-24T13:44:42Z",
         "creeLe": "2026-08-24T13:25:33Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11551,7 +11551,7 @@
         "majLe": "2026-08-24T12:37:15Z",
         "creeLe": "2026-08-24T12:17:10Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11564,7 +11564,7 @@
         "majLe": "2026-08-24T08:58:56Z",
         "creeLe": "2026-08-24T08:40:33Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11577,7 +11577,7 @@
         "majLe": "2026-08-24T08:49:35Z",
         "creeLe": "2026-08-24T08:30:06Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11590,7 +11590,7 @@
         "majLe": "2026-08-24T08:11:03Z",
         "creeLe": "2026-08-24T07:53:12Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11603,7 +11603,7 @@
         "majLe": "2026-08-24T07:18:56Z",
         "creeLe": "2026-08-24T07:00:58Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11616,7 +11616,7 @@
         "majLe": "2026-08-24T06:51:57Z",
         "creeLe": "2026-08-24T06:30:11Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11629,7 +11629,7 @@
         "majLe": "2026-08-24T04:38:15Z",
         "creeLe": "2026-08-24T04:19:46Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11642,7 +11642,7 @@
         "majLe": "2026-08-24T04:02:39Z",
         "creeLe": "2026-08-24T03:42:33Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11655,7 +11655,7 @@
         "majLe": "2026-08-24T03:22:05Z",
         "creeLe": "2026-08-24T02:59:40Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11668,7 +11668,7 @@
         "majLe": "2026-08-24T03:16:06Z",
         "creeLe": "2026-08-24T02:57:39Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11681,7 +11681,7 @@
         "majLe": "2026-08-24T02:55:09Z",
         "creeLe": "2026-08-24T02:35:14Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11694,7 +11694,7 @@
         "majLe": "2026-08-24T01:52:18Z",
         "creeLe": "2026-08-23T15:52:41Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11707,7 +11707,7 @@
         "majLe": "2026-08-23T14:36:09Z",
         "creeLe": "2026-08-23T14:00:21Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       },
       {
         "type": "pr",
@@ -11720,7 +11720,7 @@
         "majLe": "2026-08-23T13:34:40Z",
         "creeLe": "2026-08-23T08:37:30Z",
         "ci": "vert",
-        "colonne": "Fait"
+        "colonne": "Done"
       }
     ]
   }
