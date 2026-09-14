@@ -127,6 +127,27 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
     expect(readPostmasterPid(dataDir)).toBe(process.pid);
   });
 
+  it('folds case only where the filesystem does', () => {
+    // Pass-8 finding R1. Folding case everywhere made `/srv/PG/data` and
+    // `/srv/pg/data` one directory — two different clusters on any
+    // case-sensitive filesystem, and the check exists to tell them apart.
+    // Windows really is case-insensitive, so there the other spelling is the
+    // SAME directory and must still be accepted.
+    const shouted = dataDir.toUpperCase();
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}
+${shouted}
+1755600000
+25432
+`,
+      'utf-8',
+    );
+
+    const expected = process.platform === 'win32' ? process.pid : null;
+    expect(readPostmasterClaim(dataDir)?.pid ?? null).toBe(expected);
+  });
+
   it('accepts a lockfile too short to carry the directory — nothing that worked stops', () => {
     writeFileSync(join(dataDir, 'postmaster.pid'), `${process.pid}\n`, 'utf-8');
 
@@ -168,11 +189,10 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
     const started = processStartedAtMs(process.pid);
 
     expect(started).not.toBeNull();
-    // A function answering `Date.now()` passes any window while the process is
-    // still young, so the process has to have SOME age for this to discriminate
-    // (pass-7 finding R6). Vitest has been up for longer than this by the time
-    // the file runs; assert it rather than assume it.
-    expect(process.uptime()).toBeGreaterThan(0.5);
+    // A function answering `Date.now()` is wrong by exactly the process's age,
+    // so this only discriminates once that age EXCEEDS the two-second window
+    // the guard allows. Half a second did not (pass-8 finding R4).
+    expect(process.uptime()).toBeGreaterThan(3);
     // A 24-hour window would also accept `Date.now()` — that is, a function
     // that reads nothing and answers "now" (pass-6 finding R4). Node knows how
     // long IT has been running, so the answer is checked against that, within
@@ -201,19 +221,55 @@ describe('postgresProcessesForDataDir — the fallback wants TWO proofs', () => 
   // whenever the pid could be DATED, which a mutation answering `Date.now()`
   // also satisfied. What is asserted now is the agreement itself.
 
-  it('owns nothing when the recorded start time disagrees', async () => {
-    writeFileSync(
-      join(dataDir, 'postmaster.pid'),
-      `${process.pid}
+  it('owns nothing when the recorded start time disagrees, cwd or no cwd', () => {
+    // Pass-8 finding R4: the earlier version of this case ran with a cwd that
+    // did NOT match, so the clock-free proof refused first and the time check
+    // was never reached — removing it left the test green. The test process
+    // moves INTO the data directory here, so the start time is the only thing
+    // left to refuse on.
+    const before = process.cwd();
+    try {
+      process.chdir(dataDir);
+      writeFileSync(
+        join(dataDir, 'postmaster.pid'),
+        `${process.pid}
 ${dataDir}
 1
 25432
 `,
-      'utf-8',
-    );
+        'utf-8',
+      );
 
-    expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
+      expect(unconfirmedReading(dataDir).owned).toEqual([]);
+    } finally {
+      process.chdir(before);
+    }
   });
+
+  it.runIf(process.platform === 'linux')(
+    'owns the pid when BOTH proofs hold — the case the refusals are measured against',
+    () => {
+      const before = process.cwd();
+      try {
+        process.chdir(dataDir);
+        const started = processStartedAtMs(process.pid);
+        expect(started).not.toBeNull();
+        writeFileSync(
+          join(dataDir, 'postmaster.pid'),
+          `${process.pid}
+${dataDir}
+${Math.round(started! / 1000)}
+25432
+`,
+          'utf-8',
+        );
+
+        expect(unconfirmedReading(dataDir).owned).toEqual([process.pid]);
+      } finally {
+        process.chdir(before);
+      }
+    },
+  );
 
   it('owns nothing when the process does not run out of our data directory', () => {
     // This test process runs from the repo, not from `dataDir` — so even with

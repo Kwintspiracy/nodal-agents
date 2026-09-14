@@ -41,10 +41,19 @@ export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
  * Everything `<dataDir>/postmaster.pid` claims: the pid on line 1 and the start
  * time on line 3 (epoch SECONDS, written by the postmaster itself).
  *
- * The start time is what makes a RECYCLED pid detectable. A lockfile survives a
- * crash, the OS hands its pid to somebody else, and nothing about that new
- * process — not its name, not its path, not its ancestry — says it is not ours.
- * Its creation date does: it will not match the moment the postmaster recorded.
+ * The start time is what makes an ordinary RECYCLED pid detectable. A lockfile
+ * survives a crash, the OS hands its pid to somebody else, and nothing about
+ * that new process — not its name, not its path, not its ancestry — says it is
+ * not ours. Its creation date usually does.
+ *
+ * USUALLY, not always, and the difference is worth writing down. If the wall
+ * clock is wound back BEFORE the stranger is created, the stranger is born at
+ * an instant that reads the same as the recorded one, and no stored timestamp
+ * tells the two generations apart. On Linux `postmasterHoldsDataDir` closes
+ * that with a proof that has no clock in it. On Windows there is no equivalent
+ * cheap reading, so a residue stands: a deliberately wound-back clock, plus a
+ * pid recycled onto a postgres.exe, plus a stale lockfile. Named here rather
+ * than papered over.
  */
 export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClaim | null {
   const pidFile = join(dataDir, 'postmaster.pid');
@@ -67,9 +76,20 @@ export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClai
   }
 }
 
-/** Two spellings of one directory — case and separators, as everywhere else. */
+/**
+ * Two spellings of ONE directory.
+ *
+ * Case is folded on Windows and NOWHERE ELSE. Folding it everywhere made
+ * `/srv/PG/data` and `/srv/pg/data` the same directory, and on a
+ * case-sensitive filesystem those are two different clusters — so a pid
+ * recycled from one to the other passed the very check that exists to tell
+ * them apart (pass-8 finding R1). The filesystem's own rule is the only rule.
+ */
 function sameDirectory(a: string, b: string): boolean {
-  const clean = (v: string): string => v.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+  const clean = (v: string): string => {
+    const normalised = v.replace(/\\/g, '/').replace(/\/+$/, '');
+    return process.platform === 'win32' ? normalised.toLowerCase() : normalised;
+  };
   return clean(a) === clean(b);
 }
 

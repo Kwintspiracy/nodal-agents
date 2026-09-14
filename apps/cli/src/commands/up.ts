@@ -475,6 +475,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       // a working stack on a new port instead of a copy-paste taskkill chore.
       const list = stillHeld.map((o) => `${o.name}:${o.port}=${o.pid}`).join(', ');
       console.log(chalk.yellow(`Some ports still held (likely Windows ghost sockets): ${list}.`));
+      // Both things can be true at once, and this branch used to swallow the
+      // second one (pass-8 finding R3).
+      if (leftAlone.length > 0) {
+        console.log(
+          chalk.yellow(`Also left running, unconfirmed as ours: ${leftAlone.join(', ')}.`),
+        );
+      }
       console.log(chalk.gray('Will rotate to free neighbours below.\n'));
     } else if (leftAlone.length > 0) {
       // "Orphans cleaned up" used to print here whatever we had declined to
