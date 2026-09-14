@@ -184,6 +184,7 @@ async function insertState(
   canonicalKey: string,
   dirtyGeneration: number,
   produced = false,
+  displayPathSnapshot: string | null = null,
 ): Promise<string> {
   const [row] = await db
     .insert(jobDeliverableVerificationState)
@@ -194,6 +195,7 @@ async function insertState(
       dirtyGeneration,
       decisionStatus: 'dirty',
       produced,
+      displayPathSnapshot,
     })
     .returning({ id: jobDeliverableVerificationState.id });
   if (!row) throw new Error('state insert failed');
@@ -807,6 +809,35 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     expect((await stateRow(stateId)).decisionStatus).toBe('green');
     expect((await stateRow(stateId)).verifiedGeneration).toBe(1);
     expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
+  it('la preuve ouvre le CHEMIN de l’état, pas sa clé — elles peuvent différer', async () => {
+    // Revue Codex post-merge de la PR #66, constat C2 : la clé d'un document
+    // est repliée en casse sous Windows, et la preuve s'en servait comme chemin
+    // d'ouverture. Sur un dossier sensible à la casse, elle ouvrait un fichier
+    // qui n'existe pas. Ici les deux diffèrent pour de bon : la clé ne désigne
+    // RIEN, seul le chemin d'affichage existe. Vert ne peut venir que du chemin.
+    const doc = join(dir, 'Adresse.md');
+    await writeFile(doc, '# Adresse\n', 'utf8');
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(
+      jobId,
+      'document',
+      `${projectKey(doc)}.introuvable`,
+      1,
+      true,
+      doc,
+    );
+
+    await finalizeJobSuccess(asDb(), { jobId, result: 'ok', toolsUsed: [] }, deps());
+
+    expect((await runsOf(jobId)).map((r) => r.verdict)).toEqual([
+      'green',
+      'green',
+      'green',
+      'green',
+    ]);
+    expect((await stateRow(stateId)).decisionStatus).toBe('green');
   });
 
   it('un markdown sans titre : la décision est ROUGE, et la ligne rouge dit pourquoi', async () => {

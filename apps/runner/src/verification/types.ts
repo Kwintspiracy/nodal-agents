@@ -24,6 +24,21 @@ import type { DeliverableType, RunVerdict, VerifyCommand } from '@nodal-agents/s
 export interface VerifierTarget {
   readonly entityId: string;
   readonly canonicalKey: string;
+  /**
+   * Le dernier chemin RÉEL connu du livrable (`display_path_snapshot`), tel que
+   * l'outil l'a écrit — avec sa casse.
+   *
+   * Pourquoi il existe ici (revue Codex post-merge de la PR #66, constat C2) :
+   * la clé d'un document est `projectKey(chemin)`, donc REPLIÉE EN CASSE sous
+   * Windows, et le vérificateur s'en servait comme chemin d'ouverture. Sur un
+   * dossier Windows sensible à la casse — possible depuis Windows 10 — cela
+   * donne un « not found » sur un fichier qui existe, ou la preuve d'un AUTRE
+   * fichier si les deux existent. La clé reste l'IDENTITÉ ; ceci est l'ADRESSE.
+   *
+   * Absent quand l'état n'en porte pas : le vérificateur retombe alors sur la
+   * clé, le contrat d'avant, mot pour mot.
+   */
+  readonly displayPath?: string | null;
 }
 
 /** Configuration prête à prouver — le manifeste correspond à l'approbation. */
