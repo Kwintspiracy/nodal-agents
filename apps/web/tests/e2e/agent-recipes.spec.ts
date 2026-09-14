@@ -184,8 +184,14 @@ test.describe('agent recipes @cap:configurer-agent/ecran', () => {
         .where(sql`${agents.slug} LIKE ${'%' + suffix}`);
       expect(withSuffix).toHaveLength(1);
     } finally {
-      await db.delete(agents).where(eq(agents.slug, slug));
-      await close();
+      // Le `close()` doit survivre à l'échec du nettoyage : tel quel, une
+      // suppression qui rejette emportait la fermeture avec elle et laissait le
+      // client Postgres ouvert pour le reste de la session Playwright.
+      try {
+        await db.delete(agents).where(eq(agents.slug, slug));
+      } finally {
+        await close();
+      }
     }
   });
 
