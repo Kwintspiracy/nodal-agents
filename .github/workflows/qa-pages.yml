@@ -1,4 +1,4 @@
-name: Qualité — publier le portail
+name: Quality — publish the portal
 
 # Le portail qualité, sur Cloudflare Pages.
 #
@@ -23,7 +23,7 @@ on:
   # mesuré pour rien, et le portail en ligne serait resté figé à jamais
   # (revue Codex du 11/09).
   workflow_run:
-    workflows: ['Qualité — mesure complète']
+    workflows: ['Quality — full measurement']
     types: [completed]
   push:
     branches: [main]

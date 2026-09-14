@@ -32,18 +32,19 @@ Six colonnes, DÉDUITES, jamais rangées à la main :
 
 | Colonne | Ce qui y va | Comment on l'y met |
 |---|---|---|
-| À faire | ce qui attend un geste ou un arbitrage de Quentin | issue avec l'étiquette `décision` |
-| En cours | un chantier ouvert | issue ouverte sans `décision` ni `test` |
-| En review | une PR ouverte | `gh pr create` |
-| À tester | quelque chose à éprouver | issue avec l'étiquette `test` |
-| Fait | issue fermée, PR mergée | `gh issue close`, merge |
-| Abandonné | PR fermée sans merge | `gh pr close` |
+| To do | ce qui attend un geste ou un arbitrage de Quentin | issue avec l'étiquette `decision` |
+| In progress | un chantier ouvert | issue ouverte sans `decision` ni `test` |
+| In review | une PR ouverte | `gh pr create` |
+| To test | quelque chose à éprouver | issue avec l'étiquette `test` |
+| Done | issue fermée, PR mergée | `gh issue close`, merge |
+| Abandoned | PR fermée sans merge | `gh pr close` |
 
-Étiquettes : `décision` `sécurité` `test` `dette` `coût` `produit`.
+Étiquettes (elles sont en anglais : le dépôt est public) : `decision` `security`
+`test` `debt` `cost` `product`.
 
 Donc : **un next step qui n'a pas d'issue n'existe pas.** Un « à faire par
-Quentin » est une issue `décision`. Un doute à vérifier est une issue `test`.
-Un lot planifié est une issue `produit` jusqu'à ce qu'une PR le porte.
+Quentin » est une issue `decision`. Un doute à vérifier est une issue `test`.
+Un lot planifié est une issue `product` jusqu'à ce qu'une PR le porte.
 
 ## Fin de session de code — le rituel
 
