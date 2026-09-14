@@ -92,6 +92,16 @@ describe('makeFakeTmpRoot / makeOutsideDir', () => {
     expect(isUnderPath(fakeTmp, outside)).toBe(false);
   });
 
+  it('créent leurs dossiers dans le dossier temporaire que rend os.tmpdir()', () => {
+    // `outside-roots.ts` n'importe pas `node:os` (le bouchon l'importe) et
+    // relit donc l'environnement lui-même. Une première version prenait
+    // `TMPDIR` d'abord sur toutes les plateformes, ce que Node ne fait pas
+    // sous Windows : `mkdtempSync` aurait visé un dossier inexistant. Ici,
+    // sans bouchon, les deux doivent coïncider.
+    const dir = track(makeFakeTmpRoot('parite'));
+    expect(path.dirname(dir)).toBe(path.resolve(tmpdir()));
+  });
+
   it('rendent un dossier NEUF à chaque appel', () => {
     // Le nom était déterministe dans une première version ; le test de
     // confinement supprimant récursivement ce qu'il reçoit, deux exécutions
