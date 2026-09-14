@@ -5,16 +5,32 @@
 // racine que la garde autorise ». Tant qu'elle était produite par
 // `process.cwd()`, elle était fausse dès que le clone vivait sous %TEMP%
 // (issue #90). Elle est prouvée ici, une fois, et indépendamment du cwd.
+//
+// Ce fichier ne bouchonne PAS `node:os` : il vérifie les helpers tels qu'un
+// autre fichier de test les obtient.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import {
   SYNTHETIC_OUTSIDE_DIR,
   isUnderPath,
-  outsideEveryRootDir,
+  makeFakeTmpRoot,
+  makeOutsideDir,
   syntheticOutsideSource,
 } from './outside-roots';
+
+const created: string[] = [];
+function track(dir: string): string {
+  created.push(dir);
+  return dir;
+}
+
+afterAll(async () => {
+  for (const dir of created) await rm(dir, { recursive: true, force: true });
+});
 
 describe('isUnderPath', () => {
   it('reconnaît le dossier lui-même et ses descendants', () => {
@@ -36,7 +52,7 @@ describe('SYNTHETIC_OUTSIDE_DIR', () => {
   it("n'est pas sous le répertoire courant — quel que soit celui-ci", () => {
     // Le cas qui a produit l'issue : un clone SOUS %TEMP%. On ne change pas le
     // cwd du process (vitest le partage entre fichiers) : on vérifie la
-    // propriété contre des cwd simulés, dont un sous tmpdir().
+    // propriété contre des cwd simulés, dont deux sous tmpdir().
     const cwds = [
       process.cwd(),
       path.join(tmpdir(), 'wt-8990'),
@@ -61,14 +77,25 @@ describe('SYNTHETIC_OUTSIDE_DIR', () => {
   });
 });
 
-describe('outsideEveryRootDir', () => {
-  it("rend un chemin hors du dossier temporaire, sur l'environnement courant", () => {
-    const dir = outsideEveryRootDir('preuve');
-    expect(path.isAbsolute(dir)).toBe(true);
-    expect(isUnderPath(dir, tmpdir())).toBe(false);
+describe('makeFakeTmpRoot / makeOutsideDir', () => {
+  it('rendent deux dossiers réels dont aucun ne contient l’autre', () => {
+    // C'est toute la mécanique : le test de confinement fait rendre le premier
+    // par un `tmpdir()` bouchonné, et le second devient « hors de toute racine
+    // autorisée » — sans jamais écrire hors du dossier temporaire, seul
+    // emplacement inscriptible sous le bac à sable de codex.
+    const fakeTmp = track(makeFakeTmpRoot('preuve'));
+    const outside = track(makeOutsideDir('preuve'));
+
+    expect(statSync(fakeTmp).isDirectory()).toBe(true);
+    expect(statSync(outside).isDirectory()).toBe(true);
+    expect(isUnderPath(outside, fakeTmp)).toBe(false);
+    expect(isUnderPath(fakeTmp, outside)).toBe(false);
   });
 
-  it('rend le même chemin à chaque appel pour un même label', () => {
-    expect(outsideEveryRootDir('preuve')).toBe(outsideEveryRootDir('preuve'));
+  it('rendent un dossier NEUF à chaque appel', () => {
+    // Le nom était déterministe dans une première version ; le test de
+    // confinement supprimant récursivement ce qu'il reçoit, deux exécutions
+    // concurrentes s'effaçaient mutuellement leurs fixtures.
+    expect(track(makeOutsideDir('preuve'))).not.toBe(track(makeOutsideDir('preuve')));
   });
 });
