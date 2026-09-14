@@ -339,7 +339,7 @@ function chantiers() {
   // par-dessus le vrai, sans un mot (revue Codex du 11/09).
   const cartes = cartesDuTableau({ issues, pr });
   if (!cartes) {
-    console.warn('[qa] GitHub sans réponse — le tableau est marqué ABSENT, pas vide.');
+    console.warn('[qa] GitHub did not answer — the board is marked MISSING, not empty.');
     return null;
   }
 
@@ -373,7 +373,7 @@ function prixCi() {
     }
   }
   if (!runs) {
-    console.warn("[qa] GitHub sans réponse sur les exécutions — le prix d'une PR est ABSENT.");
+    console.warn('[qa] GitHub did not answer on runs — the price of a pull request is MISSING.');
     return null;
   }
   return prixDeLaCi(runs);
@@ -636,16 +636,16 @@ function main() {
 
   const r = snapshot.resume;
   console.log(
-    `snapshot: ${r.paquets} paquets · ${r.casDeTest} cas · ${r.specsE2e} parcours (${r.specsE2eJoueesParLaCi} en CI)`,
+    `snapshot: ${r.paquets} packages · ${r.casDeTest} cases · ${r.specsE2e} journeys (${r.specsE2eJoueesParLaCi} in CI)`,
   );
   console.log(
-    `couverture: ${r.paquetsMesures}/${r.paquets} paquets mesurés · ${r.couvertureLignes ?? '—'}% des lignes mesurées`,
+    `coverage: ${r.paquetsMesures}/${r.paquets} packages measured · ${r.couvertureLignes ?? '—'}% of the measured lines`,
   );
   console.log(
-    `capacités: ${r.capacites} nommées · ${r.capacitesVerifiees} vérifiées aux deux niveaux · ${r.capacitesSansMoteur} sans moteur · ${r.capacitesSansPreuve} sans aucune preuve`,
+    `capabilities: ${r.capacites} named · ${r.capacitesVerifiees} verified at both levels · ${r.capacitesSansMoteur} without an engine · ${r.capacitesSansPreuve} with no proof at all`,
   );
   console.log(
-    `mémoire: ${r.testsEnMemoire} tests suivis (${mem.joues} joués cette fois) · ${r.testsInstables} instables · ${r.testsCasses} cassés`,
+    `memory: ${r.testsEnMemoire} tests tracked (${mem.joues} played this time) · ${r.testsInstables} flaky · ${r.testsCasses} broken`,
   );
 }
 

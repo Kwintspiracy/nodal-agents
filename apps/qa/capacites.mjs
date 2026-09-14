@@ -42,198 +42,198 @@
 
 /** @type {Capacite[]} */
 export const CAPACITES = [
-  // ─── Entrer ─────────────────────────────────────────────────────────────────
+  // ─── Getting in ────────────────────────────────────────────
   {
     slug: 'installer-et-demarrer',
-    domaine: 'Entrer',
-    nom: 'Installer et démarrer',
-    question: 'Puis-je installer Nodal et arriver sur un écran qui répond ?',
+    domaine: 'Getting in',
+    nom: 'Install and start',
+    question: 'Can I install Nodal and land on a screen that answers?',
     exigee: true,
   },
   {
     slug: 'se-connecter',
-    domaine: 'Entrer',
-    nom: 'Protéger et se connecter',
-    question: 'Puis-je fermer mon instance et y revenir avec mon compte ?',
+    domaine: 'Getting in',
+    nom: 'Protect and sign in',
+    question: 'Can I close my instance and come back to it with my account?',
     exigee: true,
   },
 
-  // ─── Composer une équipe ────────────────────────────────────────────────────
+  // ─── Building a team ──────────────────────────────────────
   {
     slug: 'creer-agent',
-    domaine: 'Composer une équipe',
-    nom: 'Créer un agent',
-    question: 'Puis-je créer un agent et lui donner un rôle ?',
+    domaine: 'Building a team',
+    nom: 'Create an agent',
+    question: 'Can I create an agent and give it a role?',
     exigee: true,
   },
   {
     slug: 'configurer-agent',
-    domaine: 'Composer une équipe',
-    nom: 'Configurer un agent',
-    question: 'Puis-je changer son profil, sa personnalité, ses réglages ?',
+    domaine: 'Building a team',
+    nom: 'Configure an agent',
+    question: 'Can I change its profile, its personality, its settings?',
     exigee: true,
   },
   {
     slug: 'organiser-equipe',
-    domaine: 'Composer une équipe',
-    nom: 'Organiser une équipe',
-    question: 'Puis-je rattacher des agents à un orchestrateur ?',
+    domaine: 'Building a team',
+    nom: 'Organise a team',
+    question: 'Can I attach agents to an orchestrator?',
     exigee: true,
   },
   {
     slug: 'choisir-modele',
-    domaine: 'Composer une équipe',
-    nom: 'Choisir un modèle',
-    question: 'Puis-je décider quel modèle fait tourner quel agent ?',
+    domaine: 'Building a team',
+    nom: 'Choose a model',
+    question: 'Can I decide which model runs which agent?',
     exigee: true,
   },
 
-  // ─── Parler et suivre ───────────────────────────────────────────────────────
+  // ─── Talking and following ─────────────────────────────────
   {
     slug: 'parler-a-un-agent',
-    domaine: 'Parler et suivre',
-    nom: 'Parler à un agent',
-    question: 'Puis-je écrire à un agent et obtenir une réponse ?',
+    domaine: 'Talking and following',
+    nom: 'Talk to an agent',
+    question: 'Can I write to an agent and get an answer?',
     exigee: true,
   },
   {
     slug: 'suivre-execution',
-    domaine: 'Parler et suivre',
-    nom: "Suivre ce qu'il fait",
-    question: "Puis-je voir, pendant qu'il travaille, ce qu'il fait vraiment ?",
+    domaine: 'Talking and following',
+    nom: 'Follow what it does',
+    question: 'Can I see, while it works, what it is really doing?',
     exigee: true,
   },
   {
     slug: 'reprendre-conversation',
-    domaine: 'Parler et suivre',
-    nom: 'Reprendre une conversation',
-    question: 'Puis-je revenir demain et repartir de là où on en était ?',
+    domaine: 'Talking and following',
+    nom: 'Resume a conversation',
+    question: 'Can I come back tomorrow and pick up where we left off?',
     exigee: true,
   },
   {
     slug: 'parler-par-canal-externe',
-    domaine: 'Parler et suivre',
-    nom: 'Parler depuis ailleurs',
-    question: "Puis-je lui parler depuis Telegram plutôt que depuis l'écran ?",
+    domaine: 'Talking and following',
+    nom: 'Talk from elsewhere',
+    question: 'Can I talk to it from Telegram rather than from the screen?',
     exigee: true,
   },
 
-  // ─── Donner des capacités ───────────────────────────────────────────────────
+  // ─── Granting capabilities ───────────────────────────────
   {
     slug: 'assigner-outils',
-    domaine: 'Donner des capacités',
-    nom: 'Donner des outils',
-    question: 'Puis-je décider exactement ce que cet agent a le droit de faire ?',
+    domaine: 'Granting capabilities',
+    nom: 'Give tools',
+    question: 'Can I decide exactly what this agent is allowed to do?',
     exigee: true,
   },
   {
     slug: 'assigner-skill',
-    domaine: 'Donner des capacités',
-    nom: 'Donner un savoir-faire',
-    question: 'Puis-je lui attacher une skill, et la lui retirer ?',
+    domaine: 'Granting capabilities',
+    nom: 'Give a skill',
+    question: 'Can I attach a skill to it, and take it back?',
     exigee: true,
     ecranAttendu:
-      "Qu'attacher une skill depuis l'onglet Skills d'un agent, puis la retirer, se voie dans la liste ET dans la ligne d'assignation en base.",
+      "That attaching a skill from an agent's Skills tab, then removing it, shows both in the list AND in the assignment row in the database.",
   },
   {
     slug: 'apprendre-une-skill',
-    domaine: 'Donner des capacités',
-    nom: 'Installer une skill du catalogue',
-    question: 'Puis-je prendre une skill de la communauté et la tenir à jour ?',
+    domaine: 'Granting capabilities',
+    nom: 'Install a skill from the catalogue',
+    question: 'Can I take a community skill and keep it up to date?',
     exigee: true,
   },
   {
     slug: 'connecter-un-service',
-    domaine: 'Donner des capacités',
-    nom: 'Connecter un service',
-    question: 'Puis-je connecter Notion, Google, Airtable — et voir ce que je cède ?',
+    domaine: 'Granting capabilities',
+    nom: 'Connect a service',
+    question: 'Can I connect Notion, Google, Airtable — and see what I am handing over?',
     exigee: true,
   },
   {
     slug: 'se-souvenir',
-    domaine: 'Donner des capacités',
-    nom: 'Se souvenir',
-    question: "Est-ce qu'il retient ce que je lui ai appris ?",
+    domaine: 'Granting capabilities',
+    nom: 'Remember',
+    question: 'Does it hold on to what I taught it?',
     exigee: true,
   },
 
-  // ─── Garder la main ─────────────────────────────────────────────────────────
+  // ─── Staying in control ───────────────────────────────────
   {
     slug: 'regler-autonomie',
-    domaine: 'Garder la main',
-    nom: "Régler l'autonomie",
-    question: 'Puis-je choisir ce qui passe seul et ce qui me demande ?',
+    domaine: 'Staying in control',
+    nom: 'Set the autonomy',
+    question: 'Can I choose what goes through alone and what asks me first?',
     exigee: true,
   },
   {
     slug: 'approuver-une-action',
-    domaine: 'Garder la main',
-    nom: 'Approuver ou refuser',
-    question: "Est-ce qu'il m'attend vraiment quand il doit m'attendre ?",
+    domaine: 'Staying in control',
+    nom: 'Approve or refuse',
+    question: 'Does it really wait for me when it is supposed to wait?',
     exigee: true,
     ecranAttendu:
-      "Qu'une action en attente s'affiche dans le fil avec Approuver et Refuser, que le clic débloque l'agent, et que refuser l'arrête.",
+      'That a pending action shows in the thread with Approve and Refuse, that the click unblocks the agent, and that refusing stops it.',
   },
   {
     slug: 'executer-une-commande',
-    domaine: 'Garder la main',
-    nom: 'Exécuter une commande',
-    question: 'Puis-je le laisser lancer une commande sur ma machine ?',
+    domaine: 'Staying in control',
+    nom: 'Run a command',
+    question: 'Can I let it run a command on my machine?',
     exigee: true,
     ecranAttendu:
-      "Qu'un agent autorisé à lancer une commande le montre dans l'écran, demande la permission quand il le doit, et rende sa sortie dans le fil.",
+      'That an agent allowed to run a command shows it on screen, asks for permission when it must, and renders its output in the thread.',
   },
   {
     slug: 'travailler-sur-des-fichiers',
-    domaine: 'Garder la main',
-    nom: 'Travailler sur mes fichiers',
-    question: 'Puis-je lui donner un dossier et retrouver ce qu’il y a écrit ?',
+    domaine: 'Staying in control',
+    nom: 'Work on my files',
+    question: 'Can I hand it a folder and find what it wrote there?',
     exigee: true,
     ecranAttendu:
-      "Qu'on désigne un dossier de travail depuis l'écran et qu'on y retrouve, dans l'onglet Code, le fichier que l'agent vient d'écrire.",
+      'That a working folder is picked from the screen and that the file the agent just wrote is found there, in the Code tab.',
   },
   {
     slug: 'verifier-un-livrable',
-    domaine: 'Garder la main',
-    nom: 'Vérifier un livrable',
-    question: "Est-ce que ce qu'il annonce avoir produit est vraiment là ?",
+    domaine: 'Staying in control',
+    nom: 'Verify a deliverable',
+    question: 'Is what it claims to have produced really there?',
     exigee: true,
   },
 
-  // ─── Automatiser ────────────────────────────────────────────────────────────
+  // ─── Automating ──────────────────────────────────────────
   {
     slug: 'planifier-une-tache',
-    domaine: 'Automatiser',
-    nom: 'Planifier une tâche',
-    question: 'Puis-je lui demander de faire ça tous les matins ?',
+    domaine: 'Automating',
+    nom: 'Schedule a task',
+    question: 'Can I ask it to do that every morning?',
     exigee: true,
   },
   {
     slug: 'declencher-sur-evenement',
-    domaine: 'Automatiser',
-    nom: 'Déclencher sur un événement',
-    question: "Puis-je le faire réagir à quelque chose qui arrive de l'extérieur ?",
+    domaine: 'Automating',
+    nom: 'Trigger on an event',
+    question: 'Can I make it react to something happening outside?',
     exigee: true,
   },
 
-  // ─── Piloter ────────────────────────────────────────────────────────────────
+  // ─── Steering ────────────────────────────────────────────
   {
     slug: 'voir-le-cout',
-    domaine: 'Piloter',
-    nom: 'Voir ce que ça coûte',
-    question: 'Puis-je savoir ce que ce tour de chat vient de me coûter ?',
+    domaine: 'Steering',
+    nom: 'See what it costs',
+    question: 'Can I know what this chat turn just cost me?',
     exigee: true,
     ecranAttendu:
-      "Que le coût et les jetons du tour qui vient d'avoir lieu s'affichent dans le fil, et qu'ils correspondent à ce que la base a enregistré.",
+      'That the cost and the tokens of the turn that just happened show in the thread, and that they match what the database recorded.',
   },
   {
     slug: 'consulter-l-aide',
-    domaine: 'Piloter',
-    nom: 'Trouver comment faire',
-    question: "Quand je bloque, est-ce que le produit sait me l'expliquer ?",
+    domaine: 'Steering',
+    nom: 'Find out how',
+    question: 'When I get stuck, can the product explain it to me?',
     exigee: true,
     preuveAttendue:
-      "Qu'un guide servi au client décrit bien le connecteur demandé — ses étapes, ses champs et ses portées lues depuis le catalogue, et non une page écrite en dur.",
+      'That a guide served to the client really describes the connector asked for — its steps, its fields and its scopes read from the catalogue, and not a hardcoded page.',
   },
 ];
 

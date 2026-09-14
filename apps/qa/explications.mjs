@@ -5,12 +5,13 @@
 // moindre idée de ce que ça veut dire et de ce que ça montre ». Un tableau de
 // bord qu'on ne sait pas lire ne vaut rien, quelle que soit la justesse de ses
 // chiffres. Chaque page porte donc, en tête, deux phrases qui disent pourquoi
-// elle existe, et un bouton « Comprendre cette page » qui ouvre le texte complet.
+// elle existe, et un bouton « Understand this page » qui ouvre le texte complet.
 //
-// Les textes sont en français, pour Quentin, et ils parlent PRODUIT d'abord :
-// ce qu'un utilisateur de Nodal peut ou ne peut pas faire, et ce que ça coûte de
-// ne pas regarder. Le jargon (couverture, baseline, instabilité) est expliqué
-// à l'endroit où il apparaît, jamais supposé.
+// Les textes sont en ANGLAIS depuis le 14/09/2026 : le dépôt est public et le
+// portail est publié, donc tout ce qu'il REND se lit en anglais. Ils parlent
+// PRODUIT d'abord : ce qu'un utilisateur de Nodal peut ou ne peut pas faire, et
+// ce que ça coûte de ne pas regarder. Le jargon (couverture, baseline,
+// instabilité) est expliqué à l'endroit où il apparaît, jamais supposé.
 //
 // Une entrée par page (`id` = l'ancre de la page). `enBref` va sous le titre ;
 // `parties` fait la modale. `blocs` porte les phrases posées au-dessus des
@@ -18,371 +19,371 @@
 
 export const EXPLICATIONS = {
   chantiers: {
-    titre: 'Chantiers',
+    titre: 'Work in flight',
     enBref:
-      "Le tableau de bord du travail : ce qui attend, ce qui est en cours, ce qui attend une relecture, ce qui est fait. Rien n'est rangé à la main — chaque carte est une issue ou une PR GitHub, et sa colonne est déduite de faits.",
+      'The work board: what is waiting, what is underway, what is waiting for a review, what is done. Nothing is filed by hand — every card is a GitHub issue or pull request, and its column is deduced from facts.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>À répondre en un coup d'œil à « où en est-on ? » sans ouvrir GitHub ni lire un rapport. C'est la page d'accueil parce que c'est la question qu'on se pose le plus souvent.</p>`,
+        titre: "What it's for",
+        texte: `<p>Answering "where do we stand?" at a glance, without opening GitHub or reading a report. It is the landing page because it is the question we ask most often.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Six colonnes, de gauche à droite dans l'ordre du travail :</p>
+        titre: 'How to read it',
+        texte: `<p>Six columns, left to right in the order work flows:</p>
 <ul>
-<li><b>À faire</b> — ce qui attend un geste ou un arbitrage de toi (une issue étiquetée <code>décision</code>).</li>
-<li><b>En cours</b> — une issue ouverte que personne n'a encore portée dans une PR.</li>
-<li><b>En review</b> — une PR ouverte, ou une issue qu'une PR ouverte ferme (« Closes #n » dans son corps). Le travail est écrit, il attend sa relecture.</li>
-<li><b>À tester</b> — une issue étiquetée <code>test</code> : quelque chose à éprouver, ou un doute à trancher.</li>
-<li><b>Fait</b> — issue fermée, PR mergée. Borné aux plus récents.</li>
-<li><b>Abandonné</b> — une PR fermée sans être mergée.</li>
+<li><b>To do</b> — what is waiting on a move or a call from you (an issue labelled <code>decision</code>).</li>
+<li><b>In progress</b> — an open issue nobody has carried into a pull request yet.</li>
+<li><b>In review</b> — an open pull request, or an issue that an open pull request closes ("Closes #n" in its body). The work is written, it is waiting to be read.</li>
+<li><b>To test</b> — an issue labelled <code>test</code>: something to try out, or a doubt to settle.</li>
+<li><b>Done</b> — closed issue, merged pull request. Capped at the most recent ones.</li>
+<li><b>Abandoned</b> — a pull request closed without being merged.</li>
 </ul>
-<p>La barre de gauche suit le même ordre que le regard : Chantiers, Capacités, Écarts, Parcours, Mémoire des tests. Ces cinq pages sont celles qu'on pilote, et elles se lisent dans cet ordre.</p>
-<p>Sous la rubrique « Comment ça tourne » se rangent les quatre pages de plomberie : la vue d'ensemble des tests, le banc d'essai, les déclencheurs et l'historique. On les ouvre quand on doute d'un chiffre, pas tous les jours.</p>
-<p>Sur une carte de PR, la pastille CI dit si ses contrôles sont verts, rouges ou en cours. « CI verte » ne veut pas dire « relue » : une PR se merge après relecture ET contrôles verts.</p>`,
+<p>The left bar follows the same order as the eye: Work in flight, Capabilities, Gaps, Journeys, Test memory. Those five pages are the ones you steer with, and they read in that order.</p>
+<p>Under the "How it runs" heading sit the four plumbing pages: the test overview, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
+<p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>De GitHub, par <code>gh issue list</code> et <code>gh pr list</code>, au moment de la collecte. Les étiquettes du dépôt sont les seules qui comptent : <code>décision</code>, <code>test</code>, <code>sécurité</code>, <code>dette</code>, <code>coût</code>, <code>produit</code>.</p>
-<p>Si GitHub ne répond pas, le tableau dit « absent » plutôt que d'afficher une liste vide ou périmée — une absence n'est jamais peinte en zéro.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>From GitHub, through <code>gh issue list</code> and <code>gh pr list</code>, at collection time. Only the repository's own labels count: <code>decision</code>, <code>test</code>, <code>security</code>, <code>debt</code>, <code>cost</code>, <code>product</code>.</p>
+<p>If GitHub does not answer, the board says "missing" rather than showing an empty or stale list — an absence is never painted as a zero.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p><b>À faire</b> est ta colonne : chaque carte y attend quelque chose de toi. <b>En review</b> est celle de la relecture (Codex) puis du merge. <b>En cours</b> qui grossit sans PR en face, c'est du travail qui n'avance pas. <b>À tester</b> qui stagne, ce sont des doutes qu'on a cessé de trancher.</p>`,
+        titre: 'When to act',
+        texte: `<p><b>To do</b> is your column: every card there is waiting on something from you. <b>In review</b> belongs to the reviewer (Codex) and then to the merge. <b>In progress</b> growing with no pull request facing it is work that is not moving. <b>To test</b> going stale means doubts we have stopped settling.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Ni la priorité entre deux cartes d'une même colonne, ni le temps passé. Une carte « En cours » ne dit pas si quelqu'un y travaille réellement — seulement qu'elle n'est ni tranchée, ni portée par une PR, ni fermée.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Neither the priority between two cards in the same column, nor the time spent. An "In progress" card does not say whether anyone is actually working on it — only that it is neither settled, nor carried by a pull request, nor closed.</p>`,
       },
     ],
     blocs: {},
   },
 
   capacites: {
-    titre: 'Ce que le produit sait faire',
+    titre: 'What the product can do',
     enBref:
-      "La seule page qui parle du PRODUIT et non du code : une ligne par chose qu'un utilisateur croit pouvoir faire (créer un agent, connecter Notion, approuver une action…), et ce qui le prouve — à deux niveaux, l'écran et le moteur. Elle ne rend pas un verdict : elle dit quelles preuves existent et ce que la dernière mesure en a dit.",
+      'The only page that talks about the PRODUCT rather than the code: one row per thing a user believes they can do (create an agent, connect Notion, approve an action…), and what proves it — at two levels, the screen and the engine. It hands down no verdict: it says which proofs exist and what the last measurement said about them.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>« <code>apps/web</code> est couvert à 78 % » ne répond à aucune question qu'on se pose vraiment. « Un utilisateur peut-il connecter Notion ce matin, et qu'est-ce qui le montre ? » — si. Cette page relie chaque capacité du produit aux tests qui la prouvent.</p>
-<p>Elle rendait un mot jusqu'au 12/09 — « prouvée », « cassée » — et ce mot mentait par omission. « Donner des outils » s'affichait <i>prouvée</i> parce que trois parcours de NAVIGATEUR passaient ; les tests qui prouvent la promesse (un agent ne peut appeler que les outils qu'on lui a donnés) n'étaient étiquetés nulle part. Et <i>cassée</i> ne disait pas si c'était le produit ou le navigateur qui avait lâché.</p>
-<p>C'est ce qu'un responsable produit appelle une <i>matrice de traçabilité</i> : le lien entre ce qu'on promet et ce qu'on vérifie. La plupart des équipes ne l'ont pas, et découvrent une promesse rompue quand un utilisateur s'en plaint.</p>`,
+        titre: "What it's for",
+        texte: `<p>"<code>apps/web</code> is 78% covered" answers no question anyone actually asks. "Can a user connect Notion this morning, and what shows it?" — that one does. This page ties every product capability to the tests that prove it.</p>
+<p>It handed down a single word until 12/09 — "proven", "broken" — and that word lied by omission. "Give tools" showed as <i>proven</i> because three BROWSER journeys passed; the tests that prove the promise (an agent can only call the tools it was given) were labelled nowhere. And <i>broken</i> did not say whether it was the product or the browser that had given up.</p>
+<p>This is what a product manager calls a <i>traceability matrix</i>: the link between what we promise and what we verify. Most teams do not have one, and find out a promise is broken when a user complains.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Deux colonnes par capacité, et elles ne prouvent pas la même chose :</p>
+        titre: 'How to read it',
+        texte: `<p>Two columns per capability, and they do not prove the same thing:</p>
 <ul>
-<li><b>Écran</b> — un parcours dans un vrai navigateur, ou un test de composant. Il prouve que les boutons existent, qu'ils s'enchaînent, et que la page affiche ce qu'il faut. Il ne prouve PAS que quoi que ce soit se passe derrière : un écran peut être vert devant un moteur débranché.</li>
-<li><b>Moteur</b> — un test du runner, des outils, de l'orchestration ou de la base. Il prouve que la chose promise EST FAITE : que l'outil hors liste est refusé, que la mémoire est relue, que l'approbation bloque vraiment. Il ne prouve PAS qu'un utilisateur sait y arriver : un moteur parfait derrière un bouton introuvable ne sert à personne.</li>
+<li><b>Screen</b> — a journey in a real browser, or a component test. It proves the buttons exist, that they chain together, and that the page shows what it should. It does NOT prove anything happens behind: a screen can be green in front of an unplugged engine.</li>
+<li><b>Engine</b> — a test of the runner, the tools, the orchestration or the database. It proves the promised thing IS DONE: that a tool off the list is refused, that memory is read back, that approval really blocks. It does NOT prove a user can get there: a perfect engine behind an unfindable button serves nobody.</li>
 </ul>
-<p>D'où la règle : <b>une capacité n'est vraiment vérifiée que si les deux existent et passent</b>. Un seul niveau vert est une moitié de réponse, et la page le dit en toutes lettres plutôt que de l'arrondir.</p>
-<p>Dans chaque colonne, un résultat et rien d'autre : <b>passé</b>, <b>échoué</b>, <b>instable</b> (vert et rouge selon les jours), <b>ignoré</b> (quelqu'un l'a sauté, on peut le rouvrir), <b>jamais joué</b> (le test existe, aucune exécution ne l'a atteint), <b>non testé</b> (personne n'a écrit ce niveau). Sous le résultat, les tests qui le portent ; au-delà de trois, le reste se déplie.</p>
-<p><b>Le rouge n'apparaît que sur une preuve qui a ÉCHOUÉ.</b> Une absence est grise, et elle est dite : la peindre en rouge enverrait chercher une panne là où personne n'a écrit de test.</p>
-<p>Sous le nom de la capacité, une phrase résume la ligne — « écran passé · moteur non testé ». C'est deux faits, jamais un verdict.</p>`,
+<p>Hence the rule: <b>a capability is only truly verified if both exist and pass</b>. A single green level is half an answer, and the page says so in plain words instead of rounding it up.</p>
+<p>In each column, a result and nothing else: <b>passed</b>, <b>failed</b>, <b>flaky</b> (green or red depending on the day), <b>skipped</b> (someone turned it off, it can be turned back on), <b>never run</b> (the test exists, no run has reached it), <b>not tested</b> (nobody wrote that level). Under the result, the tests that carry it; past three, the rest unfolds.</p>
+<p><b>Red only ever appears on a proof that FAILED.</b> An absence is grey, and it is said out loud: painting it red would send someone hunting a fault where nobody wrote a test.</p>
+<p>Under the capability name, one sentence sums the row up — "screen passed · engine not tested". That is two facts, never a verdict.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>Le registre des capacités est le fichier <code>apps/qa/capacites.mjs</code> — 24 lignes, chacune avec la question que l'utilisateur se pose. Il est DÉRIVÉ des parcours et des écrans réels, jamais imaginé.</p>
-<p>Un test dit ce qu'il prouve, et à quel niveau, en écrivant <code>@cap:&lt;slug&gt;/ecran</code> ou <code>@cap:&lt;slug&gt;/moteur</code> dans son titre. Posée sur un <code>describe</code>, l'étiquette vaut pour tous ses cas. Le portail lit les TITRES des tests versionnés (jamais un commentaire, jamais une chaîne), puis croise avec les résultats de la dernière mesure pour dire si la preuve a tourné, et comment.</p>
-<p>Une étiquette écrite sans niveau (l'ancienne forme, <code>@cap:&lt;slug&gt;</code>) est encore lue, mais elle ne compte pour aucune des deux colonnes : la ranger d'office dans « écran » peindrait en vert un moteur que personne n'a testé. Elle est affichée à part, sous la ligne, et la porte la signale — c'est temporaire.</p>
-<p>Quand une capacité n'a aucun test moteur, le registre porte en une phrase ce qu'un tel test <i>devrait</i> vérifier. C'est le plan de travail, écrit là où il se lit.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>The capability registry is the file <code>apps/qa/capacites.mjs</code> — 24 rows, each with the question the user asks. It is DERIVED from the real journeys and screens, never imagined.</p>
+<p>A test says what it proves, and at which level, by writing <code>@cap:&lt;slug&gt;/ecran</code> or <code>@cap:&lt;slug&gt;/moteur</code> in its title. Placed on a <code>describe</code>, the label holds for every case inside it. The portal reads the TITLES of the versioned tests (never a comment, never a string), then crosses them with the results of the last measurement to say whether the proof ran, and how.</p>
+<p>A label written without a level (the old form, <code>@cap:&lt;slug&gt;</code>) is still read, but it counts for neither column: filing it under "screen" by default would paint an engine green that nobody tested. It is shown separately, under the row, and the gate flags it — this is temporary.</p>
+<p>When a capability has no engine test, the registry carries in one sentence what such a test <i>should</i> check. That is the plan of work, written where it gets read.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Une <b>preuve échouée</b> passe avant tout le reste, et le niveau dit quoi chercher : un ÉCRAN tombé, c'est le parcours qui ne s'enchaîne plus — souvent un sélecteur, parfois l'environnement du navigateur ; un MOTEUR tombé, c'est la chose promise qui n'est plus faite, et là un utilisateur est vraiment touché.</p>
-<p>Une capacité <b>sans preuve moteur</b> est le trou que l'ancien mot cachait : on vérifie la façade tous les jours sans jamais vérifier ce qu'il y a derrière. Ce n'est pas une panne, c'est un test à écrire. Une capacité <b>sans aucune preuve</b> est une promesse à prouver — ou à retirer du registre si elle n'existe plus.</p>
-<p>La porte <code>pnpm capacites:check</code> tourne sur chaque PR et refuse deux choses : une étiquette qui ne désigne aucune capacité (une faute de frappe, un slug renommé), et une capacité exigée que plus aucun test ne revendique. Elle SIGNALE sans bloquer une étiquette sans niveau. Elle ne juge aucun résultat — ça, c'est la mesure nocturne.</p>`,
+        titre: 'When to act',
+        texte: `<p>A <b>failed proof</b> comes before everything else, and the level says what to look for: a fallen SCREEN means the journey no longer chains — often a selector, sometimes the browser environment; a fallen ENGINE means the promised thing is no longer done, and there a user is really hurt.</p>
+<p>A capability <b>with no engine proof</b> is the hole the old word hid: we check the façade every day without ever checking what is behind it. That is not a fault, it is a test to write. A capability <b>with no proof at all</b> is a promise to prove — or to drop from the registry if it no longer exists.</p>
+<p>The gate <code>pnpm capacites:check</code> runs on every pull request and refuses two things: a label that names no capability (a typo, a renamed slug), and a required capability no test claims any more. It FLAGS without blocking a label with no level. It judges no result — that is the nightly measurement's job.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Qu'un test qui passe prouve BIEN la capacité. <b>Un test vert vérifie ce que ce test vérifie, pas la promesse entière.</b> Un parcours d'écran peut porter l'étiquette et ne cliquer qu'un bouton ; un test moteur peut vérifier une fonction et manquer le chemin par lequel le produit l'appelle. Deux niveaux verts réduisent le mensonge, ils ne le suppriment pas : la qualité d'une preuve reste une question de relecture, pas de portail.</p>
-<p>Elle ne dit pas non plus que les deux niveaux se valent. Ils répondent à deux questions différentes, et aucune ne remplace l'autre.</p>
-<p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>That a passing test really proves the capability. <b>A green test verifies what that test verifies, not the whole promise.</b> A screen journey can carry the label and click a single button; an engine test can check a function and miss the path the product calls it through. Two green levels shrink the lie, they do not remove it: the quality of a proof stays a matter of review, not of portal.</p>
+<p>It does not say the two levels are worth the same either. They answer two different questions, and neither replaces the other.</p>
+<p>The "see the run" link leads to the GitHub Actions run that saw this red. There you find the full log of the journey, and the <code>parcours-en-echec</code> artifact: Playwright's traces and screenshots, that is, what the user would have seen the moment it broke. Playwright takes a screenshot ONLY ON FAILURE, and a trace only when it retries a fallen test: on a green test there is nothing to look at. You do not find the cause there either — the link shows the symptom, it does not explain it — and the artifact is kept fourteen days, after which the link leads to the run without its pieces.</p>`,
       },
     ],
     blocs: {
       compteurs:
-        "Chaque carte dit un FAIT, pas un verdict. « Preuves échouées » est la seule qui parle d'une panne ; les trois autres comptent des preuves qui n'ont jamais été écrites — un plan de travail, pas une alarme.",
+        'Each card states a FACT, not a verdict. "Failed proofs" is the only one that talks about a fault; the other three count proofs nobody ever wrote — a plan of work, not an alarm.',
       registre:
-        "Une ligne par capacité, groupée par domaine du produit. Deux colonnes : ce que l'ÉCRAN a dit, ce que le MOTEUR a dit. Sous chaque résultat, les tests qui le portent.",
+        'One row per capability, grouped by product domain. Two columns: what the SCREEN said, what the ENGINE said. Under each result, the tests that carry it.',
     },
   },
 
   vue: {
-    titre: "Tests — vue d'ensemble",
+    titre: 'Tests — overview',
     enBref:
-      "Combien de tests le dépôt porte, quelle part du code ils exercent réellement, et combien de scénarios utilisateur la CI joue vraiment. C'est la page « santé du code » — utile à l'ingénieur, moins parlante pour le produit (pour ça, voir Capacités).",
+      'How many tests the repository carries, how much of the code they actually exercise, and how many user journeys the CI really plays. This is the "code health" page — useful to an engineer, less telling for the product (for that, see Capabilities).',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>À savoir si le filet de sécurité existe, et où il a des trous. Un dépôt peut avoir des milliers de tests et laisser 40 % de son code sans aucun test qui le traverse. Cette page le mesure au lieu de le supposer.</p>`,
+        titre: "What it's for",
+        texte: `<p>Knowing whether the safety net exists, and where it has holes. A repository can hold thousands of tests and still leave 40% of its code with no test going through it. This page measures that instead of assuming it.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p><b>Couverture des lignes</b> : sur 100 lignes de code, combien au moins un test a exécutées. 81 % veut dire que 19 lignes sur 100 ne sont traversées par aucun test — si l'une d'elles casse, rien ne le dira avant un utilisateur. Ce n'est PAS « 81 % du code est correct » : une ligne exécutée par un test peut être fausse si le test ne vérifie pas le bon résultat.</p>
-<p>Sous la jauge, une phrase dit où va ce chiffre : « en hausse de 2 points sur 7 jours », « en baisse », ou « stable ». Sept jours, parce que la question sous ce chiffre est « est-ce qu'on vient d'ajouter du code sans test », pas « où en était-on ce mois-ci ». Il faut deux collectes dans la semaine pour qu'une tendance existe ; sinon la phrase le dit et n'invente rien. L'historique complet, sur 30 jours et en courbes, est dans la page Historique.</p>
-<p><b>Branches</b> : à chaque « si », il y a deux chemins ; ce pourcentage dit combien des deux ont été empruntés par un test. Toujours plus bas que les lignes, et plus honnête.</p>
-<p><b>Cas de test</b> : le nombre de <code>it(…)</code> dans le dépôt. Un chiffre de vanité s'il est seul — il ne dit rien de ce qu'ils vérifient.</p>
-<p><b>Parcours joués par la CI</b> : les scénarios bout en bout (un vrai navigateur, une vraie page) que l'intégration continue exécute réellement. C'est le chiffre qui a fait construire ce portail : 28 sur 30 n'étaient jamais joués.</p>
-<p>Le tableau par paquet est trié par lignes NON couvertes : ce qui est en haut est ce qui coûte le plus à ignorer. Un paquet hachuré n'a pas zéro, il n'a rien — il n'a jamais été mesuré.</p>`,
+        titre: 'How to read it',
+        texte: `<p><b>Line coverage</b>: out of 100 lines of code, how many at least one test executed. 81% means 19 lines out of 100 are crossed by no test — if one of them breaks, nothing will say so before a user does. It is NOT "81% of the code is correct": a line run by a test can still be wrong if the test does not check the right result.</p>
+<p>Under the gauge, one sentence says where that number is going: "up 2 points over 7 days", "down", or "stable". Seven days, because the question under that number is "did we just add code without tests", not "where were we this month". Two collections in the week are needed for a trend to exist; otherwise the sentence says so and invents nothing. The full history, over 30 days and as curves, is on the History page.</p>
+<p><b>Branches</b>: at every "if" there are two paths; this percentage says how many of the two a test took. Always lower than lines, and more honest.</p>
+<p><b>Test cases</b>: the number of <code>it(…)</code> in the repository. A vanity number on its own — it says nothing about what they check.</p>
+<p><b>Journeys played by the CI</b>: the end-to-end scenarios (a real browser, a real page) that continuous integration actually runs. This is the number that got this portal built: 28 out of 30 were never played.</p>
+<p>The per-package table is sorted by UNCOVERED lines: what sits on top is what costs the most to ignore. A hatched package does not have zero, it has nothing — it was never measured.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>La mesure nocturne lance les tests de chaque paquet avec l'instrumentation de couverture (<code>vitest --coverage</code>, moteur V8), paquet par paquet — jamais tous ensemble, chacun porte son environnement. Chaque paquet écrit un résumé ; le collecteur les additionne. La couverture n'a JAMAIS pu tourner avant le 10/09/2026 : elle était déclarée et son outil n'était installé nulle part.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>The nightly measurement runs each package's tests with coverage instrumentation (<code>vitest --coverage</code>, V8 engine), package by package — never all together, each carries its own environment. Every package writes a summary; the collector adds them up. Coverage could NEVER run before 10/09/2026: it was declared and its tool was installed nowhere.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Quand un paquet que TOUT LE MONDE traverse est bas : <code>nodal-agents</code> (le CLI, 50 %) est celui qui installe et démarre le produit — chaque utilisateur passe par ce code. Un paquet à 60 % qui ne fait que du rendu de cartes est moins urgent.</p>
-<p>Une couverture qui BAISSE entre deux mesures (voir Historique) dit qu'on a ajouté du code sans test. Ce n'est pas une alerte, c'est une tendance à regarder.</p>`,
+        titre: 'When to act',
+        texte: `<p>When a package EVERYBODY goes through sits low: <code>nodal-agents</code> (the CLI, 50%) is the one that installs and starts the product — every user goes through that code. A package at 60% that only renders cards is less urgent.</p>
+<p>Coverage that DROPS between two measurements (see History) says code was added without tests. That is not an alert, it is a trend to watch.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Si les tests vérifient quelque chose d'utile. Un test qui appelle une fonction et ne regarde pas le résultat couvre des lignes et ne prouve rien. C'est pour ça que la règle du dépôt exige d'asserter sur le résultat réel — une règle de relecture, pas de portail.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Whether the tests check anything useful. A test that calls a function and does not look at the result covers lines and proves nothing. That is why the repository's rule demands asserting on the real result — a review rule, not a portal one.</p>`,
       },
     ],
     blocs: {
       cartes:
-        'Quatre chiffres : la part du code traversée par un test, le nombre de tests, la part des scénarios utilisateur que la CI joue, et le nombre de sections du banc. Le premier ne vaut que pour les paquets mesurés.',
+        'Four numbers: the share of code a test goes through, the number of tests, the share of user scenarios the CI plays, and the number of bench sections. The first one only holds for the measured packages.',
       paquets:
-        'Un paquet = un dossier du dépôt avec son propre code (le runner, le web, les outils…). Trié par ce qui coûte le plus à ignorer : les lignes que personne ne teste.',
+        'A package = a folder of the repository with its own code (the runner, the web app, the tools…). Sorted by what costs the most to ignore: the lines nobody tests.',
     },
   },
 
   ecarts: {
-    titre: 'Écarts',
+    titre: 'Gaps',
     enBref:
-      "Ce que la mesure du jour reproche au dépôt, classé par gravité. Cette liste est CALCULÉE à partir des autres pages, jamais rédigée : elle change quand le dépôt change. C'est la page à lire quand on n'a qu'une minute.",
+      "What today's measurement holds against the repository, sorted by severity. This list is COMPUTED from the other pages, never written by hand: it changes when the repository changes. It is the page to read when you only have a minute.",
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>Un portail qui affiche vingt tableaux ne dit pas par quoi commencer. Cette page le dit : elle prend tout ce que les autres pages mesurent, garde ce qui est anormal, et le range par ce que ça coûte de l'ignorer.</p>`,
+        titre: "What it's for",
+        texte: `<p>A portal that shows twenty tables does not say where to start. This page does: it takes everything the other pages measure, keeps what is abnormal, and sorts it by what ignoring it costs.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Trois gravités :</p>
+        titre: 'How to read it',
+        texte: `<p>Three severities:</p>
 <ul>
-<li><b>Haute</b> — quelque chose est cassé ou passé au rouge : une capacité exigée cassée, un test tombé au rouge dans les deux derniers jours, une section du banc qui a régressé ou n'a pas pu tourner, des parcours que la CI ne joue jamais. C'est ce qui réveille quelqu'un : la mesure nocturne ouvre UNE issue (« Portail : ce qui est rouge ») avec exactement ces lignes, la tient à jour, et la ferme quand il n'y a plus rien.</li>
-<li><b>Moyenne</b> — une preuve qui dort, un test instable. Rien n'est cassé, mais on ne sait pas.</li>
-<li><b>Basse</b> — un plan de travail : les capacités jamais prouvées, un historique trop court. Ça ne bouge que lentement.</li>
+<li><b>High</b> — something is broken or has turned red: a required capability down, a test that turned red in the last two days, a bench section that regressed or could not run, journeys the CI never plays. This is what wakes someone up: the nightly measurement opens ONE issue ("Portal: what is red") with exactly these lines, keeps it up to date, and closes it when there is nothing left.</li>
+<li><b>Medium</b> — a sleeping proof, a flaky test. Nothing is broken, but we do not know.</li>
+<li><b>Low</b> — a plan of work: capabilities never proven, a history that is too short. It only moves slowly.</li>
 </ul>
-<p>Chaque écart nomme ce qu'il concerne (les tests, les capacités, les paquets) : c'est par là qu'on va sur la page de détail.</p>`,
+<p>Every gap names what it concerns (the tests, the capabilities, the packages): that is the way through to the detail page.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>De la fonction <code>ecartsDe</code> dans <code>apps/qa/lib.mjs</code>, qui relit la collecte : le registre des capacités, la mémoire des tests, le rapport du banc, les parcours et les paquets. Elle est testée — chaque règle a un test qui dit quel cas réel l'a motivée.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>From the <code>ecartsDe</code> function in <code>apps/qa/lib.mjs</code>, which re-reads the collection: the capability registry, the test memory, the bench report, the journeys and the packages. It is tested — every rule has a test that says which real case motivated it.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Une gravité <b>haute</b> se traite dans la journée, ou se requalifie explicitement (une issue qui dit pourquoi on attend). Le reste se traite dans l'ordre affiché. Une liste qui ne bouge pas d'une semaine dit qu'on a cessé de la lire.</p>`,
+        titre: 'When to act',
+        texte: `<p>A <b>high</b> severity is dealt with the same day, or explicitly requalified (an issue that says why we are waiting). The rest is handled in the order shown. A list that has not moved in a week says we have stopped reading it.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Pourquoi quelque chose est cassé. L'écart nomme le test ; la raison est dans son rapport d'exécution, sur GitHub Actions, ou en le rejouant en local.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Why something is broken. The gap names the test; the reason is in its run report, on GitHub Actions, or by replaying it locally.</p>`,
       },
     ],
     blocs: {},
   },
 
   parcours: {
-    titre: 'Parcours',
+    titre: 'Journeys',
     enBref:
-      "Les scénarios bout en bout : un vrai navigateur qui fait ce qu'un utilisateur ferait — ouvrir la page, créer un agent, connecter un service. C'est le filet le plus proche de l'usage réel, et le plus fragile.",
+      'The end-to-end scenarios: a real browser doing what a user would do — open the page, create an agent, connect a service. It is the net closest to real usage, and the most fragile.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>Un test unitaire vérifie une fonction ; un parcours vérifie que TOUT tient ensemble, comme le verrait un utilisateur. Une régression qui casse un écran ne se voit dans aucun test unitaire — elle se voit ici, ou chez l'utilisateur.</p>`,
+        titre: "What it's for",
+        texte: `<p>A unit test checks a function; a journey checks that EVERYTHING holds together, the way a user would see it. A regression that breaks a screen shows up in no unit test — it shows up here, or at the user's.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Les parcours sont groupés par <b>cadence</b> : à quelle fréquence la CI les joue.</p>
+        titre: 'How to read it',
+        texte: `<p>Journeys are grouped by <b>cadence</b>: how often the CI plays them.</p>
 <ul>
-<li><b>Chaque PR</b> — joué avant chaque merge : il BLOQUE une régression. Deux parcours seulement (la fumée).</li>
-<li><b>Chaque nuit</b> — joué par la mesure nocturne : il CONSTATE une régression après coup, sans la bloquer.</li>
-<li><b>À la main</b> — versionné, jamais joué par aucune CI. Il n'existe que sur le papier.</li>
+<li><b>Every pull request</b> — played before every merge: it BLOCKS a regression. Two journeys only (the smoke test).</li>
+<li><b>Every night</b> — played by the nightly measurement: it OBSERVES a regression after the fact, without blocking it.</li>
+<li><b>By hand</b> — versioned, played by no CI. It only exists on paper.</li>
 </ul>
-<p>Sous le nom du fichier, la <b>description</b> : la première phrase de son en-tête, celle que son auteur a écrite pour dire ce que le parcours fait. Quand le fichier n'en porte aucune, la ligne dit « aucune description » plutôt que rien — c'est une chose à corriger dans le fichier, pas dans le portail.</p>
-<p>Chaque ligne porte son dernier résultat, cas par cas : <b>vert</b>, <b>rouge</b>, <b>ignoré</b> (le test s'est désactivé lui-même — souvent parce qu'un service externe manque), <b>instable</b> (passé au second essai — ce n'est pas un vert). Un parcours « rouge » n'est pas forcément un défaut du produit : sur un runner neuf, sans Google ni Notion configurés, un parcours qui les attend échoue pour une raison d'environnement.</p>`,
+<p>Under the file name, the <b>description</b>: the first sentence of its header, the one its author wrote to say what the journey does. When the file carries none, the row says "no description" rather than nothing — that is something to fix in the file, not in the portal.</p>
+<p>Every row carries its last result, case by case: <b>green</b>, <b>red</b>, <b>skipped</b> (the test turned itself off — often because an external service is missing), <b>flaky</b> (passed on the second attempt — that is not a green). A "red" journey is not necessarily a product fault: on a fresh runner, with neither Google nor Notion configured, a journey that expects them fails for an environment reason.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>Des fichiers <code>apps/web/tests/e2e/*.spec.ts</code> (Playwright). La description est lue dans le fichier lui-même : le premier bloc de commentaire, imports mis à part, jusqu'à sa première ligne vide — les bandeaux décoratifs (<code>── Constants ───</code>) sont sautés, et à défaut d'en-tête c'est le titre du premier <code>describe</code>. La cadence est LUE dans les fichiers de workflow de la CI, pas déclarée : si personne ne lance un parcours, le portail le dit. Le dernier résultat vient du rapport JSON de Playwright, produit par la mesure nocturne qui joue 29 parcours sur 30 (<code>agent-flows</code> est exclu : il attend un LM Studio sur la machine de Quentin).</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>From the <code>apps/web/tests/e2e/*.spec.ts</code> files (Playwright). The description is read from the file itself: the first comment block, imports aside, up to its first blank line — decorative banners (<code>── Constants ───</code>) are skipped, and failing a header it is the title of the first <code>describe</code>. The cadence is READ from the CI workflow files, not declared: if nobody runs a journey, the portal says so. The last result comes from Playwright's JSON report, produced by the nightly measurement, which plays 29 journeys out of 30 (<code>agent-flows</code> is excluded: it expects an LM Studio on Quentin's machine).</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Un parcours rouge depuis peu (voir « Rouge depuis » dans la Mémoire des tests) est une régression à comprendre vite. Un parcours rouge depuis toujours sur le runner et vert en local est un écart d'environnement à trancher : soit le test doit se désactiver proprement quand le service manque, soit le runner doit avoir le service.</p>
-<p>La question de fond, ouverte : lesquels de ces parcours doivent passer de « chaque nuit » à « chaque PR », pour BLOQUER une régression au lieu de la constater ? Chaque promotion coûte des minutes de CI par PR.</p>`,
+        titre: 'When to act',
+        texte: `<p>A journey red for a short while (see "Red since" in Test memory) is a regression to understand fast. A journey red forever on the runner and green locally is an environment gap to settle: either the test must turn itself off cleanly when the service is missing, or the runner must have the service.</p>
+<p>The underlying question, still open: which of these journeys should move from "every night" to "every pull request", to BLOCK a regression instead of observing it? Every promotion costs CI minutes per pull request.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>La cause d'un rouge. Pour elle : le rapport Playwright du run (traces, captures), ou rejouer le parcours en local avec <code>pnpm --filter @nodal-agents/web exec playwright test &lt;fichier&gt;</code> sur une stack qui tourne.</p>
-<p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>The cause of a red. For that: the run's Playwright report (traces, screenshots), or replay the journey locally with <code>pnpm --filter @nodal-agents/web exec playwright test &lt;file&gt;</code> on a running stack.</p>
+<p>The "see the run" link leads to the GitHub Actions run that saw this red. There you find the full log of the journey, and the <code>parcours-en-echec</code> artifact: Playwright's traces and screenshots, that is, what the user would have seen the moment it broke. Playwright takes a screenshot ONLY ON FAILURE, and a trace only when it retries a fallen test: on a green test there is nothing to look at. You do not find the cause there either — the link shows the symptom, it does not explain it — and the artifact is kept fourteen days, after which the link leads to the run without its pieces.</p>`,
       },
     ],
     blocs: {
       cadence:
-        'Trois groupes par cadence : joué à chaque PR (bloque), chaque nuit (constate), à la main (jamais). Le dernier résultat est cas par cas — un parcours peut être en partie vert, en partie ignoré.',
+        'Three groups by cadence: played on every pull request (blocks), every night (observes), by hand (never). The last result is case by case — a journey can be partly green, partly skipped.',
     },
   },
 
   banc: {
-    titre: "Banc d'essai",
+    titre: 'Bench',
     enBref:
-      "Le banc ne demande pas « est-ce cassé ? » mais « qu'est-ce qui a CHANGÉ, et de combien » : la taille du prompt, le nombre de règles d'architecture, le coût d'un tour… Chaque mesure a une valeur de référence acceptée ; s'en écarter est une régression.",
+      'The bench does not ask "is it broken?" but "what CHANGED, and by how much": the size of the prompt, the number of architecture rules, the cost of a turn… Every measurement has an accepted reference value; drifting from it is a regression.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>Certaines choses ne sont ni vraies ni fausses, elles ont une VALEUR : le nombre de jetons d'un prompt, le nombre de fichiers qui violent une règle, la durée d'un démarrage. Un test ne sait pas les garder — il faudrait décider d'un seuil. Le banc garde la dernière valeur ACCEPTÉE et signale tout écart : c'est un détecteur de dérive.</p>
-<p>Exemple : le prompt système d'un tour de chat pesait 9 000 jetons. Sans banc, il aurait pu monter à 12 000 sans qu'aucun test rougisse.</p>`,
+        titre: "What it's for",
+        texte: `<p>Some things are neither true nor false, they have a VALUE: the token count of a prompt, the number of files breaking a rule, the duration of a startup. A test cannot guard those — it would have to pick a threshold. The bench keeps the last ACCEPTED value and flags any drift: it is a drift detector.</p>
+<p>Example: the system prompt of a chat turn weighed 9,000 tokens. Without a bench, it could have climbed to 12,000 without a single test turning red.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Une <b>section</b> = un sujet mesuré (architecture, catalogue, portes de sécurité, frontière de confiance…). Chaque section liste ses <b>métriques</b> avec la valeur de référence (la <i>baseline</i>), le commit où elle a été acceptée, et le sens souhaitable (plus bas = mieux, ou plus haut = mieux).</p>
-<p>Le bandeau du haut dit le verdict du dernier passage : aucune régression, ou la liste des sections qui ont <b>régressé</b> (une valeur a bougé dans le mauvais sens), ou qui n'ont <b>pas pu tourner</b> (une panne, pas un ralentissement — les deux ne se traitent pas pareil).</p>`,
+        titre: 'How to read it',
+        texte: `<p>A <b>section</b> = one measured subject (architecture, catalogue, security gates, trust boundary…). Each section lists its <b>metrics</b> with the reference value (the <i>baseline</i>), the commit where it was accepted, and the desirable direction (lower is better, or higher is better).</p>
+<p>The banner at the top gives the verdict of the last run: no regression, or the list of sections that <b>regressed</b> (a value moved the wrong way), or that <b>could not run</b> (a fault, not a slowdown — the two are not handled the same way).</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p><code>pnpm bench</code> (le paquet <code>packages/bench</code>) mesure chaque section et compare aux fichiers <code>bench/baselines/*.json</code>. La CI le lance sur chaque PR en porte bloquante ; la mesure nocturne le lance aussi et range son rapport pour cette page.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p><code>pnpm bench</code> (the <code>packages/bench</code> package) measures each section and compares against the <code>bench/baselines/*.json</code> files. The CI runs it on every pull request as a blocking gate; the nightly measurement runs it too and files its report for this page.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Une <b>régression</b> demande une décision : soit c'est un défaut (on corrige), soit c'est un changement assumé (on accepte la nouvelle valeur avec <code>pnpm bench --update</code>, et le commit explique pourquoi). Jamais l'un sans l'autre. Une section <b>en panne</b> se répare avant tout : elle ne garde plus rien.</p>`,
+        titre: 'When to act',
+        texte: `<p>A <b>regression</b> demands a decision: either it is a fault (we fix it), or it is a change we own (we accept the new value with <code>pnpm bench --update</code>, and the commit explains why). Never one without the other. A section <b>that is down</b> gets repaired before anything else: it guards nothing any more.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Si une valeur est BONNE. Le banc ne connaît que « pareil » et « différent ». Que 4 770 jetons soit un bon prix pour un tour de chat, c'est un jugement — le banc garde seulement qu'on ne remonte pas à 9 000 sans le dire.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Whether a value is GOOD. The bench only knows "same" and "different". That 4,770 tokens is a fair price for a chat turn is a judgement — the bench only keeps us from climbing back to 9,000 without saying so.</p>`,
       },
     ],
     blocs: {
       sections:
-        "Une carte par section mesurée. La baseline est la dernière valeur acceptée, avec le commit qui l'a acceptée : c'est contre elle que le prochain passage sera comparé.",
+        'One card per measured section. The baseline is the last accepted value, with the commit that accepted it: that is what the next run will be compared against.',
     },
   },
 
   ci: {
-    titre: 'Ce qui déclenche quoi',
+    titre: 'What triggers what',
     enBref:
-      "La réponse à « qu'est-ce qui lance les tests, et quand ». Lue dans les fichiers de workflow de GitHub Actions, pas dans une intention : si un parcours n'est nommé nulle part, personne ne le joue.",
+      'The answer to "what runs the tests, and when". Read from the GitHub Actions workflow files, not from an intention: if a journey is named nowhere, nobody plays it.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>Des tests qui existent mais que rien ne lance ne protègent de rien. Cette page dit, workflow par workflow, ce qui se déclenche (à chaque PR, à chaque push sur main, chaque nuit, ou à la main), ce que ça exécute, et si le banc en fait partie.</p>`,
+        titre: "What it's for",
+        texte: `<p>Tests that exist but that nothing runs protect nothing. This page says, workflow by workflow, what fires (on every pull request, on every push to main, every night, or by hand), what it runs, and whether the bench is part of it.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Un <b>workflow</b> = un fichier dans <code>.github/workflows/</code>, une liste d'étapes que GitHub exécute sur une machine neuve. Nodal en a quatre :</p>
+        titre: 'How to read it',
+        texte: `<p>A <b>workflow</b> = a file in <code>.github/workflows/</code>, a list of steps GitHub runs on a fresh machine. Nodal has four:</p>
 <ul>
-<li><b>CI</b> — à chaque PR et chaque push sur main : tests unitaires, architecture, banc, deux parcours de fumée, le paquet publié installé à blanc. C'est la porte : rouge = pas de merge.</li>
-<li><b>Qualité — mesure complète</b> — chaque nuit à 03:17 UTC (et à la main) : couverture des 34 paquets, banc, les 29 parcours, puis elle écrit ses données sur main et ouvre ou ferme l'issue d'alerte. C'est elle qui nourrit ce portail.</li>
-<li><b>Qualité — publier le portail</b> — après chaque mesure : rend ce site et le publie (Cloudflare Pages, dès que les secrets sont posés).</li>
-<li><b>Deploy Docs</b> — la documentation publique.</li>
+<li><b>CI</b> — on every pull request and every push to main: unit tests, architecture, bench, two smoke journeys, the published package installed from scratch. This is the gate: red = no merge.</li>
+<li><b>Quality — full measurement</b> — every night at 03:17 UTC (and by hand): coverage of the 34 packages, bench, the 29 journeys, then it writes its data to main and opens or closes the alert issue. This is what feeds this portal.</li>
+<li><b>Quality — publish the portal</b> — after every measurement: renders this site and publishes it (Cloudflare Pages, as soon as the secrets are in place).</li>
+<li><b>Deploy Docs</b> — the public documentation.</li>
 </ul>
-<p>Les <b>déclencheurs</b> sont les événements qui lancent le workflow ; les <b>jobs</b> ses parties parallèles ; « Parcours joués » les scénarios qu'il exécute nommément.</p>
-<p><b>Le prix d'une PR</b>, en tête de page, est le temps qu'on attend ses contrôles. Quatre chiffres :</p>
+<p>The <b>triggers</b> are the events that start the workflow; the <b>jobs</b> are its parallel parts; "Journeys played" the scenarios it runs by name.</p>
+<p><b>The price of a pull request</b>, at the top of the page, is how long you wait for its checks. Four numbers:</p>
 <ul>
-<li><b>Médiane</b> — la durée du milieu. Pas la moyenne : une exécution qui a attendu une heure dans la file tire une moyenne vers le haut et fait croire que c'est la normale. La médiane dit ce qui arrive une fois sur deux, et ne bouge pas d'un accident.</li>
-<li><b>Dernière</b> et <b>la pire</b> — le cas d'hier, et le cas extrême qu'on peut encore tomber.</li>
-<li><b>Tendance</b> — la première moitié des exécutions comparée à la seconde. Au-delà de 15 % d'écart, elle dit « monte » ou « descend » ; en dessous, « stable ».</li>
+<li><b>Median</b> — the middle duration. Not the mean: one run that waited an hour in the queue pulls a mean up and makes it look normal. The median says what happens one time out of two, and does not move for an accident.</li>
+<li><b>Last</b> and <b>worst</b> — yesterday's case, and the extreme case you can still hit.</li>
+<li><b>Trend</b> — the first half of the runs compared to the second. Past a 15% gap it says "up" or "down"; below that, "stable".</li>
 </ul>
-<p>La durée comptée est celle du <b>mur à mur</b> : de la création du run à sa fin, file d'attente comprise. C'est ce qu'on attend réellement, et pas la somme du temps de calcul des jobs, qui décrit ce que la CI consomme et pas ce qu'elle fait subir.</p>
-<p>Seules les exécutions <b>vertes</b> comptent. Une rouge s'arrête au premier contrôle qui tombe, souvent en trois minutes : les compter ferait baisser le chiffre chaque fois que la CI va mal, c'est-à-dire précisément quand on vient le regarder.</p>`,
+<p>The duration counted is <b>wall to wall</b>: from the run being created to its end, queue included. That is what you actually wait for, and not the sum of the jobs' compute time, which describes what the CI consumes and not what it puts you through.</p>
+<p>Only <b>green</b> runs count. A red one stops at the first check that falls, often in three minutes: counting them would lower the number every time the CI is in a bad way, which is exactly when you come to look at it.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>Du texte des fichiers de workflow, lu par le collecteur. Une première version cherchait un caractère invisible et affichait « à la main » pour tout — d'où les tests qui gardent cette lecture aujourd'hui.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>From the text of the workflow files, read by the collector. An early version looked for an invisible character and showed "by hand" for everything — hence the tests that guard this reading today.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Quand un workflow annonce une cadence que GitHub ne tient pas : la mesure nocturne n'a pas tourné d'elle-même les deux premières nuits (issue #69). Quand un parcours qu'on croit protecteur est « à la main ». Quand le banc n'est lancé par aucun workflow.</p>
-<p><b>Au-delà de 25 minutes de médiane</b>, la page ouvre un écart de gravité haute, et voici pourquoi ce seuil et pas un autre : sous un quart d'heure, on attend son merge sans y penser ; au-delà d'une vingtaine de minutes, on part faire autre chose et on revient. À partir de là, ce qui se raccourcit n'est jamais la machine — c'est le contenu de la CI. Quelqu'un retire une suite, met un test en <code>skip</code>, sort les parcours de la porte. Le coût d'une PR est donc l'indicateur avancé de la prochaine garde qu'on va perdre, et c'est à ce moment-là qu'il faut découper la CI ou la paralléliser, pendant qu'on a encore le choix.</p>
-<p><b>Une hausse de plus de 25 %</b> sur la fenêtre ouvre un écart moyen. Une dérive se répare tant qu'elle est petite ; installée, elle devient la normale que plus personne ne discute.</p>`,
+        titre: 'When to act',
+        texte: `<p>When a workflow announces a cadence GitHub does not keep: the nightly measurement did not run by itself the first two nights (issue #69). When a journey you believe protects you is "by hand". When the bench is run by no workflow.</p>
+<p><b>Past a 25-minute median</b>, the page opens a high-severity gap, and here is why that threshold and not another: under a quarter of an hour, you wait for your merge without thinking about it; past twenty minutes or so, you go do something else and come back. From there on, what gets shortened is never the machine — it is the content of the CI. Someone drops a suite, marks a test <code>skip</code>, takes the journeys out of the gate. The price of a pull request is therefore the leading indicator of the next guard we are about to lose, and that is the moment to split the CI or parallelise it, while there is still a choice.</p>
+<p><b>A rise of more than 25%</b> over the window opens a medium gap. A drift is repaired while it is small; once settled, it becomes the normal nobody argues with any more.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Si les workflows ont RÉELLEMENT tourné, ni leur résultat : ça, c'est l'onglet Actions de GitHub, et l'Historique de ce portail pour la mesure nocturne.</p>
-<p>Le prix, lui, ne dit pas OÙ passe le temps. Il mesure l'attente, jamais sa cause : une file d'attente GitHub saturée et une suite de tests qui a doublé donnent le même chiffre. Pour savoir laquelle des deux, il faut ouvrir un run et regarder la durée de ses jobs.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Whether the workflows ACTUALLY ran, nor their result: that is GitHub's Actions tab, and this portal's History for the nightly measurement.</p>
+<p>The price, for its part, does not say WHERE the time goes. It measures the wait, never its cause: a saturated GitHub queue and a test suite that doubled give the same number. To know which of the two, you have to open a run and look at its job durations.</p>`,
       },
     ],
     blocs: {
-      prix: "Le temps qu'on attend les contrôles d'une PR, sur les trente dernières exécutions vertes de la CI. C'est ce chiffre qui décide du sort des tests : quand l'attente devient insupportable, c'est la suite qu'on raccourcit.",
+      prix: "How long you wait for a pull request's checks, over the CI's last thirty green runs. It is this number that decides the fate of the tests: when the wait becomes unbearable, it is the suite that gets shortened.",
     },
   },
 
   memoire: {
-    titre: 'Mémoire des tests',
+    titre: 'Test memory',
     enBref:
-      "Un enregistrement par test, gardé d'une mesure à l'autre : combien de fois il a tourné, combien de fois il est tombé, depuis quand il est rouge. C'est la seule page qui voit le TEMPS — et donc l'instabilité, invisible dans une exécution isolée.",
+      'One record per test, kept from one measurement to the next: how many times it ran, how many times it fell, how long it has been red. It is the only page that sees TIME — and therefore flakiness, invisible in an isolated run.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>Un test qui tombe une fois sur trois est plus nuisible qu'un test cassé : il passe pour vert chaque fois qu'il passe, et fait douter de tous les rouges. Aucune exécution seule ne peut le voir. Il faut se souvenir des exécutions précédentes — c'est cette page.</p>
-<p>Elle sait aussi dater un problème : un test passé au rouge hier est une régression (quelque chose a bougé, et on sait quand) ; un test rouge depuis trois mois est une dette qu'on a appris à ne plus voir. Les deux ne se traitent pas pareil.</p>`,
+        titre: "What it's for",
+        texte: `<p>A test that falls one time in three is more harmful than a broken test: it passes for green every time it passes, and casts doubt on every red. No single run can see it. You have to remember the previous runs — that is this page.</p>
+<p>It can also date a problem: a test that turned red yesterday is a regression (something moved, and we know when); a test red for three months is a debt we have learned not to see. The two are not handled the same way.</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Quatre compteurs : <b>instables</b> (verts ET rouges dans leur fenêtre récente), <b>cassés</b> (rouges à leurs derniers passages), <b>suivis</b> (tous ceux qu'on a vus au moins une fois), et <b>réparé en (médiane)</b>.</p>
-<p><b>Réparé en (médiane) N jours</b> répond à « quand un test casse, combien de temps reste-t-il cassé ». Un dépôt avec vingt rouges réparés en un jour et un dépôt avec vingt rouges réparés en quarante ne sont pas du tout dans le même état, et le nombre de rouges ne fait pas la différence. Ne comptent que les réparations vues de bout en bout : le test était vert, on l'a vu tomber, on l'a vu revenir. Un test déjà rouge avant la première mesure n'a pas de point de départ, donc pas de durée.</p>
-<p>La <b>médiane</b> et pas la moyenne : c'est la valeur qui coupe les réparations en deux moitiés. Une seule réparation oubliée six mois tire une moyenne vers le haut et fait croire que c'est la normale ; la médiane ne bouge pas d'un accident. Tant qu'aucune réparation n'a été observée, la case affiche « — » : aucune absence n'est peinte en zéro.</p>
-<p>Dans les tableaux, le <b>ruban</b> se lit de gauche à droite, du plus ancien au plus récent : une lettre par passage, vert, rouge, ignoré, instable. <b>Taux</b> = échecs sur passages. <b>Rouge depuis</b> = la date où on l'a VU basculer de vert à rouge — jamais la date où on a commencé à regarder, sinon la première collecte aurait présenté vingt-deux rouges anciens comme des régressions du jour.</p>
-<p>Le premier tableau, « Les plus nuisibles », est trié par taux d'échec.</p>`,
+        titre: 'How to read it',
+        texte: `<p>Four counters: <b>flaky</b> (green AND red within their recent window), <b>broken</b> (red at their last runs), <b>tracked</b> (every one we have seen at least once), and <b>repaired in (median)</b>.</p>
+<p><b>Repaired in (median) N days</b> answers "when a test breaks, how long does it stay broken". A repository with twenty reds repaired in a day and one with twenty reds repaired in forty are not in the same state at all, and the number of reds does not tell them apart. Only repairs seen end to end count: the test was green, we saw it fall, we saw it come back. A test already red before the first measurement has no starting point, therefore no duration.</p>
+<p>The <b>median</b> and not the mean: it is the value that cuts the repairs into two halves. A single repair forgotten for six months pulls a mean up and makes it look normal; the median does not move for an accident. As long as no repair has been observed, the box shows "—": no absence is painted as a zero.</p>
+<p>In the tables, the <b>ribbon</b> reads left to right, oldest to newest: one letter per run, green, red, skipped, flaky. <b>Rate</b> = failures over runs. <b>Red since</b> = the date we SAW it flip from green to red — never the date we started looking, otherwise the first collection would have presented twenty-two old reds as regressions of the day.</p>
+<p>The first table, "The most harmful", is sorted by failure rate.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>Du fichier <code>apps/qa/data/tests.ndjson</code> — une ligne par test, écrit sur main par la mesure nocturne. Chaque mesure y fusionne ses résultats : un test revu avance ses compteurs, un test absent de la mesure ne bouge pas (il n'a pas tourné — compter un tour, ou pire un échec, ferait mentir tous les taux). Un test « instable » ici n'est pas le même mot qu'un parcours « instable » dans la page Parcours : là-bas c'est « passé au second essai dans la même exécution », ici c'est « vert un jour, rouge le lendemain ».</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>From the file <code>apps/qa/data/tests.ndjson</code> — one line per test, written to main by the nightly measurement. Every measurement merges its results into it: a test seen again advances its counters, a test absent from the measurement does not move (it did not run — counting a run, or worse a failure, would make every rate lie). A "flaky" test here is not the same word as a "flaky" journey on the Journeys page: over there it is "passed on the second attempt within the same run", here it is "green one day, red the next".</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Un <b>rouge frais</b> (dans les deux derniers jours) se comprend le jour même : c'est une régression datée. Un test <b>instable</b> se répare ou se retire — jamais ignoré, il empoisonne la confiance dans les autres.</p>
-<p>Au-delà de <b>14 jours</b>, la colonne « Âge » passe en rouge et la page Écarts nomme ces tests. Le seuil n'est pas une science : deux semaines, c'est le moment où plus personne ne se souvient de ce qui a cassé, et où un rouge cesse d'être une régression pour devenir une décision qu'on n'a pas prise. Ces lignes-là ne réveillent personne (elles ne bougent plus) mais elles sont nommées, sinon elles finissent invisibles à force d'être là. Deux issues seulement : réparer, ou supprimer le test avec la capacité qu'il prouvait.</p>
-<p>Cette page ne vaut rien les premiers jours : il lui faut plusieurs passages avant de savoir dire quoi que ce soit. Elle a commencé le 10/09/2026.</p>`,
+        titre: 'When to act',
+        texte: `<p>A <b>fresh red</b> (within the last two days) gets understood the same day: it is a dated regression. A <b>flaky</b> test gets repaired or removed — never ignored, it poisons trust in the others.</p>
+<p>Past <b>14 days</b>, the "Age" column turns red and the Gaps page names these tests. The threshold is not a science: two weeks is the moment when nobody remembers what broke any more, and when a red stops being a regression and becomes a decision we did not take. Those rows wake nobody up (they no longer move) but they are named, otherwise they end up invisible from sheer presence. Two ways out only: repair, or delete the test along with the capability it proved.</p>
+<p>This page is worth nothing in the first days: it needs several runs before it can say anything at all. It started on 10/09/2026.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Pourquoi un test est instable. Les causes habituelles : un délai trop court, un ordre d'exécution qui compte, un service externe qui répond parfois. Le portail nomme le test ; la cause se trouve en le rejouant.</p>
-<p>Le lien « voir le run » mène à l'exécution de GitHub Actions qui a vu ce rouge. On y trouve le journal complet du parcours, et l'artefact <code>parcours-en-echec</code> : les traces et les captures d'écran de Playwright, c'est-à-dire ce que l'utilisateur aurait vu à l'instant où ça a cassé. Playwright ne prend une capture QU'EN CAS D'ÉCHEC, et la trace seulement quand il rejoue un test tombé : sur un test vert, il n'y a rien à regarder. On n'y trouve pas non plus la cause — le lien montre le symptôme, il ne l'explique pas — et l'artefact est gardé quatorze jours, après quoi le lien mène au run sans ses pièces.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Why a test is flaky. The usual causes: a timeout too short, an execution order that matters, an external service that answers sometimes. The portal names the test; the cause is found by replaying it.</p>
+<p>The "see the run" link leads to the GitHub Actions run that saw this red. There you find the full log of the journey, and the <code>parcours-en-echec</code> artifact: Playwright's traces and screenshots, that is, what the user would have seen the moment it broke. Playwright takes a screenshot ONLY ON FAILURE, and a trace only when it retries a fallen test: on a green test there is nothing to look at. You do not find the cause there either — the link shows the symptom, it does not explain it — and the artifact is kept fourteen days, after which the link leads to the run without its pieces.</p>`,
       },
     ],
     blocs: {
       nuisibles:
-        "Les tests qui tombent le plus souvent par rapport à leurs passages. Un taux de 30 % sur dix passages est pire qu'un test toujours rouge : on ne sait jamais s'il faut le croire.",
+        'The tests that fall most often relative to their runs. A 30% rate over ten runs is worse than a test that is always red: you never know whether to believe it.',
       casses:
-        "Rouges à leurs derniers passages. « Rouge depuis » ne date que les bascules vues : un test rouge depuis avant la première mesure n'a pas de date, et c'est honnête. « Âge » compte les jours à la date de la collecte, pas à celle où tu ouvres la page ; au-delà de 14 jours il vire au rouge.",
+        'Red at their last runs. "Red since" only dates the flips we saw: a test red since before the first measurement has no date, and that is honest. "Age" counts the days as of the collection, not as of when you open the page; past 14 days it turns red.',
     },
   },
 
   historique: {
-    titre: 'Historique',
+    titre: 'History',
     enBref:
-      "Une ligne par collecte : quand, déclenchée par quoi, sur quel commit, avec quels grands chiffres. C'est ce qui rendra lisibles les TENDANCES — une couverture qui glisse, un nombre de tests qui stagne — et la régularité réelle de la mesure.",
+      'One line per collection: when, triggered by what, on which commit, with which headline numbers. This is what will make TRENDS readable — coverage sliding, a test count going flat — and the real regularity of the measurement.',
     parties: [
       {
-        titre: 'À quoi ça sert',
-        texte: `<p>Une photo ne dit pas si ça va mieux ou moins bien. Deux photos, si. Cette page garde chaque collecte pour que les autres pages puissent un jour dire « la couverture a perdu deux points cette semaine » au lieu de « la couverture est à 81 % ».</p>`,
+        titre: "What it's for",
+        texte: `<p>One snapshot does not say whether things are getting better or worse. Two do. This page keeps every collection so that the other pages can one day say "coverage lost two points this week" instead of "coverage is at 81%".</p>`,
       },
       {
-        titre: 'Comment le lire',
-        texte: `<p>Une ligne par collecte, la plus récente en haut. <b>Déclencheur</b> dit d'où elle vient : <code>schedule</code> (la nuit, toute seule), <code>workflow_dispatch</code> (lancée à la main sur GitHub), <code>local</code> (lancée sur un poste — ces lignes-là ne devraient pas être poussées sur main). <b>Commit</b> est ce qui a été mesuré. Les chiffres sont ceux de la Vue d'ensemble, figés à ce moment.</p>
-<p>Deux collectes par jour ou deux par semaine, ça se lit ici : c'est la régularité réelle, pas celle du cron.</p>
-<p>Les <b>trois courbes</b> en haut tracent les mêmes chiffres sur 30 jours : la couverture des lignes, les capacités prouvées (sur 24), les tests cassés. Le chiffre à côté du titre est le <b>delta</b> : la différence entre la première et la dernière collecte de la fenêtre. « +2,1 % » veut dire que la couverture a gagné 2,1 points sur la période, pas qu'elle vaut 2,1 %.</p>
-<p>L'axe vertical est à l'échelle des données, pas à partir de zéro : une variation de deux points de couverture est ce qu'on vient regarder, et partir de zéro la rendrait invisible. Avec une seule collecte dans la fenêtre, le point est dessiné et la courbe dit « pas encore de tendance » — deux photos font une tendance, une seule n'en fait pas.</p>`,
+        titre: 'How to read it',
+        texte: `<p>One line per collection, most recent on top. <b>Trigger</b> says where it came from: <code>schedule</code> (at night, on its own), <code>workflow_dispatch</code> (started by hand on GitHub), <code>local</code> (started on a workstation — those lines should not be pushed to main). <b>Commit</b> is what was measured. The numbers are the Overview's, frozen at that moment.</p>
+<p>Two collections a day or two a week reads right here: this is the real regularity, not the cron's.</p>
+<p>The <b>three curves</b> at the top plot the same numbers over 30 days: line coverage, proven capabilities (out of 24), broken tests. The number next to the title is the <b>delta</b>: the difference between the first and the last collection of the window. "+2.1%" means coverage gained 2.1 points over the period, not that it is worth 2.1%.</p>
+<p>The vertical axis is scaled to the data, not anchored at zero: a two-point coverage move is what you came to look at, and starting from zero would make it invisible. With a single collection in the window, the point is drawn and the curve says "no trend yet" — two snapshots make a trend, one does not.</p>`,
       },
       {
-        titre: "D'où ça vient",
-        texte: `<p>Du fichier <code>apps/qa/data/history.ndjson</code>, une ligne ajoutée à la fin de chaque collecte par <code>collect.mjs</code>.</p>
-<p>Les courbes en écartent deux choses. Les collectes <code>local</code> d'abord : lancées depuis un poste, sur un arbre qui n'est pas main et souvent sur une partie des tests seulement. Mélangées aux mesures nocturnes, elles font des décrochages qui ne correspondent à aucun changement du dépôt. Les valeurs absentes ensuite : une couverture qui n'a pas pu être mesurée n'est pas une couverture de zéro, et la tracer comme telle inventerait une chute. Le tableau, lui, montre tout, <code>local</code> compris.</p>`,
+        titre: 'Where it comes from',
+        texte: `<p>From the file <code>apps/qa/data/history.ndjson</code>, one line appended at the end of every collection by <code>collect.mjs</code>.</p>
+<p>The curves leave two things out. The <code>local</code> collections first: started from a workstation, on a tree that is not main and often on part of the tests only. Mixed in with the nightly measurements, they create drops that match no change in the repository. Missing values next: coverage that could not be measured is not coverage of zero, and plotting it as such would invent a fall. The table, for its part, shows everything, <code>local</code> included.</p>`,
       },
       {
-        titre: 'Quand agir',
-        texte: `<p>Quand les lignes <code>schedule</code> manquent : la mesure nocturne ne tourne pas. Quand un chiffre glisse plusieurs collectes de suite dans le mauvais sens : une couverture qui baisse, c'est du code ajouté sans test ; des capacités prouvées qui baissent, c'est une promesse du produit qui n'est plus tenue par aucun test joué. Un seul point de bascule ne veut rien dire, la pente de trois collectes si.</p>`,
+        titre: 'When to act',
+        texte: `<p>When the <code>schedule</code> lines are missing: the nightly measurement is not running. When a number slides several collections in a row the wrong way: coverage going down is code added without tests; proven capabilities going down is a product promise no longer held by any played test. A single flip means nothing, a slope over three collections does.</p>`,
       },
       {
-        titre: 'Ce que ça ne dit pas',
-        texte: `<p>Rien de plus fin qu'une collecte. Le détail test par test est dans la Mémoire des tests.</p>`,
+        titre: 'What it does not tell you',
+        texte: `<p>Anything finer than a collection. The test-by-test detail is in Test memory.</p>`,
       },
     ],
     blocs: {
       courbes:
-        "Les mêmes chiffres que la Vue d'ensemble, mais sur 30 jours. Le nombre à côté du titre est l'écart entre la première et la dernière collecte de la fenêtre. Les collectes lancées depuis un poste sont écartées : elles ne mesurent pas main.",
+        'The same numbers as the Overview, but over 30 days. The figure next to the title is the gap between the first and the last collection of the window. Collections started from a workstation are left out: they do not measure main.',
     },
   },
 };

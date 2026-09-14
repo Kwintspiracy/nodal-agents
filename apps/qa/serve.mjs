@@ -38,20 +38,20 @@ createServer((req, res) => {
   try {
     if (!cible.startsWith(ICI) || !existsSync(cible) || !statSync(cible).isFile()) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('introuvable');
+      res.end('not found');
       return;
     }
     contenu = readFileSync(cible);
   } catch (err) {
     // Fichier effacé entre le test et la lecture, permission refusée, disque
     // qui tousse : on répond 500 et on CONTINUE de servir.
-    console.error(`[qa] lecture impossible de ${url} :`, err);
+    console.error(`[qa] cannot read ${url}:`, err);
     res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('lecture impossible');
+    res.end('cannot read');
     return;
   }
   res.writeHead(200, { 'content-type': TYPES[extname(cible)] ?? 'application/octet-stream' });
   res.end(contenu);
 }).listen(PORT, () => {
-  console.log(`Portail qualité → http://localhost:${PORT}`);
+  console.log(`Quality portal → http://localhost:${PORT}`);
 });

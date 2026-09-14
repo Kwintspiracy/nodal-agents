@@ -24,16 +24,16 @@ const entrees = [...(bloc?.[1] ?? '').matchAll(/<(a|p)\s([^>]*)>([^<$]*)/g)]
 describe('la barre de gauche', () => {
   it('sépare les cinq pages de pilotage de la plomberie, dans cet ordre', () => {
     expect(entrees).toEqual([
-      { genre: 'lien', ancre: 'chantiers', libelle: 'Chantiers' },
-      { genre: 'lien', ancre: 'capacites', libelle: 'Capacités' },
-      { genre: 'lien', ancre: 'ecarts', libelle: 'Écarts' },
-      { genre: 'lien', ancre: 'parcours', libelle: 'Parcours' },
-      { genre: 'lien', ancre: 'memoire', libelle: 'Mémoire des tests' },
-      { genre: 'rubrique', ancre: null, libelle: 'Comment ça tourne' },
-      { genre: 'lien', ancre: 'vue', libelle: "Tests, vue d'ensemble" },
-      { genre: 'lien', ancre: 'banc', libelle: "Banc d'essai" },
-      { genre: 'lien', ancre: 'ci', libelle: 'Déclencheurs' },
-      { genre: 'lien', ancre: 'historique', libelle: 'Historique' },
+      { genre: 'lien', ancre: 'chantiers', libelle: 'Work in flight' },
+      { genre: 'lien', ancre: 'capacites', libelle: 'Capabilities' },
+      { genre: 'lien', ancre: 'ecarts', libelle: 'Gaps' },
+      { genre: 'lien', ancre: 'parcours', libelle: 'Journeys' },
+      { genre: 'lien', ancre: 'memoire', libelle: 'Test memory' },
+      { genre: 'rubrique', ancre: null, libelle: 'How it runs' },
+      { genre: 'lien', ancre: 'vue', libelle: 'Tests, overview' },
+      { genre: 'lien', ancre: 'banc', libelle: 'Bench' },
+      { genre: 'lien', ancre: 'ci', libelle: 'Triggers' },
+      { genre: 'lien', ancre: 'historique', libelle: 'History' },
     ]);
   });
 
