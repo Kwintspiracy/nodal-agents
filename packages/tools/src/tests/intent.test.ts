@@ -934,6 +934,32 @@ describe('un fichier créé est typé pour ce qu’il EST — « Créer, c’est
     ]);
   });
 
+  it('la carte porte la clé de l’état posé — le premier manifeste ne la fait pas disparaître', async () => {
+    // Revue Codex post-merge de la PR #66, constat C3. Le type était calculé
+    // DEUX fois : au hook, avant l'écriture, et dans `execute()`, après. Écrire
+    // le PREMIER `package.json` d'un dossier change la réponse entre les deux —
+    // avant, aucun manifeste, donc `document` ; après, le manifeste est là,
+    // donc `code_project`, et la carte repartait sans `deliverable_key`. La
+    // ligne d'état existait pourtant, sous la clé du fichier : l'écran ne
+    // pouvait plus la retrouver. Aucune concurrence n'est nécessaire.
+    await mkdir(join(ws, 'neuf'), { recursive: true });
+    const res = await executeTool(
+      fileWriteTool as never,
+      { path: 'neuf/package.json', content: '{"name":"neuf"}\n' },
+      ctx(),
+      opts,
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    const rows = await statesOf(jobId);
+    expect(rows).toHaveLength(1);
+    const state = rows[0]!;
+    const carte = (res as { output: { deliverable_key?: string } }).output;
+    expect([state.deliverableType, carte.deliverable_key]).toEqual([
+      state.deliverableType,
+      state.deliverableType === 'document' ? state.canonicalKey : undefined,
+    ]);
+  });
+
   it('un projet déclaré de DOCUMENTS ne fait pas de ses fichiers du code', async () => {
     await mkdir(join(ws, 'notes'), { recursive: true });
     await db.insert(codeProjects).values({
