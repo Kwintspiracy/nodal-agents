@@ -168,6 +168,25 @@ test.describe('Test B — Agent edit picks LLM provider @cap:choisir-modele/ecra
     await providerSelect.selectOption(other);
     await expect(providerSelect).toHaveValue(other);
 
+    // Le titre du cas dit « model field updates » : c'est APRÈS le basculement
+    // que ça se vérifie. La lecture ci-dessus a lieu avant, et prouve seulement
+    // que le formulaire s'ouvre rempli — le cas pouvait donc passer alors que
+    // changer de fournisseur vidait le modèle, l'exact défaut qu'il surveille.
+    await expect
+      .poll(
+        async () => {
+          const sel = modelControl.locator('select').first();
+          return (await sel.count())
+            ? await sel.inputValue()
+            : await modelControl.locator('input').first().inputValue();
+        },
+        {
+          timeout: 8_000,
+          message: 'le champ Model est resté vide après le changement de fournisseur',
+        },
+      )
+      .not.toBe('');
+
     await page.getByRole('button', { name: /save changes/i }).click();
     await expect(page.getByText(/agent updated/i)).toBeVisible({ timeout: 10_000 });
   });
