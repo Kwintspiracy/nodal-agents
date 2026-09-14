@@ -3,7 +3,12 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
-import { classifyPostgresProcesses, formatForeignSkip, parseProcessRows } from './orphans.ts';
+import {
+  formatForeignSkip,
+  ownedPostgresPids,
+  parseProcessRows,
+  type LockfileClaim,
+} from './orphans.ts';
 
 /** What a reading of the process table found — and whether it could read. */
 export interface ProcessTableReading {
@@ -24,6 +29,19 @@ export interface ProcessTableReading {
  * to carry the line is accepted as before, so nothing that worked stops.
  */
 export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
+  return readPostmasterClaim(dataDir)?.pid ?? null;
+}
+
+/**
+ * Everything `<dataDir>/postmaster.pid` claims: the pid on line 1 and the start
+ * time on line 3 (epoch SECONDS, written by the postmaster itself).
+ *
+ * The start time is what makes a RECYCLED pid detectable. A lockfile survives a
+ * crash, the OS hands its pid to somebody else, and nothing about that new
+ * process — not its name, not its path, not its ancestry — says it is not ours.
+ * Its creation date does: it will not match the moment the postmaster recorded.
+ */
+export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClaim | null {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return null;
   try {
@@ -37,7 +55,8 @@ export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
       );
       return null;
     }
-    return pid;
+    const seconds = Number.parseInt(lines[2]?.trim() ?? '', 10);
+    return { pid, startedAtSeconds: Number.isInteger(seconds) && seconds > 0 ? seconds : null };
   } catch {
     return null;
   }
@@ -91,16 +110,11 @@ export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
  * `read: false` rather than an empty list: "I could not look" and "there is
  * nothing there" are different facts, and only one of them licenses a kill.
  *
- * ONE way to recognise one of ours: the DATA DIR, read off the `-D` argument.
- * A `--forkchild="io_worker"` (PostgreSQL 18, seen live 2026-08-21 surviving a
- * crash with no data dir on its command line) is judged by its ancestry
- * instead — see `classifyPostgresProcesses`.
- *
- * The embedded binary path used to be accepted as a second proof, on the claim
- * that it points inside THIS install's node_modules. Two installs sharing one
- * node_modules — a junctioned worktree — make that false, and on 2026-09-14
- * the probe claimed, and killed, another install's postmaster (pid 41956,
- * listening on :25444). The path proves nothing; the data dir does.
+ * It ATTRIBUTES nothing. The rows it reads only CONFIRM what our own data
+ * directory already claims — see `ownedPostgresPids` for why the question runs
+ * that way round. Nothing here is decided from a command line: three passes of
+ * review found three different spellings of our path on a foreign cluster's
+ * command line, and on 2026-09-14 one of them cost a live database.
  */
 export async function postgresProcessesForDataDir(
   dataDir: string = PG_DATA_DIR,
@@ -116,12 +130,11 @@ export async function postgresProcessesForDataDir(
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        // CommandLine is where the -D <dataDir> argument lives. Matching on it
-        // is what ties a bare `postgres.exe` to OUR cluster rather than to some
-        // other Postgres the user runs.
-        // `CreationDate` tells one generation of a pid from the next (finding
-        // C4). It goes BEFORE the command line, the only field that may itself
-        // carry a `|`.
+        // `CreationDate` is the load-bearing field: it tells one generation of
+        // a pid from the next, which is the only thing that catches a pid the
+        // OS recycled onto a stranger. It goes BEFORE the command line, the one
+        // field that may itself carry a `|`. The command line is kept for the
+        // log line that says what was left alone — never to decide ownership.
         'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
           // `[datetime]'…Z'` parses as LOCAL time, so the epoch itself landed on
           // the wrong side of the offset: measured here, eight hours out
@@ -144,7 +157,12 @@ export async function postgresProcessesForDataDir(
       );
       return { read: false, owned: [] };
     }
-    const { owned, skipped } = classifyPostgresProcesses(parseProcessRows(stdout), dataDir);
+    const { owned, skipped } = ownedPostgresPids({
+      rows: parseProcessRows(stdout),
+      tableRead: true,
+      // The data directory answers; this table only confirms.
+      claim: readPostmasterClaim(dataDir),
+    });
     // Loud, not silent: a candidate left alone is reported with a code.
     for (const entry of skipped) process.stderr.write(`${formatForeignSkip(entry)}\n`);
     return { read: true, owned };
@@ -246,9 +264,33 @@ function quotePgLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise<boolean> {
-  const pidFile = join(dataDir, 'postmaster.pid');
-  if (!existsSync(pidFile)) return false;
+export async function stopOrphanPostgres(
+  decidedPid: number,
+  dataDir: string = PG_DATA_DIR,
+): Promise<boolean> {
+  // `pg_ctl stop` re-reads `postmaster.pid` and signals WHATEVER pid it finds
+  // there — it does not check line 2, and it knows nothing of what we decided.
+  // So the lockfile pid has to BE the pid we settled on; otherwise every guard
+  // in this file is bypassed by the stop itself, and a foreign postmaster named
+  // by a stale lockfile gets shut down (pass-3 finding R2). When they differ we
+  // do not call it at all: the caller stops the pid it decided, by signal.
+  const claim = readPostmasterClaim(dataDir);
+  if (claim === null || claim.pid !== decidedPid) {
+    process.stderr.write(
+      `PG_CTL_SKIPPED_LOCKFILE_MISMATCH decided=${decidedPid} lockfile=${String(claim?.pid ?? null)}\n`,
+    );
+    return false;
+  }
+  // `pg_ctl` refuses to run as root, and this CLI supports being run as root
+  // (the start path creates a dedicated account for the server). Calling it
+  // there fails with exit 1 before any signal is sent, so we do not pretend
+  // (pass-3 finding R4).
+  const asRoot =
+    process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
+  if (asRoot) {
+    process.stderr.write('PG_CTL_SKIPPED_ROOT — pg_ctl refuses to run as root\n');
+    return false;
+  }
   try {
     const binary = await resolvePgCtl();
     if (binary === null) {

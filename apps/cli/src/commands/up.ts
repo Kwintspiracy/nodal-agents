@@ -359,7 +359,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // name: a postmaster could stay alive while `up` announced "Orphans cleaned
     // up" and started a second server on the same data dir.
     const pgOrphans = orphans.filter((o) => o.name === 'postgres');
-    if (pgOrphans.length > 0) await stopOrphanPostgres();
+    // The graceful stop goes through the pid we DECIDED — `stopOrphanPostgres`
+    // refuses when the lockfile names anything else, because `pg_ctl` would
+    // signal that other pid instead of ours. When it refuses, or fails, the
+    // loop below stops each pid itself; the shared-memory section is then left
+    // to the postmaster's own exit, which is the risk we take knowingly rather
+    // than signalling a process we did not identify.
+    const postmasterPid = pgOrphans[0]?.pid;
+    if (postmasterPid !== undefined) await stopOrphanPostgres(postmasterPid);
     for (const pgOrphan of pgOrphans) {
       if (isPidAlive(pgOrphan.pid)) {
         try {

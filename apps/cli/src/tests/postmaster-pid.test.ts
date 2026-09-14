@@ -12,11 +12,16 @@
 // files and real PIDs — no mocks: the whole point is that the probe reads what
 // Postgres actually writes.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readPostmasterPid, livePostmasterPid, resolvePgCtl } from '../lib/postgres.ts';
+import {
+  readPostmasterPid,
+  livePostmasterPid,
+  resolvePgCtl,
+  stopOrphanPostgres,
+} from '../lib/postgres.ts';
 
 // PIDs this high aren't allocated on Windows or Linux in practice, so
 // kill(pid, 0) throws ESRCH.
@@ -146,5 +151,63 @@ describe('resolvePgCtl', () => {
     ).not.toBeNull();
     expect(existsSync(binary!)).toBe(true);
     expect(binary!.split('\\').join('/')).toMatch(/@embedded-postgres\/.+\/native\/bin\/pg_ctl/);
+  });
+});
+
+describe('stopOrphanPostgres — it stops the pid we DECIDED', () => {
+  // Codex review of PR #98, pass 3, finding R2. `pg_ctl stop` re-reads
+  // `postmaster.pid` and signals whatever pid it finds there — it checks no
+  // data directory and knows nothing of what we decided. A stale or copied
+  // lockfile naming a FOREIGN postmaster therefore got that postmaster shut
+  // down, bypassing every ownership guard in this file. It is not called at all
+  // unless the pid it would re-read is the one we settled on.
+  /**
+   * The refusal has to be distinguishable from `pg_ctl` merely failing — both
+   * return false. Only the CODE says which happened, so that is what is read:
+   * asserting the boolean alone let a mutation that removed the guard pass.
+   */
+  async function stopAndCapture(decided: number): Promise<{ ok: boolean; err: string }> {
+    let err = '';
+    const write = process.stderr.write.bind(process.stderr);
+    const spy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation((chunk: string | Uint8Array, ...rest: unknown[]) => {
+        err += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
+        return (write as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
+      });
+    try {
+      return { ok: await stopOrphanPostgres(decided, dataDir), err };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('refuses when the lockfile names a pid other than the decided one', async () => {
+    writePostmasterPid(31415);
+
+    const { ok, err } = await stopAndCapture(999_999);
+
+    expect(ok).toBe(false);
+    expect(err).toContain('PG_CTL_SKIPPED_LOCKFILE_MISMATCH decided=999999 lockfile=31415');
+    // And pg_ctl was never reached: no failure of its own is reported.
+    expect(err).not.toContain('PG_CTL_STOP_FAILED');
+  });
+
+  it('refuses when there is no lockfile at all — nothing to re-read, nothing to signal', async () => {
+    const { ok, err } = await stopAndCapture(31415);
+
+    expect(ok).toBe(false);
+    expect(err).toContain('PG_CTL_SKIPPED_LOCKFILE_MISMATCH decided=31415 lockfile=null');
+  });
+
+  it('calls pg_ctl when the lockfile names exactly the pid we decided', async () => {
+    writePostmasterPid(31415);
+
+    const { err } = await stopAndCapture(31415);
+
+    // The directory is not a real cluster, so pg_ctl refuses — which is the
+    // proof that it RAN. The mismatch guard did not fire.
+    expect(err).not.toContain('PG_CTL_SKIPPED');
+    expect(err).toContain('PG_CTL_STOP_FAILED');
   });
 });
