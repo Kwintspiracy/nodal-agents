@@ -342,6 +342,12 @@ describe('document — bien formé, selon son type', () => {
       ['tiret-cinq-espaces.md', '-     ~~~\n\n# vrai\n', 'green'],
       ['citation-puis-titre.md', '> ~~~\n> code\n\n# vrai\n', 'green'],
       ['liste-puis-titre.md', '- ~~~\n  code\n\n# vrai\n', 'green'],
+      // Depuis `remark-parse`, un titre indenté de trois espaces EST un titre :
+      // la règle « colonne zéro » était une prudence rendue inutile par un vrai
+      // parseur, et ce cas le prouve dans l'autre sens.
+      ['titre-indente-trois.md', '   # Titre\n\ncorps\n', 'green'],
+      // La profondeur compte : c'est le TITRE du document qui est demandé.
+      ['commence-par-h2.md', '## Details\n\ncorps\n', 'red'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
