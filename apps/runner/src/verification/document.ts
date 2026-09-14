@@ -90,11 +90,27 @@ type FormCheck = (text: string) => string | null;
  * qui est une liste puis une règle horizontale, jamais un titre. L'en-tête est
  * retiré avant de chercher ; la ligne soulignée ne peut pas commencer par un
  * marqueur de liste, de citation ou de titre.
+ *
+ * Deux autres trouvés par la revue Codex de la PR #66 (constat C5) :
+ *
+ * - la FIN DE LIGNE décidait. L'en-tête n'était retiré qu'en LF, donc le même
+ *   fichier écrit par un éditeur Windows passait au vert, sa deuxième ligne
+ *   lue comme un titre souligné. Le texte est ramené au LF avant toute chose :
+ *   une convention de fin de ligne n'est pas une propriété du document.
+ * - un `#` dans un BLOC DE CODE clôturé comptait comme titre. Un bloc clôturé
+ *   est un exemple — son contenu n'est pas le document, et un fichier qui ne
+ *   contient qu'un exemple n'a pas de titre. Les blocs sont retirés avant de
+ *   chercher ; un vrai titre hors du bloc compte toujours.
  */
 const markdownHasTitle: FormCheck = (text) => {
-  const body = text.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
-  if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(body)) return null;
-  if (/^[ \t]{0,3}(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n[ \t]{0,3}(=+|-+)[ \t]*$/m.test(body)) {
+  const lf = text.replace(/\r\n?/g, '\n');
+  const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
+  const prose = body.replace(
+    /^[ \t]{0,3}(```+|~~~+)[^\n]*\n[\s\S]*?(?:^[ \t]{0,3}\1[ \t]*(?:\n|$)|$)/gm,
+    '',
+  );
+  if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(prose)) return null;
+  if (/^[ \t]{0,3}(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n[ \t]{0,3}(=+|-+)[ \t]*$/m.test(prose)) {
     return null;
   }
   return 'no title: expected a heading (`# Title` or an underlined line)';
