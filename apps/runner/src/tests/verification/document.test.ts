@@ -326,6 +326,13 @@ describe('document — bien formé, selon son type', () => {
       ['deux-blocs.md', '```\na\n```\n```\nb\n```\n# vrai\n', 'green'],
       ['titre-entre-blocs.md', '```\na\n```\n# vrai\n```\nb\n```\n', 'green'],
       ['bloc-en-citation.md', '> ```\n> # faux\n> ```\n', 'red'],
+      // Passe 4, constat R3 : un bloc dans un élément de LISTE n'était pas vu
+      // du tout — son contenu passait pour de la prose, et sa clôture devenait
+      // une ouverture qui avalait le vrai titre plus bas. L'espace insécable,
+      // lui, était accepté comme fin de clôture par `trim()`.
+      ['bloc-en-liste.md', '- ~~~\n  # faux\n  ~~~\n', 'red'],
+      ['titre-apres-bloc-en-liste.md', '- ~~~\n  code\n  ~~~\n\n# vrai\n', 'green'],
+      ['cloture-nbsp.md', '~~~\ncode\n~~~\u00a0\n# faux\n', 'red'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
@@ -373,6 +380,12 @@ describe('document — bien formé, selon son type', () => {
         '<!DOCTYPE svg SYSTEM "urn:a>b" [<!ENTITY x "ok">]><svg>&x;</svg>',
         'green',
       ],
+      // Passe 4, constat R4 : trois façons de faire taire la plainte sans rien
+      // déclarer. Les noms XML sont sensibles à la casse, et une déclaration
+      // écrite dans un commentaire ou une section CDATA n'en est pas une.
+      ['entite-casse.svg', '<!DOCTYPE svg [<!ENTITY x "ok">]><svg>&X;</svg>', 'red'],
+      ['entite-commentaire.svg', '<!-- <!ENTITY x "ok"> --><svg>&x;</svg>', 'red'],
+      ['entite-cdata.svg', '<svg><![CDATA[<!ENTITY x "ok">]]>&x;</svg>', 'red'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
