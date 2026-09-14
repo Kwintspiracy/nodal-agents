@@ -30,6 +30,23 @@ Lire `git show 5c5e4101`, puis le code d'aujourd'hui :
    menteur le droit de déclarer comment on vérifie ce projet.
 5. Prouvé par le vrai `executeTool` dans `intent.test.ts`.
 
+## Déjà trouvé et corrigé — à relire aussi
+
+Les questions 6 et 7 (la symétrie des clés entre l'intention et l'observation)
+ne sont plus hypothétiques : le défaut existait, il a été MESURÉ en corrigeant le
+constat C4 de la revue de #66, et il est fermé sur cette branche.
+
+Ce qui se passait : un projet DÉCLARÉ sans manifeste donnait le bon TYPE mais
+une clé de sous-dossier. En câblant la déclaration dans l'intention seule, le
+test est reparti au rouge sur `produced` — le seam d'observation calculait
+encore l'ancienne clé, donc un fichier réellement écrit sur le disque passait
+pour non produit. Les deux calculs partagent maintenant un seul prédicat
+(`packages/tools/src/projects/declared.ts`).
+
+**Ce correctif fait partie du périmètre de cette review.** Le prédicat est-il
+appliqué PARTOUT où une clé de projet se calcule, ou en reste-t-il un troisième
+endroit qui répondrait autrement ?
+
 ## Questions, par priorité
 
 ### P0 — le faux négatif, et ce qu'il coûte
