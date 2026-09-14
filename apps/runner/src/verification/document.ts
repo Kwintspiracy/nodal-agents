@@ -30,6 +30,8 @@ import { createHash } from 'node:crypto';
 import { dirname, extname } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
 import { Tokenizer, TokenizerMode, type Token } from 'parse5';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
 import type {
@@ -119,105 +121,31 @@ const ko = (command: string, reason: string, durationMs = 0): Constat => ({
 type FormCheck = (text: string) => string | null;
 
 /**
- * Les lignes des blocs de code CLÔTURÉS, remplacées par des lignes VIDES.
+ * Un markdown a un titre : un `heading` de profondeur 1 dans l'arbre.
  *
- * Deux raisons de ne plus le faire avec une expression régulière, chacune payée
- * par un verdict faux mesuré :
+ * POURQUOI UN VRAI PARSEUR. Cette règle a eu CINQ formes en cinq passes de
+ * revue, et j'ai réécrit CommonMark à la main quatre fois. Chaque approximation
+ * fermait un cas et en ouvrait un autre, jusqu'à une régression : un `- ~~~`
+ * situé À L'INTÉRIEUR d'un bloc de code lu comme une clôture, donc un document
+ * sans titre déclaré vert. La liste de ce qui s'est cassé en route — fin
+ * d'entrée sous le drapeau `m`, longueur et caractère de la clôture, backtick
+ * dans la ligne d'info, tabulation valant quatre colonnes, lignes recollées
+ * fabriquant un titre souligné, conteneurs invisibles à une boucle de lignes —
+ * dit assez que le problème n'était pas la qualité des expressions régulières.
  *
- * - elle s'est trompée deux fois de suite (dette #66, passes 2 et 3) sur des
- *   règles que CommonMark énonce pourtant simplement — fin d'entrée, longueur
- *   et caractère de la clôture, backtick dans la ligne d'info, tabulation
- *   initiale. Une boucle de lignes dit ces règles telles quelles et se relit ;
- * - SUPPRIMER les lignes recolle leurs voisines, et deux lignes recollées
- *   fabriquent un titre souligné qui n'existait pas : `texte`, un bloc, puis
- *   `---` devenait « texte / --- », donc un titre setext (passe 3, constat R3).
- *   Les blanchir garde la structure du document intacte.
+ * `remark-parse` répond à la question sans en inventer une autre. Il est déjà
+ * épinglé dans ce dépôt, à la même version, pour le même travail côté écran.
  *
- * Les règles appliquées, dans l'ordre où CommonMark les pose : une ouverture
- * est au plus trois espaces d'indentation puis au moins trois backticks ou
- * tildes ; une ouverture en backticks ne peut pas porter de backtick dans sa
- * ligne d'info ; une clôture porte le MÊME caractère, est au moins aussi
- * longue, et ne contient rien d'autre que des espaces ; une tabulation vaut
- * quatre colonnes, donc ne peut pas servir d'indentation ici. Un bloc jamais
- * clôturé court jusqu'à la fin du document.
- */
-function blankFencedBlocks(text: string): string {
-  const out: string[] = [];
-  let fence: { char: string; length: number } | null = null;
-  for (const line of text.split('\n')) {
-    const startsWithTab = line.startsWith('\t');
-    const indent = /^ {0,3}/.exec(line)?.[0].length ?? 0;
-    const rest = line.slice(indent);
-    const run = /^(`+|~+)/.exec(rest)?.[1] ?? '';
-    const isFence = !startsWithTab && run.length >= 3;
-
-    if (fence === null) {
-      const info = rest.slice(run.length);
-      // Une ouverture en backticks dont l'info contient un backtick n'ouvre rien.
-      const infoAllowed = run.startsWith('~') || !info.includes('`');
-      if (isFence && infoAllowed) {
-        fence = { char: run[0]!, length: run.length };
-        out.push('');
-        continue;
-      }
-      out.push(line);
-      continue;
-    }
-
-    const closes =
-      isFence &&
-      run[0] === fence.char &&
-      run.length >= fence.length &&
-      // Seuls des espaces ordinaires et des tabulations peuvent suivre une
-      // clôture ; `trim()` acceptait aussi l'espace insécable (passe 4, R3).
-      /^[ \t]*$/.test(rest.slice(run.length));
-    out.push('');
-    if (closes) fence = null;
-  }
-  return out.join('\n');
-}
-
-/**
- * Un markdown a un titre : `# …` (ATX), ou une ligne de texte soulignée de
- * `=`/`-` (setext).
- *
- * Deux faux titres que la première version acceptait, trouvés en sondant :
- * un en-tête YAML (`---` / `title: x` / `---`), dont la deuxième ligne passait
- * pour un titre souligné ; et une liste suivie d'un filet (`- item` / `---`),
- * qui est une liste puis une règle horizontale, jamais un titre. L'en-tête est
- * retiré avant de chercher ; la ligne soulignée ne peut pas commencer par un
- * marqueur de liste, de citation ou de titre.
- *
- * Deux autres trouvés par la revue Codex de la PR #66 (constat C5) :
- *
- * - la FIN DE LIGNE décidait. L'en-tête n'était retiré qu'en LF, donc le même
- *   fichier écrit par un éditeur Windows passait au vert, sa deuxième ligne
- *   lue comme un titre souligné. Le texte est ramené au LF avant toute chose :
- *   une convention de fin de ligne n'est pas une propriété du document.
- * - un `#` dans un BLOC DE CODE clôturé comptait comme titre. Un bloc clôturé
- *   est un exemple — son contenu n'est pas le document, et un fichier qui ne
- *   contient qu'un exemple n'a pas de titre. Les blocs sont retirés avant de
- *   chercher ; un vrai titre hors du bloc compte toujours.
+ * Profondeur 1 : c'est le TITRE du document qui est demandé, pas une section.
+ * Un fichier qui commence par `## Détails` n'a pas de titre, et c'est voulu —
+ * c'est exactement ce qu'un skill mal écrit produit.
  */
 const markdownHasTitle: FormCheck = (text) => {
-  const lf = text.replace(/\r\n?/g, '\n');
-  const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
-  const prose = blankFencedBlocks(body);
-  // Un titre commence en COLONNE ZÉRO. CommonMark en tolère trois
-  // d'indentation, et cette tolérance est retirée exprès : un titre indenté est
-  // presque toujours à l'intérieur d'un conteneur — une liste, une citation —
-  // que ce vérificateur ne sait pas suivre. L'accepter revenait à prendre pour
-  // titre du document un `#` appartenant à un bloc de code imbriqué dans une
-  // liste (passe 4, constat R3).
-  //
-  // Le prix est un document dont le seul titre serait indenté : il sera dit
-  // sans titre. C'est un ROUGE sur du travail correct, donc une gêne. L'autre
-  // erreur aurait été un VERT sur un document sans titre, et celle-là ment.
-  if (/^#{1,6}[ \t]+\S/m.test(prose)) return null;
-  if (/^(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n(=+|-+)[ \t]*$/m.test(prose)) {
-    return null;
-  }
-  return 'no title: expected a heading (`# Title` or an underlined line)';
+  const tree = unified().use(remarkParse).parse(text);
+  const hasTitle = (tree.children ?? []).some(
+    (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,
+  );
+  return hasTitle ? null : 'no title: expected a top-level heading (`# Title`)';
 };
 
 /**
