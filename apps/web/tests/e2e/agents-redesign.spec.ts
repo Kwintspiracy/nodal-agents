@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeDbClient, resolveActingUser } from './helpers.ts';
 
 // An owner sees their team on the /agents page: orchestrators as cards, workers as rows they can reorder.
 //
@@ -182,17 +183,44 @@ test.describe('Agents page redesign @cap:organiser-equipe/ecran', () => {
     // (Le pré-remplir en base est exclu : on ne sème pas les données qu'on
     // affirme. Le rendre autonome demande de construire l'équipe par les vrais
     // gestes — un chantier à part, signalé dans l'issue #55.)
+    // Le prérequis se lit EN BASE, pas à l'écran. Déduit du DOM, il confondait
+    // deux choses opposées : « cette installation n'a pas d'équipe » (ignorer
+    // est juste) et « la page ne rend plus les équipes » (c'est la régression
+    // que ce parcours existe pour attraper). `teamSizes.every(…)` était vrai
+    // dans les deux cas — et sur un tableau VIDE, donc y compris quand plus
+    // aucune carte ne s'affichait. La garde avalait sa propre panne.
+    const { entityId } = await resolveActingUser();
+    const { agentAssignments, eq } = await import('@nodal-agents/db');
+    const { db, close } = makeDbClient();
+    let assignmentsInDb: number;
+    try {
+      const rows = await db
+        .select({ id: agentAssignments.id })
+        .from(agentAssignments)
+        .where(eq(agentAssignments.entityId, entityId));
+      assignmentsInDb = rows.length;
+    } finally {
+      await close();
+    }
+    test.skip(
+      assignmentsInDb === 0,
+      "Aucun orchestrateur n'a de worker sur cette installation : il n'y a rien à " +
+        'déplacer, et le vivier de « Add worker » est vide. Ce parcours demande une ' +
+        'équipe déjà constituée (orchestrateur + au moins un worker).',
+    );
+
+    // La base dit qu'il y a une équipe : la page DOIT la montrer. C'est une
+    // assertion, plus une garde.
     const teamSizes = await page.evaluate(() =>
       Array.from(document.querySelectorAll('[data-orchestrator-card]'))
         .filter((c) => !(c.getAttribute('data-testid') ?? '').endsWith('unassigned'))
         .map((c) => c.querySelectorAll('[data-worker-row]').length),
     );
-    test.skip(
-      teamSizes.every((n) => n === 0),
-      "Aucun orchestrateur n'a de worker sur cette installation : il n'y a rien à " +
-        'déplacer, et le vivier de « Add worker » est vide. Ce parcours demande une ' +
-        'équipe déjà constituée (orchestrateur + au moins un worker).',
-    );
+    expect(
+      teamSizes.some((n) => n > 0),
+      `${assignmentsInDb} affectation(s) en base, mais aucune carte d'orchestrateur ne ` +
+        `montre de worker (cartes vues : ${teamSizes.length}).`,
+    ).toBe(true);
 
     // ── 1. RENDU ──────────────────────────────────────────────────────────
     // Une carte d'orchestrateur, désignée par son ANCRE et non par son texte.
