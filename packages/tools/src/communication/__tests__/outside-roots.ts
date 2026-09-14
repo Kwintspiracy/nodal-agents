@@ -15,18 +15,38 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * Le VRAI dossier temporaire du système, lu dans l'environnement et non via
- * `os.tmpdir()`. Le test de confinement bouchonne `node:os` — ce module s'en
- * tiendrait alors à la fausse racine, et `makeOutsideDir` créerait son dossier
- * DEDANS, exactement le défaut qu'on corrige. Ce module n'importe donc PAS
- * `node:os` du tout : le bouchon l'importe, et une dépendance en retour le
- * rendrait réentrant. `os.tmpdir()` ne lit de toute façon rien d'autre que ces
- * variables ; `/tmp` est son propre repli quand aucune n'est posée (POSIX
- * seulement — Windows pose toujours TEMP).
+ * Le VRAI dossier temporaire du système, et non `os.tmpdir()`. Le test de
+ * confinement bouchonne `node:os` — ce module s'en tiendrait alors à la fausse
+ * racine, et `makeOutsideDir` créerait son dossier DEDANS, exactement le défaut
+ * qu'on corrige. Il n'importe donc PAS `node:os` du tout : le bouchon
+ * l'importe, et une dépendance en retour le rendrait réentrant.
+ *
+ * La précédence est celle de Node, à la lettre, parce qu'elle DIFFÈRE selon la
+ * plateforme : sous Windows `TMPDIR` est ignoré (TEMP, puis TMP, puis
+ * `%SystemRoot%\temp`), sous POSIX il vient en premier (TMPDIR, TMP, TEMP,
+ * puis `/tmp`). Une première version prenait `TMPDIR` d'abord partout : la
+ * revue Codex l'a montrée divergente en une commande, `os.tmpdir()` rendant
+ * `C:\definitely-temp` là où le helper rendait `C:\definitely-tmpdir`. Une
+ * variable vide est ignorée, comme le fait Node — `??` l'aurait retenue.
  */
+function firstNonEmptyEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value && value.length > 0) return value;
+  }
+  return undefined;
+}
+
 function realTmpBase(): string {
-  const fromEnv = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP;
-  return fromEnv && fromEnv.length > 0 ? path.resolve(fromEnv) : '/tmp';
+  const fallback =
+    process.platform === 'win32'
+      ? path.join(firstNonEmptyEnv('SystemRoot', 'windir') ?? 'C:\\Windows', 'temp')
+      : '/tmp';
+  const fromEnv =
+    process.platform === 'win32'
+      ? firstNonEmptyEnv('TEMP', 'TMP')
+      : firstNonEmptyEnv('TMPDIR', 'TMP', 'TEMP');
+  return path.resolve(fromEnv ?? fallback);
 }
 
 /** Normalisation identique à celle de la garde : résolue, insensible à la casse sous Windows. */
