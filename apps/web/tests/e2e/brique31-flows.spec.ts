@@ -45,6 +45,14 @@ test.describe('Test A — LLM key add + test connection + save', () => {
   }) => {
     await page.goto('/llm-providers');
 
+    // Combien de fournisseurs AVANT. Le titre du cas promet « row appears » :
+    // c'est une ligne de PLUS qu'il faut compter, et la carte d'un fournisseur
+    // se reconnaît à son interrupteur d'activation.
+    const providerCards = page.getByRole('button', {
+      name: /^(Activate|Deactivate) provider$/,
+    });
+    const cardsBefore = await providerCards.count();
+
     // Le bouton de la barre d'outils s'appelle « + New provider ».
     // « Add provider » est le bouton de SOUMISSION du formulaire, qui n'existe
     // qu'une fois le formulaire ouvert : le parcours attendait donc, sur une
@@ -79,7 +87,13 @@ test.describe('Test A — LLM key add + test connection + save', () => {
     const submit = page.getByRole('button', { name: /add provider/i });
     if (state === 'pass') {
       await submit.click();
-      await expect(page.getByText(/anthropic/i).first()).toBeVisible({ timeout: 10_000 });
+      // PAS `getByText(/anthropic/i)` : le mot « anthropic » est déjà sur la
+      // page — dans le menu du formulaire, et dans un éventuel message d'erreur
+      // de sauvegarde. L'assertion passait donc sans qu'aucune ligne n'existe.
+      // Ce qui prouve l'enregistrement, c'est une carte de PLUS, et une carte
+      // Anthropic.
+      await expect(providerCards).toHaveCount(cardsBefore + 1, { timeout: 10_000 });
+      await expect(page.getByText('Anthropic', { exact: true }).first()).toBeVisible();
     } else {
       // Échec du test → l'enregistrement est refusé. C'est le comportement
       // voulu (« Test the connection before saving »), et il se vérifie.
