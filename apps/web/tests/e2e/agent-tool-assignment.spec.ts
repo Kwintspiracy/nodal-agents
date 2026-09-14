@@ -38,13 +38,18 @@ async function resolveE2eUserContext(): Promise<{ userId: string; entityId: stri
   return resolveActingUser();
 }
 
+/** The names this spec gives to the rows it creates — and the ONLY rows it is
+ *  ever allowed to delete. */
+const TEST_CONNECTOR_NAME = 'E2E Google Drive';
+const TEST_CREDENTIAL_NAME = 'E2E Test Drive Credential';
+
 /** Insert a fake Google Drive connector + credential; return their IDs.
  *
- * Cleans up any existing google-drive connector AND any stub credentials this
- * spec may have left behind in prior runs (e.g. Playwright was killed before
- * `afterAll` ran). Previously we only deleted the connector — the credential
- * row stayed orphaned, which surfaced as a "Cannot decrypt" banner on
- * /credentials for the user the next time they opened the page.
+ * Cleans up any connector AND any stub credential this spec may have left
+ * behind in prior runs (e.g. Playwright was killed before `afterAll` ran).
+ * Previously we only deleted the connector — the credential row stayed
+ * orphaned, which surfaced as a "Cannot decrypt" banner on /credentials for
+ * the user the next time they opened the page.
  */
 async function insertTestConnector(
   userId: string,
@@ -54,13 +59,20 @@ async function insertTestConnector(
     await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
-    // Remove any prior google-drive connector for this entity. Capture the
-    // FK to the credential so we can drop it too (ON DELETE SET NULL otherwise
-    // leaves the credentials row dangling).
+    // Remove the connector THIS SPEC left behind. Capture the FK to the
+    // credential so we can drop it too (ON DELETE SET NULL otherwise leaves the
+    // credentials row dangling).
+    //
+    // Scoped by NAME, not by slug. `slug = 'google-drive'` alone selected EVERY
+    // Google Drive of the workspace, and since the acting user is now resolved
+    // for local-trust too, that is the developer's own Google Drive connector,
+    // its assignments and its credential — deleted by a `beforeAll`, on a
+    // machine where nothing warned. The spec only ever needs to clear the stub
+    // it named itself.
     const existing = await db
       .select({ id: connectors.id, credentialId: connectors.credentialId })
       .from(connectors)
-      .where(and(eq(connectors.entityId, entityId), eq(connectors.slug, 'google-drive')));
+      .where(and(eq(connectors.entityId, entityId), eq(connectors.name, TEST_CONNECTOR_NAME)));
     for (const row of existing) {
       await db
         .delete(agentConnectorAssignments)
@@ -75,16 +87,14 @@ async function insertTestConnector(
     // (ownerUserId + name) so we never touch the user's real credentials.
     await db
       .delete(credentials)
-      .where(
-        and(eq(credentials.ownerUserId, userId), eq(credentials.name, 'E2E Test Drive Credential')),
-      );
+      .where(and(eq(credentials.ownerUserId, userId), eq(credentials.name, TEST_CREDENTIAL_NAME)));
 
     // Insert a stub credential (payload is fake — no real decryption needed for UI test)
     const [credRow] = await db
       .insert(credentials)
       .values({
         ownerUserId: userId,
-        name: 'E2E Test Drive Credential',
+        name: TEST_CREDENTIAL_NAME,
         type: 'google-oauth',
         payload: 'stub-encrypted-payload',
       })
@@ -96,7 +106,7 @@ async function insertTestConnector(
       .insert(connectors)
       .values({
         entityId,
-        name: 'E2E Google Drive',
+        name: TEST_CONNECTOR_NAME,
         slug: 'google-drive',
         authType: 'oauth2',
         active: true,
