@@ -113,15 +113,25 @@ function sameDirectory(a: string, b: string): boolean {
  */
 export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
   const pid = readPostmasterPid(dataDir);
-  if (pid === null) return null;
-  // process.kill(pid, 0) is the canonical "is this PID alive?" probe — sends
-  // no signal, throws ESRCH if the process doesn't exist.
+  return pid !== null && isPidRunning(pid) ? pid : null;
+}
+
+/**
+ * Is this pid a running process?
+ *
+ * `process.kill(pid, 0)` is the canonical probe — it sends no signal and throws
+ * ESRCH when nothing holds that number. EPERM means alive and owned by another
+ * user, which is still alive.
+ *
+ * Split out so a caller holding a pid can ask about THAT pid, instead of going
+ * through `livePostmasterPid` and re-reading the lockfile underneath it.
+ */
+function isPidRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return pid;
+    return true;
   } catch (err) {
-    // EPERM = alive but owned by another user: still a live process.
-    return (err as NodeJS.ErrnoException).code === 'ESRCH' ? null : pid;
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 }
 
@@ -233,7 +243,12 @@ export function unconfirmedReading(dataDir: string): ProcessTableReading {
     process.stderr.write(`ORPHAN_PROBE_NO_CLAIM dataDir=${dataDir}\n`);
     return { read: false, owned: [] };
   }
-  if (livePostmasterPid(dataDir) !== claim.pid) {
+  // Ask about THE PID WE READ, not about whatever the lockfile says a moment
+  // later. `livePostmasterPid` re-reads the file, so a lockfile that vanished
+  // or changed pid between the two reads produced "this pid is not alive" for a
+  // process that had never been probed at all (pass-13 finding R1). The refusal
+  // was safe; the diagnostic accused a death nobody had established.
+  if (!isPidRunning(claim.pid)) {
     process.stderr.write(`ORPHAN_PROBE_CLAIMED_PID_NOT_ALIVE pid=${claim.pid}\n`);
     return { read: false, owned: [] };
   }
