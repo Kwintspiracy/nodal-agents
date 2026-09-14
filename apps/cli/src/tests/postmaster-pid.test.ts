@@ -317,7 +317,12 @@ ${Math.round(started / 1000)}
     expect(reading.owned).toEqual([]);
   });
 
-  it('owns nothing when the lockfile names a dead pid', async () => {
+  // This one goes through the REAL probe, which on Windows spawns PowerShell
+  // with a ten-second budget of its own — longer than vitest's five-second
+  // default. It passed locally and timed out on CI (ci-windows, 1091d64d):
+  // machine speed decided, which is exactly what a timeout should never do.
+  // The budget here is the probe's, plus room for a loaded runner.
+  it('owns nothing when the lockfile names a dead pid', { timeout: 30_000 }, async () => {
     writePostmasterPid(DEAD_PID);
 
     expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
@@ -400,16 +405,23 @@ describe('stopOrphanPostgres — it stops the pid we DECIDED', () => {
   const asRoot =
     process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
 
-  it.skipIf(asRoot)('calls pg_ctl when the lockfile names exactly the pid we decided', async () => {
-    writePostmasterPid(31415);
+  // Spawns pg_ctl for real, which carries a forty-second budget of its own.
+  // Same hazard as the probe test above: vitest's five seconds would make the
+  // runner's speed the verdict.
+  it.skipIf(asRoot)(
+    'calls pg_ctl when the lockfile names exactly the pid we decided',
+    { timeout: 60_000 },
+    async () => {
+      writePostmasterPid(31415);
 
-    const { err } = await stopAndCapture(31415);
+      const { err } = await stopAndCapture(31415);
 
-    // The directory is not a real cluster, so pg_ctl refuses — which is the
-    // proof that it RAN. The mismatch guard did not fire.
-    expect(err).not.toContain('PG_CTL_SKIPPED');
-    expect(err).toContain('PG_CTL_STOP_FAILED');
-  });
+      // The directory is not a real cluster, so pg_ctl refuses — which is the
+      // proof that it RAN. The mismatch guard did not fire.
+      expect(err).not.toContain('PG_CTL_SKIPPED');
+      expect(err).toContain('PG_CTL_STOP_FAILED');
+    },
+  );
 
   it.runIf(asRoot)('declines to call pg_ctl at all when running as root', async () => {
     writePostmasterPid(31415);
