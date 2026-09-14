@@ -1,0 +1,17 @@
+{
+  // Les parcours Playwright ne sont compilés par RIEN : `tsconfig.json` exclut
+  // `tests`, et l'y inclure ferait entrer les specs dans le graphe de
+  // `next build`. Ils ont donc leur propre projet, qui reprend les mêmes
+  // options et ne regarde qu'eux. `pnpm --filter @nodal-agents/web typecheck:e2e`.
+  //
+  // Ce qu'il a attrapé le jour où il a existé : un `beforeAll(fn, 30_000)` —
+  // surcharge inexistante — qui faisait lire la fonction comme un titre. Une
+  // vérification qui ne tourne pas ne trouve rien, et personne ne s'en aperçoit.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["tests/e2e/**/*.ts"],
+  "exclude": ["node_modules"]
+}
