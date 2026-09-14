@@ -19,6 +19,21 @@ et le workflow CI qui l'appelle.
 3. Le fichier ne peut pas être gitignoré : le portail en ligne se rend depuis
    le dépôt.
 
+## Déjà trouvé et corrigé — à relire aussi
+
+La question 2 n'est plus hypothétique. Le commentaire affirmait que les données
+du portail échappent à la taille « et à elle seule : NUL et UTF-16 restent
+contrôlés ». C'était FAUX pour `apps/qa/data/tests.ndjson`, le fichier même qui
+a motivé l'exemption : `.ndjson` n'était pas dans `TEXT_EXT`, donc la boucle
+sortait une ligne avant les contrôles de contenu. Trouvé en écrivant cette
+demande, vérifié à la source, corrigé.
+
+La décision « quels contrôles pour quel fichier » vit désormais dans une
+fonction pure, `scripts/lib/hygiene-file-scope.mjs`, testée — la phrase est
+tenue par du code et non par un commentaire.
+
+**Ce correctif fait partie du périmètre de cette review.**
+
 ## Questions, par priorité
 
 ### P0 — l'exemption est-elle exactement celle annoncée ?
