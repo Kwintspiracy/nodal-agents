@@ -484,10 +484,15 @@ export async function finalizeJobSuccess(
             canonicalKey: plan.canonicalKey,
             displayPath: plan.displayPath,
           });
+          // Comparer à ce que la preuve a RÉELLEMENT lu quand elle sait le dire,
+          // et à la configuration sinon. Sans ça, une séquence A → B → A passe :
+          // la transaction 1 voit A, la preuve trouve B vert, un autre job remet
+          // A, et les deux empreintes coïncident (dette #66, passe 3, R1).
+          const provenHash = proof?.provedManifestHash ?? ready.manifestHash;
           const moved =
             current.kind !== 'ready' ||
             current.epoch !== ready.epoch ||
-            current.manifestHash !== ready.manifestHash;
+            current.manifestHash !== provenHash;
           if (moved) {
             status = 'dirty';
             log(VERIFY_STALE_EPOCH, {

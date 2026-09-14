@@ -311,6 +311,36 @@ describe('document — bien formé, selon son type', () => {
     expect((await prove(clotureLongue)).verdict).toBe('green');
   });
 
+  it('les règles CommonMark des blocs clôturés, une par une', async () => {
+    // Passe 3 de la dette #66, constat R2. La regex s'était trompée deux fois ;
+    // elle est remplacée par une boucle de lignes, et voici les cas que je
+    // n'aurais pas pensé à écrire — c'est la revue qui les a sondés.
+    const cas: Array<[string, string, 'green' | 'red']> = [
+      ['cloture-mixte-1.md', '```\ncode\n```~\n# faux\n', 'red'],
+      ['cloture-mixte-2.md', '~~~\ncode\n~~~`\n# faux\n', 'red'],
+      ['info-backtick.md', '``` info`x\n# vrai\n', 'green'],
+      ['tab-ouvre-pas.md', '\t```\n# vrai\n', 'green'],
+      ['tab-ferme-pas.md', '```\ncode\n\t```\n# faux\n', 'red'],
+      ['indent-4.md', '    ```\n    # faux\n', 'red'],
+      ['cloture-indentee-3.md', '```\ncode\n   ```\n# vrai\n', 'green'],
+      ['deux-blocs.md', '```\na\n```\n```\nb\n```\n# vrai\n', 'green'],
+      ['titre-entre-blocs.md', '```\na\n```\n# vrai\n```\nb\n```\n', 'green'],
+      ['bloc-en-citation.md', '> ```\n> # faux\n> ```\n', 'red'],
+    ];
+    for (const [name, content, attendu] of cas) {
+      expect((await prove(write(name, content))).verdict, name).toBe(attendu);
+    }
+  });
+
+  it('retirer un bloc ne doit pas FABRIQUER un titre souligné', async () => {
+    // Passe 3, constat R3. Supprimer les lignes recollait leurs voisines :
+    // un paragraphe, un bloc, puis un filet devenaient « texte / --- », donc un
+    // titre setext qui n'existait pas. Les lignes sont blanchies, pas retirées.
+    const p = write('recollage.md', 'texte\n```\ncode\n```\n---\n');
+
+    expect((await prove(p)).verdict).toBe('red');
+  });
+
   it('une entité déclarée DANS le document ne le rend pas mal formé', async () => {
     // Passe 2 de la dette #66, constat R3. `@xmldom/xmldom` ne lit pas le
     // sous-ensemble interne d'un DOCTYPE et rapporte `entity not found` pour
@@ -329,6 +359,24 @@ describe('document — bien formé, selon son type', () => {
       '<svg xmlns="http://www.w3.org/2000/svg">&nope;</svg>',
     );
     expect((await prove(inconnue)).verdict).toBe('red');
+
+    // Passe 3, constats R4 et R5 : chercher un DOCTYPE se trompait DANS LES DEUX
+    // SENS. Un sous-ensemble vide, ou un commentaire qui en imite un, éteignait
+    // tous les `error` et rouvrait le trou ; un `>` dans un identifiant système
+    // — permis par la grammaire XML — faisait manquer un vrai sous-ensemble.
+    // C'est l'ENTITÉ NOMMÉE par le message qui décide maintenant.
+    const cas: Array<[string, string, 'green' | 'red']> = [
+      ['dtd-vide.svg', '<!DOCTYPE svg []><svg>&nope;</svg>', 'red'],
+      ['dtd-commentaire.svg', '<!-- <!DOCTYPE svg [ --><svg>&nope;</svg>', 'red'],
+      [
+        'dtd-system-chevron.svg',
+        '<!DOCTYPE svg SYSTEM "urn:a>b" [<!ENTITY x "ok">]><svg>&x;</svg>',
+        'green',
+      ],
+    ];
+    for (const [name, content, attendu] of cas) {
+      expect((await prove(write(name, content))).verdict, name).toBe(attendu);
+    }
   });
 
   it('un HTML qui ne se referme pas est rouge', async () => {
