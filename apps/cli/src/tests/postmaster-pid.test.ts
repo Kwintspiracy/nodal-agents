@@ -168,6 +168,11 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
     const started = processStartedAtMs(process.pid);
 
     expect(started).not.toBeNull();
+    // A function answering `Date.now()` passes any window while the process is
+    // still young, so the process has to have SOME age for this to discriminate
+    // (pass-7 finding R6). Vitest has been up for longer than this by the time
+    // the file runs; assert it rather than assume it.
+    expect(process.uptime()).toBeGreaterThan(0.5);
     // A 24-hour window would also accept `Date.now()` — that is, a function
     // that reads nothing and answers "now" (pass-6 finding R4). Node knows how
     // long IT has been running, so the answer is checked against that, within
@@ -187,35 +192,16 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
   });
 });
 
-describe('postgresProcessesForDataDir — the fallback owns nothing it cannot date', () => {
-  // Pass-6 finding R4: nothing exercised the fallback itself, so restoring the
-  // liveness-only attribution would have escaped every assertion. This runs the
-  // real function against a real lockfile.
-  const onWindows = process.platform === 'win32';
+describe('postgresProcessesForDataDir — the fallback wants TWO proofs', () => {
+  // Where no process table can be read, the lockfile's claim is confirmed by
+  // asking the OS about that one pid: which directory it runs out of, and when
+  // it started. Both must hold.
+  //
+  // Pass-7 finding R3 rewrote these: the earlier version expected ownership
+  // whenever the pid could be DATED, which a mutation answering `Date.now()`
+  // also satisfied. What is asserted now is the agreement itself.
 
-  it.skipIf(onWindows)('owns a live pid it CAN date, off this platform', async () => {
-    writePostmasterPid(process.pid);
-    const claim = readPostmasterClaim(dataDir);
-    // Our own start time, as the OS reports it — the lockfile has to agree.
-    const started = processStartedAtMs(process.pid);
-    writeFileSync(
-      join(dataDir, 'postmaster.pid'),
-      `${process.pid}
-${dataDir}
-${Math.round((started ?? 0) / 1000)}
-25432
-`,
-      'utf-8',
-    );
-
-    const reading = await postgresProcessesForDataDir(dataDir);
-
-    expect(claim?.pid).toBe(process.pid);
-    expect(reading.read).toBe(false);
-    expect(reading.owned).toEqual(started === null ? [] : [process.pid]);
-  });
-
-  it.skipIf(onWindows)('owns nothing when the recorded start time disagrees', async () => {
+  it('owns nothing when the recorded start time disagrees', async () => {
     writeFileSync(
       join(dataDir, 'postmaster.pid'),
       `${process.pid}
@@ -229,25 +215,16 @@ ${dataDir}
     expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
   });
 
-  it('owns nothing when the lockfile names a dead pid', async () => {
-    writePostmasterPid(DEAD_PID);
-
-    expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
-  });
-
-  it('owns nothing where no pid can be dated at all', () => {
-    // Windows reaches this only when its WMI probe failed, and there
-    // `processStartedAtMs` has no answer. The branch is exercised directly so
-    // that BOTH platforms hold their own half of the fallback: without this,
-    // replacing the date with `Date.now()` passed every Windows run.
-    // The lockfile claims a start time of NOW, so the only thing standing
-    // between this pid and `owned` is whether the OS could date it. A version
-    // that skips the dating and assumes "now" would own it.
+  it('owns nothing when the process does not run out of our data directory', () => {
+    // This test process runs from the repo, not from `dataDir` — so even with
+    // a start time written to agree exactly, the clock-free proof refuses. It
+    // is the case a wound-back wall clock cannot fake.
+    const started = processStartedAtMs(process.pid) ?? Date.now();
     writeFileSync(
       join(dataDir, 'postmaster.pid'),
       `${process.pid}
 ${dataDir}
-${Math.round(Date.now() / 1000)}
+${Math.round(started / 1000)}
 25432
 `,
       'utf-8',
@@ -256,8 +233,13 @@ ${Math.round(Date.now() / 1000)}
     const reading = unconfirmedReading(dataDir);
 
     expect(reading.read).toBe(false);
-    // Linux can date it and owns it; everywhere else the answer is a refusal.
-    expect(reading.owned).toEqual(processStartedAtMs(process.pid) === null ? [] : [process.pid]);
+    expect(reading.owned).toEqual([]);
+  });
+
+  it('owns nothing when the lockfile names a dead pid', async () => {
+    writePostmasterPid(DEAD_PID);
+
+    expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
   });
 });
 
