@@ -1,4 +1,4 @@
-name: Qualité — mesure complète
+name: Quality — full measurement
 
 # Ce workflow ne garde rien : il MESURE, et il écrit ce qu'il a mesuré dans
 # `apps/qa/data/`. C'est cette écriture, répétée, qui donne au portail son
