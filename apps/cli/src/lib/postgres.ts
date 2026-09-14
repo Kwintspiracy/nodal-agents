@@ -117,11 +117,17 @@ export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
 }
 
 /**
- * Is this pid a running process?
+ * Has this pid NOT been established as gone?
  *
- * `process.kill(pid, 0)` is the canonical probe — it sends no signal and throws
- * ESRCH when nothing holds that number. EPERM means alive and owned by another
- * user, which is still alive.
+ * The honest reading of the name, and the difference matters. `process.kill(pid,
+ * 0)` sends no signal and throws ESRCH when nothing holds that number, which is
+ * the only conclusive answer it gives. EPERM means alive and owned by another
+ * user. Any OTHER error establishes nothing, and this returns true there —
+ * "not proven gone", which is the conservative side for a lockfile we must not
+ * delete out from under a live server.
+ *
+ * It is not a licence to kill anything: every caller that acts on a pid still
+ * has to get past the directory proof and the start-time match.
  *
  * Split out so a caller holding a pid can ask about THAT pid, instead of going
  * through `livePostmasterPid` and re-reading the lockfile underneath it.
@@ -223,11 +229,13 @@ export async function postgresProcessesForDataDir(
  *
  * NOT "the pid our data directory claims, if it is alive" — liveness is the
  * cheapest of the three things asked here, and the summary used to stop at it
- * (pass-11 finding R2). The pid has to be claimed by our lockfile, alive, still
- * running OUT of our data directory, and started when the lockfile says. Any
- * one of those unanswerable is a refusal, and every one of them now writes a
- * code — two of these returns were silent until pass 12, and a refusal nobody
- * can debug is barely better than a wrong answer.
+ * (pass-11 finding R2). The pid has to be claimed by our lockfile, not known to
+ * be gone, still running OUT of our data directory, and started when the
+ * lockfile says. The last two are refusals when unanswerable; the liveness
+ * probe is the one that leans the other way, because its only conclusive answer
+ * is ESRCH (see `isPidRunning`). Every refusal writes a code — two of these
+ * returns were silent until pass 12, and a refusal nobody can debug is barely
+ * better than a wrong answer.
  *
  * `up` used to reach for `livePostmasterPid()` itself in this case — a second,
  * looser answer to the one question this module exists to answer, and it
