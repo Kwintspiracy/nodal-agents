@@ -145,9 +145,14 @@ function blankFencedBlocks(text: string): string {
   const out: string[] = [];
   let fence: { char: string; length: number } | null = null;
   for (const line of text.split('\n')) {
-    const startsWithTab = line.startsWith('\t');
-    const indent = /^ {0,3}/.exec(line)?.[0].length ?? 0;
-    const rest = line.slice(indent);
+    // Un bloc peut vivre DANS une citation ou un élément de liste. Le préfixe
+    // de conteneur est retiré avant de lire la ligne : sans lui, `- ~~~` n'était
+    // pas une ouverture, son contenu passait pour de la prose, et sa clôture
+    // devenait une ouverture qui avalait le vrai titre plus bas (passe 4, R3).
+    const withoutContainer = line.replace(/^(?: {0,3}(?:>\s?|(?:[-*+]|\d+[.)])\s+))+/, '');
+    const startsWithTab = withoutContainer.startsWith('\t');
+    const indent = /^ {0,3}/.exec(withoutContainer)?.[0].length ?? 0;
+    const rest = withoutContainer.slice(indent);
     const run = /^(`+|~+)/.exec(rest)?.[1] ?? '';
     const isFence = !startsWithTab && run.length >= 3;
 
@@ -168,7 +173,9 @@ function blankFencedBlocks(text: string): string {
       isFence &&
       run[0] === fence.char &&
       run.length >= fence.length &&
-      rest.slice(run.length).trim() === '';
+      // Seuls des espaces ordinaires et des tabulations peuvent suivre une
+      // clôture ; `trim()` acceptait aussi l'espace insécable (passe 4, R3).
+      /^[ \t]*$/.test(rest.slice(run.length));
     out.push('');
     if (closes) fence = null;
   }
@@ -445,7 +452,13 @@ function isDeclaredEntityComplaint(text: string, message: string): boolean {
   // Un nom d'entité XML ne peut contenir aucun métacaractère d'expression
   // régulière, mais on l'échappe quand même : le message vient du parseur.
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`<!ENTITY\\s+${escaped}\\s`, 'i').test(text);
+  // Les noms XML sont SENSIBLES À LA CASSE : `&X;` n'est pas déclaré par
+  // `<!ENTITY x …>`, et le drapeau `i` les confondait. Les commentaires et les
+  // sections CDATA sont retirés d'abord : une déclaration écrite à l'intérieur
+  // n'en est pas une, et les laisser faisait taire la plainte — les trois trous
+  // de la passe 4, constat R4.
+  const declarations = text.replace(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  return new RegExp(`<!ENTITY\\s+${escaped}\\s`).test(declarations);
 }
 
 /**
@@ -561,23 +574,31 @@ export const documentVerifier: DeliverableVerifier = {
       ...(provedManifestHash === undefined ? {} : { provedManifestHash }),
     });
 
-    // 1 · il existe, et c'est un fichier
+    // UNE seule lecture, et tous les constats en découlent.
+    //
+    // `exists` et `not-empty` s'appuyaient sur un `stat` fait AVANT la lecture :
+    // un autre job pouvait vider le fichier entre les deux, et les quatre
+    // constats ressortaient verts alors que deux d'entre eux décrivaient un
+    // contenu et deux un autre (passe 4, constat R1). L'empreinte prouvée ne
+    // vaut que si TOUS les constats portent sur les octets qu'elle couvre.
     const t0 = Date.now();
-    let size = 0;
+    let bytes: Buffer;
     try {
       const s = await stat(path);
       if (!s.isFile()) {
         await emit(ko('exists', `${path} is not a file`, Date.now() - t0));
         return done();
       }
-      size = s.size;
+      bytes = await readFile(path);
+      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${createHash('sha256').update(bytes).digest('hex')}`;
     } catch {
       await emit(ko('exists', `${path} not found`, Date.now() - t0));
       return done();
     }
+    const size = bytes.byteLength;
     await emit(ok('exists', `${size} bytes`, Date.now() - t0));
 
-    // 2 · il n'est pas vide
+    // 2 · il n'est pas vide — la taille de CE qui a été lu
     if (size === 0) {
       await emit(ko('not-empty', 'the file is empty (0 bytes)'));
       return done();
@@ -588,10 +609,6 @@ export const documentVerifier: DeliverableVerifier = {
     const t1 = Date.now();
     let text: string;
     try {
-      const bytes = await readFile(path);
-      // Haché AVANT le décodage : c'est l'octet lu qui fait foi, et c'est la
-      // même règle que `fileStamp`, pour que les deux valeurs se comparent.
-      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${createHash('sha256').update(bytes).digest('hex')}`;
       text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
       await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t1));
