@@ -225,6 +225,8 @@ interface DeliverablePlan {
   readonly stateId: string;
   readonly deliverableType: string;
   readonly canonicalKey: string;
+  /** L'ADRESSE du livrable, à côté de son identité (constat C2, revue de #66). */
+  readonly displayPath: string | null;
   /** La génération sale capturée sous verrou — le garde de la transaction 2. */
   readonly generation: number;
   readonly verifier: DeliverableVerifier;
@@ -355,6 +357,7 @@ export async function finalizeJobSuccess(
         deliverableType: jobDeliverableVerificationState.deliverableType,
         canonicalKey: jobDeliverableVerificationState.canonicalKey,
         dirtyGeneration: jobDeliverableVerificationState.dirtyGeneration,
+        displayPathSnapshot: jobDeliverableVerificationState.displayPathSnapshot,
       })
       .from(jobDeliverableVerificationState)
       .where(eq(jobDeliverableVerificationState.jobId, jobId));
@@ -384,11 +387,15 @@ export async function finalizeJobSuccess(
       const config = await verifier.loadConfig(tx, {
         entityId: job.entityId,
         canonicalKey: state.canonicalKey,
+        // L'ADRESSE, à côté de l'identité : un document s'ouvre par son chemin
+        // réel, jamais par sa clé repliée en casse (constat C2).
+        displayPath: state.displayPathSnapshot,
       });
       plans.push({
         stateId: state.id,
         deliverableType: state.deliverableType,
         canonicalKey: state.canonicalKey,
+        displayPath: state.displayPathSnapshot,
         generation: state.dirtyGeneration,
         verifier,
         config,
@@ -475,6 +482,7 @@ export async function finalizeJobSuccess(
           const current = await plan.verifier.loadConfig(tx, {
             entityId: opened.entityId,
             canonicalKey: plan.canonicalKey,
+            displayPath: plan.displayPath,
           });
           const moved =
             current.kind !== 'ready' ||

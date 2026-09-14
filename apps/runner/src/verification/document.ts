@@ -386,8 +386,8 @@ export const documentVerifier: DeliverableVerifier = {
     return {
       kind: 'ready',
       manifestHash: DOCUMENT_MANIFEST_HASH,
-      cwd: dirname(target.canonicalKey),
-      subject: target.canonicalKey,
+      cwd: dirname(target.displayPath ?? target.canonicalKey),
+      subject: target.displayPath ?? target.canonicalKey,
       commands: [],
       epoch: 0,
     };

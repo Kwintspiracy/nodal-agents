@@ -111,6 +111,51 @@ describe('document — les trois constats communs', () => {
   });
 });
 
+describe('document — le chemin RÉEL, pas la clé repliée en casse', () => {
+  it('la preuve ouvre le chemin d’affichage quand il est donné, pas la clé en minuscules', async () => {
+    // Revue Codex post-merge de la PR #66, constat C2. La clé d'un document
+    // est `projectKey(chemin)`, donc REPLIÉE EN CASSE sous Windows, et
+    // `runProof` s'en servait comme chemin d'ouverture. Sur un dossier Windows
+    // sensible à la casse (possible depuis Windows 10, et le cas de tout
+    // système de fichiers POSIX), `Rapport.md` écrit puis `rapport.md` ouvert
+    // donne un « not found » sur un fichier qui existe — ou pire, la preuve
+    // d'un AUTRE fichier si les deux existent.
+    //
+    // Le chemin d'affichage (`display_path_snapshot`) est celui que l'outil a
+    // écrit : c'est lui que la preuve ouvre. La clé reste l'identité.
+    const reel = write('Casse/Rapport.md', '# Rapport\n');
+    const repliee = reel.replace(/Rapport\.md$/, 'rapport.md');
+    const config = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: repliee,
+      displayPath: reel,
+    });
+    // Ce que le test peut prouver sur TOUTE plateforme : le sujet de la preuve
+    // est le chemin réel, pas la clé. La conséquence (ouvrir le bon fichier)
+    // ne se distingue que sur un système sensible à la casse — un volume
+    // Windows normal répond pareil aux deux, et le test y resterait vert quoi
+    // qu'il arrive.
+    expect(config).toMatchObject({ kind: 'ready', subject: reel });
+    const proof = await documentVerifier.runProof(config as ReadyConfig, async () => {});
+    expect(proof.verdict).toBe('green');
+    expect(proof.records.map((r) => r.command)).toEqual([
+      'exists',
+      'not-empty',
+      'utf8',
+      'well-formed:markdown',
+    ]);
+  });
+
+  it('sans chemin d’affichage, la clé reste le sujet — le contrat d’avant, intact', async () => {
+    const p = write('sans-affichage.md', '# Titre\n');
+    const config = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(p),
+    });
+    expect(config).toMatchObject({ kind: 'ready', subject: documentVerifier.canonicalize(p) });
+  });
+});
+
 describe('document — bien formé, selon son type', () => {
   it('un markdown sans titre est rouge et dit pourquoi', async () => {
     const p = write('sans-titre.md', 'juste du texte\n\nsans titre\n');
