@@ -157,6 +157,20 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
           reason: `Edit would produce ${bytes} bytes (max ${MAX_WRITE_BYTES}). Split the change.`,
         };
       }
+      // Le type est lu AVANT d'écrire, comme le fait le hook qui a posé
+      // l'intention : les deux voient alors le MÊME disque. Écrire le premier
+      // `package.json` d'un dossier change la réponse entre les deux lectures —
+      // avant, aucun manifeste, donc `document` ; après, `code_project` — et la
+      // carte repartait sans clé alors que la ligne d'état existait sous celle
+      // du fichier (revue Codex post-merge de la PR #66, constat C3).
+      const deliverableKey =
+        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
+          ? fileDeliverableKey(
+              path,
+              (ctx.workspaces ?? []).map((w) => w.path),
+              'document',
+            )
+          : null;
       // Atomic write
       const dir = dirname(path);
       const tmp = `${dir}/.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`;
@@ -167,14 +181,6 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
         await unlink(tmp).catch(() => undefined);
         throw err;
       }
-      const deliverableKey =
-        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
-          ? fileDeliverableKey(
-              path,
-              (ctx.workspaces ?? []).map((w) => w.path),
-              'document',
-            )
-          : null;
       return {
         ok: true,
         edited: true,

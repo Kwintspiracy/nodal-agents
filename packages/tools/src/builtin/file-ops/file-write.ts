@@ -135,6 +135,23 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
       if (input.create_dirs) {
         await mkdir(dir, { recursive: true });
       }
+      // La clé du document, pour la carte (P12) — la même que celle posée
+      // par l'intention, calculée par la même fonction. Un fichier de projet
+      // n'en porte pas : son état est celui du projet.
+      // Le type est lu AVANT d'écrire, comme le fait le hook qui a posé
+      // l'intention : les deux voient alors le MÊME disque. Écrire le premier
+      // `package.json` d'un dossier change la réponse entre les deux lectures —
+      // avant, aucun manifeste, donc `document` ; après, `code_project` — et la
+      // carte repartait sans clé alors que la ligne d'état existait sous celle
+      // du fichier (revue Codex post-merge de la PR #66, constat C3).
+      const deliverableKey =
+        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
+          ? fileDeliverableKey(
+              path,
+              (ctx.workspaces ?? []).map((w) => w.path),
+              'document',
+            )
+          : null;
       // Atomic write: tempfile in same dir (same filesystem → rename is atomic)
       const tmp = `${dir}/.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`;
       try {
@@ -145,17 +162,6 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
         await unlink(tmp).catch(() => undefined);
         throw err;
       }
-      // La clé du document, pour la carte (P12) — la même que celle posée
-      // par l'intention, calculée par la même fonction. Un fichier de projet
-      // n'en porte pas : son état est celui du projet.
-      const deliverableKey =
-        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
-          ? fileDeliverableKey(
-              path,
-              (ctx.workspaces ?? []).map((w) => w.path),
-              'document',
-            )
-          : null;
       return {
         ok: true,
         written: true,
