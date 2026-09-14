@@ -260,7 +260,16 @@ const htmlCloses: FormCheck = (text) => {
         const name = token.tagName;
         if (name === 'svg' || name === 'math') foreign += 1;
         const mode = RAW_TEXT_MODE[name];
-        if (mode !== undefined && foreign === 0) tokenizer.state = mode;
+        // `<script>` et `<style>` portent du JS et du CSS DANS un `<svg>` comme
+        // hors de lui : leur contenu n'est jamais du balisage. Constat C8 de la
+        // revue Codex de la PR #66 — le mode n'était posé que hors contenu
+        // étranger, donc une chaîne CSS contenant `<div>` à l'intérieur d'un
+        // `<svg>` faisait rougir un fichier valide. Les autres modes restent
+        // réservés au HTML : ces éléments-là n'existent pas en contenu étranger.
+        const rawInForeign = name === 'script' || name === 'style';
+        if (mode !== undefined && (foreign === 0 || (rawInForeign && !token.selfClosing))) {
+          tokenizer.state = mode;
+        }
         if (VOID_ELEMENTS.has(name) || OPTIONAL_END_TAG.has(name)) return;
         if (foreign > 0 && token.selfClosing) {
           if (name === 'svg' || name === 'math') foreign -= 1;

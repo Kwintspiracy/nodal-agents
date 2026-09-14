@@ -216,6 +216,32 @@ describe('document — bien formé, selon son type', () => {
     expect(verdict).toBe('green');
   });
 
+  it('un <style> DANS un <svg> reste du CSS — le compteur n’invente pas de balise', async () => {
+    // Revue Codex de la PR #66, constat C8. Le mode « texte brut » n'était posé
+    // que hors contenu étranger : à l'intérieur d'un `<svg>`, le contenu d'un
+    // `<style>` était relu comme du HTML, et une chaîne CSS contenant `<div>`
+    // faisait rougir un fichier valide. Mesuré sur les deux formes — le constat
+    // rendu ne nommait que `foreignObject`, la forme simple échouait aussi.
+    const simple = write(
+      'svg-style.html',
+      '<svg><style>.a::before { content: "<div>"; }</style></svg>\n',
+    );
+    expect((await prove(simple)).verdict).toBe('green');
+    const foreign = write(
+      'svg-foreign.html',
+      '<svg><foreignObject><style>.a::before { content: "<div>"; }</style></foreignObject></svg>\n',
+    );
+    expect((await prove(foreign)).verdict).toBe('green');
+    const script = write(
+      'svg-script.html',
+      '<svg><script>if (a &lt; b) { x("</div>"); }</script></svg>\n',
+    );
+    expect((await prove(script)).verdict).toBe('green');
+    // Et le SVG lui-même doit toujours se refermer.
+    const ouvert = write('svg-ouvert.html', '<div><svg><style>.a{}</style></svg>\n');
+    expect((await prove(ouvert)).verdict).toBe('red');
+  });
+
   it('un JSON qui ne se parse pas est rouge', async () => {
     const p = write('bad.json', '{"a": 1,}');
     const { verdict, records } = await prove(p);
