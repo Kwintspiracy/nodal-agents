@@ -216,6 +216,24 @@ describe('document — bien formé, selon son type', () => {
     expect(records.at(-1)).toMatchObject({ command: 'well-formed:svg', verdict: 'red' });
   });
 
+  it('une faute XML NON fatale est rouge aussi — une entité inconnue n’est pas du bien formé', async () => {
+    // Revue Codex de la PR #66, constat C6 : seul le niveau `fatalError` était
+    // retenu. `@xmldom/xmldom` rapporte une entité inconnue au niveau `error`
+    // et rend quand même un document : le SVG passait au vert.
+    const p = write('entite.svg', '<svg xmlns="http://www.w3.org/2000/svg">&undefined;</svg>');
+    const { verdict, records } = await prove(p);
+    expect(verdict).toBe('red');
+    expect(records.at(-1)).toMatchObject({ command: 'well-formed:svg', verdict: 'red' });
+    expect(records.at(-1)?.stderrTail).toMatch(/entity/i);
+    // Et les SVG valides restent verts : sondés, ils n'émettent aucun `error`.
+    const ok = write(
+      'valide.svg',
+      '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg">' +
+        '<!-- c --><style><![CDATA[.a{fill:red}]]></style><rect width="1" height="1"/></svg>',
+    );
+    expect((await prove(ok)).verdict).toBe('green');
+  });
+
   it('les trois fichiers du skill sont verts', async () => {
     const md = write('skill/SKILL.md', '# Base CSS\n\nUn skill.\n');
     const css = write('skill/base.css', ':root { --ink: #111; }\nbody { color: var(--ink); }\n');
