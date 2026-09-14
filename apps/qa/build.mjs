@@ -43,7 +43,7 @@ const entete = (id, titre) => {
   if (!x) throw new Error(`page sans explication : ${id}`);
   return `<div class="entete-page">
     <h2 class="titre-vue">${esc(titre)}</h2>
-    <button type="button" class="btn-comprendre" data-explique="${id}">Comprendre cette page</button>
+    <button type="button" class="btn-comprendre" data-explique="${id}">Understand this page</button>
   </div>
   <p class="pourquoi">${esc(x.enBref)}</p>`;
 };
@@ -60,7 +60,7 @@ const modaleExplications = () => `<dialog id="explication" class="modale">
   <div class="modale__cadre">
     <header class="modale__tete">
       <h2 id="explication-titre"></h2>
-      <button type="button" class="modale__fermer" data-fermer aria-label="Fermer">Fermer</button>
+      <button type="button" class="modale__fermer" data-fermer aria-label="Close">Close</button>
     </header>
     <div id="explication-corps" class="modale__corps"></div>
   </div>
@@ -78,7 +78,7 @@ const esc = (v) =>
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
   );
-const n = (v) => (typeof v === 'number' ? v.toLocaleString('fr-FR') : '—');
+const n = (v) => (typeof v === 'number' ? v.toLocaleString('en-GB') : '—');
 
 /**
  * Le chemin entre un rouge et sa CAUSE.
@@ -92,15 +92,15 @@ const n = (v) => (typeof v === 'number' ? v.toLocaleString('fr-FR') : '—');
  */
 const lienRun = (url) =>
   url
-    ? `<a class="lien-run" href="${esc(url)}" target="_blank" rel="noopener">voir le run</a>`
+    ? `<a class="lien-run" href="${esc(url)}" target="_blank" rel="noopener">see the run</a>`
     : '';
 const pct = (v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : null);
 /** Le jour seul — sur un axe de courbe, l'heure d'une collecte n'apprend rien. */
 const jourFr = (iso) =>
-  iso ? new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '—';
+  iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—';
 const dateFr = (iso) =>
   iso
-    ? new Date(iso).toLocaleString('fr-FR', {
+    ? new Date(iso).toLocaleString('en-GB', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
@@ -120,10 +120,10 @@ const ecarts = () => ecartsDe(s, historique);
 
 function barre(valeur, libelle) {
   if (typeof valeur !== 'number') {
-    return `<div class="jauge jauge--inconnue" role="img" aria-label="${esc(libelle)} : non mesuré"><span>non mesuré</span></div>`;
+    return `<div class="jauge jauge--inconnue" role="img" aria-label="${esc(libelle)}: not measured"><span>not measured</span></div>`;
   }
   const ton = valeur >= 80 ? 'ok' : valeur >= 60 ? 'moyen' : 'faible';
-  return `<div class="jauge jauge--${ton}" role="img" aria-label="${esc(libelle)} : ${valeur.toFixed(1)} %">
+  return `<div class="jauge jauge--${ton}" role="img" aria-label="${esc(libelle)}: ${valeur.toFixed(1)}%">
       <i style="width:${Math.max(0, Math.min(100, valeur)).toFixed(1)}%"></i><span>${valeur.toFixed(1)}%</span></div>`;
 }
 
@@ -153,7 +153,7 @@ function courbe(t, { titre, libelle, fmt = (v) => v.toFixed(1) }) {
   if (pts.length === 0) {
     return `<article class="courbe">
       <h4>${esc(titre)}</h4>
-      <p class="courbe__vide">Aucune collecte mesurée sur la fenêtre. Rien à tracer — et rien n'est tracé.</p>
+      <p class="courbe__vide">No measured collection over the window. Nothing to plot — and nothing is plotted.</p>
     </article>`;
   }
 
@@ -189,12 +189,12 @@ function courbe(t, { titre, libelle, fmt = (v) => v.toFixed(1) }) {
   const fleche = { monte: '↗', descend: '↘', stable: '→' }[t.direction] ?? '';
   const resume =
     t.delta == null
-      ? 'une seule collecte, pas encore de tendance'
-      : `${fleche} ${t.delta > 0 ? '+' : ''}${fmt(t.delta)} depuis le ${jourFr(pts[0].le)}`;
+      ? 'a single collection, no trend yet'
+      : `${fleche} ${t.delta > 0 ? '+' : ''}${fmt(t.delta)} since ${jourFr(pts[0].le)}`;
 
   return `<article class="courbe">
   <h4>${esc(titre)} <span class="courbe__resume courbe__resume--${t.direction ?? 'seule'}">${esc(resume)}</span></h4>
-  <svg viewBox="0 0 ${W} ${H}" class="courbe__trace" role="img" aria-label="${esc(libelle)} : ${esc(resume)}">
+  <svg viewBox="0 0 ${W} ${H}" class="courbe__trace" role="img" aria-label="${esc(libelle)}: ${esc(resume)}">
     <line class="courbe__axe" x1="${mg}" y1="${mh}" x2="${W - md}" y2="${mh}"></line>
     <line class="courbe__axe" x1="${mg}" y1="${H - mb}" x2="${W - md}" y2="${H - mb}"></line>
     <text class="courbe__graduation" x="${mg - 8}" y="${mh + 4}" text-anchor="end">${esc(fmt(haut))}</text>
@@ -216,56 +216,56 @@ function vueEnsemble() {
   const tCouv = tendance(historique, 'couvertureLignes', { jours: 7 });
   const phraseCouv =
     tCouv.delta == null
-      ? `Pas encore de tendance : ${tCouv.valeurs.length} collecte(s) mesurée(s) sur les 7 derniers jours, il en faut deux.`
+      ? `No trend yet: ${tCouv.valeurs.length} measured collection(s) over the last 7 days, two are needed.`
       : tCouv.direction === 'stable'
-        ? 'Stable sur 7 jours.'
-        : `En ${tCouv.direction === 'monte' ? 'hausse' : 'baisse'} de ${Math.abs(tCouv.delta)} point(s) sur 7 jours.`;
+        ? 'Stable over 7 days.'
+        : `${tCouv.direction === 'monte' ? 'Up' : 'Down'} ${Math.abs(tCouv.delta)} point(s) over 7 days.`;
   const couvert = pct(r.couvertureLignes);
   const partJouee = r.specsE2e > 0 ? Math.round((r.specsE2eJoueesParLaCi / r.specsE2e) * 100) : 0;
 
   return `
 <section id="vue" class="vue">
-  ${entete('vue', "Tests, vue d'ensemble")}
-  <p class="chapo">Ce que le dépôt sait de ses propres tests, mesuré — et ce qu'il ne sait pas encore, dit comme tel.</p>
+  ${entete('vue', 'Tests, overview')}
+  <p class="chapo">What the repository knows about its own tests, measured — and what it does not know yet, said as such.</p>
 
   ${repere('vue', 'cartes')}
   <div class="cartes">
     <article class="carte carte--phare">
-      <h3>Couverture réelle des lignes</h3>
+      <h3>Real line coverage</h3>
       <p class="chiffre">${couvert ?? '—'}</p>
-      <p class="sous">${n(r.lignesCouvertes)} lignes couvertes sur ${n(r.lignesTotal)}<br>
-        <b>sur ${r.paquetsMesures} paquets mesurés / ${r.paquets}</b></p>
-      ${barre(r.couvertureLignes, 'couverture des lignes')}
+      <p class="sous">${n(r.lignesCouvertes)} lines covered out of ${n(r.lignesTotal)}<br>
+        <b>over ${r.paquetsMesures} measured packages / ${r.paquets}</b></p>
+      ${barre(r.couvertureLignes, 'line coverage')}
       <p class="tendance tendance--${tCouv.direction ?? 'seule'}">${esc(phraseCouv)}</p>
-      <p class="avertissement">Ce chiffre ne vaut que pour la part mesurée. ${r.paquets - r.paquetsMesures} paquets n'ont jamais été instrumentés — ils ne sont ni comptés dans le numérateur ni dans le dénominateur.</p>
+      <p class="avertissement">This number only holds for the measured share. ${r.paquets - r.paquetsMesures} package${r.paquets - r.paquetsMesures > 1 ? 's have' : ' has'} never been instrumented — they count in neither the numerator nor the denominator.</p>
     </article>
 
     <article class="carte">
-      <h3>Cas de test</h3>
+      <h3>Test cases</h3>
       <p class="chiffre">${n(r.casDeTest)}</p>
-      <p class="sous">dans ${n(r.fichiersDeTest)} fichiers, hors bout en bout</p>
+      <p class="sous">in ${n(r.fichiersDeTest)} files, end-to-end aside</p>
     </article>
 
     <article class="carte ${partJouee < 50 ? 'carte--alerte' : ''}">
-      <h3>Parcours joués par la CI</h3>
+      <h3>Journeys played by the CI</h3>
       <p class="chiffre">${r.specsE2eJoueesParLaCi} <span class="sur">/ ${r.specsE2e}</span></p>
-      <p class="sous">${n(r.casE2e)} cas écrits · <b>${r.specsE2e - r.specsE2eJoueesParLaCi} parcours jamais exécutés</b></p>
-      ${barre(partJouee, 'parcours joués')}
+      <p class="sous">${n(r.casE2e)} cases written · <b>${r.specsE2e - r.specsE2eJoueesParLaCi} journey${r.specsE2e - r.specsE2eJoueesParLaCi > 1 ? 's' : ''} never run</b></p>
+      ${barre(partJouee, 'journeys played')}
     </article>
 
     <article class="carte">
-      <h3>Sections du banc</h3>
+      <h3>Bench sections</h3>
       <p class="chiffre">${s.banc.sections.length}</p>
-      <p class="sous">${s.ci.some((w) => w.lanceBanc) ? 'lancé par la CI' : '<b>jamais lancé par la CI</b>'}</p>
+      <p class="sous">${s.ci.some((w) => w.lanceBanc) ? 'run by the CI' : '<b>never run by the CI</b>'}</p>
     </article>
   </div>
 
-  <h3 class="sous-titre">Couverture par paquet</h3>
+  <h3 class="sous-titre">Coverage by package</h3>
   ${repere('vue', 'paquets')}
-  <p class="note-section">Trié par nombre de lignes non couvertes : ce qui est en haut est ce qui coûte le plus à ignorer. Un paquet non mesuré est hachuré — il n'a pas zéro, il n'a rien.</p>
+  <p class="note-section">Sorted by uncovered line count: what sits on top is what costs the most to ignore. An unmeasured package is hatched — it does not have zero, it has nothing.</p>
   <div class="tableau">
     <table>
-      <thead><tr><th>Paquet</th><th>Cas</th><th class="num">Lignes</th><th style="min-width:180px">Couverture des lignes</th><th class="num">Branches</th></tr></thead>
+      <thead><tr><th>Package</th><th>Cases</th><th class="num">Lines</th><th style="min-width:180px">Line coverage</th><th class="num">Branches</th></tr></thead>
       <tbody>
         ${[...s.paquets]
           .filter((p) => p.tests.cas > 0 || p.couverture)
@@ -301,43 +301,39 @@ function vueParcours() {
   // qui ne garde rien.
   const parCadence = new Map();
   for (const p of s.parcours) {
-    const c = p.cadence ?? 'jamais joué';
+    const c = p.cadence ?? 'never played';
     parCadence.set(c, [...(parCadence.get(c) ?? []), p]);
   }
-  const ORDRE = ['chaque PR', 'chaque push sur main', 'chaque nuit', 'à la main', 'jamais joué'];
+  const ORDRE = [
+    'every pull request',
+    'every push to main',
+    'every night',
+    'by hand',
+    'never played',
+  ];
 
   const ligne = (p) => {
     const r = p.resultat;
     let etat;
     if (!r) {
-      etat = '<span class="pastille pastille--inconnu">jamais exécuté ici</span>';
+      etat = '<span class="pastille pastille--inconnu">never run here</span>';
     } else {
       // Quatre sorts, montrés SÉPARÉMENT. Un cas ignoré n'est pas un cas rouge :
       // les confondre, c'est le défaut que ce portail dénonce ailleurs.
       const bouts = [];
-      if (r.vert)
-        bouts.push(
-          `<span class="pastille pastille--ok">${r.vert} vert${r.vert > 1 ? 's' : ''}</span>`,
-        );
-      if (r.rouge)
-        bouts.push(
-          `<span class="pastille pastille--ko">${r.rouge} rouge${r.rouge > 1 ? 's' : ''}</span>`,
-        );
+      if (r.vert) bouts.push(`<span class="pastille pastille--ok">${r.vert} green</span>`);
+      if (r.rouge) bouts.push(`<span class="pastille pastille--ko">${r.rouge} red</span>`);
       if (r.instable)
-        bouts.push(
-          `<span class="pastille pastille--moyen">${r.instable} instable${r.instable > 1 ? 's' : ''}</span>`,
-        );
+        bouts.push(`<span class="pastille pastille--moyen">${r.instable} flaky</span>`);
       if (r['ignoré'])
-        bouts.push(
-          `<span class="pastille pastille--inconnu">${r['ignoré']} non exécuté${r['ignoré'] > 1 ? 's' : ''}</span>`,
-        );
-      etat = bouts.join(' ') || '<span class="pastille pastille--inconnu">rien à dire</span>';
+        bouts.push(`<span class="pastille pastille--inconnu">${r['ignoré']} skipped</span>`);
+      etat = bouts.join(' ') || '<span class="pastille pastille--inconnu">nothing to say</span>';
     }
     return `<tr>
       <td><span class="mono">${esc(p.nom)}</span><br>${
         p.intention
           ? `<span class="intention">${esc(p.intention)}</span>`
-          : '<span class="intention intention--absente">aucune description</span>'
+          : '<span class="intention intention--absente">no description</span>'
       }
         ${r?.rouge ? lienRun(s.execution?.url) : ''}</td>
       <td class="num">${p.cas}</td>
@@ -350,26 +346,26 @@ function vueParcours() {
     const dedans = parCadence.get(cadence);
     if (!dedans || dedans.length === 0) return '';
     const note =
-      cadence === 'chaque PR'
-        ? 'Ceux-là BLOQUENT une régression avant le merge.'
-        : cadence === 'chaque nuit'
-          ? 'Ceux-là la CONSTATENT le lendemain. Ils ne gardent aucune PR.'
-          : cadence === 'jamais joué'
-            ? 'Écrits, versionnés, et qu’aucune intégration continue n’exécute.'
+      cadence === 'every pull request'
+        ? 'These BLOCK a regression before the merge.'
+        : cadence === 'every night'
+          ? 'These OBSERVE it the next day. They guard no pull request.'
+          : cadence === 'never played'
+            ? 'Written, versioned, and run by no continuous integration.'
             : '';
     return `<h3 class="sous-titre">${esc(cadence)} <span class="compte">${dedans.length}</span></h3>
       ${note ? `<p class="note-section">${note}</p>` : ''}
       <div class="tableau"><table>
-        <thead><tr><th>Parcours</th><th class="num">Cas</th><th style="min-width:230px">Dernier résultat</th><th class="num">Durée</th></tr></thead>
+        <thead><tr><th>Journey</th><th class="num">Cases</th><th style="min-width:230px">Last result</th><th class="num">Duration</th></tr></thead>
         <tbody>${dedans.map(ligne).join('\n')}</tbody>
       </table></div>`;
   };
 
-  const bloque = (parCadence.get('chaque PR') ?? []).length;
+  const bloque = (parCadence.get('every pull request') ?? []).length;
   return `
 <section id="parcours" class="vue">
-  ${entete('parcours', 'Parcours')}
-  <p class="chapo">Les scénarios bout en bout : ce qu'un utilisateur fait réellement. ${s.parcours.length} versionnés, et <b>${bloque} seulement gardent une PR</b> — les autres constatent après coup, ou jamais.</p>
+  ${entete('parcours', 'Journeys')}
+  <p class="chapo">The end-to-end scenarios: what a user actually does. ${s.parcours.length} versioned, and <b>only ${bloque} guard a pull request</b> — the others observe after the fact, or never.</p>
   ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
 </section>`;
@@ -378,12 +374,12 @@ function vueParcours() {
 function vueBanc() {
   return `
 <section id="banc" class="vue">
-  ${entete('banc', "Banc d'essai")}
-  <p class="chapo">Le banc ne répond pas « est-ce cassé ? » mais « qu'est-ce qui a CHANGÉ, et de combien ». Chaque section porte une baseline acceptée ; un écart fait sortir la commande en erreur.</p>
+  ${entete('banc', 'Bench')}
+  <p class="chapo">The bench does not answer "is it broken?" but "what CHANGED, and by how much". Every section carries an accepted baseline; a drift makes the command exit with an error.</p>
   ${
     s.ci.some((w) => w.lanceBanc)
       ? ''
-      : `<div class="alerte"><b>Aucun workflow ne le lance.</b> Le banc peut détecter une régression et le dire ; il reste muet tant que rien ne l'exécute.</div>`
+      : `<div class="alerte"><b>No workflow runs it.</b> The bench can detect a regression and say so; it stays silent as long as nothing runs it.</div>`
   }
   ${(() => {
     // Le verdict du DERNIER passage, et pas seulement les baselines acceptées.
@@ -391,37 +387,37 @@ function vueBanc() {
     // — la vue ne montrait que ce qui avait été validé un jour.
     const v = verdictDuBanc(s.banc?.dernierRun);
     if (v.absent) {
-      return `<div class="alerte"><b>Aucun passage enregistré.</b> Les valeurs ci-dessous sont les baselines ACCEPTÉES, pas une mesure du jour. Absent n'est pas « rien n'a bougé ».</div>`;
+      return `<div class="alerte"><b>No run recorded.</b> The values below are the ACCEPTED baselines, not a measurement of the day. Missing is not "nothing moved".</div>`;
     }
     if (v.regressions.length === 0 && v.erreurs.length === 0) {
-      return `<p class="note-section">Dernier passage le ${esc(dateFr(v.mesureLe))} — aucune régression, aucune section en panne.</p>`;
+      return `<p class="note-section">Last run on ${esc(dateFr(v.mesureLe))} — no regression, no section down.</p>`;
     }
     const bouts = [];
     if (v.regressions.length > 0) {
       bouts.push(
-        `<b>${v.regressions.length} section(s) ont régressé :</b> ${v.regressions.map(esc).join(', ')}`,
+        `<b>${v.regressions.length} section(s) regressed:</b> ${v.regressions.map(esc).join(', ')}`,
       );
     }
     if (v.erreurs.length > 0) {
       bouts.push(
-        `<b>${v.erreurs.length} section(s) n'ont pas pu tourner :</b> ${v.erreurs.map(esc).join(', ')} — une panne, pas un ralentissement`,
+        `<b>${v.erreurs.length} section(s) could not run:</b> ${v.erreurs.map(esc).join(', ')} — a fault, not a slowdown`,
       );
     }
-    return `<div class="alerte">${bouts.join('<br>')}<br><span class="dim">Passage du ${esc(dateFr(v.mesureLe))}.</span></div>`;
+    return `<div class="alerte">${bouts.join('<br>')}<br><span class="dim">Run of ${esc(dateFr(v.mesureLe))}.</span></div>`;
   })()}
   ${repere('banc', 'sections')}
   <div class="grille-banc">
     ${s.banc.sections
       .map(
         (b) => `<article class="bloc-banc">
-        <header><h3 class="mono">${esc(b.id)}</h3><span class="dim mono">réf. ${esc((b.gitSha ?? '').slice(0, 7))}</span></header>
+        <header><h3 class="mono">${esc(b.id)}</h3><span class="dim mono">ref. ${esc((b.gitSha ?? '').slice(0, 7))}</span></header>
         <dl>${b.metriques
           .map(
             (m) =>
               `<div><dt>${esc(m.label)}</dt><dd>${n(m.valeur)} <span class="unite">${esc(m.unite ?? '')}</span></dd></div>`,
           )
           .join('')}</dl>
-        <p class="dim">acceptée le ${dateFr(b.accepteeLe)}</p>
+        <p class="dim">accepted on ${dateFr(b.accepteeLe)}</p>
       </article>`,
       )
       .join('\n')}
@@ -444,34 +440,34 @@ function cadrePrix() {
   const p = s.prixCi;
   if (!p) {
     return `<article class="prix prix--absent">
-      <h3>Prix d'une PR</h3>
-      <p class="avertissement">GitHub n'a pas répondu. Le coût des contrôles n'est pas mesuré pour cette collecte — ce n'est pas zéro minute, c'est aucune mesure.</p>
+      <h3>Price of a pull request</h3>
+      <p class="avertissement">GitHub did not answer. The cost of the checks is not measured for this collection — that is not zero minutes, it is no measurement.</p>
     </article>`;
   }
   if (p.runs === 0) {
     return `<article class="prix prix--absent">
-      <h3>Prix d'une PR</h3>
-      <p class="avertissement">Aucune exécution VERTE dans les trente dernières. On ne mesure une attente que sur un run qui est allé au bout : un run rouge s'arrête au premier échec et donnerait une durée flatteuse.</p>
+      <h3>Price of a pull request</h3>
+      <p class="avertissement">No GREEN run among the last thirty. A wait is only measured on a run that went all the way: a red run stops at the first failure and would give a flattering duration.</p>
     </article>`;
   }
   const min = (v) => (typeof v === 'number' ? `${v.toFixed(1)} min` : '—');
   return `<article class="prix">
-  <h3>Prix d'une PR <span class="dim">${p.runs} exécution(s) verte(s) sur les 30 dernières</span></h3>
+  <h3>Price of a pull request <span class="dim">${p.runs} green run(s) out of the last 30</span></h3>
   <div class="prix__chiffres">
-    <div class="prix__bloc prix__bloc--phare"><span class="prix__valeur">${min(p.mediane)}</span><span class="prix__quoi">médiane</span></div>
-    <div class="prix__bloc"><span class="prix__valeur">${min(p.dernier)}</span><span class="prix__quoi">dernière</span></div>
-    <div class="prix__bloc"><span class="prix__valeur">${min(p.pire)}</span><span class="prix__quoi">la pire</span></div>
+    <div class="prix__bloc prix__bloc--phare"><span class="prix__valeur">${min(p.mediane)}</span><span class="prix__quoi">median</span></div>
+    <div class="prix__bloc"><span class="prix__valeur">${min(p.dernier)}</span><span class="prix__quoi">last</span></div>
+    <div class="prix__bloc"><span class="prix__valeur">${min(p.pire)}</span><span class="prix__quoi">worst</span></div>
     <div class="prix__bloc"><span class="prix__valeur prix__valeur--${p.tendance ?? 'seule'}">${
       p.tendance == null
         ? '—'
         : `${{ monte: '↗', descend: '↘', stable: '→' }[p.tendance]} ${p.hausse > 0 ? '+' : ''}${p.hausse} %`
-    }</span><span class="prix__quoi">tendance</span></div>
+    }</span><span class="prix__quoi">trend</span></div>
   </div>
   ${courbe(
     { valeurs: p.serie, delta: p.deltaMin, direction: p.tendance },
     {
-      titre: 'Durée des exécutions vertes',
-      libelle: "Minutes d'attente par exécution de la CI",
+      titre: 'Duration of green runs',
+      libelle: 'Minutes of waiting per CI run',
       fmt: (v) => `${v.toFixed(1)} min`,
     },
   )}
@@ -481,8 +477,8 @@ function cadrePrix() {
 function vueCi() {
   return `
 <section id="ci" class="vue">
-  ${entete('ci', 'Ce qui déclenche quoi')}
-  <p class="chapo">Lu dans les fichiers de workflow, pas dans une intention. C'est la réponse à « qu'est-ce qui lance les tests, et quand » — et à ce que ça coûte d'attendre.</p>
+  ${entete('ci', 'What triggers what')}
+  <p class="chapo">Read from the workflow files, not from an intention. This is the answer to "what runs the tests, and when" — and to what the waiting costs.</p>
   ${repere('ci', 'prix')}
   ${cadrePrix()}
   <div class="grille-ci">
@@ -490,11 +486,11 @@ function vueCi() {
       .map(
         (w) => `<article class="bloc-ci">
       <header><h3>${esc(w.nom)}</h3><span class="dim mono">${esc(w.fichier)}</span></header>
-      <p class="ligne-meta"><b>Déclencheurs</b> ${w.declencheurs.length ? w.declencheurs.map((d) => `<span class="jeton">${esc(d)}</span>`).join(' ') : '<span class="dim">aucun</span>'}</p>
+      <p class="ligne-meta"><b>Triggers</b> ${w.declencheurs.length ? w.declencheurs.map((d) => `<span class="jeton">${esc(d)}</span>`).join(' ') : '<span class="dim">none</span>'}</p>
       <p class="ligne-meta"><b>Jobs</b> ${w.jobs.map((j) => `<span class="jeton">${esc(j)}</span>`).join(' ')}</p>
-      <p class="ligne-meta"><b>Banc</b> ${w.lanceBanc ? '<span class="pastille pastille--ok">lancé</span>' : '<span class="pastille pastille--ko">non lancé</span>'}
-         &nbsp;<b>Couverture</b> ${w.lanceCouverture ? '<span class="pastille pastille--ok">mesurée</span>' : '<span class="pastille pastille--ko">non mesurée</span>'}</p>
-      ${w.specsNommees.length ? `<p class="ligne-meta"><b>Parcours joués</b> ${w.specsNommees.map((x) => `<span class="jeton mono">${esc(x)}</span>`).join(' ')}</p>` : ''}
+      <p class="ligne-meta"><b>Bench</b> ${w.lanceBanc ? '<span class="pastille pastille--ok">run</span>' : '<span class="pastille pastille--ko">not run</span>'}
+         &nbsp;<b>Coverage</b> ${w.lanceCouverture ? '<span class="pastille pastille--ok">measured</span>' : '<span class="pastille pastille--ko">not measured</span>'}</p>
+      ${w.specsNommees.length ? `<p class="ligne-meta"><b>Journeys played</b> ${w.specsNommees.map((x) => `<span class="jeton mono">${esc(x)}</span>`).join(' ')}</p>` : ''}
     </article>`,
       )
       .join('\n')}
@@ -530,16 +526,16 @@ const TESTS_VISIBLES = 3;
 function vueCapacites() {
   const reg = s.capacites?.registre ?? [];
   if (reg.length === 0) {
-    return `<section id="capacites" class="vue">${entete('capacites', 'Ce que le produit sait faire')}
-      <p class="chapo">Aucun registre dans cette collecte.</p></section>`;
+    return `<section id="capacites" class="vue">${entete('capacites', 'What the product can do')}
+      <p class="chapo">No registry in this collection.</p></section>`;
   }
   // Une collecte antérieure aux niveaux écran/moteur n'a pas ces clés. Le
   // rendu plantait dessus — et `apps/qa build` sortait en erreur dans la CI
   // de toute PR, tant que la mesure nocturne n'avait pas réécrit les données.
   // On le DIT, on ne devine pas : deviner afficherait un registre faux.
   if (!reg[0]?.ecran || !reg[0]?.moteur) {
-    return `<section id="capacites" class="vue">${entete('capacites', 'Ce que le produit sait faire')}
-      <p class="chapo">Cette collecte est antérieure aux niveaux écran / moteur : son registre ne dit pas à quel niveau chaque capacité est prouvée. La prochaine mesure la remplacera.</p></section>`;
+    return `<section id="capacites" class="vue">${entete('capacites', 'What the product can do')}
+      <p class="chapo">This collection predates the screen / engine levels: its registry does not say at which level each capability is proven. The next measurement will replace it.</p></section>`;
   }
 
   const tombees = reg.filter((c) => c.ecran.etat === 'echouee' || c.moteur.etat === 'echouee');
@@ -574,7 +570,7 @@ function vueCapacites() {
     const cls = PASTILLE_NIVEAU[n.etat] ?? 'inconnu';
     if (n.etat === 'absente') {
       return `<td><span class="pastille pastille--${cls}">${esc(mot)}</span>
-        <div class="dim petit">aucun test à ce niveau</div></td>`;
+        <div class="dim petit">no test at this level</div></td>`;
     }
     const noms = nomsDe(n.preuves);
     const tete = noms.slice(0, TESTS_VISIBLES);
@@ -585,7 +581,7 @@ function vueCapacites() {
     return `<td><span class="pastille pastille--${cls}">${esc(mot)}</span>${cause}
       <div class="preuves">${tete.map((t) => `<div>${esc(t)}</div>`).join('')}${
         reste.length > 0
-          ? `<details><summary>${reste.length} autre${reste.length > 1 ? 's' : ''}</summary>${reste
+          ? `<details><summary>${reste.length} more</summary>${reste
               .map((t) => `<div>${esc(t)}</div>`)
               .join('')}</details>`
           : ''
@@ -596,28 +592,28 @@ function vueCapacites() {
     caps
       .map(
         (c) => `<tr>
-        <td><b>${esc(c.nom)}</b>${c.exigee ? ' <span class="jeton">exigée</span>' : ''}<br>
+        <td><b>${esc(c.nom)}</b>${c.exigee ? ' <span class="jeton">required</span>' : ''}<br>
           <span class="intention">${esc(c.question)}</span>
           <div class="phrase-cap">${esc(c.phrase)}</div>
           ${
             c.nonDit.length > 0
               ? `<div class="dim petit preuves"><details><summary>${
                   c.nonDit.length
-                } étiquette(s) sans niveau</summary>${nomsDe(c.nonDit)
+                } label(s) with no level</summary>${nomsDe(c.nonDit)
                   .map((t) => `<div>${esc(t)}</div>`)
                   .join('')}</details></div>`
               : ''
           }
           ${
             c.ecran.etat === 'absente' && c.ecranAttendu
-              ? `<div class="dim petit">Ce qu'un test d'écran devrait vérifier : ${esc(
+              ? `<div class="dim petit">What a screen test should check: ${esc(
                   c.ecranAttendu,
                 )}</div>`
               : ''
           }
           ${
             c.moteur.etat === 'absente' && c.preuveAttendue
-              ? `<div class="dim petit">Ce qu'un test moteur devrait vérifier : ${esc(
+              ? `<div class="dim petit">What an engine test should check: ${esc(
                   c.preuveAttendue,
                 )}</div>`
               : ''
@@ -630,34 +626,34 @@ function vueCapacites() {
 
   return `
 <section id="capacites" class="vue">
-  ${entete('capacites', 'Ce que le produit sait faire')}
-  <p class="chapo">Une ligne par capacité, et ce qui la prouve — à deux niveaux. L'<b>écran</b> dit que les boutons s'enchaînent ; le <b>moteur</b> dit que la chose est faite derrière. Une capacité n'est vraiment vérifiée que si les deux existent et passent.</p>
+  ${entete('capacites', 'What the product can do')}
+  <p class="chapo">One row per capability, and what proves it — at two levels. The <b>screen</b> says the buttons chain together; the <b>engine</b> says the thing is done behind. A capability is only truly verified if both exist and pass.</p>
 
   ${repere('capacites', 'compteurs')}
   <div class="cartes">
     <article class="carte carte--phare ${tombees.length > 0 ? 'carte--alerte' : ''}">
-      <h3>Preuves échouées</h3>
+      <h3>Failed proofs</h3>
       <p class="chiffre">${tombees.length}</p>
-      <p class="sous">sur ${reg.length} capacités nommées</p>
-      <p class="avertissement">Un test qui les prouvait a échoué. C'est la seule carte qui parle d'une panne.</p>
+      <p class="sous">out of ${reg.length} named capabilities</p>
+      <p class="avertissement">A test that proved them failed. This is the only card that talks about a fault.</p>
     </article>
 
     <article class="carte ${sansMoteur.length > 0 ? 'carte--alerte' : ''}">
-      <h3>Sans preuve moteur</h3>
+      <h3>No engine proof</h3>
       <p class="chiffre">${sansMoteur.length}</p>
-      <p class="sous">la façade est peut-être vérifiée, le moteur non</p>
+      <p class="sous">the façade may be checked, the engine is not</p>
     </article>
 
     <article class="carte">
-      <h3>Sans preuve écran</h3>
+      <h3>No screen proof</h3>
       <p class="chiffre">${sansEcran.length}</p>
-      <p class="sous">rien ne dit qu'un utilisateur y arrive par l'interface</p>
+      <p class="sous">nothing says a user can get there through the interface</p>
     </article>
 
     <article class="carte">
-      <h3>Aucune preuve</h3>
+      <h3>No proof at all</h3>
       <p class="chiffre">${rien.length}</p>
-      <p class="sous">ni écran ni moteur — ce qu'on croit livré</p>
+      <p class="sous">neither screen nor engine — what we believe is shipped</p>
     </article>
   </div>
   ${repere('capacites', 'registre')}
@@ -667,13 +663,13 @@ function vueCapacites() {
       (d) => `
   <h3 class="sous-titre">${esc(d.nom)} <span class="compte">${d.capacites.length}</span></h3>
   <table class="tableau tableau--capacites">
-    <thead><tr><th>Capacité</th><th>Écran</th><th>Moteur</th></tr></thead>
+    <thead><tr><th>Capability</th><th>Screen</th><th>Engine</th></tr></thead>
     <tbody>${lignes(d.capacites)}</tbody>
   </table>`,
     )
     .join('')}
 
-  <p class="note-section">L'étiquette <code>@cap:&lt;slug&gt;/ecran</code> ou <code>@cap:&lt;slug&gt;/moteur</code> se pose dans le titre d'un <code>describe</code> ou d'un test, et vaut pour tous les cas qu'il contient. <code>node apps/qa/porte.mjs</code> refuse une étiquette qui ne désigne rien, et une capacité exigée que plus aucun test ne revendique ; une étiquette sans niveau est signalée sans bloquer, le temps de la transition.</p>
+  <p class="note-section">The label <code>@cap:&lt;slug&gt;/ecran</code> or <code>@cap:&lt;slug&gt;/moteur</code> goes in the title of a <code>describe</code> or of a test, and holds for every case it contains. <code>node apps/qa/porte.mjs</code> refuses a label that names nothing, and a required capability no test claims any more; a label with no level is flagged without blocking, for the duration of the transition.</p>
 </section>`;
 }
 
@@ -691,8 +687,8 @@ function ruban(recents) {
 function vueMemoire() {
   const m = s.memoire;
   if (!m || m.total === 0) {
-    return `<section id="memoire" class="vue">${entete('memoire', 'Mémoire des tests')}
-      <p class="chapo">Aucun test suivi pour l'instant. La mémoire se remplit à chaque mesure ; elle a besoin de plusieurs passages avant de savoir dire quoi que ce soit d'utile.</p></section>`;
+    return `<section id="memoire" class="vue">${entete('memoire', 'Test memory')}
+      <p class="chapo">No test tracked so far. The memory fills up at every measurement; it needs several runs before it can say anything useful.</p></section>`;
   }
 
   // `colonneJours` n'est posée que sur les cassés : l'âge d'un rouge ne veut
@@ -708,7 +704,7 @@ function vueMemoire() {
       <td class="num">${e.echecs}/${e.tours}</td>
       <td class="num">${e.tauxEchec != null ? e.tauxEchec + ' %' : '—'}</td>
       <td>${esc(dateFr(colonneAge ? e.rougeDepuis : e.dernierTourLe))}</td>
-      ${colonneJours ? `<td class="num ${jours != null && jours > 14 ? 'dette' : ''}">${jours != null ? `${jours} j` : '<span class="dim">bascule jamais vue</span>'}</td>` : ''}
+      ${colonneJours ? `<td class="num ${jours != null && jours > 14 ? 'dette' : ''}">${jours != null ? `${jours} d` : '<span class="dim">flip never seen</span>'}</td>` : ''}
     </tr>`;
       })
       .join('');
@@ -719,40 +715,40 @@ function vueMemoire() {
 
   return `
 <section id="memoire" class="vue">
-  ${entete('memoire', 'Mémoire des tests')}
-  <p class="chapo">Un enregistrement par test, pas par exécution. C'est la seule forme qui sache répondre « combien de fois ça tourne, et combien de fois ça tombe ».</p>
+  ${entete('memoire', 'Test memory')}
+  <p class="chapo">One record per test, not per run. It is the only shape that can answer "how often does it run, and how often does it fall".</p>
 
   <div class="cartes">
     <article class="carte carte--phare ${m.instables > 0 ? 'carte--alerte' : ''}">
-      <h3>Tests instables</h3>
+      <h3>Flaky tests</h3>
       <p class="chiffre">${m.instables}</p>
-      <p class="sous">verts ET rouges dans leur fenêtre</p>
-      <p class="avertissement">Un test cassé se répare. Un test instable se subit : aucune exécution isolée ne le dénonce, il passe pour vert chaque fois qu'il passe.</p>
+      <p class="sous">green AND red within their window</p>
+      <p class="avertissement">A broken test gets repaired. A flaky test gets endured: no isolated run gives it away, it passes for green every time it passes.</p>
     </article>
 
     <article class="carte ${m.casses > 0 ? 'carte--alerte' : ''}">
-      <h3>Tests cassés</h3>
+      <h3>Broken tests</h3>
       <p class="chiffre">${m.casses}</p>
-      <p class="sous">rouges à chaque tour connu</p>
+      <p class="sous">red at every known run</p>
     </article>
 
     <article class="carte">
-      <h3>Tests suivis</h3>
+      <h3>Tracked tests</h3>
       <p class="chiffre">${n(m.total)}</p>
-      <p class="sous">${n(m.joues)} joués lors de la dernière mesure</p>
+      <p class="sous">${n(m.joues)} played at the last measurement</p>
     </article>
 
     <article class="carte">
-      <h3>Réparé en (médiane)</h3>
-      <p class="chiffre">${rep.mediane != null ? `${rep.mediane} <span class="sur">j</span>` : '—'}</p>
+      <h3>Repaired in (median)</h3>
+      <p class="chiffre">${rep.mediane != null ? `${rep.mediane} <span class="sur">d</span>` : '—'}</p>
       <p class="sous">${
         rep.mediane != null
-          ? `sur ${rep.durees.length} réparation(s) observée(s) de bout en bout`
-          : "aucune réparation observée pour l'instant"
+          ? `over ${rep.durees.length} repair(s) observed end to end`
+          : 'no repair observed so far'
       }</p>
       ${
         rep.mediane == null
-          ? `<p class="avertissement">Il faut avoir vu un test tomber PUIS repasser au vert pour mesurer une durée. Aucun des ${n(m.total)} tests suivis n'a encore fait ce chemin sous nos yeux.</p>`
+          ? `<p class="avertissement">A test has to be seen falling AND THEN turning green again for a duration to exist. None of the ${n(m.total)} tracked tests has made that trip under our eyes yet.</p>`
           : ''
       }
     </article>
@@ -760,16 +756,16 @@ function vueMemoire() {
 
   ${
     (m.pires ?? []).length > 0
-      ? `<h3 class="sous-titre">Les plus nuisibles <span class="compte">${m.pires.length}</span></h3>
+      ? `<h3 class="sous-titre">The most harmful <span class="compte">${m.pires.length}</span></h3>
   ${repere('memoire', 'nuisibles')}
-  <p class="note-section">Triés par taux d'échec. Le ruban se lit de gauche à droite, du plus ancien au plus récent.</p>
+  <p class="note-section">Sorted by failure rate. The ribbon reads left to right, oldest to newest.</p>
   <table class="tableau">
-    <thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th></tr></thead>
+    <thead><tr><th>Test</th><th>Last runs</th><th>Failures</th><th>Rate</th><th>Red since</th></tr></thead>
     <tbody>${lignes(m.pires, true)}</tbody>
   </table>`
-      : `<p class="note-section">Aucun test instable détecté. C'est peut-être vrai — ou la mémoire est encore trop courte pour le voir : l'instabilité demande plusieurs passages avant d'apparaître, et elle en compte ${(m.pires ?? []).length === 0 && m.total > 0 ? 'peu' : 'aucun'} pour l'instant.</p>`
+      : `<p class="note-section">No flaky test detected. That may be true — or the memory is still too short to see it: flakiness needs several runs before it shows, and it counts ${(m.pires ?? []).length === 0 && m.total > 0 ? 'few' : 'none'} so far.</p>`
   }
-  ${casses.length > 0 ? `<h3 class="sous-titre">Cassés</h3>${repere('memoire', 'casses')}<table class="tableau"><thead><tr><th>Test</th><th>Derniers tours</th><th>Échecs</th><th>Taux</th><th>Rouge depuis</th><th class="num">Âge</th></tr></thead><tbody>${lignes(casses, true, true)}</tbody></table>` : ''}
+  ${casses.length > 0 ? `<h3 class="sous-titre">Broken</h3>${repere('memoire', 'casses')}<table class="tableau"><thead><tr><th>Test</th><th>Last runs</th><th>Failures</th><th>Rate</th><th>Red since</th><th class="num">Age</th></tr></thead><tbody>${lignes(casses, true, true)}</tbody></table>` : ''}
 </section>`;
 }
 
@@ -777,8 +773,8 @@ function vueEcarts() {
   const list = ecarts();
   return `
 <section id="ecarts" class="vue">
-  ${entete('ecarts', 'Écarts')}
-  <p class="chapo">Ce que la mesure d'aujourd'hui reproche au dépôt, classé par ce que ça coûte de l'ignorer. Cette liste est calculée, pas rédigée : elle change quand le dépôt change.</p>
+  ${entete('ecarts', 'Gaps')}
+  <p class="chapo">What today's measurement holds against the repository, sorted by what ignoring it costs. This list is computed, not written: it changes when the repository changes.</p>
   <ol class="ecarts">
     ${list
       .map(
@@ -798,22 +794,22 @@ function vueEcarts() {
 
 // « Abandonné » est une colonne à part entière : sans elle, une PR fermée
 // sans merge n'apparaîtrait NULLE PART — disparue du tableau sans trace.
-const COLONNES = ['À faire', 'En cours', 'En review', 'À tester', 'Fait', 'Abandonné'];
+const COLONNES = ['To do', 'In progress', 'In review', 'To test', 'Done', 'Abandoned'];
 
 const TONS_ETIQUETTE = {
-  décision: 'violet',
-  sécurité: 'rouge',
+  decision: 'violet',
+  security: 'rouge',
   test: 'bleu',
-  dette: 'ambre',
-  coût: 'vert',
-  produit: 'rose',
+  debt: 'ambre',
+  cost: 'vert',
+  product: 'rose',
 };
 
 function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
-    return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Chantiers')}
-      <div class="alerte">GitHub n'a pas répondu — le portail ne montre rien plutôt qu'une liste périmée.</div></section>`;
+    return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Work in flight')}
+      <div class="alerte">GitHub did not answer — the portal shows nothing rather than a stale list.</div></section>`;
   }
 
   const carte = (c) => {
@@ -822,14 +818,14 @@ function vueChantiers() {
       .join('');
     const ci =
       c.ci === 'vert'
-        ? '<span class="pastille pastille--ok">CI verte</span>'
+        ? '<span class="pastille pastille--ok">CI green</span>'
         : c.ci === 'rouge'
-          ? '<span class="pastille pastille--ko">CI rouge</span>'
+          ? '<span class="pastille pastille--ko">CI red</span>'
           : c.ci === 'en cours'
-            ? '<span class="pastille pastille--inconnu">CI en cours</span>'
+            ? '<span class="pastille pastille--inconnu">CI running</span>'
             : '';
     return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">brouillon</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}</span>
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
     </a>`;
@@ -839,32 +835,32 @@ function vueChantiers() {
   // quatre autres, et ce n'est pas là qu'on regarde.
   const colonnes = COLONNES.map((nom) => {
     const dedans = cartes.filter((c) => c.colonne === nom);
-    const montrees = nom === 'Fait' || nom === 'Abandonné' ? dedans.slice(0, 8) : dedans;
+    const montrees = nom === 'Done' || nom === 'Abandoned' ? dedans.slice(0, 8) : dedans;
     return `<section class="colonne">
       <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
       <div class="pile">
-        ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Rien ici.</p>'}
-        ${dedans.length > montrees.length ? `<p class="vide">+ ${dedans.length - montrees.length} de plus</p>` : ''}
+        ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Nothing here.</p>'}
+        ${dedans.length > montrees.length ? `<p class="vide">+ ${dedans.length - montrees.length} more</p>` : ''}
       </div>
     </section>`;
   }).join('');
 
-  const aFaire = cartes.filter((c) => c.colonne === 'À faire').length;
-  const enReview = cartes.filter((c) => c.colonne === 'En review').length;
+  const aFaire = cartes.filter((c) => c.colonne === 'To do').length;
+  const enReview = cartes.filter((c) => c.colonne === 'In review').length;
 
   return `
 <section id="chantiers" class="vue actif">
-  ${entete('chantiers', 'Chantiers')}
-  <p class="chapo">Le travail en cours, lu depuis GitHub. Les colonnes sont DÉDUITES — une PR ouverte est en review, une issue fermée est faite, une décision attend Quentin. Rien ne se range à la main, donc rien ne peut mentir par oubli.</p>
-  ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} décision${aFaire > 1 ? 's' : ''} t'attend${aFaire > 1 ? 'ent' : ''}</b> — elles bloquent le reste tant qu'elles ne sont pas tranchées.${enReview > 0 ? ` Et ${enReview} PR ${enReview > 1 ? 'attendent' : 'attend'} ton merge.` : ''}</div>` : ''}
+  ${entete('chantiers', 'Work in flight')}
+  <p class="chapo">The work under way, read from GitHub. The columns are DEDUCED — an open pull request is in review, a closed issue is done, a decision waits for its owner. Nothing is filed by hand, so nothing can lie by omission.</p>
+  ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b> — they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   <div class="kanban">${colonnes}</div>
 </section>`;
 }
 
 function vueHistorique() {
   if (historique.length === 0) {
-    return `<section id="historique" class="vue">${entete('historique', 'Historique')}
-      <div class="alerte">Aucune collecte enregistrée.</div></section>`;
+    return `<section id="historique" class="vue">${entete('historique', 'History')}
+      <div class="alerte">No collection recorded.</div></section>`;
   }
   const derniers = historique.slice(-40);
   const max = Math.max(...derniers.map((h) => h.casDeTest ?? 0), 1);
@@ -873,35 +869,35 @@ function vueHistorique() {
   const f = { jours: 30 };
   return `
 <section id="historique" class="vue">
-  ${entete('historique', 'Historique')}
-  <p class="chapo">Une ligne par collecte. C'est cet historique — et lui seul — qui rendra répondables « combien de fois ça tourne » et « à quelle régularité ». Il commence aujourd'hui.</p>
+  ${entete('historique', 'History')}
+  <p class="chapo">One line per collection. It is this history — and it alone — that will make "how often does it run" and "how regularly" answerable. It starts today.</p>
 
-  <h3 class="sous-titre">Ce qui bouge</h3>
+  <h3 class="sous-titre">What moves</h3>
   ${repere('historique', 'courbes')}
   <div class="courbes">
     ${courbe(tendance(historique, 'couvertureLignes', f), {
-      titre: 'Couverture des lignes',
-      libelle: 'couverture des lignes en pourcentage',
+      titre: 'Line coverage',
+      libelle: 'line coverage as a percentage',
       fmt: (v) => `${v.toFixed(1)} %`,
     })}
     ${courbe(tendance(historique, 'capacitesVerifiees', f), {
-      titre: 'Capacités vérifiées aux deux niveaux',
-      libelle: 'capacités dont la preuve écran ET la preuve moteur sont passées',
+      titre: 'Capabilities verified at both levels',
+      libelle: 'capabilities whose screen proof AND engine proof passed',
       fmt: (v) => `${Math.round(v)}`,
     })}
     ${courbe(tendance(historique, 'testsCasses', f), {
-      titre: 'Tests cassés',
-      libelle: 'nombre de tests rouges à chacun de leurs derniers passages',
+      titre: 'Broken tests',
+      libelle: 'number of tests red at each of their last runs',
       fmt: (v) => `${Math.round(v)}`,
     })}
   </div>
 
-  <h3 class="sous-titre">Chaque collecte</h3>
-  <div class="sparkline" role="img" aria-label="évolution du nombre de cas de test">
-    ${derniers.map((h) => `<i style="height:${Math.max(4, ((h.casDeTest ?? 0) / max) * 100).toFixed(1)}%" title="${esc(dateFr(h.le))} — ${n(h.casDeTest)} cas"></i>`).join('')}
+  <h3 class="sous-titre">Every collection</h3>
+  <div class="sparkline" role="img" aria-label="change in the number of test cases over time">
+    ${derniers.map((h) => `<i style="height:${Math.max(4, ((h.casDeTest ?? 0) / max) * 100).toFixed(1)}%" title="${esc(dateFr(h.le))} — ${n(h.casDeTest)} cases"></i>`).join('')}
   </div>
   <div class="tableau"><table>
-    <thead><tr><th>Quand</th><th>Déclencheur</th><th>Commit</th><th class="num">Cas</th><th class="num">Parcours en CI</th><th class="num">Couverture</th></tr></thead>
+    <thead><tr><th>When</th><th>Trigger</th><th>Commit</th><th class="num">Cases</th><th class="num">Journeys in CI</th><th class="num">Coverage</th></tr></thead>
     <tbody>${[...derniers]
       .reverse()
       .map(
@@ -920,11 +916,11 @@ function vueHistorique() {
 // ─── Le document ──────────────────────────────────────────────────────────────
 
 const html = `<!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nodal-Agents — Qualité</title>
+<title>Nodal-Agents — Quality</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -1220,24 +1216,24 @@ td.dette{color:var(--ko);font-weight:600}
 <div class="app">
   <aside class="rail">
     <div class="marque">
-      <b>Qualité</b>
+      <b>Quality</b>
       <span>NODAL-AGENTS</span>
     </div>
     <nav id="nav">
-      <a href="#chantiers" class="actif">Chantiers <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Fait').length}</b></a>
-      <a href="#capacites">Capacités <b>${
+      <a href="#chantiers" class="actif">Work in flight <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Done').length}</b></a>
+      <a href="#capacites">Capabilities <b>${
         (s.capacites?.registre ?? []).filter(
           (c) => c.ecran?.etat === 'echouee' || c.moteur?.etat === 'echouee',
         ).length
       }</b></a>
-      <a href="#ecarts">Écarts <b>${ecarts().length}</b></a>
-      <a href="#parcours">Parcours <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
-      <a href="#memoire">Mémoire des tests <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
-      <p class="rubrique">Comment ça tourne</p>
-      <a href="#vue" class="discret">Tests, vue d'ensemble</a>
-      <a href="#banc" class="discret">Banc d'essai <b>${s.banc.sections.length}</b></a>
-      <a href="#ci" class="discret">Déclencheurs <b>${s.ci.length}</b></a>
-      <a href="#historique" class="discret">Historique <b>${historique.length}</b></a>
+      <a href="#ecarts">Gaps <b>${ecarts().length}</b></a>
+      <a href="#parcours">Journeys <b>${s.resume.specsE2eJoueesParLaCi}/${s.resume.specsE2e}</b></a>
+      <a href="#memoire">Test memory <b>${(s.memoire?.instables ?? 0) + (s.memoire?.casses ?? 0)}</b></a>
+      <p class="rubrique">How it runs</p>
+      <a href="#vue" class="discret">Tests, overview</a>
+      <a href="#banc" class="discret">Bench <b>${s.banc.sections.length}</b></a>
+      <a href="#ci" class="discret">Triggers <b>${s.ci.length}</b></a>
+      <a href="#historique" class="discret">History <b>${historique.length}</b></a>
     </nav>
     <footer>
       ${esc(s.branche ?? '')}<br>
@@ -1302,4 +1298,4 @@ ${modaleExplications()}
 
 if (!existsSync(DIST)) mkdirSync(DIST, { recursive: true });
 writeFileSync(join(DIST, 'index.html'), html);
-console.log(`portail rendu → apps/qa/dist/index.html (${(html.length / 1024).toFixed(0)} Ko)`);
+console.log(`portal rendered → apps/qa/dist/index.html (${(html.length / 1024).toFixed(0)} KB)`);

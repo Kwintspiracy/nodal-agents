@@ -77,12 +77,12 @@ function main() {
   const sansMoteur = registre.filter((c) => c.moteur.etat === 'absente');
   const sansEcran = registre.filter((c) => c.ecran.etat === 'absente');
 
-  console.log(`Capacités du produit : ${registre.length}`);
-  console.log(`  exigées            : ${exigees.length}`);
-  console.log(`  revendications     : ${preuves.length} dans le dépôt`);
-  console.log(`  sans preuve écran  : ${sansEcran.length}`);
-  console.log(`  sans preuve moteur : ${sansMoteur.length}`);
-  console.log(`  aucune preuve      : ${jamais.length}`);
+  console.log(`Product capabilities : ${registre.length}`);
+  console.log(`  required           : ${exigees.length}`);
+  console.log(`  claims             : ${preuves.length} in the repository`);
+  console.log(`  no screen proof    : ${sansEcran.length}`);
+  console.log(`  no engine proof    : ${sansMoteur.length}`);
+  console.log(`  no proof at all    : ${jamais.length}`);
   if (jamais.length > 0) {
     // Affiché sans faire échouer : c'est la liste de ce qu'on croit livré, et
     // elle est censée rétrécir. La transformer en échec dès aujourd'hui ferait
@@ -91,19 +91,19 @@ function main() {
   }
 
   if (fautes.length === 0) {
-    console.log('\nLe lien produit ↔ preuves tient.');
+    console.log('\nThe product ↔ proofs link holds.');
     return 0;
   }
 
-  console.error(`\n${fautes.length} faute(s) :\n`);
+  console.error(`\n${fautes.length} fault(s):\n`);
   for (const f of fautes) {
     if (f.type === 'étiquette inconnue') {
-      console.error(`  ✗ @cap:${f.slug} ne désigne aucune capacité du registre`);
-      for (const o of f.origines) console.error(`      revendiquée par ${o}`);
-      console.error(`      → corriger le titre, ou ajouter la capacité à apps/qa/capacites.mjs`);
+      console.error(`  ✗ @cap:${f.slug} names no capability of the registry`);
+      for (const o of f.origines) console.error(`      claimed by ${o}`);
+      console.error(`      → fix the title, or add the capability to apps/qa/capacites.mjs`);
     } else {
-      console.error(`  ✗ « ${f.nom} » est exigée et plus aucun test ne la prouve`);
-      console.error(`      → écrire @cap:${f.slug} dans le titre du test qui la prouve`);
+      console.error(`  ✗ "${f.nom}" is required and no test proves it any more`);
+      console.error(`      → write @cap:${f.slug} in the title of the test that proves it`);
     }
     console.error('');
   }

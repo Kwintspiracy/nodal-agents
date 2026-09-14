@@ -102,42 +102,40 @@ describe('etatCi — le vert ne s’accorde qu’à ce qui a réussi', () => {
 
 describe('colonneDeCarte — déduite de faits', () => {
   it('une PR mergée est faite, une PR ouverte est en review', () => {
-    expect(colonneDeCarte({ type: 'pr', etat: 'MERGED' })).toBe('Fait');
-    expect(colonneDeCarte({ type: 'pr', etat: 'OPEN' })).toBe('En review');
+    expect(colonneDeCarte({ type: 'pr', etat: 'MERGED' })).toBe('Done');
+    expect(colonneDeCarte({ type: 'pr', etat: 'OPEN' })).toBe('In review');
   });
 
   it('une PR FERMÉE sans merge n’attend pas de review', () => {
     // La PR #2 de Snyk, fermée sans merge, gonflait la colonne « En review » —
     // qui doit rester un appel à l'action, pas un cimetière.
-    expect(colonneDeCarte({ type: 'pr', etat: 'CLOSED' })).toBe('Abandonné');
+    expect(colonneDeCarte({ type: 'pr', etat: 'CLOSED' })).toBe('Abandoned');
   });
 
   it('une issue étiquetée décision attend Quentin', () => {
-    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: ['décision'] })).toBe(
-      'À faire',
-    );
+    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: ['decision'] })).toBe('To do');
   });
 
   it('une issue étiquetée test va dans À tester', () => {
     expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: ['test', 'dette'] })).toBe(
-      'À tester',
+      'To test',
     );
   });
 
   it('« décision » prime sur « test » — c’est elle qui bloque', () => {
-    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: ['test', 'décision'] })).toBe(
-      'À faire',
+    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: ['test', 'decision'] })).toBe(
+      'To do',
     );
   });
 
   it('une issue ouverte sans étiquette parlante est en cours', () => {
-    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: [] })).toBe('En cours');
-    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN' })).toBe('En cours');
+    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN', etiquettes: [] })).toBe('In progress');
+    expect(colonneDeCarte({ type: 'issue', etat: 'OPEN' })).toBe('In progress');
   });
 
   it('une issue fermée est faite', () => {
-    expect(colonneDeCarte({ type: 'issue', etat: 'CLOSED', etiquettes: ['décision'] })).toBe(
-      'Fait',
+    expect(colonneDeCarte({ type: 'issue', etat: 'CLOSED', etiquettes: ['decision'] })).toBe(
+      'Done',
     );
   });
 });
@@ -168,8 +166,8 @@ describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vi
   it('mélange issues et PR, chacune avec sa colonne', () => {
     const c = cartesDuTableau({ issues: [ISSUE], pr: [{ ...PR, state: 'MERGED' }] });
     expect(c).toHaveLength(2);
-    expect(c.find((x) => x.type === 'issue').colonne).toBe('En cours');
-    expect(c.find((x) => x.type === 'pr').colonne).toBe('Fait');
+    expect(c.find((x) => x.type === 'issue').colonne).toBe('In progress');
+    expect(c.find((x) => x.type === 'pr').colonne).toBe('Done');
   });
 
   it('une issue qu’une PR OUVERTE ferme (« Closes #n ») est en review, pas en cours', () => {
@@ -182,7 +180,7 @@ describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vi
       pr: [{ ...PR, state: 'OPEN', body: 'Ce que ça change.\n\nCloses #1.' }],
     });
     const issue = c.find((x) => x.type === 'issue');
-    expect(issue.colonne).toBe('En review');
+    expect(issue.colonne).toBe('In review');
     expect(issue.parPr).toBe(2);
   });
 
@@ -191,12 +189,12 @@ describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vi
       issues: [ISSUE],
       pr: [{ ...PR, state: 'MERGED', mergedAt: 'x', body: 'Fixes #1' }],
     });
-    expect(merged.find((x) => x.type === 'issue').colonne).toBe('En cours');
+    expect(merged.find((x) => x.type === 'issue').colonne).toBe('In progress');
     const closed = cartesDuTableau({
       issues: [ISSUE],
       pr: [{ ...PR, state: 'CLOSED', body: 'Resolves #1' }],
     });
-    expect(closed.find((x) => x.type === 'issue').colonne).toBe('En cours');
+    expect(closed.find((x) => x.type === 'issue').colonne).toBe('In progress');
   });
 
   it('un « #n » cité sans verbe ne couvre pas, et une décision reste À faire même couverte', () => {
@@ -204,12 +202,12 @@ describe('cartesDuTableau — une requête qui ÉCHOUE n’est pas un tableau vi
       issues: [ISSUE],
       pr: [{ ...PR, state: 'OPEN', body: 'Voir aussi #1 pour le contexte.' }],
     });
-    expect(cite.find((x) => x.type === 'issue').colonne).toBe('En cours');
+    expect(cite.find((x) => x.type === 'issue').colonne).toBe('In progress');
     const decision = cartesDuTableau({
-      issues: [{ ...ISSUE, labels: [{ name: 'décision' }] }],
+      issues: [{ ...ISSUE, labels: [{ name: 'decision' }] }],
       pr: [{ ...PR, state: 'OPEN', body: 'Closes #1' }],
     });
-    expect(decision.find((x) => x.type === 'issue').colonne).toBe('À faire');
+    expect(decision.find((x) => x.type === 'issue').colonne).toBe('To do');
   });
 });
 
@@ -301,7 +299,7 @@ jobs:
   });
 
   it('lit schedule et le déclenchement manuel', () => {
-    expect(declencheursDunWorkflow(NOCTURNE)).toEqual(['schedule', 'manuel']);
+    expect(declencheursDunWorkflow(NOCTURNE)).toEqual(['schedule', 'manual']);
   });
 
   it('un fichier sans bloc `on:` ne déclenche rien', () => {
@@ -321,26 +319,26 @@ jobs:
   x:
     steps:
       - run: git push origin main`;
-    expect(declencheursDunWorkflow(wf)).toEqual(['manuel']);
+    expect(declencheursDunWorkflow(wf)).toEqual(['manual']);
   });
 });
 
 describe('cadenceDe — garder n’est pas constater', () => {
   it('une PR prime sur tout : c’est la seule cadence qui BLOQUE', () => {
-    expect(cadenceDe(['push', 'pull_request', 'schedule'])).toBe('chaque PR');
+    expect(cadenceDe(['push', 'pull_request', 'schedule'])).toBe('every pull request');
   });
 
   it('la nuit constate, elle ne bloque pas', () => {
-    expect(cadenceDe(['schedule', 'manuel'])).toBe('chaque nuit');
+    expect(cadenceDe(['schedule', 'manual'])).toBe('every night');
   });
 
   it('un push sur main est entre les deux', () => {
-    expect(cadenceDe(['push', 'manuel'])).toBe('chaque push sur main');
+    expect(cadenceDe(['push', 'manual'])).toBe('every push to main');
   });
 
   it('rien d’automatique ⇒ à la main', () => {
-    expect(cadenceDe(['manuel'])).toBe('à la main');
-    expect(cadenceDe([])).toBe('à la main');
+    expect(cadenceDe(['manual'])).toBe('by hand');
+    expect(cadenceDe([])).toBe('by hand');
   });
 });
 
@@ -417,19 +415,19 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     // ne répond pas.
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('echouee', 'passee')] } }), [{}, {}]);
     expect(e[0].gravite).toBe('haute');
-    expect(e[0].titre).toMatch(/preuve\(s\) de capacité ont ÉCHOUÉ/);
-    expect(e[0].quoi).toEqual(['Connecter un service — écran']);
+    expect(e[0].titre).toMatch(/capability proof\(s\) FAILED/);
+    expect(e[0].quoi).toEqual(['Connecter un service — screen']);
   });
 
   it('une preuve de MOTEUR qui échoue est haute aussi, et dite comme telle', () => {
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'echouee')] } }), [{}, {}]);
     expect(e[0].gravite).toBe('haute');
-    expect(e[0].quoi).toEqual(['Connecter un service — moteur']);
+    expect(e[0].quoi).toEqual(['Connecter un service — engine']);
   });
 
   it('les deux niveaux tombés sont NOMMÉS tous les deux', () => {
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('echouee', 'echouee')] } }), [{}, {}]);
-    expect(e[0].quoi).toEqual(['Connecter un service — écran', 'Connecter un service — moteur']);
+    expect(e[0].quoi).toEqual(['Connecter un service — screen', 'Connecter un service — engine']);
   });
 
   it('un moteur ABSENT sur une capacité exigée est MOYEN — façade vérifiée, moteur inconnu', () => {
@@ -439,7 +437,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'absente')] } }), [{}, {}]);
     expect(e).toHaveLength(1);
     expect(e[0].gravite).toBe('moyenne');
-    expect(e[0].titre).toMatch(/sans preuve de MOTEUR/);
+    expect(e[0].titre).toMatch(/no ENGINE proof/);
     expect(e[0].quoi).toEqual(['Connecter un service']);
   });
 
@@ -459,7 +457,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     ]);
     expect(e).toHaveLength(1);
     expect(e[0].gravite).toBe('basse');
-    expect(e[0].titre).toMatch(/aucune preuve/);
+    expect(e[0].titre).toMatch(/no proof at all/);
   });
 
   it('une capacité sans aucune preuve ne compte PAS aussi comme « sans moteur »', () => {
@@ -477,7 +475,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       {},
     ]);
     expect(dort[0].gravite).toBe('moyenne');
-    expect(dort[0].titre).toMatch(/n’(?:a|ont) pas tourné/);
+    expect(dort[0].titre).toMatch(/did not run/);
 
     const ignore = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'ignoree')] } }), [
       {},
@@ -502,11 +500,11 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
 
     const frais = ecartsDe(SNAP({ memoire: memoire('2026-09-09T12:00:00Z') }), [{}, {}], now);
     expect(
-      frais.some((x) => x.gravite === 'haute' && /rouge dans les deux derniers/.test(x.titre)),
+      frais.some((x) => x.gravite === 'haute' && /turned red in the last two days/.test(x.titre)),
     ).toBe(true);
 
     const vieux = ecartsDe(SNAP({ memoire: memoire('2026-06-01T00:00:00Z') }), [{}, {}], now);
-    expect(vieux.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
+    expect(vieux.some((x) => /turned red in the last two days/.test(x.titre))).toBe(false);
   });
 
   it('une RÉGRESSION FRAÎCHE est vue même quand l’historique la dit instable', () => {
@@ -530,7 +528,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       [{}, {}],
       now,
     );
-    const alerte = e.find((x) => /rouge dans les deux derniers/.test(x.titre));
+    const alerte = e.find((x) => /turned red in the last two days/.test(x.titre));
     expect(alerte?.gravite).toBe('haute');
     expect(alerte?.quoi).toEqual(['un test qui passait hier']);
   });
@@ -542,7 +540,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       SNAP({ memoire: { instables: 0, regressions: [{ cle: 'a::b', rougeDepuis: null }] } }),
       [{}, {}],
     );
-    expect(e.some((x) => /rouge dans les deux derniers/.test(x.titre))).toBe(false);
+    expect(e.some((x) => /turned red in the last two days/.test(x.titre))).toBe(false);
   });
 
   it('une RÉGRESSION DU BANC remonte en haute', () => {
@@ -560,7 +558,7 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       }),
       [{}, {}],
     );
-    const x = e.find((y) => /banc ont RÉGRESSÉ/.test(y.titre));
+    const x = e.find((y) => /bench section\(s\) REGRESSED/.test(y.titre));
     expect(x?.gravite).toBe('haute');
     expect(x?.quoi).toEqual(['Architecture']);
   });
@@ -570,8 +568,8 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       SNAP({ banc: { dernierRun: { diffs: [{ sectionId: 'x', label: 'X', error: 'ENOENT' }] } } }),
       [{}, {}],
     );
-    expect(e.find((y) => /n'ont PAS PU tourner/.test(y.titre))?.gravite).toBe('haute');
-    expect(e.some((y) => /banc ont RÉGRESSÉ/.test(y.titre))).toBe(false);
+    expect(e.find((y) => /COULD NOT run/.test(y.titre))?.gravite).toBe('haute');
+    expect(e.some((y) => /bench section\(s\) REGRESSED/.test(y.titre))).toBe(false);
   });
 
   it('un banc qui n’a laissé AUCUN rapport remonte en haute — l’écran le disait, l’alerte se taisait', () => {
@@ -579,19 +577,19 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     // `ecartsDe` ne lisait pas ce champ. Le banc pouvait planter avant d'écrire
     // une ligne, et l'alerte fermait son billet comme si tout allait bien.
     const e = ecartsDe(SNAP({ banc: { attendu: true, dernierRun: null } }), [{}, {}]);
-    const x = e.find((y) => /banc n'a laissé aucun rapport/.test(y.titre));
+    const x = e.find((y) => /bench left no report/.test(y.titre));
     expect(x?.gravite).toBe('haute');
     expect(alertes(e)).toContain(x);
     // Mais seulement quand il était ATTENDU : un rendu local ne le lance pas,
     // et « un banc jamais passé ne crie pas » (plus haut) reste vrai.
     const local = ecartsDe(SNAP({ banc: { attendu: false, dernierRun: null } }), [{}, {}]);
-    expect(local.some((y) => /banc/.test(y.titre))).toBe(false);
+    expect(local.some((y) => /bench/.test(y.titre))).toBe(false);
   });
 
   it('un banc jamais passé ne crie pas dans les écarts', () => {
     // Absent se dit à l'écran du banc, pas dans la liste des alertes : sinon
     // chaque dépôt neuf partirait avec une alerte permanente.
-    expect(ecartsDe(SNAP(), [{}, {}]).some((y) => /banc/.test(y.titre))).toBe(false);
+    expect(ecartsDe(SNAP(), [{}, {}]).some((y) => /bench/.test(y.titre))).toBe(false);
   });
 
   it('à gravité égale, le PRODUIT est listé avant le dépôt', () => {
@@ -603,8 +601,8 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       [{}, {}],
     );
     const hautes = e.filter((x) => x.gravite === 'haute');
-    expect(hautes[0].titre).toMatch(/capacité/);
-    expect(hautes[1].titre).toMatch(/parcours/);
+    expect(hautes[0].titre).toMatch(/capability/);
+    expect(hautes[1].titre).toMatch(/journeys/);
   });
 
   it('trie par gravité, toutes catégories confondues', () => {
@@ -748,7 +746,7 @@ describe('corpsDeLalerte — un billet dont on doute est un billet qu’on ignor
     );
     expect(c).toContain('t14');
     expect(c).not.toContain('t15');
-    expect(c).toContain('et 25 autres');
+    expect(c).toContain('and 25 more');
   });
 
   it('un écart sans détail nommé ne fabrique pas de liste vide', () => {
@@ -1158,7 +1156,7 @@ describe('preuvesDuneCapacite — deux niveaux, et l’absence n’est pas un é
     const r = preuvesDuneCapacite([P('ecran', 'vert')]);
     expect(r.ecran.etat).toBe('passee');
     expect(r.moteur.etat).toBe('absente');
-    expect(phraseDeCapacite(r)).toBe('écran passé · moteur non testé');
+    expect(phraseDeCapacite(r)).toBe('screen passed · engine not tested');
   });
 
   it('écran rouge et moteur vert ⇒ chaque niveau garde SON résultat', () => {
@@ -1167,7 +1165,7 @@ describe('preuvesDuneCapacite — deux niveaux, et l’absence n’est pas un é
     const r = preuvesDuneCapacite([P('ecran', 'rouge'), P('moteur', 'vert')]);
     expect(r.ecran.etat).toBe('echouee');
     expect(r.moteur.etat).toBe('passee');
-    expect(phraseDeCapacite(r)).toBe('écran échoué · moteur passé');
+    expect(phraseDeCapacite(r)).toBe('screen failed · engine passed');
   });
 
   it('le ROUGE l’emporte sur le vert DANS SON NIVEAU, et n’éclabousse pas l’autre', () => {
@@ -1232,16 +1230,16 @@ describe('phraseDeCapacite — une ligne qui dit deux faits, jamais un verdict',
   const R = (e, m) => ({ ecran: { etat: e, preuves: [] }, moteur: { etat: m, preuves: [] } });
 
   it('nomme chaque niveau et son résultat', () => {
-    expect(phraseDeCapacite(R('passee', 'passee'))).toBe('écran passé · moteur passé');
-    expect(phraseDeCapacite(R('absente', 'passee'))).toBe('écran non testé · moteur passé');
+    expect(phraseDeCapacite(R('passee', 'passee'))).toBe('screen passed · engine passed');
+    expect(phraseDeCapacite(R('absente', 'passee'))).toBe('screen not tested · engine passed');
     expect(phraseDeCapacite(R('ignoree', 'jamais jouee'))).toBe(
-      'écran ignoré · moteur jamais joué',
+      'screen skipped · engine never run',
     );
-    expect(phraseDeCapacite(R('instable', 'echouee'))).toBe('écran instable · moteur échoué');
+    expect(phraseDeCapacite(R('instable', 'echouee'))).toBe('screen flaky · engine failed');
   });
 
   it('les deux absents se disent en toutes lettres, pas en silence', () => {
-    expect(phraseDeCapacite(R('absente', 'absente'))).toBe('aucune preuve');
+    expect(phraseDeCapacite(R('absente', 'absente'))).toBe('no proof');
   });
 });
 
@@ -1391,7 +1389,7 @@ describe('regrouperParCapacite — l’ordre du registre est l’écran', () => 
       capacites: [{ slug: 'a', domaine: 'X' }],
       preuves: [{ capacite: 'a', niveau: 'ecran', sort: 'vert' }],
     });
-    expect(r[0].phrase).toBe('écran passé · moteur non testé');
+    expect(r[0].phrase).toBe('screen passed · engine not tested');
   });
 
   it('ne trie PAS par état — sinon la page cesse de dire ce que le produit sait faire', () => {
@@ -1846,7 +1844,7 @@ describe('ecartsDe — un rouge de plus de quinze jours est une dette, pas une a
         ],
       },
     };
-    const e = ecartsDe(s, [], maintenant).find((x) => /plus de 14 jours/.test(x.titre));
+    const e = ecartsDe(s, [], maintenant).find((x) => /red for more than 14 days/.test(x.titre));
     expect(e).toBeTruthy();
     expect(e.gravite).toBe('moyenne');
     expect(e.titre).toContain('1 test(s)');
@@ -1861,7 +1859,9 @@ describe('ecartsDe — un rouge de plus de quinze jours est une dette, pas une a
         regressions: [{ cle: 'a', titre: 'rouge sans date', rougeDepuis: null }],
       },
     };
-    expect(ecartsDe(s, [], maintenant).some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+    expect(ecartsDe(s, [], maintenant).some((x) => /red for more than 14 days/.test(x.titre))).toBe(
+      false,
+    );
   });
 
   it('ne réveille personne — seule la gravité haute le fait', () => {
@@ -1873,7 +1873,7 @@ describe('ecartsDe — un rouge de plus de quinze jours est une dette, pas une a
       },
     };
     const hautes = alertes(ecartsDe(s, [], maintenant));
-    expect(hautes.some((x) => /plus de 14 jours/.test(x.titre))).toBe(false);
+    expect(hautes.some((x) => /red for more than 14 days/.test(x.titre))).toBe(false);
   });
 });
 
@@ -2096,39 +2096,39 @@ describe('ecartsDe — le prix d’une PR décide du sort des tests', () => {
 
   it('au-delà de 25 min de médiane récente, c’est HAUTE — sous le seuil, rien', () => {
     const cher = ecartsDe(SNAP(prixDe({ medianeRecente: 32 })), [{}, {}]);
-    const e = cher.find((x) => /coûte/.test(x.titre));
+    const e = cher.find((x) => /costs/.test(x.titre));
     expect(e).toBeTruthy();
     expect(e.gravite).toBe('haute');
     expect(e.titre).toContain('32');
     expect(alertes(cher)).toContain(e);
 
     const ok = ecartsDe(SNAP(prixDe({ medianeRecente: 25 })), [{}, {}]);
-    expect(ok.some((x) => /coûte/.test(x.titre))).toBe(false);
+    expect(ok.some((x) => /costs/.test(x.titre))).toBe(false);
   });
 
   it('une hausse de plus de 25 % est MOYENNE — elle ne réveille personne mais elle est dite', () => {
     const liste = ecartsDe(SNAP(prixDe({ hausse: 40 })), [{}, {}]);
-    const e = liste.find((x) => /de plus/.test(x.titre));
+    const e = liste.find((x) => /grew/.test(x.titre));
     expect(e.gravite).toBe('moyenne');
     // Moyenne, donc hors des alertes : une dérive n'est pas une panne.
     expect(alertes(liste)).not.toContain(e);
 
-    expect(
-      ecartsDe(SNAP(prixDe({ hausse: 25 })), [{}, {}]).some((x) => /de plus/.test(x.titre)),
-    ).toBe(false);
+    expect(ecartsDe(SNAP(prixDe({ hausse: 25 })), [{}, {}]).some((x) => /grew/.test(x.titre))).toBe(
+      false,
+    );
   });
 
   it('une baisse ne dit rien — une CI qui accélère n’est pas un écart', () => {
     expect(
-      ecartsDe(SNAP(prixDe({ hausse: -60 })), [{}, {}]).some((x) => /de plus/.test(x.titre)),
+      ecartsDe(SNAP(prixDe({ hausse: -60 })), [{}, {}]).some((x) => /grew/.test(x.titre)),
     ).toBe(false);
   });
 
   it('`prixCi` absent ⇒ AUCUN écart : une mesure manquante n’est pas une CI gratuite', () => {
     const e = ecartsDe(SNAP(null), [{}, {}]);
-    expect(e.some((x) => /coûte|de plus/.test(x.titre))).toBe(false);
+    expect(e.some((x) => /costs|grew/.test(x.titre))).toBe(false);
     expect(
-      ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]).some((x) => /coûte|de plus/.test(x.titre)),
+      ecartsDe(SNAP(prixDe({ runs: 0 })), [{}, {}]).some((x) => /costs|grew/.test(x.titre)),
     ).toBe(false);
   });
 });
@@ -2209,7 +2209,7 @@ describe('le rendu mène à la cause, et seulement quand elle existe', () => {
 
   it('le cadre « Prix d’une PR » dit l’absence plutôt qu’un zéro', () => {
     const cadre = vue('cadrePrix');
-    expect(cadre).toContain("GitHub n'a pas répondu");
+    expect(cadre).toContain('GitHub did not answer');
     expect(cadre).toContain('prix--absent');
   });
 });
@@ -2223,7 +2223,7 @@ describe('le rendu ne plante pas sur une collecte plus vieille que lui', () => {
 
   it('un registre sans niveaux est reconnu, et le portail le DIT', () => {
     expect(build).toContain('!reg[0]?.ecran || !reg[0]?.moteur');
-    expect(build).toContain('antérieure aux niveaux écran / moteur');
+    expect(build).toContain('predates the screen / engine levels');
   });
 });
 
@@ -2313,7 +2313,7 @@ describe('intentionDunParcours — la description d’un parcours, pas son bande
 
   it('le rendu dit « aucune description » quand il n’y en a pas', () => {
     const build = readFileSync(new URL('./build.mjs', import.meta.url), 'utf8');
-    expect(build).toContain('aucune description');
+    expect(build).toContain('no description');
     expect(build).toContain('intention--absente');
   });
 

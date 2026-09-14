@@ -71,21 +71,21 @@ export function etatCi(rollup) {
  */
 export function colonneDeCarte(carte) {
   if (carte.type === 'pr') {
-    if (carte.etat === 'MERGED') return 'Fait';
-    if (carte.etat === 'CLOSED') return 'Abandonné';
-    return 'En review';
+    if (carte.etat === 'MERGED') return 'Done';
+    if (carte.etat === 'CLOSED') return 'Abandoned';
+    return 'In review';
   }
-  if (carte.etat !== 'OPEN') return 'Fait';
+  if (carte.etat !== 'OPEN') return 'Done';
   const etiquettes = carte.etiquettes ?? [];
-  if (etiquettes.includes('décision')) return 'À faire';
-  if (etiquettes.includes('test')) return 'À tester';
+  if (etiquettes.includes('decision')) return 'To do';
+  if (etiquettes.includes('test')) return 'To test';
   // Une PR ouverte la ferme (`parPr`, posé par `cartesDuTableau`) : le travail
   // est écrit, il attend sa relecture — pas « en cours » (12/09).
-  if (carte.parPr != null) return 'En review';
-  return 'En cours';
+  if (carte.parPr != null) return 'In review';
+  return 'In progress';
 }
 
-export const COLONNES = ['À faire', 'En cours', 'En review', 'À tester', 'Fait'];
+export const COLONNES = ['To do', 'In progress', 'In review', 'To test', 'Done'];
 
 // ─── Le résultat d'un parcours ────────────────────────────────────────────────
 
@@ -147,7 +147,7 @@ export function declencheursDunWorkflow(texte) {
   if (/^\s*push:/m.test(texte)) out.push('push');
   if (/^\s*pull_request:/m.test(texte)) out.push('pull_request');
   if (/^\s*schedule:/m.test(texte)) out.push('schedule');
-  if (/workflow_dispatch/.test(texte)) out.push('manuel');
+  if (/workflow_dispatch/.test(texte)) out.push('manual');
   return out;
 }
 
@@ -160,10 +160,10 @@ export function declencheursDunWorkflow(texte) {
  */
 export function cadenceDe(declencheurs) {
   const d = declencheurs ?? [];
-  if (d.includes('pull_request')) return 'chaque PR';
-  if (d.includes('schedule')) return 'chaque nuit';
-  if (d.includes('push')) return 'chaque push sur main';
-  return 'à la main';
+  if (d.includes('pull_request')) return 'every pull request';
+  if (d.includes('schedule')) return 'every night';
+  if (d.includes('push')) return 'every push to main';
+  return 'by hand';
 }
 
 // ─── Ce qu'une PR coûte en contrôles ──────────────────────────────────────────
@@ -422,7 +422,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   // Trois familles, et la hiérarchie entre elles est tout le lot : un ÉCHEC
   // réveille, une ABSENCE informe. Confondre les deux — ce que faisait le mot
   // « cassée » — envoyait chercher un bug là où personne n'avait écrit de test.
-  const MOT_NIVEAU = { ecran: 'écran', moteur: 'moteur' };
+  const MOT_NIVEAU = { ecran: 'screen', moteur: 'engine' };
   const tombees = [];
   for (const c of registre) {
     if (!c.exigee) continue;
@@ -433,8 +433,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (tombees.length > 0) {
     out.push({
       gravite: 'haute',
-      titre: `${tombees.length} preuve(s) de capacité ont ÉCHOUÉ à la dernière mesure`,
-      detail: `Le niveau est nommé parce qu'il change tout : un ÉCRAN tombé veut dire que le parcours ne s'enchaîne plus — les boutons ; un MOTEUR tombé veut dire que la chose promise n'est plus faite.`,
+      titre: `${tombees.length} capability proof(s) FAILED at the last measurement`,
+      detail: `The level is named because it changes everything: a fallen SCREEN means the journey no longer chains — the buttons; a fallen ENGINE means the promised thing is no longer done.`,
       quoi: tombees,
     });
   }
@@ -447,8 +447,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (sansMoteur.length > 0) {
     out.push({
       gravite: 'moyenne',
-      titre: `${sansMoteur.length} capacité(s) exigée(s) sans preuve de MOTEUR`,
-      detail: `Un parcours d'écran passe : les boutons s'enchaînent. Rien ne dit que la chose est faite derrière. C'est exactement ce que le mot « prouvée » laissait croire.`,
+      titre: `${sansMoteur.length} required capability(ies) with no ENGINE proof`,
+      detail: `A screen journey passes: the buttons chain together. Nothing says the thing is done behind. That is exactly what the word "proven" let people believe.`,
       quoi: sansMoteur.map((c) => c.nom),
     });
   }
@@ -465,8 +465,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (dorment.length > 0) {
     out.push({
       gravite: 'moyenne',
-      titre: `${dorment.length} preuve(s) de capacité n’ont pas tourné`,
-      detail: `Un test les revendique, aucune exécution ne l'a joué — sauté, ou jamais atteint. La preuve existe et dort : c'est un trou dans la mesure, pas dans le produit.`,
+      titre: `${dorment.length} capability proof(s) did not run`,
+      detail: `A test claims them, no run played it — skipped, or never reached. The proof exists and sleeps: that is a hole in the measurement, not in the product.`,
       quoi: dorment,
     });
   }
@@ -484,8 +484,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
       // en haute noierait les vraies régressions sous une liste qui ne bouge
       // que lentement.
       gravite: 'basse',
-      titre: `${jamais.length} capacité(s) sur ${registre.length} n’ont aucune preuve, ni écran ni moteur`,
-      detail: `C'est la liste de ce qu'on croit livré. Elle est censée rétrécir.`,
+      titre: `${jamais.length} capability(ies) out of ${registre.length} have no proof at all, neither screen nor engine`,
+      detail: `This is the list of what we believe is shipped. It is meant to shrink.`,
       quoi: jamais.map((c) => c.nom),
     });
   }
@@ -494,8 +494,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (mem?.instables > 0) {
     out.push({
       gravite: 'moyenne',
-      titre: `${mem.instables} test(s) instables`,
-      detail: `Verts et rouges dans leur fenêtre. Aucune exécution isolée ne les dénonce : ils passent pour verts chaque fois qu'ils passent.`,
+      titre: `${mem.instables} flaky test(s)`,
+      detail: `Green and red within their window. No isolated run gives them away: they pass for green every time they pass.`,
       quoi: (mem.pires ?? []).map((e) => e.titre ?? e.cle),
     });
   }
@@ -511,8 +511,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (frais.length > 0) {
     out.push({
       gravite: 'haute',
-      titre: `${frais.length} test(s) sont passés au rouge dans les deux derniers jours`,
-      detail: `Un rouge frais est une régression : quelque chose a bougé, et on sait quand. Un rouge ancien est une dette qu'on a appris à ne plus voir — les deux ne se traitent pas pareil.`,
+      titre: `${frais.length} test(s) turned red in the last two days`,
+      detail: `A fresh red is a regression: something moved, and we know when. An old red is a debt we have learned not to see — the two are not handled the same way.`,
       quoi: frais.map((e) => e.titre ?? e.cle),
     });
   }
@@ -527,8 +527,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (vieux.length > 0) {
     out.push({
       gravite: 'moyenne',
-      titre: `${vieux.length} test(s) rouges depuis plus de 14 jours`,
-      detail: `Deux semaines sans réparation, ce n'est plus une régression : c'est une décision qui n'a pas été prise. Réparer, ou supprimer le test avec la capacité qu'il prouvait.`,
+      titre: `${vieux.length} test(s) red for more than 14 days`,
+      detail: `Two weeks without a repair is no longer a regression: it is a decision nobody took. Repair, or delete the test along with the capability it proved.`,
       quoi: vieux.map((e) => e.titre ?? e.cle),
     });
   }
@@ -539,16 +539,16 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (banc.regressions.length > 0) {
     out.push({
       gravite: 'haute',
-      titre: `${banc.regressions.length} section(s) du banc ont RÉGRESSÉ`,
-      detail: `Le banc l'a mesuré et l'a écrit. La mesure nocturne l'ignore volontairement pour ne pas s'interrompre — c'est ici que ça se dit.`,
+      titre: `${banc.regressions.length} bench section(s) REGRESSED`,
+      detail: `The bench measured it and wrote it down. The nightly measurement ignores it on purpose so as not to stop — here is where it gets said.`,
       quoi: banc.regressions,
     });
   }
   if (banc.erreurs.length > 0) {
     out.push({
       gravite: 'haute',
-      titre: `${banc.erreurs.length} section(s) du banc n'ont PAS PU tourner`,
-      detail: `Une panne, pas un ralentissement. Ces sections ne mesurent plus rien, donc elles ne peuvent plus rien garder.`,
+      titre: `${banc.erreurs.length} bench section(s) COULD NOT run`,
+      detail: `A fault, not a slowdown. These sections measure nothing any more, so they can guard nothing any more.`,
       quoi: banc.erreurs,
     });
   }
@@ -564,8 +564,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (banc.absent && s.banc?.attendu === true) {
     out.push({
       gravite: 'haute',
-      titre: `Le banc n'a laissé aucun rapport`,
-      detail: `Il a planté avant d'écrire, ou n'a pas tourné. Aucune de ses sections n'a mesuré quoi que ce soit cette nuit : ce n'est pas un vert, c'est un trou.`,
+      titre: `The bench left no report`,
+      detail: `It crashed before writing, or did not run. None of its sections measured anything last night: this is not a green, it is a hole.`,
       quoi: [],
     });
   }
@@ -576,8 +576,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     const cas = nonJoues.reduce((a, p) => a + p.cas, 0);
     out.push({
       gravite: 'haute',
-      titre: `${nonJoues.length} parcours sur ${r.specsE2e} ne sont jamais joués par la CI`,
-      detail: `${cas} cas de test écrits, versionnés, et qu'aucune intégration continue n'exécute. Ce sont les parcours utilisateur — précisément ce qu'une régression casse en premier et qu'un test unitaire ne voit pas.`,
+      titre: `${nonJoues.length} journeys out of ${r.specsE2e} are never played by the CI`,
+      detail: `${cas} test cases written, versioned, and run by no continuous integration. These are the user journeys — precisely what a regression breaks first and what a unit test does not see.`,
       quoi: nonJoues.map((p) => p.nom),
     });
   }
@@ -586,8 +586,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (nonMesures.length > 0) {
     out.push({
       gravite: 'haute',
-      titre: `${nonMesures.length} paquets portent des tests dont la couverture n'a jamais été mesurée`,
-      detail: `La configuration de couverture existait depuis toujours ; le paquet qui la fait tourner n'était pas installé. Aucun de ces paquets ne peut dire quelle part de son code ses tests traversent.`,
+      titre: `${nonMesures.length} packages carry tests whose coverage has never been measured`,
+      detail: `The coverage configuration had always existed; the package that runs it was not installed. None of these packages can say how much of its code its tests go through.`,
       quoi: nonMesures.map((p) => p.nom),
     });
   }
@@ -596,8 +596,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (ci.length > 0 && ci.every((w) => !w.lanceBanc)) {
     out.push({
       gravite: 'haute',
-      titre: `Aucun workflow ne lance le banc d'essai`,
-      detail: `Le banc sort déjà en erreur sur une régression de métrique — c'est une porte qui fonctionne et que personne ne franchit. Une régression du gate d'approbation peut donc partir en production sans un mot.`,
+      titre: `No workflow runs the bench`,
+      detail: `The bench already exits with an error on a metric regression — a gate that works and that nobody walks through. A regression of the approval gate can therefore ship without a word.`,
       quoi: (s.banc?.sections ?? []).map((b) => b.id),
     });
   }
@@ -613,16 +613,16 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (prix?.medianeRecente != null && prix.medianeRecente > SEUIL_PRIX_MIN) {
     out.push({
       gravite: 'haute',
-      titre: `La CI coûte ${prix.medianeRecente} min par PR`,
-      detail: `Médiane des ${Math.min(prix.runs, 10)} dernières exécutions vertes, attente en file comprise. Au-delà d'une vingtaine de minutes, l'attente cesse d'être supportable et c'est le contenu de la CI qu'on finit par raboter, pas le temps qu'elle prend.`,
+      titre: `The CI costs ${prix.medianeRecente} min per pull request`,
+      detail: `Median of the last ${Math.min(prix.runs, 10)} green runs, queue time included. Past twenty minutes or so, the wait stops being bearable and it is the content of the CI that ends up being trimmed, not the time it takes.`,
       quoi: [],
     });
   }
   if (prix?.hausse != null && prix.hausse > SEUIL_HAUSSE_PRIX) {
     out.push({
       gravite: 'moyenne',
-      titre: `La CI a pris ${prix.hausse} % de plus sur la fenêtre`,
-      detail: `Première moitié des exécutions contre seconde moitié. Une dérive se répare pendant qu'elle est petite ; une fois installée, elle devient la normale que personne ne discute plus.`,
+      titre: `The CI grew ${prix.hausse}% over the window`,
+      detail: `First half of the runs against the second half. A drift is repaired while it is small; once settled, it becomes the normal nobody argues with any more.`,
       quoi: [],
     });
   }
@@ -630,8 +630,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (ci.length > 0 && !ci.some((w) => w.lanceCouverture)) {
     out.push({
       gravite: 'moyenne',
-      titre: `Aucun workflow ne mesure la couverture`,
-      detail: `Sans mesure en continu, la couverture est un chiffre du jour où quelqu'un a pensé à la lancer — pas une propriété du dépôt.`,
+      titre: `No workflow measures coverage`,
+      detail: `Without continuous measurement, coverage is a number from the day someone thought to run it — not a property of the repository.`,
       quoi: [],
     });
   }
@@ -640,8 +640,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if (nus.length > 0) {
     out.push({
       gravite: 'moyenne',
-      titre: `${nus.length} paquets sans aucun test`,
-      detail: `Un paquet sans test n'est pas forcément un problème — certains ne portent que des types ou de la configuration. Ceux-là méritent d'être nommés pour qu'on cesse de se poser la question.`,
+      titre: `${nus.length} packages with no test at all`,
+      detail: `A package without tests is not necessarily a problem — some only carry types or configuration. Those deserve to be named so we stop asking the question.`,
       quoi: nus.map((p) => p.nom),
     });
   }
@@ -649,8 +649,8 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   if ((historique ?? []).length < 2) {
     out.push({
       gravite: 'basse',
-      titre: `L'historique commence tout juste`,
-      detail: `${(historique ?? []).length} collecte(s) enregistrée(s). Les questions « combien de fois ça tourne » et « à quelle régularité » deviennent répondables dès que la CI collecte à chaque exécution.`,
+      titre: `The history is only just starting`,
+      detail: `${(historique ?? []).length} collection(s) recorded. The questions "how often does it run" and "how regularly" become answerable as soon as the CI collects on every run.`,
       quoi: [],
     });
   }
@@ -1097,12 +1097,12 @@ export function preuvesDuneCapacite(preuves) {
 
 /** Le mot qu'on affiche pour un état, à l'intérieur d'un niveau. */
 export const MOT_ETAT = {
-  absente: 'non testé',
-  echouee: 'échoué',
-  instable: 'instable',
-  passee: 'passé',
-  ignoree: 'ignoré',
-  'jamais jouee': 'jamais joué',
+  absente: 'not tested',
+  echouee: 'failed',
+  instable: 'flaky',
+  passee: 'passed',
+  ignoree: 'skipped',
+  'jamais jouee': 'never run',
 };
 
 /**
@@ -1114,8 +1114,8 @@ export const MOT_ETAT = {
 export function phraseDeCapacite(r) {
   const e = r?.ecran?.etat ?? 'absente';
   const m = r?.moteur?.etat ?? 'absente';
-  if (e === 'absente' && m === 'absente') return 'aucune preuve';
-  return `écran ${MOT_ETAT[e]} · moteur ${MOT_ETAT[m]}`;
+  if (e === 'absente' && m === 'absente') return 'no proof';
+  return `screen ${MOT_ETAT[e]} · engine ${MOT_ETAT[m]}`;
 }
 
 /**

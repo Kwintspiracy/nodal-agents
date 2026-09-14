@@ -13,11 +13,11 @@ const pagesRendues = [
 ];
 
 const PARTIES = [
-  'À quoi ça sert',
-  'Comment le lire',
-  "D'où ça vient",
-  'Quand agir',
-  'Ce que ça ne dit pas',
+  "What it's for",
+  'How to read it',
+  'Where it comes from',
+  'When to act',
+  'What it does not tell you',
 ];
 
 describe('chaque page du portail a son explication', () => {
@@ -25,12 +25,12 @@ describe('chaque page du portail a son explication', () => {
     expect([...pagesRendues].sort()).toEqual([...PAGES_EXPLIQUEES].sort());
   });
 
-  it('chaque page appelle son en-tête, qui porte le bouton « Comprendre cette page »', () => {
+  it('chaque page appelle son en-tête, qui porte le bouton « Understand this page »', () => {
     for (const id of pagesRendues) {
       expect(build, `entete('${id}') manque dans build.mjs`).toContain(`entete('${id}'`);
     }
     expect(build).toContain('data-explique="${id}"');
-    expect(build).toContain('Comprendre cette page');
+    expect(build).toContain('Understand this page');
   });
 
   it('chaque explication dit pourquoi, comment lire, d’où ça vient, quand agir, et ce que ça ne dit pas', () => {

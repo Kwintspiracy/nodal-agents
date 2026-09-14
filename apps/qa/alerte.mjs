@@ -25,7 +25,7 @@ const ICI = dirname(fileURLToPath(import.meta.url));
 const DATA = join(ICI, 'data');
 const RACINE = join(ICI, '..', '..');
 
-export const TITRE = 'Portail : ce qui est rouge';
+export const TITRE = 'Portal: what is red';
 
 /**
  * Le corps de l'issue.
@@ -36,9 +36,9 @@ export const TITRE = 'Portail : ce qui est rouge';
  */
 export function corpsDeLalerte(liste, meta = {}) {
   const entete = [
-    `**${liste.length} chose(s) au rouge.** Ce billet est tenu à jour par la mesure nocturne ; il se ferme tout seul quand il n'a plus rien à dire.`,
+    `**${liste.length} thing(s) in the red.** This issue is kept up to date by the nightly measurement; it closes itself when it has nothing left to say.`,
     '',
-    `Collecte du ${meta.le ?? '—'} · commit \`${meta.commit ?? '—'}\` · branche \`${meta.branche ?? '—'}\``,
+    `Collected on ${meta.le ?? '—'} · commit \`${meta.commit ?? '—'}\` · branch \`${meta.branche ?? '—'}\``,
     '',
   ];
 
@@ -50,7 +50,7 @@ export function corpsDeLalerte(liste, meta = {}) {
       const montres = e.quoi.slice(0, 15);
       lignes.push('', ...montres.map((q) => `- \`${q}\``));
       if (e.quoi.length > montres.length) {
-        lignes.push(`- … et ${e.quoi.length - montres.length} autres`);
+        lignes.push(`- … and ${e.quoi.length - montres.length} more`);
       }
     }
     return lignes.join('\n');
@@ -108,34 +108,34 @@ function main(appliquer) {
   const meta = { le: snapshot.genereLe, commit: snapshot.commit, branche: snapshot.branche };
 
   if (liste.length === 0) {
-    console.log('Rien au rouge.');
+    console.log('Nothing in the red.');
     if (!appliquer) return 0;
     const ouverte = issueOuverte();
     if (!ouverte) {
-      console.log('Aucun billet à fermer.');
+      console.log('No issue to close.');
       return 0;
     }
-    gh(['issue', 'close', String(ouverte.number), '--comment', 'Plus rien au rouge.']);
-    console.log(`Billet #${ouverte.number} fermé.`);
+    gh(['issue', 'close', String(ouverte.number), '--comment', 'Nothing in the red any more.']);
+    console.log(`Issue #${ouverte.number} closed.`);
     return 0;
   }
 
   const corps = corpsDeLalerte(liste, meta);
-  console.log(`${liste.length} chose(s) au rouge :`);
+  console.log(`${liste.length} thing(s) in the red:`);
   for (const e of liste) console.log(`  · ${e.titre}`);
 
   if (!appliquer) {
-    console.log('\n(rien écrit — relancer avec --appliquer)');
+    console.log('\n(nothing written — run again with --appliquer)');
     return 0;
   }
 
   const ouverte = issueOuverte();
   if (ouverte) {
     gh(['issue', 'edit', String(ouverte.number), '--body', corps]);
-    console.log(`Billet #${ouverte.number} mis à jour.`);
+    console.log(`Issue #${ouverte.number} updated.`);
   } else {
     const url = gh(['issue', 'create', '--title', TITRE, '--body', corps, '--label', 'test']);
-    console.log(`Billet ouvert : ${url}`);
+    console.log(`Issue opened: ${url}`);
   }
   return 0;
 }
