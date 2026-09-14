@@ -1,0 +1,19 @@
+- **R1 — modéré, couverture de régression — `apps/cli/src/lib/postgres.ts:275`, `apps/cli/src/tests/postmaster-pid.test.ts:299`. Le constat tient : le défaut de couverture du repli Linux subsiste.** Réintroduire une comparaison insensible à la casse uniquement dans `postmasterHoldsDataDir` permettrait de confondre deux répertoires distincts, avec PID recyclé et dates concordantes. Le test `owns nothing when the process does not run out of our data directory` resterait vert : ses chemins diffèrent autrement que par la casse. Le test de casse à `:157` porte uniquement sur la lecture du fichier. Déjà relevé en passes 9 et 10.
+
+- **R2 — modéré, documentation des garanties — `apps/cli/src/lib/postgres.ts:212`. Le constat tient : R3 de passe 10 n’est corrigé qu’en partie.** Le résumé de `unconfirmedReading` présente toujours le PID enregistré et vivant comme appartenant à l’installation. Le code exige aussi le répertoire courant (`:233`) et la concordance temporelle (`:240`, `:247`). Le commentaire à `:230` réduit également encore le cas non couvert par l’horloge au recul de celle-ci, malgré le résidu de deux secondes désormais expliqué à `:49`.
+
+- **R3 — mineur, message d’écran — `apps/cli/src/commands/up.ts:315`. Le constat tient : les causes annoncées du refus sont incomplètes.** Sous Linux, un PID vivant et correctement daté peut être refusé parce que son répertoire courant diffère ou demeure illisible (`postgres.ts:233`). Le message affirme pourtant que sa date diffère ou n’a pas pu être lue. Ajouter la preuve du répertoire aux causes possibles.
+
+1. **constat** — Les trois interventions annoncées existent dans `1091d64d` : R1, attente à `postmaster-pid.test.ts:215`, assertion à `:226` ; R2, séparation de la casse à `:124`, sous-dossier à `:144`, antislash à `:148`, assertion à `:152` ; R3, parent plausible à `orphans.ts:96`, troisième sonde à `up.ts:327`, résidu temporel à `orphans.ts:169` et `postgres.ts:49`. Mais l’intégralité du constat R3 précédent n’est pas résolue : R2 ci-dessus. `cadd99a8` ajoute bien les timeouts de 30 secondes à `postmaster-pid.test.ts:325` et 60 secondes à `:413`, supérieurs aux budgets respectifs de 10 et 40 secondes du code.
+
+2. **tient** — Aucun nouveau chemin envoyant un signal sans confirmation fraîche identifié dans le périmètre. L’arrêt gracieux est conditionné par `up.ts:394`, puis par la concordance du PID à `postgres.ts:429`. Chaque `SIGKILL` à `up.ts:434` exige la reconfirmation à `:408`. La course entre lecture et action demeure ; ces contrôles ne garantissent pas une identité atomique.
+
+3. **constat** — Oui : la comparaison insensible à la casse réintroduite dans la preuve Linux du répertoire échapperait au test nommé en R1. Les deux lacunes directement corrigées dans `1091d64d` disposent désormais d’assertions discriminantes à la lecture du code.
+
+4. **constat** — R2 et R3 ci-dessus. Les corrections documentaires annoncées sont présentes, mais elles ne suppriment pas toutes les contradictions déjà signalées.
+
+5. **NON TRANCHÉ** — Vérification statique sur Windows, HEAD confirmé à `cadd99a8` ; aucun test exécuté ni signal envoyé. Avant merge, vérifier les résultats CI de ce HEAD, notamment `ci-windows` pour les nouveaux budgets et Linux pour la datation et les antislashs POSIX. Un Linux avec système de fichiers sensible à la casse est nécessaire pour éprouver R1. Aucun recyclage réel de PID ni arrêt d’un vrai cluster n’a été reproduit ici.
+
+6. **constat** — Aucun nouveau contournement des confirmations identifié ; des constats de couverture et de documentation subsistent, avec un message de refus incomplet relevé dans cette passe.
+
+des constats

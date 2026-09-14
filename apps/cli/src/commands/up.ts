@@ -312,13 +312,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
         chalk.yellow(
           `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which is alive. Its identity
 ` +
-            `    could NOT be confirmed — either its start time differs from the one recorded, or
+            `    could NOT be confirmed: its start time differs from the one recorded, or it does
 ` +
-            `    no start time could be read at all. Nothing was stopped. If Postgres then fails to
+            `    not run out of that directory, or neither could be read. Nothing was stopped. If
 ` +
-            `    start, check that pid yourself (its executable, its start time, which cluster it
+            `    Postgres then fails to start, check that pid yourself (its executable, its start
 ` +
-            `    serves) and stop it through its owner rather than killing the number.`,
+            `    time, which cluster it serves) and stop it through its owner rather than killing
+` +
+            `    the number.`,
         ),
       );
     }

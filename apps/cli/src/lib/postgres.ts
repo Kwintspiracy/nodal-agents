@@ -209,8 +209,13 @@ export async function postgresProcessesForDataDir(
 }
 
 /**
- * What we own when the process table could not be read: the pid our own data
- * directory claims, if it is still alive, and nothing else.
+ * What we own when the process table could not be read.
+ *
+ * NOT "the pid our data directory claims, if it is alive" — liveness is the
+ * cheapest of the three things asked here, and the summary used to stop at it
+ * (pass-11 finding R2). The pid has to be claimed by our lockfile, alive, still
+ * running OUT of our data directory, and started when the lockfile says. Any
+ * one of those unanswerable is a refusal, each with its own code.
  *
  * `up` used to reach for `livePostmasterPid()` itself in this case — a second,
  * looser answer to the one question this module exists to answer, and it
@@ -221,15 +226,16 @@ export async function postgresProcessesForDataDir(
 export function unconfirmedReading(dataDir: string): ProcessTableReading {
   const claim = readPostmasterClaim(dataDir);
   if (claim === null || livePostmasterPid(dataDir) !== claim.pid) return { read: false, owned: [] };
-  // Liveness is NOT confirmation. Without a start time, a stale lockfile whose
-  // pid the OS has since handed to a stranger reads exactly like our own
-  // postmaster — the hole pass 4 closed for the Windows path and pass 5 found
-  // still open here. So the same question is asked of the OS about THIS pid
-  // alone, which needs no process table.
-  // TWO proofs, and both must hold. The start time catches an ordinary
-  // recycled pid; the working directory catches the one case a clock
-  // comparison cannot — a wall clock wound back far enough that a stranger's
-  // start time lands exactly on the recorded one.
+  // Liveness is NOT confirmation. A stale lockfile whose pid the OS has since
+  // handed to a stranger reads exactly like our own postmaster — the hole pass
+  // 4 closed for the Windows path and pass 5 found still open here. So the OS
+  // is asked about THIS pid alone, which needs no process table, and TWO proofs
+  // must hold.
+  //
+  // The start time catches an ordinary recycled pid. The working directory
+  // catches what a clock comparison cannot, and that is more than a wound-back
+  // clock: the time check is a WINDOW, so a pid reused inside it passes on its
+  // own (see `readPostmasterClaim` for both shapes of that residue).
   const holdsDataDir = postmasterHoldsDataDir(claim.pid, dataDir);
   if (holdsDataDir !== true) {
     process.stderr.write(

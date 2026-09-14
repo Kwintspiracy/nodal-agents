@@ -322,6 +322,57 @@ ${Math.round(started / 1000)}
   // default. It passed locally and timed out on CI (ci-windows, 1091d64d):
   // machine speed decided, which is exactly what a timeout should never do.
   // The budget here is the probe's, plus room for a loaded runner.
+  it.runIf(process.platform === 'linux')(
+    'the DIRECTORY proof is case-sensitive too, not only the lockfile read',
+    () => {
+      // Pass-11 finding R1, raised in passes 9 and 10 as well. Folding case
+      // back into `postmasterHoldsDataDir` alone would confuse two real
+      // directories, and the existing cases could not see it: the cwd case uses
+      // paths that differ by more than case, and the case test reads the
+      // lockfile rather than the proof. Two directories differing ONLY by case,
+      // on a filesystem where that makes two of them.
+      const lower = join(dataDir, 'sub');
+      const upper = join(dataDir, 'SUB');
+      mkdirSync(lower);
+      mkdirSync(upper);
+      const before = process.cwd();
+      try {
+        // The process runs out of `sub`; the lockfile lives in `SUB` and is
+        // correct in every other way — same pid, its own directory on line 2,
+        // the real start time on line 3. Only the case differs.
+        process.chdir(lower);
+        const started = processStartedAtMs(process.pid);
+        expect(started).not.toBeNull();
+        writeFileSync(
+          join(upper, 'postmaster.pid'),
+          `${process.pid}
+${upper}
+${Math.round(started! / 1000)}
+25432
+`,
+          'utf-8',
+        );
+
+        expect(unconfirmedReading(upper).owned).toEqual([]);
+
+        // And the same reading from `sub`, where the process really is, owns it
+        // — so the refusal above is about the case, not about anything else.
+        writeFileSync(
+          join(lower, 'postmaster.pid'),
+          `${process.pid}
+${lower}
+${Math.round(started! / 1000)}
+25432
+`,
+          'utf-8',
+        );
+        expect(unconfirmedReading(lower).owned).toEqual([process.pid]);
+      } finally {
+        process.chdir(before);
+      }
+    },
+  );
+
   it('owns nothing when the lockfile names a dead pid', { timeout: 30_000 }, async () => {
     writePostmasterPid(DEAD_PID);
 
