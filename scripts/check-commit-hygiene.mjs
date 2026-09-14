@@ -26,16 +26,13 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
+// Quels contrôles s'appliquent à quel fichier — une fonction pure, testée par
+// `scripts/tests/hygiene-file-scope.test.mjs`. Elle vit à part parce que la
+// phrase « exemptés de la taille, et d'elle seule » se vérifie, et qu'elle
+// était fausse pour `.ndjson` (revue post-merge de la PR #77).
+import { MAX_BYTES, fileScope } from './lib/hygiene-file-scope.mjs';
 
 const ALL = process.argv.includes('--all');
-
-/** Extensions whose content must be text. A NUL byte in one of these is damage. */
-const TEXT_EXT =
-  /\.(ts|tsx|js|jsx|mjs|cjs|json|md|mdx|css|scss|html|yml|yaml|sql|sh|txt|toml|env\.example)$/i;
-
-/** Binary by nature — never inspected for NULs. */
-const BINARY_EXT =
-  /\.(png|jpe?g|gif|ico|webp|avif|svgz|woff2?|ttf|otf|eot|pdf|zip|tgz|gz|xlsx|docx|pptx|mp[34]|mov|wasm|node|bin|db|sqlite)$/i;
 
 /**
  * Paths that have no business in a commit, matched against the repo-relative
@@ -68,21 +65,6 @@ const STRAY_RULES = [
     why: 'a private key or certificate — never commit these',
   },
 ];
-
-/** Anything past this is almost certainly not source. */
-const MAX_BYTES = 2 * 1024 * 1024;
-
-/**
- * Les DONNÉES du portail qualité : écrites par la mesure nocturne (`qa.yml`),
- * sur `main`, jamais à la main. `tests.ndjson` porte un enregistrement par
- * test du dépôt — 7 372 lignes, 3,2 Mo le 12/09/2026 — et c'est voulu : c'est
- * la mémoire qui rend l'instabilité visible. La première nuit l'a poussé, et
- * ce contrôle a rougi TOUTES les PR qui suivaient, sur un fichier qu'aucune
- * d'elles ne touchait. Un contenu borné (une ligne par test, pas par
- * exécution), lisible, qui ne peut pas être « gitignoré » puisque le portail
- * en ligne se rend depuis le dépôt. Les autres contrôles (NUL, UTF-16) restent.
- */
-const SIZE_EXEMPT = /^apps\/qa\/data\/.*\.(ndjson|json)$/;
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
@@ -132,10 +114,11 @@ for (const file of files) {
     }
   }
 
-  if (BINARY_EXT.test(file)) continue;
+  const scope = fileScope(file);
+  if (scope.binary) continue;
 
   // ── Oversized ─────────────────────────────────────────────────────────────
-  if (stat.size > MAX_BYTES && !SIZE_EXEMPT.test(file)) {
+  if (stat.size > MAX_BYTES && scope.sizeChecked) {
     report(
       file,
       `${(stat.size / 1024 / 1024).toFixed(1)} MB — too large for a source file`,
@@ -144,7 +127,7 @@ for (const file of files) {
     continue;
   }
 
-  if (!TEXT_EXT.test(file)) continue;
+  if (!scope.contentChecked) continue;
 
   // ── Damaged content ───────────────────────────────────────────────────────
   let buf;
