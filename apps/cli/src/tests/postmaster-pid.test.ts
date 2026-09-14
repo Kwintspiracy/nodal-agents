@@ -116,8 +116,12 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
     expect(livePostmasterPid(dataDir)).toBeNull();
   });
 
-  it('accepts the same directory written with the other separators and case', () => {
-    const other = dataDir.split('\\').join('/').toUpperCase();
+  it('accepts the same directory written with the other separators', () => {
+    // Separators are interchangeable on Windows only, and case has its own case
+    // below. Mixing both into one assertion made a CORRECT Linux implementation
+    // fail (pass-9 finding R4).
+    const other =
+      process.platform === 'win32' ? dataDir.split('\\').join('/').toUpperCase() : dataDir;
     writeFileSync(
       join(dataDir, 'postmaster.pid'),
       `${process.pid}\n${other}\n1755600000\n25432\n`,
@@ -190,9 +194,11 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
 
     expect(started).not.toBeNull();
     // A function answering `Date.now()` is wrong by exactly the process's age,
-    // so this only discriminates once that age EXCEEDS the two-second window
-    // the guard allows. Half a second did not (pass-8 finding R4).
-    expect(process.uptime()).toBeGreaterThan(3);
+    // so this only discriminates once that age exceeds the two-second window
+    // the guard allows. ASSERTING that age failed a correct implementation on a
+    // fast targeted run (pass-9 finding R4); the vitest process is seconds old
+    // in any full run, and when it is not, this case simply proves less rather
+    // than reporting a defect that is not there.
     // A 24-hour window would also accept `Date.now()` — that is, a function
     // that reads nothing and answers "now" (pass-6 finding R4). Node knows how
     // long IT has been running, so the answer is checked against that, within

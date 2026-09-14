@@ -86,10 +86,14 @@ export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClai
  * them apart (pass-8 finding R1). The filesystem's own rule is the only rule.
  */
 function sameDirectory(a: string, b: string): boolean {
-  const clean = (v: string): string => {
-    const normalised = v.replace(/\\/g, '/').replace(/\/+$/, '');
-    return process.platform === 'win32' ? normalised.toLowerCase() : normalised;
-  };
+  const clean = (v: string): string =>
+    process.platform === 'win32'
+      ? v.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      : // A backslash is a legal character in a POSIX filename, so turning it
+        // into a separator made `/srv/pg\data` and `/srv/pg/data` — two real,
+        // different directories — compare equal (pass-9 finding R2). Only the
+        // trailing separator is dropped.
+        v.replace(/\/+$/, '');
   return clean(a) === clean(b);
 }
 
