@@ -117,6 +117,38 @@ describe('classifyPostgresProcesses', () => {
     }
   });
 
+  it('the LAST -D wins, as PostgreSQL itself does', () => {
+    // Codex review of this PR, pass 2, finding R1. `-D` is read with getopt:
+    // each occurrence overwrites the previous, so the server uses the LAST one.
+    // Taking the first meant claiming a cluster whose real data dir is
+    // somewhere else — and killing it — while refusing our own in the mirror
+    // case.
+    expect(
+      classifyPostgresProcesses([foreign(101, `postgres.exe -D ${US} -D C:/foreign`)], US).owned,
+    ).toEqual([]);
+    expect(
+      classifyPostgresProcesses([foreign(102, `postgres.exe -D C:/foreign -D ${US}`)], US).owned,
+    ).toEqual([102]);
+  });
+
+  it('-c data_directory overrides -D, so it decides', () => {
+    // Codex review of this PR, pass 2, finding R2. `data_directory` is a
+    // configuration setting, and a setting beats the command-line default: the
+    // server runs against IT, not against `-D`.
+    expect(
+      classifyPostgresProcesses(
+        [foreign(201, `postgres.exe -D ${US} -c data_directory=C:/foreign`)],
+        US,
+      ).owned,
+    ).toEqual([]);
+    expect(
+      classifyPostgresProcesses(
+        [foreign(202, `postgres.exe -D C:/foreign -c data_directory=${US}`)],
+        US,
+      ).owned,
+    ).toEqual([202]);
+  });
+
   it('an io_worker of OUR postmaster is ours', () => {
     const rows = [postmaster(8932, OURS), ioWorker(5856, 8932)];
 
