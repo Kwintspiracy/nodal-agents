@@ -21,6 +21,8 @@ import {
   openInstalledConnectors,
   installedConnectorRow,
   removeInstalledConnectorIfPresent,
+  makeDbClient,
+  resolveActingUser,
 } from './helpers.ts';
 
 test.beforeAll(async () => {
@@ -173,6 +175,41 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
     await expect(
       installedConnectorRow(page, 'Google Drive').first().getByText('Connected'),
     ).toBeVisible();
+
+    // Deux lignes « Connected » ne disent PAS que l'identifiant est partagé :
+    // elles diraient la même chose de deux comptes Google distincts, c'est-à-dire
+    // du contraire exact de ce que ce parcours porte dans son titre. La seule
+    // preuve du partage est en base — un `credential_id`, le même sur les deux
+    // connecteurs. C'est le SEUL endroit du parcours qui distingue « réutilisé »
+    // de « reconnecté ».
+    const { entityId } = await resolveActingUser();
+    const { connectors, credentials, eq, and, inArray } = await import('@nodal-agents/db');
+    const { db, close } = makeDbClient();
+    try {
+      const rows = await db
+        .select({ slug: connectors.slug, credentialId: connectors.credentialId })
+        .from(connectors)
+        .where(
+          and(
+            eq(connectors.entityId, entityId),
+            inArray(connectors.slug, ['google-drive', 'gmail']),
+          ),
+        );
+      const drive = rows.find((r) => r.slug === 'google-drive');
+      const gmail = rows.find((r) => r.slug === 'gmail');
+      expect(drive?.credentialId, 'Google Drive sans identifiant en base').toBeTruthy();
+      expect(gmail?.credentialId, 'Gmail sans identifiant en base').toBeTruthy();
+      expect(gmail!.credentialId).toBe(drive!.credentialId);
+
+      // Et cet identifiant unique est bien celui que l'assistant a créé.
+      const [cred] = await db
+        .select({ type: credentials.type })
+        .from(credentials)
+        .where(eq(credentials.id, drive!.credentialId!));
+      expect(cred?.type).toBe('google-oauth');
+    } finally {
+      await close();
+    }
 
     // ── Cleanup ───────────────────────────────────────────────────────────
     await context.unrouteAll();
