@@ -23,6 +23,8 @@ import {
   resolvePgCtl,
   stopOrphanPostgres,
   processStartedAtMs,
+  postgresProcessesForDataDir,
+  unconfirmedReading,
 } from '../lib/postgres.ts';
 
 // PIDs this high aren't allocated on Windows or Linux in practice, so
@@ -162,13 +164,16 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
   // cheaply; asking it is what closes the hole without giving up cleanup.
   const onLinux = process.platform === 'linux';
 
-  it.runIf(onLinux)('dates this very process, close to now', () => {
+  it.runIf(onLinux)('dates this very process to when it actually started', () => {
     const started = processStartedAtMs(process.pid);
 
     expect(started).not.toBeNull();
-    // This process cannot have started in the future, nor before the machine.
-    expect(started!).toBeLessThanOrEqual(Date.now() + 1_000);
-    expect(started!).toBeGreaterThan(Date.now() - 24 * 3_600_000);
+    // A 24-hour window would also accept `Date.now()` — that is, a function
+    // that reads nothing and answers "now" (pass-6 finding R4). Node knows how
+    // long IT has been running, so the answer is checked against that, within
+    // the same two seconds the ownership guard itself allows.
+    const expected = Date.now() - process.uptime() * 1000;
+    expect(Math.abs(started! - expected)).toBeLessThan(2_000);
   });
 
   it.runIf(onLinux)('says nothing about a pid that does not exist', () => {
@@ -179,6 +184,80 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
     // Windows answers through the WMI probe instead; this path is the fallback
     // for hosts with neither, and it must refuse rather than guess.
     expect(processStartedAtMs(process.pid)).toBeNull();
+  });
+});
+
+describe('postgresProcessesForDataDir — the fallback owns nothing it cannot date', () => {
+  // Pass-6 finding R4: nothing exercised the fallback itself, so restoring the
+  // liveness-only attribution would have escaped every assertion. This runs the
+  // real function against a real lockfile.
+  const onWindows = process.platform === 'win32';
+
+  it.skipIf(onWindows)('owns a live pid it CAN date, off this platform', async () => {
+    writePostmasterPid(process.pid);
+    const claim = readPostmasterClaim(dataDir);
+    // Our own start time, as the OS reports it — the lockfile has to agree.
+    const started = processStartedAtMs(process.pid);
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}
+${dataDir}
+${Math.round((started ?? 0) / 1000)}
+25432
+`,
+      'utf-8',
+    );
+
+    const reading = await postgresProcessesForDataDir(dataDir);
+
+    expect(claim?.pid).toBe(process.pid);
+    expect(reading.read).toBe(false);
+    expect(reading.owned).toEqual(started === null ? [] : [process.pid]);
+  });
+
+  it.skipIf(onWindows)('owns nothing when the recorded start time disagrees', async () => {
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}
+${dataDir}
+1
+25432
+`,
+      'utf-8',
+    );
+
+    expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
+  });
+
+  it('owns nothing when the lockfile names a dead pid', async () => {
+    writePostmasterPid(DEAD_PID);
+
+    expect((await postgresProcessesForDataDir(dataDir)).owned).toEqual([]);
+  });
+
+  it('owns nothing where no pid can be dated at all', () => {
+    // Windows reaches this only when its WMI probe failed, and there
+    // `processStartedAtMs` has no answer. The branch is exercised directly so
+    // that BOTH platforms hold their own half of the fallback: without this,
+    // replacing the date with `Date.now()` passed every Windows run.
+    // The lockfile claims a start time of NOW, so the only thing standing
+    // between this pid and `owned` is whether the OS could date it. A version
+    // that skips the dating and assumes "now" would own it.
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}
+${dataDir}
+${Math.round(Date.now() / 1000)}
+25432
+`,
+      'utf-8',
+    );
+
+    const reading = unconfirmedReading(dataDir);
+
+    expect(reading.read).toBe(false);
+    // Linux can date it and owns it; everywhere else the answer is a refusal.
+    expect(reading.owned).toEqual(processStartedAtMs(process.pid) === null ? [] : [process.pid]);
   });
 });
 
