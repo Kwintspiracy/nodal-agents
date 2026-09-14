@@ -46,14 +46,16 @@ export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
  * that new process — not its name, not its path, not its ancestry — says it is
  * not ours. Its creation date usually does.
  *
- * USUALLY, not always, and the difference is worth writing down. If the wall
- * clock is wound back BEFORE the stranger is created, the stranger is born at
- * an instant that reads the same as the recorded one, and no stored timestamp
- * tells the two generations apart. On Linux `postmasterHoldsDataDir` closes
- * that with a proof that has no clock in it. On Windows there is no equivalent
- * cheap reading, so a residue stands: a deliberately wound-back clock, plus a
- * pid recycled onto a postgres.exe, plus a stale lockfile. Named here rather
- * than papered over.
+ * USUALLY, not always, and the residue is worth stating exactly. The check is a
+ * WINDOW, currently two seconds, so it accepts anything born within it — a pid
+ * recycled that fast needs no clock trickery at all. Wind the wall clock back
+ * BEFORE the stranger is created and the window is not even needed: it is born
+ * at an instant that reads the same as the recorded one, and no stored
+ * timestamp separates the two generations.
+ *
+ * On Linux `postmasterHoldsDataDir` closes both, with a proof that has no clock
+ * in it. On Windows there is no equivalent cheap reading, so there the residue
+ * stands. Named rather than papered over.
  */
 export function readPostmasterClaim(dataDir: string = PG_DATA_DIR): LockfileClaim | null {
   const pidFile = join(dataDir, 'postmaster.pid');
