@@ -54,6 +54,7 @@ import {
 import type { FinalizeDeps } from '../../job/finalize.ts';
 import type { DeliverableVerifier } from '../../verification/registry.ts';
 import { MAX_TAIL_CHARS, codeProjectVerifier } from '../../verification/code-project.ts';
+import { documentVerifier } from '../../verification/document.ts';
 
 // Ces tests lancent de VRAIS processus (node) : sous la charge de la suite
 // complète (une centaine de fichiers en parallèle), une preuve de 1 s en
@@ -838,6 +839,46 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
       'green',
     ]);
     expect((await stateRow(stateId)).decisionStatus).toBe('green');
+  });
+
+  it('un AUTRE job réécrit le document PENDANT la preuve ⇒ dirty + VERIFY_STALE_EPOCH, jamais un vert périmé', async () => {
+    // Revue Codex post-merge de la PR #66, constat C1 (BLOQUANT). La primitive
+    // relit la configuration après la preuve : `epoch` ou `manifestHash`
+    // différents ⇒ ce qui vient d'être prouvé n'est plus l'arbre courant. Pour
+    // un projet de code, l'intention d'un autre job avance l'epoch partagé de
+    // `code_projects`. Pour un document, les deux étaient CONSTANTS, et la
+    // garde de génération ne voit que les écritures de CE job : un vert restait
+    // posé sur un contenu qui n'était plus sur le disque.
+    //
+    // Ici l'écriture concurrente a lieu DANS la preuve, sur le vrai
+    // vérificateur de document — seul `runProof` est enveloppé.
+    const doc = join(dir, 'concurrent.md');
+    await writeFile(doc, '# Court\n', 'utf8');
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true, doc);
+
+    const pendantLaPreuve: DeliverableVerifier = {
+      ...documentVerifier,
+      runProof: async (config, onCommandDone) => {
+        // L'autre job écrit : taille différente, donc empreinte différente quelle
+        // que soit la granularité du mtime.
+        await writeFile(doc, '# Un titre que personne n’a prouvé, et bien plus long\n', 'utf8');
+        return documentVerifier.runProof(config, onCommandDone);
+      },
+    };
+
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', toolsUsed: [] },
+      deps({ getVerifier: () => pendantLaPreuve }),
+    );
+
+    expect(logged(VERIFY_STALE_EPOCH)).toBe(true);
+    const state = await stateRow(stateId);
+    expect(state.decisionStatus).toBe('dirty');
+    expect(state.verifiedGeneration).toBeNull();
+    // …et le job finit quand même (①).
+    expect((await jobRow(jobId)).status).toBe('completed');
   });
 
   it('un markdown sans titre : la décision est ROUGE, et la ligne rouge dit pourquoi', async () => {
