@@ -19,6 +19,12 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
  */
 export default function Handoff({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  // Rien à déplier, rien à annoncer. Constat C9 de la revue Codex de la PR #66 :
+  // le séparateur `·` ne dépendait que de l'état replié, et un tour dont le
+  // message d'utilisateur ne porte aucun bloc de texte (une image seule) donne
+  // une consigne vide — l'écran offrait alors de déplier du vide derrière un
+  // point.
+  if (text.trim() === '') return null;
   return (
     <div className="mt-3">
       <DisclosureButton open={open} onClick={() => setOpen((o) => !o)} className="h-auto py-0 px-0">
