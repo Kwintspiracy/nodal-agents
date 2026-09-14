@@ -258,20 +258,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const ownedPgPids = new Set<number>(pgTable.owned);
 
   /**
-   * Is this pid a postmaster of OURS?
+   * Is this pid one of ours? ONE answer, from ONE place.
    *
-   * `postmaster.pid` alone does not settle it (finding C3). The lockfile can be
-   * stale, and the pid it records can since have been handed to somebody else's
-   * process — which `up` would then kill. When the process table COULD be read,
-   * it is the arbiter: one of ours has to be in it. When it could NOT be read
-   * (any non-Windows host, or a probe that failed — two cases now told apart),
-   * the lockfile is all there is, and it decides, exactly as before.
+   * It used to fall back to `livePostmasterPid()` whenever the process table
+   * could not be read — a second, looser answer to the same question, and it
+   * accepted pids the confirmed set had already refused (pass-4 finding R1).
+   * `postgresProcessesForDataDir` now covers that case itself, so a refusal
+   * cannot be walked around.
    */
-  const isOurPostmasterPid = (pid: number): boolean => {
-    if (ownedPgPids.has(pid)) return true;
-    if (pgTable.read) return false;
-    return livePostmasterPid() === pid;
-  };
+  const isOurPostmasterPid = (pid: number): boolean => ownedPgPids.has(pid);
 
   const orphans: Array<{ name: string; port: number | null; pid: number }> = [];
   const strangers: Array<{ name: string; port: number; pid: number }> = [];
@@ -309,6 +304,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     const pgPid = livePostmasterPid();
     if (pgPid !== null && isOurPostmasterPid(pgPid)) {
       orphans.push({ name: 'postgres', port: measuredPort(pgPid, listeners), pid: pgPid });
+    } else if (pgPid !== null) {
+      // The lockfile names a live pid that the confirmed set refused. Say so:
+      // the alternative is a boot that looks clean while an orphan we declined
+      // to identify still holds the shared-memory block.
+      console.log(
+        chalk.gray(
+          `  - a process (pid ${pgPid}) is named by postmaster.pid but could not be confirmed as ours; it is left alone`,
+        ),
+      );
     }
   }
 
@@ -367,7 +371,18 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // than signalling a process we did not identify.
     const postmasterPid = pgOrphans[0]?.pid;
     if (postmasterPid !== undefined) await stopOrphanPostgres(postmasterPid);
+    // The set was decided BEFORE the graceful stop. A pid freed by that stop
+    // and handed to a stranger would pass `isPidAlive` and take the SIGKILL
+    // below, so ownership is asked again, now, against a freshly read table
+    // (pass-4 finding R4). Identity is not a fact that keeps.
+    const stillOurs = new Set<number>((await postgresProcessesForDataDir()).owned);
     for (const pgOrphan of pgOrphans) {
+      if (!stillOurs.has(pgOrphan.pid)) {
+        console.log(
+          chalk.gray(`  - postgres pid ${pgOrphan.pid} is no longer ours; not killing it`),
+        );
+        continue;
+      }
       if (isPidAlive(pgOrphan.pid)) {
         try {
           // Kill the postmaster DIRECTLY — NOT `taskkill /T`. Walking the

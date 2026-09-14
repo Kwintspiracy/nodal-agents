@@ -119,9 +119,11 @@ export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
 export async function postgresProcessesForDataDir(
   dataDir: string = PG_DATA_DIR,
 ): Promise<ProcessTableReading> {
-  // Not Windows: the table is not READ here, it is not readable at all. Saying
-  // `read: false` keeps the caller from concluding anything from the silence.
-  if (process.platform !== 'win32') return { read: false, owned: [] };
+  // Not Windows: the table is not READ here, it is not readable at all. The
+  // data directory still answers, so the claim is honoured on its own — with
+  // nothing to confirm it, and no workers reached. `read: false` keeps the
+  // caller from concluding anything MORE from the silence.
+  if (process.platform !== 'win32') return unconfirmedReading(dataDir);
   const { execa } = await import('execa');
   try {
     const { stdout, stderr, exitCode } = await execa(
@@ -155,7 +157,7 @@ export async function postgresProcessesForDataDir(
       process.stderr.write(
         `ORPHAN_PROBE_UNREADABLE exit=${String(exitCode)} stderr=${stderr.trim().slice(0, 200)}\n`,
       );
-      return { read: false, owned: [] };
+      return unconfirmedReading(dataDir);
     }
     const { owned, skipped } = ownedPostgresPids({
       rows: parseProcessRows(stdout),
@@ -170,8 +172,23 @@ export async function postgresProcessesForDataDir(
     process.stderr.write(
       `ORPHAN_PROBE_UNREADABLE error=${err instanceof Error ? err.message : String(err)}\n`,
     );
-    return { read: false, owned: [] };
+    return unconfirmedReading(dataDir);
   }
+}
+
+/**
+ * What we own when the process table could not be read: the pid our own data
+ * directory claims, if it is still alive, and nothing else.
+ *
+ * `up` used to reach for `livePostmasterPid()` itself in this case — a second,
+ * looser answer to the one question this module exists to answer, and it
+ * accepted pids the confirmed set had refused (pass-4 finding R1). One source,
+ * here, so a refusal cannot be walked around. No workers are claimed: with no
+ * table there is no ancestry to walk.
+ */
+function unconfirmedReading(dataDir: string): ProcessTableReading {
+  const pid = livePostmasterPid(dataDir);
+  return { read: false, owned: pid === null ? [] : [pid] };
 }
 
 /**

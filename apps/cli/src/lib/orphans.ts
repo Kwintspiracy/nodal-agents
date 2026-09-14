@@ -94,12 +94,11 @@ export function parseProcessRows(stdout: string): PostgresProcessRow[] {
  * Did `parent` start strictly after `child`? Unknowable — and therefore false —
  * when either date is missing.
  */
-function startsAfter(parent: PostgresProcessRow, child: PostgresProcessRow): boolean {
-  return (
-    parent.startedAt !== undefined &&
-    child.startedAt !== undefined &&
-    parent.startedAt > child.startedAt
-  );
+function isPlausibleParent(parent: PostgresProcessRow, child: PostgresProcessRow): boolean {
+  // Without both dates there is nothing to check, and an unchecked link is how
+  // a recycled ppid adopts a stranger. No dates, no descent.
+  if (parent.startedAt === undefined || child.startedAt === undefined) return false;
+  return parent.startedAt <= child.startedAt;
 }
 
 /**
@@ -128,12 +127,19 @@ export interface OwnershipInput {
  * How far apart the lockfile's start time and the process's creation date may
  * be and still describe the same start.
  *
- * PostgreSQL writes the lockfile immediately after the postmaster starts, so
- * the two are within a second of each other in practice. A minute is generous
- * for a slow disk and still far shorter than the time it takes for a pid to be
- * recycled onto a new process.
+ * Line 3 is `MyStartTime`, set by `InitProcessGlobals` at the top of
+ * `PostmasterMain` and only then written to the file — so it is the moment the
+ * POSTMASTER started, not the moment the file was written. It therefore sits
+ * milliseconds away from the process creation date the OS records, and the
+ * window needs to cover clock resolution, nothing more.
+ *
+ * It was a minute, justified by "a slow disk". That justification was wrong —
+ * the disk is not in the picture — and the window was wide enough to accept a
+ * pid recycled around the recorded start, which is exactly what it exists to
+ * refuse. Measured: a foreign process created 30 s after the claimed start was
+ * accepted as ours.
  */
-const START_TIME_TOLERANCE_MS = 60_000;
+const START_TIME_TOLERANCE_MS = 2_000;
 
 /**
  * Which Postgres processes this install owns.
@@ -224,13 +230,15 @@ export function ownedPostgresPids(input: OwnershipInput): PostgresOwnership {
  * Does this process's creation date agree with the start time the postmaster
  * wrote into the lockfile?
  *
- * Unknowable — and therefore accepted — when either side is missing: an older
- * lockfile has no line 3, and a process table without `CreationDate` gives no
- * date. Said here rather than left implicit; when both are present this is the
- * only check that catches a recycled pid.
+ * A missing date is a NO, not a yes. It used to be a yes — "unknowable,
+ * therefore accepted" — and that made the one check capable of catching a
+ * recycled pid switch itself off exactly when the inputs were incomplete: an
+ * older lockfile with no line 3, or a WMI row with no `CreationDate`. Measured
+ * both ways, a foreign postmaster came back owned. Uncertainty must stop an
+ * automatic kill, never license one (invariant #4).
  */
 function startMatchesClaim(process: PostgresProcessRow, claim: LockfileClaim): boolean {
-  if (process.startedAt === undefined || claim.startedAtSeconds === null) return true;
+  if (process.startedAt === undefined || claim.startedAtSeconds === null) return false;
   return Math.abs(process.startedAt - claim.startedAtSeconds * 1000) <= START_TIME_TOLERANCE_MS;
 }
 
@@ -244,8 +252,9 @@ function descendsFrom(
   let child: PostgresProcessRow = row;
   let cursor = byPid.get(row.ppid);
   while (cursor && !seen.has(cursor.pid)) {
-    // A parent that started AFTER its child is a RECYCLED pid, not a parent.
-    if (startsAfter(cursor, child)) return false;
+    // A parent that started AFTER its child is a RECYCLED pid, not a parent —
+    // and a link with no dates cannot be checked at all, so it is not a link.
+    if (!isPlausibleParent(cursor, child)) return false;
     if (cursor.pid === ancestorPid) return true;
     seen.add(cursor.pid);
     child = cursor;

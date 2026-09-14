@@ -130,6 +130,50 @@ describe('ownedPostgresPids — the data directory answers', () => {
     expect(owned).toEqual([8932]);
   });
 
+  it('a missing creation date REFUSES, it does not wave through', () => {
+    // Pass-4 finding R2. The date check used to answer "unknowable, therefore
+    // yes", which switched off the one guard that catches a recycled pid
+    // exactly when the inputs were incomplete. Measured both ways then: a
+    // foreign postmaster came back owned.
+    const noDate: PostgresProcessRow = {
+      pid: 8932,
+      ppid: 1,
+      commandLine: 'postgres',
+      startedAt: undefined,
+    };
+
+    expect(
+      ownedPostgresPids({ rows: [noDate], tableRead: true, claim: claims(8932) }).owned,
+    ).toEqual([]);
+    // And the other side: a lockfile too old to carry line 3.
+    expect(
+      ownedPostgresPids({
+        rows: [postmaster(8932, OURS)],
+        tableRead: true,
+        claim: claims(8932, null),
+      }).owned,
+    ).toEqual([]);
+  });
+
+  it('a worker with no creation date is not adopted either', () => {
+    const rows: PostgresProcessRow[] = [
+      postmaster(8932, OURS),
+      { pid: 5856, ppid: 8932, commandLine: 'postgres --forkchild', startedAt: undefined },
+    ];
+
+    expect(ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) }).owned).toEqual([8932]);
+  });
+
+  it('half a minute apart is a different generation, not a slow start', () => {
+    // Pass-4 finding R3. The window was a minute, justified by "a slow disk" —
+    // and the disk is not in the picture: line 3 is the postmaster's own start
+    // time, recorded before the file is written. A minute was wide enough to
+    // accept a pid recycled around that instant. Measured: 30 s was accepted.
+    const rows = [postmaster(8932, OURS, 1_700_000_030_000)];
+
+    expect(ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) }).owned).toEqual([]);
+  });
+
   it('a worker of a FOREIGN postmaster is not adopted', () => {
     const rows = [postmaster(8932, OURS), postmaster(41956, OURS), ioWorker(7100, 41956)];
 
