@@ -2790,7 +2790,7 @@
         "nom": "Give a skill",
         "question": "Can I attach a skill to it, and take it back?",
         "exigee": true,
-        "ecranAttendu": "Qu'attacher une skill depuis l'onglet Skills d'un agent, puis la retirer, se voie dans la liste ET dans la ligne d'assignation en base.",
+        "ecranAttendu": "That attaching a skill from an agent's Skills tab, then removing it, shows both in the list AND in the assignment row in the database.",
         "nonDit": [],
         "ecran": {
           "etat": "absente",
@@ -3325,7 +3325,7 @@
         "nom": "Approve or refuse",
         "question": "Does it really wait for me when it is supposed to wait?",
         "exigee": true,
-        "ecranAttendu": "Qu'une action en attente s'affiche dans le fil avec Approuver et Refuser, que le clic débloque l'agent, et que refuser l'arrête.",
+        "ecranAttendu": "That a pending action shows in the thread with Approve and Refuse, that the click unblocks the agent, and that refusing stops it.",
         "nonDit": [],
         "ecran": {
           "etat": "absente",
@@ -3458,7 +3458,7 @@
         "nom": "Run a command",
         "question": "Can I let it run a command on my machine?",
         "exigee": true,
-        "ecranAttendu": "Qu'un agent autorisé à lancer une commande le montre dans l'écran, demande la permission quand il le doit, et rende sa sortie dans le fil.",
+        "ecranAttendu": "That an agent allowed to run a command shows it on screen, asks for permission when it must, and renders its output in the thread.",
         "nonDit": [],
         "ecran": {
           "etat": "absente",
@@ -3647,7 +3647,7 @@
         "nom": "Work on my files",
         "question": "Can I hand it a folder and find what it wrote there?",
         "exigee": true,
-        "ecranAttendu": "Qu'on désigne un dossier de travail depuis l'écran et qu'on y retrouve, dans l'onglet Code, le fichier que l'agent vient d'écrire.",
+        "ecranAttendu": "That a working folder is picked from the screen and that the file the agent just wrote is found there, in the Code tab.",
         "nonDit": [],
         "ecran": {
           "etat": "absente",
@@ -4417,7 +4417,7 @@
         "nom": "See what it costs",
         "question": "Can I know what this chat turn just cost me?",
         "exigee": true,
-        "ecranAttendu": "Que le coût et les jetons du tour qui vient d'avoir lieu s'affichent dans le fil, et qu'ils correspondent à ce que la base a enregistré.",
+        "ecranAttendu": "That the cost and the tokens of the turn that just happened show in the thread, and that they match what the database recorded.",
         "nonDit": [],
         "ecran": {
           "etat": "absente",
@@ -4494,7 +4494,7 @@
         "nom": "Find out how",
         "question": "When I get stuck, can the product explain it to me?",
         "exigee": true,
-        "preuveAttendue": "Qu'un guide servi au client décrit bien le connecteur demandé — ses étapes, ses champs et ses portées lues depuis le catalogue, et non une page écrite en dur.",
+        "preuveAttendue": "That a guide served to the client really describes the connector asked for — its steps, its fields and its scopes read from the catalogue, and not a hardcoded page.",
         "nonDit": [],
         "ecran": {
           "etat": "passee",
@@ -5306,63 +5306,63 @@
         "metriques": [
           {
             "id": "packages_scanned",
-            "label": "Packages scannés",
+            "label": "Packages scanned",
             "valeur": 32,
             "unite": "packages",
             "sens": "higher-is-better"
           },
           {
             "id": "agent_slug_violations",
-            "label": "Slugs d’agent en dur (invariant #1)",
+            "label": "Hardcoded agent slugs (invariant #1)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "user_facing_violations",
-            "label": "Texte utilisateur en dur (invariant #2)",
+            "label": "Hardcoded user-facing text (invariant #2)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "db_driver_violations",
-            "label": "Imports de driver DB hors packages/db",
+            "label": "DB driver imports outside packages/db",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "hardcoded_uuid_violations",
-            "label": "UUID par utilisateur en dur (invariant #6)",
+            "label": "Hardcoded per-user UUIDs (invariant #6)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "mutating_launcher_violations",
-            "label": "Écritures disque hors seam d’intention",
+            "label": "Disk writes outside the intent seam",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "terminal_write_violations",
-            "label": "Écritures terminales hors de la primitive (V&C)",
+            "label": "Terminal writes outside the primitive (V&C)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "terminal_send_violations",
-            "label": "Envois de canal hors de l’outbox (V&C)",
+            "label": "Channel sends outside the outbox (V&C)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
           },
           {
             "id": "deliverable_literal_violations",
-            "label": "Types de livrable en dur dans la primitive (V&C)",
+            "label": "Hardcoded deliverable types in the primitive (V&C)",
             "valeur": 0,
             "unite": "violations",
             "sens": "lower-is-better"
@@ -5376,30 +5376,30 @@
         "metriques": [
           {
             "id": "openrouter_models_listed",
-            "label": "Modèles OpenRouter au catalogue",
+            "label": "OpenRouter models in the catalogue",
             "valeur": 31,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "higher-is-better"
           },
           {
             "id": "dead_ids",
-            "label": "Identifiants absents en amont",
+            "label": "Ids missing upstream",
             "valeur": 0,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "lower-is-better"
           },
           {
             "id": "families_with_newer_upstream",
-            "label": "Familles ayant plus récent en amont",
+            "label": "Families with a newer version upstream",
             "valeur": 0,
-            "unite": "familles",
+            "unite": "families",
             "sens": "lower-is-better"
           },
           {
             "id": "upstream_catalogue_size",
-            "label": "Taille du catalogue amont",
+            "label": "Upstream catalogue size",
             "valeur": 400,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "higher-is-better"
           }
         ]
@@ -5411,58 +5411,58 @@
         "metriques": [
           {
             "id": "providers",
-            "label": "Fournisseurs au catalogue",
+            "label": "Providers in the catalogue",
             "valeur": 9,
-            "unite": "fournisseurs",
+            "unite": "providers",
             "sens": "higher-is-better"
           },
           {
             "id": "models",
-            "label": "Modèles au catalogue",
+            "label": "Models in the catalogue",
             "valeur": 55,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "higher-is-better"
           },
           {
             "id": "models_with_tools",
-            "label": "Modèles déclarant les outils",
+            "label": "Models declaring tools",
             "valeur": 55,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "higher-is-better"
           },
           {
             "id": "models_reasoning",
-            "label": "Modèles à raisonnement",
+            "label": "Reasoning models",
             "valeur": 32,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "higher-is-better"
           },
           {
             "id": "missing_context_window",
-            "label": "Sans fenêtre de contexte",
+            "label": "Without a context window",
             "valeur": 0,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "lower-is-better"
           },
           {
             "id": "missing_pricing",
-            "label": "Sans tarif",
+            "label": "Without pricing",
             "valeur": 2,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "lower-is-better"
           },
           {
             "id": "duplicate_ids",
-            "label": "Identifiants dupliqués chez un fournisseur",
+            "label": "Duplicate ids within a provider",
             "valeur": 0,
-            "unite": "doublons",
+            "unite": "duplicates",
             "sens": "lower-is-better"
           },
           {
             "id": "context_on_fallback",
-            "label": "Contexte laissé sur la valeur par défaut",
+            "label": "Context left on the default value",
             "valeur": 2,
-            "unite": "modèles",
+            "unite": "models",
             "sens": "lower-is-better"
           }
         ]
@@ -5474,30 +5474,30 @@
         "metriques": [
           {
             "id": "decisions_total",
-            "label": "Décisions mesurées",
+            "label": "Decisions measured",
             "valeur": 20,
-            "unite": "décisions",
+            "unite": "decisions",
             "sens": "exact"
           },
           {
             "id": "asks_human",
-            "label": "Suspend pour approbation",
+            "label": "Pauses for approval",
             "valeur": 12,
-            "unite": "décisions",
+            "unite": "decisions",
             "sens": "exact"
           },
           {
             "id": "runs_freely",
-            "label": "Passe sans demander",
+            "label": "Goes through without asking",
             "valeur": 8,
-            "unite": "décisions",
+            "unite": "decisions",
             "sens": "exact"
           },
           {
             "id": "blocked",
-            "label": "Refusé d’emblée",
+            "label": "Refused outright",
             "valeur": 0,
-            "unite": "décisions",
+            "unite": "decisions",
             "sens": "exact"
           }
         ]
@@ -5509,37 +5509,37 @@
         "metriques": [
           {
             "id": "third_party_families_covered",
-            "label": "Familles tierces cadrées",
+            "label": "Third-party families framed",
             "valeur": 20,
             "unite": "/20",
             "sens": "higher-is-better"
           },
           {
             "id": "own_tools_wrongly_framed",
-            "label": "Outils du produit cadrés à tort",
+            "label": "Product tools wrongly framed",
             "valeur": 0,
-            "unite": "outils",
+            "unite": "tools",
             "sens": "lower-is-better"
           },
           {
             "id": "payloads_lost",
-            "label": "Charges utiles perdues par l’enveloppe",
+            "label": "Payloads lost by the envelope",
             "valeur": 0,
             "unite": "payloads",
             "sens": "lower-is-better"
           },
           {
             "id": "payloads_unframed",
-            "label": "Charges utiles sorties sans cadre",
+            "label": "Payloads emitted unframed",
             "valeur": 0,
             "unite": "payloads",
             "sens": "lower-is-better"
           },
           {
             "id": "delimiter_escapes",
-            "label": "Délimiteurs contrefaits non neutralisés",
+            "label": "Forged delimiters not neutralised",
             "valeur": 0,
-            "unite": "évasions",
+            "unite": "escapes",
             "sens": "lower-is-better"
           }
         ]

@@ -49,7 +49,7 @@ const OWN_TOOLS = [
 
 export const trustBoundarySection: Section = {
   id: 'trust-boundary',
-  label: 'Frontières de confiance',
+  label: 'Trust boundaries',
   why: 'Du texte écrit par un tiers qui atteint le modèle sans cadre est lu au même niveau qu’une consigne du propriétaire.',
   tests: [
     '@nodal-agents/shared:src/tests/untrusted.test.ts',
@@ -77,7 +77,7 @@ export const trustBoundarySection: Section = {
     return [
       {
         id: 'third_party_families_covered',
-        label: 'Familles tierces cadrées',
+        label: 'Third-party families framed',
         value: THIRD_PARTY_TOOLS.length - unframed.length,
         unit: `/${THIRD_PARTY_TOOLS.length}`,
         direction: 'higher-is-better',
@@ -85,15 +85,15 @@ export const trustBoundarySection: Section = {
       },
       {
         id: 'own_tools_wrongly_framed',
-        label: 'Outils du produit cadrés à tort',
+        label: 'Product tools wrongly framed',
         value: criedWolf.length,
-        unit: 'outils',
+        unit: 'tools',
         direction: 'lower-is-better',
         detail: [...criedWolf],
       },
       {
         id: 'payloads_lost',
-        label: 'Charges utiles perdues par l’enveloppe',
+        label: 'Payloads lost by the envelope',
         value: lost,
         unit: 'payloads',
         // Supprimer n'est pas sécuriser : l'utilisateur perdrait sa donnée.
@@ -101,16 +101,16 @@ export const trustBoundarySection: Section = {
       },
       {
         id: 'payloads_unframed',
-        label: 'Charges utiles sorties sans cadre',
+        label: 'Payloads emitted unframed',
         value: unframedPayloads,
         unit: 'payloads',
         direction: 'lower-is-better',
       },
       {
         id: 'delimiter_escapes',
-        label: 'Délimiteurs contrefaits non neutralisés',
+        label: 'Forged delimiters not neutralised',
         value: realClosers - 1,
-        unit: 'évasions',
+        unit: 'escapes',
         direction: 'lower-is-better',
       },
     ];

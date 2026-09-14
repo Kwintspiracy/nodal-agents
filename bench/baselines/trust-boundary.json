@@ -5,7 +5,7 @@
   "metrics": [
     {
       "id": "third_party_families_covered",
-      "label": "Familles tierces cadrées",
+      "label": "Third-party families framed",
       "value": 20,
       "unit": "/20",
       "direction": "higher-is-better",
@@ -13,31 +13,31 @@
     },
     {
       "id": "own_tools_wrongly_framed",
-      "label": "Outils du produit cadrés à tort",
+      "label": "Product tools wrongly framed",
       "value": 0,
-      "unit": "outils",
+      "unit": "tools",
       "direction": "lower-is-better",
       "detail": []
     },
     {
       "id": "payloads_lost",
-      "label": "Charges utiles perdues par l’enveloppe",
+      "label": "Payloads lost by the envelope",
       "value": 0,
       "unit": "payloads",
       "direction": "lower-is-better"
     },
     {
       "id": "payloads_unframed",
-      "label": "Charges utiles sorties sans cadre",
+      "label": "Payloads emitted unframed",
       "value": 0,
       "unit": "payloads",
       "direction": "lower-is-better"
     },
     {
       "id": "delimiter_escapes",
-      "label": "Délimiteurs contrefaits non neutralisés",
+      "label": "Forged delimiters not neutralised",
       "value": 0,
-      "unit": "évasions",
+      "unit": "escapes",
       "direction": "lower-is-better"
     }
   ]

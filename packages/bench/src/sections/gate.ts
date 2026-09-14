@@ -51,7 +51,7 @@ const SCENARIOS: Scenario[] = [
 
 export const gateSection: Section = {
   id: 'gate',
-  label: 'Matrice de décision du gate',
+  label: 'Gate decision matrix',
   why: 'Une décision qui bascule en silence, c’est soit une action non gardée, soit un réglage d’autonomie qui ne veut plus rien dire.',
   tests: [
     '@nodal-agents/tools:src/tests/mcp-approval-gate.test.ts',
@@ -89,16 +89,16 @@ export const gateSection: Section = {
     return [
       {
         id: 'decisions_total',
-        label: 'Décisions mesurées',
+        label: 'Decisions measured',
         value: SCENARIOS.length * AUTONOMIES.length,
-        unit: 'décisions',
+        unit: 'decisions',
         direction: 'exact',
       },
       {
         id: 'asks_human',
-        label: 'Suspend pour approbation',
+        label: 'Pauses for approval',
         value: asked,
-        unit: 'décisions',
+        unit: 'decisions',
         // `exact`: this number moving in EITHER direction is the story. Fewer
         // asks can mean an action lost its gate; more can mean an autonomy
         // setting stopped being honoured. Both are regressions until reviewed.
@@ -107,17 +107,17 @@ export const gateSection: Section = {
       },
       {
         id: 'runs_freely',
-        label: 'Passe sans demander',
+        label: 'Goes through without asking',
         value: ran,
-        unit: 'décisions',
+        unit: 'decisions',
         direction: 'exact',
         detail: decisions.filter((d) => d.endsWith('passe')),
       },
       {
         id: 'blocked',
-        label: 'Refusé d’emblée',
+        label: 'Refused outright',
         value: blocked,
-        unit: 'décisions',
+        unit: 'decisions',
         direction: 'exact',
       },
     ];
