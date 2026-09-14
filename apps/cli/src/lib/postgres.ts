@@ -1,6 +1,6 @@
 // postgres.ts — start/stop embedded Postgres using the embedded-postgres package
 
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
 import {
@@ -10,9 +10,14 @@ import {
   type LockfileClaim,
 } from './orphans.ts';
 
-/** What a reading of the process table found — and whether it could read. */
+/** What a reading found — and whether a process TABLE was behind it. */
 export interface ProcessTableReading {
-  /** False when the table could not be read at all: conclude NOTHING from `owned`. */
+  /**
+   * False when no process table was read: on a host that has none, or after a
+   * probe that failed. `owned` can still be non-empty — the single-pid checks
+   * confirm the lockfile's claim without a table — but no ancestry was walked,
+   * so no workers are in the answer.
+   */
   read: boolean;
   owned: number[];
 }
@@ -95,8 +100,8 @@ export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
 }
 
 /**
- * Postgres processes whose command line points at `dataDir`, found by asking
- * the OS rather than by reading our own bookkeeping.
+ * The Postgres processes this install owns, found by asking the OS rather than
+ * by reading our own bookkeeping.
  *
  * The last resort, and it earned its place: on 2026-08-20 a postmaster survived
  * with NO listening socket and NO `postmaster.pid` — the lockfile had been
@@ -120,10 +125,10 @@ export async function postgresProcessesForDataDir(
   dataDir: string = PG_DATA_DIR,
 ): Promise<ProcessTableReading> {
   // Not Windows: there is no table to read. The data directory still answers,
-  // and the claim is still CONFIRMED — by asking the OS for that one pid's
-  // start time (`processStartedAtMs`) instead of listing every process. Where
-  // even that is unavailable, nothing is owned. `read: false` tells the caller
-  // no ancestry was walked, so no workers are in the answer.
+  // and the claim is still CONFIRMED — by asking the OS about that ONE pid:
+  // which directory it runs out of, and when it started. Where either is
+  // unanswerable, nothing is owned. `read: false` tells the caller no ancestry
+  // was walked, so no workers are in the answer.
   if (process.platform !== 'win32') return unconfirmedReading(dataDir);
   const { execa } = await import('execa');
   try {
@@ -195,6 +200,17 @@ export function unconfirmedReading(dataDir: string): ProcessTableReading {
   // postmaster — the hole pass 4 closed for the Windows path and pass 5 found
   // still open here. So the same question is asked of the OS about THIS pid
   // alone, which needs no process table.
+  // TWO proofs, and both must hold. The start time catches an ordinary
+  // recycled pid; the working directory catches the one case a clock
+  // comparison cannot — a wall clock wound back far enough that a stranger's
+  // start time lands exactly on the recorded one.
+  const holdsDataDir = postmasterHoldsDataDir(claim.pid, dataDir);
+  if (holdsDataDir !== true) {
+    process.stderr.write(
+      `ORPHAN_PROBE_NOT_IN_DATA_DIR pid=${claim.pid} holds=${String(holdsDataDir)}\n`,
+    );
+    return { read: false, owned: [] };
+  }
   const startedAt = processStartedAtMs(claim.pid);
   if (startedAt === null) {
     process.stderr.write(
@@ -211,13 +227,42 @@ export function unconfirmedReading(dataDir: string): ProcessTableReading {
 }
 
 /**
+ * Does this process hold OUR data directory as its working directory?
+ *
+ * A clock-free proof, and the reason it exists: no comparison of wall-clock
+ * times survives the wall clock being wound back, so a start time alone cannot
+ * settle a recycled pid. PostgreSQL's postmaster `chdir()`s into its data
+ * directory at startup and stays there, so `/proc/<pid>/cwd` — a symlink the
+ * KERNEL maintains, not a string the process chose — points at it for as long
+ * as it lives.
+ *
+ * This is not the command line wearing a different hat. A command line is what
+ * a process SAYS; this is what the kernel knows it HAS. A stranger would have
+ * to be running out of our data directory to fake it.
+ *
+ * Null where the platform or permissions make it unanswerable, and the caller
+ * treats that as "not proven" rather than as a yes.
+ */
+function postmasterHoldsDataDir(pid: number, dataDir: string): boolean | null {
+  if (process.platform !== 'linux') return null;
+  try {
+    return sameDirectory(realpathSync(`/proc/${pid}/cwd`), realpathSync(dataDir));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * When this pid started, in epoch milliseconds, asked of the OS about ONE pid —
  * no process table needed. Null when this platform cannot say.
  *
- * Linux keeps it in `/proc/<pid>/stat` field 22, in clock ticks since boot, and
- * `/proc/stat`'s `btime` gives the boot instant. Both are plain reads. Where
- * neither is available the answer is null, and the caller refuses rather than
- * attributing a pid it cannot date.
+ * Linux keeps it in `/proc/<pid>/stat` field 22, in clock ticks since boot;
+ * `/proc/uptime` turns that into an instant. Where neither is available the
+ * answer is null, and the caller refuses rather than attributing a pid it
+ * cannot date.
+ *
+ * It is NOT proof on its own — see the rollback counter-example inside — and
+ * the caller pairs it with `postmasterHoldsDataDir`.
  */
 export function processStartedAtMs(pid: number): number | null {
   if (process.platform !== 'linux') return null;
@@ -229,13 +274,17 @@ export function processStartedAtMs(pid: number): number | null {
     const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
     const ticksSinceBoot = Number.parseInt(after[19] ?? '', 10);
     if (!Number.isFinite(ticksSinceBoot)) return null;
-    // `/proc/uptime`, NOT `/proc/stat`'s `btime`. `btime` is derived from
-    // `getboottime64`, which Linux SHIFTS when the wall clock is set: a clock
-    // that moves after the postmaster started moves our computed start with
-    // it, and can land it back on a stranger's — a coincidence the two-second
-    // window would then wave through. Anchoring on the CURRENT clock instead
-    // means a clock jump pushes the estimate AWAY from the recorded value, so
-    // the answer is a refusal. Wrong in the safe direction is the requirement.
+    // `/proc/uptime`, not `/proc/stat`'s `btime`: `btime` comes from
+    // `getboottime64`, which Linux shifts when the wall clock is set, so the
+    // same reading gives different answers across a clock change.
+    //
+    // Anchoring on the current clock does NOT make this rollback-proof, and
+    // the comment here used to claim it did. Worked counter-example: postmaster
+    // at B+1000, its pid recycled at B+2000, clock then wound back 1000 s — at
+    // uptime 3000 the arithmetic lands exactly on B+1000, the value sitting in
+    // the stale lockfile. No wall-clock comparison survives a wall-clock
+    // rollback, because both sides move together. That is why
+    // `postmasterHoldsDataDir` exists: a second proof with no clock in it.
     const uptimeSeconds = Number.parseFloat(
       readFileSync('/proc/uptime', 'utf-8').split(' ')[0] ?? '',
     );

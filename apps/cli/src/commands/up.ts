@@ -391,11 +391,17 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // can take five seconds, and a pid can turn over in that time (pass-5
     // finding R2). The window cannot be closed entirely without holding an OS
     // handle; this shrinks it to the syscall.
+    // Anything we declined to touch: the closing line must not claim it was
+    // cleaned up (pass-7 finding R2).
+    const leftAlone: number[] = [];
     for (const pgOrphan of pgOrphans) {
       const stillOurs = new Set<number>((await postgresProcessesForDataDir()).owned);
       if (!stillOurs.has(pgOrphan.pid)) {
+        leftAlone.push(pgOrphan.pid);
         console.log(
-          chalk.gray(`  - postgres pid ${pgOrphan.pid} is no longer ours; not killing it`),
+          chalk.yellow(
+            `  - postgres pid ${pgOrphan.pid} can no longer be confirmed as ours; it was NOT stopped`,
+          ),
         );
         continue;
       }
@@ -470,6 +476,16 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       const list = stillHeld.map((o) => `${o.name}:${o.port}=${o.pid}`).join(', ');
       console.log(chalk.yellow(`Some ports still held (likely Windows ghost sockets): ${list}.`));
       console.log(chalk.gray('Will rotate to free neighbours below.\n'));
+    } else if (leftAlone.length > 0) {
+      // "Orphans cleaned up" used to print here whatever we had declined to
+      // touch, because the check was "no port still held" — and a surviving
+      // worker holds no port (pass-7 finding R2). Say what was actually done.
+      console.log(
+        chalk.yellow(
+          `Ports are free, but ${leftAlone.length} postgres process(es) were left running ` +
+            `(${leftAlone.join(', ')}): they could not be confirmed as ours.\n`,
+        ),
+      );
     } else {
       console.log(chalk.green('Orphans cleaned up.\n'));
     }

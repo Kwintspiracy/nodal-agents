@@ -36,7 +36,9 @@ export interface PostgresProcessRow {
    * foreign worker can outlive its postmaster and see that freed pid handed to
    * OURS; the rows then read as a family and the worker gets adopted, and
    * killed. A parent cannot start after its own child, so the dates settle it.
-   * Optional: when either date is missing, the check simply does not apply.
+   * Optional in the type, required in practice: a row with no date is REFUSED,
+   * never waved through — an unchecked link is how a recycled ppid adopts a
+   * stranger.
    */
   startedAt?: number;
 }
