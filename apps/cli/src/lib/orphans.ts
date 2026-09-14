@@ -40,9 +40,36 @@ export interface PostgresOwnership {
   skipped: SkippedPostgres[];
 }
 
-/** Lower-case, forward slashes — command lines and data dirs mix both. */
+/** Lower-case, forward slashes, no trailing separator — every form is seen. */
 function normalise(value: string): string {
-  return value.toLowerCase().replace(/\\/g, '/');
+  return value.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * Does this command line name THIS directory — as a path, not as a substring?
+ *
+ * `includes` was the whole of the test, and that is how the incident of
+ * 2026-09-14 walks back in through a new door. Our dir `…/pg-data` is a
+ * substring of a sibling install's `…/pg-data2`, and of a `…/pg-data.bak` kept
+ * beside it: their postmaster carries our needle, we call it ours, and `up`
+ * kills a live database that is not ours. Measured on this very function
+ * before the fix — `owned` held their postmaster AND their workers.
+ *
+ * The match must therefore end on a path boundary: end of line, a separator,
+ * or the quote or space that closes the argument. The start needs no such
+ * guard — the needle is an absolute path, so nothing can precede it but the
+ * start of the line, a quote or a space.
+ */
+function namesDirectory(commandLine: string, dir: string): boolean {
+  for (let from = 0; ; ) {
+    const at = commandLine.indexOf(dir, from);
+    if (at < 0) return false;
+    const after = commandLine[at + dir.length];
+    if (after === undefined || after === '/' || after === '"' || after === "'" || after === ' ') {
+      return true;
+    }
+    from = at + 1;
+  }
 }
 
 /**
@@ -67,7 +94,7 @@ export function classifyPostgresProcesses(
   for (const row of rows) byPid.set(row.pid, row);
 
   const isOurPostmaster = (row: PostgresProcessRow): boolean =>
-    normalise(row.commandLine).includes(dataNeedle);
+    dataNeedle !== '' && namesDirectory(normalise(row.commandLine), dataNeedle);
 
   const owned: number[] = [];
   const skipped: SkippedPostgres[] = [];
