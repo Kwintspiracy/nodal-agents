@@ -22,6 +22,7 @@ import {
   classifyPostgresProcesses,
   measuredPort,
   formatForeignSkip,
+  parseProcessRows,
   type PostgresProcessRow,
 } from '../lib/orphans.ts';
 
@@ -72,8 +73,88 @@ describe('classifyPostgresProcesses', () => {
     expect(classifyPostgresProcesses(rows, OURS + '\\').owned).toEqual([8932]);
   });
 
+  // Codex review of this PR, findings C1, C2 and C5. The path boundary added
+  // in 527c5148 accepted `/` and a space as the end of the argument — neither
+  // ends an argument — and it had LOST the tab the old `includes` accepted.
+  // Four foreign data dirs were still claimed, and ours could stop being
+  // recognised. What `-D` names is now read as an argument, and compared whole.
+  const foreign = (pid: number, commandLine: string): PostgresProcessRow => ({
+    pid,
+    ppid: 1,
+    commandLine,
+  });
+  const US = 'C:/install/pg-data';
+
+  it('a data dir NEXT TO ours is not ours, in any of the shapes found', () => {
+    for (const cmd of [
+      `postgres.exe -D "${US}/other"`, // a sub-directory
+      `postgres.exe -D "${US} backup"`, // a name that merely starts the same
+      `postgres.exe -D "${US}/../foreign"`, // a climb back out
+      `postgres.exe -D "${US}2"`,
+      `postgres.exe -D "${US}.bak"`,
+    ]) {
+      expect(classifyPostgresProcesses([foreign(101, cmd)], US).owned, cmd).toEqual([]);
+    }
+  });
+
+  it('our path somewhere OTHER than behind -D does not make the cluster ours', () => {
+    // C2: the cluster lives elsewhere, only its external PID file sits with us.
+    const cmd = `postgres.exe -D C:/foreign -c external_pid_file="${US}/foreign.pid"`;
+
+    expect(classifyPostgresProcesses([foreign(201, cmd)], US).owned).toEqual([]);
+  });
+
+  it('our postmaster is recognised however the argument is written', () => {
+    for (const cmd of [
+      `postgres.exe -D "${US}"`, // quoted
+      `postgres.exe -D ${US}`, // bare
+      `postgres.exe -D ${US}\t-p 5432`, // C5: separated by a tab
+      `postgres.exe -D"${US}"`, // glued
+      `postgres.exe --pgdata="${US}"`, // the long form
+      `postgres.exe --pgdata ${US}`,
+    ]) {
+      expect(classifyPostgresProcesses([foreign(301, cmd)], US).owned, cmd).toEqual([301]);
+    }
+  });
+
   it('an io_worker of OUR postmaster is ours', () => {
     const rows = [postmaster(8932, OURS), ioWorker(5856, 8932)];
+
+    expect(classifyPostgresProcesses(rows, OURS).owned).toEqual([8932, 5856]);
+  });
+
+  it('a parent that started AFTER its supposed child is a recycled pid, not a parent', () => {
+    // Codex review of this PR, finding C4. A foreign worker outlives its
+    // postmaster; the OS hands that freed pid to OUR postmaster. The rows then
+    // read as a family, and the worker — someone else's — is adopted and
+    // killed. Nothing in a pid says which generation it belongs to, but a
+    // creation date does: a parent cannot start after its own child.
+    const rows: PostgresProcessRow[] = [
+      { pid: 8932, ppid: 1, commandLine: `"${BIN}" -D "${OURS}"`, startedAt: 2_000 },
+      {
+        pid: 7100,
+        ppid: 8932,
+        commandLine: `"${BIN}" --forkchild="io_worker" 8932`,
+        startedAt: 1_000,
+      },
+    ];
+
+    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
+
+    expect(owned).toEqual([8932]);
+    expect(skipped.map((s) => s.pid)).toEqual([7100]);
+  });
+
+  it('a worker older than nothing keeps its parent when the dates agree', () => {
+    const rows: PostgresProcessRow[] = [
+      { pid: 8932, ppid: 1, commandLine: `"${BIN}" -D "${OURS}"`, startedAt: 1_000 },
+      {
+        pid: 5856,
+        ppid: 8932,
+        commandLine: `"${BIN}" --forkchild="io_worker" 8932`,
+        startedAt: 2_000,
+      },
+    ];
 
     expect(classifyPostgresProcesses(rows, OURS).owned).toEqual([8932, 5856]);
   });
@@ -140,5 +221,46 @@ describe('measuredPort', () => {
 
   it('gives no port when nothing was measured at all', () => {
     expect(measuredPort(222, [])).toBeNull();
+  });
+});
+
+describe('parseProcessRows', () => {
+  // The Codex review of this PR pointed at a hole, and it was real: nothing
+  // tested the parsing, because it lived inside the probe and the probe cannot
+  // run in a suite. The shape below is a VERBATIM line from the real command,
+  // taken by running it on this machine — note the pipes inside the command
+  // line itself, which is why only the first three separators are cut.
+  const REAL =
+    '55768|45420|1789376176154|powershell -NoProfile -Command "Get-CimInstance ' +
+    'Win32_Process -Filter \\"Name=\'postgres.exe\'\\" | ForEach-Object { $ms | 0 }"';
+
+  it('keeps the command line whole, pipes and all', () => {
+    const [row] = parseProcessRows(REAL);
+
+    expect(row?.pid).toBe(55768);
+    expect(row?.ppid).toBe(45420);
+    expect(row?.startedAt).toBe(1_789_376_176_154);
+    expect(row?.commandLine).toBe(REAL.slice(REAL.indexOf('powershell')));
+  });
+
+  it('drops a line that does not carry the three separators', () => {
+    // A truncated or continued line used to be half-read, and the review made
+    // one into a pid classified as ours. Half a row is not a row.
+    expect(parseProcessRows('999|1|C:/install/pg-data"')).toEqual([]);
+    expect(parseProcessRows('not a row at all')).toEqual([]);
+    expect(parseProcessRows('')).toEqual([]);
+  });
+
+  it('leaves the date out when the process table did not give one', () => {
+    const [row] = parseProcessRows('42|1|0|postgres.exe -D "C:/x"');
+
+    expect(row?.startedAt).toBeUndefined();
+    expect(row?.commandLine).toBe('postgres.exe -D "C:/x"');
+  });
+
+  it('reads an empty command line — another user’s process, access denied', () => {
+    const [row] = parseProcessRows('101|1|0|');
+
+    expect(row).toEqual({ pid: 101, ppid: 1, commandLine: '' });
   });
 });

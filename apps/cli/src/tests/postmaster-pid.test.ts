@@ -87,3 +87,40 @@ describe('livePostmasterPid', () => {
     expect(livePostmasterPid(dataDir)).toBe(process.pid);
   });
 });
+
+describe('readPostmasterPid — the lockfile must be OURS', () => {
+  // Codex review of PR #98, finding C3. A stale lockfile is not just stale: the
+  // pid it records can since have been handed to somebody else's process, and
+  // `up` hands that pid straight to SIGKILL. Line 2 of the file is the data
+  // directory the postmaster was started with, and checking it costs nothing —
+  // it catches a lockfile copied, restored from a backup, or left by another
+  // cluster. It does not prove the pid was not recycled; the process table does
+  // that, and `up` now asks it first.
+  it('refuses a lockfile written for a DIFFERENT data directory', () => {
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}\n${join(dataDir, 'somewhere-else')}\n1755600000\n25432\n`,
+      'utf-8',
+    );
+
+    expect(readPostmasterPid(dataDir)).toBeNull();
+    expect(livePostmasterPid(dataDir)).toBeNull();
+  });
+
+  it('accepts the same directory written with the other separators and case', () => {
+    const other = dataDir.split('\\').join('/').toUpperCase();
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}\n${other}\n1755600000\n25432\n`,
+      'utf-8',
+    );
+
+    expect(readPostmasterPid(dataDir)).toBe(process.pid);
+  });
+
+  it('accepts a lockfile too short to carry the directory — nothing that worked stops', () => {
+    writeFileSync(join(dataDir, 'postmaster.pid'), `${process.pid}\n`, 'utf-8');
+
+    expect(readPostmasterPid(dataDir)).toBe(process.pid);
+  });
+});

@@ -25,6 +25,16 @@ export interface PostgresProcessRow {
   pid: number;
   ppid: number;
   commandLine: string;
+  /**
+   * When the process started, in epoch milliseconds — `CreationDate` from WMI.
+   *
+   * It is what tells one generation of a pid from the next (finding C4). A
+   * foreign worker can outlive its postmaster and see that freed pid handed to
+   * OURS; the rows then read as a family and the worker gets adopted, and
+   * killed. A parent cannot start after its own child, so the dates settle it.
+   * Optional: when either date is missing, the check simply does not apply.
+   */
+  startedAt?: number;
 }
 
 /** A candidate the probe refused, and why — never dropped in silence. */
@@ -46,30 +56,118 @@ function normalise(value: string): string {
 }
 
 /**
- * Does this command line name THIS directory — as a path, not as a substring?
+ * The command line split into arguments, double quotes removed.
  *
- * `includes` was the whole of the test, and that is how the incident of
- * 2026-09-14 walks back in through a new door. Our dir `…/pg-data` is a
- * substring of a sibling install's `…/pg-data2`, and of a `…/pg-data.bak` kept
- * beside it: their postmaster carries our needle, we call it ours, and `up`
- * kills a live database that is not ours. Measured on this very function
- * before the fix — `owned` held their postmaster AND their workers.
- *
- * The match must therefore end on a path boundary: end of line, a separator,
- * or the quote or space that closes the argument. The start needs no such
- * guard — the needle is an absolute path, so nothing can precede it but the
- * start of the line, a quote or a space.
+ * Whitespace is space, tab, CR or LF. The tab matters: the path-boundary rule
+ * this replaces accepted only a space, so `-D C:/…/pg-data<TAB>-p 5432` stopped
+ * being recognised as OUR postmaster (finding C5) — the same bug with the sign
+ * flipped, and `up` then refuses to start or leaves its own orphan behind.
  */
-function namesDirectory(commandLine: string, dir: string): boolean {
-  for (let from = 0; ; ) {
-    const at = commandLine.indexOf(dir, from);
-    if (at < 0) return false;
-    const after = commandLine[at + dir.length];
-    if (after === undefined || after === '/' || after === '"' || after === "'" || after === ' ') {
-      return true;
+function tokenise(commandLine: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let started = false;
+  let quoted = false;
+  for (const ch of commandLine) {
+    if (ch === '"') {
+      quoted = !quoted;
+      started = true;
+      continue;
     }
-    from = at + 1;
+    if (!quoted && (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n')) {
+      if (started) tokens.push(current);
+      current = '';
+      started = false;
+      continue;
+    }
+    current += ch;
+    started = true;
   }
+  if (started) tokens.push(current);
+  return tokens;
+}
+
+/**
+ * The probe's stdout, one process per line, turned into rows.
+ *
+ * The line is `pid|ppid|startedAt|commandLine`. The three numbers come FIRST
+ * and are cut with `indexOf`, so the command line — the only field that can
+ * itself carry a `|` — stays last and whole.
+ *
+ * It lives here, and not inside the probe, because nothing tested it: the probe
+ * cannot run in a suite without killing somebody's database, and the parsing
+ * went with it. A line that does not carry the three separators is dropped
+ * rather than half-read — that is what turned a truncated line into a pid 999
+ * classified as ours during the review of this PR.
+ */
+export function parseProcessRows(stdout: string): PostgresProcessRow[] {
+  const rows: PostgresProcessRow[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const first = line.indexOf('|');
+    if (first < 0) continue;
+    const second = line.indexOf('|', first + 1);
+    if (second < 0) continue;
+    const third = line.indexOf('|', second + 1);
+    if (third < 0) continue;
+    const pid = Number.parseInt(line.slice(0, first), 10);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const ppid = Number.parseInt(line.slice(first + 1, second), 10);
+    const startedAt = Number.parseInt(line.slice(second + 1, third), 10);
+    rows.push({
+      pid,
+      ppid: Number.isInteger(ppid) ? ppid : 0,
+      commandLine: line.slice(third + 1),
+      ...(Number.isInteger(startedAt) && startedAt > 0 ? { startedAt } : {}),
+    });
+  }
+  return rows;
+}
+
+/**
+ * Did `parent` start strictly after `child`? Unknowable — and therefore false —
+ * when either date is missing.
+ */
+function startsAfter(parent: PostgresProcessRow, child: PostgresProcessRow): boolean {
+  return (
+    parent.startedAt !== undefined &&
+    child.startedAt !== undefined &&
+    parent.startedAt > child.startedAt
+  );
+}
+
+/**
+ * The directory `-D` names on this command line, or null when it names none.
+ *
+ * Why the ARGUMENT, and not the line. Searching the LINE for our path — with
+ * `includes`, then with a path boundary — kept claiming clusters that are not
+ * ours, and the Codex review of this PR measured four of them on this very
+ * function (findings C1 and C2):
+ *
+ *     -D "…/pg-data/other"                        a sub-directory
+ *     -D "…/pg-data backup"                       a name that starts the same
+ *     -D "…/pg-data/../foreign"                   a climb back out
+ *     -D C:/foreign -c external_pid_file="…/pg-data/foreign.pid"
+ *                                                 a cluster elsewhere whose PID
+ *                                                 file happens to sit with us
+ *
+ * Every one of them came back `owned`, and `up` kills what it owns. No boundary
+ * rule closes that, because the path was never the thing to look at: the
+ * ARGUMENT is. Read `-D` (or `--pgdata`), compare the whole value, and a
+ * directory that is not exactly ours is not ours.
+ *
+ * A value that leans on `..` to name our OWN directory is not resolved here and
+ * reads as foreign. That errs towards leaving a process alone, which is the
+ * side this module must always fall on.
+ */
+export function dataDirArgument(commandLine: string): string | null {
+  const tokens = tokenise(commandLine);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (token === '-D' || token === '--pgdata') return tokens[i + 1] ?? null;
+    if (token.startsWith('--pgdata=')) return token.slice('--pgdata='.length);
+    if (token.startsWith('-D') && token.length > 2) return token.slice(2);
+  }
+  return null;
 }
 
 /**
@@ -93,8 +191,11 @@ export function classifyPostgresProcesses(
   const byPid = new Map<number, PostgresProcessRow>();
   for (const row of rows) byPid.set(row.pid, row);
 
-  const isOurPostmaster = (row: PostgresProcessRow): boolean =>
-    dataNeedle !== '' && namesDirectory(normalise(row.commandLine), dataNeedle);
+  const isOurPostmaster = (row: PostgresProcessRow): boolean => {
+    if (dataNeedle === '') return false;
+    const declared = dataDirArgument(row.commandLine);
+    return declared !== null && normalise(declared) === dataNeedle;
+  };
 
   const owned: number[] = [];
   const skipped: SkippedPostgres[] = [];
@@ -107,14 +208,19 @@ export function classifyPostgresProcesses(
     // Walk up the parent chain, staying inside the postgres.exe rows. The seen
     // set keeps a recycled or corrupt ppid from looping forever.
     const seen = new Set<number>([row.pid]);
+    let child: PostgresProcessRow = row;
     let cursor = byPid.get(row.ppid);
     let ancestor: PostgresProcessRow | null = null;
     while (cursor && !seen.has(cursor.pid)) {
+      // A parent that started AFTER its child is a RECYCLED pid, not a parent
+      // (finding C4). The chain stops there rather than adopting a stranger.
+      if (startsAfter(cursor, child)) break;
       seen.add(cursor.pid);
       if (isOurPostmaster(cursor)) {
         ancestor = cursor;
         break;
       }
+      child = cursor;
       cursor = byPid.get(cursor.ppid);
     }
     if (ancestor) owned.push(row.pid);
