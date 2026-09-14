@@ -541,15 +541,40 @@ export async function waitForNoProcessingJobs(timeoutMs = 60_000): Promise<void>
  *    ce nettoyage une purge de TOUS les identifiants du propriétaire. Sur la
  *    machine d'un développeur en local-trust, c'est son vrai compte Google que
  *    `beforeAll` effaçait. Le filtre est rétabli : il suffit au besoin réel.
+ *
+ * Restait la moitié du danger : le filtre protège les AUTRES types, pas le
+ * compte Google réel du développeur quand le type demandé est justement
+ * `google-oauth`. Rien ne distingue en base un identifiant posé par un parcours
+ * d'un identifiant posé par un humain — il n'y a pas de marqueur à filtrer.
+ * Donc la suppression se DEMANDE : sans `NODALAI_E2E_WIPE_CREDENTIALS=1`, une
+ * base qui contient déjà un identifiant de ce type fait échouer bruyamment le
+ * `beforeAll` avec la marche à suivre, au lieu de l'effacer. Une base qui n'en
+ * contient pas — le cas de la pile neuve du runner, donc de la mesure
+ * nocturne — n'a rien à supprimer et ne voit aucune différence.
  */
 export async function cleanCredentialsByType(type: CredentialType): Promise<void> {
   const { credentials, eq, and } = await import('@nodal-agents/db');
   const { userId } = await resolveActingUser();
   const { db, close } = makeDbClient();
   try {
-    await db
-      .delete(credentials)
-      .where(and(eq(credentials.ownerUserId, userId), eq(credentials.type, type)));
+    const owned = and(eq(credentials.ownerUserId, userId), eq(credentials.type, type));
+    const existing = await db
+      .select({ id: credentials.id, name: credentials.name })
+      .from(credentials)
+      .where(owned);
+    if (existing.length === 0) return;
+
+    if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {
+      throw new Error(
+        `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +
+          `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +
+          "effacerait un compte que quelqu'un a connecté à la main. Relancer avec " +
+          'NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile ' +
+          'isolée (NODALAI_E2E_DB_URL).',
+      );
+    }
+
+    await db.delete(credentials).where(owned);
   } finally {
     await close();
   }
