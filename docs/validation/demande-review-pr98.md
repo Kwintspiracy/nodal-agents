@@ -41,22 +41,36 @@ Lire `git show 498d3367`, puis `apps/cli/src/lib/orphans.ts`,
 6. Preuve : 10 cas sur des lignes en forme de ce que WMI rend ; deux mutations
    vérifiées.
 
+## Déjà trouvé et corrigé sur cette branche — à relire aussi
+
+`527c5148` : le dossier de données était cherché par **sous-chaîne**
+(`includes`), donc une installation voisine à `…\pg-data2` ou un
+`…\pg-data.bak` gardé à côté voyait son postmaster ET ses workers réclamés
+comme nôtres — l'incident #97 par une autre porte, sur la branche même qui le
+ferme. Mesuré sur la fonction pure avant de toucher quoi que ce soit. La
+correspondance doit désormais finir sur une **frontière de chemin** ;
+`normalise` retire aussi un séparateur final.
+
+**Ce correctif fait partie du périmètre de cette review.** Sa fonction
+`namesDirectory` est-elle juste ? Un chemin court 8.3 (`PROGRA~1`), un chemin
+UNC, un `-D` sans guillemets suivi d'une tabulation, un chemin cité avec des
+guillemets simples : la frontière couvre-t-elle tout, ou en refuse-t-elle un
+qui était accepté avant (une régression qui empêcherait de trouver NOTRE
+postmaster, donc un `up` qui ne nettoie plus rien) ?
+
 ## Questions, par priorité
 
 ### P0 — un pid étranger peut-il encore être attribué à cette installation ?
 
 C'est LA question. Tout le reste est secondaire.
 
-1. **Le dossier de données est cherché par SOUS-CHAÎNE.** `isOurPostmaster`
-   fait `normalise(row.commandLine).includes(dataNeedle)`. Deux installations
-   dont l'une a un dossier dont le chemin CONTIENT celui de l'autre —
-   `…/pgdata` et `…/pgdata2`, `…/pgdata` et `…/pgdata-old`, `…/.nodal/pgdata`
-   et `…/.nodal/pgdata.bak` — la première réclame-t-elle le postmaster de la
-   seconde, et donc le TUE-t-elle ? C'est exactement la forme de l'incident du
-   14/09, déplacée du chemin du binaire au chemin des données. Vérifier sur la
-   fonction, pas sur l'intention. Si le constat tient, dire quelle
-   délimitation le fermerait sans casser le cas réel (`-D "C:\...\pgdata"`
-   avec guillemets, séparateurs mélangés, chemin court 8.3).
+1. **Reste-t-il une autre attribution par ressemblance ?** La sous-chaîne du
+   dossier de données est fermée (ci-dessus). Cherche les autres : une
+   comparaison de chemins qui ignore les liens et jonctions (deux chemins
+   différents désignant le MÊME dossier — notre cas d'usage, les worktrees),
+   un `realpath` absent d'un côté et présent de l'autre, un chemin relatif.
+   Deux installations dont l'une voit le dossier de l'autre par une jonction
+   sont-elles distinguées ?
 2. **`livePostmasterPid() === pid`** dans `up.ts` : un second chemin pour
    déclarer « à nous » un pid qui ÉCOUTE sur notre port. `postmaster.pid` peut
    être PÉRIMÉ (le fichier survit à un crash) et son pid peut avoir été
@@ -122,10 +136,10 @@ Le reste de `up.ts` (santé, migrations) ; le choix des ports par défaut ;
 
 ## Ce dont je doute moi-même
 
-La question 1. Le correctif retire une preuve fondée sur une sous-chaîne
-(`@embedded-postgres`) et la remplace par une autre preuve fondée sur une
-sous-chaîne (le dossier de données). Si deux dossiers peuvent se contenir, le
-même incident revient par la même porte, et les dix tests n'en disent rien.
+Que la frontière de chemin de `527c5148` soit complète. J'ai fermé la forme
+que j'ai su nommer (`pg-data` / `pg-data2`) ; une deuxième façon de confondre
+deux dossiers — jonctions, chemins courts, casse d'un volume sensible à la
+casse — coûterait exactement aussi cher, et mes tests n'en diraient rien.
 
 ## Forme du rapport
 
