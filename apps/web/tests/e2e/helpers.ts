@@ -135,19 +135,30 @@ export async function removeInstalledConnectorIfPresent(
   instanceName: string,
 ): Promise<void> {
   await openInstalledConnectors(page);
-  const row = installedConnectorRow(page, instanceName);
-  if (
-    !(await row
-      .first()
-      .isVisible()
-      .catch(() => false))
-  )
-    return;
-  // Le titre du bouton est « Disconnect » pour un OAuth, « Delete » sinon.
-  await row
+  // Laisser l'onglet rendre : `count()` sur un tableau pas encore monté rend 0
+  // sans attendre, et le nettoyage passerait à côté d'une instance présente.
+  await page
+    .getByRole('row')
     .first()
-    .getByRole('button', { name: /^(delete|disconnect)$/i })
-    .click();
+    .waitFor({ state: 'visible', timeout: 10_000 })
+    .catch(() => {
+      /* aucune ligne du tout : l'onglet est vide, il n'y a rien à nettoyer. */
+    });
+  const row = installedConnectorRow(page, instanceName);
+  const matches = await row.count();
+  if (matches === 0) return;
+  // `hasText` est une correspondance PARTIELLE : « Google » attrape « Google
+  // Drive », et deux comptes du même connecteur donnent deux lignes. Le
+  // `.first()` d'avant choisissait donc au hasard — et le geste qui suit est
+  // une SUPPRESSION, pas une lecture.
+  if (matches > 1) {
+    throw new Error(
+      `« ${instanceName} » désigne ${matches} lignes de la table des connecteurs installés. ` +
+        "Refus de supprimer au hasard : donner un nom qui ne désigne qu'une ligne.",
+    );
+  }
+  // Le titre du bouton est « Disconnect » pour un OAuth, « Delete » sinon.
+  await row.getByRole('button', { name: /^(delete|disconnect)$/i }).click();
   const confirm = page.getByRole('dialog');
   await confirm.waitFor({ state: 'visible', timeout: 5_000 });
   await confirm.getByRole('button', { name: /^(delete|disconnect)$/i }).click();
