@@ -123,9 +123,13 @@ export async function postgresProcessesForDataDir(
         // C4). It goes BEFORE the command line, the only field that may itself
         // carry a `|`.
         'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
+          // `[datetime]'…Z'` parses as LOCAL time, so the epoch itself landed on
+          // the wrong side of the offset: measured here, eight hours out
+          // (finding R4). `Get-Date … | ToUniversalTime` gives a Utc-kind
+          // epoch, and the millisecond value then matches the real instant.
           'ForEach-Object { $ms = if ($_.CreationDate) ' +
-          "{ [int64]($_.CreationDate.ToUniversalTime() - [datetime]'1970-01-01T00:00:00Z')" +
-          '.TotalMilliseconds } else { 0 }; ' +
+          "{ [int64]($_.CreationDate.ToUniversalTime() - (Get-Date '1970-01-01T00:00:00Z')" +
+          '.ToUniversalTime()).TotalMilliseconds } else { 0 }; ' +
           '"$($_.ProcessId)|$($_.ParentProcessId)|$ms|$($_.CommandLine)" }',
       ],
       { reject: false, timeout: 10_000 },
@@ -189,15 +193,22 @@ export interface PostgresHandle {
 
 /**
  * Gracefully stop a Postgres instance whose `postmaster.pid` is in our data
- * dir. Uses `pg_ctl stop -m fast` via the embedded-postgres package so that
- * the postmaster releases its Windows shared-memory section cleanly. A bare
- * `taskkill /F` skips that release and leaves the SHM segment orphaned —
- * the next `pg_ctl start` then dies with FATAL "pre-existing shared memory
- * block is still in use" until the machine reboots.
+ * dir, by running `pg_ctl stop -m fast` against it. The postmaster then
+ * releases its Windows shared-memory section cleanly; a bare `taskkill /F`
+ * skips that release and leaves the SHM segment orphaned, and the next
+ * `pg_ctl start` dies with FATAL "pre-existing shared memory block is still in
+ * use" until the machine reboots.
  *
- * Returns true if a stop was attempted (and didn't throw), false if there
- * was nothing to stop or the stop failed. The caller can then fall back to
- * a hard taskkill, accepting the SHM-leak risk over leaving the port held.
+ * It used to construct an `EmbeddedPostgres` handle and call `.stop()` on it,
+ * and the comment above this one said that reads `postmaster.pid` and signals
+ * pg_ctl. It does not. Read in the installed package
+ * (`embedded-postgres@18.3.0-beta.17`, `dist/index.js`): `stop()` opens with
+ * `if (!this.process) return;`, and a handle that never started a cluster has
+ * no `process`. So the call returned at once, this function returned `true`,
+ * and NOTHING had been signalled — while its caller went on to `SIGKILL` the
+ * postmaster, which is exactly the SHM leak the graceful stop exists to avoid
+ * (finding R3). `pg_ctl` is invoked here directly instead, and the return value
+ * now reports what actually happened.
  */
 /**
  * The password every install used before SECRET-003 (audit 2026-08-07): the role
@@ -239,26 +250,60 @@ export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return false;
   try {
-    const EmbeddedPostgres = (await import('embedded-postgres')).default;
-    // Re-create a handle pointing at the existing data dir. The constructor
-    // doesn't connect; .stop() reads postmaster.pid and signals graceful
-    // shutdown via pg_ctl, which releases the Windows shared-memory section
-    // before the postmaster exits.
-    const pg = new EmbeddedPostgres({
-      databaseDir: dataDir,
-      user: PG_USER,
-      // stop() only reads postmaster.pid and signals pg_ctl — it never
-      // authenticates, so the value here is irrelevant.
-      password: LEGACY_PG_PASSWORD,
-      port: 25432, // unused for stop()
-      persistent: true,
-      onError: () => {},
-      onLog: () => {},
-    });
-    await pg.stop();
+    const binary = await resolvePgCtl();
+    if (binary === null) {
+      process.stderr.write(`PG_CTL_NOT_FOUND dataDir=${dataDir}\n`);
+      return false;
+    }
+    const { execa } = await import('execa');
+    // `-w` waits for the shutdown to complete: returning before the postmaster
+    // is gone would hand the caller a live process it then hard-kills.
+    const { exitCode, stderr } = await execa(
+      binary,
+      ['stop', '-D', dataDir, '-m', 'fast', '-w', '-t', '30'],
+      { reject: false, timeout: 40_000 },
+    );
+    if (exitCode !== 0) {
+      process.stderr.write(
+        `PG_CTL_STOP_FAILED exit=${String(exitCode)} stderr=${stderr.trim().slice(0, 200)}\n`,
+      );
+      return false;
+    }
     return true;
-  } catch {
+  } catch (err) {
+    process.stderr.write(
+      `PG_CTL_STOP_FAILED error=${err instanceof Error ? err.message : String(err)}\n`,
+    );
     return false;
+  }
+}
+
+/**
+ * The absolute path of the `pg_ctl` that ships with the embedded cluster — the
+ * same binary that started it.
+ *
+ * `embedded-postgres` exports only `./dist/index.js`, so its `binary.js` cannot
+ * be reached by specifier. It is loaded by PATH instead, next to the entry
+ * point we resolve through the package we already depend on; that module picks
+ * the right `@embedded-postgres/<platform>` and hands back absolute paths.
+ * Everything is checked rather than assumed: a layout that stops exposing
+ * `pg_ctl` returns null here and the caller says so with a code.
+ */
+export async function resolvePgCtl(): Promise<string | null> {
+  try {
+    const { createRequire } = await import('node:module');
+    const { pathToFileURL } = await import('node:url');
+    const { dirname } = await import('node:path');
+    const require = createRequire(import.meta.url);
+    const entry = require.resolve('embedded-postgres');
+    const module = (await import(pathToFileURL(join(dirname(entry), 'binary.js')).href)) as {
+      default?: () => Promise<{ pg_ctl?: string }>;
+    };
+    const binaries = await module.default?.();
+    const pgCtl = binaries?.pg_ctl;
+    return pgCtl !== undefined && existsSync(pgCtl) ? pgCtl : null;
+  } catch {
+    return null;
   }
 }
 

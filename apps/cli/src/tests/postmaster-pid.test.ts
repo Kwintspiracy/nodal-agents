@@ -13,10 +13,10 @@
 // Postgres actually writes.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readPostmasterPid, livePostmasterPid } from '../lib/postgres.ts';
+import { readPostmasterPid, livePostmasterPid, resolvePgCtl } from '../lib/postgres.ts';
 
 // PIDs this high aren't allocated on Windows or Linux in practice, so
 // kill(pid, 0) throws ESRCH.
@@ -122,5 +122,29 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
     writeFileSync(join(dataDir, 'postmaster.pid'), `${process.pid}\n`, 'utf-8');
 
     expect(readPostmasterPid(dataDir)).toBe(process.pid);
+  });
+});
+
+describe('resolvePgCtl', () => {
+  // Codex review of PR #98, pass 2, finding R3. `stopOrphanPostgres` used to
+  // build an `EmbeddedPostgres` handle and call `.stop()`, and the comment said
+  // that signals pg_ctl. It does not: in the installed package, `stop()` opens
+  // with `if (!this.process) return;`, and a handle that never started a
+  // cluster has no process. The call did nothing, the function reported
+  // success, and the caller went on to SIGKILL the postmaster — leaking the
+  // shared-memory section the graceful stop exists to release.
+  //
+  // `pg_ctl` is now run directly, so the path to it has to be REAL. This test
+  // is the one that would have caught the silent no-op: it asserts a file on
+  // disk, not an intention.
+  it('finds the pg_ctl that ships with the embedded cluster', async () => {
+    const binary = await resolvePgCtl();
+
+    expect(
+      binary,
+      'pg_ctl must resolve to a real file or the graceful stop is a lie',
+    ).not.toBeNull();
+    expect(existsSync(binary!)).toBe(true);
+    expect(binary!.split('\\').join('/')).toMatch(/@embedded-postgres\/.+\/native\/bin\/pg_ctl/);
   });
 });

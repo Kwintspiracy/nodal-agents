@@ -161,13 +161,31 @@ function startsAfter(parent: PostgresProcessRow, child: PostgresProcessRow): boo
  */
 export function dataDirArgument(commandLine: string): string | null {
   const tokens = tokenise(commandLine);
+  let fromOption: string | null = null;
+  let fromSetting: string | null = null;
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
-    if (token === '-D' || token === '--pgdata') return tokens[i + 1] ?? null;
-    if (token.startsWith('--pgdata=')) return token.slice('--pgdata='.length);
-    if (token.startsWith('-D') && token.length > 2) return token.slice(2);
+    // `-c name=value`, and the `--name=value` spelling of the same setting.
+    const setting =
+      token === '-c' ? tokens[i + 1] : token.startsWith('--') ? token.slice(2) : undefined;
+    const named = setting?.match(/^data[_-]directory=(.*)$/);
+    if (named?.[1] !== undefined) {
+      fromSetting = named[1];
+      continue;
+    }
+    // The LAST `-D` wins, never the first: getopt overwrites as it goes, so
+    // that is the one the server actually runs against (finding R1).
+    if (token === '-D' || token === '--pgdata') {
+      const next = tokens[i + 1];
+      if (next !== undefined) fromOption = next;
+      continue;
+    }
+    if (token.startsWith('--pgdata=')) fromOption = token.slice('--pgdata='.length);
+    else if (token.startsWith('-D') && token.length > 2) fromOption = token.slice(2);
   }
-  return null;
+  // `data_directory` is a SETTING, and a setting beats the command-line
+  // default: when both are present the server uses this one (finding R2).
+  return fromSetting ?? fromOption;
 }
 
 /**
