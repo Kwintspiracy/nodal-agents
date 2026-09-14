@@ -102,11 +102,20 @@ const MARQUEURS = [
  * La casse compte par défaut, et c'est le même souci : `href="#chantiers"` est
  * une ANCRE, pas un libellé, et une comparaison insensible la prenait pour le
  * titre « Chantiers ». Seule la prose est cherchée sans la casse.
+ *
+ * La frontière n'est posée que du côté où le marqueur FINIT par une lettre.
+ * Sans cette nuance, `qu'` — qui finit par une apostrophe — exigeait une
+ * non-lettre après elle, c'est-à-dire l'inverse d'une élision : les deux
+ * marqueurs les plus francophones de la liste ne trouvaient jamais rien
+ * (revue Codex, 2e passe).
  */
+const LETTRE = /\p{L}/u;
 const dedans = (texte, mots, drapeaux = 'u') =>
   mots.filter((m) => {
     const echappe = m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^\\p{L}])${echappe}($|[^\\p{L}])`, drapeaux).test(texte);
+    const avant = LETTRE.test(m[0]) ? '(^|[^\\p{L}])' : '';
+    const apres = LETTRE.test(m.at(-1)) ? '($|[^\\p{L}])' : '';
+    return new RegExp(`${avant}${echappe}${apres}`, drapeaux).test(texte);
   });
 
 const trouve = (texte) => dedans(texte, MARQUEURS, 'iu');
@@ -168,5 +177,57 @@ describe('le portail se lit en anglais', () => {
       ];
       expect(dedans(src, FAUTES), `${f} parle encore français`).toEqual([]);
     }
+  });
+
+  // La faute que ce lot a vraiment failli publier, et qu'aucun des contrôles
+  // ci-dessus ne voyait : le code parle anglais, la COLLECTE COMMITTÉE parle
+  // français. `qa-pages.yml` publie sur push SANS collecter — le premier rendu
+  // après le merge lit ce fichier-là. Les mots y sont des DONNÉES : la colonne
+  // et les étiquettes d'une carte, la cadence d'un parcours, le nom d'un
+  // workflow, le libellé d'une métrique du banc, le nom d'une capacité.
+  it('la collecte committée porte le même vocabulaire que le code', () => {
+    const s = JSON.parse(readFileSync(new URL('./data/snapshot.json', import.meta.url), 'utf8'));
+    const textes = [];
+    const dire = (ou, v) => v && textes.push([ou, String(v)]);
+
+    for (const c of s.chantiers?.cartes ?? []) {
+      dire(`carte #${c.numero}.colonne`, c.colonne);
+      for (const e of c.etiquettes ?? []) dire(`carte #${c.numero}.etiquette`, e);
+    }
+    for (const p of s.parcours ?? []) dire(`${p.nom}.cadence`, p.cadence);
+    for (const w of s.ci ?? []) {
+      dire('workflow.nom', w.nom);
+      for (const d of w.declencheurs ?? []) dire(`${w.fichier}.declencheur`, d);
+    }
+    for (const b of s.banc?.sections ?? []) {
+      for (const m of b.metriques ?? []) {
+        dire(`banc ${b.id}.label`, m.label);
+        dire(`banc ${b.id}.unite`, m.unite ?? m.unit);
+      }
+    }
+    for (const r of s.capacites?.registre ?? []) {
+      dire(`${r.slug}.domaine`, r.domaine);
+      dire(`${r.slug}.nom`, r.nom);
+      dire(`${r.slug}.question`, r.question);
+      dire(`${r.slug}.phrase`, r.phrase);
+      dire(`${r.slug}.ecranAttendu`, r.ecranAttendu);
+      dire(`${r.slug}.preuveAttendue`, r.preuveAttendue);
+    }
+
+    expect(textes.length).toBeGreaterThan(100);
+
+    // Ici, et ICI SEULEMENT, un accent suffit à condamner : ces valeurs sont
+    // des données de nomenclature — un nom de colonne, une étiquette, un
+    // libellé de métrique — et aucune ne contient légitimement un accent.
+    // La liste de marqueurs ne les attrapait pas : « Packages scannés » n'a
+    // aucun mot français commun, et il s'affichait sur la page Banc (revue
+    // Codex, 2e passe). Cette règle ne vaut pas pour la prose des
+    // explications, où « façade » est un mot anglais parfaitement valide.
+    const ACCENT = /[àâäçéèêëîïôöùûüÀÂÄÇÉÈÊËÎÏÔÖÙÛÜ]/;
+    const fautifs = textes
+      .map(([ou, t]) => [ou, [...trouve(t), ...(ACCENT.test(t) ? [`accent dans « ${t} »`] : [])]])
+      .filter(([, mots]) => mots.length > 0)
+      .map(([ou, mots]) => `${ou} : ${mots.join(', ')}`);
+    expect(fautifs).toEqual([]);
   });
 });

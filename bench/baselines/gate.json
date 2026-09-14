@@ -5,16 +5,16 @@
   "metrics": [
     {
       "id": "decisions_total",
-      "label": "Décisions mesurées",
+      "label": "Decisions measured",
       "value": 20,
-      "unit": "décisions",
+      "unit": "decisions",
       "direction": "exact"
     },
     {
       "id": "asks_human",
-      "label": "Suspend pour approbation",
+      "label": "Pauses for approval",
       "value": 12,
-      "unit": "décisions",
+      "unit": "decisions",
       "direction": "exact",
       "detail": [
         "mcp_ordinaire@défaut → demande",
@@ -33,9 +33,9 @@
     },
     {
       "id": "runs_freely",
-      "label": "Passe sans demander",
+      "label": "Goes through without asking",
       "value": 8,
-      "unit": "décisions",
+      "unit": "decisions",
       "direction": "exact",
       "detail": [
         "mcp_ordinaire@destructive_gate → passe",
@@ -50,9 +50,9 @@
     },
     {
       "id": "blocked",
-      "label": "Refusé d’emblée",
+      "label": "Refused outright",
       "value": 0,
-      "unit": "décisions",
+      "unit": "decisions",
       "direction": "exact"
     }
   ]

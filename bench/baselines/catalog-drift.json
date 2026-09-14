@@ -5,32 +5,32 @@
   "metrics": [
     {
       "id": "openrouter_models_listed",
-      "label": "Modèles OpenRouter au catalogue",
+      "label": "OpenRouter models in the catalogue",
       "value": 31,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "higher-is-better"
     },
     {
       "id": "dead_ids",
-      "label": "Identifiants absents en amont",
+      "label": "Ids missing upstream",
       "value": 0,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "lower-is-better",
       "detail": []
     },
     {
       "id": "families_with_newer_upstream",
-      "label": "Familles ayant plus récent en amont",
+      "label": "Families with a newer version upstream",
       "value": 0,
-      "unit": "familles",
+      "unit": "families",
       "direction": "lower-is-better",
       "detail": []
     },
     {
       "id": "upstream_catalogue_size",
-      "label": "Taille du catalogue amont",
+      "label": "Upstream catalogue size",
       "value": 400,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "higher-is-better"
     }
   ]

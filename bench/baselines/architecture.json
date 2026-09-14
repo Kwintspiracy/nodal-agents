@@ -5,14 +5,14 @@
   "metrics": [
     {
       "id": "packages_scanned",
-      "label": "Packages scannés",
+      "label": "Packages scanned",
       "value": 32,
       "unit": "packages",
       "direction": "higher-is-better"
     },
     {
       "id": "agent_slug_violations",
-      "label": "Slugs d’agent en dur (invariant #1)",
+      "label": "Hardcoded agent slugs (invariant #1)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -20,7 +20,7 @@
     },
     {
       "id": "user_facing_violations",
-      "label": "Texte utilisateur en dur (invariant #2)",
+      "label": "Hardcoded user-facing text (invariant #2)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -28,7 +28,7 @@
     },
     {
       "id": "db_driver_violations",
-      "label": "Imports de driver DB hors packages/db",
+      "label": "DB driver imports outside packages/db",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -36,7 +36,7 @@
     },
     {
       "id": "hardcoded_uuid_violations",
-      "label": "UUID par utilisateur en dur (invariant #6)",
+      "label": "Hardcoded per-user UUIDs (invariant #6)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -44,7 +44,7 @@
     },
     {
       "id": "mutating_launcher_violations",
-      "label": "Écritures disque hors seam d’intention",
+      "label": "Disk writes outside the intent seam",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -52,7 +52,7 @@
     },
     {
       "id": "terminal_write_violations",
-      "label": "Écritures terminales hors de la primitive (V&C)",
+      "label": "Terminal writes outside the primitive (V&C)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -60,7 +60,7 @@
     },
     {
       "id": "terminal_send_violations",
-      "label": "Envois de canal hors de l’outbox (V&C)",
+      "label": "Channel sends outside the outbox (V&C)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",
@@ -68,7 +68,7 @@
     },
     {
       "id": "deliverable_literal_violations",
-      "label": "Types de livrable en dur dans la primitive (V&C)",
+      "label": "Hardcoded deliverable types in the primitive (V&C)",
       "value": 0,
       "unit": "violations",
       "direction": "lower-is-better",

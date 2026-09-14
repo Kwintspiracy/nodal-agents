@@ -33,7 +33,7 @@ async function fetchUpstream(): Promise<UpstreamModel[]> {
 
 export const catalogDriftSection: Section = {
   id: 'catalog-drift',
-  label: 'Catalogue vs OpenRouter en direct',
+  label: 'Catalogue vs live OpenRouter',
   why: 'Un identifiant mort ne se découvre qu’en 404 de production ; un modèle plus récent ne se découvre pas du tout.',
   tests: [],
 
@@ -67,24 +67,24 @@ export const catalogDriftSection: Section = {
     return [
       {
         id: 'openrouter_models_listed',
-        label: 'Modèles OpenRouter au catalogue',
+        label: 'OpenRouter models in the catalogue',
         value: ours.length,
-        unit: 'modèles',
+        unit: 'models',
         direction: 'higher-is-better',
       },
       {
         id: 'dead_ids',
-        label: 'Identifiants absents en amont',
+        label: 'Ids missing upstream',
         value: dead.length,
-        unit: 'modèles',
+        unit: 'models',
         direction: 'lower-is-better',
         detail: dead,
       },
       {
         id: 'families_with_newer_upstream',
-        label: 'Familles ayant plus récent en amont',
+        label: 'Families with a newer version upstream',
         value: newer.length,
-        unit: 'familles',
+        unit: 'families',
         // Informational: a rise is a nudge to look, not a failure. Marked
         // lower-is-better so it surfaces, never `exact` — upstream ships
         // constantly and an `exact` metric would cry regression every week.
@@ -93,9 +93,9 @@ export const catalogDriftSection: Section = {
       },
       {
         id: 'upstream_catalogue_size',
-        label: 'Taille du catalogue amont',
+        label: 'Upstream catalogue size',
         value: upstream.length,
-        unit: 'modèles',
+        unit: 'models',
         direction: 'higher-is-better',
       },
     ];

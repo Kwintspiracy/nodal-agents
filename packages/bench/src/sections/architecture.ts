@@ -72,7 +72,7 @@ function packageDirs(): string[] {
 
 export const architectureSection: Section = {
   id: 'architecture',
-  label: 'Invariants d’architecture',
+  label: 'Architecture invariants',
   why: 'Un slug d’agent ou un texte utilisateur codé en dur part chez toutes les installations.',
   tests: [
     '@nodal-agents/test-kit:src/tests/architecture.test.ts',
@@ -155,7 +155,7 @@ export const architectureSection: Section = {
     return [
       {
         id: 'packages_scanned',
-        label: 'Packages scannés',
+        label: 'Packages scanned',
         value: dirs.length,
         unit: 'packages',
         // A DROP means a package stopped being covered — the failure mode the
@@ -165,7 +165,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'agent_slug_violations',
-        label: 'Slugs d’agent en dur (invariant #1)',
+        label: 'Hardcoded agent slugs (invariant #1)',
         value: slugHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -173,7 +173,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'user_facing_violations',
-        label: 'Texte utilisateur en dur (invariant #2)',
+        label: 'Hardcoded user-facing text (invariant #2)',
         value: proseHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -181,7 +181,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'db_driver_violations',
-        label: 'Imports de driver DB hors packages/db',
+        label: 'DB driver imports outside packages/db',
         value: driverHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -189,7 +189,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'hardcoded_uuid_violations',
-        label: 'UUID par utilisateur en dur (invariant #6)',
+        label: 'Hardcoded per-user UUIDs (invariant #6)',
         value: uuidHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -197,7 +197,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'mutating_launcher_violations',
-        label: 'Écritures disque hors seam d’intention',
+        label: 'Disk writes outside the intent seam',
         value: launcherHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -205,7 +205,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'terminal_write_violations',
-        label: 'Écritures terminales hors de la primitive (V&C)',
+        label: 'Terminal writes outside the primitive (V&C)',
         value: terminalWriteHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -213,7 +213,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'terminal_send_violations',
-        label: 'Envois de canal hors de l’outbox (V&C)',
+        label: 'Channel sends outside the outbox (V&C)',
         value: terminalSendHits.length,
         unit: 'violations',
         direction: 'lower-is-better',
@@ -221,7 +221,7 @@ export const architectureSection: Section = {
       },
       {
         id: 'deliverable_literal_violations',
-        label: 'Types de livrable en dur dans la primitive (V&C)',
+        label: 'Hardcoded deliverable types in the primitive (V&C)',
         value: deliverableLiteralHits.length,
         unit: 'violations',
         direction: 'lower-is-better',

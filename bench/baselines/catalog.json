@@ -5,61 +5,61 @@
   "metrics": [
     {
       "id": "providers",
-      "label": "Fournisseurs au catalogue",
+      "label": "Providers in the catalogue",
       "value": 9,
-      "unit": "fournisseurs",
+      "unit": "providers",
       "direction": "higher-is-better"
     },
     {
       "id": "models",
-      "label": "Modèles au catalogue",
+      "label": "Models in the catalogue",
       "value": 55,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "higher-is-better"
     },
     {
       "id": "models_with_tools",
-      "label": "Modèles déclarant les outils",
+      "label": "Models declaring tools",
       "value": 55,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "higher-is-better"
     },
     {
       "id": "models_reasoning",
-      "label": "Modèles à raisonnement",
+      "label": "Reasoning models",
       "value": 32,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "higher-is-better"
     },
     {
       "id": "missing_context_window",
-      "label": "Sans fenêtre de contexte",
+      "label": "Without a context window",
       "value": 0,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "lower-is-better",
       "detail": []
     },
     {
       "id": "missing_pricing",
-      "label": "Sans tarif",
+      "label": "Without pricing",
       "value": 2,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "lower-is-better",
       "detail": ["groq/llama-3.3-70b-versatile", "mistral/mistral-large-latest"]
     },
     {
       "id": "duplicate_ids",
-      "label": "Identifiants dupliqués chez un fournisseur",
+      "label": "Duplicate ids within a provider",
       "value": 0,
-      "unit": "doublons",
+      "unit": "duplicates",
       "direction": "lower-is-better",
       "detail": []
     },
     {
       "id": "context_on_fallback",
-      "label": "Contexte laissé sur la valeur par défaut",
+      "label": "Context left on the default value",
       "value": 2,
-      "unit": "modèles",
+      "unit": "models",
       "direction": "lower-is-better",
       "detail": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
     }
