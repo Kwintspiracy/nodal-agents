@@ -52,6 +52,33 @@ const documentDeliverableType = 'document' as const;
  */
 export const DOCUMENT_MANIFEST_HASH = 'document-rules/v1';
 
+/**
+ * L'empreinte du FICHIER au moment où la configuration est lue — taille et
+ * mtime en nanosecondes, ou `absent` / `not-a-file`.
+ *
+ * Pourquoi elle entre dans le `manifestHash` (revue Codex post-merge de la
+ * PR #66, constat C1, BLOQUANT). La primitive relit la configuration après la
+ * preuve et compare `epoch` et `manifestHash` : différents ⇒ ce qui vient
+ * d'être prouvé n'est plus l'arbre courant, l'état reste sale. Pour un projet
+ * de code, l'intention d'un AUTRE job avance l'epoch partagé de
+ * `code_projects`, et la garde joue. Pour un document, les deux étaient
+ * CONSTANTS : un autre job pouvait remplacer le fichier pendant la preuve, et
+ * la garde de génération — qui ne voit que les écritures de CE job — laissait
+ * passer un VERT sur un contenu qui n'était plus sur le disque.
+ *
+ * Le fichier EST la configuration d'un document : son empreinte est donc son
+ * manifeste. Ce que cette empreinte ne voit pas, et le système de fichiers non
+ * plus : une réécriture de même taille dans la même granularité de mtime.
+ */
+async function fileStamp(path: string): Promise<string> {
+  try {
+    const s = await stat(path, { bigint: true });
+    return s.isFile() ? `${s.size}:${s.mtimeNs}` : 'not-a-file';
+  } catch {
+    return 'absent';
+  }
+}
+
 /** Un constat : sa ligne dans `verification_runs`. */
 type Constat = Omit<ProofCommandRecord, 'rank'>;
 
@@ -383,11 +410,15 @@ export const documentVerifier: DeliverableVerifier = {
    * qui le dit.
    */
   async loadConfig(_tx: AnyDrizzleDb, target: VerifierTarget): Promise<LoadedConfig> {
+    const path = target.displayPath ?? target.canonicalKey;
     return {
       kind: 'ready',
-      manifestHash: DOCUMENT_MANIFEST_HASH,
-      cwd: dirname(target.displayPath ?? target.canonicalKey),
-      subject: target.displayPath ?? target.canonicalKey,
+      // Les règles ET l'état du fichier : c'est lui, la configuration d'un
+      // document (constat C1). Une écriture pendant la preuve change cette
+      // empreinte, et la primitive refuse alors le vert.
+      manifestHash: `${DOCUMENT_MANIFEST_HASH}:${await fileStamp(path)}`,
+      cwd: dirname(path),
+      subject: path,
       commands: [],
       epoch: 0,
     };

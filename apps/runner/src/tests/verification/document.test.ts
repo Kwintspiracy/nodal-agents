@@ -69,9 +69,36 @@ describe('document — identité et configuration', () => {
       kind: 'ready',
       commands: [],
       cwd: '/srv/docs',
-      manifestHash: DOCUMENT_MANIFEST_HASH,
       epoch: 0,
     });
+    // Le manifeste d'un document, c'est ses règles PLUS l'état du fichier
+    // (constat C1) : ici le fichier n'existe pas, et c'est dit.
+    expect((config as ReadyConfig).manifestHash).toBe(`${DOCUMENT_MANIFEST_HASH}:absent`);
+  });
+
+  it('le manifeste SUIT le fichier — écrire dedans change la configuration', async () => {
+    // Revue Codex post-merge de la PR #66, constat C1 (bloquant). `epoch` et
+    // `manifestHash` étaient CONSTANTS pour un document : la primitive, qui les
+    // relit après la preuve pour savoir si l'arbre a bougé, ne voyait jamais
+    // rien bouger. Un autre job pouvait remplacer le fichier pendant la preuve
+    // et le vert restait — sur un contenu qui n'était plus là.
+    const p = write('empreinte.md', '# Un\n');
+    const avant = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(p),
+    });
+    writeFileSync(p, '# Un titre bien plus long qu’avant\n');
+    const apres = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(p),
+    });
+    expect((avant as ReadyConfig).manifestHash).not.toBe((apres as ReadyConfig).manifestHash);
+    // Et sans écriture, il ne bouge pas : sinon tout deviendrait sale.
+    const encore = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(p),
+    });
+    expect((encore as ReadyConfig).manifestHash).toBe((apres as ReadyConfig).manifestHash);
   });
 });
 
