@@ -310,13 +310,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       // to identify still holds the shared-memory block.
       console.log(
         chalk.yellow(
-          `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which is alive. Its\n` +
-            `    identity could NOT be confirmed: its start time differs from the one\n` +
-            `    recorded, or it does not run out of that directory, or at least one of\n` +
-            `    those two could not be read. Nothing was stopped. If Postgres then fails\n` +
-            `    to start, check that pid yourself (its executable, its start time, which\n` +
-            `    cluster it serves) and stop it through its owner rather than killing the\n` +
-            `    number.`,
+          `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which has not been seen\n` +
+            `    to exit. Its identity could NOT be confirmed: its start time differs from\n` +
+            `    the one recorded, or it does not run out of that directory, or at least\n` +
+            `    one of those two could not be read. Nothing was stopped. If Postgres then\n` +
+            `    fails to start, check that pid yourself (its executable, its start time,\n` +
+            `    which cluster it serves) and stop it through its owner rather than killing\n` +
+            `    the number.`,
         ),
       );
     }
