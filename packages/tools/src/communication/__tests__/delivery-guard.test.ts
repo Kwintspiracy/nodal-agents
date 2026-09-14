@@ -41,7 +41,24 @@ import { mkdtemp, writeFile, rm, symlink, mkdir, realpath } from 'node:fs/promis
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { outsideEveryRootDir } from './outside-roots';
+import { cleanupFakeTmpRoot, makeOutsideDir } from './outside-roots';
+
+// `tmpdir()` est la seule racine autorisée de la garde qu'un test ne contrôle
+// pas — elle l'est inconditionnellement. On déplace donc la frontière au lieu
+// de la fuir : `os.tmpdir()` rend ici un dossier neuf sous le VRAI dossier
+// temporaire, et le dossier interdit est son FRÈRE. Les deux restent
+// inscriptibles partout — y compris sous le bac à sable `workspace-write` de
+// codex, qui n'ouvre en écriture que le dépôt et le dossier temporaire, ce qui
+// ne laissait aucun emplacement à une première version qui écrivait dans le
+// dossier personnel — et `mkdtemp` les rend uniques, donc deux exécutions
+// concurrentes ne s'effacent pas mutuellement leurs fixtures. Les deux
+// constats viennent de la revue Codex de cette PR.
+vi.mock('node:os', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('node:os')>();
+  const { fakeTmpRootFor } = await import('./outside-roots');
+  return { ...actual, tmpdir: () => fakeTmpRootFor('dg-confinement') };
+});
 import {
   resolveBotToken,
   resolveRecipientChatId,
@@ -539,14 +556,13 @@ describe('assertLocalSourceAllowed', () => {
     // d'écriture. macOS ferait pareil (/var → /private/var).
     rootDir = await realpath(await mkdtemp(path.join(tmpdir(), 'dg-confinement-')));
 
-    // workspaceDir/skillStoreDir vivent HORS du dossier temporaire — tmpdir()
-    // est une racine autorisée inconditionnellement, donc les y nicher ferait
-    // passer « hors de toute racine » et « piège de préfixe » pour la
-    // mauvaise raison. Le chemin venait de `process.cwd()` : dans un clone
-    // situé sous %TEMP% il tombait DANS tmpdir() et ces tests rougissaient
-    // (issue #90). `outsideEveryRootDir` le choisit explicitement hors de
-    // tmpdir(), sans rien devoir à l'emplacement du clone.
-    outsideDir = outsideEveryRootDir('dg-confinement');
+    // workspaceDir/skillStoreDir vivent HORS du `tmpdir()` que voit la garde
+    // — racine autorisée inconditionnelle, donc les y nicher ferait passer
+    // « hors de toute racine » et « piège de préfixe » pour la mauvaise
+    // raison. Le chemin venait de `process.cwd()` : dans un clone situé sous
+    // %TEMP% il tombait DANS tmpdir() et ces tests rougissaient (issue #90).
+    // Voir le bouchon de `node:os` en tête de fichier.
+    outsideDir = makeOutsideDir('dg-confinement');
     workspaceDir = path.join(outsideDir, 'workspace');
     skillStoreDir = path.join(outsideDir, 'skills');
     await mkdir(workspaceDir, { recursive: true });
@@ -561,6 +577,7 @@ describe('assertLocalSourceAllowed', () => {
   afterAll(async () => {
     await rm(rootDir, { recursive: true, force: true });
     await rm(outsideDir, { recursive: true, force: true });
+    await cleanupFakeTmpRoot();
   });
 
   it('allows a source inside a workspace root', async () => {
