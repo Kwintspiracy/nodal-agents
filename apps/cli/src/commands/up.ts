@@ -382,8 +382,18 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // loop below stops each pid itself; the shared-memory section is then left
     // to the postmaster's own exit, which is the risk we take knowingly rather
     // than signalling a process we did not identify.
+    //
+    // Ownership is re-read RIGHT HERE too, not just before the kills below
+    // (pass-9 finding R1): the set was decided back at the port pre-flight, and
+    // a postmaster that died in between can have left its pid to a stranger
+    // whose number the stale lockfile still matches. `stopOrphanPostgres`
+    // compares pids, not processes, so without this the graceful stop was the
+    // one step no fresh confirmation covered.
     const postmasterPid = pgOrphans[0]?.pid;
-    if (postmasterPid !== undefined) await stopOrphanPostgres(postmasterPid);
+    if (postmasterPid !== undefined) {
+      const confirmedNow = new Set<number>((await postgresProcessesForDataDir()).owned);
+      if (confirmedNow.has(postmasterPid)) await stopOrphanPostgres(postmasterPid);
+    }
     // The set was decided BEFORE the graceful stop. A pid freed by that stop and
     // handed to a stranger would pass `isPidAlive` and take the SIGKILL below,
     // so ownership is asked again — and asked PER PID, immediately before each
@@ -397,10 +407,16 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     for (const pgOrphan of pgOrphans) {
       const stillOurs = new Set<number>((await postgresProcessesForDataDir()).owned);
       if (!stillOurs.has(pgOrphan.pid)) {
+        // A pid drops out of the owned set by DYING, which is exactly what a
+        // successful graceful stop does. Counting those as "left running" told
+        // the user a dead process was still there (pass-8 finding R3 — claimed
+        // fixed then, and it was not: the edit was lost and the commit message
+        // said otherwise. Pass 9 caught the claim).
+        if (!isPidAlive(pgOrphan.pid)) continue;
         leftAlone.push(pgOrphan.pid);
         console.log(
           chalk.yellow(
-            `  - postgres pid ${pgOrphan.pid} can no longer be confirmed as ours; it was NOT stopped`,
+            `  - postgres pid ${pgOrphan.pid} is alive but can no longer be confirmed as ours; it was NOT stopped`,
           ),
         );
         continue;
