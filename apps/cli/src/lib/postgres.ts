@@ -215,7 +215,9 @@ export async function postgresProcessesForDataDir(
  * cheapest of the three things asked here, and the summary used to stop at it
  * (pass-11 finding R2). The pid has to be claimed by our lockfile, alive, still
  * running OUT of our data directory, and started when the lockfile says. Any
- * one of those unanswerable is a refusal, each with its own code.
+ * one of those unanswerable is a refusal, and every one of them now writes a
+ * code — two of these returns were silent until pass 12, and a refusal nobody
+ * can debug is barely better than a wrong answer.
  *
  * `up` used to reach for `livePostmasterPid()` itself in this case — a second,
  * looser answer to the one question this module exists to answer, and it
@@ -225,7 +227,16 @@ export async function postgresProcessesForDataDir(
  */
 export function unconfirmedReading(dataDir: string): ProcessTableReading {
   const claim = readPostmasterClaim(dataDir);
-  if (claim === null || livePostmasterPid(dataDir) !== claim.pid) return { read: false, owned: [] };
+  if (claim === null) {
+    // Silent until pass 12: a refusal with no code is a refusal nobody can
+    // debug, and the summary above promised one for every condition.
+    process.stderr.write(`ORPHAN_PROBE_NO_CLAIM dataDir=${dataDir}\n`);
+    return { read: false, owned: [] };
+  }
+  if (livePostmasterPid(dataDir) !== claim.pid) {
+    process.stderr.write(`ORPHAN_PROBE_CLAIMED_PID_NOT_ALIVE pid=${claim.pid}\n`);
+    return { read: false, owned: [] };
+  }
   // Liveness is NOT confirmation. A stale lockfile whose pid the OS has since
   // handed to a stranger reads exactly like our own postmaster — the hole pass
   // 4 closed for the Windows path and pass 5 found still open here. So the OS
@@ -250,11 +261,15 @@ export function unconfirmedReading(dataDir: string): ProcessTableReading {
     );
     return { read: false, owned: [] };
   }
-  const { owned } = ownedPostgresPids({
+  const { owned, skipped } = ownedPostgresPids({
     rows: [{ pid: claim.pid, ppid: 0, commandLine: '', startedAt }],
     tableRead: true,
     claim,
   });
+  // The last refusal — a lockfile with no start time on line 3, or a start
+  // time that disagrees — happened INSIDE the classifier, and its reason was
+  // being dropped here (pass-12 finding R2).
+  for (const entry of skipped) process.stderr.write(`${formatForeignSkip(entry)}\n`);
   return { read: false, owned };
 }
 

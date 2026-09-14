@@ -334,6 +334,15 @@ ${Math.round(started / 1000)}
       const lower = join(dataDir, 'sub');
       const upper = join(dataDir, 'SUB');
       mkdirSync(lower);
+      // Linux does not guarantee a case-sensitive /tmp: it can be a mount that
+      // folds case, and there `mkdirSync(upper)` throws EEXIST before any
+      // assertion runs (pass-12 finding R1). The precondition is MEASURED, and
+      // when it does not hold the case is skipped rather than failing for a
+      // reason that has nothing to do with the code.
+      if (existsSync(upper)) {
+        expect(existsSync(upper), 'case-insensitive volume: nothing to prove here').toBe(true);
+        return;
+      }
       mkdirSync(upper);
       const before = process.cwd();
       try {
