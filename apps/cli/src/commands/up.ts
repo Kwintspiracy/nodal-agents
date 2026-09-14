@@ -305,9 +305,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     if (pgPid !== null && isOurPostmasterPid(pgPid)) {
       orphans.push({ name: 'postgres', port: measuredPort(pgPid, listeners), pid: pgPid });
     } else if (pgPid !== null) {
-      // The lockfile names a live pid that the confirmed set refused. Say so:
-      // the alternative is a boot that looks clean while an orphan we declined
-      // to identify still holds the shared-memory block.
+      // The lockfile names a pid the confirmed set refused, and which has not
+      // been seen to exit. Say so: the alternative is a boot that looks clean
+      // while an orphan we declined to identify still holds the shared-memory
+      // block.
       console.log(
         chalk.yellow(
           `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which has not been seen\n` +
