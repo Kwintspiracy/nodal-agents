@@ -136,6 +136,15 @@ const cssCloses: FormCheck = (text) => {
       line += 1;
       continue;
     }
+    // Un ANTISLASH échappe le caractère suivant, y compris une accolade dans
+    // un nom de classe (`.foo\{`). Constat C7 de la revue Codex de la PR #66 :
+    // sans ça, `.foo\{ { color: red; }` était rapporté comme un bloc jamais
+    // refermé — un rouge sur un fichier valide, le pire des verdicts.
+    if (c === '\\') {
+      if (text[i + 1] === '\n') line += 1;
+      i += 1;
+      continue;
+    }
     if (c === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2);
       if (end === -1) return `comment opened at line ${line} is never closed`;

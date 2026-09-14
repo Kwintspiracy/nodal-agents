@@ -164,6 +164,20 @@ describe('document — bien formé, selon son type', () => {
     expect((await prove(fmTitre)).verdict).toBe('green');
   });
 
+  it('une accolade ÉCHAPPÉE dans un sélecteur CSS ne compte pas comme une ouverture', async () => {
+    // Revue Codex de la PR #66, constat C7 : `.foo\{ { color: red; }` était
+    // rapporté rouge (« '{' opened at line 1 is never closed ») alors que la
+    // première accolade appartient au nom de la classe. Un échappement est
+    // permis dans un identifiant CSS ; le compteur le lisait comme structure.
+    const echappe = write('escape.css', '.foo\\{ { color: red; }\n');
+    expect((await prove(echappe)).verdict).toBe('green');
+    const echappeAntislash = write('escape-bs.css', '.a\\\\ { color: red; }\n');
+    expect((await prove(echappeAntislash)).verdict).toBe('green');
+    // Et l'échappement ne sert pas d'excuse : un bloc vraiment ouvert reste rouge.
+    const ouvert = write('escape-ouvert.css', '.foo\\{ { color: red;\n');
+    expect((await prove(ouvert)).verdict).toBe('red');
+  });
+
   it('un en-tête YAML en CRLF n’est pas un titre non plus — la fin de ligne ne décide pas', async () => {
     // Revue Codex de la PR #66, constat C5 : l'en-tête n'était retiré qu'avec
     // des fins de ligne LF. Le MÊME fichier écrit par un éditeur Windows
