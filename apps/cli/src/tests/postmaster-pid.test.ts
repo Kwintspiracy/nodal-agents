@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   readPostmasterPid,
+  readPostmasterClaim,
   livePostmasterPid,
   resolvePgCtl,
   stopOrphanPostgres,
@@ -130,6 +131,29 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
   });
 });
 
+describe('readPostmasterClaim — line 3 is the guard, so it is READ', () => {
+  // Pass-4 question 9: nothing asserted the value taken off disk, so replacing
+  // it with null would have escaped every assertion and switched the
+  // recycled-pid guard off in production while the suite stayed green.
+  it('reads the postmaster start time, in epoch seconds', () => {
+    writePostmasterPid(31415);
+
+    expect(readPostmasterClaim(dataDir)).toEqual({ pid: 31415, startedAtSeconds: 1755600000 });
+  });
+
+  it('says so when the lockfile is too short to carry it', () => {
+    writeFileSync(
+      join(dataDir, 'postmaster.pid'),
+      `${process.pid}
+${dataDir}
+`,
+      'utf-8',
+    );
+
+    expect(readPostmasterClaim(dataDir)).toEqual({ pid: process.pid, startedAtSeconds: null });
+  });
+});
+
 describe('resolvePgCtl', () => {
   // Codex review of PR #98, pass 2, finding R3. `stopOrphanPostgres` used to
   // build an `EmbeddedPostgres` handle and call `.stop()`, and the comment said
@@ -200,7 +224,13 @@ describe('stopOrphanPostgres — it stops the pid we DECIDED', () => {
     expect(err).toContain('PG_CTL_SKIPPED_LOCKFILE_MISMATCH decided=31415 lockfile=null');
   });
 
-  it('calls pg_ctl when the lockfile names exactly the pid we decided', async () => {
+  // As root, `pg_ctl` is never reached — it refuses to run there, so the code
+  // declines before spawning it. Asserting that it RAN would then fail for a
+  // correct reason, which is a bad test, not a bug.
+  const asRoot =
+    process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0;
+
+  it.skipIf(asRoot)('calls pg_ctl when the lockfile names exactly the pid we decided', async () => {
     writePostmasterPid(31415);
 
     const { err } = await stopAndCapture(31415);
@@ -209,5 +239,14 @@ describe('stopOrphanPostgres — it stops the pid we DECIDED', () => {
     // proof that it RAN. The mismatch guard did not fire.
     expect(err).not.toContain('PG_CTL_SKIPPED');
     expect(err).toContain('PG_CTL_STOP_FAILED');
+  });
+
+  it.runIf(asRoot)('declines to call pg_ctl at all when running as root', async () => {
+    writePostmasterPid(31415);
+
+    const { ok, err } = await stopAndCapture(31415);
+
+    expect(ok).toBe(false);
+    expect(err).toContain('PG_CTL_SKIPPED_ROOT');
   });
 });
