@@ -145,14 +145,9 @@ function blankFencedBlocks(text: string): string {
   const out: string[] = [];
   let fence: { char: string; length: number } | null = null;
   for (const line of text.split('\n')) {
-    // Un bloc peut vivre DANS une citation ou un élément de liste. Le préfixe
-    // de conteneur est retiré avant de lire la ligne : sans lui, `- ~~~` n'était
-    // pas une ouverture, son contenu passait pour de la prose, et sa clôture
-    // devenait une ouverture qui avalait le vrai titre plus bas (passe 4, R3).
-    const withoutContainer = line.replace(/^(?: {0,3}(?:>\s?|(?:[-*+]|\d+[.)])\s+))+/, '');
-    const startsWithTab = withoutContainer.startsWith('\t');
-    const indent = /^ {0,3}/.exec(withoutContainer)?.[0].length ?? 0;
-    const rest = withoutContainer.slice(indent);
+    const startsWithTab = line.startsWith('\t');
+    const indent = /^ {0,3}/.exec(line)?.[0].length ?? 0;
+    const rest = line.slice(indent);
     const run = /^(`+|~+)/.exec(rest)?.[1] ?? '';
     const isFence = !startsWithTab && run.length >= 3;
 
@@ -208,8 +203,18 @@ const markdownHasTitle: FormCheck = (text) => {
   const lf = text.replace(/\r\n?/g, '\n');
   const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
   const prose = blankFencedBlocks(body);
-  if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(prose)) return null;
-  if (/^[ \t]{0,3}(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n[ \t]{0,3}(=+|-+)[ \t]*$/m.test(prose)) {
+  // Un titre commence en COLONNE ZÉRO. CommonMark en tolère trois
+  // d'indentation, et cette tolérance est retirée exprès : un titre indenté est
+  // presque toujours à l'intérieur d'un conteneur — une liste, une citation —
+  // que ce vérificateur ne sait pas suivre. L'accepter revenait à prendre pour
+  // titre du document un `#` appartenant à un bloc de code imbriqué dans une
+  // liste (passe 4, constat R3).
+  //
+  // Le prix est un document dont le seul titre serait indenté : il sera dit
+  // sans titre. C'est un ROUGE sur du travail correct, donc une gêne. L'autre
+  // erreur aurait été un VERT sur un document sans titre, et celle-là ment.
+  if (/^#{1,6}[ \t]+\S/m.test(prose)) return null;
+  if (/^(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n(=+|-+)[ \t]*$/m.test(prose)) {
     return null;
   }
   return 'no title: expected a heading (`# Title` or an underlined line)';

@@ -331,8 +331,17 @@ describe('document — bien formé, selon son type', () => {
       // une ouverture qui avalait le vrai titre plus bas. L'espace insécable,
       // lui, était accepté comme fin de clôture par `trim()`.
       ['bloc-en-liste.md', '- ~~~\n  # faux\n  ~~~\n', 'red'],
-      ['titre-apres-bloc-en-liste.md', '- ~~~\n  code\n  ~~~\n\n# vrai\n', 'green'],
       ['cloture-nbsp.md', '~~~\ncode\n~~~\u00a0\n# faux\n', 'red'],
+      // Passe 5. Le retrait du préfixe de conteneur, posé en passe 4, était une
+      // approximation de plus : elle fabriquait une clôture à partir d'un `- ~~~`
+      // situé DANS le code, et faisait disparaître de vrais titres. Elle est
+      // retirée ; c'est la règle « un titre commence en colonne zéro » qui ferme
+      // le faux vert, du côté sûr.
+      ['pseudo-cloture-dans-le-code.md', '~~~\n- ~~~\n# faux\n', 'red'],
+      ['liste-dix-chiffres.md', '1234567890. ~~~\n# vrai\n', 'green'],
+      ['tiret-cinq-espaces.md', '-     ~~~\n\n# vrai\n', 'green'],
+      ['citation-puis-titre.md', '> ~~~\n> code\n\n# vrai\n', 'green'],
+      ['liste-puis-titre.md', '- ~~~\n  code\n\n# vrai\n', 'green'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
