@@ -119,10 +119,11 @@ export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
 export async function postgresProcessesForDataDir(
   dataDir: string = PG_DATA_DIR,
 ): Promise<ProcessTableReading> {
-  // Not Windows: the table is not READ here, it is not readable at all. The
-  // data directory still answers, so the claim is honoured on its own — with
-  // nothing to confirm it, and no workers reached. `read: false` keeps the
-  // caller from concluding anything MORE from the silence.
+  // Not Windows: there is no table to read. The data directory still answers,
+  // and the claim is still CONFIRMED — by asking the OS for that one pid's
+  // start time (`processStartedAtMs`) instead of listing every process. Where
+  // even that is unavailable, nothing is owned. `read: false` tells the caller
+  // no ancestry was walked, so no workers are in the answer.
   if (process.platform !== 'win32') return unconfirmedReading(dataDir);
   const { execa } = await import('execa');
   try {
@@ -187,8 +188,57 @@ export async function postgresProcessesForDataDir(
  * table there is no ancestry to walk.
  */
 function unconfirmedReading(dataDir: string): ProcessTableReading {
-  const pid = livePostmasterPid(dataDir);
-  return { read: false, owned: pid === null ? [] : [pid] };
+  const claim = readPostmasterClaim(dataDir);
+  if (claim === null || livePostmasterPid(dataDir) !== claim.pid) return { read: false, owned: [] };
+  // Liveness is NOT confirmation. Without a start time, a stale lockfile whose
+  // pid the OS has since handed to a stranger reads exactly like our own
+  // postmaster — the hole pass 4 closed for the Windows path and pass 5 found
+  // still open here. So the same question is asked of the OS about THIS pid
+  // alone, which needs no process table.
+  const startedAt = processStartedAtMs(claim.pid);
+  if (startedAt === null) {
+    process.stderr.write(
+      `ORPHAN_PROBE_NO_START_TIME pid=${claim.pid} platform=${process.platform}\n`,
+    );
+    return { read: false, owned: [] };
+  }
+  const { owned } = ownedPostgresPids({
+    rows: [{ pid: claim.pid, ppid: 0, commandLine: '', startedAt }],
+    tableRead: true,
+    claim,
+  });
+  return { read: false, owned };
+}
+
+/**
+ * When this pid started, in epoch milliseconds, asked of the OS about ONE pid —
+ * no process table needed. Null when this platform cannot say.
+ *
+ * Linux keeps it in `/proc/<pid>/stat` field 22, in clock ticks since boot, and
+ * `/proc/stat`'s `btime` gives the boot instant. Both are plain reads. Where
+ * neither is available the answer is null, and the caller refuses rather than
+ * attributing a pid it cannot date.
+ */
+export function processStartedAtMs(pid: number): number | null {
+  if (process.platform !== 'linux') return null;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf-8');
+    // Field 2 is the executable name in parentheses and may itself contain
+    // spaces or parentheses; everything after the LAST ')' is unambiguous.
+    const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const ticksSinceBoot = Number.parseInt(after[19] ?? '', 10); // field 22, 0-based 19 here
+    if (!Number.isFinite(ticksSinceBoot)) return null;
+    const btimeLine = readFileSync('/proc/stat', 'utf-8')
+      .split('\n')
+      .find((l) => l.startsWith('btime '));
+    const btime = Number.parseInt(btimeLine?.slice('btime '.length).trim() ?? '', 10);
+    if (!Number.isFinite(btime)) return null;
+    // USER_HZ is 100 on every Linux this runs on; it is not exposed to a
+    // process, and getconf CLK_TCK would mean spawning a shell to learn it.
+    return (btime + ticksSinceBoot / 100) * 1000;
+  } catch {
+    return null;
+  }
 }
 
 /**

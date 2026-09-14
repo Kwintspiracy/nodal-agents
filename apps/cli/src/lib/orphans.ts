@@ -195,7 +195,19 @@ export function ownedPostgresPids(input: OwnershipInput): PostgresOwnership {
   for (const row of input.rows) byPid.set(row.pid, row);
   const postmaster = byPid.get(claim.pid);
 
-  if (input.tableRead) {
+  if (!input.tableRead) {
+    // Nothing to confirm the claim with, so the claim stands alone — and a
+    // claim alone is exactly what a stale lockfile on a recycled pid looks
+    // like. Callers that CAN date the pid another way say so by handing a row
+    // for it and `tableRead: true` (see `unconfirmedReading`); those that
+    // cannot get nothing, which is the side this module falls on.
+    for (const row of input.rows) {
+      skipped.push({ pid: row.pid, reason: 'the process table could not be read' });
+    }
+    return { owned, skipped };
+  }
+
+  {
     if (postmaster === undefined) {
       // The lockfile names a pid that is not a live postgres process. Stale, or
       // recycled onto something else entirely — either way, not ours to touch.

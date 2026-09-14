@@ -6,7 +6,7 @@ import open from 'open';
 import { randomBytes } from 'crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readConfig, writeConfig, LOG_DIR, type Config } from '../lib/config.ts';
+import { readConfig, writeConfig, LOG_DIR, PG_DATA_DIR, type Config } from '../lib/config.ts';
 import {
   startEmbeddedPostgres,
   runMigrations,
@@ -309,8 +309,12 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       // the alternative is a boot that looks clean while an orphan we declined
       // to identify still holds the shared-memory block.
       console.log(
-        chalk.gray(
-          `  - a process (pid ${pgPid}) is named by postmaster.pid but could not be confirmed as ours; it is left alone`,
+        chalk.yellow(
+          `  - postmaster.pid in ${PG_DATA_DIR} names pid ${pgPid}, which is alive but could NOT be
+` +
+            `    confirmed as ours (its start time does not match the one recorded). Nothing was
+` +
+            `    stopped. If Postgres then fails to start, check that pid yourself before killing it.`,
         ),
       );
     }
@@ -371,12 +375,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // than signalling a process we did not identify.
     const postmasterPid = pgOrphans[0]?.pid;
     if (postmasterPid !== undefined) await stopOrphanPostgres(postmasterPid);
-    // The set was decided BEFORE the graceful stop. A pid freed by that stop
-    // and handed to a stranger would pass `isPidAlive` and take the SIGKILL
-    // below, so ownership is asked again, now, against a freshly read table
-    // (pass-4 finding R4). Identity is not a fact that keeps.
-    const stillOurs = new Set<number>((await postgresProcessesForDataDir()).owned);
+    // The set was decided BEFORE the graceful stop. A pid freed by that stop and
+    // handed to a stranger would pass `isPidAlive` and take the SIGKILL below,
+    // so ownership is asked again — and asked PER PID, immediately before each
+    // one is signalled, not once for the whole loop. Waiting for one candidate
+    // can take five seconds, and a pid can turn over in that time (pass-5
+    // finding R2). The window cannot be closed entirely without holding an OS
+    // handle; this shrinks it to the syscall.
     for (const pgOrphan of pgOrphans) {
+      const stillOurs = new Set<number>((await postgresProcessesForDataDir()).owned);
       if (!stillOurs.has(pgOrphan.pid)) {
         console.log(
           chalk.gray(`  - postgres pid ${pgOrphan.pid} is no longer ours; not killing it`),

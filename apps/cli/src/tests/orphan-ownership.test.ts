@@ -122,12 +122,20 @@ describe('ownedPostgresPids — the data directory answers', () => {
     expect(skipped[0]?.reason).toContain('is not a live postgres');
   });
 
-  it('trusts the lockfile alone when the table could NOT be read', () => {
-    // Every non-Windows host, and any probe that failed. Nothing confirms, so
-    // nothing extra is claimed either: the lockfile pid, and no workers.
-    const { owned } = ownedPostgresPids({ rows: [], tableRead: false, claim: claims(8932) });
+  it('owns NOTHING when the table could not be read — a claim alone is not proof', () => {
+    // Pass-5 finding R1, and the test that used to demand the opposite. A
+    // lockfile with nothing to confirm it is indistinguishable from a stale one
+    // whose pid the OS has handed to a stranger. A caller that can date the pid
+    // another way says so by handing a row for it (see `unconfirmedReading`);
+    // a caller that cannot gets nothing.
+    const { owned, skipped } = ownedPostgresPids({
+      rows: [postmaster(8932, OURS)],
+      tableRead: false,
+      claim: claims(8932),
+    });
 
-    expect(owned).toEqual([8932]);
+    expect(owned).toEqual([]);
+    expect(skipped[0]?.reason).toContain('could not be read');
   });
 
   it('a missing creation date REFUSES, it does not wave through', () => {

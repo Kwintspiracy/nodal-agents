@@ -22,6 +22,7 @@ import {
   livePostmasterPid,
   resolvePgCtl,
   stopOrphanPostgres,
+  processStartedAtMs,
 } from '../lib/postgres.ts';
 
 // PIDs this high aren't allocated on Windows or Linux in practice, so
@@ -151,6 +152,33 @@ ${dataDir}
     );
 
     expect(readPostmasterClaim(dataDir)).toEqual({ pid: process.pid, startedAtSeconds: null });
+  });
+});
+
+describe('processStartedAtMs — dating ONE pid, without a process table', () => {
+  // Pass-5 finding R1. Where no process table can be read, liveness was taken
+  // for confirmation — and a stale lockfile on a recycled pid looks exactly
+  // like our own postmaster under that rule. The OS can date a single pid
+  // cheaply; asking it is what closes the hole without giving up cleanup.
+  const onLinux = process.platform === 'linux';
+
+  it.runIf(onLinux)('dates this very process, close to now', () => {
+    const started = processStartedAtMs(process.pid);
+
+    expect(started).not.toBeNull();
+    // This process cannot have started in the future, nor before the machine.
+    expect(started!).toBeLessThanOrEqual(Date.now() + 1_000);
+    expect(started!).toBeGreaterThan(Date.now() - 24 * 3_600_000);
+  });
+
+  it.runIf(onLinux)('says nothing about a pid that does not exist', () => {
+    expect(processStartedAtMs(DEAD_PID)).toBeNull();
+  });
+
+  it.skipIf(onLinux)('says nothing on a platform it cannot read', () => {
+    // Windows answers through the WMI probe instead; this path is the fallback
+    // for hosts with neither, and it must refuse rather than guess.
+    expect(processStartedAtMs(process.pid)).toBeNull();
   });
 });
 
