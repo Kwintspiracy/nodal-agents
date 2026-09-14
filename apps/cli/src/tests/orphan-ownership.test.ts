@@ -50,6 +50,28 @@ describe('classifyPostgresProcesses', () => {
     expect(skipped.map((s) => s.pid)).toEqual([41956]);
   });
 
+  it('a NEIGHBOUR whose data dir merely starts with ours is not ours', () => {
+    // The incident of 2026-09-14 came from proving ownership with a substring.
+    // The fix replaced one substring (the binary path) with another (the data
+    // dir), and a sibling install one suffix away — pg-data / pg-data2, or a
+    // pg-data.bak kept beside it — walked straight back through the same door:
+    // its postmaster AND its workers were claimed, and `up` kills what it
+    // claims.
+    const voisin = `${OURS}2`;
+    const rows = [postmaster(8932, OURS), postmaster(41956, voisin), ioWorker(7100, 41956)];
+
+    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
+
+    expect(owned).toEqual([8932]);
+    expect(skipped.map((s) => s.pid)).toEqual([41956, 7100]);
+  });
+
+  it('a data dir written with a trailing separator names the same cluster', () => {
+    const rows = [postmaster(8932, OURS)];
+
+    expect(classifyPostgresProcesses(rows, OURS + '\\').owned).toEqual([8932]);
+  });
+
   it('an io_worker of OUR postmaster is ours', () => {
     const rows = [postmaster(8932, OURS), ioWorker(5856, 8932)];
 
