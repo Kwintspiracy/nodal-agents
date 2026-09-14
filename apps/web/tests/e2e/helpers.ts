@@ -425,15 +425,26 @@ export async function resolveActingUser(): Promise<{ userId: string; entityId: s
   const baseURL = base.info().project.use.baseURL ?? 'http://localhost:3000';
   const sentinelEmail = process.env['E2E_EMAIL'] ?? 'e2e-playwright@nodalai.local';
 
-  let betterAuthAvailable = false;
+  // Une sonde qui ÉCHOUE ne dit pas « local-trust », elle ne dit rien. Le
+  // `catch` rendait pourtant `false`, donc « local-trust », donc un utilisateur
+  // — le mauvais si la pile était en local-auth et que la ligne local-trust
+  // traînait encore en base. Un repli silencieux (invariant #4) dans la
+  // fonction dont TOUT le reste dépend, y compris la suppression
+  // d'identifiants. Une panne de sonde échoue maintenant bruyamment ; seule une
+  // RÉPONSE du serveur, quel que soit son code, tranche le mode.
+  let betterAuthAvailable: boolean;
   try {
     const probe = await fetch(`${baseURL}/api/auth/get-session`, {
       headers: { Origin: baseURL },
       signal: AbortSignal.timeout(10_000),
     });
     betterAuthAvailable = probe.ok;
-  } catch {
-    betterAuthAvailable = false;
+  } catch (err) {
+    throw new Error(
+      `Impossible de savoir dans quel mode d'auth tourne la pile de ${baseURL} : ` +
+        `la sonde /api/auth/get-session n'a pas répondu (${(err as Error).message}). ` +
+        "Refus de deviner — l'utilisateur choisi commande ensuite des suppressions en base.",
+    );
   }
 
   const { users, entities, eq } = await import('@nodal-agents/db');
