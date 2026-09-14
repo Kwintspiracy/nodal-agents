@@ -841,36 +841,34 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     expect((await stateRow(stateId)).decisionStatus).toBe('green');
   });
 
-  it('un AUTRE job réécrit le document PENDANT la preuve ⇒ dirty + VERIFY_STALE_EPOCH, jamais un vert périmé', async () => {
-    // Revue Codex post-merge de la PR #66, constat C1 (BLOQUANT). La primitive
-    // relit la configuration après la preuve : `epoch` ou `manifestHash`
-    // différents ⇒ ce qui vient d'être prouvé n'est plus l'arbre courant. Pour
-    // un projet de code, l'intention d'un autre job avance l'epoch partagé de
-    // `code_projects`. Pour un document, les deux étaient CONSTANTS, et la
-    // garde de génération ne voit que les écritures de CE job : un vert restait
-    // posé sur un contenu qui n'était plus sur le disque.
+  it('un AUTRE job réécrit le document APRÈS la preuve ⇒ dirty, jamais un vert périmé', async () => {
+    // Revue Codex post-merge de la PR #66, constat C1 (BLOQUANT), puis passe 3
+    // constat R1 qui a montré que la première forme du correctif ne suffisait
+    // pas — et que CE test décrivait le mauvais danger.
     //
-    // Ici l'écriture concurrente a lieu DANS la preuve, sur le vrai
-    // vérificateur de document — seul `runProof` est enveloppé.
-    const doc = join(dir, 'concurrent.md');
+    // Le danger n'est pas qu'un autre job écrive avant la preuve : la preuve lit
+    // alors le nouveau contenu et le vert le décrit correctement. Le danger est
+    // que le fichier change APRÈS avoir été lu. La comparaison porte donc sur ce
+    // que la preuve a RÉELLEMENT lu, pas sur la configuration relue.
+    const doc = join(dir, 'apres-la-preuve.md');
     await writeFile(doc, '# Court\n', 'utf8');
     const jobId = await insertJob('processing');
     const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true, doc);
 
-    const pendantLaPreuve: DeliverableVerifier = {
+    const apresLaPreuve: DeliverableVerifier = {
       ...documentVerifier,
       runProof: async (config, onCommandDone) => {
-        // L'autre job écrit : taille différente, donc empreinte différente quelle
-        // que soit la granularité du mtime.
-        await writeFile(doc, '# Un titre que personne n’a prouvé, et bien plus long\n', 'utf8');
-        return documentVerifier.runProof(config, onCommandDone);
+        const proof = await documentVerifier.runProof(config, onCommandDone);
+        // La preuve a lu `# Court` et l'a trouvé vert ; l'autre job écrit ensuite.
+        await writeFile(doc, 'plus aucun titre\n', 'utf8');
+        return proof;
       },
     };
 
     await finalizeJobSuccess(
       asDb(),
       { jobId, result: 'ok', toolsUsed: [] },
-      deps({ getVerifier: () => pendantLaPreuve }),
+      deps({ getVerifier: () => apresLaPreuve }),
     );
 
     expect(logged(VERIFY_STALE_EPOCH)).toBe(true);
@@ -879,6 +877,38 @@ describe('finalizeJobSuccess — un document, par le VRAI registre', () => {
     expect(state.verifiedGeneration).toBeNull();
     // …et le job finit quand même (①).
     expect((await jobRow(jobId)).status).toBe('completed');
+  });
+
+  it('A → B → A pendant la preuve ⇒ dirty : les deux configurations coïncident, pas la preuve', async () => {
+    // Passe 3, constat R1. Comparer `loadConfig` à `loadConfig` rate cette
+    // séquence : la transaction 1 voit A, la preuve lit B et le trouve vert, un
+    // autre job remet A avant la transaction 2 — les deux empreintes sont
+    // identiques et le vert reste, posé sur un contenu que personne n'a prouvé.
+    const doc = join(dir, 'aba.md');
+    const A = 'pas de titre du tout\n';
+    const B = '# Un titre\n';
+    await writeFile(doc, A, 'utf8');
+    const jobId = await insertJob('processing');
+    const stateId = await insertState(jobId, 'document', projectKey(doc), 1, true, doc);
+
+    const aba: DeliverableVerifier = {
+      ...documentVerifier,
+      runProof: async (config, onCommandDone) => {
+        await writeFile(doc, B, 'utf8'); // l'autre job écrit B
+        const proof = await documentVerifier.runProof(config, onCommandDone); // vert sur B
+        await writeFile(doc, A, 'utf8'); // …puis remet A
+        return proof;
+      },
+    };
+
+    await finalizeJobSuccess(
+      asDb(),
+      { jobId, result: 'ok', toolsUsed: [] },
+      deps({ getVerifier: () => aba }),
+    );
+
+    expect(logged(VERIFY_STALE_EPOCH)).toBe(true);
+    expect((await stateRow(stateId)).decisionStatus).toBe('dirty');
   });
 
   it('un markdown sans titre : la décision est ROUGE, et la ligne rouge dit pourquoi', async () => {

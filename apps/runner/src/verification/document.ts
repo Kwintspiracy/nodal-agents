@@ -119,6 +119,63 @@ const ko = (command: string, reason: string, durationMs = 0): Constat => ({
 type FormCheck = (text: string) => string | null;
 
 /**
+ * Les lignes des blocs de code CLÔTURÉS, remplacées par des lignes VIDES.
+ *
+ * Deux raisons de ne plus le faire avec une expression régulière, chacune payée
+ * par un verdict faux mesuré :
+ *
+ * - elle s'est trompée deux fois de suite (dette #66, passes 2 et 3) sur des
+ *   règles que CommonMark énonce pourtant simplement — fin d'entrée, longueur
+ *   et caractère de la clôture, backtick dans la ligne d'info, tabulation
+ *   initiale. Une boucle de lignes dit ces règles telles quelles et se relit ;
+ * - SUPPRIMER les lignes recolle leurs voisines, et deux lignes recollées
+ *   fabriquent un titre souligné qui n'existait pas : `texte`, un bloc, puis
+ *   `---` devenait « texte / --- », donc un titre setext (passe 3, constat R3).
+ *   Les blanchir garde la structure du document intacte.
+ *
+ * Les règles appliquées, dans l'ordre où CommonMark les pose : une ouverture
+ * est au plus trois espaces d'indentation puis au moins trois backticks ou
+ * tildes ; une ouverture en backticks ne peut pas porter de backtick dans sa
+ * ligne d'info ; une clôture porte le MÊME caractère, est au moins aussi
+ * longue, et ne contient rien d'autre que des espaces ; une tabulation vaut
+ * quatre colonnes, donc ne peut pas servir d'indentation ici. Un bloc jamais
+ * clôturé court jusqu'à la fin du document.
+ */
+function blankFencedBlocks(text: string): string {
+  const out: string[] = [];
+  let fence: { char: string; length: number } | null = null;
+  for (const line of text.split('\n')) {
+    const startsWithTab = line.startsWith('\t');
+    const indent = /^ {0,3}/.exec(line)?.[0].length ?? 0;
+    const rest = line.slice(indent);
+    const run = /^(`+|~+)/.exec(rest)?.[1] ?? '';
+    const isFence = !startsWithTab && run.length >= 3;
+
+    if (fence === null) {
+      const info = rest.slice(run.length);
+      // Une ouverture en backticks dont l'info contient un backtick n'ouvre rien.
+      const infoAllowed = run.startsWith('~') || !info.includes('`');
+      if (isFence && infoAllowed) {
+        fence = { char: run[0]!, length: run.length };
+        out.push('');
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+
+    const closes =
+      isFence &&
+      run[0] === fence.char &&
+      run.length >= fence.length &&
+      rest.slice(run.length).trim() === '';
+    out.push('');
+    if (closes) fence = null;
+  }
+  return out.join('\n');
+}
+
+/**
  * Un markdown a un titre : `# …` (ATX), ou une ligne de texte soulignée de
  * `=`/`-` (setext).
  *
@@ -143,19 +200,7 @@ type FormCheck = (text: string) => string | null;
 const markdownHasTitle: FormCheck = (text) => {
   const lf = text.replace(/\r\n?/g, '\n');
   const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
-  const prose = body.replace(
-    // `$` under the `m` flag matches at EVERY end of line, so the first version
-    // of this ended the block at the first newline. Measured, all three ways it
-    // went wrong (revue Codex de la dette #66, passe 2, R2): a `#` anywhere
-    // inside a fence counted as a title, an unterminated fence swallowed
-    // nothing, and a fence closed by a LONGER run read as never closed —
-    // reddening a document whose real title sat outside it.
-    //
-    // The unterminated case now ends at the end of the INPUT, and a closing
-    // fence may be longer than its opening, as CommonMark allows.
-    /^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]{0,3}\1[`~]*[ \t]*(?:\n|$)|(?![\s\S]))/gm,
-    '',
-  );
+  const prose = blankFencedBlocks(body);
   if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(prose)) return null;
   if (/^[ \t]{0,3}(?![-*+>#\s]|\d+[.)][ \t])\S[^\n]*\n[ \t]{0,3}(=+|-+)[ \t]*$/m.test(prose)) {
     return null;
@@ -375,6 +420,35 @@ const jsonParses: FormCheck = (text) => {
 };
 
 /**
+ * Cette plainte du parseur porte-t-elle sur une entité que le document DÉCLARE
+ * lui-même ?
+ *
+ * `@xmldom/xmldom` ne lit pas le sous-ensemble interne d'un DOCTYPE : il
+ * rapporte `entity not found` pour une entité parfaitement déclarée, et retenir
+ * ce niveau faisait rougir du XML valide (dette #66, passe 2, R3).
+ *
+ * La première version cherchait un DOCTYPE à crochet ouvrant, et se trompait
+ * DANS LES DEUX SENS (passe 3, R4 et R5) : un sous-ensemble vide ou un simple
+ * commentaire suffisait à éteindre TOUS les `error`, rouvrant le trou d'origine,
+ * tandis qu'un `>` à l'intérieur d'un identifiant système — permis par la
+ * grammaire XML — faisait manquer un vrai sous-ensemble.
+ *
+ * On ne regarde donc plus le DOCTYPE du tout. Le message du parseur NOMME
+ * l'entité ; on ne fait taire la plainte que si CETTE entité-là est déclarée.
+ * Ce qui reste hors de portée, et se dit : une déclaration écrite à l'intérieur
+ * d'un commentaire ou d'une section CDATA compte encore comme une déclaration.
+ */
+function isDeclaredEntityComplaint(text: string, message: string): boolean {
+  const named = /entity not found\s*:?\s*&?([A-Za-z_:][\w.:-]*)/i.exec(message);
+  const name = named?.[1];
+  if (name === undefined) return false;
+  // Un nom d'entité XML ne peut contenir aucun métacaractère d'expression
+  // régulière, mais on l'échappe quand même : le message vient du parseur.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<!ENTITY\\s+${escaped}\\s`, 'i').test(text);
+}
+
+/**
  * Un SVG est du XML : `@xmldom/xmldom` lève à la première faute fatale.
  *
  * Mais toutes les fautes ne sont pas fatales, et c'est le constat C6 de la
@@ -392,13 +466,13 @@ const jsonParses: FormCheck = (text) => {
  * celle du parseur, pas celle du document, et elle ne doit pas coûter un rouge.
  */
 const xmlParses: FormCheck = (text) => {
-  // `<!DOCTYPE … [ … ]>` — le crochet ouvrant est ce qui déclare des entités.
-  const declaresEntities = /<!DOCTYPE[^>[]*\[/i.test(text);
   try {
     let reported: string | null = null;
     new DOMParser({
       onError: (level, message) => {
-        const counts = level === 'fatalError' || (level === 'error' && !declaresEntities);
+        const counts =
+          level === 'fatalError' ||
+          (level === 'error' && !isDeclaredEntityComplaint(text, message));
         if (counts && reported === null) reported = message;
       },
     }).parseFromString(text, 'text/xml');
@@ -475,9 +549,16 @@ export const documentVerifier: DeliverableVerifier = {
         );
       }
     };
+    // L'empreinte de ce que la preuve a RÉELLEMENT lu. La finalisation compare
+    // à ELLE, pas à la configuration relue : sans ça, une séquence A → B → A
+    // passe — la transaction 1 voit A, la preuve trouve B vert, un autre job
+    // remet A avant la transaction 2, et les deux configurations coïncident
+    // (dette #66, passe 3, constat R1).
+    let provedManifestHash: string | undefined;
     const done = (): ProofResult => ({
       verdict: records.some((r) => r.verdict === 'red') ? 'red' : 'green',
       records,
+      ...(provedManifestHash === undefined ? {} : { provedManifestHash }),
     });
 
     // 1 · il existe, et c'est un fichier
@@ -507,7 +588,11 @@ export const documentVerifier: DeliverableVerifier = {
     const t1 = Date.now();
     let text: string;
     try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(path));
+      const bytes = await readFile(path);
+      // Haché AVANT le décodage : c'est l'octet lu qui fait foi, et c'est la
+      // même règle que `fileStamp`, pour que les deux valeurs se comparent.
+      provedManifestHash = `${DOCUMENT_MANIFEST_HASH}:${createHash('sha256').update(bytes).digest('hex')}`;
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
       await emit(ko('utf8', 'the file is not valid UTF-8', Date.now() - t1));
       return done();

@@ -94,6 +94,22 @@ export interface ProofResult {
   readonly verdict: RunVerdict;
   /** Une entrée par commande LANCÉE — celles qui suivent un rouge n'existent pas. */
   readonly records: readonly ProofCommandRecord[];
+  /**
+   * L'empreinte de ce que la preuve a RÉELLEMENT lu, quand le vérificateur
+   * peut la donner.
+   *
+   * La finalisation compare la configuration d'avant et d'après pour savoir si
+   * l'arbre a bougé. Comparer `loadConfig` à `loadConfig` rate une séquence
+   * A → B → A : la transaction 1 voit A, la preuve lit B et le trouve vert, un
+   * autre job remet A avant la transaction 2, et les deux empreintes
+   * coïncident. Un vert reste alors posé sur un contenu que personne n'a
+   * prouvé (dette #66, passe 3, constat R1).
+   *
+   * Comparer à CE QUI A ÉTÉ PROUVÉ ferme la séquence. Omis par un vérificateur
+   * qui ne sait pas dire ce qu'il a lu — la comparaison retombe alors sur la
+   * configuration, comme avant.
+   */
+  readonly provedManifestHash?: string;
 }
 
 /**
