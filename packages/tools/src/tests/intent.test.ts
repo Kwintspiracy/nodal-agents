@@ -894,6 +894,46 @@ describe('un fichier créé est typé pour ce qu’il EST — « Créer, c’est
     ]);
   });
 
+  it('un projet DÉCLARÉ nomme aussi la CLÉ, pas seulement le type', async () => {
+    // Revue Codex post-merge de la PR #66, constat C4. La déclaration décidait
+    // du TYPE mais n'entrait pas dans le calcul de l'IDENTITÉ : avec deux
+    // racines attachées qui s'emboîtent, une écriture deux niveaux sous le
+    // projet déclaré était typée `code_project` et salissait `…/app/src` — un
+    // sous-dossier dont aucune configuration de vérification n'existe. La
+    // preuve du projet déclaré ne couvrait alors pas ce qui venait d'être
+    // écrit.
+    const app = join(ws, 'app');
+    await mkdir(join(app, 'src'), { recursive: true }); // aucun manifeste, nulle part
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: normalizePath(app),
+      projectKey: keyOf(app),
+      kind: 'code',
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+    const res = await executeTool(
+      fileWriteTool as never,
+      // Le premier segment est le LABEL de la racine, comme partout ici.
+      { path: 'app/src/x.ts', content: 'export const x = 1;\n' },
+      ctx({
+        workspaces: [
+          { label: 'conteneur', path: ws },
+          { label: 'app', path: app },
+        ],
+      }),
+      opts,
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    const rows = await statesOf(jobId);
+    // Et la clé CONSTATÉE (#75) doit être la même : sinon l'écriture réelle ne
+    // soutient plus le livrable que l'intention a posé, et `produced` reste
+    // faux sur un fichier qui est bel et bien sur le disque.
+    expect(rows.map((r) => [r.deliverableType, r.canonicalKey, r.produced])).toEqual([
+      ['code_project', keyOf(app), true],
+    ]);
+  });
+
   it('un projet déclaré de DOCUMENTS ne fait pas de ses fichiers du code', async () => {
     await mkdir(join(ws, 'notes'), { recursive: true });
     await db.insert(codeProjects).values({
