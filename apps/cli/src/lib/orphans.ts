@@ -1,6 +1,6 @@
 // orphans.ts — who owns a Postgres process, and on which port it was OBSERVED.
 //
-// Both questions were answered by guessing until 2026-09-14, and the guess cost
+// Both questions were answered by GUESSING until 2026-09-14, and the guess cost
 // a live database:
 //
 //   · OWNERSHIP was decided by the embedded binary path (`@embedded-postgres`).
@@ -12,10 +12,14 @@
 //     was printed next to `config.ports.postgres`. Thirteen lines announced
 //     :25450 for processes listening on :25444 or on nothing.
 //
-// The rules here replace both guesses. Ownership is the DATA DIR and nothing
-// else; a worker without a data dir on its command line is ours only when its
-// ancestry reaches a postmaster that is ours. A port is printed only when a
-// listener probe actually returned that pid.
+// Three passes of review then found three more ways to attribute a foreign
+// cluster, each one a new spelling of the same mistake — the data dir as a
+// substring, then as a path, then the `-D` argument, then `-c data_directory`.
+// The pattern, not the spelling, is the defect: **a process table cannot say
+// whose a cluster is.** So the question is turned around and the DATA DIRECTORY
+// answers it — see `ownedPostgresPids`. The table only confirms.
+//
+// A port is printed only when a listener probe actually returned that pid.
 //
 // Pure functions over plain rows on purpose: the probe they serve cannot be run
 // in a test without killing somebody's Postgres.
@@ -48,43 +52,6 @@ export interface PostgresOwnership {
   owned: number[];
   /** Processes seen and deliberately left alone. */
   skipped: SkippedPostgres[];
-}
-
-/** Lower-case, forward slashes, no trailing separator — every form is seen. */
-function normalise(value: string): string {
-  return value.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
-}
-
-/**
- * The command line split into arguments, double quotes removed.
- *
- * Whitespace is space, tab, CR or LF. The tab matters: the path-boundary rule
- * this replaces accepted only a space, so `-D C:/…/pg-data<TAB>-p 5432` stopped
- * being recognised as OUR postmaster (finding C5) — the same bug with the sign
- * flipped, and `up` then refuses to start or leaves its own orphan behind.
- */
-function tokenise(commandLine: string): string[] {
-  const tokens: string[] = [];
-  let current = '';
-  let started = false;
-  let quoted = false;
-  for (const ch of commandLine) {
-    if (ch === '"') {
-      quoted = !quoted;
-      started = true;
-      continue;
-    }
-    if (!quoted && (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n')) {
-      if (started) tokens.push(current);
-      current = '';
-      started = false;
-      continue;
-    }
-    current += ch;
-    started = true;
-  }
-  if (started) tokens.push(current);
-  return tokens;
 }
 
 /**
@@ -136,120 +103,155 @@ function startsAfter(parent: PostgresProcessRow, child: PostgresProcessRow): boo
 }
 
 /**
- * The directory `-D` names on this command line, or null when it names none.
+ * What `<dataDir>/postmaster.pid` claims: the pid on line 1, and the start time
+ * PostgreSQL wrote on line 3 (epoch SECONDS).
  *
- * Why the ARGUMENT, and not the line. Searching the LINE for our path — with
- * `includes`, then with a path boundary — kept claiming clusters that are not
- * ours, and the Codex review of this PR measured four of them on this very
- * function (findings C1 and C2):
- *
- *     -D "…/pg-data/other"                        a sub-directory
- *     -D "…/pg-data backup"                       a name that starts the same
- *     -D "…/pg-data/../foreign"                   a climb back out
- *     -D C:/foreign -c external_pid_file="…/pg-data/foreign.pid"
- *                                                 a cluster elsewhere whose PID
- *                                                 file happens to sit with us
- *
- * Every one of them came back `owned`, and `up` kills what it owns. No boundary
- * rule closes that, because the path was never the thing to look at: the
- * ARGUMENT is. Read `-D` (or `--pgdata`), compare the whole value, and a
- * directory that is not exactly ours is not ours.
- *
- * A value that leans on `..` to name our OWN directory is not resolved here and
- * reads as foreign. That errs towards leaving a process alone, which is the
- * side this module must always fall on.
+ * The lockfile is read by `postgres.ts`, which owns the disk; this module only
+ * reasons about what it said.
  */
-export function dataDirArgument(commandLine: string): string | null {
-  const tokens = tokenise(commandLine);
-  let fromOption: string | null = null;
-  let fromSetting: string | null = null;
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i]!;
-    // `-c name=value`, and the `--name=value` spelling of the same setting.
-    const setting =
-      token === '-c' ? tokens[i + 1] : token.startsWith('--') ? token.slice(2) : undefined;
-    const named = setting?.match(/^data[_-]directory=(.*)$/);
-    if (named?.[1] !== undefined) {
-      fromSetting = named[1];
-      continue;
-    }
-    // The LAST `-D` wins, never the first: getopt overwrites as it goes, so
-    // that is the one the server actually runs against (finding R1).
-    if (token === '-D' || token === '--pgdata') {
-      const next = tokens[i + 1];
-      if (next !== undefined) fromOption = next;
-      continue;
-    }
-    if (token.startsWith('--pgdata=')) fromOption = token.slice('--pgdata='.length);
-    else if (token.startsWith('-D') && token.length > 2) fromOption = token.slice(2);
-  }
-  // `data_directory` is a SETTING, and a setting beats the command-line
-  // default: when both are present the server uses this one (finding R2).
-  return fromSetting ?? fromOption;
+export interface LockfileClaim {
+  pid: number;
+  /** Line 3, epoch seconds. Null when the file is too short to carry it. */
+  startedAtSeconds: number | null;
+}
+
+export interface OwnershipInput {
+  /** The rows the process table gave, empty when it could not be read. */
+  readonly rows: readonly PostgresProcessRow[];
+  /** Whether the table could be READ at all. Without it, nothing is confirmed. */
+  readonly tableRead: boolean;
+  /** What our own data directory claims, or null when it claims nothing. */
+  readonly claim: LockfileClaim | null;
 }
 
 /**
- * Split the `postgres.exe` rows into the ones this install owns and the ones it
- * must not touch.
+ * How far apart the lockfile's start time and the process's creation date may
+ * be and still describe the same start.
  *
- * A row is OURS when its command line carries our data dir (that is the
- * postmaster, `postgres.exe -D <dataDir>`), or when walking up `ppid` reaches
- * such a postmaster. The second case is what `--forkchild="io_worker"` needs:
- * PostgreSQL 18 spawns workers whose command line holds no data dir at all
- * (seen live 2026-08-21), and their parent is the postmaster.
- *
- * Everything else is skipped — including a sibling install's postmaster and its
- * workers, which is precisely what the binary-path test used to swallow.
+ * PostgreSQL writes the lockfile immediately after the postmaster starts, so
+ * the two are within a second of each other in practice. A minute is generous
+ * for a slow disk and still far shorter than the time it takes for a pid to be
+ * recycled onto a new process.
  */
-export function classifyPostgresProcesses(
-  rows: readonly PostgresProcessRow[],
-  dataDir: string,
-): PostgresOwnership {
-  const dataNeedle = normalise(dataDir);
-  const byPid = new Map<number, PostgresProcessRow>();
-  for (const row of rows) byPid.set(row.pid, row);
+const START_TIME_TOLERANCE_MS = 60_000;
 
-  const isOurPostmaster = (row: PostgresProcessRow): boolean => {
-    if (dataNeedle === '') return false;
-    const declared = dataDirArgument(row.commandLine);
-    return declared !== null && normalise(declared) === dataNeedle;
-  };
-
+/**
+ * Which Postgres processes this install owns.
+ *
+ * THE DATA DIRECTORY IS THE AUTHORITY. Everything else only confirms.
+ *
+ * Three passes of Codex review on this PR each found a way to attribute a
+ * FOREIGN postmaster, and each fix closed one more spelling of the same
+ * mistake: the embedded binary path, then our data dir as a substring of the
+ * command line, then a path boundary, then the `-D` argument, then `-c
+ * data_directory=`. The third pass named the real problem instead of the next
+ * spelling, and it is this: **the process table cannot say whose a cluster is.**
+ * A command line is not authoritative — `data_directory` in `postgresql.conf`
+ * overrides `-D` and never appears on it — and a lockfile alone is not either,
+ * since its pid can have been recycled onto somebody else's process.
+ *
+ * So the question is turned around. `<dataDir>/postmaster.pid` is written BY
+ * the postmaster that holds THIS directory: that is true by construction, not
+ * by resemblance. It names our pid. The process table is then asked to CONFIRM,
+ * never to attribute:
+ *
+ *   · the pid is in the table, so it is a postgres process (the probe filters
+ *     on the executable name) and it is alive;
+ *   · its creation date matches the start time the postmaster itself wrote on
+ *     line 3 of the lockfile. A recycled pid fails this and nothing else can —
+ *     no name, no path, no ancestry would have caught it.
+ *
+ * Workers are then reached by ANCESTRY towards that one confirmed pid, never by
+ * reading their command line. A `--forkchild="io_worker"` carries no data dir
+ * at all (PostgreSQL 18, seen live 2026-08-21), and that is fine: it does not
+ * need to say anything, it needs a parent we already trust.
+ *
+ * WHAT THIS GIVES UP, and it is a real loss: when the lockfile is GONE while a
+ * postmaster lives on — the 2026-08-20 incident — nothing here attributes
+ * anything. The old code guessed from the command line and could be right; it
+ * could also kill a stranger, which it did on 2026-09-14. Refusing to guess
+ * means `up` reports what it sees and stops instead of cleaning up. That is the
+ * side this module falls on.
+ */
+export function ownedPostgresPids(input: OwnershipInput): PostgresOwnership {
   const owned: number[] = [];
   const skipped: SkippedPostgres[] = [];
+  const claim = input.claim;
 
-  for (const row of rows) {
-    if (isOurPostmaster(row)) {
-      owned.push(row.pid);
-      continue;
+  if (claim === null) {
+    for (const row of input.rows) {
+      skipped.push({ pid: row.pid, reason: 'no postmaster.pid claims this data dir' });
     }
-    // Walk up the parent chain, staying inside the postgres.exe rows. The seen
-    // set keeps a recycled or corrupt ppid from looping forever.
-    const seen = new Set<number>([row.pid]);
-    let child: PostgresProcessRow = row;
-    let cursor = byPid.get(row.ppid);
-    let ancestor: PostgresProcessRow | null = null;
-    while (cursor && !seen.has(cursor.pid)) {
-      // A parent that started AFTER its child is a RECYCLED pid, not a parent
-      // (finding C4). The chain stops there rather than adopting a stranger.
-      if (startsAfter(cursor, child)) break;
-      seen.add(cursor.pid);
-      if (isOurPostmaster(cursor)) {
-        ancestor = cursor;
-        break;
+    return { owned, skipped };
+  }
+
+  const byPid = new Map<number, PostgresProcessRow>();
+  for (const row of input.rows) byPid.set(row.pid, row);
+  const postmaster = byPid.get(claim.pid);
+
+  if (input.tableRead) {
+    if (postmaster === undefined) {
+      // The lockfile names a pid that is not a live postgres process. Stale, or
+      // recycled onto something else entirely — either way, not ours to touch.
+      for (const row of input.rows) {
+        skipped.push({ pid: row.pid, reason: `lockfile pid ${claim.pid} is not a live postgres` });
       }
-      child = cursor;
-      cursor = byPid.get(cursor.ppid);
+      return { owned, skipped };
     }
-    if (ancestor) owned.push(row.pid);
-    else
-      skipped.push({
-        pid: row.pid,
-        reason: `ancestry=${row.ppid} reaches no postmaster for ${dataDir}`,
-      });
+    if (!startMatchesClaim(postmaster, claim)) {
+      for (const row of input.rows) {
+        skipped.push({
+          pid: row.pid,
+          reason: `pid ${claim.pid} started at ${String(postmaster.startedAt)}, lockfile says ${String(claim.startedAtSeconds)}`,
+        });
+      }
+      return { owned, skipped };
+    }
+  }
+
+  owned.push(claim.pid);
+
+  for (const row of input.rows) {
+    if (row.pid === claim.pid) continue;
+    if (descendsFrom(row, claim.pid, byPid)) owned.push(row.pid);
+    else skipped.push({ pid: row.pid, reason: `ancestry=${row.ppid} does not reach ${claim.pid}` });
   }
 
   return { owned, skipped };
+}
+
+/**
+ * Does this process's creation date agree with the start time the postmaster
+ * wrote into the lockfile?
+ *
+ * Unknowable — and therefore accepted — when either side is missing: an older
+ * lockfile has no line 3, and a process table without `CreationDate` gives no
+ * date. Said here rather than left implicit; when both are present this is the
+ * only check that catches a recycled pid.
+ */
+function startMatchesClaim(process: PostgresProcessRow, claim: LockfileClaim): boolean {
+  if (process.startedAt === undefined || claim.startedAtSeconds === null) return true;
+  return Math.abs(process.startedAt - claim.startedAtSeconds * 1000) <= START_TIME_TOLERANCE_MS;
+}
+
+/** Does `row` descend from `ancestorPid`, walking up inside the table? */
+function descendsFrom(
+  row: PostgresProcessRow,
+  ancestorPid: number,
+  byPid: ReadonlyMap<number, PostgresProcessRow>,
+): boolean {
+  const seen = new Set<number>([row.pid]);
+  let child: PostgresProcessRow = row;
+  let cursor = byPid.get(row.ppid);
+  while (cursor && !seen.has(cursor.pid)) {
+    // A parent that started AFTER its child is a RECYCLED pid, not a parent.
+    if (startsAfter(cursor, child)) return false;
+    if (cursor.pid === ancestorPid) return true;
+    seen.add(cursor.pid);
+    child = cursor;
+    cursor = byPid.get(cursor.ppid);
+  }
+  return false;
 }
 
 /**

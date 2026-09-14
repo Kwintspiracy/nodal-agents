@@ -1,267 +1,190 @@
-// orphan-ownership.test.ts — regression for the incident of 2026-09-14 (#97).
+// orphan-ownership.test.ts — whose Postgres is this?
 //
-// Starting a second, isolated stack killed the MAIN install's Postgres. Two
-// defects, one line apart:
+// The incident of 2026-09-14 (#97): starting a second, isolated stack killed
+// the MAIN install's Postgres. Ownership was decided by the embedded BINARY
+// PATH, and two installs sharing one node_modules — a junctioned worktree, the
+// supported way to review a branch on Windows — resolve to the same path.
 //
-//   1. the ownership test accepted the embedded BINARY PATH as proof. Two
-//      installs sharing one node_modules (a junctioned worktree) resolve to the
-//      same path, so the probe claimed the other install's postmaster — pid
-//      41956, listening on :25444 — and killed it;
-//   2. every pid the process-table probe returned was printed next to
-//      `config.ports.postgres`. Thirteen lines announced :25450 for processes
-//      that had never listened on it.
+// Three passes of Codex review then found three more ways to attribute a
+// foreign cluster, each a new spelling of the same mistake: the data dir as a
+// substring of the command line, then as a bounded path, then the `-D`
+// argument, then `-c data_directory=`. The third pass named the pattern rather
+// than the next spelling — a process table cannot say whose a cluster is, since
+// `postgresql.conf` can redirect `data_directory` and never appears on any
+// command line.
 //
-// These cases run against rows shaped exactly like the ones WMI returns. They
-// cannot run the probe itself — doing so on this machine means killing
-// somebody's live database, which is the very bug — so the probe was split:
-// the OS call stays in postgres.ts, the DECISION lives in orphans.ts and is
-// what these tests hold.
+// So the question is turned around, and these cases hold the new rule: the DATA
+// DIRECTORY answers, the process table only confirms. `postmaster.pid` is
+// written BY the postmaster that holds this directory — true by construction,
+// not by resemblance.
+//
+// Rows here are shaped exactly like the ones WMI returns. The probe itself
+// cannot run in a suite: doing so on this machine means killing somebody's live
+// database, which is the very bug.
 
 import { describe, it, expect } from 'vitest';
 import {
-  classifyPostgresProcesses,
+  ownedPostgresPids,
   measuredPort,
   formatForeignSkip,
   parseProcessRows,
+  type LockfileClaim,
   type PostgresProcessRow,
 } from '../lib/orphans.ts';
 
 const OURS = 'C:\\Users\\kwint\\AppData\\Local\\Temp\\wt-97\\.nodalai\\pg-data';
-const THEIRS = 'C:\\Users\\kwint\\.nodalai\\pg-data';
 
 /** The shared embedded binary — identical for both installs, which is the point. */
 const BIN = 'C:/Users/kwint/node_modules/@embedded-postgres/windows-x64/native/bin/postgres.exe';
 
-function postmaster(pid: number, dataDir: string): PostgresProcessRow {
-  return { pid, ppid: 1, commandLine: `"${BIN}" -D "${dataDir}"` };
+function postmaster(
+  pid: number,
+  dataDir: string,
+  startedAt = 1_700_000_000_000,
+): PostgresProcessRow {
+  return { pid, ppid: 1, commandLine: `"${BIN}" -D "${dataDir}"`, startedAt };
 }
 
-function ioWorker(pid: number, parent: number): PostgresProcessRow {
+function ioWorker(pid: number, parent: number, startedAt = 1_700_000_001_000): PostgresProcessRow {
   // The real shape, seen live on 2026-08-21: no data dir anywhere on the line.
-  return { pid, ppid: parent, commandLine: `"${BIN}" --forkchild="io_worker" ${parent}` };
+  return {
+    pid,
+    ppid: parent,
+    commandLine: `"${BIN}" --forkchild="io_worker" ${parent}`,
+    startedAt,
+  };
 }
 
-describe('classifyPostgresProcesses', () => {
-  it('two installs sharing node_modules: only OUR postmaster is owned', () => {
-    const rows = [postmaster(8932, OURS), postmaster(41956, THEIRS)];
+/** What our own lockfile claims, consistent with `postmaster()`'s default. */
+const claims = (pid: number, startedAtSeconds: number | null = 1_700_000_000): LockfileClaim => ({
+  pid,
+  startedAtSeconds,
+});
 
-    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
-
-    expect(owned).toEqual([8932]);
-    expect(skipped.map((s) => s.pid)).toEqual([41956]);
-  });
-
-  it('a NEIGHBOUR whose data dir merely starts with ours is not ours', () => {
-    // The incident of 2026-09-14 came from proving ownership with a substring.
-    // The fix replaced one substring (the binary path) with another (the data
-    // dir), and a sibling install one suffix away — pg-data / pg-data2, or a
-    // pg-data.bak kept beside it — walked straight back through the same door:
-    // its postmaster AND its workers were claimed, and `up` kills what it
-    // claims.
-    const voisin = `${OURS}2`;
-    const rows = [postmaster(8932, OURS), postmaster(41956, voisin), ioWorker(7100, 41956)];
-
-    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
-
-    expect(owned).toEqual([8932]);
-    expect(skipped.map((s) => s.pid)).toEqual([41956, 7100]);
-  });
-
-  it('a data dir written with a trailing separator names the same cluster', () => {
-    const rows = [postmaster(8932, OURS)];
-
-    expect(classifyPostgresProcesses(rows, OURS + '\\').owned).toEqual([8932]);
-  });
-
-  // Codex review of this PR, findings C1, C2 and C5. The path boundary added
-  // in 527c5148 accepted `/` and a space as the end of the argument — neither
-  // ends an argument — and it had LOST the tab the old `includes` accepted.
-  // Four foreign data dirs were still claimed, and ours could stop being
-  // recognised. What `-D` names is now read as an argument, and compared whole.
-  const foreign = (pid: number, commandLine: string): PostgresProcessRow => ({
-    pid,
-    ppid: 1,
-    commandLine,
-  });
-  const US = 'C:/install/pg-data';
-
-  it('a data dir NEXT TO ours is not ours, in any of the shapes found', () => {
-    for (const cmd of [
-      `postgres.exe -D "${US}/other"`, // a sub-directory
-      `postgres.exe -D "${US} backup"`, // a name that merely starts the same
-      `postgres.exe -D "${US}/../foreign"`, // a climb back out
-      `postgres.exe -D "${US}2"`,
-      `postgres.exe -D "${US}.bak"`,
-    ]) {
-      expect(classifyPostgresProcesses([foreign(101, cmd)], US).owned, cmd).toEqual([]);
-    }
-  });
-
-  it('our path somewhere OTHER than behind -D does not make the cluster ours', () => {
-    // C2: the cluster lives elsewhere, only its external PID file sits with us.
-    const cmd = `postgres.exe -D C:/foreign -c external_pid_file="${US}/foreign.pid"`;
-
-    expect(classifyPostgresProcesses([foreign(201, cmd)], US).owned).toEqual([]);
-  });
-
-  it('our postmaster is recognised however the argument is written', () => {
-    for (const cmd of [
-      `postgres.exe -D "${US}"`, // quoted
-      `postgres.exe -D ${US}`, // bare
-      `postgres.exe -D ${US}\t-p 5432`, // C5: separated by a tab
-      `postgres.exe -D"${US}"`, // glued
-      `postgres.exe --pgdata="${US}"`, // the long form
-      `postgres.exe --pgdata ${US}`,
-    ]) {
-      expect(classifyPostgresProcesses([foreign(301, cmd)], US).owned, cmd).toEqual([301]);
-    }
-  });
-
-  it('the LAST -D wins, as PostgreSQL itself does', () => {
-    // Codex review of this PR, pass 2, finding R1. `-D` is read with getopt:
-    // each occurrence overwrites the previous, so the server uses the LAST one.
-    // Taking the first meant claiming a cluster whose real data dir is
-    // somewhere else — and killing it — while refusing our own in the mirror
-    // case.
-    expect(
-      classifyPostgresProcesses([foreign(101, `postgres.exe -D ${US} -D C:/foreign`)], US).owned,
-    ).toEqual([]);
-    expect(
-      classifyPostgresProcesses([foreign(102, `postgres.exe -D C:/foreign -D ${US}`)], US).owned,
-    ).toEqual([102]);
-  });
-
-  it('-c data_directory overrides -D, so it decides', () => {
-    // Codex review of this PR, pass 2, finding R2. `data_directory` is a
-    // configuration setting, and a setting beats the command-line default: the
-    // server runs against IT, not against `-D`.
-    expect(
-      classifyPostgresProcesses(
-        [foreign(201, `postgres.exe -D ${US} -c data_directory=C:/foreign`)],
-        US,
-      ).owned,
-    ).toEqual([]);
-    expect(
-      classifyPostgresProcesses(
-        [foreign(202, `postgres.exe -D C:/foreign -c data_directory=${US}`)],
-        US,
-      ).owned,
-    ).toEqual([202]);
-  });
-
-  it('an io_worker of OUR postmaster is ours', () => {
+describe('ownedPostgresPids — the data directory answers', () => {
+  it('owns the pid our lockfile names, and its workers', () => {
     const rows = [postmaster(8932, OURS), ioWorker(5856, 8932)];
 
-    expect(classifyPostgresProcesses(rows, OURS).owned).toEqual([8932, 5856]);
+    const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
+
+    expect(owned).toEqual([8932, 5856]);
+    expect(skipped).toEqual([]);
   });
 
-  it('a parent that started AFTER its supposed child is a recycled pid, not a parent', () => {
-    // Codex review of this PR, finding C4. A foreign worker outlives its
-    // postmaster; the OS hands that freed pid to OUR postmaster. The rows then
-    // read as a family, and the worker — someone else's — is adopted and
-    // killed. Nothing in a pid says which generation it belongs to, but a
-    // creation date does: a parent cannot start after its own child.
-    const rows: PostgresProcessRow[] = [
-      { pid: 8932, ppid: 1, commandLine: `"${BIN}" -D "${OURS}"`, startedAt: 2_000 },
-      {
-        pid: 7100,
-        ppid: 8932,
-        commandLine: `"${BIN}" --forkchild="io_worker" 8932`,
-        startedAt: 1_000,
-      },
-    ];
+  it('owns NOTHING when no lockfile claims this directory', () => {
+    // The 2026-08-20 shape: a postmaster alive with its lockfile gone. The old
+    // code guessed from the command line and could be right; it could also kill
+    // a stranger, which it did. Refusing to guess is the trade, and it is here
+    // on purpose rather than by omission.
+    const rows = [postmaster(8932, OURS), ioWorker(5856, 8932)];
 
-    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
+    const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: null });
+
+    expect(owned).toEqual([]);
+    expect(skipped.map((s) => s.pid)).toEqual([8932, 5856]);
+    expect(skipped[0]?.reason).toContain('no postmaster.pid');
+  });
+
+  it('a command line naming our directory does not make a cluster ours', () => {
+    // This is the whole reversal. The foreign postmaster carries our data dir on
+    // its command line — exactly what every previous rule looked at — and it is
+    // NOT ours, because our lockfile names someone else.
+    const rows = [postmaster(8932, OURS), postmaster(41956, OURS)];
+
+    const { owned } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
 
     expect(owned).toEqual([8932]);
-    expect(skipped.map((s) => s.pid)).toEqual([7100]);
   });
 
-  it('a worker older than nothing keeps its parent when the dates agree', () => {
-    const rows: PostgresProcessRow[] = [
-      { pid: 8932, ppid: 1, commandLine: `"${BIN}" -D "${OURS}"`, startedAt: 1_000 },
-      {
-        pid: 5856,
-        ppid: 8932,
-        commandLine: `"${BIN}" --forkchild="io_worker" 8932`,
-        startedAt: 2_000,
-      },
-    ];
+  it('refuses a RECYCLED pid: the process is younger than the start we recorded', () => {
+    // A lockfile survives a crash and the OS hands its pid to something else.
+    // No name, no path, no ancestry tells them apart. The creation date does.
+    const rows = [postmaster(8932, OURS, 1_700_000_900_000)]; // fifteen minutes later
 
-    expect(classifyPostgresProcesses(rows, OURS).owned).toEqual([8932, 5856]);
+    const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
+
+    expect(owned).toEqual([]);
+    expect(skipped[0]?.reason).toContain('lockfile says');
   });
 
-  it('an io_worker of the FOREIGN postmaster is not ours, whatever binary it runs', () => {
-    const rows = [postmaster(8932, OURS), postmaster(41956, THEIRS), ioWorker(7100, 41956)];
+  it('accepts the small gap between the postmaster starting and writing its lockfile', () => {
+    const rows = [postmaster(8932, OURS, 1_700_000_000_000 + 900)];
 
-    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
+    expect(ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) }).owned).toEqual([8932]);
+  });
+
+  it('refuses when the lockfile names a pid that is not a live postgres', () => {
+    const rows = [postmaster(41956, OURS)];
+
+    const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
+
+    expect(owned).toEqual([]);
+    expect(skipped[0]?.reason).toContain('is not a live postgres');
+  });
+
+  it('trusts the lockfile alone when the table could NOT be read', () => {
+    // Every non-Windows host, and any probe that failed. Nothing confirms, so
+    // nothing extra is claimed either: the lockfile pid, and no workers.
+    const { owned } = ownedPostgresPids({ rows: [], tableRead: false, claim: claims(8932) });
+
+    expect(owned).toEqual([8932]);
+  });
+
+  it('a worker of a FOREIGN postmaster is not adopted', () => {
+    const rows = [postmaster(8932, OURS), postmaster(41956, OURS), ioWorker(7100, 41956)];
+
+    const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
 
     expect(owned).toEqual([8932]);
     expect(skipped.map((s) => s.pid).sort((a, b) => a - b)).toEqual([7100, 41956]);
   });
 
-  it('a worker whose parent is not in the table at all is skipped, not guessed', () => {
-    const rows = [ioWorker(7100, 999999)];
+  it('a parent that started AFTER its child is a recycled pid, not a parent', () => {
+    // A foreign worker outlives its postmaster; the OS hands that freed pid to
+    // OURS. The rows read as a family and the worker would be adopted.
+    const rows = [postmaster(8932, OURS, 2_000_000), ioWorker(7100, 8932, 1_000_000)];
 
-    const { owned, skipped } = classifyPostgresProcesses(rows, OURS);
+    const { owned } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932, 2_000) });
 
-    expect(owned).toEqual([]);
+    expect(owned).toEqual([8932]);
+  });
+
+  it('a worker whose parent is not in the table is skipped, not guessed', () => {
+    const rows = [postmaster(8932, OURS), ioWorker(7100, 999999)];
+
+    const { owned, skipped } = ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) });
+
+    expect(owned).toEqual([8932]);
     expect(skipped[0]?.reason).toContain('999999');
   });
 
-  it('matches the data dir across slash styles and case', () => {
-    const rows: PostgresProcessRow[] = [
-      { pid: 42, ppid: 1, commandLine: `"${BIN}" -D "${OURS.toUpperCase().replace(/\\/g, '/')}"` },
+  it('reaches a worker through an intermediate process of ours', () => {
+    const rows = [
+      postmaster(8932, OURS),
+      ioWorker(5856, 8932),
+      ioWorker(5857, 5856, 1_700_000_002_000),
     ];
 
-    expect(classifyPostgresProcesses(rows, OURS).owned).toEqual([42]);
+    expect(ownedPostgresPids({ rows, tableRead: true, claim: claims(8932) }).owned).toEqual([
+      8932, 5856, 5857,
+    ]);
   });
+});
 
-  it('a corrupt parent chain does not loop forever', () => {
-    const rows: PostgresProcessRow[] = [
-      { pid: 10, ppid: 11, commandLine: 'postgres.exe --forkchild="io_worker" 11' },
-      { pid: 11, ppid: 10, commandLine: 'postgres.exe --forkchild="io_worker" 10' },
-    ];
-
-    expect(classifyPostgresProcesses(rows, OURS).owned).toEqual([]);
-  });
-
-  it('reports the refusal with a machine code, not a sentence', () => {
-    const { skipped } = classifyPostgresProcesses([postmaster(41956, THEIRS)], OURS);
-
-    const line = formatForeignSkip(skipped[0]!);
+describe('formatForeignSkip', () => {
+  it('reports a refusal as a CODE with its pid, never a sentence', () => {
+    const line = formatForeignSkip({ pid: 41956, reason: 'ancestry=1 does not reach 8932' });
 
     expect(line).toMatch(/^ORPHAN_PROBE_FOREIGN_POSTGRES_SKIPPED pid=41956 reason=\S/);
   });
 });
 
-describe('measuredPort', () => {
-  const listeners = [
-    { name: 'web', port: 3000, pid: 111 },
-    { name: 'postgres', port: 25450, pid: 222 },
-  ];
-
-  it('gives a pid the port it was OBSERVED on', () => {
-    expect(measuredPort(222, listeners)).toBe(25450);
-  });
-
-  it('gives no port to a pid that listens on none of our ports', () => {
-    // pid 41956 was the other install's postmaster on :25444 — a port this
-    // config never mentions. It must not be stamped with ours.
-    expect(measuredPort(41956, listeners)).toBeNull();
-  });
-
-  it('gives no port when nothing was measured at all', () => {
-    expect(measuredPort(222, [])).toBeNull();
-  });
-});
-
 describe('parseProcessRows', () => {
-  // The Codex review of this PR pointed at a hole, and it was real: nothing
-  // tested the parsing, because it lived inside the probe and the probe cannot
-  // run in a suite. The shape below is a VERBATIM line from the real command,
-  // taken by running it on this machine — note the pipes inside the command
-  // line itself, which is why only the first three separators are cut.
+  // The review pointed at a hole, and it was real: nothing tested the parsing,
+  // because it lived inside a probe that cannot run in a suite. The shape below
+  // is a VERBATIM line from the real command, taken by running it on this
+  // machine — note the pipes inside the command line itself, which is why only
+  // the first three separators are cut.
   const REAL =
     '55768|45420|1789376176154|powershell -NoProfile -Command "Get-CimInstance ' +
     'Win32_Process -Filter \\"Name=\'postgres.exe\'\\" | ForEach-Object { $ms | 0 }"';
@@ -294,5 +217,26 @@ describe('parseProcessRows', () => {
     const [row] = parseProcessRows('101|1|0|');
 
     expect(row).toEqual({ pid: 101, ppid: 1, commandLine: '' });
+  });
+});
+
+describe('measuredPort', () => {
+  const listeners = [
+    { name: 'web', port: 3000, pid: 111 },
+    { name: 'postgres', port: 25450, pid: 222 },
+  ];
+
+  it('gives a pid the port it was OBSERVED on', () => {
+    expect(measuredPort(222, listeners)).toBe(25450);
+  });
+
+  it('gives no port to a pid that listens on none of our ports', () => {
+    // pid 41956 was the other install's postmaster on :25444 — a port this
+    // config never mentions. It must not be stamped with ours.
+    expect(measuredPort(41956, listeners)).toBeNull();
+  });
+
+  it('gives no port when nothing was measured at all', () => {
+    expect(measuredPort(222, [])).toBeNull();
   });
 });
