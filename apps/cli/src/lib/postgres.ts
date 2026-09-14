@@ -100,8 +100,10 @@ function sameDirectory(a: string, b: string): boolean {
 }
 
 /**
- * The PID of a postmaster that is BOTH recorded for this data dir AND still
- * alive, or null.
+ * The PID recorded for this data dir, when it is not known to have exited —
+ * otherwise null. Not "alive": `isPidRunning` leans conservative on any probe
+ * error that is not ESRCH, and this name inherits that limit rather than
+ * hiding it.
  *
  * This is the only reliable way to see a dead-but-not-gone Postgres. Detection
  * by listening port cannot: a postmaster that crashed its startup (or is mid
