@@ -192,7 +192,20 @@ jobs:
   # dans l'angle mort qu'il vient de fermer.
   ci-windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    # 35 min, et non 25. Mesure sur les 15 derniers runs du job (13/09) :
+    # médiane 7,7 min, pire cas 24,8 min (run 34763241321). L'écart n'est pas
+    # une suite qui grossit, c'est le cache turbo : à chaud « Unit tests » dure
+    # 248 s et « Typecheck » 27 s (run 34774241407, 5,9 min au total) ; à froid,
+    # 1125 s et 270 s (24,8 min). Les deux étapes sont les seules qui comptent,
+    # tout le reste du job tient en ~80 s. Un plafond à 25 min coupait donc les
+    # runs à cache froid — c'est ce qui a annulé le job de #87 à 24 min sans
+    # qu'aucun test ne soit rouge (issue #89). 24,8 + 30 % = 32,2, arrondi à 35.
+    #
+    # Rien d'évident à gagner dans le job lui-même : pas de Playwright ici, le
+    # cache pnpm et le cache turbo sont déjà en place, lint et format ne sont
+    # pas rejoués, et turbo tourne déjà à --concurrency=3. La piste réelle
+    # reste le montage des bases de test par fichier, hors de ce lot.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
