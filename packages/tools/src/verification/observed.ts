@@ -79,12 +79,25 @@ export function observedDeliverableKeys(input: {
   readonly changedFiles: readonly MutationTarget[];
   readonly dirTargets: readonly MutationTarget[];
   readonly workspaceRoots: readonly string[];
+  /**
+   * Le MÊME prédicat que l'intention (`projects/declared.ts`) : manifeste sur
+   * le disque OU projet déclaré. Sans lui, les clés des deux côtés divergent
+   * dès qu'un projet déclaré n'a pas de manifeste, et une écriture bel et bien
+   * constatée sur le disque laisse `produced` faux — mesuré, revue Codex
+   * post-merge de la PR #66, constat C4. Omis = `hasMarker` seul.
+   */
+  readonly isProjectRoot?: (dir: string) => boolean;
 }): ReadonlySet<string> {
   const keys = new Set<string>();
   const rebasedFiles = rebaseOntoLexicalRoots(input.changedFiles, input.workspaceRoots);
   const rebasedDirs = rebaseOntoLexicalRoots(input.dirTargets, input.workspaceRoots);
+  const isProjectRoot = input.isProjectRoot ?? hasMarker;
   const projects = (targets: readonly MutationTarget[]): readonly ProjectRoot[] =>
-    resolveProjectRoots({ targets, workspaceRoots: input.workspaceRoots, hasMarker });
+    resolveProjectRoots({
+      targets,
+      workspaceRoots: input.workspaceRoots,
+      hasMarker: isProjectRoot,
+    });
   for (const p of projects(rebasedFiles.filter((t) => t.deliverableType === 'code_project'))) {
     keys.add(p.key);
   }

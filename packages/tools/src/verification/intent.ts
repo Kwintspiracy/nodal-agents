@@ -48,6 +48,8 @@ import type { ToolContext } from '../types';
 // autant que l'intention, et deux copies auraient fini par voir deux projets
 // différents pour la même écriture.
 import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
+// La déclaration d'un projet vaut manifeste — pour le type comme pour la clé.
+import { loadDeclaredCodeRoots, projectRootPredicate } from '../projects/declared';
 // La clé d'un document se calcule dans UN module, partagé avec la carte de
 // l'outil qui l'écrit (P12) : voir office-file-key.ts pour ce qui divergeait.
 import { officeFileDeliverables } from './office-file-key';
@@ -247,6 +249,15 @@ interface ResolvedDeliverable {
 async function resolveDeliverables(
   targets: readonly MutationTarget[],
   workspaceRoots: readonly string[],
+  /**
+   * « Cette racine EST un projet » — le manifeste sur le disque OU la
+   * déclaration en base (`projects/declared.ts`). La déclaration décidait déjà
+   * du TYPE (PR #66) ; elle décide maintenant aussi de l'IDENTITÉ, sans quoi
+   * une écriture sous un projet déclaré sans manifeste salissait un
+   * sous-dossier qui n'est le projet de personne (revue Codex post-merge de la
+   * PR #66, constat C4).
+   */
+  isProjectRoot: (dir: string) => boolean,
 ): Promise<readonly ResolvedDeliverable[]> {
   const rebased = rebaseOntoLexicalRoots(targets, workspaceRoots);
   const byType = new Map<DeliverableType, MutationTarget[]>();
@@ -281,14 +292,14 @@ async function resolveDeliverables(
           resolveProjectRoots({
             targets: group.filter((t) => t.scope !== 'precaution'),
             workspaceRoots,
-            hasMarker,
+            hasMarker: isProjectRoot,
           }).map((p) => p.key),
         );
         const expanded = await expandWorkspaceRoots(group, workspaceRoots);
         for (const project of resolveProjectRoots({
           targets: expanded,
           workspaceRoots,
-          hasMarker,
+          hasMarker: isProjectRoot,
         })) {
           out.push({
             deliverableType,
@@ -539,7 +550,11 @@ export async function writeMutationIntent(
   const workspaceRoots = (ctx.workspaces ?? []).map((w) => normalizePath(w.path));
   let deliverables: readonly ResolvedDeliverable[];
   try {
-    deliverables = await resolveDeliverables(targets, workspaceRoots);
+    deliverables = await resolveDeliverables(
+      targets,
+      workspaceRoots,
+      projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId)),
+    );
   } catch (err) {
     const code = err instanceof IntentFailure ? err.code : 'intent_resolve_failed';
     console.error(

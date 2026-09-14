@@ -30,6 +30,7 @@ import {
   snapshotFileTargets,
 } from './verification/observed';
 import { attachProductionToProject } from './projects/attach';
+import { loadDeclaredCodeRoots, projectRootPredicate } from './projects/declared';
 
 // ─── Outils d'exécution de code ───────────────────────────────────────────────
 
@@ -684,6 +685,10 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         changedFiles: await changedFileTargets(mutationTargets, filesBefore ?? new Map()),
         dirTargets: mutationTargets.filter((t) => t.kind === 'dir'),
         workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
+        // La MÊME règle de projet que l'intention : sinon les deux calculent
+        // deux clés pour la même écriture, et `produced` reste faux sur un
+        // fichier constaté (revue Codex post-merge de la PR #66, constat C4).
+        isProjectRoot: projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId)),
       });
       await markDeliverablesProduced(ctx.db, ctx.jobId, mutationDeliverables, observed);
       await attachProductionToProject(
