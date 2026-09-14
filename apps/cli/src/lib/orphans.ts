@@ -93,8 +93,9 @@ export function parseProcessRows(stdout: string): PostgresProcessRow[] {
 }
 
 /**
- * Did `parent` start strictly after `child`? Unknowable — and therefore false —
- * when either date is missing.
+ * Is `parent` a plausible parent of `child` — did it start no LATER than it?
+ * Equal instants pass: a postmaster and the worker it forks can land in the
+ * same millisecond. A missing date on either side is a NO, not a maybe.
  */
 function isPlausibleParent(parent: PostgresProcessRow, child: PostgresProcessRow): boolean {
   // Without both dates there is nothing to check, and an unchecked link is how
@@ -166,8 +167,11 @@ const START_TIME_TOLERANCE_MS = 2_000;
  *   · the pid is in the table, so it is a postgres process (the probe filters
  *     on the executable name) and it is alive;
  *   · its creation date matches the start time the postmaster itself wrote on
- *     line 3 of the lockfile. A recycled pid fails this and nothing else can —
- *     no name, no path, no ancestry would have caught it.
+ *     line 3 of the lockfile, within a small window. An ordinary recycled pid
+ *     fails this and nothing else would have caught it — no name, no path, no
+ *     ancestry. It is not absolute: a pid recycled within that window, or a
+ *     wall clock wound back before the stranger was born, still reads as a
+ *     match. `postgres.ts` says what closes those and what does not.
  *
  * Workers are then reached by ANCESTRY towards that one confirmed pid, never by
  * reading their command line. A `--forkchild="io_worker"` carries no data dir

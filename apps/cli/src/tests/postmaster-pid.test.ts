@@ -13,7 +13,7 @@
 // Postgres actually writes.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -119,9 +119,9 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
   it('accepts the same directory written with the other separators', () => {
     // Separators are interchangeable on Windows only, and case has its own case
     // below. Mixing both into one assertion made a CORRECT Linux implementation
-    // fail (pass-9 finding R4).
-    const other =
-      process.platform === 'win32' ? dataDir.split('\\').join('/').toUpperCase() : dataDir;
+    // fail (pass-9 finding R4), and left case riding along on Windows where it
+    // proved nothing about separators (pass-10 finding R2).
+    const other = process.platform === 'win32' ? dataDir.split('\\').join('/') : dataDir;
     writeFileSync(
       join(dataDir, 'postmaster.pid'),
       `${process.pid}\n${other}\n1755600000\n25432\n`,
@@ -129,6 +129,29 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
     );
 
     expect(readPostmasterPid(dataDir)).toBe(process.pid);
+  });
+
+  it('treats a literal backslash as a NAME off Windows, not a separator', () => {
+    // Pass-10 finding R2. The case above compares `dataDir` with itself off
+    // Windows, so putting the backslash folding back left it green. A backslash
+    // is a legal character in a POSIX filename, and this case turns on that.
+    //
+    // A real directory `<dataDir>/sub`, holding a lockfile whose line 2 spells
+    // its own path with a BACKSLASH before `sub`. On Windows that spelling is
+    // the very same directory, so the claim stands. Off Windows it names
+    // something else — a sibling whose name contains a backslash — so the claim
+    // must be refused.
+    const sub = join(dataDir, 'sub');
+    mkdirSync(sub);
+    writeFileSync(
+      join(sub, 'postmaster.pid'),
+      `${process.pid}\n${dataDir}\\sub\n1755600000\n25432\n`,
+      'utf-8',
+    );
+
+    expect(readPostmasterClaim(sub)?.pid ?? null).toBe(
+      process.platform === 'win32' ? process.pid : null,
+    );
   });
 
   it('folds case only where the filesystem does', () => {
@@ -140,11 +163,7 @@ describe('readPostmasterPid — the lockfile must be OURS', () => {
     const shouted = dataDir.toUpperCase();
     writeFileSync(
       join(dataDir, 'postmaster.pid'),
-      `${process.pid}
-${shouted}
-1755600000
-25432
-`,
+      `${process.pid}\n${shouted}\n1755600000\n25432\n`,
       'utf-8',
     );
 
@@ -189,16 +208,16 @@ describe('processStartedAtMs — dating ONE pid, without a process table', () =>
   // cheaply; asking it is what closes the hole without giving up cleanup.
   const onLinux = process.platform === 'linux';
 
-  it.runIf(onLinux)('dates this very process to when it actually started', () => {
+  it.runIf(onLinux)('dates this very process to when it actually started', async () => {
+    // The age has to EXCEED the guard's two-second window, or a version
+    // answering `Date.now()` passes too (pass-10 finding R1). Asserting the age
+    // failed a fast run; WAITING for it neither fails nor stops discriminating.
+    while (process.uptime() < 2.5) await new Promise((r) => setTimeout(r, 100));
     const started = processStartedAtMs(process.pid);
 
     expect(started).not.toBeNull();
-    // A function answering `Date.now()` is wrong by exactly the process's age,
-    // so this only discriminates once that age exceeds the two-second window
-    // the guard allows. ASSERTING that age failed a correct implementation on a
-    // fast targeted run (pass-9 finding R4); the vitest process is seconds old
-    // in any full run, and when it is not, this case simply proves less rather
-    // than reporting a defect that is not there.
+    // Node knows how long IT has been running, so the answer is checked against
+    // that, within the same two seconds the ownership guard itself allows.
     // A 24-hour window would also accept `Date.now()` — that is, a function
     // that reads nothing and answers "now" (pass-6 finding R4). Node knows how
     // long IT has been running, so the answer is checked against that, within

@@ -324,8 +324,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     }
   }
 
-  // THIRD probe, when the first two came up empty: ask the OS which postgres
-  // processes are running against our data dir.
+  // THIRD probe: ask the OS which postgres processes this install owns. It runs
+  // whatever the two above found — see the note below the paragraph.
   //
   // Both probes above read state a crash can destroy — a listening socket, and
   // our own lockfile. Seen live on 2026-08-20: a postmaster alive with neither,
