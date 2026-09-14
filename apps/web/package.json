@@ -10,6 +10,7 @@
     "lint": "eslint src && node scripts/check-no-arbitrary-text.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "e2e": "playwright test",
     "e2e:up": "node tests/e2e/up-with-oauth-mock.mjs",
     "figma:parse": "figma connect parse",

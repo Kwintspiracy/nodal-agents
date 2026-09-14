@@ -65,11 +65,17 @@ const DESCRIBE_TIMEOUT_MS = 210_000;
 
 // ─── Suite-level guards ───────────────────────────────────────────────────────
 
+// `beforeAll` ne prend PAS de délai en deuxième argument : ses surcharges sont
+// `(fn)` et `(titre, fn)`. Le `30_000` faisait donc lire la fonction comme un
+// TITRE et le nombre comme le corps du hook. Invisible parce que le `tsconfig`
+// d'`apps/web` exclut `tests/` : aucun compilateur ne lit ce fichier. Le délai
+// se pose depuis l'intérieur, par `test.setTimeout`.
 test.beforeAll(async () => {
+  test.setTimeout(30_000);
   await requireLiveStack();
   // Probe LM Studio — fail fast with clear message if it's not up.
   await requireLmStudio(15_000);
-}, 30_000 /* hook timeout */);
+});
 
 // ─── Scenario A — Proactive save_memory ──────────────────────────────────────
 
