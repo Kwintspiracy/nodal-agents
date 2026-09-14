@@ -12,7 +12,7 @@ import {
   runMigrations,
   stopOrphanPostgres,
   livePostmasterPid,
-  postgresPidsForDataDir,
+  postgresProcessesForDataDir,
   LEGACY_PG_PASSWORD,
 } from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
@@ -254,7 +254,24 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // Which postgres processes belong to THIS data dir. Asked once: the answer
   // decides both whether a listener on our configured port may be killed and
   // what the last-resort probe below may report.
-  const ownedPgPids = new Set<number>(await postgresPidsForDataDir());
+  const pgTable = await postgresProcessesForDataDir();
+  const ownedPgPids = new Set<number>(pgTable.owned);
+
+  /**
+   * Is this pid a postmaster of OURS?
+   *
+   * `postmaster.pid` alone does not settle it (finding C3). The lockfile can be
+   * stale, and the pid it records can since have been handed to somebody else's
+   * process — which `up` would then kill. When the process table COULD be read,
+   * it is the arbiter: one of ours has to be in it. When it could NOT be read
+   * (any non-Windows host, or a probe that failed — two cases now told apart),
+   * the lockfile is all there is, and it decides, exactly as before.
+   */
+  const isOurPostmasterPid = (pid: number): boolean => {
+    if (ownedPgPids.has(pid)) return true;
+    if (pgTable.read) return false;
+    return livePostmasterPid() === pid;
+  };
 
   const orphans: Array<{ name: string; port: number | null; pid: number }> = [];
   const strangers: Array<{ name: string; port: number; pid: number }> = [];
@@ -263,8 +280,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // ownership test above cannot speak for it — the DATA DIR does. Holding
     // our configured port proves nothing: another install can sit there, and
     // killing it is exactly the incident of 2026-09-14.
-    const ours =
-      name === 'postgres' ? ownedPgPids.has(pid) || livePostmasterPid() === pid : ourPids.has(pid);
+    const ours = name === 'postgres' ? isOurPostmasterPid(pid) : ourPids.has(pid);
     if (ours) orphans.push({ name, port, pid });
     else strangers.push({ name, port, pid });
   }
@@ -291,7 +307,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // reported all ports free throughout).
   if (!orphans.some((o) => o.name === 'postgres')) {
     const pgPid = livePostmasterPid();
-    if (pgPid !== null) {
+    if (pgPid !== null && isOurPostmasterPid(pgPid)) {
       orphans.push({ name: 'postgres', port: measuredPort(pgPid, listeners), pid: pgPid });
     }
   }
@@ -338,9 +354,13 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     //   2. tree-kill as a fallback, then
     //   3. VERIFY the pid is dead. If it survives, abort loudly with an
     //      actionable message instead of rotating into the misleading FATAL.
-    const pgOrphan = orphans.find((o) => o.name === 'postgres');
-    if (pgOrphan) {
-      await stopOrphanPostgres();
+    // EVERY postgres orphan, not just the first (finding C7). The report listed
+    // them all, then `find` stopped one and the loop below skipped the rest by
+    // name: a postmaster could stay alive while `up` announced "Orphans cleaned
+    // up" and started a second server on the same data dir.
+    const pgOrphans = orphans.filter((o) => o.name === 'postgres');
+    if (pgOrphans.length > 0) await stopOrphanPostgres();
+    for (const pgOrphan of pgOrphans) {
       if (isPidAlive(pgOrphan.pid)) {
         try {
           // Kill the postmaster DIRECTLY — NOT `taskkill /T`. Walking the

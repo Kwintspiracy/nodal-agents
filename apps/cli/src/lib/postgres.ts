@@ -3,27 +3,50 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
-import {
-  classifyPostgresProcesses,
-  formatForeignSkip,
-  type PostgresProcessRow,
-} from './orphans.ts';
+import { classifyPostgresProcesses, formatForeignSkip, parseProcessRows } from './orphans.ts';
+
+/** What a reading of the process table found — and whether it could read. */
+export interface ProcessTableReading {
+  /** False when the table could not be read at all: conclude NOTHING from `owned`. */
+  read: boolean;
+  owned: number[];
+}
 
 /**
  * The postmaster PID recorded in `<dataDir>/postmaster.pid`, or null when the
- * lockfile is absent or unreadable. Says nothing about whether that process is
- * still alive — see `livePostmasterPid` for that.
+ * lockfile is absent, unreadable, or written for ANOTHER data directory. Says
+ * nothing about whether that process is still alive — see `livePostmasterPid`.
+ *
+ * Line 2 of the lockfile is the data directory the postmaster was started with.
+ * Checking it costs nothing and catches a lockfile that was copied, restored
+ * from a backup, or left behind by a different cluster — a file whose pid we
+ * would otherwise hand straight to `SIGKILL` (finding C3). A lockfile too old
+ * to carry the line is accepted as before, so nothing that worked stops.
  */
 export function readPostmasterPid(dataDir: string = PG_DATA_DIR): number | null {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return null;
   try {
-    const firstLine = readFileSync(pidFile, 'utf-8').split('\n')[0]?.trim() ?? '';
-    const pid = Number.parseInt(firstLine, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const lines = readFileSync(pidFile, 'utf-8').split('\n');
+    const pid = Number.parseInt(lines[0]?.trim() ?? '', 10);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    const recorded = lines[1]?.trim();
+    if (recorded !== undefined && recorded !== '' && !sameDirectory(recorded, dataDir)) {
+      process.stderr.write(
+        `POSTMASTER_PID_FOREIGN_DATA_DIR pid=${pid} recorded=${recorded} expected=${dataDir}\n`,
+      );
+      return null;
+    }
+    return pid;
   } catch {
     return null;
   }
+}
+
+/** Two spellings of one directory — case and separators, as everywhere else. */
+function sameDirectory(a: string, b: string): boolean {
+  const clean = (v: string): string => v.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+  return clean(a) === clean(b);
 }
 
 /**
@@ -64,14 +87,30 @@ export function livePostmasterPid(dataDir: string = PG_DATA_DIR): number | null 
  * reported. Both earlier probes rely on state the crash can destroy; this one
  * relies on the process table, which it cannot.
  *
- * Windows-only (WMI). Returns [] elsewhere and on any failure: this is an extra
- * chance to notice, never a reason to fail a boot.
+ * Windows-only (WMI). Everywhere else, and on any failure, it says so with
+ * `read: false` rather than an empty list: "I could not look" and "there is
+ * nothing there" are different facts, and only one of them licenses a kill.
+ *
+ * ONE way to recognise one of ours: the DATA DIR, read off the `-D` argument.
+ * A `--forkchild="io_worker"` (PostgreSQL 18, seen live 2026-08-21 surviving a
+ * crash with no data dir on its command line) is judged by its ancestry
+ * instead — see `classifyPostgresProcesses`.
+ *
+ * The embedded binary path used to be accepted as a second proof, on the claim
+ * that it points inside THIS install's node_modules. Two installs sharing one
+ * node_modules — a junctioned worktree — make that false, and on 2026-09-14
+ * the probe claimed, and killed, another install's postmaster (pid 41956,
+ * listening on :25444). The path proves nothing; the data dir does.
  */
-export async function postgresPidsForDataDir(dataDir: string = PG_DATA_DIR): Promise<number[]> {
-  if (process.platform !== 'win32') return [];
+export async function postgresProcessesForDataDir(
+  dataDir: string = PG_DATA_DIR,
+): Promise<ProcessTableReading> {
+  // Not Windows: the table is not READ here, it is not readable at all. Saying
+  // `read: false` keeps the caller from concluding anything from the silence.
+  if (process.platform !== 'win32') return { read: false, owned: [] };
   const { execa } = await import('execa');
   try {
-    const { stdout } = await execa(
+    const { stdout, stderr, exitCode } = await execa(
       'powershell',
       [
         '-NoProfile',
@@ -80,44 +119,36 @@ export async function postgresPidsForDataDir(dataDir: string = PG_DATA_DIR): Pro
         // CommandLine is where the -D <dataDir> argument lives. Matching on it
         // is what ties a bare `postgres.exe` to OUR cluster rather than to some
         // other Postgres the user runs.
+        // `CreationDate` tells one generation of a pid from the next (finding
+        // C4). It goes BEFORE the command line, the only field that may itself
+        // carry a `|`.
         'Get-CimInstance Win32_Process -Filter "Name=\'postgres.exe\'" | ' +
-          'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CommandLine)" }',
+          'ForEach-Object { $ms = if ($_.CreationDate) ' +
+          "{ [int64]($_.CreationDate.ToUniversalTime() - [datetime]'1970-01-01T00:00:00Z')" +
+          '.TotalMilliseconds } else { 0 }; ' +
+          '"$($_.ProcessId)|$($_.ParentProcessId)|$ms|$($_.CommandLine)" }',
       ],
       { reject: false, timeout: 10_000 },
     );
-    // ONE way to recognise one of ours: the DATA DIR.
-    //
-    // It is present on the POSTMASTER's command line (`postgres.exe -D <dir>`)
-    // and nowhere else, so a `--forkchild="io_worker"` (PostgreSQL 18, seen
-    // live 2026-08-21 surviving a crash with no data dir on its command line)
-    // is judged by its ancestry instead — see classifyPostgresProcesses.
-    //
-    // The embedded binary path used to be accepted as a second proof, on the
-    // claim that it points inside THIS install's node_modules. Two installs
-    // sharing one node_modules — a junctioned worktree — make that false, and
-    // on 2026-09-14 the probe claimed, and killed, another install's postmaster
-    // (pid 41956, listening on :25444). The path proves nothing; the data dir
-    // does.
-    const rows: PostgresProcessRow[] = [];
-    for (const line of stdout.split(/\r?\n/)) {
-      const first = line.indexOf('|');
-      const second = line.indexOf('|', first + 1);
-      if (first < 0 || second < 0) continue;
-      const pid = Number.parseInt(line.slice(0, first), 10);
-      const ppid = Number.parseInt(line.slice(first + 1, second), 10);
-      if (!Number.isInteger(pid) || pid <= 0) continue;
-      rows.push({
-        pid,
-        ppid: Number.isInteger(ppid) ? ppid : 0,
-        commandLine: line.slice(second + 1),
-      });
+    if (exitCode !== 0) {
+      // The probe could not ANSWER. That is not the same fact as "no Postgres
+      // is running", and telling the two apart is the whole point: a boot that
+      // reasons about a process table it never read is guessing (finding C6,
+      // invariant #4).
+      process.stderr.write(
+        `ORPHAN_PROBE_UNREADABLE exit=${String(exitCode)} stderr=${stderr.trim().slice(0, 200)}\n`,
+      );
+      return { read: false, owned: [] };
     }
-    const { owned, skipped } = classifyPostgresProcesses(rows, dataDir);
+    const { owned, skipped } = classifyPostgresProcesses(parseProcessRows(stdout), dataDir);
     // Loud, not silent: a candidate left alone is reported with a code.
     for (const entry of skipped) process.stderr.write(`${formatForeignSkip(entry)}\n`);
-    return owned;
-  } catch {
-    return [];
+    return { read: true, owned };
+  } catch (err) {
+    process.stderr.write(
+      `ORPHAN_PROBE_UNREADABLE error=${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return { read: false, owned: [] };
   }
 }
 
