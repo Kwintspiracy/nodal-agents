@@ -100,6 +100,25 @@ describe('document — identité et configuration', () => {
     });
     expect((encore as ReadyConfig).manifestHash).toBe((apres as ReadyConfig).manifestHash);
   });
+
+  it('le manifeste suit le CONTENU, pas la taille ni la date', async () => {
+    // Passe 2 de la dette #66, constat R1. La première empreinte prenait taille
+    // et mtime, et laissait donc passer une réécriture de MÊME TAILLE dans la
+    // même granularité de mtime — et ce test-ci ne le voyait pas, puisqu'il
+    // changeait la longueur. Deux contenus de longueur identique.
+    const p = write('meme-taille.md', '# aaaa\n');
+    const avant = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(p),
+    });
+    writeFileSync(p, '# bbbb\n');
+    const apres = await documentVerifier.loadConfig(null as never, {
+      entityId: 'e',
+      canonicalKey: documentVerifier.canonicalize(p),
+    });
+
+    expect((avant as ReadyConfig).manifestHash).not.toBe((apres as ReadyConfig).manifestHash);
+  });
 });
 
 describe('document — les trois constats communs', () => {
@@ -273,6 +292,43 @@ describe('document — bien formé, selon son type', () => {
     // Un vrai titre hors du bloc compte, et le bloc ne le mange pas.
     const vrai = write('fence-vrai.md', '# Titre\n\n```\n# exemple\n```\n');
     expect((await prove(vrai)).verdict).toBe('green');
+  });
+
+  it('un bloc clôturé ne se termine pas à la première fin de ligne', async () => {
+    // Passe 2 de la dette #66, constat R2. Le `$` de l'alternative, sous le
+    // drapeau `m`, s'accroche à CHAQUE fin de ligne : le bloc s'arrêtait donc
+    // au premier saut, et le retrait ne retirait presque rien. Trois verdicts
+    // faux, mesurés sur le vrai vérificateur.
+    const fauxTitreAuMilieu = write('fence-milieu.md', '```\ntexte\n# faux\n```\n');
+    expect((await prove(fauxTitreAuMilieu)).verdict).toBe('red');
+
+    const jamaisFerme = write('fence-ouvert.md', '```\ntexte\n# faux\n');
+    expect((await prove(jamaisFerme)).verdict).toBe('red');
+
+    // Une clôture PLUS LONGUE que l'ouverture est permise : le titre qui suit
+    // est bien hors du bloc, et le document a un titre.
+    const clotureLongue = write('fence-longue.md', '```\ntexte\n````\n# vrai\n');
+    expect((await prove(clotureLongue)).verdict).toBe('green');
+  });
+
+  it('une entité déclarée DANS le document ne le rend pas mal formé', async () => {
+    // Passe 2 de la dette #66, constat R3. `@xmldom/xmldom` ne lit pas le
+    // sous-ensemble interne d'un DOCTYPE et rapporte `entity not found` pour
+    // une entité parfaitement déclarée. Retenir `error` faisait rougir du XML
+    // valide — un faux rouge sur du travail correct.
+    const declaree = write(
+      'entite-declaree.svg',
+      '<!DOCTYPE svg [<!ENTITY x "bonjour">]>' +
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>&x;</text></svg>',
+    );
+    expect((await prove(declaree)).verdict).toBe('green');
+
+    // Et sans déclaration, l'entité inconnue reste rouge (le constat C6).
+    const inconnue = write(
+      'entite-inconnue.svg',
+      '<svg xmlns="http://www.w3.org/2000/svg">&nope;</svg>',
+    );
+    expect((await prove(inconnue)).verdict).toBe('red');
   });
 
   it('un HTML qui ne se referme pas est rouge', async () => {

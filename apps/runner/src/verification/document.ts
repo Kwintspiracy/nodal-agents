@@ -26,6 +26,7 @@
 // (invariant #4).
 
 import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, extname } from 'node:path';
 import { DOMParser } from '@xmldom/xmldom';
 import { Tokenizer, TokenizerMode, type Token } from 'parse5';
@@ -53,8 +54,8 @@ const documentDeliverableType = 'document' as const;
 export const DOCUMENT_MANIFEST_HASH = 'document-rules/v1';
 
 /**
- * L'empreinte du FICHIER au moment où la configuration est lue — taille et
- * mtime en nanosecondes, ou `absent` / `not-a-file`.
+ * L'empreinte du CONTENU du fichier au moment où la configuration est lue —
+ * un sha256, ou `absent` / `not-a-file`.
  *
  * Pourquoi elle entre dans le `manifestHash` (revue Codex post-merge de la
  * PR #66, constat C1, BLOQUANT). La primitive relit la configuration après la
@@ -67,13 +68,23 @@ export const DOCUMENT_MANIFEST_HASH = 'document-rules/v1';
  * passer un VERT sur un contenu qui n'était plus sur le disque.
  *
  * Le fichier EST la configuration d'un document : son empreinte est donc son
- * manifeste. Ce que cette empreinte ne voit pas, et le système de fichiers non
- * plus : une réécriture de même taille dans la même granularité de mtime.
+ * manifeste.
+ *
+ * C'est le CONTENU qui est haché, pas ses métadonnées. La première version
+ * prenait taille et mtime, et laissait passer une réécriture de même taille
+ * dans la même granularité de mtime — un résidu nommé dans le commit, que la
+ * passe 2 a refusé de considérer comme fermé, à raison : « annoncé » n'est pas
+ * « absent ». Un document tient dans quelques kilo-octets et la primitive le
+ * lit déjà pour le prouver ; le hacher coûte une lecture de plus et ne laisse
+ * rien passer.
  */
 async function fileStamp(path: string): Promise<string> {
   try {
-    const s = await stat(path, { bigint: true });
-    return s.isFile() ? `${s.size}:${s.mtimeNs}` : 'not-a-file';
+    const s = await stat(path);
+    if (!s.isFile()) return 'not-a-file';
+    return createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex');
   } catch {
     return 'absent';
   }
@@ -133,7 +144,16 @@ const markdownHasTitle: FormCheck = (text) => {
   const lf = text.replace(/\r\n?/g, '\n');
   const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
   const prose = body.replace(
-    /^[ \t]{0,3}(```+|~~~+)[^\n]*\n[\s\S]*?(?:^[ \t]{0,3}\1[ \t]*(?:\n|$)|$)/gm,
+    // `$` under the `m` flag matches at EVERY end of line, so the first version
+    // of this ended the block at the first newline. Measured, all three ways it
+    // went wrong (revue Codex de la dette #66, passe 2, R2): a `#` anywhere
+    // inside a fence counted as a title, an unterminated fence swallowed
+    // nothing, and a fence closed by a LONGER run read as never closed —
+    // reddening a document whose real title sat outside it.
+    //
+    // The unterminated case now ends at the end of the INPUT, and a closing
+    // fence may be longer than its opening, as CommonMark allows.
+    /^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]{0,3}\1[`~]*[ \t]*(?:\n|$)|(?![\s\S]))/gm,
     '',
   );
   if (/^[ \t]{0,3}#{1,6}[ \t]+\S/m.test(prose)) return null;
@@ -361,15 +381,25 @@ const jsonParses: FormCheck = (text) => {
  * revue Codex de la PR #66 : une entité inconnue (`&undefined;`) est rapportée
  * au niveau `error`, le parseur rend quand même un document, et le fichier
  * passait au vert. Un document qui référence une entité qui n'existe pas n'est
- * pas bien formé. On retient donc `error` autant que `fatalError` ; `warning`
- * reste ignoré — sondé, aucun SVG valide n'émet l'un des deux premiers.
+ * pas bien formé. On retient donc `error` autant que `fatalError`.
+ *
+ * SAUF quand le document déclare ses entités lui-même. `@xmldom/xmldom` ne lit
+ * pas le sous-ensemble INTERNE d'un DOCTYPE : il rapporte `entity not found`
+ * pour une entité parfaitement déclarée, et retenir `error` faisait alors
+ * rougir du XML valide — un faux rouge sur du travail correct, le pire des
+ * verdicts (passe 2 de la dette, constat R3, mesuré sur `runProof`). Devant un
+ * sous-ensemble interne, on retombe donc sur `fatalError` seul : la limite est
+ * celle du parseur, pas celle du document, et elle ne doit pas coûter un rouge.
  */
 const xmlParses: FormCheck = (text) => {
+  // `<!DOCTYPE … [ … ]>` — le crochet ouvrant est ce qui déclare des entités.
+  const declaresEntities = /<!DOCTYPE[^>[]*\[/i.test(text);
   try {
     let reported: string | null = null;
     new DOMParser({
       onError: (level, message) => {
-        if ((level === 'fatalError' || level === 'error') && reported === null) reported = message;
+        const counts = level === 'fatalError' || (level === 'error' && !declaresEntities);
+        if (counts && reported === null) reported = message;
       },
     }).parseFromString(text, 'text/xml');
     return reported;
