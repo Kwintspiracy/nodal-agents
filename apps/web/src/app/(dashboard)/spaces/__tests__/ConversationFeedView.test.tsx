@@ -460,4 +460,18 @@ describe('ConversationFeedView — le handoff', () => {
     // Plus de troncature par attribut `title` : le texte est dans le flux.
     expect(html).toContain('END-OF-HANDOFF');
   });
+
+  it('une consigne VIDE ne se déplie pas — pas de séparateur seul, pas de bouton pour rien', () => {
+    // Revue Codex de la PR #66, constat C9. Le séparateur `·` ne dépendait que
+    // de l'état replié : un tour dont le message d'utilisateur ne porte aucun
+    // bloc de texte (une image seule) produit `text: ''`, et l'écran offrait de
+    // déplier du vide derrière un point.
+    const vide: ConversationFeed = {
+      ...feedAvecHandoff,
+      items: [feedAvecHandoff.items[0]!, { kind: 'handoff', text: '   \n' }],
+    };
+    const html = renderToStaticMarkup(<ConversationFeedView feed={vide} />);
+    expect(html).not.toContain('Handed to the work');
+    expect(html).not.toContain('aria-expanded');
+  });
 });
