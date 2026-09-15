@@ -310,6 +310,7 @@ describe('Auto-run brake — code-execution tools beyond run_command', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-1', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -380,6 +381,7 @@ describe('Auto-run brake — code-execution tools beyond run_command', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -448,6 +450,7 @@ describe('Auto-run brake — code-execution tools beyond run_command', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-3', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -534,6 +537,7 @@ describe('Autonomy never grants code execution (P0 review fix)', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-auto', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -639,6 +643,7 @@ describe('Autonomy never grants code execution (P0 review fix)', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-wild-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -699,6 +704,7 @@ describe('Autonomy never grants code execution (P0 review fix)', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-rule', toolName: 'return_result', args: { status: 'success' } },
           ],

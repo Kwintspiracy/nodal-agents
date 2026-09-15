@@ -229,6 +229,7 @@ async function createJob() {
 function returnResultScript() {
   return [
     {
+      text: 'Done.',
       toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }],
     },
   ];
