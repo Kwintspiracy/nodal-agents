@@ -2636,13 +2636,35 @@ async function runJob(
     }
   }
 
-  // The last non-empty assistant TEXT produced during this run. For a delegated
-  // sub-job this IS the deliverable the parent receives (Hermes:
-  // `tools/delegate_tool.py:2064-2078`, `summary = final_response`); for a head
-  // job it is what lands in `agent_jobs.result` when no delivery tool wrote it.
-  // Empty at finalization time means the job produced nothing — see the
-  // empty-deliverable guard in the return_result branch.
+  // The last non-empty assistant TEXT this job has written, this run OR an
+  // earlier one. For a delegated sub-job this IS the deliverable the parent
+  // receives (Hermes: `tools/delegate_tool.py:2064-2078`,
+  // `summary = final_response`); for a head job it is what
+  // `fillResultFromFinalTextIfEmpty` lands in `agent_jobs.result` when no
+  // delivery tool wrote it. Empty at finalization time means the job produced
+  // nothing, anywhere — see the empty-deliverable guard in the return_result
+  // branch.
+  //
+  // Seeded from the transcript, not just tracked per turn: a parent writes its
+  // text BEFORE suspending into a delegation, and comes back in a fresh
+  // executeJob run whose final turn is `return_result` alone. Counting only
+  // this run's text would fail that job over a deliverable it already wrote.
   let lastAssistantTextSeen = '';
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m || m.role !== 'assistant') continue;
+    const c = m.content;
+    if (typeof c === 'string') {
+      if (c.trim() !== '') lastAssistantTextSeen = c.trim();
+      continue;
+    }
+    if (!Array.isArray(c)) continue;
+    const joined = (c as Array<{ type?: unknown; text?: unknown }>)
+      .filter((part) => part && part.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text as string)
+      .join('')
+      .trim();
+    if (joined !== '') lastAssistantTextSeen = joined;
+  }
   // ONE nudge, as Hermes does: ask for the deliverable, then fail loud.
   const MAX_EMPTY_DELIVERABLE_NUDGES = 1;
   let emptyDeliverableNudges = 0;

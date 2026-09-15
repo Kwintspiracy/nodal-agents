@@ -5477,6 +5477,7 @@ describe('Guard 1f: non-progress detector', () => {
     // signature detector — whose default threshold also happens to be 12 —
     // never latches; this test isolates Guard 1f alone.
     const responses: Array<{
+      text?: string;
       toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
     }> = Array.from({ length: 12 }, (_v, i) => ({
       toolCalls: [{ toolCallId: `fl-${i}`, toolName: 'file_list', args: { glob: `probe-${i}` } }],
@@ -5526,7 +5527,10 @@ describe('Guard 1f: non-progress detector', () => {
   it('S1 regression: alternating tools for 30 calls never nudges or fails', async () => {
     const job = await createTestJob(db, seed);
     const capturedPrompts: unknown[] = [];
-    const responses = Array.from({ length: 30 }, (_v, i) => ({
+    const responses: Array<{
+      text?: string;
+      toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    }> = Array.from({ length: 30 }, (_v, i) => ({
       toolCalls: [
         {
           toolCallId: `alt-${i}`,
@@ -5552,7 +5556,10 @@ describe('Guard 1f: non-progress detector', () => {
     const job = await createTestJob(db, seed);
     const capturedPrompts: unknown[] = [];
     // save_memory with {} is invalid input → errors every time (Guard 1b fixture).
-    const responses = Array.from({ length: 5 }, (_v, i) => ({
+    const responses: Array<{
+      text?: string;
+      toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    }> = Array.from({ length: 5 }, (_v, i) => ({
       toolCalls: [{ toolCallId: `sm-err-${i}`, toolName: 'save_memory', args: {} }],
     }));
     responses.push({
