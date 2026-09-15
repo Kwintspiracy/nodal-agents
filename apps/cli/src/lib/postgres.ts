@@ -1,8 +1,9 @@
 // postgres.ts — start/stop embedded Postgres using the embedded-postgres package
 
-import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
+import { applyPostgresLoggingConfig, PG_LOG_DIR } from './pg-logging.ts';
 import {
   formatForeignSkip,
   ownedPostgresPids,
@@ -562,10 +563,110 @@ export async function resolvePgCtl(): Promise<string | null> {
  * pgvector: if CREATE EXTENSION vector fails we log a yellow warning and
  * continue in keyword-only memory mode (no halt).
  */
+/**
+ * How long a cluster may take to accept its first connection.
+ *
+ * Generous: a first boot on a cold Windows machine replays WAL, and the old
+ * path had no budget at all — it waited on a stderr line forever.
+ */
+const READY_TIMEOUT_MS = 180_000;
+
+/**
+ * Start the cluster and wait until it ANSWERS, rather than until it says so.
+ *
+ * `embedded-postgres@18.3.0-beta.17` decides a cluster is up by watching the
+ * postmaster's stderr for the literal line "database system is ready to accept
+ * connections" (dist/index.js, the `start()` promise). That is fine while the
+ * postmaster writes to stderr — and it stops being fine the moment
+ * `logging_collector` is on, because the collector then owns that stream and
+ * the parent process never sees another byte. The promise neither resolves nor
+ * rejects: `nodal-agents up` hangs forever with a healthy Postgres behind it.
+ *
+ * This was NOT reasoned out. It was found by `postgres-logging.pg.test.ts`,
+ * which timed out at 180s against a cluster whose log file was being written
+ * the whole time — the log proved the cluster was up, the promise proved
+ * nothing. Writing it down because the next person to touch the logging
+ * settings will meet it again.
+ *
+ * So readiness is MEASURED instead: connect, run nothing, disconnect. That is
+ * what the sentence in the log means anyway, and it is true regardless of where
+ * the cluster writes. The package's own promise is still watched — it rejects
+ * when the postmaster exits during startup, which is a failure this poll would
+ * otherwise sit through until the deadline.
+ */
+async function startAndWaitUntilReady(pg: {
+  start: () => Promise<void>;
+  getPgClient: (database?: string) => { connect: () => Promise<void>; end: () => Promise<void> };
+}): Promise<void> {
+  let exitedEarly: unknown = null;
+  let resolvedItself = false;
+  // Attached SYNCHRONOUSLY, before any await: an unobserved rejection here
+  // would take the whole CLI down through `unhandledRejection`.
+  const started = pg.start().then(
+    () => {
+      resolvedItself = true;
+    },
+    (err: unknown) => {
+      exitedEarly = err ?? new Error('the postmaster exited during startup');
+    },
+  );
+
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (;;) {
+    if (exitedEarly !== null) throw exitedEarly;
+    // `postgres` always exists after initdb; `nodalai` may not yet.
+    const probe = pg.getPgClient('postgres');
+    try {
+      await probe.connect();
+      await probe.end();
+      return;
+    } catch {
+      await probe.end().catch(() => {});
+    }
+    if (resolvedItself) {
+      // The package saw its line, so the cluster is up even if this probe is
+      // still being refused (a role or auth problem, not a readiness one).
+      await started;
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Postgres did not accept a connection within ${READY_TIMEOUT_MS / 1000}s of starting`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/**
+ * The last lines the cluster wrote into its own log directory, newest file
+ * first. Empty when there is nothing to read — this runs on the failure path
+ * and must never replace the original error with a second one.
+ */
+function tailLogDirectory(logDirectory: string, lines = 40): string[] {
+  try {
+    const files = readdirSync(logDirectory)
+      .map((name) => join(logDirectory, name))
+      .map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    const newest = files[0];
+    if (!newest) return [];
+    return readFileSync(newest.path, 'utf-8')
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== '')
+      .slice(-lines);
+  } catch {
+    return [];
+  }
+}
+
 export async function startEmbeddedPostgres(
   dataDir: string = PG_DATA_DIR,
   port: number = 25432,
   password: string = LEGACY_PG_PASSWORD,
+  // Overridable so a test can start a cluster without writing into the user's
+  // own `~/.nodalai/logs/`. The product never passes it.
+  logDirectory: string = PG_LOG_DIR,
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep
   const EmbeddedPostgres = (await import('embedded-postgres')).default;
@@ -624,12 +725,29 @@ export async function startEmbeddedPostgres(
     if (!alreadyInitialised) {
       await pg.initialise();
     }
-    await pg.start();
+    // The cluster keeps its OWN log from here on (issue #111). Written after
+    // initdb — the data directory does not exist before it — and before every
+    // start, not once, so a cluster created by an older version gets it too.
+    //
+    // It is the last thing done before `start()` on purpose: a start that
+    // crashes is exactly the start whose log is worth having, and until
+    // 2026-09-15 that log did not exist. The only trace of two crashes that day
+    // was the runner's side of the disconnect.
+    applyPostgresLoggingConfig(dataDir, logDirectory);
+    await startAndWaitUntilReady(pg);
   } catch (err) {
     const errMsg = err instanceof Error && err.message ? err.message : String(err);
     // The actionable failure is usually in the FATAL log lines, not the
     // thrown error (embedded-postgres v18.3.0-beta.17 throws undefined).
-    const fatalLines = capturedLogs.filter((l) => /\b(FATAL|PANIC|ERROR)\b/.test(l));
+    //
+    // TWO sources since #111, and both are needed. The collector owns stderr
+    // once the cluster is up, so `capturedLogs` only ever holds what was
+    // written before it took over — which is exactly where a data-directory or
+    // shared-memory FATAL lands, so it is still the right place to look first.
+    // Anything later is in the file, and the file is new.
+    const fatalLines = [...capturedLogs, ...tailLogDirectory(logDirectory)].filter((l) =>
+      /\b(FATAL|PANIC|ERROR)\b/.test(l),
+    );
     const detail = [
       capturedErrors.length
         ? `Captured Postgres errors:\n    ${capturedErrors.join('\n    ')}`
@@ -641,7 +759,7 @@ export async function startEmbeddedPostgres(
 
     // Hint for the common Windows-after-crash case so the user knows what to do
     // instead of seeing a bare FATAL line.
-    const sharedMemHint = capturedLogs.some((l) => /pre-existing shared memory block/.test(l))
+    const sharedMemHint = fatalLines.some((l) => /pre-existing shared memory block/.test(l))
       ? '\n  → A previous Postgres crashed without releasing its Windows shared-memory ' +
         'block. Reboot the machine to clear the orphan kernel object, then retry. ' +
         'No data is lost; pg-data is preserved.'

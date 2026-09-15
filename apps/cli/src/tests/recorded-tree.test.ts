@@ -203,4 +203,61 @@ describe('sweepRecordedChildren', () => {
     },
     WMI_BUDGET_MS,
   );
+
+  it.skipIf(!canReadProcessTable)(
+    'refuses to kill a live process now running a different executable (issue #100)',
+    async () => {
+      // The tick catches a recycled pid only when the two generations were
+      // created at different instants — which is almost always, and "almost" is
+      // not a property to build a kill on. The BINARY is a second, independent
+      // proof: a number recorded as our node.exe that now carries something
+      // else was reused, whatever the clock says.
+      const bystander = spawnIdle();
+      try {
+        const snapshot = await processSnapshotWin();
+        const real = snapshot.get(bystander.pid!);
+        expect(real).toBeDefined();
+
+        const killed = await sweepRecordedChildren([{ ...real!, name: 'chrome.exe' }]);
+
+        expect(killed, 'a pid carrying another executable was killed').not.toContain(bystander.pid);
+        expect(isPidAlive(bystander.pid!), 'the bystander process was killed').toBe(true);
+      } finally {
+        bystander.kill();
+      }
+    },
+    WMI_BUDGET_MS,
+  );
+
+  it.skipIf(!canReadProcessTable)(
+    'refuses to kill a recorded pid that is now a postgres we cannot claim (issue #100)',
+    async () => {
+      // A recorded child whose number the OS handed to somebody's Postgres.
+      // Every other check passes — the tick is real — and before #100 no
+      // ownership question was ever asked on this path. The empty owned-set is
+      // the only thing between that cluster and a `taskkill /F`.
+      //
+      // A real `postgres.exe` cannot be started in a suite without risking
+      // somebody's data directory, so the case is built from the recorded side,
+      // which `confirmRecordedPid` compares against the live table. The rule
+      // itself is exercised from both sides in pid-confirm.test.ts.
+      const bystander = spawnIdle();
+      try {
+        const snapshot = await processSnapshotWin();
+        const real = snapshot.get(bystander.pid!);
+        expect(real).toBeDefined();
+
+        const killed = await sweepRecordedChildren(
+          [{ ...real!, name: 'postgres.exe' }],
+          new Set<number>(),
+        );
+
+        expect(killed).not.toContain(bystander.pid);
+        expect(isPidAlive(bystander.pid!)).toBe(true);
+      } finally {
+        bystander.kill();
+      }
+    },
+    WMI_BUDGET_MS,
+  );
 });

@@ -10,9 +10,46 @@ import {
   killPidTree,
   waitForPidDead,
   sweepRecordedChildren,
+  processSnapshotWin,
+  recordedRoot,
+  type PidFile,
+  type ProcessRecord,
 } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
-import { readPostmasterPid } from '../lib/postgres.ts';
+import { readPostmasterPid, postgresProcessesForDataDir } from '../lib/postgres.ts';
+import { confirmRecordedPid, formatRefusal, type LiveProcess } from '../lib/pid-confirm.ts';
+
+/** Everything a kill decision needs, read ONCE and shared by the whole run. */
+interface KillContext {
+  pids: PidFile | null;
+  snapshot: Map<number, ProcessRecord>;
+  ownedPostgresPids: ReadonlySet<number>;
+  /**
+   * Whether this platform can produce a process table AT ALL.
+   *
+   * Not the same as "the reading failed". Windows can and does; nothing else
+   * here can, and refusing to stop the stack on a machine that was never going
+   * to answer would break `down` on macOS and Linux outright to close a hole
+   * that only exists where pids are recycled aggressively. Where no reading is
+   * possible the old behaviour stands and the line says so — the identity was
+   * not confirmed, and that is stated rather than implied.
+   */
+  tableAvailable: boolean;
+  /**
+   * Whether a postgres ownership READING could be taken at all. False means the
+   * question went unanswered — a different fact from "the answer was no", and
+   * the two license different actions (invariant #4).
+   */
+  postgresReadingWorked: boolean;
+}
+
+/** A snapshot row in the shape `pid-confirm` reads, or undefined. */
+function liveOf(snapshot: Map<number, ProcessRecord>, pid: number): LiveProcess | undefined {
+  const rec = snapshot.get(pid);
+  return rec === undefined
+    ? undefined
+    : { pid: rec.pid, startedAt: rec.startedAt, name: rec.name ?? '' };
+}
 
 /**
  * Stop one service by pid, tree and all, and report what actually happened.
@@ -23,12 +60,48 @@ import { readPostmasterPid } from '../lib/postgres.ts';
  * so `down` printed "Stopped web" over a web that was still serving. Now the
  * whole tree is killed and the pid is re-probed before anything is claimed.
  */
-async function killPid(pid: number, label: string): Promise<boolean> {
+async function killPid(pid: number, label: string, ctx: KillContext): Promise<boolean> {
   if (!isPidAlive(pid)) {
     console.log(chalk.gray(`  ${label} (pid ${pid}) was already stopped`));
     return false;
   }
-  await killPidTree(pid);
+  if (!ctx.tableAvailable) {
+    console.log(
+      chalk.gray(`  ${label} (pid ${pid}) — no process table on this platform to confirm it with`),
+    );
+    await killPidTree(pid, ctx.ownedPostgresPids);
+    if (isPidAlive(pid)) {
+      console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
+      return false;
+    }
+    console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
+    return true;
+  }
+
+  // CONFIRM, then signal — never the other way round (issue #100).
+  //
+  // `down` read this number out of a file that may be days old and handed it
+  // straight to a tree kill. Windows reuses pid numbers, so the number alone
+  // said nothing about whether the process now carrying it is the service we
+  // started; `recordServiceTree` now writes the creation tick and the
+  // executable name next to it, and this is where they are spent.
+  const verdict = confirmRecordedPid({
+    recorded: recordedRoot(ctx.pids, pid),
+    live: liveOf(ctx.snapshot, pid),
+    tableRead: ctx.snapshot.size > 0,
+    ownedPostgresPids: ctx.ownedPostgresPids,
+  });
+  if (!verdict.killable) {
+    console.log(
+      chalk.yellow(
+        `  ${label} (pid ${pid}) was NOT stopped — ${verdict.detail}.\n` +
+          `    Nodal-Agents does not kill a pid it cannot identify. Nothing was signalled.`,
+      ),
+    );
+    process.stderr.write(`${formatRefusal(verdict)}\n`);
+    return false;
+  }
+  await killPidTree(pid, ctx.ownedPostgresPids);
   if (isPidAlive(pid)) {
     console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
     return false;
@@ -47,13 +120,40 @@ async function killPid(pid: number, label: string): Promise<boolean> {
  * Returns true if a stop was attempted (postmaster.pid existed), false if
  * Postgres wasn't running per its lockfile.
  */
-async function stopPostgresGracefully(): Promise<boolean> {
+async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
   const pidFile = join(PG_DATA_DIR, 'postmaster.pid');
   if (!existsSync(pidFile)) return false;
 
   // Captured BEFORE the stop: pg.stop() removes the lockfile, so afterwards
   // there is nothing left to read the pid from.
   const pgPid = readPostmasterPid(PG_DATA_DIR);
+
+  // Is that pid CONFIRMED ours, refused, or simply unknowable? Three states,
+  // and #100 turns on telling them apart.
+  //
+  //   - confirmed: the data dir claims it and a fresh reading agrees;
+  //   - refused: a reading was taken and it did NOT agree, which means the
+  //     lockfile names somebody else's process. Nothing is signalled;
+  //   - unknowable: no reading could be taken at all. That is the ordinary case
+  //     off Windows, where `postgresProcessesForDataDir` has neither a process
+  //     table nor `/proc` to lean on. The graceful stop still runs, because
+  //     `pg.stop()` is how this product has always stopped its own cluster and
+  //     refusing here would leave macOS unable to stop anything — but the HARD
+  //     KILL suggestion below is withheld, which is the line #100 actually asks
+  //     for: never recommend a force-kill against a pid nobody identified.
+  const confirmed = pgPid !== null && ctx.ownedPostgresPids.has(pgPid);
+  const refused = pgPid !== null && !confirmed && ctx.postgresReadingWorked;
+  if (refused) {
+    console.log(
+      chalk.yellow(
+        `  postgres (pid ${pgPid}) was NOT stopped — postmaster.pid names it, but a fresh\n` +
+          `    reading could not confirm it belongs to ${PG_DATA_DIR}.\n` +
+          `    Nothing was signalled. Check that pid yourself before touching it.`,
+      ),
+    );
+    process.stderr.write(`KILL_REFUSED code=FOREIGN_POSTGRES pid=${pgPid} lockfile=${pidFile}\n`);
+    return false;
+  }
 
   try {
     const EmbeddedPostgres = (await import('embedded-postgres')).default;
@@ -95,6 +195,9 @@ async function stopPostgresGracefully(): Promise<boolean> {
     // never fires on a Postgres that was merely still on its way out.
     const pgGone = pgPid === null || (await waitForPidDead(pgPid, 15_000));
     if (!pgGone) {
+      // The command is printed only for a pid we CONFIRMED. Handing the user a
+      // force-kill for a number nobody identified is the same defect as making
+      // the kill ourselves, one indirection removed (#100, path 3).
       const killCmd =
         process.platform === 'win32'
           ? `powershell Stop-Process -Id ${pgPid} -Force`
@@ -104,7 +207,11 @@ async function stopPostgresGracefully(): Promise<boolean> {
           `  postgres (pid ${pgPid}) is STILL RUNNING after a graceful stop\n` +
             `    It holds the shared-memory block for the data dir, so the next ` +
             `\`up\` will fail.\n` +
-            `    Fix: ${killCmd}`,
+            (confirmed
+              ? `    Fix: ${killCmd}`
+              : `    Its identity could NOT be confirmed, so no kill command is suggested:\n` +
+                `    check that pid yourself (its executable, its start time, which cluster\n` +
+                `    it serves) and stop it through its owner.`),
         ),
       );
       return false;
@@ -126,22 +233,34 @@ async function stopPostgresGracefully(): Promise<boolean> {
 export async function runDown(): Promise<void> {
   const pids = readPids();
 
+  // ONE reading of the process table and ONE of postgres ownership, shared by
+  // every decision below. Two readings would let a pid be refused by the first
+  // and accepted by the second — the shape of the pass-4 finding on #98.
+  const pgReading = await postgresProcessesForDataDir();
+  const ctx: KillContext = {
+    pids,
+    tableAvailable: process.platform === 'win32',
+    snapshot: await processSnapshotWin(),
+    ownedPostgresPids: new Set(pgReading.owned),
+    postgresReadingWorked: pgReading.read,
+  };
+
   let stopped = 0;
 
-  if (pids?.runner) stopped += (await killPid(pids.runner, 'runner')) ? 1 : 0;
-  if (pids?.web) stopped += (await killPid(pids.web, 'web')) ? 1 : 0;
+  if (pids?.runner) stopped += (await killPid(pids.runner, 'runner', ctx)) ? 1 : 0;
+  if (pids?.web) stopped += (await killPid(pids.web, 'web', ctx)) ? 1 : 0;
 
   // The tree recorded at startup, when every parent/child link still existed.
   // `down` usually reaches everything through killPidTree, but not always: a
   // Next dev server outlives the launcher that spawned it, and after
   // `up --detach` the CLI that owned the tree is long gone.
-  const swept = await sweepRecordedChildren(pids?.children ?? []);
+  const swept = await sweepRecordedChildren(pids?.children ?? [], ctx.ownedPostgresPids);
   if (swept.length > 0) {
     console.log(chalk.green(`  Stopped ${swept.length} background worker(s) left behind`));
     stopped += swept.length;
   }
 
-  if (await stopPostgresGracefully()) stopped++;
+  if (await stopPostgresGracefully(ctx)) stopped++;
 
   clearPids();
 
