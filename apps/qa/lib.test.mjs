@@ -416,18 +416,18 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('echouee', 'passee')] } }), [{}, {}]);
     expect(e[0].gravite).toBe('haute');
     expect(e[0].titre).toMatch(/capability proof\(s\) FAILED/);
-    expect(e[0].quoi).toEqual(['Connecter un service — screen']);
+    expect(e[0].quoi).toEqual(['Connecter un service · screen']);
   });
 
   it('une preuve de MOTEUR qui échoue est haute aussi, et dite comme telle', () => {
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('passee', 'echouee')] } }), [{}, {}]);
     expect(e[0].gravite).toBe('haute');
-    expect(e[0].quoi).toEqual(['Connecter un service — engine']);
+    expect(e[0].quoi).toEqual(['Connecter un service · engine']);
   });
 
   it('les deux niveaux tombés sont NOMMÉS tous les deux', () => {
     const e = ecartsDe(SNAP({ capacites: { registre: [CAP('echouee', 'echouee')] } }), [{}, {}]);
-    expect(e[0].quoi).toEqual(['Connecter un service — screen', 'Connecter un service — engine']);
+    expect(e[0].quoi).toEqual(['Connecter un service · screen', 'Connecter un service · engine']);
   });
 
   it('un moteur ABSENT sur une capacité exigée est MOYEN — façade vérifiée, moteur inconnu', () => {

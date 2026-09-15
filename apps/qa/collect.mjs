@@ -339,7 +339,7 @@ function chantiers() {
   // par-dessus le vrai, sans un mot (revue Codex du 11/09).
   const cartes = cartesDuTableau({ issues, pr });
   if (!cartes) {
-    console.warn('[qa] GitHub did not answer — the board is marked MISSING, not empty.');
+    console.warn('[qa] GitHub did not answer, the board is marked MISSING, not empty.');
     return null;
   }
 
@@ -373,7 +373,7 @@ function prixCi() {
     }
   }
   if (!runs) {
-    console.warn('[qa] GitHub did not answer on runs — the price of a pull request is MISSING.');
+    console.warn('[qa] GitHub did not answer on runs, the price of a pull request is MISSING.');
     return null;
   }
   return prixDeLaCi(runs);
@@ -639,7 +639,7 @@ function main() {
     `snapshot: ${r.paquets} packages · ${r.casDeTest} cases · ${r.specsE2e} journeys (${r.specsE2eJoueesParLaCi} in CI)`,
   );
   console.log(
-    `coverage: ${r.paquetsMesures}/${r.paquets} packages measured · ${r.couvertureLignes ?? '—'}% of the measured lines`,
+    `coverage: ${r.paquetsMesures}/${r.paquets} packages measured · ${r.couvertureLignes ?? '·'}% of the measured lines`,
   );
   console.log(
     `capabilities: ${r.capacites} named · ${r.capacitesVerifiees} verified at both levels · ${r.capacitesSansMoteur} without an engine · ${r.capacitesSansPreuve} with no proof at all`,
