@@ -132,7 +132,11 @@ test.afterAll(async () => {
   }
 });
 
-test('A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke', async ({
+// The capability tag sits here, on the screen that decides who may talk to an
+// agent from Telegram. It used to sit on a scenario of `agent-flows.spec.ts`
+// that inserted a `channel='telegram'` job and waited for a real model to run
+// it (issue #110) — a journey no CI could ever play. This one plays anywhere.
+test('A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran', async ({
   page,
 }) => {
   await page.goto(`/agents/${agentId}/telegram`);
