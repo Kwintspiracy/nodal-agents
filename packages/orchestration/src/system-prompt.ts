@@ -935,10 +935,19 @@ export async function buildSystemPrompt(
   // wade through the manual and reinvent logic the skill already ships. The
   // mandatory-load + anti-reimplement steering below mirrors what makes Hermes
   // reliably use skills.
+  // L'index porte l'APPEL qui charge la skill — sauf là où cet appel n'existe
+  // pas. Sur le chat, cette ligne annonçait `skill_view` une fois par skill :
+  // l'outil absent le plus cité du prompt (revue Codex de la dette de la
+  // PR #73, passe 2, constat 1). Le slug, lui, sert encore — c'est ce que
+  // l'agent nomme dans la tâche qu'il passe.
   const skillIndex = assignedSkillRows
     .map((r) => {
-      const desc = (r.skillDescription ?? '').trim() || '(load with skill_view for details)';
-      return `- \`skill_view('${r.skillSlug}')\` — **${r.skillName}**: ${desc}`;
+      const desc =
+        (r.skillDescription ?? '').trim() ||
+        (hasNodalTools ? '(load with skill_view for details)' : '(its own file holds the details)');
+      return hasNodalTools
+        ? `- \`skill_view('${r.skillSlug}')\` — **${r.skillName}**: ${desc}`
+        : `- \`${r.skillSlug}\` — **${r.skillName}**: ${desc}`;
     })
     .join('\n');
   // On 'cli-runtime' the skills are LISTED, never prescribed: `skill_view` and
