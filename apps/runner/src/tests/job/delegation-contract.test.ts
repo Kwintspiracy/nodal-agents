@@ -21,7 +21,7 @@ import { completeJob } from '../../job/state.ts';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
-import { resumeDelegated } from '@nodal-agents/orchestration';
+import { resumeDelegated, DELEGATION_FAILED_MARKER } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -492,7 +492,11 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
               type: 'tool-result',
               toolCallId: 'assign-3',
               toolName: 'assign_researcher',
-              output: { type: 'error-text', value: '{"status":"failed"} delivered NOTHING' },
+              output: {
+                type: 'error-text',
+                value: `${DELEGATION_FAILED_MARKER}
+{"status":"failed"} delivered NOTHING`,
+              },
             },
           ],
         },
@@ -567,5 +571,62 @@ describe('a child with no deliverable is never "(no output)" @cap:organiser-equi
     const row = await jobRow(parentId);
     expect(row.result).not.toContain('(no output)');
     expect(row.result).toContain('no deliverable');
+  });
+});
+
+describe('a DEFERRED delegation is not a failure @cap:organiser-equipe/moteur', () => {
+  it('lets the parent finish honestly after a deferred second handoff', async () => {
+    // `buildDeferredToolResults` writes an error-text tool-result meaning
+    // "another handoff took priority, call me again" — not a failure. Reading it
+    // as one would refuse an honest success.
+    const parentId = await insertJob({
+      channel: 'api',
+      messages: [
+        { role: 'user', content: 'deux recherches' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-d',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-d',
+              toolName: 'assign_researcher',
+              output: {
+                type: 'error-text',
+                value: 'Deferred — another handoff in this turn took priority.',
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          text: 'Longueur de Planck : 1.616255e-35 m.',
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(parentId);
+    expect(row.status).toBe('completed');
+    expect(row.result).toContain('1.616255e-35');
   });
 });

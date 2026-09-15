@@ -39,6 +39,17 @@ export interface DelegationOutcomeRecord {
  */
 export type DelegationOutcome = string | { error: string } | DelegationOutcomeRecord;
 
+/**
+ * Marker opening the tool-result of a delegation that DELIVERED NOTHING.
+ *
+ * It exists so the runner can tell that case apart from the other `error-text`
+ * tool-result an `assign_*` call can carry: a DEFERRAL (`buildDeferredToolResults`
+ * — "another handoff took priority, call me again"), which is not a failure at
+ * all. Without the marker, guard 3b's cross-run seeding would read a deferral as
+ * an unresolved failure and refuse the parent's honest success.
+ */
+export const DELEGATION_FAILED_MARKER = '[delegation-produced-nothing]';
+
 /** Normalize any accepted outcome shape into the typed record. */
 export function normalizeDelegationOutcome(outcome: DelegationOutcome): DelegationOutcomeRecord {
   if (typeof outcome === 'string') {
@@ -241,7 +252,8 @@ export async function resumeDelegated(
   // exist. So the failure payload names the three legal moves and forbids the
   // fourth. LLM-channel text only; it never reaches the user (invariant #2).
   const errorValue = isFailure
-    ? `${renderDelegationOutcome(outcome)}
+    ? `${DELEGATION_FAILED_MARKER}
+${renderDelegationOutcome(outcome)}
 
 This delegation delivered NOTHING usable. DO NOT retry the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}). DO NOT tell the user the work is in progress, launched, or coming later: it is not, and nothing else will arrive. Your only options are: (1) do the work yourself with your own tools, (2) delegate to a DIFFERENT specialist whose skills match, or (3) tell the user the truth about what failed via your delivery tool. Then call return_result with the honest status.`
     : '';

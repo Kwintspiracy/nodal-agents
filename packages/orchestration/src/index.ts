@@ -78,6 +78,7 @@ export {
   resumeDelegated,
   normalizeDelegationOutcome,
   renderDelegationOutcome,
+  DELEGATION_FAILED_MARKER,
 } from './router/resume';
 export type { DelegationOutcome, DelegationOutcomeRecord } from './router/resume';
 
