@@ -2614,6 +2614,34 @@ async function runJob(
   const MAX_UNRESOLVED_FAILURE_NUDGES = 2;
   let unresolvedFailureNudges = 0;
 
+  /**
+   * Les échecs NON RÉSOLUS qui rendraient un succès mensonger — une livraison
+   * qui n'est pas partie, une délégation qui n'a rien rendu.
+   *
+   * Lu par les DEUX chemins de finalisation. La garde ne vivait que dans la
+   * branche `return_result` ; un parent sur `api` ou `dashboard` peut finir son
+   * job par un simple texte, et « Recherche lancée, je te renvoie ça » y
+   * finalisait un succès sans que rien n'ait été produit — l'incident #107 par
+   * la porte d'à côté (revue Codex de la PR #108, constat 2).
+   */
+  const stuckDeliveriesNow = (): string[] =>
+    [...unresolvedToolFailures].filter(
+      (t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t) || t.startsWith('assign_'),
+    );
+
+  /** Le rappel que les deux chemins envoient, mot pour mot. */
+  const unresolvedFailureNudge = (stuck: string[]): ModelMessage =>
+    ({
+      role: 'user',
+      content:
+        "[système] Ne déclare pas un succès qui n'a pas eu lieu. Une action dont " +
+        "dépend ce résultat a échoué et n'a pas été corrigée (" +
+        stuck.join(', ') +
+        "). Ne dis pas à l'utilisateur que le travail est lancé ou à venir : il ne " +
+        "l'est pas. Refais-le toi-même, confie-le à un autre spécialiste, ou dis la " +
+        "vérité à l'utilisateur, puis termine honnêtement avec status='blocked'.",
+    }) as ModelMessage;
+
   // Guard 3b, cross-run leg (#107). `unresolvedToolFailures` is in-memory and a
   // delegation resume re-ENTERS executeJob, so a parent resumed with a FAILED
   // delegation would start its next run with an empty set and be free to signal
@@ -3100,7 +3128,33 @@ async function runJob(
           return suspended;
         }
         const textContent = response.text ?? '';
-        if (textContent) {
+        // `trim()`, et pas seulement « non vide » : trois espaces ne sont pas un
+        // livrable, et ce `if` les finalisait en succès. La garde du vide, elle,
+        // lit déjà le texte après `trim()` — les deux chemins disaient donc deux
+        // choses différentes du même tour (revue Codex de la PR #108,
+        // constat 1). Un texte blanc retombe désormais sur le tour vide : on
+        // redemande, puis on échoue.
+        if (textContent.trim() !== '') {
+          // MÊME garde que la branche `return_result` (3b) : un texte final est
+          // une livraison, et livrer « je te reviens » par-dessus une délégation
+          // qui a échoué, c'est promettre ce qui n'existe pas.
+          const stuckHere = stuckDeliveriesNow();
+          if (stuckHere.length > 0) {
+            if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+              unresolvedFailureNudges += 1;
+              trace('unresolved_tool_failure_nudge', {
+                turn,
+                attempt: unresolvedFailureNudges,
+                stuck: stuckHere,
+                via: 'text_branch',
+              });
+              messages = [...messages, unresolvedFailureNudge(stuckHere)];
+              continue;
+            }
+            trace('unresolved_tool_failure', { turn, stuck: stuckHere, via: 'text_branch' });
+            await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
+            return { status: 'failed', error: 'unresolved_tool_failure' };
+          }
           // Delivery guard: on a tool-only channel, a plain-text answer was NOT
           // delivered to the user (only the tool reaches them). Re-prompt the
           // agent to resend via its tool instead of silently completing. Live
@@ -4183,9 +4237,7 @@ async function runJob(
           // over it is claiming a result that does not exist — the same lie the
           // guard already catches for a failed send. The parent is nudged to
           // redo, re-delegate elsewhere, or tell the truth; then it fails loud.
-          const stuckDelivery = stuck.filter(
-            (t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t) || t.startsWith('assign_'),
-          );
+          const stuckDelivery = stuckDeliveriesNow();
           if (stuckDelivery.length > 0) {
             if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
               unresolvedFailureNudges += 1;
@@ -4207,18 +4259,7 @@ async function runJob(
                 }),
               });
               messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
-              messages = [
-                ...messages,
-                {
-                  role: 'user',
-                  content:
-                    "[système] Ne déclare pas un succès qui n'a pas eu lieu. Une action dont " +
-                    "dépend ce résultat a échoué et n'a pas été corrigée. Ne dis pas à " +
-                    "l'utilisateur que le travail est lancé ou à venir : il ne l'est pas. " +
-                    'Refais-le toi-même, confie-le à un autre spécialiste, ou dis la vérité à ' +
-                    "l'utilisateur, puis termine honnêtement avec status='blocked'.",
-                } as ModelMessage,
-              ];
+              messages = [...messages, unresolvedFailureNudge(stuckDelivery)];
               continue;
             }
             trace('unresolved_tool_failure', { turn, stuck: stuckDelivery });
