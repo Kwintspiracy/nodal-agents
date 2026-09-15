@@ -13,6 +13,8 @@ import { test, expect } from '@playwright/test';
 import {
   requireLiveStack,
   cleanCredentialsByType,
+  dropE2ECredentials,
+  e2eCredentialName,
   openConnectorLibrary,
   connectorCard,
   openInstalledConnectors,
@@ -23,6 +25,12 @@ test.beforeAll(async () => {
   await requireLiveStack();
   // Clean up any credentials from previous runs so the card renders the wizard button.
   await cleanCredentialsByType('airtable-oauth');
+});
+
+// Les parcours ne doivent pas dépendre de leur ordre : ce qui est créé ici est
+// effacé ici, même si le parcours a échoué en route.
+test.afterAll(async () => {
+  await dropE2ECredentials('airtable-oauth');
 });
 
 test.describe('Airtable OAuth flow (wizard-driven)', () => {
@@ -74,10 +82,13 @@ test.describe('Airtable OAuth flow (wizard-driven)', () => {
     // ── 5. Fill wizard form ───────────────────────────────────────────────────
     await wizard.locator('input[name="clientId"]').fill('airtable-test-client-id');
     await wizard.locator('input[name="clientSecret"]').fill('airtable-test-client-secret');
+    // Le nom PORTE le marqueur e2e : c'est lui qui autorise le nettoyage
+    // (`afterAll`) et la garde du parcours suivant à effacer cet identifiant
+    // sans jamais toucher au compte d'un humain. Le champ existe toujours dans
+    // l'assistant, donc on l'attend au lieu de le remplir « si visible ».
     const nameInput = wizard.locator('input[name="name"]');
-    if (await nameInput.isVisible()) {
-      await nameInput.fill('My Airtable (e2e)');
-    }
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    await nameInput.fill(e2eCredentialName('My Airtable (e2e)'));
 
     // ── 6. Intercept /start POST ──────────────────────────────────────────────
     let capturedRedirectUri = '';

@@ -16,6 +16,8 @@ import { test, expect } from '@playwright/test';
 import {
   requireLiveStack,
   cleanCredentialsByType,
+  dropE2ECredentials,
+  e2eCredentialName,
   openConnectorLibrary,
   connectorCard,
   openInstalledConnectors,
@@ -30,6 +32,12 @@ test.beforeAll(async () => {
   // Clean up any credentials from previous runs so the Drive card renders the wizard button
   // and Gmail shows no compatible credentials initially.
   await cleanCredentialsByType('google-oauth');
+});
+
+// Les parcours ne doivent pas dépendre de leur ordre : ce qui est créé ici est
+// effacé ici, même si le parcours a échoué en route.
+test.afterAll(async () => {
+  await dropE2ECredentials('google-oauth');
 });
 
 test.describe('Credential reuse — Drive + Gmail share one Google credential', () => {
@@ -94,10 +102,13 @@ test.describe('Credential reuse — Drive + Gmail share one Google credential', 
 
     await wizard.locator('input[name="clientId"]').fill('reuse-client-id');
     await wizard.locator('input[name="clientSecret"]').fill('reuse-client-secret');
+    // Le nom PORTE le marqueur e2e : c'est lui qui autorise le nettoyage
+    // (`afterAll`) et la garde du parcours suivant à effacer cet identifiant
+    // sans jamais toucher au compte d'un humain. Le champ existe toujours dans
+    // l'assistant, donc on l'attend au lieu de le remplir « si visible ».
     const nameInput = wizard.locator('input[name="name"]');
-    if (await nameInput.isVisible()) {
-      await nameInput.fill('My Google (reuse test)');
-    }
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    await nameInput.fill(e2eCredentialName('My Google (reuse test)'));
 
     // ── 4. Intercept /start → capture state ──────────────────────────────
     let capturedRedirectUri = '';
