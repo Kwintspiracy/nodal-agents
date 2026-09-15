@@ -74,7 +74,13 @@ const MONTHS = [
   'December',
 ];
 
-/** `2026-09-15T09:01:39.520Z` → `15 September 2026`, in UTC, like the portal. */
+/**
+ * `2026-09-15T09:01:39.520Z` → `15 September 2026`, in UTC, like the portal.
+ *
+ * UTC and a hand-written month name rather than a locale format: the page is
+ * prerendered on a CI runner and read everywhere, so a date resolved against
+ * the builder's timezone would name a day the measurement did not run on.
+ */
 export function spellDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) fail('genereLe', `is not a date (${iso})`);
