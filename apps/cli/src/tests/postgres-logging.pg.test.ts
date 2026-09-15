@@ -24,10 +24,15 @@ import { embeddedPostgres } from './embedded-postgres-available.ts';
 
 const canStartCluster = embeddedPostgres.available;
 
+// The budget is EXPLICIT because `apps/cli/vitest.config.ts` sets none, so
+// vitest's 10s default applied here — and stopping a cluster means
+// `pg_ctl stop -m fast`, which returns only once the postmaster has rolled back
+// and detached its shared memory. It ran past 10s on the Linux runner and
+// failed the whole file after every one of its cases had already passed.
 afterAll(async () => {
   await embeddedPostgres.handle?.stop().catch(() => {});
   rmSync(embeddedPostgres.root, { recursive: true, force: true });
-});
+}, 120_000);
 
 /** Everything the cluster has written so far, all files concatenated. */
 function logText(): string {
