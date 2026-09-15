@@ -165,13 +165,31 @@ async function seedDelegationThread(opts: {
       completedAt: now,
     });
 
-    await db.insert(chatMessages).values({
-      entityId: acting.entityId,
-      agentId: parentAgent!.id,
-      conversationId: conversation!.id,
-      role: 'user',
-      content: 'Fais une recherche sur la longueur de Planck',
-    });
+    // Both rows matter, and the second one is not decoration: on a `dashboard`
+    // conversation the thread walks `chat_messages`, and a head job is rendered
+    // ONLY through the assistant row whose `job_id` points at it
+    // (`conversation-thread.ts`, buildConversationThread). Without it the job
+    // and its delegation are invisible — which is exactly how the runner
+    // behaves: `run-chat-turn.ts` writes this acknowledgement when it escalates
+    // a chat turn into a job. The wording is a plain "on it", never a promise
+    // about a result: the promise is the thing under test.
+    await db.insert(chatMessages).values([
+      {
+        entityId: acting.entityId,
+        agentId: parentAgent!.id,
+        conversationId: conversation!.id,
+        role: 'user',
+        content: 'Fais une recherche sur la longueur de Planck',
+      },
+      {
+        entityId: acting.entityId,
+        agentId: parentAgent!.id,
+        conversationId: conversation!.id,
+        role: 'assistant',
+        content: 'On it.',
+        jobId: head!.id,
+      },
+    ]);
 
     return { conversationId: conversation!.id, parentName, childName };
   } finally {
