@@ -10,30 +10,49 @@
 // tour, `dist/` exclu) ne pouvaient trancher.
 //
 // Ce module tranche pour les cibles FICHIER, et pour elles seules : on prend
-// l'état du fichier avant l'outil (existence, taille, mtime en nanosecondes),
+// l'état du fichier avant l'outil (existence, taille, empreinte du CONTENU),
 // on le reprend après, et une différence est une écriture constatée. Une cible
 // DOSSIER (le `cwd` d'un shell) reste déclarative : constater ce qu'un shell
 // a écrit sous un dossier demanderait un instantané de l'arbre à chaque
 // commande, et c'est un autre lot — dit ici, pas caché.
 //
-// Ce qui n'est PAS constaté : un contenu réécrit à l'identique dans la même
-// nanoseconde. Le système de fichiers ne le distingue pas non plus.
+// LE CONTENU, PAS LA DATE (revue Codex post-merge de la PR #75, constat 3).
+// La première empreinte était `{ size, mtimeNs }`, et ces lignes annonçaient un
+// seul trou : « un contenu réécrit à l'identique dans la même nanoseconde ».
+// C'était faux. `mtimeNs` PORTE des nanosecondes, il ne les mesure pas : la
+// résolution est celle du système de fichiers, et elle va de la nanoseconde à
+// deux secondes (FAT), en passant par la seconde de plusieurs montages réseau.
+// Une réécriture de même taille dans cette fenêtre passait pour « rien n'a
+// changé » et laissait `produced` faux sur un fichier bel et bien écrit — un
+// faux rouge, puis le refus de `declare_verification` derrière.
+//
+// Le prix est une lecture complète du fichier de chaque côté de l'appel. Il est
+// payé sciemment : les cibles FICHIER sont celles que l'outil a nommées, elles
+// se comptent sur les doigts, et un plafond de taille serait un trou de plus à
+// ne pas dire. C'est la même décision que `fileStamp` côté vérificateur de
+// document (constat C1 de la PR #66).
+//
+// Ce qui n'est PAS constaté : un contenu réécrit à L'IDENTIQUE. Rien ne l'a
+// changé, pour qui lit le fichier.
 
-import { stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
 import type { MutationTarget, ProjectRoot } from '@nodal-agents/shared';
 import { resolveProjectRoots } from '@nodal-agents/shared';
 import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
 import { officeFileDeliverables } from './office-file-key';
 
 /** L'empreinte d'un fichier à un instant : `null` = absent. */
-export type FileFingerprint = { readonly size: bigint; readonly mtimeNs: bigint } | null;
+export type FileFingerprint = { readonly size: bigint; readonly sha256: string } | null;
 
 export type FileSnapshot = ReadonlyMap<string, FileFingerprint>;
 
 async function fingerprint(path: string): Promise<FileFingerprint> {
   try {
     const s = await stat(path, { bigint: true });
-    return s.isFile() ? { size: s.size, mtimeNs: s.mtimeNs } : null;
+    if (!s.isFile()) return null;
+    const bytes = await readFile(path);
+    return { size: s.size, sha256: createHash('sha256').update(bytes).digest('hex') };
   } catch {
     return null;
   }
@@ -63,7 +82,7 @@ export async function changedFileTargets(
     const now = await fingerprint(t.path);
     const same =
       (was === null && now === null) ||
-      (was !== null && now !== null && was.size === now.size && was.mtimeNs === now.mtimeNs);
+      (was !== null && now !== null && was.size === now.size && was.sha256 === now.sha256);
     if (!same) out.push(t);
   }
   return out;
