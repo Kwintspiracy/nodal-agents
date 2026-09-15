@@ -10,6 +10,13 @@
 
 import {
   BASE_PATH,
+  CATALOG_FIGURES,
+  CHANNEL_ICONS,
+  CONNECTOR_ICONS,
+  DEFINITIONS,
+  EXAMPLES,
+  LEVERS,
+  MCP_ICONS,
   CI_JOBS,
   FIGURES,
   INVARIANTS,
@@ -25,7 +32,6 @@ import {
   PRACTICES,
   PRINCIPLES,
   ROADMAP,
-  SCENARIOS,
   SECTIONS,
   VERSION,
   VERSION_DATE,
@@ -142,8 +148,37 @@ function FlowDiagram() {
   );
 }
 
+function IconWall({
+  title,
+  items,
+}: {
+  title: string;
+  items: readonly { slug: string; file: string; label: string }[];
+}) {
+  return (
+    <div className="home-wall">
+      <p className="home-mono">{title}</p>
+      <ul>
+        {items.map((i) => (
+          <li key={i.slug}>
+            <img
+              src={`${BASE_PATH}/home/icons/${i.file}.svg`}
+              width={28}
+              height={28}
+              alt=""
+              loading="lazy"
+              decoding="async"
+            />
+            <span>{i.label}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function Home() {
-  const [s1, s2, s3, s4, s5] = SECTIONS;
+  const [s1, s2, s3, s4, s5, s6] = SECTIONS;
 
   return (
     <main className="home">
@@ -250,16 +285,30 @@ export default function Home() {
         <Rail index={s2.index} label={s2.label} />
         <div>
           <h2 className="home-display">{s2.title}</h2>
-          <p className="home-intro">
-            Three shapes that come up again and again. Every agent runs on the model you choose,
-            with the tools you grant, in a workspace you own.
+          <p className="home-claim">
+            There is no list of supported use cases, because there is no list. An agent does
+            whatever the tools you granted it can do, against whatever you connected it to.
           </p>
+          <p className="home-intro">
+            Three things bound an agent, and you set all three. Widen any of them and the same
+            platform builds something it could not build yesterday, with no change to the code.
+          </p>
+          <div className="home-grid-2 home-grid-3">
+            {LEVERS.map((l) => (
+              <article className="home-block" key={l.name}>
+                <h3>{l.name}</h3>
+                <p>{l.body}</p>
+              </article>
+            ))}
+          </div>
+
+          <p className="home-mono home-examples-label">Two, out of as many as you like</p>
           <ol className="home-steps">
-            {SCENARIOS.map((s) => (
-              <li key={s.name}>
+            {EXAMPLES.map((e) => (
+              <li key={e.name}>
                 <div>
-                  <h3>{s.name}</h3>
-                  <p>{s.body}</p>
+                  <h3>{e.name}</h3>
+                  <p>{e.body}</p>
                 </div>
               </li>
             ))}
@@ -267,11 +316,49 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── 03 How it is designed ────────────────────────────────────── */}
+      {/* ── 03 Connectors, skills, tools ─────────────────────────────── */}
       <section className="home-wrap home-section" id={s3.id}>
         <Rail index={s3.index} label={s3.label} />
         <div>
           <h2 className="home-display">{s3.title}</h2>
+          <p className="home-intro">
+            Three words the product keeps apart, because they are three different decisions you make
+            about one agent.
+          </p>
+          <dl className="home-defs">
+            {DEFINITIONS.map((d) => (
+              <div key={d.term}>
+                <dt>{d.term}</dt>
+                <dd>{d.body}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <div className="home-figures">
+            {CATALOG_FIGURES.map((f) => (
+              <div className="home-figure" key={f.label}>
+                <span className="v">{f.value}</span>
+                <span className="l">{f.label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="home-figures-note">
+            Counted from the catalogs themselves at build time, not typed by hand. Add your own MCP
+            server or connector instance from the dashboard, and run several of the same one side by
+            side, such as a personal Gmail and a work Gmail on one install.
+          </p>
+
+          <IconWall title="Connectors" items={CONNECTOR_ICONS} />
+          <IconWall title="MCP servers" items={MCP_ICONS} />
+          <IconWall title="Channels" items={CHANNEL_ICONS} />
+        </div>
+      </section>
+
+      {/* ── 04 How it is designed ────────────────────────────────────── */}
+      <section className="home-wrap home-section" id={s4.id}>
+        <Rail index={s4.index} label={s4.label} />
+        <div>
+          <h2 className="home-display">{s4.title}</h2>
           <p className="home-intro">
             The hard part of an agent platform is not calling a model. It is what happens when a run
             loops, lies, or stops without saying so. These are the decisions that shape the product.
@@ -314,11 +401,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── 04 How it is built ───────────────────────────────────────── */}
-      <section className="home-wrap home-section" id={s4.id}>
-        <Rail index={s4.index} label={s4.label} />
+      {/* ── 05 How it is built ───────────────────────────────────────── */}
+      <section className="home-wrap home-section" id={s5.id}>
+        <Rail index={s5.index} label={s5.label} />
         <div>
-          <h2 className="home-display">{s4.title}</h2>
+          <h2 className="home-display">{s5.title}</h2>
           <p className="home-intro">
             A TypeScript monorepo in strict mode, shipped in small pull requests, each one gated by
             the same checks. The numbers below are measured, not estimated.
@@ -364,11 +451,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── 05 Where it stands ───────────────────────────────────────── */}
-      <section className="home-wrap home-section" id={s5.id}>
-        <Rail index={s5.index} label={s5.label} />
+      {/* ── 06 Where it stands ───────────────────────────────────────── */}
+      <section className="home-wrap home-section" id={s6.id}>
+        <Rail index={s6.index} label={s6.label} />
         <div>
-          <h2 className="home-display">{s5.title}</h2>
+          <h2 className="home-display">{s6.title}</h2>
           <p className="home-intro">
             Used daily by its maintainer and stable enough for personal production. Still pre-1.0,
             so a minor version can carry a breaking change. Upgrading in place keeps your data.
