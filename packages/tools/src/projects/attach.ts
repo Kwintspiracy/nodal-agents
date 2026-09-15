@@ -392,7 +392,8 @@ async function registerManifestProjects(
 
   const rows = await registerCodeProjects(ctx.db, {
     entityId: ctx.entityId,
-    // P5b : seules les racines à MANIFESTE arrivent ici — c'est du code.
+    // P5b : seules les racines qui SONT des projets arrivent ici — manifeste sur
+    // le disque, ou déclaration en base. C'est du code dans les deux cas.
     kind: 'code' as const,
     agentId: ctx.agentId,
     registeredJobId: ctx.jobId,

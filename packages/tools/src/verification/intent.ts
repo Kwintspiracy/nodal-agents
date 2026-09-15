@@ -289,10 +289,11 @@ async function resolveDeliverables(
         // cette PR corrige, réintroduit par son propre correctif.
         //
         // Le cas qui avait motivé l'essai se règle sans elle : quand la racine
-        // porte un manifeste, c'est ELLE le projet, `expandWorkspaceRoots` ne
-        // l'éclate pas, et la clé correspond d'elle-même. Quand elle n'en porte
-        // pas, aucune clé ne correspond — et c'est la bonne réponse : lancer un
-        // shell à la racine, c'est ne pas choisir de projet.
+        // EST un projet — un manifeste sur le disque, ou une déclaration en base
+        // —, c'est ELLE le projet, `expandWorkspaceRoots` ne l'éclate pas, et la
+        // clé correspond d'elle-même. Quand elle n'est ni l'un ni l'autre, aucune
+        // clé ne correspond — et c'est la bonne réponse : lancer un shell à la
+        // racine, c'est ne pas choisir de projet.
         const addressedKeys = new Set(
           resolveProjectRoots({
             targets: group.filter((t) => t.scope !== 'precaution'),
