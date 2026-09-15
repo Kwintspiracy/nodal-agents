@@ -355,12 +355,17 @@ jobs:
       # capacité : depuis la sortie d'`agent-flows.spec.ts` (issue #110), plus
       # aucun fichier de `tests/e2e` n'exige de modèle, donc tous tournent sur
       # un runner. La mesure nocturne les joue tous, sans exception.
-      - name: Three journeys — boot/navigation, the autonomy tab, delegation outcomes
+      # memory-kept.spec.ts joins the list because it is NEW (issue #110) and
+      # because the whole point of that issue is that a journey nobody plays
+      # proves nothing. It needs no model: it records a fact through the
+      # screen and asks for it back.
+      - name: Four journeys — boot/navigation, the autonomy tab, delegation outcomes, memory
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
           tests/e2e/autonomy-approvals.spec.ts
           tests/e2e/delegation-outcome.spec.ts
+          tests/e2e/memory-kept.spec.ts
 
       - name: Upload the report on failure
         if: failure()
