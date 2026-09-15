@@ -22,8 +22,9 @@ import {
   buildDatabaseUrl,
   resolveAuthMode,
 } from '../lib/env.ts';
-import { isPortBindable, findFreePort } from '../lib/ports.ts';
+import { isPortBindable, findFreePort, pidListeningOnPort } from '../lib/ports.ts';
 import { measuredPort } from '../lib/orphans.ts';
+import { decideStartFromProbes, AlreadyRunningError } from '../lib/already-running.ts';
 import { confirmRecordedPid, formatRefusal } from '../lib/pid-confirm.ts';
 import { logLauncherEvent, LAUNCHER_LOG } from '../lib/launcher-log.ts';
 import {
@@ -87,28 +88,6 @@ function printLogTail(service: 'runner' | 'web' | string, lines: number): void {
   }
 }
 
-/**
- * Returns the PID of a process listening on the given port, or null if free.
- * Windows-aware (uses netstat). Returns null on Unix (where we'd use lsof,
- * but the user's environment is Windows for now).
- */
-async function pidListeningOnPort(port: number): Promise<number | null> {
-  const { execa } = await import('execa');
-  try {
-    const { stdout } = await execa('netstat', ['-ano'], { reject: false });
-    for (const line of stdout.split(/\r?\n/)) {
-      // "  TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       14568"
-      const m = line.match(/\s+TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/);
-      if (m && m[1] && m[2] && Number.parseInt(m[1], 10) === port) {
-        return Number.parseInt(m[2], 10);
-      }
-    }
-  } catch {
-    /* ignore — best-effort */
-  }
-  return null;
-}
-
 export interface RunUpOptions {
   /**
    * Use `next dev` (HMR) for the web app instead of `next start`.
@@ -167,6 +146,28 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // unauthenticated RCE surface) BEFORE starting Postgres or spawning any
   // process — resolveAuthMode throws; see apps/cli/src/lib/env.ts.
   resolveAuthMode(config);
+
+  // ── 1.4 Is it ALREADY RUNNING? Asked before anything is touched ───────────
+  //
+  // On 2026-09-15 at 21:05 a `pnpm dev` in the repo ran this command against a
+  // healthy install, and the pre-flight below classified the live runner, web
+  // and postgres as orphans and killed all three. The turbo run then failed, so
+  // nothing replaced them; the stack was down for two and a half hours
+  // (issue #117).
+  //
+  // The pre-flight is not wrong about orphans — it is missing a category. So
+  // the question is asked HERE, ahead of the recorded-children sweep, ahead of
+  // the port probe, ahead of every kill: is the product already up out of this
+  // data directory? When it is, nothing is signalled and nothing is swept.
+  const startVerdict = await decideStartFromProbes({
+    runnerPort: config.ports.runner,
+    webPort: config.ports.web,
+    dataDir: PG_DATA_DIR,
+  });
+  if (!startVerdict.proceed) {
+    logLauncherEvent('refused-kill', `already-running runner=${config.ports.runner}`);
+    throw new AlreadyRunningError(startVerdict.message);
+  }
 
   // URLs are computed after the port-rotation guard below — config.ports may
   // change between here and there if the OS has reserved the configured port.
