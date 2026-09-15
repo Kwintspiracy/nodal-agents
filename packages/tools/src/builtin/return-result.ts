@@ -25,6 +25,9 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'Signal that the task is complete (status="success") or blocked (status="blocked"). ' +
     'For content delivery to the user, use the appropriate delivery tool ' +
     '(`telegram_send_message`, `dashboard_publish`, etc.) — return_result carries no content. ' +
+    'On a DELEGATED sub-task you have no delivery tool: your written reply is the delivery, so ' +
+    'write your deliverable as your reply text in the same turn. Signalling success with no ' +
+    'reply and no delivery hands back an empty result and the run is failed, not accepted. ' +
     'Whenever your task involves delivering an answer, emit `return_result` and the delivery ' +
     'tool(s) **in the same assistant turn** (parallel tool calls). The runner handles delivery ' +
     'failures automatically (defers finalization if a sibling tool errors), so there is no need ' +
