@@ -42,19 +42,41 @@ import { resolveProjectRoots } from '@nodal-agents/shared';
 import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
 import { officeFileDeliverables } from './office-file-key';
 
-/** L'empreinte d'un fichier à un instant : `null` = absent. */
-export type FileFingerprint = { readonly size: bigint; readonly sha256: string } | null;
+/**
+ * L'empreinte d'un fichier à un instant — TROIS états, pas deux.
+ *
+ * `unreadable` existe parce que lire le contenu peut échouer là où `stat`
+ * réussit : un verrou, un droit retiré, un montage qui tombe. Le confondre avec
+ * `absent` — ce que faisait la première version de cette empreinte — faisait
+ * d'une lecture refusée une ÉCRITURE constatée, donc un faux vert, et de deux
+ * lectures refusées un silence sur une écriture réelle (revue Codex de la dette
+ * de la PR #75, passe 2, constat 2 : un trou ouvert par le correctif de la
+ * passe 1). La taille est gardée quand `stat` a répondu : elle se lit sans
+ * ouvrir le fichier, et c'est tout ce qu'on peut encore constater.
+ */
+export type FileFingerprint =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'file'; readonly size: bigint; readonly sha256: string }
+  | { readonly kind: 'unreadable'; readonly size: bigint | null };
 
 export type FileSnapshot = ReadonlyMap<string, FileFingerprint>;
 
+const ABSENT: FileFingerprint = { kind: 'absent' };
+
 async function fingerprint(path: string): Promise<FileFingerprint> {
+  let size: bigint;
   try {
     const s = await stat(path, { bigint: true });
-    if (!s.isFile()) return null;
-    const bytes = await readFile(path);
-    return { size: s.size, sha256: createHash('sha256').update(bytes).digest('hex') };
+    if (!s.isFile()) return ABSENT;
+    size = s.size;
   } catch {
-    return null;
+    return ABSENT;
+  }
+  try {
+    const bytes = await readFile(path);
+    return { kind: 'file', size, sha256: createHash('sha256').update(bytes).digest('hex') };
+  } catch {
+    return { kind: 'unreadable', size };
   }
 }
 
@@ -70,7 +92,14 @@ export async function snapshotFileTargets(
   return out;
 }
 
-/** Les cibles FICHIER dont l'empreinte a changé depuis l'instantané. */
+/**
+ * Les cibles FICHIER dont l'empreinte a changé depuis l'instantané.
+ *
+ * Quand un des deux côtés n'a pas pu être LU, il n'y a rien à constater : la
+ * seule chose qui reste est la taille, quand `stat` a répondu des deux côtés.
+ * À défaut, la cible n'est pas créditée et la ligne est DITE — pas devinée
+ * dans un sens ou dans l'autre (invariant nº 4).
+ */
 export async function changedFileTargets(
   targets: readonly MutationTarget[],
   before: FileSnapshot,
@@ -78,11 +107,24 @@ export async function changedFileTargets(
   const out: MutationTarget[] = [];
   for (const t of targets) {
     if (t.kind !== 'file') continue;
-    const was = before.get(t.path) ?? null;
+    const was = before.get(t.path) ?? ABSENT;
     const now = await fingerprint(t.path);
+    if (was.kind === 'unreadable' || now.kind === 'unreadable') {
+      const tailleAvant = was.kind === 'absent' ? null : was.size;
+      const tailleApres = now.kind === 'absent' ? null : now.size;
+      if (tailleAvant !== null && tailleApres !== null && tailleAvant !== tailleApres) {
+        out.push(t);
+        continue;
+      }
+      console.warn(`[verification] VERIFICATION_OBSERVE_UNREADABLE path=${t.path}`);
+      continue;
+    }
     const same =
-      (was === null && now === null) ||
-      (was !== null && now !== null && was.size === now.size && was.sha256 === now.sha256);
+      (was.kind === 'absent' && now.kind === 'absent') ||
+      (was.kind === 'file' &&
+        now.kind === 'file' &&
+        was.size === now.size &&
+        was.sha256 === now.sha256);
     if (!same) out.push(t);
   }
   return out;
