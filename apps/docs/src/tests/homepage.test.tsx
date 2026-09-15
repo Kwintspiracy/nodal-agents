@@ -25,6 +25,7 @@ import {
   CHANNEL_ICONS,
   CONNECTOR_ICONS,
   EXAMPLES,
+  FEATURE_SLUGS,
   FIGURES,
   MCP_ICONS,
   INVARIANTS,
@@ -114,13 +115,59 @@ describe('the catalog section only shows what the product actually ships', () =>
     for (const f of CATALOG_FIGURES) expect(markup).toContain(f.label);
   });
 
-  it('presents its use cases as examples, not as the list of what the product does', () => {
-    expect(EXAMPLES).toHaveLength(2);
-    expect(markup).toContain('Two, out of as many as you like');
-    // Telegram is a way to reach an agent, not a thing you build with it. It
-    // belongs to the channels row and to the design section, never to the list
-    // of what the platform is for.
-    for (const e of EXAMPLES) expect(e.name).not.toMatch(/telegram/i);
+  it('offers a wide, unordered scatter of examples rather than a short menu', () => {
+    expect(EXAMPLES.length).toBeGreaterThanOrEqual(8);
+    // Heterogeneous on purpose: two examples sharing a domain tag would read as
+    // a category, and a category reads as the list the section denies having.
+    const tags = EXAMPLES.map((e) => e.tag);
+    expect(new Set(tags).size).toBe(tags.length);
+    for (const e of EXAMPLES) {
+      expect(markup).toContain(e.body);
+      // One line each. The section failed twice by explaining two cases at
+      // length, which is what made them read as the only two.
+      expect(e.body.length).toBeLessThan(110);
+    }
+    // Telegram is a way to reach an agent, not a thing you build with one. It
+    // may appear as the channel of an example, never as its subject.
+    expect(markup).toContain('There is no list of supported use cases');
+  });
+
+  it('builds every example out of things that are really in the catalog', () => {
+    const known = new Set([
+      ...CATALOG.connectorSlugs,
+      ...CATALOG.mcpSlugs,
+      ...CATALOG.systemSkillSlugs,
+      ...FEATURE_SLUGS,
+    ]);
+    const unknown = EXAMPLES.flatMap((e) =>
+      e.uses.filter((u) => !known.has(u)).map((u) => `${e.tag}: ${u}`),
+    );
+    expect(unknown).toEqual([]);
+    for (const e of EXAMPLES) expect(e.uses.length).toBeGreaterThan(0);
+  });
+
+  it('says how much of each catalog the grid is not showing', () => {
+    const connectorsLeft = CATALOG.connectors - CONNECTOR_ICONS.length;
+    const serversLeft = CATALOG.mcpPreconfigured - MCP_ICONS.length;
+    expect(connectorsLeft).toBeGreaterThan(0);
+    expect(serversLeft).toBeGreaterThan(0);
+    expect(markup).toContain(`+ ${connectorsLeft} more`);
+    expect(markup).toContain(`+ ${serversLeft} more`);
+    // The two "add your own" sentinels are not servers anybody can connect to,
+    // so counting them here would overstate the catalog by two.
+    expect(CATALOG.mcpPreconfigured).toBe(CATALOG.mcpServers - 2);
+    // Channels are the one grid that IS the whole list, so it claims no more.
+    expect(CHANNEL_ICONS.length).toBe(4);
+  });
+
+  // Verified in the dashboard source, not assumed: McpAddForm plus the two
+  // custom-* catalog sentinels for servers, InstallCommunitySkillModal and
+  // SkillForm for skills, and no form at all for a new connector type, which
+  // ConnectorsClient.tsx states outright ("custom passe par un MCP server").
+  it('claims you can add servers and skills, and does not claim it for connectors', () => {
+    expect(markup).toContain('You can add your own, over HTTP or as a local process');
+    expect(markup).toContain('You cannot add a connector type yourself');
+    expect(markup).toContain('any community skill file');
   });
 });
 

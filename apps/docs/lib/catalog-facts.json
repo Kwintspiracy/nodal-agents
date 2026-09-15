@@ -50,6 +50,7 @@
   ],
   "connectorTools": 166,
   "mcpServers": 26,
+  "mcpPreconfigured": 24,
   "mcpSlugs": [
     "cogni-cortex",
     "stripe",

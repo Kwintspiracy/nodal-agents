@@ -86,45 +86,122 @@ export const PILLARS: readonly Pillar[] = [
 /* ── Section 02 ─────────────────────────────────────────────────────────── */
 
 /**
- * The first version of this section listed three use cases, which read as the
- * three things the product does. It does not have a list. Source: README.md,
- * "What you can build", reframed around what actually bounds an agent.
+ * This section has been wrong twice. First it listed three use cases, which
+ * read as the three things the product does. Then it kept two of them, which
+ * read as a choice between two. The product has no list at all: it composes.
+ * So the section leads with the grammar, and the examples that follow are
+ * deliberately scattered across unrelated domains, one line each, in no order.
+ *
+ * Every example carries the catalog slugs it would use, and a test refuses a
+ * slug that no catalog has. An example nobody could actually build is a lie
+ * with a friendly face.
  */
-export interface Lever {
-  readonly name: string;
+export interface FormulaTerm {
+  readonly term: string;
   readonly body: string;
 }
 
-/** The three things that decide what an agent can do, and you set all three. */
-export const LEVERS: readonly Lever[] = [
+export const FORMULA: readonly FormulaTerm[] = [
   {
-    name: 'What it can reach',
-    body: 'The connectors, MCP servers and APIs you attach. A service you can call, an agent can call.',
+    term: 'A channel',
+    body: 'Where you say it and where the answer lands. The dashboard, Telegram, Discord, Slack, WhatsApp, a schedule, or a webhook from anything.',
   },
   {
-    name: 'What it knows how to do',
-    body: 'The skills you assign. Written guidance an agent reads before it works. Install one from the community, write one, or let the agent write its own.',
+    term: 'Connectors and servers',
+    body: 'What the agent can reach. Your accounts through a connector, anything else through an MCP server, including ones you add.',
   },
   {
-    name: 'What it is allowed to run',
-    body: 'The tools you grant, listed per agent. Shell commands, files, its own sandboxed folder, and the risky ones behind an approval.',
+    term: 'Skills',
+    body: 'How it goes about it. Written guidance it reads first, from the catalog, from the community, or written by you.',
   },
 ];
 
+export const FORMULA_RESULT = 'whatever you asked for';
+
+/**
+ * Product capabilities an example may lean on that are not catalog rows.
+ * Each one is named in README.md under "Available now" or "Event triggers".
+ */
+export const FEATURE_SLUGS: readonly string[] = [
+  'telegram',
+  'discord',
+  'slack',
+  'whatsapp',
+  'dashboard',
+  'cron',
+  'webhook',
+  'watcher',
+  'approval',
+  'claude-code',
+];
+
 export interface Example {
-  readonly name: string;
+  readonly tag: string;
   readonly body: string;
+  /** Catalog slugs or product features this would actually use. */
+  readonly uses: readonly string[];
 }
 
-/** Two of them, and the page says so. Source: README.md. */
 export const EXAMPLES: readonly Example[] = [
   {
-    name: 'A research desk',
-    body: 'An orchestrator fans a question out to specialists, one on web search, one on your Notion, one on your Drive. Each writes a section. The orchestrator compiles the brief and emails it to you.',
+    tag: 'Personal',
+    body: 'Every Monday, turn last week of Gmail into a one-page brief in Notion.',
+    uses: ['cron', 'gmail', 'notion'],
   },
   {
-    name: 'An automation crew',
-    body: 'Cron-scheduled agents wake up every morning, hit your connectors and MCP servers, and report back on whichever channel you read.',
+    tag: 'Work',
+    body: 'Ask in Slack where a Linear project stands, and read the answer in the thread.',
+    uses: ['slack', 'linear'],
+  },
+  {
+    tag: 'Dev',
+    body: 'On a webhook from your CI, read the Sentry error and open the issue that describes it.',
+    uses: ['webhook', 'sentry', 'linear'],
+  },
+  {
+    tag: 'Ops',
+    body: 'Watch a Postgres table and message you the moment a number crosses a line.',
+    uses: ['watcher', 'mcp-postgres', 'telegram'],
+  },
+  {
+    tag: 'Content',
+    body: 'Crawl a site every week and keep a spreadsheet of what changed on it.',
+    uses: ['cron', 'firecrawl', 'google-sheets'],
+  },
+  {
+    tag: 'Data',
+    body: 'Turn an Airtable base into a formatted Excel workbook, on request.',
+    uses: ['airtable', 'spreadsheet-editing'],
+  },
+  {
+    tag: 'Research',
+    body: 'Search the web, read the sources, and write a brief that cites them.',
+    uses: ['tavily', 'citation-discipline', 'google-docs'],
+  },
+  {
+    tag: 'Code',
+    body: 'Hand a repository task to Claude Code on your own subscription, then read the diff.',
+    uses: ['claude-code', 'mcp-github', 'code-task'],
+  },
+  {
+    tag: 'Notes',
+    body: 'File today into your Obsidian vault, link it to what it belongs with, archive the rest.',
+    uses: ['obsidian'],
+  },
+  {
+    tag: '3D',
+    body: 'Drive Blender from a sentence and drop the render into your Drive.',
+    uses: ['blender', 'google-drive'],
+  },
+  {
+    tag: 'Shipping',
+    body: 'Deploy a page to Cloudflare Workers, once you have approved it.',
+    uses: ['cloudflare', 'approval'],
+  },
+  {
+    tag: 'Money',
+    body: 'Answer what came in last week, from Stripe, on WhatsApp.',
+    uses: ['stripe', 'whatsapp'],
   },
 ];
 

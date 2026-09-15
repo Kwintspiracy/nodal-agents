@@ -679,6 +679,116 @@
   }
 }
 
+/* ── The composition grammar ───────────────────────────────────────────── */
+
+.home-formula {
+  margin-top: 44px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(18px, 2.4vw, 34px);
+  align-items: start;
+}
+.home-formula-term {
+  position: relative;
+  border-top: 2px solid var(--home-ink);
+  padding-top: 16px;
+}
+.home-formula-op {
+  position: absolute;
+  top: 12px;
+  left: -19px;
+  font-family: var(--font-archivo), sans-serif;
+  font-size: 17px;
+  color: var(--home-ink-soft);
+}
+.home-formula-term h3 {
+  font-family: var(--font-archivo), sans-serif;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+.home-formula-term p {
+  margin: 0;
+  color: var(--home-ink-soft);
+  font-size: 16px;
+}
+.home-formula-out {
+  grid-column: 1 / -1;
+  margin: 10px 0 0;
+  font-family: var(--font-archivo), sans-serif;
+  font-size: clamp(22px, 2.8vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--home-flame);
+}
+.home-formula-out span {
+  color: var(--home-ink-soft);
+  margin-right: 8px;
+}
+
+/* ── The scatter of examples ───────────────────────────────────────────── */
+
+.home-examples {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 clamp(24px, 3vw, 44px);
+}
+.home-examples li {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 14px;
+  align-items: baseline;
+  padding-block: 15px;
+  border-top: 1px solid var(--home-line-soft);
+}
+.home-examples li span {
+  font-size: 11px;
+}
+.home-examples li p {
+  margin: 0;
+  font-size: 16px;
+  color: var(--home-ink-soft);
+}
+
+/* ── Icon wall additions ───────────────────────────────────────────────── */
+
+.home-wall-more {
+  justify-content: center;
+  border-style: dashed;
+  color: var(--home-ink-soft);
+  font-family: var(--font-jbmono), monospace;
+  font-size: 13px;
+}
+.home-wall-note {
+  margin: 12px 0 0;
+  font-size: 14px;
+  color: var(--home-ink-soft);
+  max-width: 74ch;
+}
+
+@media (max-width: 820px) {
+  .home-formula {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-formula-op {
+    display: none;
+  }
+  .home-examples {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .home-examples li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
 /* ── Narrow ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
