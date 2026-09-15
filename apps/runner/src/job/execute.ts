@@ -296,7 +296,7 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAME_LIST
  * recommence à zéro : sans cette marque, « un seul rappel » n'était vrai que
  * d'une exécution, pas du job (revue Codex de la PR #108, constat 7).
  */
-const EMPTY_DELIVERABLE_NUDGE_MARK = '[livrable-vide]';
+const EMPTY_DELIVERABLE_NUDGE_MARK = '[système:livrable-vide:]';
 
 const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'return_result',
@@ -2625,6 +2625,25 @@ async function runJob(
   let unresolvedFailureNudges = 0;
 
   /**
+   * Du travail a-t-il eu lieu DEPUIS l'échec non résolu ?
+   *
+   * La garde 3b veut empêcher un parent d'annoncer un résultat qui n'existe
+   * pas. Elle ne peut pas juger si le travail refait RÉPOND à la même question
+   * que celui qui a raté : ça demanderait de comparer deux tâches, et le runner
+   * n'a pas de quoi. Deux versions ont été essayées et toutes deux étaient
+   * fausses : n'effacer jamais rendait un FAUX ROUGE à un parent qui obtempère
+   * (passe 1, constat 3), effacer dès qu'une autre délégation livre rendait un
+   * FAUX VERT si elle portait sur autre chose (passe 2, constat 1).
+   *
+   * Ce qui se constate, en revanche : un appel d'outil qui a RÉUSSI après
+   * l'échec — une autre délégation, une recherche, une écriture. L'incident
+   * #107 n'en avait aucun : le parent n'a rien fait entre l'échec et sa
+   * promesse. C'est cette frontière-là qui est tenue ici, et le vide pur reste
+   * couvert par la garde 3c.
+   */
+  let workDoneSinceFailure = false;
+
+  /**
    * Les échecs NON RÉSOLUS qui rendraient un succès mensonger — une livraison
    * qui n'est pas partie, une délégation qui n'a rien rendu.
    *
@@ -2634,10 +2653,16 @@ async function runJob(
    * finalisait un succès sans que rien n'ait été produit — l'incident #107 par
    * la porte d'à côté (revue Codex de la PR #108, constat 2).
    */
-  const stuckDeliveriesNow = (): string[] =>
-    [...unresolvedToolFailures].filter(
+  const stuckDeliveriesNow = (): string[] => {
+    const stuck = [...unresolvedToolFailures].filter(
       (t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t) || t.startsWith('assign_'),
     );
+    // Une délégation ratée ne bloque plus dès lors qu'un outil a réussi après
+    // elle : le parent a refait, re-délégué ou travaillé lui-même, les trois
+    // issues que le rappel lui propose. Une LIVRAISON ratée, elle, bloque
+    // toujours : personne n'a reçu le message, et aucun travail ne remplace ça.
+    return workDoneSinceFailure ? stuck.filter((t) => !t.startsWith('assign_')) : stuck;
+  };
 
   /** Le rappel que les deux chemins envoient, mot pour mot. */
   const unresolvedFailureNudge = (stuck: string[]): ModelMessage =>
@@ -2669,7 +2694,17 @@ async function runJob(
     }>) {
       if (!part || part.type !== 'tool-result') continue;
       const name = typeof part.toolName === 'string' ? part.toolName : '';
-      if (!name.startsWith('assign_')) continue;
+      // Un outil QUELCONQUE qui a réussi APRÈS une délégation ratée est du
+      // travail constaté, et il compte au même titre à la relecture qu'en cours
+      // d'exécution : sans ça, « je l'ai refait moi-même » était invisible dès
+      // qu'une approbation avait coupé le run en deux (revue Codex de la PR
+      // #108, passe 2, constat 2).
+      if (!name.startsWith('assign_')) {
+        if (part.output?.type !== 'error-text' && unresolvedToolFailures.size > 0) {
+          workDoneSinceFailure = true;
+        }
+        continue;
+      }
       // Only a delegation that DELIVERED NOTHING counts. The other error-text an
       // assign_* result can carry is a DEFERRAL ("another handoff took priority,
       // call me again") — not a failure, and reading it as one would refuse the
@@ -2678,12 +2713,12 @@ async function runJob(
       if (part.output?.type === 'error-text' && value.startsWith(DELEGATION_FAILED_MARKER)) {
         unresolvedToolFailures.add(name);
       } else {
-        // Une délégation qui a LIVRÉ efface toutes les précédentes qui n'avaient
-        // rien rendu : le travail existe, et c'est le seul fait qui compte ici
-        // (même règle qu'en cours de run, revue Codex de la PR #108, constat 3).
-        for (const t of [...unresolvedToolFailures]) {
-          if (t.startsWith('assign_')) unresolvedToolFailures.delete(t);
-        }
+        unresolvedToolFailures.delete(name);
+        // Une délégation qui a LIVRÉ après une autre qui a raté est du travail
+        // constaté : même règle qu'en cours d'exécution, et même frontière — la
+        // machine constate qu'il s'est passé quelque chose, pas que ça répond à
+        // la même question.
+        if (unresolvedToolFailures.size > 0) workDoneSinceFailure = true;
       }
     }
   }
@@ -2729,6 +2764,11 @@ async function runJob(
     for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
       if (!m || m.role !== 'user') continue;
       const c = m.content;
+      // La marque porte un caractère de CONTRÔLE : un message d'utilisateur ne
+      // peut pas la produire par accident, et le modèle n'écrit pas de message
+      // de rôle `user` (revue Codex de la PR #108, passe 2, constat 3 — la
+      // première marque était du texte ordinaire, et un utilisateur qui l'aurait
+      // recopiée privait son agent de son unique rappel).
       if (typeof c === 'string' && c.includes(EMPTY_DELIVERABLE_NUDGE_MARK)) seen += 1;
     }
     return seen;
@@ -3901,17 +3941,10 @@ async function runJob(
         // probably already arrived.
         if (toolResult.outcome === 'success') {
           unresolvedToolFailures.delete(call.name);
-          // Une DÉLÉGATION réussie efface les délégations ratées d'avant, quel que
-          // soit le spécialiste. C'est ce que le rappel demande — « confie-le à
-          // un autre spécialiste » — et sans ça l'obtempérer ne servait à rien :
-          // `assign_a` restait inscrit à jamais, et le parent finissait en
-          // échec après avoir fait exactement ce qu'on lui avait dit (revue Codex
-          // de la PR #108, constat 3). Le travail existe : c'est le seul fait
-          // que cette garde a à connaître.
-          if (call.name.startsWith('assign_')) {
-            for (const t of [...unresolvedToolFailures]) {
-              if (t.startsWith('assign_')) unresolvedToolFailures.delete(t);
-            }
+          // Du TRAVAIL a eu lieu depuis. C'est le seul fait que la machine peut
+          // constater ici, et il décide de la suite (voir `workDoneSinceFailure`).
+          if (unresolvedToolFailures.size > 0 || workDoneSinceFailure) {
+            workDoneSinceFailure = true;
           }
         } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
           unresolvedToolFailures.add(call.name);

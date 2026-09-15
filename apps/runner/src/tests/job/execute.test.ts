@@ -6118,7 +6118,8 @@ describe('F-8: tool-call heartbeat keeps a long single tool call from being reap
 // agent's Telegram token so it could deliver directly on the orchestrator's
 // chat. Removed 2026-07-21: two voices on one chat produced duplicate
 // confirmations, and worker outputs already travel through the shared
-// workspace (file path via return_result) for the binding owner to deliver.
+// workspace, and names the file path in its written answer, for the binding
+// owner to deliver. `return_result` is only the done signal: it carries nothing.
 // The regression contract is now the inverse: delivery tools are armed ONLY
 // for agents with their OWN credential, delegated or not, chatId or not.
 
