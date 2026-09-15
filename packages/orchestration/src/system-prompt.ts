@@ -278,6 +278,15 @@ export function buildRuntimeBlock(
   d: DeploymentContext,
   triggerContext?: JobTriggerContext,
   routineState?: ReadonlyArray<{ key: string; value: string }>,
+  /**
+   * False sur une surface sans les builtins. Le FAIT — « tu tournes sur la
+   * machine de l'utilisateur, les services locaux y sont joignables » — vaut
+   * partout et sert à répondre. Le GESTE (« appelle-les directement », « ne
+   * demande pas de tunnel ») s'adresse à qui peut appeler quelque chose ; sur le
+   * chat, c'est un ordre de plus qui ne s'exécute pas (revue Codex de la dette
+   * de la PR #73, passe 3, constat 1).
+   */
+  nodalTools = true,
 ): string {
   const networkLine =
     d.networkMode === 'lan'
@@ -289,7 +298,9 @@ export function buildRuntimeBlock(
     ``,
     `You run locally inside Nodal-Agents on the user's own machine (${d.os}). You are NOT a cloud or hosted agent — your process and the user's machine are the same host.`,
     ``,
-    `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`,
+    nodalTools
+      ? `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`
+      : `- Local services on this machine are reachable at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`) — a job can reach them there. NEVER tell the user to expose a local service through a public tunnel (ngrok, cloudflared): it is unnecessary here and a needless security risk.`,
     `- Network: ${networkLine}`,
   ];
 
@@ -734,14 +745,22 @@ async function buildMessagingChannelsBlock(
     `conversation list):\n` +
     `${lines.join('\n')}`;
 
-  // Sans les builtins, la liste reste et l'invitation à explorer part : c'est
+  // Sans les builtins, la liste reste et l'invitation à EXPLORER part : c'est
   // le fait qui compte ici (un agent qui niait sa connexion Discord est
   // l'incident fondateur de ce bloc), pas le geste.
+  //
+  // La procédure d'approbation, elle, reste : ce n'est pas un geste de l'agent
+  // mais une chose que l'UTILISATEUR fait, et c'est exactement la question qui
+  // arrive en conversation — « comment je t'autorise à écrire dans ce salon ? ».
+  // La retirer faisait répondre « je ne sais pas » à un agent qui sait (revue
+  // Codex de la dette de la PR #73, passe 3, constat 2).
   if (!nodalTools) {
     return (
       `${connected}\n\n` +
       `Sending and exploring happen in a job, not from here — hand it the platform and ` +
-      `the conversation you mean.`
+      `the conversation you mean. Only approved conversations can be written to; to get a ` +
+      `new one approved, the owner mentions you there (or messages you from it) and ` +
+      `approves the card that appears.`
     );
   }
 
@@ -950,12 +969,15 @@ export async function buildSystemPrompt(
         : `- \`${r.skillSlug}\` — **${r.skillName}**: ${desc}`;
     })
     .join('\n');
-  // On 'cli-runtime' the skills are LISTED, never prescribed: `skill_view` and
-  // `run_skill_script` are Nodal builtins, absent from a coding-CLI session, so
-  // a "you MUST call skill_view before acting" reads as an impossible
-  // precondition — the agent either invents the call or refuses to move. The
-  // slugs and paths still matter (the CLI can open the files itself with its
-  // own Read), so the index stays and only the imperative goes.
+  // Trois sorts pour ce bloc, un par surface, et le commentaire d'ici en
+  // annonçait un quatrième qui n'existe pas : il disait « sur cli-runtime les
+  // skills sont LISTÉES » alors que cette branche rend `''` (revue Codex de la
+  // dette de la PR #73, passe 3). Ce qui est vrai :
+  //
+  //  · un job : le texte complet, et l'impératif qui le fait charger ;
+  //  · le chat : la LISTE seule, comme connaissance — l'agent sait ce qu'il
+  //    sait faire et le nomme dans la tâche qu'il passe ;
+  //  · cli-runtime : RIEN, ni texte ni liste, par la décision citée plus bas.
   const skillsBlock =
     assignedSkillRows.length === 0
       ? ''
@@ -1019,7 +1041,12 @@ export async function buildSystemPrompt(
   // context is provided (system jobs, tests).
   const runtimeBlock = jobContext?.deployment
     ? '\n\n' +
-      buildRuntimeBlock(jobContext.deployment, jobContext.triggerContext, jobContext.routineState)
+      buildRuntimeBlock(
+        jobContext.deployment,
+        jobContext.triggerContext,
+        jobContext.routineState,
+        hasNodalTools,
+      )
     : '';
 
   // 5. Built-in capabilities block — injected for every agent so the LLM sees
@@ -1105,6 +1132,7 @@ export async function buildSystemPrompt(
     attachedMcpSlugs: mcpRows.map((r) => r.slug),
     workspaceConnectors,
     workspaceMcps,
+    nodalTools: hasNodalTools,
   });
 
   //    Messaging channels block — content assembled from `messagingChannelsBlock`

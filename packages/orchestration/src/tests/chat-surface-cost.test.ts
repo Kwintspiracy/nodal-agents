@@ -94,13 +94,22 @@ const conversation = {
   ],
 };
 
+/**
+ * Le déploiement, que le vrai tour de chat passe TOUJOURS
+ * (`apps/runner/src/chat/run-chat-turn.ts`). Sans lui dans la fixture, le bloc
+ * `## Runtime` — et son « Call them directly » — ne se déclenchait jamais ici
+ * (revue Codex de la dette, passe 3, constat 1).
+ */
+const deployment = { os: 'Windows 11', networkMode: 'loopback' as const };
+
 const chat = () =>
   buildSystemPrompt(agent as never, db, {
     origin: 'dashboard',
     surface: 'chat',
     conversation,
+    deployment,
   } as never);
-const job = () => buildSystemPrompt(agent as never, db, { origin: 'api' } as never);
+const job = () => buildSystemPrompt(agent as never, db, { origin: 'api', deployment } as never);
 
 describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
   it('le TEXTE de ces skills ne part pas sur le chat — ce qui en reste vrai, oui', async () => {
@@ -190,6 +199,16 @@ describe('la promesse « rien que d’exécutable » se vérifie sur le TEXTE, p
   it('aucun bloc du chat ne nomme un outil que le chat n’a pas', async () => {
     const restants = outilsPrescrits(await chat());
     expect(restants, `ordres inexécutables sur le chat : ${restants.join(', ')}`).toEqual([]);
+  });
+
+  // Tous les ordres ne portent pas un nom d'outil : « Call them directly » n'en
+  // nomme aucun et reste inexécutable (passe 3, constat 1). Ceux-là se prennent
+  // par la phrase, et la liste s'allonge chaque fois qu'une passe en trouve un.
+  it('aucune phrase du chat n’ordonne un geste que le chat ne peut pas poser', async () => {
+    const c = await chat();
+    for (const ordre of ['Call them directly', '`attach_connector`', 'you MUST call']) {
+      expect(c, `ordre inexécutable sur le chat : « ${ordre} »`).not.toContain(ordre);
+    }
   });
 
   it('et le job, lui, les nomme bel et bien — sinon ce test ne prouverait rien', async () => {

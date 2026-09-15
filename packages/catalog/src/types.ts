@@ -52,9 +52,11 @@ export interface SystemSkill {
   kind?: SkillKind;
   /**
    * Les SURFACES où le texte de cette skill peut être suivi. Omis = `job`
-   * seulement pour une `baseline` qui prescrit des outils ; les autres kinds ne
-   * lisent pas ce champ (une `capability` se charge à la demande, un `channel`
-   * suit son canal).
+   * seulement, pour tout kind qui passe par `skillContentOn` — aujourd'hui les
+   * `baseline` ET les `channel`, qui sont assemblés par le même chemin. Une
+   * `capability` ne le lit pas : elle se charge à la demande. Ces lignes
+   * disaient « les autres kinds ne lisent pas ce champ », ce qui n'est pas vrai
+   * des channels (revue Codex de la dette de la PR #73, passe 3).
    *
    * Pourquoi c'est déclaré ICI et pas déduit par le runtime (invariant #3) :
    * une skill baseline dit « `file_read` before `file_write` », « `save_memory`

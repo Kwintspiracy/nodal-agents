@@ -239,6 +239,15 @@ export interface DiscoverabilityInput {
   workspaceConnectors: { slug: string; name: string }[];
   /** MCP servers CONFIGURED in the workspace — slug + name. */
   workspaceMcps: { slug: string; name: string }[];
+  /**
+   * False sur une surface sans les builtins de Nodal. Ce que le bloc ANNONCE —
+   * « ceci est configuré chez toi, il suffit de te l'attacher » — reste : c'est
+   * le fait qui évite un « je ne peux pas » devant une capacité qui existe. Le
+   * GESTE (`attach_connector` / `attach_mcp`) part, parce que l'agent ne peut
+   * pas le poser d'ici (revue Codex de la dette de la PR #73, passe 3,
+   * constat 1).
+   */
+  nodalTools?: boolean;
 }
 
 /**
@@ -296,9 +305,13 @@ export function buildDiscoverabilityBlock(input: DiscoverabilityInput): string {
   if (readyConnectors.length > 0 || readyMcps.length > 0) {
     lines.push(
       '',
-      'ALREADY configured in this workspace — just needs to be assigned to you ' +
-        '(NO new API key needed; if you are the workspace ROOT, use ' +
-        '`attach_connector` / `attach_mcp`, otherwise ask the user to assign it):',
+      input.nodalTools === false
+        ? 'ALREADY configured in this workspace — just needs to be assigned to you ' +
+            '(NO new API key needed; say so, and the job you hand the task to can do the ' +
+            'attaching):'
+        : 'ALREADY configured in this workspace — just needs to be assigned to you ' +
+            '(NO new API key needed; if you are the workspace ROOT, use ' +
+            '`attach_connector` / `attach_mcp`, otherwise ask the user to assign it):',
     );
     for (const c of readyConnectors)
       lines.push(`- ${labelForConnector(c.slug, c.name)} — connector \`${c.slug}\` (configured)`);
