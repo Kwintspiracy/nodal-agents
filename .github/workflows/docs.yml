@@ -5,6 +5,11 @@ name: Deploy Docs to GitHub Pages
 # vit sous `/qa/`. Ils ne partagent RIEN d'autre que l'hébergeur — le portail
 # est un document autonome, sans runtime.
 #
+# Ce workflow REND et déploie ; il ne mesure jamais et il n'écrit rien dans le
+# dépôt. Une seule exception au « il ne mesure pas » : la part GitHub du portail
+# (le tableau des chantiers, le prix d'une pull request) est relue à chaque
+# rendu, parce qu'elle vieillit en minutes là où la mesure vieillit en jours.
+#
 # Le portail visait Cloudflare Pages (`qa-pages.yml`, supprimé ici). Le motif
 # était de pouvoir mettre une porte devant : le dépôt est public et le portail
 # montre l'état interne du travail. Cette porte n'a jamais été posée, les
@@ -26,12 +31,29 @@ on:
   workflow_run:
     workflows: ['Quality — full measurement']
     types: [completed]
+  # Le tableau des chantiers vieillit en minutes, la mesure en jours. Publier
+  # les deux au rythme de la mesure faisait afficher « To do » le soir sur une
+  # issue fermée à 14:05. Chaque événement GitHub republie donc la page, qui
+  # relit AVANT de rendre la seule part que GitHub donne en une seconde.
+  issues:
+    types: [opened, closed, reopened, labeled, unlabeled, edited]
+  pull_request:
+    branches: [main]
+    types: [opened, closed, reopened, labeled, ready_for_review, converted_to_draft]
+  schedule:
+    # Le filet : les états de la CI ne portent aucun événement d'issue, et un
+    # webhook se perd. 41 et non 0 pour ne pas rejoindre la vague de l'heure.
+    - cron: '41 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  # `collect.mjs --github-only` interroge `gh`. En lecture seule, comme la
+  # mesure nocturne, mais il lui faut le droit de demander.
+  issues: read
+  pull-requests: read
 
 concurrency:
   group: pages
@@ -43,9 +65,15 @@ jobs:
     timeout-minutes: 15
     # Publier ce qu'une mesure RATÉE a laissé derrière elle donnerait un portail
     # à moitié écrit, présenté comme l'état du jour.
+    # Une mesure RATÉE laisse des données à moitié écrites ; les publier les
+    # présenterait comme l'état du jour. Et une pull request venue d'un fork
+    # n'a pas de jeton capable de déployer : le job échouerait sans rien dire
+    # d'utile.
     if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.conclusion == 'success') &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - uses: actions/checkout@v5
         with:
@@ -67,9 +95,18 @@ jobs:
       - name: Build docs
         run: pnpm --filter @nodal-agents/docs build
 
-      # `build.mjs` ne lit que `apps/qa/data/*.json` : il REND ce que la mesure
-      # nocturne a committé, il ne mesure pas. S'il mesurait, deux déploiements
-      # du même commit donneraient deux vérités.
+      # La part GitHub, relue à l'instant et reposée sur la mesure committée.
+      # Elle N'EST PAS committée : ce workflow rend, il n'enregistre pas. La
+      # mesure nocturne reste seule à écrire dans `apps/qa/data/`, sinon
+      # l'historique du portail deviendrait celui de ses déploiements.
+      # GitHub muet laisse le tableau committé en place, daté comme tel.
+      - name: Rafraîchir le tableau depuis GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node apps/qa/collect.mjs --github-only
+
+      # `build.mjs` ne lit que `apps/qa/data/*.json` : il REND, il ne mesure
+      # pas. La page porte les deux dates, « measured » et « board as of ».
       - name: Rendre le portail qualité
         run: node apps/qa/build.mjs
 
