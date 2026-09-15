@@ -312,9 +312,10 @@ describe('document — bien formé, selon son type', () => {
   });
 
   it('les règles CommonMark des blocs clôturés, une par une', async () => {
-    // Passe 3 de la dette #66, constat R2. La regex s'était trompée deux fois ;
-    // elle est remplacée par une boucle de lignes, et voici les cas que je
-    // n'aurais pas pensé à écrire — c'est la revue qui les a sondés.
+    // Le tableau de régression de cette règle, accumulé au fil des passes 2 à 6.
+    // La règle a eu cinq formes — quatre réécritures de CommonMark à la main,
+    // puis `remark-parse` ; ces cas ont survécu à toutes, et c'est ce qui leur
+    // donne leur valeur. La plupart viennent de la revue, pas de moi.
     const cas: Array<[string, string, 'green' | 'red']> = [
       ['cloture-mixte-1.md', '```\ncode\n```~\n# faux\n', 'red'],
       ['cloture-mixte-2.md', '~~~\ncode\n~~~`\n# faux\n', 'red'],
@@ -348,6 +349,12 @@ describe('document — bien formé, selon son type', () => {
       ['titre-indente-trois.md', '   # Titre\n\ncorps\n', 'green'],
       // La profondeur compte : c'est le TITRE du document qui est demandé.
       ['commence-par-h2.md', '## Details\n\ncorps\n', 'red'],
+      // Passe 6, constat R1 — une RÉGRESSION de C5 que le passage au parseur
+      // avait réintroduite : `remark-parse` ignore le front matter, lit `---`
+      // comme un filet, et un commentaire YAML `# …` y devient un vrai titre.
+      ['yaml-commentaire.md', '---\n# commentaire YAML\ntitle: x\n---\n\ncorps\n', 'red'],
+      ['yaml-commentaire-crlf.md', '---\r\n# commentaire\r\ntitle: x\r\n---\r\ncorps\r\n', 'red'],
+      ['yaml-puis-vrai-titre.md', '---\ntitle: x\n---\n\n# Vrai\n', 'green'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
@@ -355,9 +362,11 @@ describe('document — bien formé, selon son type', () => {
   });
 
   it('retirer un bloc ne doit pas FABRIQUER un titre souligné', async () => {
-    // Passe 3, constat R3. Supprimer les lignes recollait leurs voisines :
-    // un paragraphe, un bloc, puis un filet devenaient « texte / --- », donc un
-    // titre setext qui n'existait pas. Les lignes sont blanchies, pas retirées.
+    // Passe 3, constat R3. La règle d'alors supprimait les lignes du bloc, ce
+    // qui recollait leurs voisines : un paragraphe, un bloc, puis un filet
+    // devenaient « texte / --- », donc un titre setext qui n'existait pas.
+    // `remark-parse` ne peut plus se tromper là-dessus ; le cas reste, parce
+    // qu'il dit ce que le document SIGNIFIE.
     const p = write('recollage.md', 'texte\n```\ncode\n```\n---\n');
 
     expect((await prove(p)).verdict).toBe('red');

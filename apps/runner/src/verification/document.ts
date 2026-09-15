@@ -139,9 +139,20 @@ type FormCheck = (text: string) => string | null;
  * Profondeur 1 : c'est le TITRE du document qui est demandé, pas une section.
  * Un fichier qui commence par `## Détails` n'a pas de titre, et c'est voulu —
  * c'est exactement ce qu'un skill mal écrit produit.
+ *
+ * L'EN-TÊTE YAML est retiré AVANT de parser, et il faut qu'il le soit :
+ * `remark-parse` ne connaît pas le front matter, donc il lit `---` comme un
+ * filet et son contenu comme de la prose — un COMMENTAIRE YAML `# titre` y
+ * devient un vrai `heading` de profondeur 1, et un document sans titre repasse
+ * au vert. C'est le constat C5 de la passe 1, que ce remplacement avait
+ * réintroduit sans le vouloir (passe 6, constat R1). Les fins de ligne sont
+ * ramenées au LF d'abord : une convention d'éditeur n'est pas une propriété du
+ * document.
  */
 const markdownHasTitle: FormCheck = (text) => {
-  const tree = unified().use(remarkParse).parse(text);
+  const lf = text.replace(/\r\n?/g, '\n');
+  const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
+  const tree = unified().use(remarkParse).parse(body);
   const hasTitle = (tree.children ?? []).some(
     (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,
   );
@@ -375,8 +386,16 @@ const jsonParses: FormCheck = (text) => {
  *
  * On ne regarde donc plus le DOCTYPE du tout. Le message du parseur NOMME
  * l'entité ; on ne fait taire la plainte que si CETTE entité-là est déclarée.
- * Ce qui reste hors de portée, et se dit : une déclaration écrite à l'intérieur
- * d'un commentaire ou d'une section CDATA compte encore comme une déclaration.
+ * Deux limites restent, et se disent plutôt que de se corriger de travers :
+ *
+ * - une entité dont le NOM porte un point (`&a.b;`) est illisible par ce
+ *   parseur, qui rend `EntityRef: expecting ;` — le MÊME message qu'elle soit
+ *   déclarée ou non, mesuré. On ne peut donc pas les séparer, et faire taire ce
+ *   message ferait passer un `&foo` sans point-virgule, lui bien malformé. Le
+ *   document valide est donc dit ROUGE : c'est le côté sûr, et c'est une gêne ;
+ * - la recherche de déclaration est textuelle. Elle retire d'abord les
+ *   commentaires et les sections CDATA, mais ne parse pas le sous-ensemble
+ *   interne.
  */
 function isDeclaredEntityComplaint(text: string, message: string): boolean {
   const named = /entity not found\s*:?\s*&?([A-Za-z_:][\w.:-]*)/i.exec(message);
