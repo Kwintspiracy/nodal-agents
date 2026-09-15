@@ -234,3 +234,56 @@ describe('présentation (P1) — run_command', () => {
     });
   });
 });
+
+// ─── Per-agent command allowlist ────────────────────────────────────────────
+// The pure matcher is proven in builtin/command-allowlist.test.ts. What is
+// proven HERE is that run_command actually consults it, and that a refused
+// command never reaches a process — the file the command would have written
+// does not exist afterwards.
+
+describe('run_command — per-agent command allowlist @cap:executer-une-commande/moteur', () => {
+  it('runs a command that is on the allowlist', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'allowed', command: `node -e "process.stdout.write('ok-allowed')"` },
+      ctx({ commandAllowlist: ['node', 'npx vitest'] }),
+    );
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('ok-allowed');
+  });
+
+  it('refuses a command that is not on the allowlist, and nothing runs', async () => {
+    const marker = join(workspaceDir, 'should-not-exist.txt');
+    await expect(
+      runCommandTool.execute(
+        {
+          purpose: 'refused',
+          command: `npx rimraf --version && node -e "require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')"`,
+        },
+        ctx({ commandAllowlist: ['node'] }),
+      ),
+    ).rejects.toThrow(/not on this agent's command allowlist/);
+    const { existsSync } = await import('node:fs');
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('refuses the unlisted half of a compound command that starts with a listed one', async () => {
+    const marker = join(workspaceDir, 'should-not-exist-2.txt');
+    await expect(
+      runCommandTool.execute(
+        {
+          purpose: 'refused compound',
+          command: `node -e "1" && npx rimraf ${JSON.stringify(marker)}`,
+        },
+        ctx({ commandAllowlist: ['node'] }),
+      ),
+    ).rejects.toThrow(/not on this agent's command allowlist/);
+  });
+
+  it('leaves behaviour unchanged when no allowlist is configured', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'no allowlist', command: `node -e "process.stdout.write('no-list')"` },
+      ctx(),
+    );
+    expect(out.stdout).toContain('no-list');
+  });
+});

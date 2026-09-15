@@ -12,8 +12,11 @@
 // SECURITY MODEL (be honest): cwd is locked to the agent's workspace as a
 // CONVENIENCE, not a sandbox — a shell command escapes trivially (`cd ..`,
 // absolute paths, `node -e fs.rm(...)`). The real controls are (1) the approval
-// gate (a human reviews the exact command before it runs) and (2) the per-agent
-// opt-in skill. This is the same trust model as Claude Code's Bash tool.
+// gate (a human reviews the exact command before it runs), (2) the per-agent
+// opt-in skill, and (3) the per-agent command allowlist (command-allowlist.ts)
+// — which says WHICH PROGRAM may start, and is what makes an auto-approved
+// shell defensible for a narrow job. This is the same trust model as Claude
+// Code's Bash tool, plus that third control.
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
@@ -24,6 +27,7 @@ import {
   SHARED_WORKSPACE_LABEL,
 } from './file-ops/workspace';
 import { buildChildEnv } from './child-env';
+import { assertCommandAllowed } from './command-allowlist';
 import { runShellCommand, type CommandRunResult } from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
@@ -161,6 +165,12 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
   execute: async (input, ctx) => {
     // Fail loud when the agent has no workspace — same contract as the file_* tools.
     assertWorkspacesConfigured(ctx);
+
+    // Refuse a command this agent may not start, BEFORE resolving anything.
+    // Checked here rather than at the approval gate on purpose: the gate is
+    // skipped entirely by an auto_approve rule, and an unattended shell is
+    // exactly the case the allowlist exists for.
+    assertCommandAllowed(input.command, ctx.commandAllowlist);
 
     // Resolve the working directory inside the workspace (boundary-checked).
     // No `cwd` → the workspace root ('.' resolves under the sole/labelled root).

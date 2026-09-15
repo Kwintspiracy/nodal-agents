@@ -78,6 +78,7 @@ export {
   SkillFileError,
 } from './skill-ops';
 export { runCommandTool } from './run-command';
+export { assertCommandAllowed, CommandNotAllowedError } from './command-allowlist';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
 export { codeTaskTool, runCliDoctor } from './code-task';
 export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task';

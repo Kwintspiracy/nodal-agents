@@ -7138,6 +7138,78 @@ export async function setAgentRuntimeAction(raw: unknown): Promise<ActionResult<
   }
 }
 
+// ─── Per-agent run_command allowlist ─────────────────────────────────────────
+//
+// agents.command_allowlist: the programs run_command may start for this agent.
+// NULL = no list (unrestricted, historical). An EMPTY array refuses every
+// command — a decision, not an absence, which is why `[]` is accepted here and
+// stored as-is rather than normalised back to NULL.
+//
+// Owner-only, same gate shape as setCliRuntimeModeAction: this widens or
+// narrows what an agent may execute on the machine.
+
+const SetAgentCommandAllowlistSchema = z.object({
+  agentId: z.string().guid(),
+  // null clears the list. Entries are one or more words ("npx vitest"); a
+  // shell metacharacter in an entry would be a list that does not mean what it
+  // reads as, so it is refused rather than quietly matched.
+  allowlist: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .max(120)
+        .regex(/^[A-Za-z0-9._\-@/]+( [A-Za-z0-9._\-@/]+)*$/, 'Use plain command words'),
+    )
+    .max(50)
+    .nullable(),
+});
+
+export async function setAgentCommandAllowlistAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentCommandAllowlistSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, allowlist } = parsed.data;
+
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail(
+          'forbidden',
+          'Only the workspace owner can change what an agent is allowed to run.',
+        );
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    await db
+      .update(agents)
+      .set({ commandAllowlist: allowlist, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentCommandAllowlistAction]', err);
+    return fail('db_error', 'Failed to save the command allowlist');
+  }
+}
+
 // ─── Runtime-agent permission mode (read / write) ─────────────────────────────
 //
 // agents.cli_permissions.mode: 'read' (default when NULL) hides the CLI's

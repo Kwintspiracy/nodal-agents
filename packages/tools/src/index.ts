@@ -124,6 +124,8 @@ export {
   dashboardPublishTool,
   DashboardPublishInputSchema,
   buildChildEnv,
+  assertCommandAllowed,
+  CommandNotAllowedError,
   safeEnvAllowlistSnapshot,
   runShellCommand,
   runCommandSequence,
