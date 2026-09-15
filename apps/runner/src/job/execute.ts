@@ -91,6 +91,7 @@ import {
   generateTaskTools,
   handleDelegation,
   resumeDelegated,
+  DELEGATION_FAILED_MARKER,
   filterToolCallsForDelegation,
   buildDeferredToolResults,
   buildSystemPrompt,
@@ -2626,13 +2627,21 @@ async function runJob(
     for (const part of m.content as Array<{
       type?: unknown;
       toolName?: unknown;
-      output?: { type?: unknown };
+      output?: { type?: unknown; value?: unknown };
     }>) {
       if (!part || part.type !== 'tool-result') continue;
       const name = typeof part.toolName === 'string' ? part.toolName : '';
       if (!name.startsWith('assign_')) continue;
-      if (part.output?.type === 'error-text') unresolvedToolFailures.add(name);
-      else unresolvedToolFailures.delete(name);
+      // Only a delegation that DELIVERED NOTHING counts. The other error-text an
+      // assign_* result can carry is a DEFERRAL ("another handoff took priority,
+      // call me again") — not a failure, and reading it as one would refuse the
+      // parent's honest success later.
+      const value = typeof part.output?.value === 'string' ? part.output.value : '';
+      if (part.output?.type === 'error-text' && value.startsWith(DELEGATION_FAILED_MARKER)) {
+        unresolvedToolFailures.add(name);
+      } else {
+        unresolvedToolFailures.delete(name);
+      }
     }
   }
 
