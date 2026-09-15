@@ -17,7 +17,8 @@
 //     After the fix this should be 0 by construction: such a run is `failed`.
 //
 // Requires the stack to be up (`pnpm --filter nodal-agents exec tsx src/index.ts
-// --dev`) and a real key configured for the agents. Every failure mode is loud:
+// --dev`), a real key configured for the agents, and `BENCH_DELEGATION_AGENT`
+// naming the orchestrator to run. Every failure mode is loud:
 // a missing config, an unreachable runner and an unknown agent each throw, and
 // `runSections` records the section error rather than reporting a silent 0.
 
@@ -113,6 +114,29 @@ async function openDb() {
   return createClient(url, { max: 2 });
 }
 
+/**
+ * Which orchestrator to measure. NEVER a default baked into the code: an agent
+ * slug is agent metadata, and invariant #1 keeps all of it in the database — the
+ * architecture gate scans this file for exactly that. So the operator names the
+ * agent, and an unnamed one fails loud (invariant #4) with the list of
+ * orchestrators this install actually has.
+ */
+async function resolveAgentSlug(db: Awaited<ReturnType<typeof openDb>>['db']): Promise<string> {
+  const fromEnv = (process.env['BENCH_DELEGATION_AGENT'] ?? '').trim();
+  if (fromEnv !== '') return fromEnv;
+  const { agents, eq, and } = await import('@nodal-agents/db');
+  const rows = await db
+    .select({ slug: agents.slug })
+    .from(agents)
+    .where(and(eq(agents.role, 'orchestrator'), eq(agents.active, true)));
+  const available = rows.map((r) => r.slug).join(', ');
+  throw new Error(
+    'BENCH_DELEGATION_AGENT non défini — cette section mesure une délégation, ' +
+      "elle a donc besoin de l'orchestrateur à lancer. Orchestrateurs actifs de " +
+      `cette install : ${available || 'aucun'}.`,
+  );
+}
+
 async function startJob(runnerUrl: string, secret: string, agentSlug: string): Promise<string> {
   const res = await fetch(`${runnerUrl}/api/agent`, {
     method: 'POST',
@@ -139,7 +163,6 @@ export const delegationSection: Section = {
 
   async run(): Promise<Metric[]> {
     const runs = intFromEnv('BENCH_DELEGATION_RUNS', DEFAULT_RUNS);
-    const agentSlug = process.env['BENCH_DELEGATION_AGENT'] ?? 'alfred';
     const config = readLocalConfig();
     const secret = config.workerSecret;
     if (!secret) throw new Error('workerSecret absent de ~/.nodalai/config.json');
@@ -150,6 +173,10 @@ export const delegationSection: Section = {
     if (!health?.ok) throw new Error(`Runner injoignable sur ${runnerUrl} — démarre la stack.`);
 
     const { db, close } = await openDb();
+    const agentSlug = await resolveAgentSlug(db).catch(async (err: unknown) => {
+      await close();
+      throw err;
+    });
     const detail: string[] = [];
     let parentDelivered = 0;
     let emptySuccess = 0;
