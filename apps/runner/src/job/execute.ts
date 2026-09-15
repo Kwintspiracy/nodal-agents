@@ -2635,7 +2635,8 @@ async function runJob(
    * (passe 1, constat 3), effacer dès qu'une autre délégation livre rendait un
    * FAUX VERT si elle portait sur autre chose (passe 2, constat 1).
    *
-   * UNE seule réparation se constate : une autre DÉLÉGATION a livré. C'est la
+   * UNE seule réparation se constate : une autre DÉLÉGATION a vraiment livré —
+   * ni un report, ni un échec. C'est la
    * deuxième des trois issues que le rappel propose (« confie-le à un autre
    * spécialiste »), et l'ordre des `assign_*` entre eux est fiable — c'est le
    * résultat que la reprise range.
@@ -2717,13 +2718,21 @@ async function runJob(
       // call me again") — not a failure, and reading it as one would refuse the
       // parent's honest success later.
       const value = typeof part.output?.value === 'string' ? part.output.value : '';
-      if (part.output?.type === 'error-text' && value.startsWith(DELEGATION_FAILED_MARKER)) {
+      const estErreur = part.output?.type === 'error-text';
+      if (estErreur && value.startsWith(DELEGATION_FAILED_MARKER)) {
         unresolvedToolFailures.add(name);
+      } else if (estErreur) {
+        // Un REPORT (« un autre transfert a la priorité, rappelle-moi ») : ni un
+        // échec — le lire comme tel refuserait plus tard un succès honnête —, ni
+        // une livraison. Il ne compte donc pour RIEN. Le prendre pour un
+        // livrable faisait qu'une délégation jamais exécutée neutralisait celle
+        // qui avait raté (revue Codex de la PR #108, passe 4, constat 1).
+        unresolvedToolFailures.delete(name);
       } else {
         unresolvedToolFailures.delete(name);
-        // Une délégation qui a LIVRÉ pendant qu'une autre restait en échec est
-        // du travail constaté, et l'ordre des `assign_*` entre eux, lui, est
-        // fiable : c'est ce résultat-là que la reprise range.
+        // Une délégation qui a vraiment LIVRÉ pendant qu'une autre restait en
+        // échec est du travail constaté, et l'ordre des `assign_*` entre eux,
+        // lui, est fiable : c'est ce résultat-là que la reprise range.
         if (unresolvedToolFailures.size > 0) workDoneSinceFailure = true;
       }
     }
