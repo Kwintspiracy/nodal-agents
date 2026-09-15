@@ -121,6 +121,37 @@ const ko = (command: string, reason: string, durationMs = 0): Constat => ({
 type FormCheck = (text: string) => string | null;
 
 /**
+ * Les en-têtes de métadonnées, tels qu'ils s'écrivent vraiment : ouverts par
+ * `---` (YAML) ou `+++` (TOML, employé par Hugo), et fermés par le même filet —
+ * sauf le YAML, qui admet aussi `...` comme fin de document, la forme que
+ * Pandoc accepte.
+ *
+ * Une boucle de lignes, et non une expression régulière : celle qu'elle
+ * remplace ne connaissait qu'une seule des trois clôtures, et sa recherche
+ * paresseuse manquait l'en-tête VIDE — elle allait chercher la fermeture au
+ * filet suivant et emportait le vrai titre avec (passe 7, constats R1 et R2 :
+ * un faux vert et un faux rouge dans la même ligne).
+ *
+ * Un en-tête jamais refermé n'en est pas un : le texte est rendu tel quel, et
+ * `---` redevient ce que CommonMark en dit, un filet.
+ */
+const FRONT_MATTER: ReadonlyArray<{ open: string; close: readonly string[] }> = [
+  { open: '---', close: ['---', '...'] },
+  { open: '+++', close: ['+++'] },
+];
+
+function stripFrontMatter(lf: string): string {
+  const lines = lf.split('\n');
+  const trimEnd = (line: string): string => line.replace(/[ \t]+$/, '');
+  const fence = FRONT_MATTER.find((candidate) => candidate.open === trimEnd(lines[0] ?? ''));
+  if (fence === undefined) return lf;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (fence.close.includes(trimEnd(lines[i] ?? ''))) return lines.slice(i + 1).join('\n');
+  }
+  return lf;
+}
+
+/**
  * Un markdown a un titre : un `heading` de profondeur 1 dans l'arbre.
  *
  * POURQUOI UN VRAI PARSEUR. Cette règle a eu CINQ formes en cinq passes de
@@ -151,7 +182,7 @@ type FormCheck = (text: string) => string | null;
  */
 const markdownHasTitle: FormCheck = (text) => {
   const lf = text.replace(/\r\n?/g, '\n');
-  const body = lf.replace(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(\n|$)/, '');
+  const body = stripFrontMatter(lf);
   const tree = unified().use(remarkParse).parse(body);
   const hasTitle = (tree.children ?? []).some(
     (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,

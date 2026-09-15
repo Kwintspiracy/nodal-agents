@@ -355,6 +355,17 @@ describe('document — bien formé, selon son type', () => {
       ['yaml-commentaire.md', '---\n# commentaire YAML\ntitle: x\n---\n\ncorps\n', 'red'],
       ['yaml-commentaire-crlf.md', '---\r\n# commentaire\r\ntitle: x\r\n---\r\ncorps\r\n', 'red'],
       ['yaml-puis-vrai-titre.md', '---\ntitle: x\n---\n\n# Vrai\n', 'green'],
+      // Passe 7, constats R1 et R2. L'expression régulière ne connaissait qu'un
+      // seul en-tête : ouvert par `---`, fermé par `---`, non vide. La clôture
+      // YAML `...` et l'en-tête TOML `+++` lui échappaient — deux FAUX VERTS.
+      ['yaml-cloture-points.md', '---\n# commentaire\ntitle: x\n...\ncorps\n', 'red'],
+      ['toml-commentaire.md', '+++\n# commentaire\ntitle = "x"\n+++\ncorps\n', 'red'],
+      ['toml-puis-vrai-titre.md', '+++\ntitle = "x"\n+++\n\n# Vrai\n', 'green'],
+      // Et un en-tête VIDE faisait chercher la fermeture trop loin : le vrai
+      // titre était mangé jusqu'au filet suivant — un FAUX ROUGE.
+      ['front-matter-vide.md', '---\n---\n# Vrai\n\n---\n\ncorps\n', 'green'],
+      // Jamais refermé : ce n'est pas un en-tête, c'est le document lui-même.
+      ['front-matter-non-ferme.md', '---\ntitle: x\n\ncorps\n', 'red'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
