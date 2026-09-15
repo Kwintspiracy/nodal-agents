@@ -47,11 +47,13 @@ import type {
 const documentDeliverableType = 'document' as const;
 
 /**
- * Le « manifeste » d'un document est la version de ces règles : elles ne se
- * configurent pas, donc elles ne peuvent pas diverger de ce qui a été
- * approuvé. La primitive compare cette empreinte avant et après la preuve
- * pour savoir si la configuration a bougé — pour un document, elle ne bouge
- * que si CE fichier change, et c'est alors une nouvelle version des règles.
+ * Le « manifeste » d'un document est la version de ces règles, et il n'est que
+ * la MOITIÉ de ce que `loadConfig` renvoie : l'empreinte complète y est suivie
+ * de celle du CONTENU du fichier (constat C1). La primitive compare cette
+ * empreinte avant et après la preuve pour savoir si la configuration a bougé ;
+ * pour un document, elle bouge donc de deux façons — une nouvelle version de
+ * ces règles, ou une écriture dans le fichier pendant la preuve. Ce commentaire
+ * n'en disait qu'une (passe 8, constat R3).
  */
 export const DOCUMENT_MANIFEST_HASH = 'document-rules/v1';
 
