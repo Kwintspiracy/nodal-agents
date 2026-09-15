@@ -7,14 +7,65 @@ import { OrchestrationError } from '../errors';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 
 /**
- * What the child handed back. `string` = the child's text result on success.
- * `{ error: string }` = the child failed (executor returned `{status:'failed'}`)
- * — we inject an `error-text` tool_result so the parent's LLM treats it as a
- * tool failure and can react (notify the user, try a different sub-agent,
- * `return_result{status:'blocked'}`). Without this branch the parent died
- * silently alongside the child and the user got no Telegram message back.
+ * The TYPED outcome of one delegation, as the parent receives it.
+ *
+ * Modelled on Hermes (`tools/delegate_tool.py:2080-2130`): the parent never
+ * gets a bare string it has to guess the meaning of, it gets a record whose
+ * `status` field says whether anything was actually delivered. `summary` is the
+ * child's deliverable — its final assistant text — and an empty summary on a
+ * `completed` status is impossible by construction: the runner fails such a
+ * child before it ever reaches here (execute.ts, empty-deliverable guard).
  */
-export type DelegationOutcome = string | { error: string };
+export interface DelegationOutcomeRecord {
+  status: 'completed' | 'failed' | 'blocked';
+  /** The child's deliverable: the last assistant text it produced. */
+  summary: string;
+  /** Machine reason when status is not `completed`. */
+  error?: string | null;
+  /** How the child's run ended (`return_result_success`, `empty_deliverable`, …). */
+  exit_reason?: string | null;
+  /** Tools the child actually ran, so the parent can see what was attempted. */
+  tools_used?: string[];
+}
+
+/**
+ * What the child handed back. `string` = the child's text result on success and
+ * `{ error: string }` = a bare failure; both are legacy shapes kept for callers
+ * that have no richer information, and both are normalized into a
+ * `DelegationOutcomeRecord` before injection. A failure is injected as an `error-text`
+ * tool_result so the parent's LLM treats it as a tool failure and can react
+ * (notify the user, try a different sub-agent, `return_result{status:'blocked'}`)
+ * instead of dying silently alongside the child.
+ */
+export type DelegationOutcome = string | { error: string } | DelegationOutcomeRecord;
+
+/** Normalize any accepted outcome shape into the typed record. */
+export function normalizeDelegationOutcome(outcome: DelegationOutcome): DelegationOutcomeRecord {
+  if (typeof outcome === 'string') {
+    return { status: 'completed', summary: outcome, error: null, exit_reason: null };
+  }
+  if ('status' in outcome) return outcome;
+  return { status: 'failed', summary: '', error: outcome.error, exit_reason: null };
+}
+
+/**
+ * Render the typed outcome as the tool-result payload the parent's model reads.
+ * JSON, deliberately: the fields are the contract, and a model that sees
+ * `"status": "failed"` cannot mistake it for a specialist that answered.
+ */
+export function renderDelegationOutcome(result: DelegationOutcomeRecord): string {
+  return JSON.stringify(
+    {
+      status: result.status,
+      summary: result.summary,
+      error: result.error ?? null,
+      exit_reason: result.exit_reason ?? null,
+      tools_used: result.tools_used ?? [],
+    },
+    null,
+    2,
+  );
+}
 
 /**
  * Extract the child slug from a `pending_delegation.toolName` of the form
@@ -163,7 +214,8 @@ export async function resumeDelegated(
   // results (string) and 'error-text' for the deferred-sibling markers (which
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
-  const isFailure = typeof childOutcome !== 'string';
+  const outcome = normalizeDelegationOutcome(childOutcome);
+  const isFailure = outcome.status !== 'completed';
 
   // Per-slug delegation cap: track the slug of the LAST failed child so the
   // runner can block a naive same-slug retry while still letting the
@@ -182,13 +234,21 @@ export async function resumeDelegated(
   const failedSlug = isFailure ? childSlugFromToolName(toolName) : null;
   const nextLastFailedSlug = isFailure ? failedSlug : null;
 
+  // The parent MUST NOT be able to turn a failed delegation into a promise.
+  // The incident this closes (#107, job f1852d35): the child produced nothing,
+  // the parent read "(no output)" as an answer and told the user "recherche
+  // lancée, je te renvoie la synthèse" — a result that had already failed to
+  // exist. So the failure payload names the three legal moves and forbids the
+  // fourth. LLM-channel text only; it never reaches the user (invariant #2).
   const errorValue = isFailure
-    ? `Delegation failed: ${(childOutcome as { error: string }).error}. DO NOT retry the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}) — either fall back to a different specialist if your task allows it, or notify the user via telegram_send_message and call return_result{status:'blocked'}.`
+    ? `${renderDelegationOutcome(outcome)}
+
+This delegation delivered NOTHING usable. DO NOT retry the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}). DO NOT tell the user the work is in progress, launched, or coming later: it is not, and nothing else will arrive. Your only options are: (1) do the work yourself with your own tools, (2) delegate to a DIFFERENT specialist whose skills match, or (3) tell the user the truth about what failed via your delivery tool. Then call return_result with the honest status.`
     : '';
 
   const primaryOutput: ToolResultOutput = isFailure
     ? { type: 'error-text', value: errorValue }
-    : { type: 'text', value: childOutcome as string };
+    : { type: 'text', value: renderDelegationOutcome(outcome) };
 
   const toolResultParts: Array<{
     type: 'tool-result';
