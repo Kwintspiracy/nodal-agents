@@ -140,6 +140,13 @@ export const TERMINAL_STATUSES: JobStatus[] = ['completed', 'failed', 'cancelled
  * in agent_jobs.error for diagnostics; this string is the last-resort prose the
  * user reads when neither the agent nor a delivery tool left anything.
  */
+/**
+ * What a delegation that produced nothing reads as. Same invariant #2 exception
+ * as `genericFailExplanation` below: last-resort prose so a failure is never
+ * silent. It must name the failure — never imply an empty but valid answer.
+ */
+const NO_DELIVERABLE = '⚠️ This agent produced no deliverable — treat it as a failed delegation.';
+
 function genericFailExplanation(errorCode: string): string {
   return `⚠️ The task could not be completed (${errorCode}) and no explanation was provided.`;
 }
@@ -170,9 +177,17 @@ async function compileChildResults(db: AnyDrizzleDb, parentJobId: string): Promi
     .map((k) => {
       const who = k.name ?? k.slug ?? 'Agent';
       const tag = k.status === 'completed' ? '' : ` [${k.status ?? 'pending'}]`;
+      // #107 — a child with nothing to show is NOT a child that answered
+      // "(no output)". The old placeholder was indistinguishable from a real
+      // answer, and the parent read it as one (job f1852d35: the orchestrator
+      // then promised the user a synthesis that never existed). The runner now
+      // fails such a child before it can get here (empty-deliverable guard), so
+      // this is the last-resort wording — and it says FAILURE, not emptiness.
       const body =
         (k.result ?? '').trim() ||
-        (k.status === 'failed' ? (k.error ?? '(failed, no detail)') : '(no output)');
+        (k.status === 'failed'
+          ? (k.error ?? NO_DELIVERABLE)
+          : `${NO_DELIVERABLE} (status: ${k.status ?? 'pending'})`);
       return `## ${who}${tag}\n${body}`;
     })
     .join('\n\n---\n\n');

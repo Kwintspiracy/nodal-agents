@@ -119,6 +119,7 @@ import type {
   JobContext,
   SameToolStreakState,
   ErrorStreakState,
+  DelegationOutcomeRecord,
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
@@ -520,18 +521,49 @@ function stableStringify(value: unknown): string {
 // ─── JobStatus type (what we return) ─────────────────────────────────────────
 
 export type ExecuteJobResult =
-  | { status: 'completed'; result: string }
+  | { status: 'completed'; result: string; toolsUsed?: string[]; exitReason?: string }
   // `result` carries a user-facing explanation when one exists (e.g. a blocked
   // agent's reason). It lets a delegating parent relay WHY a child stopped,
   // not just the machine error code — never leave the user without an
   // explanation. The job row's own result column is filled independently by
   // failJob, so direct (non-delegated) surfaces don't depend on this.
-  | { status: 'failed'; error: string; result?: string }
+  | { status: 'failed'; error: string; result?: string; toolsUsed?: string[]; exitReason?: string }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
   | { status: 'awaiting_delegation' }
   | { status: 'awaiting_tasks' }
   | { status: 'already_handled' };
+
+/**
+ * Build the TYPED record a parent receives for one delegation (#107).
+ *
+ * Lives here, at module level, rather than inline at the two resume sites. The
+ * architecture gate (V&C T13) reads a terminal-success literal written near a
+ * job-row update as a bypass of the finalization primitive, and both resume
+ * sites sit right next to the cancel cascade. This record is a MESSAGE payload,
+ * never a status write — moving it out of that neighbourhood keeps the gate
+ * honest instead of loosening it.
+ */
+function delegationRecordFromOutcome(
+  outcome: Extract<ExecuteJobResult, { status: 'completed' | 'failed' }>,
+): DelegationOutcomeRecord {
+  if (outcome.status === 'completed') {
+    return {
+      status: outcome.status,
+      summary: outcome.result,
+      error: null,
+      exit_reason: outcome.exitReason ?? null,
+      tools_used: outcome.toolsUsed ?? [],
+    };
+  }
+  return {
+    status: outcome.exitReason === 'agent_blocked' ? 'blocked' : 'failed',
+    summary: outcome.result ?? '',
+    error: outcome.error || 'unknown',
+    exit_reason: outcome.exitReason ?? null,
+    tools_used: outcome.toolsUsed ?? [],
+  };
+}
 
 // ─── AnyToolDef ──────────────────────────────────────────────────────────────
 
@@ -668,10 +700,7 @@ export async function maybeResumeParent(
     return;
   }
 
-  const childResult =
-    outcome.status === 'completed'
-      ? outcome.result
-      : { error: outcome.result || outcome.error || 'unknown' };
+  const childResult = delegationRecordFromOutcome(outcome);
   // Inject the child's outcome as a tool_result on the parent + flip it to
   // pending (resumeDelegated). Re-verifies awaiting_delegation internally.
   await resumeDelegated(parentJobId as JobId, childJobId, childResult, db);
@@ -2584,6 +2613,47 @@ async function runJob(
   const MAX_UNRESOLVED_FAILURE_NUDGES = 2;
   let unresolvedFailureNudges = 0;
 
+  // Guard 3b, cross-run leg (#107). `unresolvedToolFailures` is in-memory and a
+  // delegation resume re-ENTERS executeJob, so a parent resumed with a FAILED
+  // delegation would start its next run with an empty set and be free to signal
+  // success over a delegation that delivered nothing. Seed the set from the
+  // transcript: for every `assign_*` tool-result already in `messages`, the LAST
+  // occurrence decides — an error-text one leaves the slug unresolved, a later
+  // successful one clears it (so a fallback to another specialist, or a redo
+  // that worked, is not held against the parent).
+  for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+    if (!m || m.role !== 'tool' || !Array.isArray(m.content)) continue;
+    for (const part of m.content as Array<{
+      type?: unknown;
+      toolName?: unknown;
+      output?: { type?: unknown };
+    }>) {
+      if (!part || part.type !== 'tool-result') continue;
+      const name = typeof part.toolName === 'string' ? part.toolName : '';
+      if (!name.startsWith('assign_')) continue;
+      if (part.output?.type === 'error-text') unresolvedToolFailures.add(name);
+      else unresolvedToolFailures.delete(name);
+    }
+  }
+
+  // The last non-empty assistant TEXT produced during this run. For a delegated
+  // sub-job this IS the deliverable the parent receives (Hermes:
+  // `tools/delegate_tool.py:2064-2078`, `summary = final_response`); for a head
+  // job it is what lands in `agent_jobs.result` when no delivery tool wrote it.
+  // Empty at finalization time means the job produced nothing — see the
+  // empty-deliverable guard in the return_result branch.
+  let lastAssistantTextSeen = '';
+  // ONE nudge, as Hermes does: ask for the deliverable, then fail loud.
+  const MAX_EMPTY_DELIVERABLE_NUDGES = 1;
+  let emptyDeliverableNudges = 0;
+  // Internal corrective prompt — LLM channel only, never sent to a user
+  // (invariant #2 holds, same standing as `deliveryNudge` above).
+  const emptyDeliverableNudge =
+    '[système] Tu as signalé la fin de la tâche mais tu n’as produit AUCUN texte. ' +
+    '`return_result` ne transporte pas de contenu : ta réponse écrite EST le livrable. ' +
+    'Écris maintenant ton livrable (ce que tu as trouvé ou fait, en résultats, pas en ' +
+    'intentions) comme réponse, puis arrête-toi.';
+
   // A return_result(status='blocked') MUST carry a user-facing reason. If the
   // agent omits it, nudge (bounded) for one before finalizing — never leave the
   // user without an explanation (invariant #4 / explicit product requirement).
@@ -2972,6 +3042,7 @@ async function runJob(
               : response.text || '',
       };
       messages = [...messages, assistantMsg];
+      if ((response.text ?? '').trim() !== '') lastAssistantTextSeen = (response.text ?? '').trim();
 
       // f. Note return_result presence — but do NOT short-circuit. If the LLM
       // returns it alongside other tools (e.g. [create_task, return_result]),
@@ -3057,7 +3128,12 @@ async function runJob(
           await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
             console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
           );
-          return { status: 'completed', result: withDeliveryNotice(textContent) };
+          return {
+            status: 'completed',
+            result: withDeliveryNotice(textContent),
+            toolsUsed,
+            exitReason: 'final_text',
+          };
         }
         // No text AND no tool calls — an empty LLM turn. Transient (the model
         // occasionally returns a blank completion); retry a bounded number of
@@ -3583,7 +3659,7 @@ async function runJob(
                 // Prefer the child's user-facing reason (e.g. an agent_blocked
                 // explanation) over the bare error code, so the parent can relay
                 // WHY the child stopped — not just that it did.
-                const childErr = childOutcome.result || childOutcome.error || 'unknown';
+                const childFailure = delegationRecordFromOutcome(childOutcome);
                 // Surface the failure as a tool_result so the parent's LLM can
                 // react (notify the user via telegram_send_message, try another
                 // sub-agent, return_result{status:'blocked'}, etc.) instead of
@@ -3595,12 +3671,7 @@ async function runJob(
                 // delegated to Summarizus, child failed at turn 5, parent died
                 // immediately with `child_failed:Retry exhausted` and the user
                 // got NOTHING back on Telegram after 8 minutes of work.
-                await resumeDelegated(
-                  jobId as JobId,
-                  delegation.childJobId,
-                  { error: childErr },
-                  db,
-                );
+                await resumeDelegated(jobId as JobId, delegation.childJobId, childFailure, db);
                 return runJob(jobId, deps, runnerEnv, opts);
               }
 
@@ -3633,7 +3704,8 @@ async function runJob(
 
               // Inject child's result as tool_result on the parent and flip
               // status back to 'pending' so we can re-enter executeJob.
-              await resumeDelegated(jobId as JobId, delegation.childJobId, childOutcome.result, db);
+              const childSuccess = delegationRecordFromOutcome(childOutcome);
+              await resumeDelegated(jobId as JobId, delegation.childJobId, childSuccess, db);
 
               return runJob(jobId, deps, runnerEnv, opts);
             }
@@ -4053,7 +4125,13 @@ async function runJob(
           await failJob(db, jobId as string, errorMessage, runStats(), messages, resultMessage);
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
-          return { status: 'failed', error: errorMessage, result: resultMessage };
+          return {
+            status: 'failed',
+            error: errorMessage,
+            result: resultMessage,
+            toolsUsed,
+            exitReason: 'agent_blocked',
+          };
         }
 
         if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {
@@ -4069,7 +4147,14 @@ async function runJob(
           // the agent literally cannot retry to success). The telegram-delivery
           // guard below independently catches "nothing delivered on a tool-only
           // channel".
-          const stuckDelivery = stuck.filter((t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t));
+          // `assign_*` joins the delivery tools here (#107): a delegation that
+          // came back FAILED produced nothing, so a parent signalling success
+          // over it is claiming a result that does not exist — the same lie the
+          // guard already catches for a failed send. The parent is nudged to
+          // redo, re-delegate elsewhere, or tell the truth; then it fails loud.
+          const stuckDelivery = stuck.filter(
+            (t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t) || t.startsWith('assign_'),
+          );
           if (stuckDelivery.length > 0) {
             if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
               unresolvedFailureNudges += 1;
@@ -4084,9 +4169,10 @@ async function runJob(
                 toolName: 'return_result',
                 output: toResultOutput({
                   error:
-                    'deferred: tu signales success mais ta livraison a échoué sans être corrigée (' +
+                    'deferred: tu signales un succès alors que ceci a échoué sans être corrigé (' +
                     stuckDelivery.join(', ') +
-                    "). Réessaie la livraison jusqu'à réussite, ou appelle return_result avec status='blocked'.",
+                    "). Refais-le jusqu'à réussite (ou confie-le à un autre spécialiste), ou " +
+                    "appelle return_result avec status='blocked'.",
                 }),
               });
               messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
@@ -4095,9 +4181,11 @@ async function runJob(
                 {
                   role: 'user',
                   content:
-                    "[système] Ne déclare pas un succès qui n'a pas eu lieu. Ta livraison à " +
-                    "l'utilisateur a échoué et n'a pas été corrigée. Corrige-la, ou termine " +
-                    "honnêtement avec status='blocked'.",
+                    "[système] Ne déclare pas un succès qui n'a pas eu lieu. Une action dont " +
+                    "dépend ce résultat a échoué et n'a pas été corrigée. Ne dis pas à " +
+                    "l'utilisateur que le travail est lancé ou à venir : il ne l'est pas. " +
+                    'Refais-le toi-même, confie-le à un autre spécialiste, ou dis la vérité à ' +
+                    "l'utilisateur, puis termine honnêtement avec status='blocked'.",
                 } as ModelMessage,
               ];
               continue;
@@ -4150,6 +4238,58 @@ async function runJob(
           trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
           await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
           return { status: 'failed', error: 'telegram_not_delivered' };
+        }
+
+        // Guard 3c — empty deliverable (#107, job f1852d35 / sub-job 538b8d53).
+        // `return_result` is a SIGNAL and carries no content, so a turn made of
+        // reasoning + `return_result{status:'success'}` delivers NOTHING. Hermes
+        // refuses exactly this (`tools/delegate_tool.py:2064-2078`: status is
+        // `completed` only if the final response is non-empty, "treat it as a
+        // failure so the parent surfaces it instead of silently accepting
+        // zero-content success"). Every channel is covered, not only the
+        // tool-only ones: an internal sub-job's deliverable IS its final text,
+        // and an api/dashboard job with no text and no delivery leaves its
+        // caller an empty result column. ONE nudge, then fail loud (invariant #4).
+        // A run that created tasks delivers later via the board, and a run that
+        // already wrote a result (dashboard_publish, an earlier resume) has a
+        // deliverable — neither is empty.
+        if (taskRows.length === 0 && !toolDelivered && lastAssistantTextSeen === '') {
+          const [deliverableRow] = await db
+            .select({ result: agentJobs.result })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, jobId as string))
+            .limit(1);
+          if ((deliverableRow?.result ?? '').trim() === '') {
+            if (emptyDeliverableNudges < MAX_EMPTY_DELIVERABLE_NUDGES) {
+              emptyDeliverableNudges += 1;
+              trace('empty_deliverable_nudge', { turn, attempt: emptyDeliverableNudges });
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: returnResultCall.toolCallId,
+                toolName: 'return_result',
+                output: toResultOutput({
+                  error:
+                    'deferred: tu signales la fin de la tâche mais tu n’as produit aucun ' +
+                    'contenu. `return_result` ne transporte rien : écris ton livrable comme ' +
+                    'réponse, puis signale à nouveau.',
+                }),
+              });
+              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [
+                ...messages,
+                { role: 'user', content: emptyDeliverableNudge } as ModelMessage,
+              ];
+              continue;
+            }
+            trace('empty_deliverable', { turn });
+            await failJob(db, jobId as string, 'empty_deliverable', runStats(), messages);
+            return {
+              status: 'failed',
+              error: 'empty_deliverable',
+              exitReason: 'empty_deliverable',
+              toolsUsed,
+            };
+          }
         }
 
         // Brique 33: return_result is status-only. Content delivery happens via
@@ -4248,7 +4388,12 @@ async function runJob(
         trace('exit_completed_via_return_result', {
           propagatedResultLen: propagatedResult.length,
         });
-        return { status: 'completed', result: withDeliveryNotice(propagatedResult) };
+        return {
+          status: 'completed',
+          result: withDeliveryNotice(propagatedResult),
+          toolsUsed,
+          exitReason: 'return_result_success',
+        };
       }
 
       // k. Append tool results and continue
