@@ -242,11 +242,15 @@ function lastAssistantText(messages: unknown): string {
 }
 
 /**
- * Final result-capture fallback (Result-capture fix): after children-compile, if
- * the job's `result` is STILL empty, capture the agent's last written answer from
- * the transcript. Guarantees a leaf agent's substantive output is never lost just
- * because it forgot to call a delivery tool — the captured result then flows to
- * dependents, run memory, and delivery. No-op if there is no usable text.
+ * Le livrable d'un agent : son dernier texte écrit, relu dans la transcription.
+ *
+ * Appelé AVANT la compilation des enfants, et non après comme ces lignes le
+ * disaient : un agent qui délègue une étape puis écrit sa synthèse voyait la
+ * compilation gagner, et sa synthèse disparaître (revue Codex de la PR #108,
+ * constat 4). Garantit qu'une production substantielle n'est jamais perdue
+ * parce que l'agent a oublié d'appeler un outil de livraison — le texte capturé
+ * part ensuite vers les dépendants, la mémoire de run et la livraison. Sans
+ * effet s'il n'y a aucun texte utilisable.
  */
 async function fillResultFromFinalTextIfEmpty(
   db: AnyDrizzleDb,

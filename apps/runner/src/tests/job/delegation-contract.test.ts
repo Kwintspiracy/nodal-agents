@@ -724,6 +724,89 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(row.result ?? '').toContain('1,616');
   });
 
+  it('un parent qui REFAIT le travail lui-même peut finir honnêtement', async () => {
+    // Revue Codex de la PR #108, passe 2, constat 2. Le rappel propose trois
+    // issues : refaire, confier à un autre, dire la vérité. Les deux premières
+    // étaient impossibles à valider — l'échec `assign_*` restait inscrit quoi
+    // que le parent fasse, et il finissait en `unresolved_tool_failure` après
+    // avoir obéi. Ce qui se constate, c'est qu'un outil a RÉUSSI depuis.
+    const parentId = await insertJob({
+      channel: 'api',
+      status: 'pending',
+      messages: [
+        { role: 'user', content: 'Fais une recherche sur la longueur de Planck' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-z',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-z',
+              toolName: 'assign_researcher',
+              output: {
+                type: 'error-text',
+                value: `${DELEGATION_FAILED_MARKER}
+{"status":"failed"} delivered NOTHING`,
+              },
+            },
+          ],
+        },
+        // Puis il le fait LUI-MÊME : un outil, qui réussit. C'est ce que la
+        // machine peut constater ; qu'il réponde à la même question, non.
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'search-1',
+              toolName: 'web_search',
+              input: { query: 'longueur de Planck' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'search-1',
+              toolName: 'web_search',
+              output: { type: 'text', value: '1,616 × 10⁻³⁵ m' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          text: "Je l'ai fait moi-même : la longueur de Planck vaut 1,616 × 10⁻³⁵ m.",
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(parentId);
+    expect(row.status).toBe('completed');
+    expect(row.result ?? '').toContain('1,616');
+  });
+
   it('refuse aussi la promesse rendue en TEXTE SEUL, sans return_result', async () => {
     // Revue Codex de la PR #108, constat 2 (bloquant). La garde vit dans la
     // branche `return_result`. Sur `api` et `dashboard`, un parent peut finir
