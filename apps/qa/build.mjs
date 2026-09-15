@@ -38,14 +38,30 @@ const historique = existsSync(join(DATA, 'history.ndjson'))
  * existe, et le bouton qui ouvre l'explication complète. Quentin, 12/09 :
  * « je ne sais pas ce que je regarde ». Un titre seul ne suffit à personne.
  */
+const RAIL = {
+  chantiers: ['01', 'The board'],
+  capacites: ['02', 'The product'],
+  ecarts: ['03', 'What is wrong'],
+  parcours: ['04', 'Journeys'],
+  memoire: ['05', 'Over time'],
+  vue: ['06', 'The code'],
+  banc: ['07', 'Measures'],
+  ci: ['08', 'What runs it'],
+  historique: ['09', 'The record'],
+};
+
 const entete = (id, titre) => {
   const x = EXPLICATIONS[id];
   if (!x) throw new Error(`page sans explication : ${id}`);
+  const [n, rubrique] = RAIL[id] ?? ['', ''];
   return `<div class="entete-page">
-    <h2 class="titre-vue">${esc(titre)}</h2>
+    <div class="rail-page"><span class="rail-page__n">${n}</span><span class="mono">${esc(rubrique)}</span></div>
+    <div class="entete-page__corps">
+      <h2 class="titre-vue">${esc(titre)}</h2>
+      <p class="pourquoi">${esc(x.enBref)}</p>
+    </div>
     <button type="button" class="btn-comprendre" data-explique="${id}">Understand this page</button>
-  </div>
-  <p class="pourquoi">${esc(x.enBref)}</p>`;
+  </div>`;
 };
 
 /** Une phrase au-dessus d'un tableau ou d'un cadre : ce qu'on est en train de regarder. */
@@ -979,59 +995,83 @@ h1,h2,h3{font-family:Archivo,system-ui,sans-serif;color:var(--encre);letter-spac
 a{color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-/* ── Charpente ── */
-.app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
-.rail{background:var(--barre);color:#b9b9be;border-right:1px solid rgba(255,255,255,.08);padding:22px 16px;position:sticky;top:0;height:100vh;
-  display:flex;flex-direction:column;gap:26px;overflow-y:auto}
-.marque{display:flex;flex-direction:column;gap:2px}
-.marque b{font-family:Archivo,sans-serif;font-size:15px;color:#fff;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+/* ── Charpente ──────────────────────────────────────────────────────────────
+   La grammaire de la homepage : une barre fine en haut, pas de colonne sombre,
+   une seule gouttière généreuse, et un rythme vertical constant. Les boîtes
+   grises ont disparu : un bloc se définit par son filet, jamais par un fond ni
+   par une ombre. */
+.tete{position:sticky;top:0;z-index:20;background:var(--fond);border-bottom:1px solid var(--regle)}
+.tete__in{width:100%;max-width:1440px;margin-inline:auto;padding-inline:clamp(20px,4vw,52px);
+  display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.tete__in:first-child{min-height:56px}
+.marque{display:flex;align-items:baseline;gap:11px;text-decoration:none;color:var(--encre)}
+.marque b{font-family:Archivo,sans-serif;font-size:17px;font-weight:700;letter-spacing:-.02em;
+  display:flex;align-items:center;gap:9px}
 .marque b::before{content:'';width:10px;height:10px;border-radius:50%;background:#ff5631;flex:none}
-.marque span{font-family:"JetBrains Mono",monospace;font-size:11px;color:#7c7c81;letter-spacing:.12em;text-transform:uppercase;padding-left:19px}
-nav{display:flex;flex-direction:column;gap:2px;counter-reset:vue}
+.marque span{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--encre3);letter-spacing:.12em}
+.tete__meta{margin:0;font-size:11px;color:var(--encre3);letter-spacing:.06em}
+.tete__onglets{padding-bottom:0}
+
+/* La barre de navigation : une bande d'onglets, pas une liste verticale. */
+nav{display:flex;align-items:stretch;gap:2px;flex-wrap:wrap;counter-reset:vue;width:100%}
+nav a{display:flex;align-items:center;gap:8px;padding:11px 13px 12px;color:var(--encre2);
+  text-decoration:none;font-size:14px;border-bottom:2px solid transparent;white-space:nowrap}
 nav>a{counter-increment:vue}
-nav>a::before{content:counter(vue,decimal-leading-zero);font-family:"JetBrains Mono",monospace;font-size:10px;color:#6d6d72;margin-right:9px;letter-spacing:.04em}
+nav>a::before{content:counter(vue,decimal-leading-zero);font-family:"JetBrains Mono",monospace;
+  font-size:10px;color:var(--encre3);letter-spacing:.04em}
 nav>a.discret{counter-increment:none}
 nav>a.discret::before{content:none}
-nav a{display:flex;align-items:center;gap:8px;
-  padding:8px 11px;border-radius:3px;color:#b9b9be;text-decoration:none;font-size:14px}
-nav a b{margin-left:auto}
-nav a:hover{background:rgba(255,255,255,.06);color:#fff}
-nav a.actif{background:rgba(255,255,255,.1);color:#fff;font-weight:600;box-shadow:inset 2px 0 0 #ff5631}
-nav a.actif::before{color:#ff5631}
-nav a b{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;opacity:.8}
-nav .rubrique{margin:14px 0 2px;padding:0 11px;font-family:"JetBrains Mono",monospace;
-  font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#6d7679}
-nav a.discret{font-size:13px;color:#9aa3a7}
-nav a.discret:hover{color:#fff}
-nav a.discret.actif{color:#fff}
-.rail footer{margin-top:auto;font-family:"JetBrains Mono",monospace;font-size:11px;color:#6d7679;line-height:1.7}
-.contenu{padding:34px 34px 90px;max-width:1220px}
+nav a b{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;color:var(--encre3)}
+nav a:hover{color:var(--encre)}
+nav a.actif{color:var(--encre);font-weight:600;border-bottom-color:#ff5631}
+nav a.actif::before,nav a.actif b{color:#ff5631}
+nav .rubrique{margin:0;align-self:center;padding:0 16px 0 22px;font-family:"JetBrains Mono",monospace;
+  font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--encre3);
+  border-left:1px solid var(--regle);margin-left:12px}
+nav a.discret{font-size:13px;color:var(--encre3)}
+nav a.discret:hover{color:var(--encre)}
+nav a.discret.actif{color:var(--encre)}
+
+.contenu{width:100%;max-width:1440px;margin-inline:auto;
+  padding:clamp(34px,5vw,64px) clamp(20px,4vw,52px) 110px}
+.pied{width:100%;max-width:1440px;margin-inline:auto;
+  padding:26px clamp(20px,4vw,52px) 44px;border-top:1px solid var(--regle);
+  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-size:11px;color:var(--encre3)}
 
 /* ── Vues ── */
-.vue{display:none}
+.vue{display:none;scroll-margin-top:150px}
 .vue.actif{display:block}
-.titre-vue{font-size:27px;font-weight:700;margin-bottom:6px}
-.chapo{color:var(--encre3);max-width:74ch;margin:0 0 26px;font-size:15px}
-.sous-titre{font-size:14px;font-weight:600;margin:34px 0 6px;display:flex;align-items:center;gap:10px}
-.compte{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--encre3);
-  background:var(--panneau2);padding:1px 8px;border-radius:3px}
-.note-section{color:var(--encre3);font-size:13px;margin:0 0 12px;max-width:80ch}
-.entete-page{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.btn-comprendre{background:var(--panneau);color:var(--accent);border:1px solid var(--regle);border-radius:3px;padding:6px 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
-.btn-comprendre:hover{border-color:var(--accent)}
+
+/* L'en-tête d'une page : le rail numéroté de la homepage à gauche, le titre et
+   sa raison d'être au centre, le bouton d'explication à droite. */
+.entete-page{display:grid;grid-template-columns:168px minmax(0,1fr) auto;gap:clamp(20px,3vw,44px);
+  align-items:start;margin-bottom:38px}
+.rail-page{display:flex;flex-direction:column;gap:3px;padding-top:9px}
+.rail-page__n{font-family:Archivo,sans-serif;font-size:13px;font-weight:700;color:#ff5631;letter-spacing:.06em}
+.rail-page .mono{font-size:11px;color:var(--encre3);letter-spacing:.14em;text-transform:uppercase}
+.titre-vue{font-size:clamp(28px,3.4vw,42px);font-weight:700;line-height:1.05;margin-bottom:12px}
+.pourquoi{color:var(--encre2);font-size:16px;line-height:1.6;max-width:66ch;margin:0}
+.chapo{color:var(--encre3);max-width:74ch;margin:0 0 30px;font-size:15px}
+.sous-titre{font-size:14px;font-weight:600;margin:44px 0 8px;display:flex;align-items:center;gap:10px}
+.compte{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--encre3)}
+.note-section{color:var(--encre3);font-size:13px;margin:0 0 14px;max-width:80ch}
+.btn-comprendre{background:transparent;color:var(--encre);border:1px solid var(--regle);
+  border-radius:3px;padding:9px 16px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;
+  white-space:nowrap}
+.btn-comprendre:hover{border-color:var(--encre);background:var(--panneau2)}
 .btn-comprendre:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.pourquoi{color:var(--encre2);font-size:15px;line-height:1.55;max-width:80ch;margin:0 0 10px;padding:10px 14px;border-left:3px solid var(--accent);background:var(--accent-doux);border-radius:0 4px 4px 0}
 .repere{color:var(--encre3);font-size:13px;margin:0 0 10px;max-width:80ch}
 .modale{border:0;padding:0;background:transparent;max-width:none;max-height:none;width:100vw;height:100vh}
 .modale::backdrop{background:rgba(0,0,0,.45)}
-.modale__cadre{background:var(--panneau);color:var(--encre);border:1px solid var(--regle);border-radius:8px;width:min(860px,calc(100vw - 32px));max-height:calc(100vh - 48px);margin:24px auto;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.modale__cadre{background:var(--fond);color:var(--encre);border:1px solid var(--regle);border-radius:6px;width:min(880px,calc(100vw - 32px));max-height:calc(100vh - 48px);margin:24px auto;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.28)}
 .modale__tete{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;border-bottom:1px solid var(--regle)}
-.modale__tete h2{font-size:22px;margin:0}
+.modale__tete h2{font-family:Archivo,sans-serif;font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0}
 .modale__fermer{background:transparent;color:var(--encre2);border:1px solid var(--regle);border-radius:3px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
 .modale__corps{overflow:auto;padding:8px 24px 24px;font-size:15px;line-height:1.6}
-.modale__partie{padding:16px 0;border-bottom:1px solid var(--regle)}
+.modale__partie{padding:22px 0;border-bottom:1px solid var(--regle)}
 .modale__partie:last-child{border-bottom:0}
-.modale__partie h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--encre3);margin:0 0 8px}
+.modale__partie h3{font-family:"JetBrains Mono",monospace;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--encre3);margin:0 0 10px;font-weight:400}
 .modale__partie p,.modale__partie li{color:var(--encre2);max-width:76ch}
 .modale__partie ul{padding-left:20px;margin:8px 0}
 .modale__partie li{margin:4px 0}
@@ -1040,17 +1080,19 @@ nav a.discret.actif{color:#fff}
 /* ── Cartes ── */
 /* 200px et non 215 : la Mémoire porte quatre cartes plus une en double largeur,
    soit cinq colonnes, à 215 la dernière tombait seule sur une deuxième ligne. */
-.cartes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:8px}
-.carte{background:var(--panneau);border:1px solid var(--regle);border-radius:6px;padding:16px 18px;
-  box-shadow:var(--ombre);display:flex;flex-direction:column;gap:6px}
-.carte--phare{grid-column:span 2;border-top:3px solid var(--accent)}
-.carte--alerte{border-top:3px solid var(--ko)}
-.carte h3{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--encre3);font-weight:600}
-.chiffre{margin:0;font-size:34px;line-height:1.05;color:var(--encre);font-weight:500}
-.chiffre .sur{font-size:19px;color:var(--encre3)}
-.sous{margin:0;font-size:13px;color:var(--encre3)}
-.avertissement{margin:6px 0 0;font-size:12px;color:var(--encre3);border-top:1px solid var(--regle);padding-top:8px}
-@media(max-width:760px){.carte--phare{grid-column:span 1}}
+.cartes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;
+  margin-bottom:10px;background:var(--regle);border:1px solid var(--regle);border-radius:6px;overflow:hidden}
+.carte{background:var(--fond);padding:22px 22px 20px;display:flex;flex-direction:column;gap:7px}
+.carte--phare{grid-column:span 2}
+.carte--phare .chiffre{color:var(--accent)}
+.carte--alerte .chiffre{color:var(--ko)}
+.carte h3{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre3);font-weight:500;order:2}
+.chiffre{margin:0;font-family:Archivo,sans-serif;font-size:clamp(30px,3.4vw,40px);line-height:1;
+  color:var(--encre);font-weight:700;letter-spacing:-.03em;order:1}
+.chiffre .sur{font-size:21px;color:var(--encre3);font-weight:600}
+.sous{margin:0;font-size:13px;color:var(--encre3);order:3}
+.avertissement{margin:8px 0 0;font-size:12px;color:var(--encre3);border-top:1px solid var(--regle);padding-top:9px;order:4}
+
 
 /* ── Jauge : trois états, dont « inconnu » ── */
 .jauge{position:relative;height:20px;border-radius:4px;background:var(--panneau2);overflow:hidden;
@@ -1068,12 +1110,12 @@ nav a.discret.actif{color:#fff}
 .jauge--inconnue span{color:var(--inconnu)}
 
 /* ── Tableaux ── */
-.tableau{overflow-x:auto;border:1px solid var(--regle);border-radius:6px;background:var(--panneau);box-shadow:var(--ombre)}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--encre3);
-  font-weight:600;padding:10px 14px;border-bottom:1px solid var(--regle);background:var(--panneau);
-  position:sticky;top:0;z-index:1}
-td{padding:9px 14px;border-bottom:1px solid var(--regle);vertical-align:middle}
+.tableau{overflow-x:auto;border-top:2px solid var(--encre)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre3);
+  font-weight:500;padding:14px 16px 12px 0;border-bottom:1px solid var(--regle);background:var(--fond)}
+th:last-child,td:last-child{padding-right:0}
+td{padding:15px 16px 15px 0;border-bottom:1px solid var(--regle);vertical-align:top;line-height:1.5}
 tr:last-child td{border-bottom:0}
 .num{text-align:right}
 .dim{color:var(--encre3)}
@@ -1098,27 +1140,26 @@ tr:last-child td{border-bottom:0}
   border-radius:3px;color:var(--encre3);white-space:nowrap}
 
 /* ── Écarts ── */
-.ecarts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
-.ecart{display:grid;grid-template-columns:44px 1fr;gap:14px;background:var(--panneau);
-  border:1px solid var(--regle);border-left:3px solid var(--regle);border-radius:6px;
-  padding:15px 18px;box-shadow:var(--ombre)}
-.ecart--haute{border-left-color:var(--ko)}
-.ecart--moyenne{border-left-color:var(--moyen)}
-.ecart--basse{border-left-color:var(--inconnu)}
-.rang{font-family:"JetBrains Mono",monospace;font-size:14px;color:var(--encre3);padding-top:2px}
+.ecarts{list-style:none;margin:0;padding:0;border-top:2px solid var(--encre)}
+.ecart{display:grid;grid-template-columns:112px minmax(0,1fr);gap:24px;
+  padding:22px 0;border-bottom:1px solid var(--regle)}
+.rang{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--inconnu);padding-top:5px}
 .ecart--haute .rang{color:var(--ko)}
 .ecart--moyenne .rang{color:var(--moyen)}
-.ecart h3{font-size:16px;margin-bottom:4px}
-.ecart p{margin:0;font-size:14px;max-width:82ch}
+.ecart--haute .rang{color:var(--ko)}
+.ecart--moyenne .rang{color:var(--moyen)}
+.ecart h3{font-family:Archivo,sans-serif;font-size:20px;font-weight:700;letter-spacing:-.015em;margin-bottom:6px}
+.ecart p{margin:0;font-size:15px;max-width:82ch;color:var(--encre2)}
 .quoi{margin-top:9px !important;display:flex;flex-wrap:wrap;gap:5px}
 
 /* ── Banc et CI ── */
-.grille-banc,.grille-ci{display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:14px}
-.bloc-banc,.bloc-ci{background:var(--panneau);border:1px solid var(--regle);border-radius:6px;
-  padding:15px 17px;box-shadow:var(--ombre)}
+.grille-banc,.grille-ci{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
+  gap:clamp(22px,3vw,44px)}
+.bloc-banc,.bloc-ci{border-top:2px solid var(--encre);padding-top:16px}
 .bloc-banc header,.bloc-ci header{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
-  border-bottom:1px solid var(--regle);padding-bottom:9px;margin-bottom:11px}
-.bloc-banc h3,.bloc-ci h3{font-size:14px}
+  margin-bottom:14px}
+.bloc-banc h3,.bloc-ci h3{font-family:Archivo,sans-serif;font-size:17px;font-weight:700;letter-spacing:-.01em}
 .bloc-banc dl{margin:0;display:grid;gap:5px}
 .bloc-banc dl>div{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
 .bloc-banc dt{font-size:13px;color:var(--encre3)}
@@ -1129,28 +1170,37 @@ tr:last-child td{border-bottom:0}
 .ligne-meta b{color:var(--encre3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-right:3px}
 
 /* ── Kanban ── */
-.rappel{background:var(--accent-doux);border:1px solid var(--accent);border-radius:6px;
-  padding:11px 15px;margin:0 0 18px;font-size:14px;color:var(--encre2)}
-.rappel b{color:var(--accent)}
-.kanban{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:start}
-@media(max-width:1200px){.kanban{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:820px){.kanban{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:560px){.kanban{grid-template-columns:1fr}}
-.colonne{background:var(--panneau2);border-radius:6px;padding:11px;min-width:0}
-.colonne header{display:flex;justify-content:space-between;align-items:center;
-  gap:8px;margin-bottom:10px;padding:0 3px}
-.colonne h3{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--encre3)}
-.pile{display:flex;flex-direction:column;gap:7px}
-.ticket{display:flex;flex-direction:column;gap:6px;background:var(--panneau);
-  border:1px solid var(--regle);border-left:3px solid var(--regle);border-radius:5px;
-  padding:10px 11px;text-decoration:none;color:var(--encre2);box-shadow:var(--ombre)}
-.ticket:hover{border-color:var(--accent);border-left-color:var(--accent)}
-.ticket--pr{border-left-color:var(--accent)}
-.ticket__tete{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.ticket__titre{font-size:13px;line-height:1.4;color:var(--encre)}
-.ticket__pied{display:flex;flex-wrap:wrap;gap:4px}
+.rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;
+  font-size:17px;color:var(--encre2);max-width:80ch}
+.rappel b{color:var(--encre);font-weight:700;font-family:Archivo,sans-serif}
+/* Le tableau prend TOUTE la largeur de la fenetre, pas celle de la colonne de
+   texte : six colonnes de cartes ne se lisent pas dans 1220 px. Il sort donc de
+   la gouttiere et se reprend sa propre marge, et sous 1180 px il defile
+   horizontalement plutot que d'ecraser ses colonnes. */
+.kanban{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:18px;
+  align-items:start;width:100vw;margin-left:calc(50% - 50vw);
+  padding-inline:clamp(20px,4vw,52px);padding-bottom:12px}
+/* Sous 1180 px, six colonnes lisibles ne tiennent plus : le tableau defile
+   plutot que d'ecraser ses cartes en bandes de texte. Lui seul defile, pas la
+   page. */
+@media(max-width:1180px){
+  .kanban{grid-template-columns:repeat(6,minmax(238px,1fr));overflow-x:auto}
+}
+.colonne{min-width:0}
+.colonne header{display:flex;justify-content:space-between;align-items:baseline;
+  gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--encre)}
+.colonne h3{font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--encre)}
+.pile{display:flex;flex-direction:column;gap:10px}
+.ticket{display:flex;flex-direction:column;gap:9px;background:var(--panneau);
+  border:1px solid var(--regle);border-radius:5px;padding:15px 16px 14px;
+  text-decoration:none;color:var(--encre2);transition:border-color .15s ease}
+.ticket:hover{border-color:var(--encre)}
+.ticket--pr{box-shadow:inset 3px 0 0 var(--accent)}
+.ticket__tete{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ticket__titre{font-size:15px;line-height:1.4;color:var(--encre)}
+.ticket__pied{display:flex;flex-wrap:wrap;gap:5px}
 .num-ticket{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--encre3)}
-.vide{font-size:12px;color:var(--encre3);margin:0;padding:3px 4px}
+.vide{font-size:13px;color:var(--encre3);margin:0;padding:6px 0}
 .etiq{display:inline-block;font-size:10px;padding:1px 7px;border-radius:3px;
   border:1px solid transparent;white-space:nowrap}
 .etiq--violet{background:rgba(124,92,220,.14);color:#7c5cdc;border-color:rgba(124,92,220,.3)}
@@ -1162,20 +1212,22 @@ tr:last-child td{border-bottom:0}
 .etiq--gris{background:var(--panneau2);color:var(--encre3);border-color:var(--regle)}
 
 /* ── Divers ── */
-.alerte{background:var(--ko-doux);border:1px solid var(--ko);border-radius:6px;padding:12px 15px;
-  color:var(--encre2);font-size:14px;margin:0 0 18px}
-.alerte b{color:var(--ko)}
+.alerte{border-left:3px solid var(--ko);padding:2px 0 2px 18px;color:var(--encre2);
+  font-size:16px;margin:0 0 26px;max-width:80ch}
+.alerte b{color:var(--ko);font-weight:700}
 /* Le prix d'une PR : le seul chiffre de cette page qui se subit tous les jours,
    donc en tête et en gros. La courbe reprend les conventions des autres. */
-.prix{background:var(--panneau);border:1px solid var(--regle);border-radius:6px;padding:14px 16px;margin:0 0 18px}
-.prix h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--encre);
+.prix{border-top:2px solid var(--encre);padding:16px 0 0;margin:0 0 30px}
+.prix h3{margin:0 0 14px;font-family:Archivo,sans-serif;font-size:17px;font-weight:700;color:var(--encre);
   display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .prix h3 .dim{font-size:12px;font-weight:400}
 .prix__chiffres{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
-.prix__bloc{flex:1 1 120px;border:1px solid var(--regle);border-radius:4px;padding:8px 12px;
-  display:flex;flex-direction:column;gap:2px}
-.prix__bloc--phare{border-color:var(--accent);background:var(--accent-doux)}
-.prix__valeur{font-size:19px;font-weight:600;color:var(--encre);font-variant-numeric:tabular-nums}
+.prix__bloc{flex:1 1 130px;border-left:1px solid var(--regle);padding:2px 0 2px 16px;
+  display:flex;flex-direction:column;gap:3px}
+.prix__bloc:first-child{border-left:0;padding-left:0}
+.prix__bloc--phare .prix__valeur{color:var(--accent)}
+.prix__valeur{font-family:Archivo,sans-serif;font-size:26px;font-weight:700;letter-spacing:-.03em;
+  color:var(--encre);font-variant-numeric:tabular-nums}
 .prix__valeur--monte{color:var(--ko)}
 .prix__valeur--descend{color:var(--ok)}
 .prix__valeur--seule{color:var(--encre3)}
@@ -1198,7 +1250,7 @@ tr:last-child td{border-bottom:0}
    thèmes restent lisibles sans une seconde feuille de style. */
 .courbes{display:grid;gap:14px;margin:0 0 18px}
 @media (min-width:1100px){.courbes{grid-template-columns:repeat(3,1fr)}}
-.courbe{background:var(--panneau);border:1px solid var(--regle);border-radius:6px;padding:12px 14px}
+.courbe{border-top:1px solid var(--regle);padding:14px 0 0}
 .courbe h4{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--encre);
   display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
 .courbe__resume{font-weight:500;font-size:12px;color:var(--encre2)}
@@ -1219,20 +1271,29 @@ tr:last-child td{border-bottom:0}
 .tendance--seule{color:var(--encre3);font-style:italic}
 /* Un rouge de plus de deux semaines : ce n'est plus une régression, c'est une dette. */
 td.dette{color:var(--ko);font-weight:600}
-.sparkline{display:flex;align-items:flex-end;gap:3px;height:70px;background:var(--panneau);
-  border:1px solid var(--regle);border-radius:6px;padding:12px;margin-bottom:16px}
+.sparkline{display:flex;align-items:flex-end;gap:3px;height:80px;
+  border-bottom:1px solid var(--regle);padding:12px 0;margin-bottom:22px}
 .sparkline i{flex:1;min-width:3px;background:var(--accent-doux);border-top:2px solid var(--accent);border-radius:2px 2px 0 0}
-@media(max-width:900px){.app{grid-template-columns:1fr}.rail{position:static;height:auto}.contenu{padding:22px 16px 70px}}
+@media(max-width:900px){
+  .entete-page{grid-template-columns:minmax(0,1fr);gap:14px}
+  .rail-page{flex-direction:row;align-items:baseline;gap:10px;padding-top:0}
+  .ecart{grid-template-columns:minmax(0,1fr);gap:8px}
+  .tete{position:static}
+}
+@media(max-width:620px){
+  .cartes{grid-template-columns:minmax(0,1fr)}
+  .carte--phare{grid-column:span 1}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<div class="app">
-  <aside class="rail">
-    <div class="marque">
-      <b>Quality</b>
-      <span>NODAL-AGENTS</span>
-    </div>
+<header class="tete">
+  <div class="tete__in">
+    <a class="marque" href="#chantiers"><b>Quality</b><span>NODAL-AGENTS</span></a>
+    <p class="tete__meta mono">${esc(s.branche ?? '')} · ${esc(s.commit ?? '')} · ${esc(dateFr(s.genereLe))}</p>
+  </div>
+  <div class="tete__in tete__onglets">
     <nav id="nav">
       <a href="#chantiers" class="actif">Work in flight <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Done').length}</b></a>
       <a href="#capacites">Capabilities <b>${
@@ -1249,24 +1310,23 @@ td.dette{color:var(--ko);font-weight:600}
       <a href="#ci" class="discret">Triggers <b>${s.ci.length}</b></a>
       <a href="#historique" class="discret">History <b>${historique.length}</b></a>
     </nav>
-    <footer>
-      ${esc(s.branche ?? '')}<br>
-      ${esc(s.commit ?? '')}<br>
-      ${esc(dateFr(s.genereLe))}
-    </footer>
-  </aside>
-  <main class="contenu">
-    ${vueChantiers()}
-    ${vueCapacites()}
-    ${vueEnsemble()}
-    ${vueEcarts()}
-    ${vueParcours()}
-    ${vueBanc()}
-    ${vueCi()}
-    ${vueMemoire()}
-    ${vueHistorique()}
-  </main>
-</div>
+  </div>
+</header>
+<main class="contenu">
+  ${vueChantiers()}
+  ${vueCapacites()}
+  ${vueEnsemble()}
+  ${vueEcarts()}
+  ${vueParcours()}
+  ${vueBanc()}
+  ${vueCi()}
+  ${vueMemoire()}
+  ${vueHistorique()}
+</main>
+<footer class="pied">
+  <span class="mono">Nodal-Agents · quality</span>
+  <span class="mono">${esc(s.branche ?? '')} · ${esc(s.commit ?? '')} · ${esc(dateFr(s.genereLe))}</span>
+</footer>
 ${modaleExplications()}
 <script>
 (function(){
