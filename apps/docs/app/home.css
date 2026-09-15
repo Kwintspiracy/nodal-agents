@@ -646,6 +646,39 @@
   padding: 4px;
 }
 
+/* ── Portal callout ───────────────────────────────────────────────────── */
+
+.home-portal {
+  margin-top: 48px;
+  padding: clamp(22px, 3vw, 34px);
+  background: var(--home-sunk);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 26px;
+  align-items: center;
+}
+.home-portal h3 {
+  font-family: var(--font-archivo), sans-serif;
+  font-size: 22px;
+  letter-spacing: -0.015em;
+  margin: 8px 0 8px;
+}
+.home-portal p:last-child {
+  margin: 0;
+  color: var(--home-ink-soft);
+  font-size: 16px;
+  max-width: 64ch;
+}
+@media (max-width: 720px) {
+  .home-portal {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .home-portal a {
+    justify-self: start;
+  }
+}
+
 /* ── Narrow ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
