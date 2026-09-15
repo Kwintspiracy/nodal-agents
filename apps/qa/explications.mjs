@@ -271,12 +271,11 @@ export const EXPLICATIONS = {
       },
       {
         titre: 'How to read it',
-        texte: `<p>A <b>workflow</b> = a file in <code>.github/workflows/</code>, a list of steps GitHub runs on a fresh machine. Nodal has four:</p>
+        texte: `<p>A <b>workflow</b> = a file in <code>.github/workflows/</code>, a list of steps GitHub runs on a fresh machine. Nodal has three:</p>
 <ul>
 <li><b>CI</b> — on every pull request and every push to main: unit tests, architecture, bench, two smoke journeys, the published package installed from scratch. This is the gate: red = no merge.</li>
 <li><b>Quality — full measurement</b> — every night at 03:17 UTC (and by hand): coverage of the 34 packages, bench, the 29 journeys, then it writes its data to main and opens or closes the alert issue. This is what feeds this portal.</li>
-<li><b>Quality — publish the portal</b> — after every measurement: renders this site and publishes it (Cloudflare Pages, as soon as the secrets are in place).</li>
-<li><b>Deploy Docs</b> — the public documentation.</li>
+<li><b>Deploy Docs</b> — the public documentation, and this portal with it under <code>/qa/</code>. It also fires after every measurement, so a night of work reaches the page it feeds.</li>
 </ul>
 <p>The <b>triggers</b> are the events that start the workflow; the <b>jobs</b> are its parallel parts; "Journeys played" the scenarios it runs by name.</p>
 <p><b>The price of a pull request</b>, at the top of the page, is how long you wait for its checks. Four numbers:</p>

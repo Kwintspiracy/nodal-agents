@@ -181,7 +181,7 @@ describe('le portail se lit en anglais', () => {
 
   // La faute que ce lot a vraiment failli publier, et qu'aucun des contrôles
   // ci-dessus ne voyait : le code parle anglais, la COLLECTE COMMITTÉE parle
-  // français. `qa-pages.yml` publie sur push SANS collecter — le premier rendu
+  // français. `docs.yml` publie sur push SANS collecter — le premier rendu
   // après le merge lit ce fichier-là. Les mots y sont des DONNÉES : la colonne
   // et les étiquettes d'une carte, la cadence d'un parcours, le nom d'un
   // workflow, le libellé d'une métrique du banc, le nom d'une capacité.
