@@ -61,9 +61,21 @@ then forgotten by its own author, which is why the rule now lives here.
 - **The trigger is an OPEN PR, not the end of a session.** A review is due as
   soon as the PR exists, including mid-session and including a PR that is still
   being amended.
-- **Loop** review → fix → review until Codex asks for no further change. A
-  finding is closed by a test that fails first, and the fix is verified BY
-  MUTATION (disable it, the test must go red).
+- **Loop** review → fix → review. **Stop condition (changed 2026-09-15, Quentin's
+  decision):** the loop ends at the first pass that reports **no blocking and no
+  important finding** (no false green, no false red, no kill, no data loss). The
+  minor findings of that pass are fixed without another pass. **Budget: 4 passes
+  per PR.** If the 4th pass still reports a blocker, the shape of the PR is the
+  problem — stop and say so instead of iterating (Codex diagnosed exactly that
+  on #98 at pass 3; passes 9-15 then found wording only, at the cost of two
+  quota windows). Static portal pages (`apps/qa`) get **one pass**. A finding is
+  closed by a test that fails first, and the fix is verified BY MUTATION
+  (disable it, the test must go red).
+- **A quota drop never stops the queue.** The agent running the queue waits for
+  the reopening time Codex prints, by itself (a background sleep loop), and
+  resumes without being told. It reports only when the whole queue is empty or
+  on a real blocker — every intermediate report ends its turn and stalls the
+  queue.
 - **If `codex` is missing or fails: say so and stop.** Never fall back to a
   Claude reviewer — that is a silent smart fallback (invariant #4), and it hides
   the fact that no independent review happened.
