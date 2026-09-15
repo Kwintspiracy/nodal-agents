@@ -1,23 +1,4 @@
 import facts from '../lib/catalog-facts.json';
-// La MESURE elle-même, pas une copie : le fichier que la mesure nocturne
-// commite. Voir le commentaire de `MEASURED_ON` plus bas.
-import measurement from '../../qa/data/snapshot.json';
-
-/** Ce que la page lit de la mesure — le reste du fichier ne la regarde pas. */
-interface Measurement {
-  readonly genereLe: string;
-  readonly commit: string;
-  readonly execution: { readonly url: string };
-  readonly resume: {
-    readonly paquets: number;
-    readonly fichiersDeTest: number;
-    readonly casDeTest: number;
-    readonly casE2e: number;
-    readonly couvertureLignes: number;
-    readonly capacites: number;
-    readonly capacitesVerifiees: number;
-  };
-}
 
 /**
  * Everything the homepage states, in one place.
@@ -421,56 +402,23 @@ export interface Figure {
 }
 
 /**
- * Every figure below is READ from `apps/qa/data/snapshot.json`, the file the
- * nightly measurement (`.github/workflows/qa.yml`) commits. The date is printed
- * next to the table on the page: a number without its measurement date is a
- * number nobody can check.
- *
- * Read, not copied. The first version of this page typed the numbers in, and
- * the very next nightly run made them false — the test that compares the two
- * went red on `main`, where the `ci` workflow does not run, so nothing said so
- * until the next pull request. A public page that quotes a measurement has to
- * take it from the measurement, or it is only ever right on the day it is
- * written.
+ * Every figure below was read from `apps/qa/data/snapshot.json`, produced by the
+ * nightly measurement (`.github/workflows/qa.yml`) on 14 September 2026, run
+ * 34825077357, commit 3e067fb1. The date is printed next to the table on the
+ * page: a number without its measurement date is a number nobody can check.
  */
-const snapshot = measurement as Measurement;
-const r = snapshot.resume;
-
-/** `2026-09-15T09:01:39.520Z` → `15 September 2026`, the way the page says it. */
-function readableDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-}
-
-export const MEASURED_ON = readableDate(snapshot.genereLe);
-export const MEASURED_COMMIT = snapshot.commit;
-export const MEASURED_RUN_URL = snapshot.execution.url;
-
-/** Rounded DOWN to one decimal: a coverage figure must never read higher than it is. */
-const coverage = Math.floor(r.couvertureLignes * 10) / 10;
-
-/**
- * Les deux nombres que la PHRASE sous le tableau cite aussi. Ils sortent de la
- * même mesure : une page qui écrit « douze des vingt-quatre » en toutes lettres
- * ment dès que la treizième passe au vert, et personne ne relit une phrase.
- */
-export const CAPABILITIES_GREEN = r.capacitesVerifiees;
-export const CAPABILITIES_TOTAL = r.capacites;
+export const MEASURED_ON = '14 September 2026';
+export const MEASURED_COMMIT = '3e067fb1';
+export const MEASURED_RUN_URL =
+  'https://github.com/Kwintspiracy/nodal-agents/actions/runs/34825077357';
 
 export const FIGURES: readonly Figure[] = [
-  { value: String(r.paquets), label: 'packages measured' },
-  { value: r.casDeTest.toLocaleString('en-US'), label: 'test cases' },
-  { value: String(r.fichiersDeTest), label: 'test files' },
-  { value: String(r.casE2e), label: 'end-to-end cases' },
-  { value: `${coverage.toFixed(1)}%`, label: 'line coverage' },
-  {
-    value: `${r.capacitesVerifiees} / ${r.capacites}`,
-    label: 'capabilities green at both levels',
-  },
+  { value: '34', label: 'packages measured' },
+  { value: '6,881', label: 'test cases' },
+  { value: '561', label: 'test files' },
+  { value: '229', label: 'end-to-end cases' },
+  { value: '81.6%', label: 'line coverage' },
+  { value: '12 / 24', label: 'capabilities green at both levels' },
 ];
 
 export interface Practice {

@@ -29,8 +29,6 @@ import {
   LINK_NPM,
   LINK_QA,
   MEASURED_COMMIT,
-  CAPABILITIES_GREEN,
-  CAPABILITIES_TOTAL,
   MEASURED_ON,
   MEASURED_RUN_URL,
   PILLARS,
@@ -465,9 +463,9 @@ export default function Home() {
           </div>
           <p className="home-figures-note">
             Measured by the nightly run on {MEASURED_ON}, commit {MEASURED_COMMIT}.{' '}
-            <a href={MEASURED_RUN_URL}>See the run</a>. {CAPABILITIES_GREEN} of the{' '}
-            {CAPABILITIES_TOTAL} capabilities are green at both levels today. The rest are missing
-            one level, and the page that tracks them says so in grey rather than in green.
+            <a href={MEASURED_RUN_URL}>See the run</a>. Twelve of the twenty-four capabilities are
+            green at both levels today. The other twelve are missing one level, and the page that
+            tracks them says so in grey rather than in green.
           </p>
 
           <ol className="home-steps">
