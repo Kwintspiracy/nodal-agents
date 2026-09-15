@@ -11,7 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe, verdictDuBanc, tendance, MOT_ETAT } from './lib.mjs';
+import { ecartsDe, verdictDuBanc, tendance, etatDunParcours, MOT_ETAT } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -261,10 +261,14 @@ function vueEnsemble() {
       <p class="sous">in ${n(r.fichiersDeTest)} files, end-to-end aside</p>
     </article>
 
-    <article class="carte ${partJouee < 50 ? 'carte--alerte' : ''}">
+    <article class="carte ${r.specsE2eJoueesParLaCi < r.specsE2e ? 'carte--alerte' : ''}">
       <h3>Journeys played by the CI</h3>
       <p class="chiffre">${r.specsE2eJoueesParLaCi} <span class="sur">/ ${r.specsE2e}</span></p>
-      <p class="sous">${n(r.casE2e)} cases written · <b>${r.specsE2e - r.specsE2eJoueesParLaCi} journey${r.specsE2e - r.specsE2eJoueesParLaCi > 1 ? 's' : ''} never run</b></p>
+      <p class="sous">${n(r.casE2e)} cases written · ${
+        r.specsE2e - r.specsE2eJoueesParLaCi > 0
+          ? `<b>${r.specsE2e - r.specsE2eJoueesParLaCi} never played</b>`
+          : 'every one of them played'
+      }</p>
       ${barre(partJouee, 'journeys played')}
     </article>
 
@@ -329,9 +333,15 @@ function vueParcours() {
 
   const ligne = (p) => {
     const r = p.resultat;
+    const e = etatDunParcours(p);
     let etat;
-    if (!r) {
-      etat = '<span class="pastille pastille--inconnu">never run here</span>';
+    if (e.rouge) {
+      // ROUGE, et nommé. Un fichier que personne ne joue garde zéro
+      // régression, et il ne le disait pas : il portait le même gris qu'un
+      // parcours sain dont le rapport manque (issue #110).
+      etat = `<span class="pastille pastille--ko">${e.mot}</span>`;
+    } else if (!r) {
+      etat = `<span class="pastille pastille--inconnu">${e.mot}</span>`;
     } else {
       // Quatre sorts, montrés SÉPARÉMENT. Un cas ignoré n'est pas un cas rouge :
       // les confondre, c'est le défaut que ce portail dénonce ailleurs.
@@ -350,7 +360,8 @@ function vueParcours() {
           ? `<span class="intention">${esc(p.intention)}</span>`
           : '<span class="intention intention--absente">no description</span>'
       }
-        ${r?.rouge ? lienRun(s.execution?.url) : ''}</td>
+        ${r?.rouge ? lienRun(s.execution?.url) : ''}
+        ${e.rouge ? '<br><span class="intention intention--absente">Nothing runs it: this file guards nothing.</span>' : ''}</td>
       <td class="num">${p.cas}</td>
       <td>${etat}</td>
       <td class="num dim">${r?.dureeMs ? `${(r.dureeMs / 1000).toFixed(1)} s` : '·'}</td>
@@ -366,7 +377,7 @@ function vueParcours() {
         : cadence === 'every night'
           ? 'These OBSERVE it the next day. They guard no pull request.'
           : cadence === 'never played'
-            ? 'Written, versioned, and run by no continuous integration.'
+            ? 'Written, versioned, and run by no continuous integration. These are reds, not blanks: they guard nothing.'
             : '';
     return `<h3 class="sous-titre">${esc(cadence)} <span class="compte">${dedans.length}</span></h3>
       ${note ? `<p class="note-section">${note}</p>` : ''}
@@ -377,10 +388,16 @@ function vueParcours() {
   };
 
   const bloque = (parCadence.get('every pull request') ?? []).length;
+  const jamais = s.parcours.filter((p) => etatDunParcours(p).rouge);
   return `
 <section id="parcours" class="vue">
   ${entete('parcours', 'Journeys')}
   <p class="chapo">${s.parcours.length} versioned, and <b>only ${bloque} guard a pull request</b>: the others observe after the fact, or never.</p>
+  ${
+    jamais.length > 0
+      ? `<div class="alerte"><b>${jamais.length} journey${jamais.length > 1 ? 's are' : ' is'} never played.</b> A journey nobody runs is a claim of coverage that does not exist. Delete it, or put it in a workflow.</div>`
+      : ''
+  }
   ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
 </section>`;

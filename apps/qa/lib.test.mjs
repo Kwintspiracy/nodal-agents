@@ -46,10 +46,57 @@ import {
   tendance,
   prixDeLaCi,
   intentionDunParcours,
+  etatDunParcours,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
 import { corpsDeLalerte, trouverLeBillet } from './alerte.mjs';
+
+describe('etatDunParcours — un parcours que personne ne joue est un rouge, pas un gris', () => {
+  // Issue #110. `agent-flows.spec.ts` vivait dans le dépôt depuis un an en
+  // réclamant un LM Studio que personne ne lançait. Le portail l'affichait
+  // « never run here » en gris neutre, au milieu des parcours simplement non
+  // rapportés — un fichier mort avait donc exactement la même couleur qu'un
+  // fichier sain dont le rapport manquait.
+  it('jouParLaCi false ⇒ rouge, et le mot le dit', () => {
+    const e = etatDunParcours({ nom: 'a.spec.ts', cas: 3, jouParLaCi: false, resultat: null });
+    expect(e.rouge).toBe(true);
+    expect(e.mot).toBe('never played');
+  });
+
+  it('un rapport local ne rachète pas un parcours qu’aucune CI ne joue', () => {
+    // Le fait mesuré est « joué par une intégration continue », pas « quelqu’un
+    // l’a lancé une fois ». Un vert obtenu sur la machine d’un développeur ne
+    // garde aucune régression.
+    const e = etatDunParcours({
+      nom: 'a.spec.ts',
+      cas: 3,
+      jouParLaCi: false,
+      resultat: { total: 3, vert: 3, rouge: 0, instable: 0, ignoré: 0 },
+    });
+    expect(e.rouge).toBe(true);
+    expect(e.mot).toBe('never played');
+  });
+
+  it('joué par la CI mais sans rapport ici ⇒ inconnu, jamais rouge', () => {
+    // Un rendu local n’a pas de rapport Playwright. Peindre ces trente lignes
+    // en rouge ferait une page entièrement rouge qui ne veut plus rien dire.
+    const e = etatDunParcours({ nom: 'a.spec.ts', cas: 3, jouParLaCi: true, resultat: null });
+    expect(e.rouge).toBe(false);
+    expect(e.mot).toBe('never run here');
+  });
+
+  it('joué et rapporté ⇒ le détail du rapport parle, pas l’état', () => {
+    const e = etatDunParcours({
+      nom: 'a.spec.ts',
+      cas: 3,
+      jouParLaCi: true,
+      resultat: { total: 3, vert: 3, rouge: 0, instable: 0, ignoré: 0 },
+    });
+    expect(e.rouge).toBe(false);
+    expect(e.mot).toBe(null);
+  });
+});
 
 describe('etatCi — le vert ne s’accorde qu’à ce qui a réussi', () => {
   it('tout en succès ⇒ vert', () => {
@@ -407,6 +454,27 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     paquets: [],
     ci: [],
     ...extra,
+  });
+
+  // Issue #110 — le portail doit compter ce que personne ne joue.
+  it('un seul parcours non joué suffit à réveiller quelqu’un', () => {
+    const e = ecartsDe(SNAP({ parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: false }] }), [
+      {},
+      {},
+    ]);
+    const x = e.find((y) => /never played/.test(y.titre));
+    expect(x).toBeTruthy();
+    expect(x.gravite).toBe('haute');
+    expect(alertes(e)).toContain(x);
+    expect(x.quoi).toContain('a.spec.ts');
+  });
+
+  it('tous les parcours joués ⇒ pas d’écart du tout', () => {
+    const e = ecartsDe(SNAP({ parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: true }] }), [
+      {},
+      {},
+    ]);
+    expect(e.some((y) => /never played/.test(y.titre))).toBe(false);
   });
 
   it('une preuve d’ÉCRAN qui échoue est haute, et le titre dit QUEL niveau', () => {
