@@ -130,7 +130,7 @@ import { failJob, cancelJob, setJobStatus, saveCheckpoint, touchJob, claimJob } 
 // completeJob directement — c'est elle qui calcule et journalise la décision
 // de vérification, et qui commet l'intention de livrer avec le statut.
 import { finalizeJobSuccess } from './finalize.ts';
-import { drainDeliveries } from '../delivery/outbox.ts';
+import { drainDeliveries, prepareDelivery } from '../delivery/outbox.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { loadConversationContext } from './conversation-id.ts';
 import { triggerWorker } from '../routes/agent.ts';
@@ -2347,6 +2347,40 @@ ${notice}`
    * de l'agent que s'il est VIDE, et une notice posée trop tôt le rendait non
    * vide — elle remplaçait alors le livrable au lieu de s'y ajouter.
    */
+  /**
+   * Fait partir un texte du HARNAIS sur un canal où seul un outil atteint
+   * l'utilisateur — l'intention est écrite, `drainDeliveries` l'envoie.
+   *
+   * Deux situations l'appellent, et c'est la même : le job a quelque chose que
+   * l'utilisateur DOIT lire, et rien ne l'a envoyé. Un échec de délégation
+   * qu'un parent n'a pas dit (PR #108), et la raison d'un job qui s'arrête
+   * quand ses rappels de livraison sont épuisés (issue #115). Dans les deux
+   * cas, la base portait le fait et le destinataire n'avait rien reçu.
+   *
+   * Texte de PLATEFORME, marqué comme tel, jamais la voix de l'agent
+   * (invariant #2) — même nature que `[livraison effectuée : …]`. Une panne
+   * ici est DITE et jamais fatale : le job, lui, a fini.
+   */
+  const prepareHarnessNotice = async (payload: string, suffixeCle: string): Promise<void> => {
+    const canal = job.channel ?? '';
+    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId || payload.trim() === '') return;
+    try {
+      await prepareDelivery(db, {
+        jobId: jobId as string,
+        channel: canal as Parameters<typeof prepareDelivery>[1]['channel'],
+        chatId: job.chatId,
+        payload,
+        idempotencyKey: `${jobId}:harness:${suffixeCle}`,
+      });
+    } catch (e: unknown) {
+      console.error(`[execute] HARNESS_NOTICE_PREPARE_FAILED job=${jobId} kind=${suffixeCle}`, e);
+      return;
+    }
+    await drainDeliveries(db, { jobId: jobId as string }).catch((e: unknown) =>
+      console.error(`[execute] DELIVERY_DRAIN_FAILED job=${jobId}`, e),
+    );
+  };
+
   const stampFailedDelegations = async (): Promise<void> => {
     if (failedDelegations.size === 0) return;
     const [row] = await db
@@ -2361,6 +2395,11 @@ ${notice}`
       .update(agentJobs)
       .set({ result: avec })
       .where(eq(agentJobs.id, jobId as string));
+
+    // Sur un canal où SEUL un outil atteint l'utilisateur, la ligne en base ne
+    // suffit pas : le parent a envoyé son message AVANT la finalisation, et
+    // rien de ce qu'on écrit ici n'entre dans un message parti.
+    await prepareHarnessNotice(withFailedDelegationNotice(''), 'delegation');
   };
 
   const withDeliveryNotice = (resultText: string): string => {
@@ -2753,8 +2792,29 @@ ${notice}`
       const estErreur = part.output?.type === 'error-text';
       if (estErreur && value.startsWith(DELEGATION_FAILED_MARKER)) {
         failedDelegations.add(name);
-      } else if (!estErreur) {
-        failedDelegations.delete(name);
+      } else if (!estErreur && value.trim() !== '') {
+        // Efface SEULEMENT sur une vraie livraison. Un résultat vide, une
+        // erreur sérialisée en `json` par `toResultOutput` (un rejeu refusé,
+        // par exemple) ou un texte posé par la compaction ne réparent rien, et
+        // les prendre pour une livraison faisait DISPARAÎTRE l'échec du
+        // résultat que l'utilisateur lit (passe de contrôle, constat 3).
+        const estErreurJson =
+          part.output?.type === 'json' &&
+          typeof part.output?.value === 'object' &&
+          part.output?.value !== null &&
+          'error' in (part.output.value as Record<string, unknown>);
+        if (!estErreurJson) failedDelegations.delete(name);
+      }
+      // Un ÉCHEC que ce job a déjà dit dans un résultat livré reste à dire au
+      // niveau du dessus : un grand-parent qui ne reçoit que la synthèse de son
+      // enfant ne verrait plus l'échec du petit-enfant, et la propagation
+      // retomberait sur ce que le modèle a bien voulu recopier (constat 2).
+      const rendu = typeof part.output?.value === 'string' ? part.output.value : '';
+      for (const m2 of rendu.matchAll(/\[délégation sans livrable : ([^\]]+?) —/g)) {
+        for (const nom of (m2[1] ?? '').split(',')) {
+          const propre = nom.trim();
+          if (propre !== '') failedDelegations.add(propre);
+        }
       }
     }
   }
@@ -3279,6 +3339,14 @@ ${notice}`
             }
             trace('telegram_not_delivered', { turn, via: 'text_branch' });
             await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
+            // Même raison que sur l'autre chemin : rien n'est parti, le job
+            // s'arrête, et le harnais le DIT à l'utilisateur (issue #115). Le
+            // texte que l'agent avait écrit part avec, et la ligne d'échec de
+            // délégation aussi s'il y en a une à dire.
+            await prepareHarnessNotice(
+              withFailedDelegationNotice(`[arrêt] ${textContent.trim()}`),
+              'not-delivered',
+            );
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
           // SANS `delivery` : sur ce chemin le canal a déjà été servi par
@@ -4318,6 +4386,13 @@ ${notice}`
           const errorMessage = shortBlockReason(reason);
           const resultMessage = reason || BLOCK_NO_REASON;
           await failJob(db, jobId as string, errorMessage, runStats(), messages, resultMessage);
+          // La raison existe, et sur un canal à outil personne ne l'a envoyée si
+          // les rappels de livraison sont épuisés : le harnais la fait partir
+          // (issue #115). `toolDelivered` dit que l'agent l'a déjà dite — on ne
+          // double pas son message.
+          if (!toolDelivered) {
+            await prepareHarnessNotice(`[arrêt] ${resultMessage}`, 'blocked');
+          }
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
           return {
@@ -4419,6 +4494,12 @@ ${notice}`
           }
           trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
           await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
+          // Rien n'est parti, et le job s'arrête : le harnais dit au moins qu'il
+          // s'arrête, avec ce que l'agent avait écrit (issue #115).
+          await prepareHarnessNotice(
+            `[arrêt] ${lastAssistantTextSeen || "la tâche s'est arrêtée sans livraison"}`,
+            'not-delivered',
+          );
           return { status: 'failed', error: 'telegram_not_delivered' };
         }
 
