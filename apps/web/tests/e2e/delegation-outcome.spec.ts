@@ -107,6 +107,9 @@ async function seedDelegationThread(opts: {
         entityId: acting.entityId,
         name: parentName,
         slug: `e2e-lead-${suffix}`,
+        // NOT NULL with no default, and never read here: no model runs in this
+        // journey. It is the row that matters, not what the agent would say.
+        personality: 'E2E fixture — never executed.',
         role: 'orchestrator',
         active: true,
       })
@@ -117,6 +120,7 @@ async function seedDelegationThread(opts: {
         entityId: acting.entityId,
         name: childName,
         slug: `e2e-specialist-${suffix}`,
+        personality: 'E2E fixture — never executed.',
         role: 'agent',
         active: true,
       })
