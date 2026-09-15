@@ -288,6 +288,16 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAME_LIST
 // the no-delivery runaway detector. Superset of DELIVERY_TOOL_NAMES: also includes
 // `dashboard_publish` (the non-Telegram delivery path) and `return_result` itself.
 // Any tool call in this set resets turnsSinceDelivery to 0.
+/**
+ * La marque que porte le rappel « ton livrable est vide », pour le RECONNAÎTRE
+ * dans une transcription relue.
+ *
+ * Le compteur de rappels vit en mémoire et une reprise après approbation
+ * recommence à zéro : sans cette marque, « un seul rappel » n'était vrai que
+ * d'une exécution, pas du job (revue Codex de la PR #108, constat 7).
+ */
+const EMPTY_DELIVERABLE_NUDGE_MARK = '[livrable-vide]';
+
 const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'return_result',
   'dashboard_publish',
@@ -2668,7 +2678,12 @@ async function runJob(
       if (part.output?.type === 'error-text' && value.startsWith(DELEGATION_FAILED_MARKER)) {
         unresolvedToolFailures.add(name);
       } else {
-        unresolvedToolFailures.delete(name);
+        // Une délégation qui a LIVRÉ efface toutes les précédentes qui n'avaient
+        // rien rendu : le travail existe, et c'est le seul fait qui compte ici
+        // (même règle qu'en cours de run, revue Codex de la PR #108, constat 3).
+        for (const t of [...unresolvedToolFailures]) {
+          if (t.startsWith('assign_')) unresolvedToolFailures.delete(t);
+        }
       }
     }
   }
@@ -2704,11 +2719,26 @@ async function runJob(
   }
   // ONE nudge, as Hermes does: ask for the deliverable, then fail loud.
   const MAX_EMPTY_DELIVERABLE_NUDGES = 1;
-  let emptyDeliverableNudges = 0;
+  // Le compteur de rappels vit en mémoire, donc il repart à zéro à chaque
+  // reprise — et une approbation au milieu suffit à offrir un rappel de plus
+  // (revue Codex de la PR #108, constat 7). On relit donc la transcription : un
+  // rappel déjà envoyé y est écrit, et il compte. « Un seul rappel » devient
+  // vrai sur la vie du job, pas sur une exécution.
+  let emptyDeliverableNudges = (() => {
+    let seen = 0;
+    for (const m of messages as Array<{ role?: unknown; content?: unknown }>) {
+      if (!m || m.role !== 'user') continue;
+      const c = m.content;
+      if (typeof c === 'string' && c.includes(EMPTY_DELIVERABLE_NUDGE_MARK)) seen += 1;
+    }
+    return seen;
+  })();
   // Internal corrective prompt — LLM channel only, never sent to a user
   // (invariant #2 holds, same standing as `deliveryNudge` above).
   const emptyDeliverableNudge =
-    '[système] Tu as signalé la fin de la tâche mais tu n’as produit AUCUN texte. ' +
+    '[système] ' +
+    EMPTY_DELIVERABLE_NUDGE_MARK +
+    ' Tu as signalé la fin de la tâche mais tu n’as produit AUCUN texte. ' +
     '`return_result` ne transporte pas de contenu : ta réponse écrite EST le livrable. ' +
     'Écris maintenant ton livrable (ce que tu as trouvé ou fait, en résultats, pas en ' +
     'intentions) comme réponse, puis arrête-toi.';
@@ -3871,6 +3901,18 @@ async function runJob(
         // probably already arrived.
         if (toolResult.outcome === 'success') {
           unresolvedToolFailures.delete(call.name);
+          // Une DÉLÉGATION réussie efface les délégations ratées d'avant, quel que
+          // soit le spécialiste. C'est ce que le rappel demande — « confie-le à
+          // un autre spécialiste » — et sans ça l'obtempérer ne servait à rien :
+          // `assign_a` restait inscrit à jamais, et le parent finissait en
+          // échec après avoir fait exactement ce qu'on lui avait dit (revue Codex
+          // de la PR #108, constat 3). Le travail existe : c'est le seul fait
+          // que cette garde a à connaître.
+          if (call.name.startsWith('assign_')) {
+            for (const t of [...unresolvedToolFailures]) {
+              if (t.startsWith('assign_')) unresolvedToolFailures.delete(t);
+            }
+          }
         } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
           unresolvedToolFailures.add(call.name);
         }
@@ -4331,7 +4373,18 @@ async function runJob(
             .from(agentJobs)
             .where(eq(agentJobs.id, jobId as string))
             .limit(1);
-          if ((deliverableRow?.result ?? '').trim() === '') {
+          // Un parent qui a DÉLÉGUÉ n'est pas vide parce qu'il n'a pas écrit
+          // lui-même : le livrable de ses enfants est un message d'OUTIL, pas un
+          // texte d'assistant, et `completeJob` sait le compiler. Échouer ici
+          // rendait un « vide » sur du contenu qui existe, et empêchait
+          // précisément la compilation d'avoir lieu (revue Codex de la PR #108,
+          // constat 5). On demande donc à la base, pas à la transcription.
+          const childDeliverables = await db
+            .select({ result: agentJobs.result })
+            .from(agentJobs)
+            .where(eq(agentJobs.parentJobId, jobId as string));
+          const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
+          if ((deliverableRow?.result ?? '').trim() === '' && !aChildDelivered) {
             if (emptyDeliverableNudges < MAX_EMPTY_DELIVERABLE_NUDGES) {
               emptyDeliverableNudges += 1;
               trace('empty_deliverable_nudge', { turn, attempt: emptyDeliverableNudges });
