@@ -10,12 +10,14 @@
 
 import {
   BASE_PATH,
+  CATALOG,
   CATALOG_FIGURES,
   CHANNEL_ICONS,
   CONNECTOR_ICONS,
   DEFINITIONS,
   EXAMPLES,
-  LEVERS,
+  FORMULA,
+  FORMULA_RESULT,
   MCP_ICONS,
   CI_JOBS,
   FIGURES,
@@ -151,9 +153,14 @@ function FlowDiagram() {
 function IconWall({
   title,
   items,
+  more,
+  note,
 }: {
   title: string;
   items: readonly { slug: string; file: string; label: string }[];
+  /** How many catalog entries are not shown. Zero means the grid IS the list. */
+  more: number;
+  note: string;
 }) {
   return (
     <div className="home-wall">
@@ -172,7 +179,13 @@ function IconWall({
             <span>{i.label}</span>
           </li>
         ))}
+        {more > 0 ? (
+          <li className="home-wall-more">
+            <span>+ {more} more</span>
+          </li>
+        ) : null}
       </ul>
+      <p className="home-wall-note">{note}</p>
     </div>
   );
 }
@@ -286,33 +299,40 @@ export default function Home() {
         <div>
           <h2 className="home-display">{s2.title}</h2>
           <p className="home-claim">
-            There is no list of supported use cases, because there is no list. An agent does
-            whatever the tools you granted it can do, against whatever you connected it to.
+            There is no list of supported use cases, because there is no list. The product composes,
+            and you pick the parts.
           </p>
-          <p className="home-intro">
-            Three things bound an agent, and you set all three. Widen any of them and the same
-            platform builds something it could not build yesterday, with no change to the code.
-          </p>
-          <div className="home-grid-2 home-grid-3">
-            {LEVERS.map((l) => (
-              <article className="home-block" key={l.name}>
-                <h3>{l.name}</h3>
-                <p>{l.body}</p>
-              </article>
+
+          <div className="home-formula">
+            {FORMULA.map((f, n) => (
+              <div className="home-formula-term" key={f.term}>
+                <span className="home-formula-op" aria-hidden="true">
+                  {n === 0 ? '' : '×'}
+                </span>
+                <h3>{f.term}</h3>
+                <p>{f.body}</p>
+              </div>
             ))}
+            <p className="home-formula-out">
+              <span aria-hidden="true">=</span> {FORMULA_RESULT}
+            </p>
           </div>
 
-          <p className="home-mono home-examples-label">Two, out of as many as you like</p>
-          <ol className="home-steps">
+          <p className="home-mono home-examples-label">
+            A dozen of them, in no order, out of everything the parts allow
+          </p>
+          <ul className="home-examples">
             {EXAMPLES.map((e) => (
-              <li key={e.name}>
-                <div>
-                  <h3>{e.name}</h3>
-                  <p>{e.body}</p>
-                </div>
+              <li key={e.body}>
+                <span className="home-mono">{e.tag}</span>
+                <p>{e.body}</p>
               </li>
             ))}
-          </ol>
+          </ul>
+          <p className="home-figures-note">
+            Each of these uses connectors, servers, skills and channels that are in the catalog
+            today. None of them needed a line of code written for it.
+          </p>
         </div>
       </section>
 
@@ -343,14 +363,34 @@ export default function Home() {
             ))}
           </div>
           <p className="home-figures-note">
-            Counted from the catalogs themselves at build time, not typed by hand. Add your own MCP
-            server or connector instance from the dashboard, and run several of the same one side by
-            side, such as a personal Gmail and a work Gmail on one install.
+            Counted from the catalogs themselves at build time, not typed by hand. You can also run
+            several instances of one connector side by side, a personal Gmail and a work Gmail on
+            the same install, each with its own credential.
           </p>
 
-          <IconWall title="Connectors" items={CONNECTOR_ICONS} />
-          <IconWall title="MCP servers" items={MCP_ICONS} />
-          <IconWall title="Channels" items={CHANNEL_ICONS} />
+          <IconWall
+            title="Connectors"
+            items={CONNECTOR_ICONS}
+            more={CATALOG.connectors - CONNECTOR_ICONS.length}
+            note="You cannot add a connector type yourself. Anything outside this catalog is reached through an MCP server instead, which is the same access with one more hop."
+          />
+          <IconWall
+            title="MCP servers"
+            items={MCP_ICONS}
+            more={CATALOG.mcpPreconfigured - MCP_ICONS.length}
+            note="You can add your own, over HTTP or as a local process, and its secrets are encrypted at rest like every other credential."
+          />
+          <IconWall
+            title="Channels"
+            items={CHANNEL_ICONS}
+            more={0}
+            note="All four, plus the dashboard chat. Approvals, images and files travel over every one of them."
+          />
+          <p className="home-figures-note">
+            Skills are the open end. {CATALOG.systemSkills} ship with the product, you can install
+            any community skill file, and an agent can write itself a new one after a job it did
+            well.
+          </p>
         </div>
       </section>
 

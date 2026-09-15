@@ -596,6 +596,10 @@ writeFileSync(
         0,
       ),
       mcpServers: MCP_CATALOG.length,
+      // Two catalog entries are sentinels for "add your own" (one HTTP, one
+      // stdio), not servers anybody can connect to. A page that counts them as
+      // ready-made servers overstates the catalog by two.
+      mcpPreconfigured: MCP_CATALOG.filter((m) => !m.slug.startsWith('custom-')).length,
       mcpSlugs: [...new Set(MCP_CATALOG.map((m) => m.slug))],
       models: modelCount,
       builtinTools: builtinTools.length,
