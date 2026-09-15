@@ -126,6 +126,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       cli_defaults jsonb,
       runtime text NOT NULL DEFAULT 'nodal' CHECK (runtime IN ('nodal', 'claude-code', 'codex')),
       cli_permissions jsonb,
+      command_allowlist text[],
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),

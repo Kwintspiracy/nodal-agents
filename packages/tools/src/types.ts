@@ -125,6 +125,14 @@ export interface ToolContext {
    */
   workspaces?: Array<{ label: string; path: string }>;
   /**
+   * The programs `run_command` may start for this agent, read by the runner
+   * from `agents.command_allowlist`. `null`/absent = no list, unrestricted
+   * (the historical behaviour); an EMPTY array refuses every command. See
+   * `builtin/command-allowlist.ts` for what it is and, just as importantly,
+   * what it is not.
+   */
+  commandAllowlist?: readonly string[] | null;
+  /**
    * Absolute path to the community-skill store root (e.g. `~/.nodalai/skills`),
    * injected by the runner. Each installed skill's bundled files live under
    * `<skillStoreDir>/<slug>/`. Absent in lightweight contexts → the
