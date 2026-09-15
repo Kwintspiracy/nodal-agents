@@ -10,7 +10,8 @@
     "start": "next start",
     "postinstall": "fumadocs-mdx",
     "lint": "eslint app lib",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@nodal-agents/catalog": "workspace:*",
@@ -33,6 +34,7 @@
     "eslint": "^9.39.4",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   }
 }
