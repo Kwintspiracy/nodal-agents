@@ -724,12 +724,13 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(row.result ?? '').toContain('1,616');
   });
 
-  it('un parent qui DIT LA VÉRITÉ finit honnêtement, sans échec de job', async () => {
-    // Revue Codex de la PR #108, passe 2, constat 2. Le rappel propose trois
-    // issues : refaire, confier à un autre, dire la vérité. Les deux premières
-    // étaient impossibles à valider — l'échec `assign_*` restait inscrit quoi
-    // que le parent fasse, et il finissait en `unresolved_tool_failure` après
-    // avoir obéi. Ce qui se constate, c'est qu'un outil a RÉUSSI depuis.
+  it('un parent qui DIT LA VÉRITÉ échoue AVEC sa raison, pas avec un code opaque', async () => {
+    // Le rappel propose trois issues : refaire, confier à un autre, dire la
+    // vérité. Seule la deuxième peut finir en SUCCÈS — une autre délégation a
+    // livré. Les deux autres font échouer le job, et c'est juste : le travail
+    // délégué n'a pas eu lieu. Ce que ce test garde, c'est que la troisième
+    // reste PRATICABLE : la raison arrive jusqu'à l'utilisateur, sans rappel, au
+    // lieu d'un `unresolved_tool_failure` muet.
     const parentId = await insertJob({
       channel: 'api',
       status: 'pending',
