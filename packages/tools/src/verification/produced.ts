@@ -13,9 +13,12 @@
 // PR #49, passe 2).
 //
 // POURQUOI IL NE LÈVE JAMAIS. Comme le registre des projets, il est appelé
-// depuis le seam d'exécution, APRÈS l'écriture et hors du try/catch : une
-// exception ici tuerait la boucle du job pour une écriture qui a parfaitement
-// eu lieu. Une panne se DIT par un code (invariant #4) et se termine en
+// depuis le seam d'exécution, APRÈS l'écriture — et DANS le `try` qui entoure
+// l'appel de l'outil (`execute.ts`, section 3.5) : une exception ici serait
+// donc attrapée par le gestionnaire d'ERREUR D'OUTIL et rendrait un échec pour
+// une écriture qui a parfaitement eu lieu. Ces lignes disaient « hors du
+// try/catch », ce qui est faux et rendait le danger moins grave qu'il n'est
+// (revue Codex de la dette de la PR #75, passe 4). Une panne se DIT par un code (invariant #4) et se termine en
 // `false` — l'agent devra déclarer sa preuve autrement, ce qui est le sens
 // conservateur.
 //

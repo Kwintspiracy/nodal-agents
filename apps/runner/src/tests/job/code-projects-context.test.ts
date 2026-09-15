@@ -153,6 +153,44 @@ describe('listCodeProjectsForContext', () => {
     expect(projects.some((p) => p.path === `${racine}/dev`)).toBe(false);
   });
 
+  it('un dossier attaché DÉCLARÉ projet est LUI-MÊME le projet, pas ses enfants', async () => {
+    // Revue Codex de la dette de la PR #75, passe 2, constat 1. Ce scan était
+    // le CINQUIÈME calcul de clé de projet du dépôt, et le seul qui ne
+    // connaîsse encore que le manifeste : une racine attachée déclarée projet
+    // de code depuis l'écran Spaces, sans manifeste sur le disque, restait
+    // éclatée en ses enfants ici pendant que l'intention et l'observation
+    // nommaient la racine. Deux vérités sur l'identité d'un projet — ce que ce
+    // module existe pour empêcher —, et un projet masqué dont les enfants
+    // continuaient d'être annoncés aux agents.
+    //
+    // Le scan est rempli D'ABORD, sans déclaration : c'est l'état courant.
+    const avant = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+    expect(avant.map((p) => p.path).sort()).toEqual([
+      `${racine}/dev/calorie-counter`,
+      `${racine}/dev/water-intake`,
+    ]);
+
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: `${racine}/dev`,
+      projectKey: projectKeyOf(`${racine}/dev`),
+      kind: 'code',
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+
+    // AUCUN vidage de cache ici, et c'est le second volet du test (passe 3,
+    // constat 2) : déclarer un projet est un geste de propriétaire, et
+    // l'annonce faite aux agents doit changer TOUT DE SUITE. Le premier appel
+    // ci-dessus a rempli le cache avec l'ancienne identité ; il ne doit pas
+    // servir, parce que les déclarations ont changé.
+    const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
+    expect(projects.map((p) => p.path)).toEqual([`${racine}/dev`]);
+
+    await db.delete(codeProjects).where(eq(codeProjects.entityId, seed.entityId));
+    _resetProjectsCacheForTests();
+  });
+
   it('une écriture refusée ne crée aucun projet', async () => {
     const projects = await listCodeProjectsForContext(db as RunnerDeps['db'], seed.entityId);
     expect(

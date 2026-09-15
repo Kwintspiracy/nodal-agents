@@ -24,7 +24,8 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { agentWorkspaces, agents, eq } from '@nodal-agents/db';
+import { agentWorkspaces, agents, and, codeProjects, eq, isNotNull } from '@nodal-agents/db';
+import { projectKey } from '@nodal-agents/shared';
 import type { getDb } from './server.ts';
 
 /**
@@ -57,4 +58,31 @@ export async function entityWorkspaceRoots(
   const roots = new Set<string>(rows.map((r) => r.path));
   roots.add(sharedWorkspacePath(entityId));
   return [...roots].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Les clés des projets de code DÉCLARÉS de l'entité.
+ *
+ * Une déclaration vaut manifeste : c'est la règle de
+ * `packages/tools/src/projects/declared.ts`, et l'écran Code doit la lire comme
+ * l'intention, l'observation, le registre et le contexte des agents la lisent.
+ * Sans elle, un dossier attaché déclaré projet sans manifeste s'affichait
+ * éclaté en ses enfants d'un côté et entier de l'autre (revue Codex de la dette
+ * de la PR #75, passe 2, constat 1).
+ */
+export async function entityDeclaredCodeRoots(
+  db: WorkspaceRootsDb,
+  entityId: string,
+): Promise<ReadonlySet<string>> {
+  const rows = await db
+    .select({ path: codeProjects.projectPath })
+    .from(codeProjects)
+    .where(
+      and(
+        eq(codeProjects.entityId, entityId),
+        isNotNull(codeProjects.registeredAt),
+        eq(codeProjects.kind, 'code'),
+      ),
+    );
+  return new Set(rows.map((r) => projectKey(r.path)));
 }

@@ -388,6 +388,29 @@ describe('deriveProjectRoot (vrai disque)', () => {
     );
   });
 
+  it('un dossier attaché DÉCLARÉ projet est LUI-MÊME le projet, pas ses enfants', async () => {
+    // Revue Codex de la dette de la PR #75, passe 2, constat 1. L'écran Code
+    // était le SIXIÈME calcul de clé de projet du dépôt, et l'un des deux
+    // derniers à ne connaître que le manifeste : un dossier attaché déclaré
+    // projet de code depuis l'écran Spaces, sans manifeste sur le disque,
+    // restait éclaté en ses enfants ici pendant que l'intention, l'observation,
+    // le registre et le contexte des agents nommaient la racine.
+    await mkdir(join(racine, 'declare', 'app'), { recursive: true });
+    await writeFile(join(racine, 'declare', 'app', 'x.ts'), 'export const x = 1;');
+    const workspaces: WorkspaceRef[] = [
+      { label: 'dec', path: `${racine}/declare`, hiddenFromCode: false },
+    ];
+    const changes = [{ rawPath: `${racine}/declare/app/x.ts`, workspaces }];
+
+    // Sans déclaration : le projet est l'enfant, comme avant.
+    expect(deriveProjectRoot(changes, workspaces, memo())).toBe(`${racine}/declare/app`);
+
+    // Déclaré : c'est la racine.
+    expect(
+      deriveProjectRoot(changes, workspaces, memo(), new Set([projectKey(`${racine}/declare`)])),
+    ).toBe(`${racine}/declare`);
+  });
+
   it('une écriture hors de TOUT dossier attaché ne produit AUCUN projet', () => {
     expect(
       deriveFor([`${racine}/repoA/src/x.ts`], ws(`${racine}/plain`), memo()),

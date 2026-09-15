@@ -278,6 +278,15 @@ export function buildRuntimeBlock(
   d: DeploymentContext,
   triggerContext?: JobTriggerContext,
   routineState?: ReadonlyArray<{ key: string; value: string }>,
+  /**
+   * False sur une surface sans les builtins. Le FAIT — « tu tournes sur la
+   * machine de l'utilisateur, les services locaux y sont joignables » — vaut
+   * partout et sert à répondre. Le GESTE (« appelle-les directement », « ne
+   * demande pas de tunnel ») s'adresse à qui peut appeler quelque chose ; sur le
+   * chat, c'est un ordre de plus qui ne s'exécute pas (revue Codex de la dette
+   * de la PR #73, passe 3, constat 1).
+   */
+  nodalTools = true,
 ): string {
   const networkLine =
     d.networkMode === 'lan'
@@ -289,7 +298,9 @@ export function buildRuntimeBlock(
     ``,
     `You run locally inside Nodal-Agents on the user's own machine (${d.os}). You are NOT a cloud or hosted agent — your process and the user's machine are the same host.`,
     ``,
-    `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`,
+    nodalTools
+      ? `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`
+      : `- Local services on this machine are reachable at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`) — a job can reach them there. NEVER tell the user to expose a local service through a public tunnel (ngrok, cloudflared): it is unnecessary here and a needless security risk.`,
     `- Network: ${networkLine}`,
   ];
 
@@ -458,7 +469,16 @@ export const REGISTERED_PROJECTS_IN_PROMPT = 12;
  * garde sa porte de sortie (`unless the user names another place`) : c'est une
  * directive au modèle, pas une garde — la garde est l'intention de mutation.
  */
-function buildConversationBlock(conv: ConversationContext): string {
+function buildConversationBlock(
+  conv: ConversationContext,
+  /**
+   * False sur une surface sans les builtins : la règle de rangement « rien ne
+   * se crée en silence » y reste vraie, mais ses GESTES (`ask_user`,
+   * `register_project`) n'existent pas — sur le chat, c'est le job qui les
+   * posera (revue Codex de la dette de la PR #73, passe 2, constat 1).
+   */
+  nodalTools = true,
+): string {
   const lines: string[] = [
     conv.priorTurns === 0
       ? '- This is the first turn of this conversation: nothing was said before it.'
@@ -489,14 +509,22 @@ function buildConversationBlock(conv: ConversationContext): string {
     // que la phrase du projet courant juste au-dessus. Elle ne dit pas quoi
     // répondre à l'utilisateur, elle dit dans quel ordre poser les gestes.
     lines.push(
-      '- Current project: none yet. Nothing produced in this conversation has landed ' +
-        'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
-        'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
-        '`ask_user`: offer up to five relevant registered projects by name, plus one option ' +
-        'for the new project you propose, then call `register_project` for a new one (the ' +
-        'owner confirms the folder once), then write. Code that ' +
-        'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
-        'its own project: never ask for it.',
+      nodalTools
+        ? '- Current project: none yet. Nothing produced in this conversation has landed ' +
+            'in a registered project. Before writing a DOCUMENT (a report, a note, a ' +
+            'spreadsheet, anything that is not code in a repository), ask where it goes with ' +
+            '`ask_user`: offer up to five relevant registered projects by name, plus one option ' +
+            'for the new project you propose, then call `register_project` for a new one (the ' +
+            'owner confirms the folder once), then write. Code that ' +
+            'lands in a folder with a manifest (package.json, .git, pyproject.toml, …) declares ' +
+            'its own project: never ask for it.'
+        : // La même règle, sans ses gestes : ici, on ne range rien soi-même.
+          '- Current project: none yet. Nothing produced in this conversation has landed ' +
+            'in a registered project. A document has to go somewhere before it is written, so ' +
+            'settle that in the conversation — which of the projects below, or a new one, and ' +
+            'under what name — and pass the answer on with the task. Code that lands in a ' +
+            'folder with a manifest (package.json, .git, pyproject.toml, …) declares its own ' +
+            'project: never ask for it.',
     );
     const registered = conv.registeredProjects ?? [];
     if (registered.length > 0) {
@@ -611,10 +639,33 @@ function buildBuiltinCapabilitiesBlock(): string {
 // Data-driven from DB (agent_workspaces) — no hardcoded agent text (invariant 2).
 function buildWorkspacesBlock(
   workspaceList: ReadonlyArray<{ label: string; path: string }>,
-  /** False on cli-runtime: the file_* builtins and label syntax do not exist there. */
-  nodalFileTools = true,
+  /**
+   * Quels outils de fichiers a la surface qui lit ce bloc.
+   *
+   * - `nodal` : les builtins `file_*` et la syntaxe `label/chemin`.
+   * - `own` : une session de CLI de codage, qui a les siens — les chemins
+   *   ABSOLUS sont la partie utile, la syntaxe à label lui nuirait.
+   * - `none` : le chat, qui n'a QUE `run_task`. Les dossiers y restent un FAIT
+   *   (l'agent doit pouvoir dire où il travaille), mais tout geste de fichier y
+   *   est un ordre inexécutable — et « utilise tes propres outils de fichiers »
+   *   en est un aussi, ce que le booléen d'avant ne distinguait pas (revue
+   *   Codex de la dette de la PR #73, passe 2, constat 1).
+   */
+  fileTools: 'nodal' | 'own' | 'none' = 'nodal',
 ): string {
   if (workspaceList.length === 0) return '';
+
+  if (fileTools === 'none') {
+    const lines = workspaceList.map((ws) => `- **${ws.label}**: \`${ws.path}\``).join('\n');
+    return (
+      `\n\n## Workspace${workspaceList.length > 1 ? 's' : ''}\n\n` +
+      `${lines}\n\n` +
+      `This is where the work happens. You cannot read or write there from this ` +
+      `conversation; the job you hand the task to can, and these are the folders it ` +
+      `will use.`
+    );
+  }
+  const nodalFileTools = fileTools === 'nodal';
 
   // On a coding-CLI session the PATHS are the useful part and the addressing
   // convention is actively harmful: `notes/a.md` is a label lookup performed by
@@ -661,7 +712,17 @@ function buildWorkspacesBlock(
 // bindings were never surfaced to the LLM at all. DB-only — never a network/
 // adapter call in the prompt path (bindings + counts, no live platform query).
 // Omitted entirely when the agent has zero enabled bindings.
-async function buildMessagingChannelsBlock(agentId: string, db: AnyDrizzleDb): Promise<string> {
+async function buildMessagingChannelsBlock(
+  agentId: string,
+  db: AnyDrizzleDb,
+  /**
+   * False sur une surface sans les builtins de Nodal : la LISTE des plateformes
+   * reste — c'est un fait, et l'incident fondateur était un agent qui niait sa
+   * connexion Discord —, mais la phrase qui ordonne `list_conversations` part
+   * (revue Codex de la dette de la PR #73, passe 2, constat 1).
+   */
+  nodalTools = true,
+): Promise<string> {
   const bindings = (await listChannelBindings(db, agentId)).filter((b) => b.enabled);
   if (bindings.length === 0) return '';
 
@@ -678,11 +739,33 @@ async function buildMessagingChannelsBlock(agentId: string, db: AnyDrizzleDb): P
     }),
   );
 
-  return (
+  const connected =
     `## Messaging channels\n\n` +
     `You are connected to these messaging platforms (each with its own owner-approved ` +
     `conversation list):\n` +
-    `${lines.join('\n')}\n\n` +
+    `${lines.join('\n')}`;
+
+  // Sans les builtins, la liste reste et l'invitation à EXPLORER part : c'est
+  // le fait qui compte ici (un agent qui niait sa connexion Discord est
+  // l'incident fondateur de ce bloc), pas le geste.
+  //
+  // La procédure d'approbation, elle, reste : ce n'est pas un geste de l'agent
+  // mais une chose que l'UTILISATEUR fait, et c'est exactement la question qui
+  // arrive en conversation — « comment je t'autorise à écrire dans ce salon ? ».
+  // La retirer faisait répondre « je ne sais pas » à un agent qui sait (revue
+  // Codex de la dette de la PR #73, passe 3, constat 2).
+  if (!nodalTools) {
+    return (
+      `${connected}\n\n` +
+      `Sending and exploring happen in a job, not from here — hand it the platform and ` +
+      `the conversation you mean. Only approved conversations can be written to; to get a ` +
+      `new one approved, the owner mentions you there (or messages you from it) and ` +
+      `approves the card that appears.`
+    );
+  }
+
+  return (
+    `${connected}\n\n` +
     `Use \`list_conversations\` to explore a platform's structure (servers, channels, groups) ` +
     `and see which conversations are approved. You can only SEND to approved conversations; ` +
     `to get a new one approved, ask your owner to mention you there (or message you from it) ` +
@@ -740,6 +823,17 @@ export async function buildSystemPrompt(
   // stable/volatile split around SYSTEM_PROMPT_CACHE_BOUNDARY) is untouched:
   // parallelizing changes WHEN these resolve, never the assembled prompt's
   // content or section order.
+  /**
+   * Cette surface a-t-elle les outils de Nodal ?
+   *
+   * Deux surfaces ne les ont pas, pour deux raisons opposées : la CLI de codage
+   * a les SIENS, et le chat n'en a qu'UN (`run_task`). Chaque bloc qui prescrit
+   * un geste d'outil se lit donc sous cette condition — la PR #73 l'avait
+   * appliquée à trois blocs, et quatre autres la contournaient encore en
+   * testant `cli-runtime` seul (revue Codex de la dette, passe 2, constat 1).
+   */
+  const hasNodalTools = jobContext?.surface !== 'cli-runtime' && jobContext?.surface !== 'chat';
+
   const [
     teamBlock,
     skillRows,
@@ -827,7 +921,7 @@ export async function buildSystemPrompt(
       : Promise.resolve([]),
     // Messaging channels — the agent's connected platforms + approved-
     // conversation counts (see buildMessagingChannelsBlock's doc comment).
-    buildMessagingChannelsBlock(agent.id as string, db),
+    buildMessagingChannelsBlock(agent.id as string, db, hasNodalTools),
   ]);
 
   // 3a. Learning-loop Phase A — bump last_used_at for all injected skills.
@@ -860,18 +954,30 @@ export async function buildSystemPrompt(
   // wade through the manual and reinvent logic the skill already ships. The
   // mandatory-load + anti-reimplement steering below mirrors what makes Hermes
   // reliably use skills.
+  // L'index porte l'APPEL qui charge la skill — sauf là où cet appel n'existe
+  // pas. Sur le chat, cette ligne annonçait `skill_view` une fois par skill :
+  // l'outil absent le plus cité du prompt (revue Codex de la dette de la
+  // PR #73, passe 2, constat 1). Le slug, lui, sert encore — c'est ce que
+  // l'agent nomme dans la tâche qu'il passe.
   const skillIndex = assignedSkillRows
     .map((r) => {
-      const desc = (r.skillDescription ?? '').trim() || '(load with skill_view for details)';
-      return `- \`skill_view('${r.skillSlug}')\` — **${r.skillName}**: ${desc}`;
+      const desc =
+        (r.skillDescription ?? '').trim() ||
+        (hasNodalTools ? '(load with skill_view for details)' : '(its own file holds the details)');
+      return hasNodalTools
+        ? `- \`skill_view('${r.skillSlug}')\` — **${r.skillName}**: ${desc}`
+        : `- \`${r.skillSlug}\` — **${r.skillName}**: ${desc}`;
     })
     .join('\n');
-  // On 'cli-runtime' the skills are LISTED, never prescribed: `skill_view` and
-  // `run_skill_script` are Nodal builtins, absent from a coding-CLI session, so
-  // a "you MUST call skill_view before acting" reads as an impossible
-  // precondition — the agent either invents the call or refuses to move. The
-  // slugs and paths still matter (the CLI can open the files itself with its
-  // own Read), so the index stays and only the imperative goes.
+  // Trois sorts pour ce bloc, un par surface, et le commentaire d'ici en
+  // annonçait un quatrième qui n'existe pas : il disait « sur cli-runtime les
+  // skills sont LISTÉES » alors que cette branche rend `''` (revue Codex de la
+  // dette de la PR #73, passe 3). Ce qui est vrai :
+  //
+  //  · un job : le texte complet, et l'impératif qui le fait charger ;
+  //  · le chat : la LISTE seule, comme connaissance — l'agent sait ce qu'il
+  //    sait faire et le nomme dans la tâche qu'il passe ;
+  //  · cli-runtime : RIEN, ni texte ni liste, par la décision citée plus bas.
   const skillsBlock =
     assignedSkillRows.length === 0
       ? ''
@@ -898,14 +1004,27 @@ export async function buildSystemPrompt(
           // let the human route. Thin, but not nothing. Flagged here so a later
           // review reads it as a decision rather than an oversight.
           ''
-        : `\n\n## Skills (load before acting)\n\n` +
-          `Scan the skills below. For ANY skill even partially relevant to your task, you MUST call ` +
-          `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +
-          `even if you think you could do the task with basic tools. A skill defines HOW the task ` +
-          `must be done here and ships tested scripts + ready-made files (e.g. prebuilt workflows). ` +
-          `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths skill_view ` +
-          `gives you). NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
-          `something the skill already provides.\n\n${skillIndex}`;
+        : jobContext?.surface === 'chat'
+          ? // Sur le chat, c'est l'autre moitié du raisonnement ci-dessus qui
+            // s'applique. Le TEXTE d'une skill y est illisible pour la même
+            // raison — il prescrit `skill_view`, `run_skill_script`,
+            // `run_command` —, mais la LISTE, elle, est un fait : cet agent sait
+            // faire ces choses-là, et le job auquel il passe la main les
+            // chargera. La taire ferait répondre « je ne sais pas faire » à un
+            // agent qui sait, ce qui est exactement le défaut que le roster
+            // d'équipe évite en restant (revue Codex de la dette de la PR #73,
+            // passe 2, constat 1).
+            `\n\n## Skills\n\n` +
+            `These are yours. You cannot load or run them from this conversation; the job you ` +
+            `hand the task to will, so name the one you mean in what you pass on.\n\n${skillIndex}`
+          : `\n\n## Skills (load before acting)\n\n` +
+            `Scan the skills below. For ANY skill even partially relevant to your task, you MUST call ` +
+            `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +
+            `even if you think you could do the task with basic tools. A skill defines HOW the task ` +
+            `must be done here and ships tested scripts + ready-made files (e.g. prebuilt workflows). ` +
+            `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths skill_view ` +
+            `gives you). NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
+            `something the skill already provides.\n\n${skillIndex}`;
 
   // 4. Assemble: honour {{team}} placeholder or append
   if (teamBlock) {
@@ -922,7 +1041,12 @@ export async function buildSystemPrompt(
   // context is provided (system jobs, tests).
   const runtimeBlock = jobContext?.deployment
     ? '\n\n' +
-      buildRuntimeBlock(jobContext.deployment, jobContext.triggerContext, jobContext.routineState)
+      buildRuntimeBlock(
+        jobContext.deployment,
+        jobContext.triggerContext,
+        jobContext.routineState,
+        hasNodalTools,
+      )
     : '';
 
   // 5. Built-in capabilities block — injected for every agent so the LLM sees
@@ -950,7 +1074,11 @@ export async function buildSystemPrompt(
   // runtime (l'aperçu du dashboard). Voir JobContext.workspaces.
   const workspacesBlock = buildWorkspacesBlock(
     jobContext?.workspaces ?? workspaceRows,
-    jobContext?.surface !== 'cli-runtime',
+    jobContext?.surface === 'cli-runtime'
+      ? 'own'
+      : jobContext?.surface === 'chat'
+        ? 'none'
+        : 'nodal',
   );
 
   // 6. Persistent memory block — Sprint 2 auto-injection (rows fetched above,
@@ -961,7 +1089,11 @@ export async function buildSystemPrompt(
   //    once per job assembly; mid-job writes via save_memory land on disk but
   //    do NOT mutate the in-flight system prompt (prefix-cache preservation,
   //    Hermes pattern). Next job picks them up.
-  const memoryBlock = buildPersistentMemoryBlock(memoryRows, jobContext?.surface !== 'cli-runtime');
+  // Les FAITS restent sur toutes les surfaces ; la phrase qui invite à appeler
+  // `query_memory` ne part que là où cet outil existe. Le chat ne l'a pas —
+  // il n'a que `run_task` (revue Codex de la dette de la PR #73, passe 2,
+  // constat 1).
+  const memoryBlock = buildPersistentMemoryBlock(memoryRows, hasNodalTools);
 
   // 7. Job context block — runtime data provided by the runner per-job.
   //    Only appended when jobContext is provided. The agent's personality
@@ -972,7 +1104,7 @@ export async function buildSystemPrompt(
   //       courant (P6). Volatile par nature : le compte de tours et le projet
   //       changent d'un tour à l'autre.
   const conversationBlock = jobContext?.conversation
-    ? buildConversationBlock(jobContext.conversation)
+    ? buildConversationBlock(jobContext.conversation, hasNodalTools)
     : '';
 
   // 8. Behavior layers (see agent-baseline.ts):
@@ -1000,6 +1132,7 @@ export async function buildSystemPrompt(
     attachedMcpSlugs: mcpRows.map((r) => r.slug),
     workspaceConnectors,
     workspaceMcps,
+    nodalTools: hasNodalTools,
   });
 
   //    Messaging channels block — content assembled from `messagingChannelsBlock`
