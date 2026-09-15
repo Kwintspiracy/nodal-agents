@@ -117,6 +117,32 @@ export function sortDuCas(essais) {
   return 'rouge';
 }
 
+/**
+ * Ce qu'il faut dire d'un parcours AVANT de regarder son dernier rapport.
+ *
+ * Trois états, et le premier est le seul qui soit une faute du dépôt :
+ *
+ *  - `jamais joué` — le fichier existe, aucune intégration continue ne le
+ *    lance. C'est un ROUGE, et il porte son nom. Le portail l'affichait
+ *    « never run here » en gris neutre, la même couleur qu'un parcours sain
+ *    dont le rapport manque : `agent-flows.spec.ts` a passé un an ainsi, à
+ *    réclamer un LM Studio que personne ne lançait (issue #110). Un gris ne
+ *    demande rien à personne.
+ *  - `sans rapport` — la CI le joue, ce rendu-ci n'a simplement pas son
+ *    rapport Playwright (un rendu local n'en a jamais). Inconnu, pas rouge :
+ *    peindre trente lignes en rouge sur une machine de développeur ferait une
+ *    page qui ne veut plus rien dire.
+ *  - `joué` — le rapport parle, et c'est lui qui décide de la couleur.
+ *
+ * Un rapport local ne rachète PAS un parcours qu'aucune CI ne joue : le fait
+ * mesuré est « gardé par une intégration continue », pas « lancé une fois ».
+ */
+export function etatDunParcours(p) {
+  if (!p?.jouParLaCi) return { cle: 'jamais joué', rouge: true, mot: 'never played' };
+  if (!p.resultat) return { cle: 'sans rapport', rouge: false, mot: 'never run here' };
+  return { cle: 'joué', rouge: false, mot: null };
+}
+
 /** Le compte d'un fichier de parcours, par sort. */
 export function compterParcours(cas) {
   const c = { total: 0, vert: 0, rouge: 0, ignoré: 0, instable: 0 };
@@ -571,7 +597,9 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   }
 
   // ── Le dépôt. Réel, mais jamais au-dessus du produit.
-  const nonJoues = (s.parcours ?? []).filter((p) => !p.jouParLaCi);
+  // Même définition que la page Journeys, une seule fois : l'écart et la
+  // couleur d'une ligne ne peuvent pas diverger.
+  const nonJoues = (s.parcours ?? []).filter((p) => etatDunParcours(p).rouge);
   if (nonJoues.length > 0) {
     const cas = nonJoues.reduce((a, p) => a + p.cas, 0);
     out.push({
