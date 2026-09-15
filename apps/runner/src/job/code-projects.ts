@@ -127,10 +127,12 @@ function within(dir: string, root: string): boolean {
  *
  * Une seule règle : un projet est un ENFANT DIRECT du dossier attaché, quelle
  * que soit la profondeur du fichier édité. Attacher `Dev` ne fait pas de `Dev`
- * un projet, ses sous-dossiers en sont. Seule exception, nécessaire : si le
- * dossier attaché porte lui-même un manifeste, c'est LUI le projet — sinon
- * attacher directement un dépôt afficherait `apps`, `packages` et `docs` comme
- * trois projets.
+ * un projet, ses sous-dossiers en sont. Deux exceptions, nécessaires : si le
+ * dossier attaché EST un projet — il porte un manifeste, ou il est DÉCLARÉ
+ * projet de code —, c'est LUI le projet. Sans la première, attacher directement
+ * un dépôt annoncerait `apps`, `packages` et `docs` comme trois projets ; sans
+ * la seconde, les agents entendraient d'un dossier déclaré le contraire de ce
+ * que le moteur en dit.
  *
  * Mémoïsé : le manifeste du dossier attaché est lu une fois par entité, pas une
  * fois par ligne scannée.

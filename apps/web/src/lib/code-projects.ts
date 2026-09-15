@@ -183,9 +183,11 @@ function hasProjectMarker(dir: string, memo: Map<string, string | null>): boolea
  * dossier au premier niveau »), donc l'affichage et la consigne disent la même
  * chose.
  *
- * SEULE exception, et elle est nécessaire : si le dossier attaché porte
- * lui-même un manifeste, c'est LUI le projet. Sans ça, attacher directement un
- * dépôt afficherait `apps`, `packages` et `docs` comme trois projets. Une
+ * DEUX exceptions, et elles sont nécessaires : si le dossier attaché EST un
+ * projet — il porte un manifeste, ou il est DÉCLARÉ projet de code —, c'est LUI
+ * le projet. Sans la première, attacher directement un dépôt afficherait
+ * `apps`, `packages` et `docs` comme trois projets ; sans la seconde, cet écran
+ * dirait d'un dossier déclaré le contraire de ce que le moteur en dit. Une
  * seule vérification, à la racine du dossier attaché — jamais de remontée.
  *
  * Un fichier posé à la racine même du dossier attaché rend ce dossier.
