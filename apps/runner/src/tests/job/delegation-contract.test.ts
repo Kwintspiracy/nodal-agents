@@ -16,7 +16,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentJobs, agents } from '@nodal-agents/db';
+import { eq, agentJobs, agents, jobDeliveries } from '@nodal-agents/db';
 import { completeJob } from '../../job/state.ts';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -796,7 +796,135 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(row.error ?? '').not.toBe('unresolved_tool_failure');
   });
 
-  it('refuse aussi la promesse rendue en TEXTE SEUL, sans return_result', async () => {
+  it('sur un canal à OUTIL, l’échec part vers l’utilisateur, pas seulement en base', async () => {
+    // Passe de contrôle de la forme réduite, constat 1 (bloquant). Le parent
+    // ENVOIE son message avant la finalisation ; la ligne d'échec, elle, se pose
+    // après, sur la ligne en base. Le destinataire ne la lisait donc jamais —
+    // et « rien reçu sur Telegram » est précisément l'incident #107. Le harnais
+    // prépare donc sa propre livraison, que `drainDeliveries` envoie.
+    const parentId = await insertJob({
+      channel: 'telegram',
+      chatId: '4242',
+      status: 'pending',
+      messages: [
+        { role: 'user', content: 'Fais une recherche sur la longueur de Planck' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-t',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-t',
+              toolName: 'assign_researcher',
+              output: {
+                type: 'error-text',
+                value: `${DELEGATION_FAILED_MARKER}\n{"status":"failed"} delivered NOTHING`,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'send-9',
+              toolName: 'telegram_send_message',
+              args: { text: 'Recherche lancée, je te renvoie ça' },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        { text: 'je te tiens au courant' },
+        { text: 'toujours rien' },
+      ]),
+    );
+
+    await executeJob(parentId as JobId, deps, testEnv);
+
+    const livraisons = await db
+      .select({ payload: jobDeliveries.payload, chatId: jobDeliveries.chatId })
+      .from(jobDeliveries)
+      .where(eq(jobDeliveries.jobId, parentId));
+    expect(livraisons.length, 'aucune livraison préparée pour dire l’échec').toBeGreaterThan(0);
+    expect(livraisons.map((l) => l.payload).join(' ')).toContain('assign_researcher');
+    expect(livraisons.every((l) => l.chatId === '4242')).toBe(true);
+  });
+
+  it('l’échec d’un petit-enfant remonte au grand-parent, même à travers une synthèse', async () => {
+    // Passe de contrôle, constat 2. Le grand-parent ne reçoit de son enfant
+    // qu'un résultat `text` : l'échec du petit-enfant n'était plus dans SON jeu,
+    // et sa transmission retombait sur ce que le modèle avait bien voulu
+    // recopier. La ligne posée par le harnais est désormais RELUE.
+    const grandParentId = await insertJob({
+      channel: 'api',
+      status: 'pending',
+      messages: [
+        { role: 'user', content: 'Fais une recherche' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-mid',
+              toolName: 'assign_lead',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-mid',
+              toolName: 'assign_lead',
+              output: {
+                type: 'text',
+                value:
+                  'Voici ma synthèse.\n\n[délégation sans livrable : assign_researcher — ce spécialiste n’a rien rendu]',
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          text: 'Voici ce que le lead a trouvé.',
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    await executeJob(grandParentId as JobId, deps, testEnv);
+
+    const row = await jobRow(grandParentId);
+    expect(row.result ?? '').toContain('assign_researcher');
+  });
+
+  it('la promesse rendue en TEXTE SEUL porte l’échec avec elle', async () => {
     // Revue Codex de la PR #108, constat 2 (bloquant). La garde vit dans la
     // branche `return_result`. Sur `api` et `dashboard`, un parent peut finir
     // son job par un simple texte : « Recherche lancée, je reviens vers toi »
