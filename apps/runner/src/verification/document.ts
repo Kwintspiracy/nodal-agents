@@ -179,14 +179,24 @@ function stripFrontMatter(lf: string): string {
  * réintroduit sans le vouloir (passe 6, constat R1). Les fins de ligne sont
  * ramenées au LF d'abord : une convention d'éditeur n'est pas une propriété du
  * document.
+ *
+ * MAIS le retrait ne décide pas seul, et c'est la leçon de la passe 8 : où que
+ * s'arrête l'en-tête, un retrait de lignes ne sait pas qu'un `---` peut vivre
+ * dans un bloc de code, et il emportait alors l'ouverture du bloc — le titre du
+ * document devenait celui qui était ÉCRIT DANS LE CODE (constat R1, un faux
+ * vert). Le titre doit donc se voir des DEUX côtés : avec l'en-tête et sans.
+ * Un titre qui n'apparaît qu'après le retrait était dans le code ; un titre qui
+ * disparaît avec le retrait était dans l'en-tête, c'est-à-dire un commentaire
+ * YAML — le constat C5 lui-même. Aucun des deux n'est le titre du document.
  */
-const markdownHasTitle: FormCheck = (text) => {
-  const lf = text.replace(/\r\n?/g, '\n');
-  const body = stripFrontMatter(lf);
-  const tree = unified().use(remarkParse).parse(body);
-  const hasTitle = (tree.children ?? []).some(
+const hasTopLevelHeading = (markdown: string): boolean =>
+  (unified().use(remarkParse).parse(markdown).children ?? []).some(
     (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,
   );
+
+const markdownHasTitle: FormCheck = (text) => {
+  const lf = text.replace(/\r\n?/g, '\n');
+  const hasTitle = hasTopLevelHeading(lf) && hasTopLevelHeading(stripFrontMatter(lf));
   return hasTitle ? null : 'no title: expected a top-level heading (`# Title`)';
 };
 

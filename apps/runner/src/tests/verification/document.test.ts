@@ -366,6 +366,16 @@ describe('document — bien formé, selon son type', () => {
       ['front-matter-vide.md', '---\n---\n# Vrai\n\n---\n\ncorps\n', 'green'],
       // Jamais refermé : ce n'est pas un en-tête, c'est le document lui-même.
       ['front-matter-non-ferme.md', '---\ntitle: x\n\ncorps\n', 'red'],
+      // Passe 8, constat R1 — un FAUX VERT que la boucle de lignes ne pouvait
+      // pas voir : la clôture cherchée est dans un BLOC DE CODE, et le retrait
+      // emporte l'ouverture du bloc avec elle. Le seul titre du document est
+      // celui qui vivait dans le code. Il faut donc le voir des DEUX côtés.
+      ['cloture-dans-le-code.md', '---\n\n```\n---\n# faux\n```\n', 'red'],
+      // Et son symétrique, rouge lui aussi, et à dessein : un `# Vrai` posé
+      // juste après `---` est exactement ce qu'un COMMENTAIRE YAML donne à lire
+      // (constat C5). Un titre qui ne survit pas au retrait de l'en-tête n'en
+      // est pas un.
+      ['titre-colle-a-l-en-tete.md', '---\n# Vrai\n\n```\n---\n```\n', 'red'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);
