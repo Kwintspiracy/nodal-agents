@@ -190,12 +190,14 @@ function stripFrontMatter(lf: string): string {
  * `remark-frontmatter` 5.0.0, la mise en œuvre de référence de cette
  * convention : elle lit l'en-tête exactement comme cette boucle — première
  * ligne délimiteur, puis jusqu'au délimiteur suivant, où qu'il soit — et rend
- * le même verdict sur les dix cas sondés, sauf deux où CETTE règle est plus
- * stricte (elle connaît la clôture `...` et l'en-tête `+++`, pas elle). Le
- * document dont l'en-tête recouvre une ouverture de bloc n'est donc pas un
- * faux vert : son titre EST dans le corps, pour tout outil qui lit du front
- * matter. La conjonction, elle, rendait rouge un en-tête parfaitement valide
- * dont un scalaire contenait trois backticks (passe 9, constat R2).
+ * le même verdict sur les dix cas sondés — configurée `['yaml', 'toml']`, elle
+ * connaît `+++` comme ici — sauf sur UN point où cette règle est plus stricte :
+ * la clôture `...`, qu'elle ignore. Le document dont l'en-tête recouvre une
+ * ouverture de bloc n'est donc pas un faux vert : son titre est dans le corps
+ * pour la référence de cette convention, et c'est la seule autorité invoquée
+ * ici — un sondage n'est pas une preuve d'universalité (passe 10). La
+ * conjonction, elle, rendait rouge un en-tête parfaitement valide dont un
+ * scalaire contenait trois backticks (passe 9, constat R2).
  */
 const markdownHasTitle: FormCheck = (text) => {
   const lf = text.replace(/\r\n?/g, '\n');
