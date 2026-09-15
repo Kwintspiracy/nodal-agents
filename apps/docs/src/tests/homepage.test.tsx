@@ -20,7 +20,13 @@ import { describe, expect, it } from 'vitest';
 import Home from '../../app/home';
 import {
   BASE_PATH,
+  CATALOG,
+  CATALOG_FIGURES,
+  CHANNEL_ICONS,
+  CONNECTOR_ICONS,
+  EXAMPLES,
   FIGURES,
+  MCP_ICONS,
   INVARIANTS,
   MEASURED_COMMIT,
   SECTIONS,
@@ -41,7 +47,7 @@ function figure(label: string): string {
 
 describe('homepage rendering', () => {
   it('renders every declared section, with its anchor and its title', () => {
-    expect(SECTIONS).toHaveLength(5);
+    expect(SECTIONS).toHaveLength(6);
     for (const section of SECTIONS) {
       expect(markup).toContain(`id="${section.id}"`);
       expect(markup).toContain(section.title);
@@ -68,6 +74,51 @@ describe('homepage rendering', () => {
   });
 });
 
+describe('the catalog section only shows what the product actually ships', () => {
+  it('gives every connector icon a slug that is in the connector catalog', () => {
+    expect(CONNECTOR_ICONS.length).toBeGreaterThan(0);
+    for (const icon of CONNECTOR_ICONS) {
+      expect(CATALOG.connectorSlugs).toContain(icon.slug);
+      expect(markup).toContain(`${BASE_PATH}/home/icons/${icon.file}.svg`);
+    }
+  });
+
+  it('gives every MCP icon a slug that is in the MCP catalog', () => {
+    expect(MCP_ICONS.length).toBeGreaterThan(0);
+    for (const icon of MCP_ICONS) {
+      expect(CATALOG.mcpSlugs).toContain(icon.slug);
+    }
+  });
+
+  it('shows the four channels the product actually speaks', () => {
+    expect(CHANNEL_ICONS.map((c) => c.slug)).toEqual(['telegram', 'discord', 'slack', 'whatsapp']);
+  });
+
+  it('prints the catalog counts the generator recorded', () => {
+    const value = (label: string) => {
+      const found = CATALOG_FIGURES.find((f) => f.label === label);
+      if (!found) throw new Error(`no catalog figure labelled "${label}"`);
+      return found.value;
+    };
+    expect(value('connectors in the catalog')).toBe(String(CATALOG.connectors));
+    expect(value('MCP servers in the catalog')).toBe(String(CATALOG.mcpServers));
+    expect(value('system skills')).toBe(String(CATALOG.systemSkills));
+    expect(value('connector tools')).toBe(String(CATALOG.connectorTools));
+    expect(value('built-in tools')).toBe(String(CATALOG.builtinTools));
+    expect(value('models pre-configured')).toBe(String(CATALOG.models));
+    for (const f of CATALOG_FIGURES) expect(markup).toContain(f.label);
+  });
+
+  it('presents its use cases as examples, not as the list of what the product does', () => {
+    expect(EXAMPLES).toHaveLength(2);
+    expect(markup).toContain('Two, out of as many as you like');
+    // Telegram is a way to reach an agent, not a thing you build with it. It
+    // belongs to the channels row and to the design section, never to the list
+    // of what the platform is for.
+    for (const e of EXAMPLES) expect(e.name).not.toMatch(/telegram/i);
+  });
+});
+
 describe('homepage assets and configuration', () => {
   it('prefixes its own links with the basePath the build actually uses', () => {
     const config = readFileSync(join(docsRoot, 'next.config.mjs'), 'utf8');
@@ -83,6 +134,11 @@ describe('homepage assets and configuration', () => {
       const onDisk = join(docsRoot, 'public', src.slice(BASE_PATH.length + 1));
       expect(statSync(onDisk).size).toBeLessThan(250 * 1024);
     }
+    // Screenshots and brand icons both, so a renamed icon file is caught here
+    // rather than by a visitor looking at a broken image.
+    expect(sources.filter((s) => s.endsWith('.svg')).length).toBe(
+      CONNECTOR_ICONS.length + MCP_ICONS.length + CHANNEL_ICONS.length,
+    );
   });
 
   it('announces the version that is actually published', () => {

@@ -306,6 +306,18 @@
   gap: clamp(20px, 3vw, 40px);
   margin-top: 44px;
 }
+
+/* Three blocks, so three columns. Under auto-fit they laid out two and left
+   the third alone on its own row next to a hole. */
+.home-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(18px, 2.4vw, 32px);
+}
+@media (max-width: 820px) {
+  .home-grid-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .home-block h3 {
   font-family: var(--font-archivo), sans-serif;
   font-size: 19px;
@@ -546,6 +558,94 @@
   color: var(--home-ink);
 }
 
+/* ── A claim that carries a section ────────────────────────────────────── */
+
+.home-claim {
+  font-family: var(--font-archivo), sans-serif;
+  font-size: clamp(19px, 2.1vw, 25px);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  max-width: 34ch;
+  margin: 0 0 20px;
+  border-left: 3px solid var(--home-flame);
+  padding-left: 18px;
+}
+
+.home-examples-label {
+  margin-top: 52px;
+  margin-bottom: 0;
+}
+
+/* ── Definitions ───────────────────────────────────────────────────────── */
+
+.home-defs {
+  margin: 40px 0 0;
+  border-top: 1px solid var(--home-line-soft);
+}
+.home-defs > div {
+  display: grid;
+  grid-template-columns: 186px minmax(0, 1fr);
+  gap: 20px;
+  padding-block: 20px;
+  border-bottom: 1px solid var(--home-line-soft);
+}
+.home-defs dt {
+  font-family: var(--font-archivo), sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.home-defs dd {
+  margin: 0;
+  color: var(--home-ink-soft);
+  font-size: 16px;
+}
+
+/* ── Icon wall ─────────────────────────────────────────────────────────── */
+/* Brand marks are never recoloured, so each one sits on a tile that stays
+   light in both themes. Forcing them to currentColor would be wrong twice: it
+   misrepresents the mark, and half of these SVGs are multi-colour anyway. */
+
+.home-wall {
+  margin-top: 44px;
+}
+.home-wall ul {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  /* Fixed four, not auto-fill: the catalogs hold 12, 16 and 4 entries, which
+     fill four columns exactly and leave no ragged last row. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.home-wall li {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--home-line-soft);
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--home-ink-soft);
+  min-width: 0;
+}
+.home-wall li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-wall img {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  object-fit: contain;
+  background: #f4f4f2;
+  border-radius: 4px;
+  padding: 4px;
+}
+
 /* ── Narrow ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
@@ -563,6 +663,7 @@
     align-items: baseline;
     gap: 10px;
   }
+  .home-defs > div,
   .home-ci-row,
   .home-steps li {
     grid-template-columns: minmax(0, 1fr);
@@ -570,6 +671,12 @@
   }
   .home-steps li::before {
     padding-top: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .home-wall ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

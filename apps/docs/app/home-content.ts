@@ -1,3 +1,5 @@
+import facts from '../lib/catalog-facts.json';
+
 /**
  * Everything the homepage states, in one place.
  *
@@ -23,6 +25,15 @@
  */
 export const BASE_PATH = '/nodal-agents';
 
+/**
+ * Counts and slugs for every catalog the product ships, written by
+ * `scripts/gen-reference.ts` on each build from the catalogs themselves. Typing
+ * these by hand would have them wrong the first time someone adds a connector,
+ * and a public page that miscounts the product is worse than one that says
+ * nothing.
+ */
+export const CATALOG = facts;
+
 export interface Section {
   readonly id: string;
   readonly index: string;
@@ -34,9 +45,15 @@ export interface Section {
 export const SECTIONS: readonly Section[] = [
   { id: 'what-it-is', index: '01', label: 'The product', title: 'What it is' },
   { id: 'what-you-build', index: '02', label: 'In practice', title: 'What you can build' },
-  { id: 'how-its-designed', index: '03', label: 'Product approach', title: 'How it is designed' },
-  { id: 'how-its-built', index: '04', label: 'Engineering', title: 'How it is built' },
-  { id: 'where-it-stands', index: '05', label: 'Status', title: 'Where it stands' },
+  {
+    id: 'what-it-plugs-into',
+    index: '03',
+    label: 'The catalog',
+    title: 'Connectors, skills, tools',
+  },
+  { id: 'how-its-designed', index: '04', label: 'Product approach', title: 'How it is designed' },
+  { id: 'how-its-built', index: '05', label: 'Engineering', title: 'How it is built' },
+  { id: 'where-it-stands', index: '06', label: 'Status', title: 'Where it stands' },
 ];
 
 /* ── Section 01 ─────────────────────────────────────────────────────────── */
@@ -68,28 +85,144 @@ export const PILLARS: readonly Pillar[] = [
 
 /* ── Section 02 ─────────────────────────────────────────────────────────── */
 
-export interface Scenario {
+/**
+ * The first version of this section listed three use cases, which read as the
+ * three things the product does. It does not have a list. Source: README.md,
+ * "What you can build", reframed around what actually bounds an agent.
+ */
+export interface Lever {
   readonly name: string;
   readonly body: string;
 }
 
-/** Source: README.md, "What you can build". */
-export const SCENARIOS: readonly Scenario[] = [
+/** The three things that decide what an agent can do, and you set all three. */
+export const LEVERS: readonly Lever[] = [
+  {
+    name: 'What it can reach',
+    body: 'The connectors, MCP servers and APIs you attach. A service you can call, an agent can call.',
+  },
+  {
+    name: 'What it knows how to do',
+    body: 'The skills you assign. Written guidance an agent reads before it works. Install one from the community, write one, or let the agent write its own.',
+  },
+  {
+    name: 'What it is allowed to run',
+    body: 'The tools you grant, listed per agent. Shell commands, files, its own sandboxed folder, and the risky ones behind an approval.',
+  },
+];
+
+export interface Example {
+  readonly name: string;
+  readonly body: string;
+}
+
+/** Two of them, and the page says so. Source: README.md. */
+export const EXAMPLES: readonly Example[] = [
   {
     name: 'A research desk',
     body: 'An orchestrator fans a question out to specialists, one on web search, one on your Notion, one on your Drive. Each writes a section. The orchestrator compiles the brief and emails it to you.',
   },
   {
-    name: 'A Telegram concierge',
-    body: 'You message a bot. It routes to the right agent, remembers the conversation, runs shell commands or calls your APIs, and stops to ask before anything risky.',
-  },
-  {
     name: 'An automation crew',
-    body: 'Cron-scheduled agents wake up every morning, hit your connectors and MCP servers, and ping you on Telegram when they are done.',
+    body: 'Cron-scheduled agents wake up every morning, hit your connectors and MCP servers, and report back on whichever channel you read.',
   },
 ];
 
 /* ── Section 03 ─────────────────────────────────────────────────────────── */
+
+/**
+ * The icon wall. Each entry names a slug that must exist in
+ * `lib/catalog-facts.json`, and a file that must exist in
+ * `public/home/icons/`. Both are checked by the test, so an icon for something
+ * the product does not actually ship cannot reach the page.
+ *
+ * The SVGs are copied unmodified from `apps/web/public/`, which is where the
+ * dashboard reads them. They are brand marks: they are never recoloured, which
+ * is why they sit on a tile that stays light in both themes rather than being
+ * forced to `currentColor`.
+ */
+export interface CatalogIcon {
+  /** Slug in the product catalog. */
+  readonly slug: string;
+  /** File name under `public/home/icons/`, without the extension. */
+  readonly file: string;
+  readonly label: string;
+}
+
+export const CONNECTOR_ICONS: readonly CatalogIcon[] = [
+  { slug: 'notion', file: 'notion', label: 'Notion' },
+  { slug: 'gmail', file: 'gmail', label: 'Gmail' },
+  { slug: 'google-drive', file: 'google-drive', label: 'Google Drive' },
+  { slug: 'google-calendar', file: 'google-calendar', label: 'Google Calendar' },
+  { slug: 'google-sheets', file: 'google-sheets', label: 'Google Sheets' },
+  { slug: 'google-docs', file: 'google-docs', label: 'Google Docs' },
+  { slug: 'outlook-mail', file: 'outlook-mail', label: 'Outlook Mail' },
+  { slug: 'airtable', file: 'airtable', label: 'Airtable' },
+  { slug: 'cloudflare', file: 'cloudflare', label: 'Cloudflare' },
+  { slug: 'firecrawl', file: 'firecrawl', label: 'Firecrawl' },
+  { slug: 'tavily', file: 'tavily', label: 'Tavily' },
+  { slug: 'apify', file: 'apify', label: 'Apify' },
+];
+
+export const MCP_ICONS: readonly CatalogIcon[] = [
+  { slug: 'mcp-github', file: 'github', label: 'GitHub' },
+  { slug: 'mcp-git', file: 'git', label: 'Git' },
+  { slug: 'mcp-postgres', file: 'postgresql', label: 'PostgreSQL' },
+  { slug: 'mcp-playwright', file: 'playwright', label: 'Playwright' },
+  { slug: 'mcp-fetch', file: 'fetch', label: 'Fetch' },
+  { slug: 'linear', file: 'linear', label: 'Linear' },
+  { slug: 'sentry', file: 'sentry', label: 'Sentry' },
+  { slug: 'stripe', file: 'stripe', label: 'Stripe' },
+  { slug: 'supabase', file: 'supabase', label: 'Supabase' },
+  { slug: 'n8n', file: 'n8n', label: 'n8n' },
+  { slug: 'perplexity', file: 'perplexity', label: 'Perplexity' },
+  { slug: 'blender', file: 'blender', label: 'Blender' },
+  { slug: 'unity', file: 'unity', label: 'Unity' },
+  { slug: 'unreal-engine', file: 'unreal-engine', label: 'Unreal Engine' },
+  { slug: 'keyshot', file: 'keyshot', label: 'KeyShot' },
+  { slug: 'photoshop', file: 'photoshop', label: 'Photoshop' },
+];
+
+/** Source: README.md, "Channels". The icons live in apps/web/public/channel-icons. */
+export const CHANNEL_ICONS: readonly CatalogIcon[] = [
+  { slug: 'telegram', file: 'telegram', label: 'Telegram' },
+  { slug: 'discord', file: 'discord', label: 'Discord' },
+  { slug: 'slack', file: 'slack', label: 'Slack' },
+  { slug: 'whatsapp', file: 'whatsapp', label: 'WhatsApp' },
+];
+
+export interface Definition {
+  readonly term: string;
+  readonly body: string;
+}
+
+/** The three words the product uses, told apart in one line each. */
+export const DEFINITIONS: readonly Definition[] = [
+  {
+    term: 'A connector',
+    body: 'Access to a service you already use. You authorise it once, with OAuth or an API key, and the agent reaches your account inside it.',
+  },
+  {
+    term: 'A skill',
+    body: 'Know-how handed to an agent. A written page it reads before working, telling it how to do a thing well rather than what it is allowed to touch.',
+  },
+  {
+    term: 'A tool',
+    body: 'A single action an agent executes: send this mail, run this command, write this file. Every tool is listed per agent, and the risky ones stop for your approval.',
+  },
+];
+
+/** Counts, straight out of `lib/catalog-facts.json`. */
+export const CATALOG_FIGURES: readonly Figure[] = [
+  { value: String(CATALOG.connectors), label: 'connectors in the catalog' },
+  { value: String(CATALOG.connectorTools), label: 'connector tools' },
+  { value: String(CATALOG.mcpServers), label: 'MCP servers in the catalog' },
+  { value: String(CATALOG.systemSkills), label: 'system skills' },
+  { value: String(CATALOG.builtinTools), label: 'built-in tools' },
+  { value: String(CATALOG.models), label: 'models pre-configured' },
+];
+
+/* ── Section 04 ─────────────────────────────────────────────────────────── */
 
 export interface Principle {
   readonly title: string;
@@ -184,7 +317,7 @@ export const INVARIANTS: readonly Invariant[] = [
   },
 ];
 
-/* ── Section 04 ─────────────────────────────────────────────────────────── */
+/* ── Section 05 ─────────────────────────────────────────────────────────── */
 
 export interface Figure {
   readonly value: string;
@@ -269,7 +402,7 @@ export const CI_JOBS: readonly CiJob[] = [
   },
 ];
 
-/* ── Section 05 ─────────────────────────────────────────────────────────── */
+/* ── Section 06 ─────────────────────────────────────────────────────────── */
 
 /** Source: apps/cli/package.json (version) and CHANGELOG.md (headline). */
 export const VERSION = '0.8.9';
