@@ -242,7 +242,6 @@ function vueEnsemble() {
   return `
 <section id="vue" class="vue">
   ${entete('vue', 'Tests, overview')}
-  <p class="chapo">What the repository knows about its own tests, measured, and what it does not know yet, said as such.</p>
 
   ${repere('vue', 'cartes')}
   <div class="cartes">
@@ -381,7 +380,7 @@ function vueParcours() {
   return `
 <section id="parcours" class="vue">
   ${entete('parcours', 'Journeys')}
-  <p class="chapo">The end-to-end scenarios: what a user actually does. ${s.parcours.length} versioned, and <b>only ${bloque} guard a pull request</b>: the others observe after the fact, or never.</p>
+  <p class="chapo">${s.parcours.length} versioned, and <b>only ${bloque} guard a pull request</b>: the others observe after the fact, or never.</p>
   ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
 </section>`;
@@ -391,7 +390,6 @@ function vueBanc() {
   return `
 <section id="banc" class="vue">
   ${entete('banc', 'Bench')}
-  <p class="chapo">The bench does not answer "is it broken?" but "what CHANGED, and by how much". Every section carries an accepted baseline; a drift makes the command exit with an error.</p>
   ${
     s.ci.some((w) => w.lanceBanc)
       ? ''
@@ -494,7 +492,6 @@ function vueCi() {
   return `
 <section id="ci" class="vue">
   ${entete('ci', 'What triggers what')}
-  <p class="chapo">Read from the workflow files, not from an intention. This is the answer to "what runs the tests, and when", and to what the waiting costs.</p>
   ${repere('ci', 'prix')}
   ${cadrePrix()}
   <div class="grille-ci">
@@ -643,7 +640,7 @@ function vueCapacites() {
   return `
 <section id="capacites" class="vue">
   ${entete('capacites', 'What the product can do')}
-  <p class="chapo">One row per capability, and what proves it, at two levels. The <b>screen</b> says the buttons chain together; the <b>engine</b> says the thing is done behind. A capability is only truly verified if both exist and pass.</p>
+  <p class="chapo">The <b>screen</b> says the buttons chain together; the <b>engine</b> says the thing is done behind. A capability is only truly verified if both exist and pass.</p>
 
   ${repere('capacites', 'compteurs')}
   <div class="cartes">
@@ -732,7 +729,6 @@ function vueMemoire() {
   return `
 <section id="memoire" class="vue">
   ${entete('memoire', 'Test memory')}
-  <p class="chapo">One record per test, not per run. It is the only shape that can answer "how often does it run, and how often does it fall".</p>
 
   <div class="cartes">
     <article class="carte carte--phare ${m.instables > 0 ? 'carte--alerte' : ''}">
@@ -790,7 +786,6 @@ function vueEcarts() {
   return `
 <section id="ecarts" class="vue">
   ${entete('ecarts', 'Gaps')}
-  <p class="chapo">What today's measurement holds against the repository, sorted by what ignoring it costs. This list is computed, not written: it changes when the repository changes.</p>
   <ol class="ecarts">
     ${list
       .map(
@@ -867,7 +862,6 @@ function vueChantiers() {
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
-  <p class="chapo">The work under way, read from GitHub. The columns are DEDUCED, an open pull request is in review, a closed issue is done, a decision waits for its owner. Nothing is filed by hand, so nothing can lie by omission.</p>
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   <div class="kanban">${colonnes}</div>
 </section>`;
@@ -886,7 +880,6 @@ function vueHistorique() {
   return `
 <section id="historique" class="vue">
   ${entete('historique', 'History')}
-  <p class="chapo">One line per collection. It is this history, and it alone, that will make "how often does it run" and "how regularly" answerable. It starts today.</p>
 
   <h3 class="sous-titre">What moves</h3>
   ${repere('historique', 'courbes')}
