@@ -169,9 +169,13 @@ describe('le portail publié se rafraîchit sur les événements GitHub', () => 
   });
 
   it('docs.yml écoute les issues et les pull requests', () => {
-    for (const evenement of ['issues:', 'pull_request:']) {
+    for (const evenement of ['issues:', 'pull_request_target:']) {
       expect(docs).toContain(evenement);
     }
+    // Pas `pull_request` : l'environnement `github-pages` n'autorise que
+    // `main`, et le déploiement échouait sur chaque pull request. Une case
+    // rouge permanente finit par ne plus être lue.
+    expect(docs).not.toMatch(/^\s{2}pull_request:/m);
     for (const type of [
       'opened',
       'closed',

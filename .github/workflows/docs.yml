@@ -37,7 +37,13 @@ on:
   # relit AVANT de rendre la seule part que GitHub donne en une seconde.
   issues:
     types: [opened, closed, reopened, labeled, unlabeled, edited]
-  pull_request:
+  # `pull_request_target` et non `pull_request` : l'environnement `github-pages`
+  # n'autorise que `main`, et un déclenchement `pull_request` faisait échouer le
+  # déploiement sur CHAQUE pull request (« refs/pull/N/merge is not allowed to
+  # deploy », run 34944913597). Ici le contexte est celui de la branche de base.
+  # Aucun code de la pull request n'est exécuté : le job fait `checkout` de
+  # `main` explicitement, et ne rend que le portail.
+  pull_request_target:
     branches: [main]
     types: [opened, closed, reopened, labeled, ready_for_review, converted_to_draft]
   schedule:
@@ -66,14 +72,10 @@ jobs:
     # Publier ce qu'une mesure RATÉE a laissé derrière elle donnerait un portail
     # à moitié écrit, présenté comme l'état du jour.
     # Une mesure RATÉE laisse des données à moitié écrites ; les publier les
-    # présenterait comme l'état du jour. Et une pull request venue d'un fork
-    # n'a pas de jeton capable de déployer : le job échouerait sans rien dire
-    # d'utile.
+    # présenterait comme l'état du jour.
     if: >-
-      (github.event_name != 'workflow_run' ||
-       github.event.workflow_run.conclusion == 'success') &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v5
         with:
