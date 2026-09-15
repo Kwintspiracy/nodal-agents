@@ -22,6 +22,7 @@ import {
   desc,
   eq,
   inArray,
+  isNotNull,
   agentJobs,
   agentWorkspaces,
   agents,
@@ -134,7 +135,18 @@ function within(dir: string, root: string): boolean {
  * Mémoïsé : le manifeste du dossier attaché est lu une fois par entité, pas une
  * fois par ligne scannée.
  */
-function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, string>): string {
+function projectRootFor(
+  absFile: string,
+  wsRoot: string,
+  memo: Map<string, string>,
+  // « Cette racine EST un projet » — le manifeste sur le disque OU la
+  // déclaration en base. Ce scan était le dernier endroit à ne connaître que le
+  // manifeste, et une racine déclarée sans manifeste y restait éclatée en ses
+  // enfants pendant que l'intention et l'observation nommaient la racine — deux
+  // vérités sur l'identité d'un projet, ce que ce module existe pour empêcher
+  // (revue Codex de la dette de la PR #75, passe 2, constat 1).
+  rootIsProjectFor: (dir: string) => boolean,
+): string {
   const dir = absFile.replace(/\/[^/]*$/, '');
   const key = `${wsRoot}|${dir}`;
   const cached = memo.get(key);
@@ -143,7 +155,7 @@ function projectRootFor(absFile: string, wsRoot: string, memo: Map<string, strin
   const rootKey = `root|${wsRoot}`;
   let rootIsProject = memo.get(rootKey);
   if (rootIsProject === undefined) {
-    rootIsProject = hasMarker(wsRoot) ? 'yes' : 'no';
+    rootIsProject = rootIsProjectFor(wsRoot) ? 'yes' : 'no';
     memo.set(rootKey, rootIsProject);
   }
 
@@ -586,6 +598,22 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
 
+    // Les projets DÉCLARÉS de cette entité : une déclaration vaut manifeste,
+    // ici comme dans `packages/tools/src/projects/declared.ts`.
+    const declaredRows = await db
+      .select({ path: codeProjects.projectPath })
+      .from(codeProjects)
+      .where(
+        and(
+          eq(codeProjects.entityId, entityId),
+          isNotNull(codeProjects.registeredAt),
+          eq(codeProjects.kind, 'code'),
+        ),
+      );
+    const declaredRoots = new Set(declaredRows.map((r) => projectKey(norm(r.path))));
+    const rootIsProjectFor = (dir: string): boolean =>
+      hasMarker(dir) || declaredRoots.has(projectKey(dir));
+
     const rootMemo = new Map<string, string>();
     const existsMemo = new Map<string, boolean>();
     const existsCached = (p: string): boolean => {
@@ -616,7 +644,7 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
       const wsRoot = roots.find((r) => within(abs, r));
       if (!wsRoot) continue;
 
-      const projectPath = projectRootFor(abs, wsRoot, rootMemo);
+      const projectPath = projectRootFor(abs, wsRoot, rootMemo, rootIsProjectFor);
       // C'est le DOSSIER DE PROJET dont on vérifie l'existence, pas le fichier
       // (revue Codex, 26/08) : un projet supprimé disparaît, un fichier
       // supprimé au fil du travail ne fait pas disparaître son projet. Même

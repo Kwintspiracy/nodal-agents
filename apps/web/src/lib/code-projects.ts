@@ -16,7 +16,7 @@
 // des fonctions async — ces helpers sync (et testables) doivent vivre ici.
 
 import { existsSync as fsExistsSync } from 'node:fs';
-import { isAbsolutePath, isWindowsPath, normalizePath } from '@nodal-agents/shared';
+import { isAbsolutePath, isWindowsPath, normalizePath, projectKey } from '@nodal-agents/shared';
 
 /** Chemin absolu ? (POSIX `/…`, Windows `C:/…` ou UNC `//srv/part`.) */
 const isAbsoluteChangePath = isAbsolutePath;
@@ -194,7 +194,14 @@ function projectUnderWorkspace(
   dir: string,
   wsRoot: string,
   memo: Map<string, string | null>,
+  // Les projets DÉCLARÉS, par clé. Une déclaration vaut manifeste : sans
+  // elle, ce calcul éclatait en ses enfants un dossier attaché déclaré projet
+  // de code sans manifeste, pendant que l'intention, l'observation, le registre
+  // et le contexte des agents nommaient la racine (revue Codex de la dette de
+  // la PR #75, passe 2, constat 1).
+  declaredRoots?: ReadonlySet<string>,
 ): string {
+  if (declaredRoots?.has(projectKey(wsRoot)) === true) return wsRoot;
   if (hasProjectMarker(wsRoot, memo)) return wsRoot;
 
   const isWin = isWindowsPath(dir) || isWindowsPath(wsRoot);
@@ -270,6 +277,8 @@ export function deriveProjectRoot(
    */
   pipelineWorkspaces: WorkspaceRef[],
   memo: Map<string, string | null>,
+  /** Les clés des projets DÉCLARÉS de l'entité — une déclaration vaut manifeste. */
+  declaredRoots?: ReadonlySet<string>,
 ): string | null {
   const roots = workspaceRoots(pipelineWorkspaces);
   if (roots.length === 0) return null;
@@ -285,7 +294,7 @@ export function deriveProjectRoot(
     // Écriture hors de tout dossier attaché : on ne sait pas la rattacher.
     if (!wsRoot) continue;
 
-    const project = projectUnderWorkspace(dir, wsRoot, memo);
+    const project = projectUnderWorkspace(dir, wsRoot, memo, declaredRoots);
     // Masqué par le propriétaire, à n'importe quel niveau au-dessus (0087).
     if (isUnderHiddenWorkspace(project, pipelineWorkspaces)) continue;
     if (!existsMemo(project, memo)) continue;
