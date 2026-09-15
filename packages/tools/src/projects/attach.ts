@@ -38,7 +38,8 @@ import {
   resolveProjectRoots,
   type MutationTarget,
 } from '@nodal-agents/shared';
-import { hasMarker, realPathOf, rebaseOntoLexicalRoots } from './markers';
+import { realPathOf, rebaseOntoLexicalRoots } from './markers';
+import { loadDeclaredCodeRoots, projectRootPredicate } from './declared';
 import { registerCodeProjects } from './register';
 
 /**
@@ -352,9 +353,14 @@ export async function attachProductionToProject(
  * sinon le registre créerait une seconde ligne `code_projects` pour le même
  * dossier — l'état sale d'un côté, la déclaration de l'autre.
  *
- * `hasMarker` sur la racine DÉRIVÉE, pas sur le dossier de la cible : un
+ * Le prédicat sur la racine DÉRIVÉE, pas sur le dossier de la cible : un
  * fichier dans `app/src/` appartient au projet `app`, et c'est `app` qui doit
- * porter le manifeste.
+ * être un projet. Le prédicat, et non `hasMarker` seul : il connaît aussi les
+ * projets DÉCLARÉS, comme l'intention et l'observation. Sans lui, un projet
+ * déclaré sans manifeste dont un sous-dossier en porte un se faisait doubler
+ * par ce sous-dossier — déclaré au registre, puis choisi comme projet du job,
+ * pendant que l'état `produced` restait sur le projet déclaré (revue Codex
+ * post-merge de la PR #75, constat 2).
  *
  * Les cibles FICHIER seulement (revue Codex, passe 32). Une cible `dir` est un
  * PÉRIMÈTRE conservatif — le terrain entier d'une commande shell, ou d'un tour
@@ -376,11 +382,12 @@ async function registerManifestProjects(
   const workspaceRoots = ctx.workspaces.map((w) => normalizePath(w.path)).filter((p) => p !== '');
   if (workspaceRoots.length === 0) return [];
 
+  const isProjectRoot = projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId));
   const roots = resolveProjectRoots({
     targets: rebaseOntoLexicalRoots(codeTargets, workspaceRoots),
     workspaceRoots,
-    hasMarker,
-  }).filter((root) => hasMarker(root.path));
+    hasMarker: isProjectRoot,
+  }).filter((root) => isProjectRoot(root.path));
   if (roots.length === 0) return [];
 
   const rows = await registerCodeProjects(ctx.db, {

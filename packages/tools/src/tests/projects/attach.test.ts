@@ -895,6 +895,41 @@ describe('attachProductionToProject — ce qui ne DÉCLARE pas (passe 32)', () =
     expect(await projetDuJob(jobId)).toBe(row!.id);
   });
 
+  it('(k) un projet DÉCLARÉ sans manifeste n’est pas doublé par son sous-dossier à manifeste', async () => {
+    // Revue Codex post-merge de la PR #75, constat 2. Le registre était le
+    // troisième calcul de clé, et il ne connaîssait encore que `hasMarker` :
+    // avec deux racines attachées qui s'emboîtent, un projet déclaré sans
+    // manifeste et un sous-dossier qui en porte un, l'intention et
+    // l'observation nommaient `app` pendant que le registre déclarait
+    // `app/src` — puis rattachait le job À CE dernier, le plus profond. L'état
+    // `produced` restait sur `app`, et `declare_verification` pour le projet
+    // du job était refusée faute de trace. Un faux rouge.
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/src/package.json`, '{}'); // le manifeste est en DESSOUS
+    const [projetDeclare] = await db
+      .insert(codeProjects)
+      .values({
+        entityId: seed.entityId,
+        projectPath: app,
+        projectKey: projectKey(app),
+        kind: 'code',
+        registeredAt: new Date(),
+        registeredFrom: 'spaces',
+      })
+      .returning({ id: codeProjects.id });
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(
+      { ...ctxTerrain(jobId), workspaces: [{ path: terrain }, { path: app }] },
+      [fichier(`${app}/src/a.ts`)],
+    );
+
+    expect(issue).toMatchObject({ kind: 'attached', projectId: projetDeclare!.id, registered: [] });
+    expect(await projetDuJob(jobId)).toBe(projetDeclare!.id);
+    expect(await declaree(`${app}/src`), 'aucune ligne pour le sous-dossier').toBeNull();
+  });
+
   it('(j) un job INEXISTANT annule la déclaration', async () => {
     const app = `${terrain}/app`;
     await mkdir(`${app}/src`, { recursive: true });
