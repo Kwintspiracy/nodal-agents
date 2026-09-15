@@ -32,7 +32,7 @@
  *   reference/cli.mdx, reference/dashboard.mdx, reference/operate.mdx,
  *   reference/api.mdx
  */
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { systemSkills, skillKind, type SystemSkill } from '@nodal-agents/catalog';
@@ -71,6 +71,7 @@ type ToolInfo = {
 // imports, so tsx resolves the relative path fine). Lift into a shared package
 // later if a second consumer appears.
 import { MCP_CATALOG, OAUTH_PROVIDERS } from '@nodal-agents/shared';
+import { deriveMeasuredFacts } from './measured-facts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');
@@ -607,6 +608,26 @@ writeFileSync(
       gatedTools: gatedTools.length,
       channelTools: channelTools.length,
     },
+    null,
+    2,
+  ) + '\n',
+);
+
+// ── Measured facts, for the homepage ─────────────────────────────────────────
+// The homepage prints what the nightly measurement found. Those figures were
+// hand-typed constants until issue #109: the nightly rewrites the snapshot with
+// `[skip ci]`, so every pull request opened afterwards inherited a red check for
+// a drift it had not caused. They are derived here instead, from the snapshot
+// itself, and a snapshot missing a figure fails this build by name rather than
+// letting a zero reach a public page.
+writeFileSync(
+  join(here, '..', 'lib', 'measured-facts.json'),
+  JSON.stringify(
+    deriveMeasuredFacts(
+      JSON.parse(
+        readFileSync(join(here, '..', '..', 'qa', 'data', 'snapshot.json'), 'utf8'),
+      ) as unknown,
+    ),
     null,
     2,
   ) + '\n',

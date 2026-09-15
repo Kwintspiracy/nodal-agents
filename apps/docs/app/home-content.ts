@@ -1,4 +1,5 @@
 import facts from '../lib/catalog-facts.json';
+import measured from '../lib/measured-facts.json';
 
 /**
  * Everything the homepage states, in one place.
@@ -402,24 +403,26 @@ export interface Figure {
 }
 
 /**
- * Every figure below was read from `apps/qa/data/snapshot.json`, produced by the
- * nightly measurement (`.github/workflows/qa.yml`) on 14 September 2026, run
- * 34825077357, commit 3e067fb1. The date is printed next to the table on the
- * page: a number without its measurement date is a number nobody can check.
+ * Every figure below comes from `lib/measured-facts.json`, derived on each build
+ * from `apps/qa/data/snapshot.json` — the nightly measurement
+ * (`.github/workflows/qa.yml`) — by `scripts/gen-reference.ts`.
+ *
+ * They were transcribed by hand until issue #109. The nightly rewrites the
+ * snapshot with `[skip ci]`, so the constants went stale the moment it ran, and
+ * the next pull request opened inherited a red check for a drift it had not
+ * caused. A figure typed by hand is a figure that goes stale; there is one
+ * source now, and a snapshot missing a figure fails the build by name.
+ *
+ * The measurement date is printed next to the table: a number without its
+ * measurement date is a number nobody can check.
  */
-export const MEASURED_ON = '14 September 2026';
-export const MEASURED_COMMIT = '3e067fb1';
-export const MEASURED_RUN_URL =
-  'https://github.com/Kwintspiracy/nodal-agents/actions/runs/34825077357';
+export const MEASURED_ON = measured.measuredOn;
+export const MEASURED_COMMIT = measured.commit;
+export const MEASURED_RUN_URL = measured.runUrl;
+export const CAPABILITIES = measured.capabilities;
+export const CAPABILITIES_VERIFIED = measured.capabilitiesVerified;
 
-export const FIGURES: readonly Figure[] = [
-  { value: '34', label: 'packages measured' },
-  { value: '6,881', label: 'test cases' },
-  { value: '561', label: 'test files' },
-  { value: '229', label: 'end-to-end cases' },
-  { value: '81.6%', label: 'line coverage' },
-  { value: '12 / 24', label: 'capabilities green at both levels' },
-];
+export const FIGURES: readonly Figure[] = measured.figures;
 
 export interface Practice {
   readonly title: string;

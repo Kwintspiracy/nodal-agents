@@ -29,7 +29,11 @@ import {
   FIGURES,
   MCP_ICONS,
   INVARIANTS,
+  CAPABILITIES,
+  CAPABILITIES_VERIFIED,
   MEASURED_COMMIT,
+  MEASURED_ON,
+  MEASURED_RUN_URL,
   SECTIONS,
   VERSION,
 } from '../../app/home-content';
@@ -208,6 +212,22 @@ describe('homepage assets and configuration', () => {
     expect(existsSync(join(repoRoot, '.github', 'workflows', 'qa-pages.yml'))).toBe(false);
   });
 
+  // The figures are generated at build time, so the deploy has to run the
+  // generator on every publish, and has to publish again after the nightly
+  // measurement. Neither is visible from the page itself.
+  it('regenerates its figures on every build, and rebuilds after each measurement', () => {
+    const pkg = JSON.parse(readFileSync(join(docsRoot, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts.build).toContain('gen-reference.ts');
+    const wf = readFileSync(join(repoRoot, '.github', 'workflows', 'docs.yml'), 'utf8');
+    expect(wf).toContain('pnpm --filter @nodal-agents/docs build');
+    expect(wf).toContain("workflows: ['Quality — full measurement']");
+    // The measurement pushes its data commit after the run that triggered it,
+    // so the rebuild has to check out main rather than the triggering SHA.
+    expect(wf).toContain('ref: main');
+  });
+
   it('announces the version that is actually published', () => {
     const cli = JSON.parse(readFileSync(join(repoRoot, 'apps', 'cli', 'package.json'), 'utf8')) as {
       name: string;
@@ -219,45 +239,58 @@ describe('homepage assets and configuration', () => {
   });
 });
 
-describe('homepage figures match the measurement they cite', () => {
-  const snapshot = JSON.parse(
-    readFileSync(join(repoRoot, 'apps', 'qa', 'data', 'snapshot.json'), 'utf8'),
-  ) as {
-    commit: string;
-    resume: {
-      paquets: number;
-      fichiersDeTest: number;
-      casDeTest: number;
-      casE2e: number;
-      couvertureLignes: number;
-      capacites: number;
-      capacitesVerifiees: number;
-    };
-  };
-
-  it('cites the commit the snapshot was measured on', () => {
-    expect(snapshot.commit).toBe(MEASURED_COMMIT);
-  });
-
-  it('prints the counts the snapshot recorded', () => {
-    const r = snapshot.resume;
-    expect(figure('packages measured')).toBe(String(r.paquets));
-    expect(figure('test files')).toBe(String(r.fichiersDeTest));
-    expect(figure('test cases')).toBe(r.casDeTest.toLocaleString('en-US'));
-    expect(figure('end-to-end cases')).toBe(String(r.casE2e));
-  });
-
-  it('rounds coverage without inflating it', () => {
-    const shown = Number(figure('line coverage').replace('%', ''));
-    expect(shown).toBe(Math.round(snapshot.resume.couvertureLignes * 10) / 10);
-    expect(shown).toBeLessThanOrEqual(snapshot.resume.couvertureLignes);
-  });
-
-  it('does not overstate how many capabilities are proven at both levels', () => {
-    const r = snapshot.resume;
+describe('homepage figures come from the measurement, not from a transcription', () => {
+  // Deliberately NOT a comparison between the page and the current snapshot.
+  // The nightly measurement rewrites that snapshot with `[skip ci]`, so such a
+  // comparison turned every pull request opened afterwards red for a drift it
+  // had not caused (issue #109). The figures are derived at build time by
+  // `scripts/gen-reference.ts`; what is left to prove here is that the page
+  // really prints them, and cites when they were measured.
+  it('prints every derived figure, value and label', () => {
+    expect(FIGURES).toHaveLength(6);
+    for (const f of FIGURES) {
+      expect(f.value).not.toBe('');
+      expect(markup).toContain(f.value);
+      expect(markup).toContain(f.label);
+    }
     expect(figure('capabilities green at both levels')).toBe(
-      `${r.capacitesVerifiees} / ${r.capacites}`,
+      `${CAPABILITIES_VERIFIED} / ${CAPABILITIES}`,
     );
-    expect(r.capacitesVerifiees).toBeLessThanOrEqual(r.capacites);
+  });
+
+  // The guard against someone typing the numbers back in. It compares the page
+  // to the GENERATED file, never to the live snapshot, so a fresh measurement
+  // cannot redden a pull request while a transcription still does.
+  it('takes its figures from the generated file, never from a transcription', () => {
+    const generated = JSON.parse(
+      readFileSync(join(docsRoot, 'lib', 'measured-facts.json'), 'utf8'),
+    ) as {
+      measuredOn: string;
+      commit: string;
+      runUrl: string;
+      capabilities: number;
+      capabilitiesVerified: number;
+      figures: { value: string; label: string }[];
+    };
+    expect(FIGURES).toEqual(generated.figures);
+    expect(MEASURED_ON).toBe(generated.measuredOn);
+    expect(MEASURED_COMMIT).toBe(generated.commit);
+    expect(MEASURED_RUN_URL).toBe(generated.runUrl);
+    expect(CAPABILITIES).toBe(generated.capabilities);
+    expect(CAPABILITIES_VERIFIED).toBe(generated.capabilitiesVerified);
+  });
+
+  it('cites the date, the commit and the run the figures were measured on', () => {
+    expect(markup).toContain(MEASURED_ON);
+    expect(markup).toContain(MEASURED_COMMIT);
+    expect(markup).toContain(MEASURED_RUN_URL);
+    expect(MEASURED_COMMIT).toMatch(/^[0-9a-f]{7,40}$/);
+  });
+
+  it('states how many capabilities are still missing a level, without overstating', () => {
+    expect(CAPABILITIES_VERIFIED).toBeLessThanOrEqual(CAPABILITIES);
+    expect(markup).toContain(
+      `The other ${CAPABILITIES - CAPABILITIES_VERIFIED} are missing one level`,
+    );
   });
 });
