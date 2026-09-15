@@ -6,6 +6,23 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
+import {
+  confirmRecordedPid,
+  confirmTree,
+  formatRefusal,
+  type LiveProcess,
+  type RecordedProcess,
+} from './pid-confirm.ts';
+
+/** A snapshot row as `pid-confirm` wants it. A row with no name is still a row. */
+function asLiveRecord(rec: ProcessRecord): LiveProcess {
+  return { pid: rec.pid, startedAt: rec.startedAt, name: rec.name ?? '' };
+}
+
+/** The same, for a row that may be absent. */
+function asLive(rec: ProcessRecord | undefined): LiveProcess | undefined {
+  return rec === undefined ? undefined : asLiveRecord(rec);
+}
 
 export type SpawnResult = ResultPromise;
 
@@ -87,6 +104,20 @@ export interface ProcessRecord {
   pid: number;
   ppid: number;
   startedAt: string;
+  /**
+   * The executable name, e.g. `node.exe`.
+   *
+   * Added for #100. A creation tick tells one GENERATION of a pid from the
+   * next, which is enough to catch an ordinary recycled number — but it says
+   * nothing about what the number now IS, and the kill that actually hurts is
+   * the one aimed at a foreign `postgres.exe`. The tick and the name answer two
+   * different questions and neither replaces the other.
+   *
+   * Optional in the type because a pid file written before #100 carries records
+   * without it; `confirmRecordedPid` treats a missing recorded name as one less
+   * proof, never as a pass.
+   */
+  name?: string;
 }
 
 /**
@@ -177,14 +208,18 @@ async function readProcessTableWin(timeoutMs: number): Promise<Map<number, Proce
       // WRONG one, which is the failure mode worth fearing here: this list
       // decides what gets killed.
       const parts = line.trim().split('|');
-      if (parts.length !== 3) continue;
+      if (parts.length !== 4) continue;
       const pid = Number.parseInt(parts[0] ?? '', 10);
       const ppid = Number.parseInt(parts[1] ?? '', 10);
       const startedAt = (parts[2] ?? '').trim();
+      // The executable name comes LAST, after the three numbers, for the same
+      // reason the command line does in `orphans.ts`: it is the field most
+      // likely to surprise the split, so nothing sits behind it.
+      const name = (parts[3] ?? '').trim();
       // No parent and no creation time means the row cannot serve either
       // purpose — walking the tree, or proving identity before a kill.
       if (!Number.isInteger(pid) || !Number.isInteger(ppid) || startedAt === '') continue;
-      out.set(pid, { pid, ppid, startedAt });
+      out.set(pid, { pid, ppid, startedAt, name });
     }
 
     if (out.size > 0) {
@@ -215,8 +250,8 @@ const PROCESS_TABLE_QUERIES = [
     name: 'Get-CimInstance',
     // -Property keeps WMI from materialising every column of every process.
     command:
-      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
-      'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)" }',
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name | ' +
+      'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)|$($_.Name)" }',
   },
   {
     name: 'Get-WmiObject',
@@ -236,7 +271,8 @@ const PROCESS_TABLE_QUERIES = [
     // row, which the parser correctly discarded.)
     command:
       'Get-WmiObject Win32_Process | ForEach-Object { ' +
-      '"$($_.ProcessId)|$($_.ParentProcessId)|$($_.ConvertToDateTime($_.CreationDate).Ticks)" }',
+      '"$($_.ProcessId)|$($_.ParentProcessId)|' +
+      '$($_.ConvertToDateTime($_.CreationDate).Ticks)|$($_.Name)" }',
   },
 ] as const;
 
@@ -283,7 +319,23 @@ export function walkDescendants(
   return out;
 }
 
-export async function killPidTree(pid: number): Promise<void> {
+/**
+ * The postgres pids this install can PROVE are its own, asked of the one place
+ * that decides (`postgresProcessesForDataDir`, the rule #98 arrived at).
+ *
+ * Reached by dynamic import rather than a top-level one so the module graph
+ * stays a line — `postgres.ts` is the heavier module and nothing here needs it
+ * unless a kill is actually about to happen.
+ */
+async function ownedPostgres(): Promise<ReadonlySet<number>> {
+  const { postgresProcessesForDataDir } = await import('./postgres.ts');
+  return new Set((await postgresProcessesForDataDir()).owned);
+}
+
+export async function killPidTree(
+  pid: number,
+  ownedPostgresPids?: ReadonlySet<number>,
+): Promise<void> {
   if (process.platform === 'win32') {
     // Snapshot the descendants BEFORE killing anything.
     //
@@ -296,23 +348,66 @@ export async function killPidTree(pid: number): Promise<void> {
     //
     // Once the parent is dead the parent/child link is gone with it, so the list
     // has to be taken first. Cheap: one WMI call, and only on the shutdown path.
-    const descendants = await descendantPidsWin(pid, SHUTDOWN_SNAPSHOT_BUDGET_MS);
+    const snapshot = await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS);
+    const descendants = walkDescendants(snapshot, pid);
 
-    try {
-      // /T = kill children too. /F = force. We don't care if it failed (the
-      // process may already be gone); the next call site already handles
-      // unreachable services.
-      await execa('taskkill', ['/T', '/F', '/PID', String(pid)], { reject: false });
-    } catch {
-      /* best-effort */
+    // WHAT IS IN THE TREE, before `/T` empties it without saying (issue #100).
+    //
+    // `taskkill /T` walks the tree at the moment it runs and force-kills every
+    // member, and until now nobody asked what those members were. A service we
+    // started can perfectly well have started a Postgres of its own against
+    // ANOTHER data directory; `/T` would take it down with the rest, which is
+    // the 2026-09-14 incident arrived at from a new direction. So: a postgres
+    // in this tree that our data dir does not claim vetoes `/T` entirely, and
+    // the rest of the tree is then killed one pid at a time, around it.
+    const owned = ownedPostgresPids ?? (await ownedPostgres());
+    const { treeKillAllowed, foreign, killable } = confirmTree(
+      // The ROOT's own identity is the caller's business — `killPidTree` is
+      // also called with a handle to a child we spawned ourselves seconds ago,
+      // where the record IS the handle. What is judged here is the tree.
+      {
+        recorded: { pid },
+        live: asLive(snapshot.get(pid)),
+        tableRead: snapshot.size > 0,
+        ownedPostgresPids: owned,
+      },
+      descendants.map(asLiveRecord),
+      owned,
+    );
+
+    for (const stranger of foreign) {
+      process.stderr.write(
+        `KILL_REFUSED code=FOREIGN_POSTGRES pid=${stranger.pid} is a ${stranger.name} in the tree ` +
+          `of pid ${pid} that our data dir does not claim; the tree kill was done pid by pid around it\n`,
+      );
+    }
+
+    if (treeKillAllowed) {
+      try {
+        // /T = kill children too. /F = force. We don't care if it failed (the
+        // process may already be gone); the next call site already handles
+        // unreachable services.
+        await execa('taskkill', ['/T', '/F', '/PID', String(pid)], { reject: false });
+      } catch {
+        /* best-effort */
+      }
+    } else {
+      // No `/T`: the root alone, then the members we vouched for below.
+      try {
+        await execa('taskkill', ['/F', '/PID', String(pid)], { reject: false });
+      } catch {
+        /* best-effort */
+      }
     }
 
     // Then sweep whatever the tree walk missed. Each of these was a descendant
-    // of OUR process when we looked, so killing it is never someone else's work.
-    for (const child of descendants) {
-      if (!isPidAlive(child)) continue;
+    // of OUR process when we looked, so killing it is never someone else's work
+    // — except for the postgres exclusion above, which is why this iterates the
+    // vouched-for list and not the raw descendants.
+    for (const child of killable) {
+      if (!isPidAlive(child.pid)) continue;
       try {
-        await execa('taskkill', ['/F', '/PID', String(child)], { reject: false });
+        await execa('taskkill', ['/F', '/PID', String(child.pid)], { reject: false });
       } catch {
         /* best-effort */
       }
@@ -620,6 +715,11 @@ export interface PidFile {
    * the tree was still intact. See `recordServiceTree`.
    */
   children?: ProcessRecord[];
+  /**
+   * The runner and web pids as the process table saw them at startup — creation
+   * tick and executable name, not just the number. See `recordServiceTree`.
+   */
+  roots?: ProcessRecord[];
 }
 
 /**
@@ -658,16 +758,38 @@ export async function recordServiceTree(pids: PidFile): Promise<void> {
   if (snapshot.size === 0) return;
 
   const children: ProcessRecord[] = [];
+  const roots: ProcessRecord[] = [];
   const seen = new Set<number>();
   for (const root of [pids.runner, pids.web]) {
     if (!root) continue;
+    // The ROOTS are recorded too, and that is the whole of #100 for the two
+    // services. `runner` and `web` were stored as bare NUMBERS, so a later
+    // `down` or `up` had nothing whatsoever to check them against: no creation
+    // tick, no executable name. A number alone is not an identity, and the next
+    // boot was killing on it.
+    const rec = snapshot.get(root);
+    if (rec) roots.push(rec);
     for (const rec of walkDescendants(snapshot, root)) {
       if (seen.has(rec.pid)) continue;
       seen.add(rec.pid);
       children.push(rec);
     }
   }
-  writePids({ ...pids, children });
+  writePids({ ...pids, children, roots });
+}
+
+/**
+ * What we recorded about a root service pid, or a bare record when the pid file
+ * predates #100 (or was written before `recordServiceTree` got to run).
+ *
+ * A bare record is REFUSED by `confirmRecordedPid`, not waved through: that is
+ * the point. `up` then reports the pid it declined to kill instead of killing
+ * a number it cannot identify.
+ */
+export function recordedRoot(pids: PidFile | null, pid: number): RecordedProcess {
+  const found = pids?.roots?.find((r) => r.pid === pid);
+  if (!found) return { pid };
+  return { pid, startedAt: found.startedAt, ...(found.name ? { name: found.name } : {}) };
 }
 
 /**
@@ -681,18 +803,35 @@ export async function recordServiceTree(pids: PidFile): Promise<void> {
  *
  * Returns the pids actually killed, so the caller can say what it did.
  */
-export async function sweepRecordedChildren(children: ProcessRecord[]): Promise<number[]> {
+export async function sweepRecordedChildren(
+  children: ProcessRecord[],
+  ownedPostgresPids?: ReadonlySet<number>,
+): Promise<number[]> {
   if (process.platform !== 'win32' || children.length === 0) return [];
   const alive = children.filter((c) => isPidAlive(c.pid));
   if (alive.length === 0) return [];
 
   const snapshot = await processSnapshotWin();
+  // An unreadable table used to mean "kill nothing", by accident: every lookup
+  // missed and every record was skipped in silence. It now means that on
+  // purpose, and says so — `confirmRecordedPid` refuses with TABLE_UNREADABLE
+  // rather than letting a guard switch itself off without a word (#100).
+  const tableRead = snapshot.size > 0;
+  const owned = ownedPostgresPids ?? (await ownedPostgres());
   const killed: number[] = [];
   for (const rec of alive) {
-    const now = snapshot.get(rec.pid);
-    // No entry means it died between the two probes. A different creation tick
-    // means the number was recycled and belongs to someone else now.
-    if (!now || now.startedAt !== rec.startedAt) continue;
+    const verdict = confirmRecordedPid({
+      recorded: rec,
+      live: asLive(snapshot.get(rec.pid)),
+      tableRead,
+      ownedPostgresPids: owned,
+    });
+    if (!verdict.killable) {
+      // PID_GONE is not a refusal, it is a process that died between the two
+      // probes — reporting it would turn an ordinary race into a warning.
+      if (verdict.code !== 'PID_GONE') process.stderr.write(`${formatRefusal(verdict)}\n`);
+      continue;
+    }
     try {
       await execa('taskkill', ['/F', '/PID', String(rec.pid)], { reject: false });
       killed.push(rec.pid);

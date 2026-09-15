@@ -24,6 +24,8 @@ import {
 } from '../lib/env.ts';
 import { isPortBindable, findFreePort } from '../lib/ports.ts';
 import { measuredPort } from '../lib/orphans.ts';
+import { confirmRecordedPid, formatRefusal } from '../lib/pid-confirm.ts';
+import { logLauncherEvent, LAUNCHER_LOG } from '../lib/launcher-log.ts';
 import {
   spawnRunner,
   spawnWeb,
@@ -35,7 +37,10 @@ import {
   recordServiceTree,
   sweepRecordedChildren,
   killProcessTree,
+  killPidTree,
+  recordedRoot,
   processSnapshotWin,
+  type ProcessRecord,
   walkDescendants,
   isPidAlive,
   waitForPidDead,
@@ -204,7 +209,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // It also reaches what a port scan never will: the deepest Turbopack worker
   // listens on nothing, so it is invisible to the probe below and would
   // otherwise accumulate, one per interrupted session, until the next reboot.
-  const leftovers = await sweepRecordedChildren(known?.children ?? []);
+  // Which postgres processes belong to THIS data dir. Asked ONCE, and asked
+  // BEFORE the first kill of the boot rather than after it: the leftover sweep
+  // below force-kills recorded pids, and until #100 it did so without ever
+  // consulting ownership. A recorded pid recycled onto a foreign postmaster was
+  // indistinguishable from our own straggler.
+  const pgTable = await postgresProcessesForDataDir();
+  const ownedPgPids = new Set<number>(pgTable.owned);
+
+  const leftovers = await sweepRecordedChildren(known?.children ?? [], ownedPgPids);
   if (leftovers.length > 0) {
     console.log(
       chalk.gray(`  Cleaned up ${leftovers.length} process(es) left by the previous session`),
@@ -250,12 +263,6 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     const pid = await pidListeningOnPort(port);
     if (pid !== null) listeners.push({ name, port, pid });
   }
-
-  // Which postgres processes belong to THIS data dir. Asked once: the answer
-  // decides both whether a listener on our configured port may be killed and
-  // what the last-resort probe below may report.
-  const pgTable = await postgresProcessesForDataDir();
-  const ownedPgPids = new Set<number>(pgTable.owned);
 
   /**
    * Is this pid one of ours? ONE answer, from ONE place.
@@ -359,7 +366,6 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     }
     console.log(chalk.yellow('Cleaning up before starting…'));
 
-    const { execa } = await import('execa');
     // Postgres needs SPECIAL handling. Its Win32 shared-memory section is
     // keyed to the DATA DIR, not the port — so rotating to a neighbouring
     // port (section 1.6 below) while an orphan postmaster still lives does
@@ -403,6 +409,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // Anything we declined to touch: the closing line must not claim it was
     // cleaned up (pass-7 finding R2).
     const leftAlone: number[] = [];
+    /** Non-postgres pids we declined to signal, for the closing line below. */
+    const unconfirmed: number[] = [];
     for (const pgOrphan of pgOrphans) {
       const stillOurs = new Set<number>((await postgresProcessesForDataDir()).owned);
       if (!stillOurs.has(pgOrphan.pid)) {
@@ -451,13 +459,51 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       }
     }
 
+    // The non-postgres orphans. `name` here is the CONFIGURED PORT this pid was
+    // found on — "runner", "web" — never what the pid actually is, and until
+    // #100 nothing else was asked either. A pid recorded as our runner and
+    // recycled onto somebody's Postgres passed `ourPids`, never met
+    // `ownedPgPids`, and took a `taskkill /T` that emptied its whole tree.
+    //
+    // So each root is re-confirmed against a FRESH reading — recorded creation
+    // tick and executable name, from `recordServiceTree` — immediately before
+    // it is signalled, and the tree kill itself now refuses to walk through a
+    // foreign Postgres (see `killPidTree`).
+    //
+    // Only where a process table EXISTS, which is Windows. Elsewhere there is
+    // nothing to confirm against, and refusing every kill on a machine that was
+    // never going to answer would break `up`'s own recovery to close a hole
+    // that only bites where pids are recycled aggressively. The kill there is
+    // the same one as before, with the same reach as before.
+    const tableAvailable = process.platform === 'win32';
+    const table = tableAvailable ? await processSnapshotWin() : new Map<number, ProcessRecord>();
     for (const o of orphans) {
       if (o.name === 'postgres') continue; // already handled above
+      const live = table.get(o.pid);
+      const verdict = !tableAvailable
+        ? ({ killable: true } as const)
+        : confirmRecordedPid({
+            recorded: recordedRoot(known, o.pid),
+            live:
+              live === undefined
+                ? undefined
+                : { pid: live.pid, startedAt: live.startedAt, name: live.name ?? '' },
+            tableRead: table.size > 0,
+            ownedPostgresPids: ownedPgPids,
+          });
+      if (!verdict.killable) {
+        if (verdict.code !== 'PID_GONE') {
+          unconfirmed.push(o.pid);
+          console.log(chalk.yellow(`  - ${o.name} pid ${o.pid} was NOT killed: ${verdict.detail}`));
+          process.stderr.write(`${formatRefusal(verdict)}\n`);
+        }
+        continue;
+      }
       try {
         if (process.platform === 'win32') {
-          // /T = kill the whole process tree (the parent dying without /T
-          // leaves children holding the port).
-          await execa('taskkill', ['/T', '/F', '/PID', String(o.pid)], { reject: false });
+          // The tree, but a JUDGED tree: `killPidTree` drops `/T` when it finds
+          // a postgres in there that our data dir does not claim.
+          await killPidTree(o.pid, ownedPgPids);
         } else {
           process.kill(o.pid, 'SIGKILL');
         }
@@ -492,22 +538,37 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       console.log(chalk.yellow(`Some ports still held (likely Windows ghost sockets): ${list}.`));
       // Both things can be true at once, and this branch used to swallow the
       // second one (pass-8 finding R3).
-      if (leftAlone.length > 0) {
+      const alsoLeft = [...leftAlone, ...unconfirmed];
+      if (alsoLeft.length > 0) {
         console.log(
-          chalk.yellow(`Also left running, unconfirmed as ours: ${leftAlone.join(', ')}.`),
+          chalk.yellow(`Also left running, unconfirmed as ours: ${alsoLeft.join(', ')}.`),
         );
       }
       console.log(chalk.gray('Will rotate to free neighbours below.\n'));
-    } else if (leftAlone.length > 0) {
+    } else if (leftAlone.length > 0 || unconfirmed.length > 0) {
       // "Orphans cleaned up" used to print here whatever we had declined to
       // touch, because the check was "no port still held" — and a surviving
       // worker holds no port (pass-7 finding R2). Say what was actually done.
-      console.log(
-        chalk.yellow(
-          `Ports are free, but ${leftAlone.length} postgres process(es) were left running ` +
-            `(${leftAlone.join(', ')}): they could not be confirmed as ours.\n`,
-        ),
-      );
+      //
+      // Since #100 the same applies to a NON-postgres recorded pid whose
+      // identity a fresh reading could not confirm: it was not killed either,
+      // and "Orphans cleaned up" must not cover it.
+      if (leftAlone.length > 0) {
+        console.log(
+          chalk.yellow(
+            `Ports are free, but ${leftAlone.length} postgres process(es) were left running ` +
+              `(${leftAlone.join(', ')}): they could not be confirmed as ours.\n`,
+          ),
+        );
+      }
+      if (unconfirmed.length > 0) {
+        console.log(
+          chalk.yellow(
+            `${unconfirmed.length} recorded process(es) were left running ` +
+              `(${unconfirmed.join(', ')}): the pid no longer identifies what we started.\n`,
+          ),
+        );
+      }
     } else {
       console.log(chalk.green('Orphans cleaned up.\n'));
     }
@@ -588,9 +649,12 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   };
 
   /** Tear down whatever is up, in reverse order of start. Idempotent. */
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (cause = 'signal'): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Written BEFORE the teardown, not after: a shutdown that hangs or is
+    // itself killed must still have said why it started (issue #111, point 3).
+    logLauncherEvent('shutdown', `cause=${cause}`);
     console.log('\n' + chalk.yellow('  Stopping Nodal-Agents…'));
     // Read the tree BEFORE killing: clearPids() wipes it at the end, and on
     // Ctrl+C the live parent/child links are already collapsing (see
@@ -613,8 +677,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     process.exit(0);
   };
 
-  process.on('SIGINT', () => void shutdown());
-  process.on('SIGTERM', () => void shutdown());
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   let effectivePgPassword = pgPassword;
   if (pendingRotation) {
@@ -856,6 +920,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 9. Ready message ──────────────────────────────────────────────────────
 
   console.log('');
+  logLauncherEvent(
+    'started',
+    `web=${webUrl} runner=${runnerUrl} mode=${opts.detach ? 'detached' : 'foreground'}`,
+  );
   console.log(chalk.bold.green(`  Nodal-Agents ready at ${webUrl}`));
   if (config.bind === 'lan') {
     console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
@@ -870,9 +938,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // to kill the services when the foreground CLI dies, which is precisely what
   // must not happen here.
   if (opts.detach) {
+    logLauncherEvent('detached', `web=${webUrl} runner=${runnerUrl}`);
     console.log(chalk.gray('  Detached — the terminal is yours again.'));
     console.log(chalk.gray('  nodal-agents logs runner   follow a service'));
     console.log(chalk.gray('  nodal-agents down          stop everything'));
+    // Said here because this is the last thing the user sees before the
+    // terminal is theirs again — and after that, this file is the only place
+    // the launcher can still tell them anything (issue #111, point 3).
+    console.log(chalk.gray(`  ${LAUNCHER_LOG}   what the launcher saw`));
     console.log('');
     // The children were unref'd at spawn and Postgres is its own pg_ctl daemon,
     // so nothing here holds the loop — except the fire-and-forget version check
@@ -896,6 +969,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     probe: () => probeRunnerHealth(runnerUrl),
     onTransition: (state, detail) => {
       const at = new Date().toLocaleTimeString();
+      // The terminal gets local time for whoever is watching; the file gets a
+      // UTC instant, because on 2026-09-15 nobody was watching and the terminal
+      // was the only place this had ever been said.
+      logLauncherEvent(state === 'healthy' ? 'recovered' : 'degraded', `state=${state} ${detail}`);
       if (state === 'healthy') {
         console.log(chalk.green(`\n  [${at}] Recovered — ${detail}.`));
         return;
@@ -922,8 +999,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // covered and not just this point onwards.
 
   // Keep process alive until a child exits, then shut down
-  await Promise.race([runnerProcess, webProcess]);
+  // WHICH child exited is the question `%TEMP%\nodal-dev.log` could not answer
+  // on 2026-09-15: the launcher said "Stopped. Goodbye!" and nothing else.
+  const exited = await Promise.race([
+    runnerProcess.then(() => 'runner' as const).catch(() => 'runner' as const),
+    webProcess.then(() => 'web' as const).catch(() => 'web' as const),
+  ]);
+  logLauncherEvent('child-exited', `service=${exited}`);
 
   watchdog.stop();
-  await shutdown();
+  await shutdown(`${exited} exited`);
 }
