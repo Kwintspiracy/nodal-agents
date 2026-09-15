@@ -18,7 +18,14 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentAssignments, eq } from '@nodal-agents/db';
+import {
+  agents,
+  agentAssignments,
+  agentSkills,
+  agentSkillAssignments,
+  agentWorkspaces,
+  eq,
+} from '@nodal-agents/db';
 import { buildSystemPrompt } from '../system-prompt';
 import { buildBaselineBlock } from '../agent-baseline';
 
@@ -48,24 +55,77 @@ beforeAll(async () => {
     subAgentId: (sub as { id: string }).id,
   });
   await db.update(agents).set({ role: 'orchestrator' }).where(eq(agents.id, seed.agentId));
+
+  // Passe 2 de la revue, constat 1 : la fixture d'origine n'avait NI dossier,
+  // NI skill, NI canal, NI conversation — et quatre blocs qui prescrivent des
+  // outils se déclenchent précisément là-dessus. Un prompt de chat nu ne prouve
+  // rien de la promesse « rien que d'exécutable ».
+  await db.insert(agentWorkspaces).values([
+    { entityId: seed.entityId, agentId: seed.agentId, label: 'dev', path: '/tmp/dev-chat' },
+    { entityId: seed.entityId, agentId: seed.agentId, label: 'notes', path: '/tmp/notes-chat' },
+  ]);
+  const [skill] = await db
+    .insert(agentSkills)
+    .values({
+      entityId: seed.entityId,
+      slug: 'command-execution',
+      name: 'Command execution',
+      description: 'Run commands.',
+      content: '## Command execution\n\nUse `run_command`.',
+    })
+    .returning();
+  await db.insert(agentSkillAssignments).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    skillId: (skill as { id: string }).id,
+  });
+
   const [row] = await db.select().from(agents).where(eq(agents.id, seed.agentId));
   agent = row as Record<string, unknown>;
 });
 
+const conversation = {
+  id: 'conv-chat-1',
+  priorTurns: 3,
+  openedByCommand: false,
+  currentProject: null,
+  registeredProjects: [
+    { name: 'Portail', path: '/tmp/dev-chat/portail', kind: 'documents' as const },
+  ],
+};
+
 const chat = () =>
-  buildSystemPrompt(agent as never, db, { origin: 'dashboard', surface: 'chat' } as never);
+  buildSystemPrompt(agent as never, db, {
+    origin: 'dashboard',
+    surface: 'chat',
+    conversation,
+  } as never);
 const job = () => buildSystemPrompt(agent as never, db, { origin: 'api' } as never);
 
 describe('la surface chat ne reçoit que ce qu’elle peut obéir', () => {
-  it('les skills baseline qui prescrivent des outils de fichiers sont absentes du chat, présentes sur un job', async () => {
+  it('le TEXTE de ces skills ne part pas sur le chat — ce qui en reste vrai, oui', async () => {
     const c = await chat();
     const j = await job();
-    for (const titre of ['## Verify before done', '## Safe tool use', '## Workspace hygiene']) {
+    // « Workspace hygiene » n'a rien à dire sans outil de fichier : elle se tait.
+    expect(j, '## Workspace hygiene manque sur un job').toContain('## Workspace hygiene');
+    expect(c, '## Workspace hygiene injecté sur le chat').not.toContain('## Workspace hygiene');
+
+    // Les deux autres, elles, ont écrit une version sans outil (revue de la
+    // dette, passe 1, constat 1). Leur TITRE revient donc sur le chat, et
+    // l'assertion d'origine — « ce titre est absent » — refusait exactement le
+    // correctif (passe 2, constat 2). Ce qui doit rester absent, c'est le texte
+    // de JOB : les phrases qui prescrivent un outil.
+    for (const titre of ['## Verify before done', '## Safe tool use']) {
       expect(j, `${titre} manque sur un job`).toContain(titre);
-      expect(
-        c,
-        `${titre} injecté sur le chat, où l'agent n'a aucun outil de fichier`,
-      ).not.toContain(titre);
+      expect(c, `${titre} ne dit plus rien sur le chat`).toContain(titre);
+    }
+    for (const phraseDeJob of [
+      'after every `file_write` or equivalent',
+      '`file_read` before `file_write`',
+      '### Anti-loop limits',
+    ]) {
+      expect(j, `« ${phraseDeJob} » manque sur un job`).toContain(phraseDeJob);
+      expect(c, `« ${phraseDeJob} » injectée sur le chat`).not.toContain(phraseDeJob);
     }
   });
 
