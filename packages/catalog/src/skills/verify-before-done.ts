@@ -16,6 +16,19 @@ export const verifyBeforeDoneSkill: SystemSkill = {
   kind: 'baseline',
   // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
   surfaces: ['job'],
+  // Ce qui en reste vrai sans aucun outil. Le filtre de surface emportait tout,
+  // y compris les règles qui ne demandent rien à appeler — et le chat en
+  // devenait plus enclin à affirmer sans preuve (revue Codex de la dette de la
+  // PR #73, constat 1).
+  contentOnChat: `## Verify before done
+
+Never say something is done, correct, or already handled unless you know it — from this conversation, or from a result you were actually given.
+
+- If you cannot check it from here, say so plainly: \"I can't confirm that from here\" beats a confident guess.
+- Do not turn a plan into a past tense. Handing work to a job is not the same as the work being finished; the job's own result is what says it is.
+- When you reformat, summarise or aggregate data the user gave you, spot-check two or three values against what they sent, and keep the count.
+- \"Should work\", \"probably\", \"seems right\" are warnings, not answers. Say what you know and what you don't.
+- Your own earlier messages are evidence. Never contradict a turn of yours that says you did something without re-checking first — \"I have no record of it\" is not \"it did not happen\".`,
   content: `## Verify before done
 
 Never declare a task complete without checking the actual result. Verification is a mandatory last step, not an optional quality nicety.

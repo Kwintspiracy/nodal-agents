@@ -13,7 +13,7 @@
 // these are universal, never user-edited, and the catalog is the code's source
 // of truth — so the prompt can never drift from a stale seed.
 
-import { systemSkills, skillKind, skillAppliesOn } from '@nodal-agents/catalog';
+import { systemSkills, skillKind, skillContentOn } from '@nodal-agents/catalog';
 import type { PromptSurface } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
@@ -28,10 +28,21 @@ import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
  */
 const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/i;
 
+/**
+ * Le texte d'une skill POUR une surface.
+ *
+ * Deux façons d'être présent sur `chat` : déclarer la surface — tout le texte
+ * s'y suit —, ou écrire `contentOnChat`, ce qui en reste vrai sans aucun outil.
+ * Le second existe parce que le premier est un interrupteur : il emportait les
+ * règles portables avec celles qui prescrivent un outil, et le chat en devenait
+ * PLUS enclin à affirmer sans preuve (revue Codex de la dette de la PR #73,
+ * constat 1). Les deux vivent dans le CATALOGUE (invariant #3).
+ */
 const contentOfKind = (kind: 'baseline' | 'channel', surface: PromptSurface = 'job'): string[] =>
   systemSkills
-    .filter((s) => skillKind(s) === kind && skillAppliesOn(s, surface))
-    .map((s) => s.content.trim());
+    .filter((s) => skillKind(s) === kind)
+    .map((s) => skillContentOn(s, surface))
+    .filter((text): text is string => text !== null);
 
 /**
  * Memory discipline — every agent, orchestrator or worker. Injected as a
