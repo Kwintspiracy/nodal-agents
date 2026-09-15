@@ -310,6 +310,36 @@ describe('delegated sub-job deliverable @cap:organiser-equipe/moteur', () => {
     expect(row.result).toContain('1.616255e-35');
   });
 
+  it('does NOT fail a resumed job whose deliverable was written in an EARLIER run', async () => {
+    // A parent writes its answer, suspends into a delegation, and comes back in
+    // a fresh run whose final turn is `return_result` alone. The deliverable is
+    // already in the transcript — failing that job would be the guard lying.
+    const written = 'Planck length: 1.616255e-35 m. Full note written to the vault.';
+    const jobId = await insertJob({
+      channel: 'api',
+      messages: [
+        { role: 'user', content: 'recherche' },
+        { role: 'assistant', content: [{ type: 'text', text: written }] },
+      ],
+    });
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('completed');
+    expect(row.result).toContain('1.616255e-35');
+  });
+
   it('FAILS a head job on `api` that signals success with no text and no delivery', async () => {
     const jobId = await insertJob({ channel: 'api' });
     const deps = makeDeps(
