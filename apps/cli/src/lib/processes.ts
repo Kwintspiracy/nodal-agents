@@ -332,6 +332,27 @@ async function ownedPostgres(): Promise<ReadonlySet<number>> {
   return new Set((await postgresProcessesForDataDir()).owned);
 }
 
+/**
+ * The same, but only when there is actually a Postgres to arbitrate.
+ *
+ * The probe is a PowerShell CIM query: ~0.5s warm, ten seconds on a machine
+ * that will not answer. Asking it on every shutdown — the first shape of this
+ * fix — put that on the critical path of every `killPidTree`, and the GitHub
+ * Windows runner, which cannot enumerate its process table at all, timed out a
+ * `detach.test.ts` case that had never been near a database.
+ *
+ * Nothing is lost by asking late: the question only ever decides the fate of a
+ * `postgres.exe`, so where there is none in the reading, the empty answer is
+ * the correct one and it is free.
+ */
+async function ownedPostgresIfAnyInvolved(
+  candidates: readonly { name?: string }[],
+): Promise<ReadonlySet<number>> {
+  const EMPTY: ReadonlySet<number> = new Set();
+  const anyPostgres = candidates.some((c) => (c.name ?? '').toLowerCase() === 'postgres.exe');
+  return anyPostgres ? await ownedPostgres() : EMPTY;
+}
+
 export async function killPidTree(
   pid: number,
   ownedPostgresPids?: ReadonlySet<number>,
@@ -360,7 +381,9 @@ export async function killPidTree(
     // the 2026-09-14 incident arrived at from a new direction. So: a postgres
     // in this tree that our data dir does not claim vetoes `/T` entirely, and
     // the rest of the tree is then killed one pid at a time, around it.
-    const owned = ownedPostgresPids ?? (await ownedPostgres());
+    const owned =
+      ownedPostgresPids ??
+      (await ownedPostgresIfAnyInvolved([...descendants, snapshot.get(pid) ?? {}]));
     const { treeKillAllowed, foreign, killable } = confirmTree(
       // The ROOT's own identity is the caller's business — `killPidTree` is
       // also called with a handle to a child we spawned ourselves seconds ago,
@@ -817,7 +840,9 @@ export async function sweepRecordedChildren(
   // purpose, and says so — `confirmRecordedPid` refuses with TABLE_UNREADABLE
   // rather than letting a guard switch itself off without a word (#100).
   const tableRead = snapshot.size > 0;
-  const owned = ownedPostgresPids ?? (await ownedPostgres());
+  const owned =
+    ownedPostgresPids ??
+    (await ownedPostgresIfAnyInvolved(alive.flatMap((rec) => [rec, snapshot.get(rec.pid) ?? {}])));
   const killed: number[] = [];
   for (const rec of alive) {
     const verdict = confirmRecordedPid({
