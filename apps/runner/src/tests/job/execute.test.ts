@@ -530,6 +530,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-a', toolName: assignTool, args: { task: 'sub' } }] },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -591,6 +592,7 @@ describe('executeJob', () => {
     try {
       const llmClient = makeMockLlmClient([
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -626,6 +628,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -803,6 +806,7 @@ describe('executeJob', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr',
@@ -938,6 +942,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient([
       { text: 'Voici ma réponse en texte brut, non livrée.' },
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-tg',
@@ -1000,11 +1005,13 @@ describe('executeJob', () => {
     // Turn 2: it sends the confirmation, then finishes.
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-tg',
@@ -1056,6 +1063,7 @@ describe('executeJob', () => {
     // a delivery — the job completes silently.
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -1697,11 +1705,13 @@ describe('executeJob', () => {
     // Turn 1: return_result ALONE (no prior send). Turn 2: deliver + return_result.
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'enfin livré' } },
           { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
@@ -1751,6 +1761,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'pile poil' } },
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
@@ -1805,6 +1816,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'réponse' } },
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
@@ -1867,11 +1879,13 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             {
               toolCallId: 'tc-tg',
@@ -1994,6 +2008,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -2047,6 +2062,7 @@ describe('executeJob', () => {
     // sibling error must block finalization. Turn 2: [return_result(blocked)].
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-bad', toolName: 'save_memory', args: {} },
           {
@@ -2130,6 +2146,7 @@ describe('executeJob', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr',
@@ -2259,6 +2276,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-pub',
@@ -2699,6 +2717,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-bad', toolName: 'definitely_not_a_tool', args: {} }] },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -2840,6 +2859,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -2887,6 +2907,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -2946,6 +2967,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -2992,6 +3014,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -3056,6 +3079,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -3085,6 +3109,7 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -3160,6 +3185,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-tg-ctx', toolName: 'telegram_send_message', args: { text: 'done' } },
           { toolCallId: 'tc-rr-ctx', toolName: 'return_result', args: { status: 'success' } },
@@ -3202,6 +3228,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-api',
@@ -3344,6 +3371,7 @@ describe('executeJob', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -3432,6 +3460,7 @@ describe('executeJob', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-obj', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -3524,6 +3553,7 @@ describe('executeJob', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-no-tg',
@@ -3899,6 +3929,7 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-b', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -4116,6 +4147,7 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       },
       {
         costUsd: 0.1,
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-cost-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -4464,6 +4496,7 @@ describe('reliability guards', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [{ toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } }],
         },
       ]);
@@ -4489,6 +4522,7 @@ describe('reliability guards', () => {
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'sm-bad', toolName: 'save_memory', args: {} }] },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } }],
       },
     ]);
@@ -4529,12 +4563,15 @@ describe('reliability guards', () => {
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'dp', toolName: 'dashboard_publish', args: { text: 'hi' } }] },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'rr1', toolName: 'return_result', args: { status: 'success' } }],
       },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'rr2', toolName: 'return_result', args: { status: 'success' } }],
       },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'rr3', toolName: 'return_result', args: { status: 'success' } }],
       },
     ]);
@@ -4640,6 +4677,7 @@ describe('reliability guards', () => {
     const job = await createTestJob(db, seed);
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'sm-bad', toolName: 'save_memory', args: {} }, // invalid → errors
           { toolCallId: 'rr-a', toolName: 'return_result', args: { status: 'success' } },
@@ -4842,6 +4880,7 @@ describe('reliability guards', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'fp-pub',
@@ -4958,6 +4997,7 @@ describe('reliability guards', () => {
         },
         {
           costUsd: 0.2,
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -5038,6 +5078,7 @@ describe('reliability guards', () => {
               promptTokens,
               // No costUsd → no providerMetadata.openrouter → exercises the
               // native-provider derivation path, not the OpenRouter self-report.
+              text: 'Done.',
               toolCalls: [
                 { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
               ],
@@ -5118,6 +5159,7 @@ describe('reliability guards', () => {
       {
         costUsd: 0.01,
         providerName: 'TestUpstream',
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr',
@@ -5148,6 +5190,7 @@ describe('reliability guards', () => {
       {
         // costUsd present (Guard 1e path exercised) but no providerName
         costUsd: 0.01,
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr',
@@ -5181,6 +5224,7 @@ describe('reliability guards', () => {
     // Both callers use a mock that resolves in one turn.
     const llmA = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-a',
@@ -5192,6 +5236,7 @@ describe('reliability guards', () => {
     ]);
     const llmB = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-b',
@@ -5253,6 +5298,7 @@ describe('reliability guards', () => {
       },
       // Turn 2: return_result — but we'll flip the DB before this is called.
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr',
@@ -5370,6 +5416,7 @@ describe('reliability guards', () => {
     // First run: completes normally.
     const llmFirst = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-1',
@@ -5390,6 +5437,7 @@ describe('reliability guards', () => {
     // job completes normally.
     const llmSecond = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-2',
@@ -5434,6 +5482,7 @@ describe('Guard 1f: non-progress detector', () => {
       toolCalls: [{ toolCallId: `fl-${i}`, toolName: 'file_list', args: { glob: `probe-${i}` } }],
     }));
     responses.push({
+      text: 'Done.',
       toolCalls: [
         { toolCallId: 'rr-s1-nudge', toolName: 'return_result', args: { status: 'success' } },
       ],
@@ -5487,6 +5536,7 @@ describe('Guard 1f: non-progress detector', () => {
       ],
     }));
     responses.push({
+      text: 'Done.',
       toolCalls: [{ toolCallId: 'rr-alt', toolName: 'return_result', args: { status: 'success' } }],
     });
     const llmClient = makeMockLlmClient(responses, capturedPrompts);
@@ -5506,6 +5556,7 @@ describe('Guard 1f: non-progress detector', () => {
       toolCalls: [{ toolCallId: `sm-err-${i}`, toolName: 'save_memory', args: {} }],
     }));
     responses.push({
+      text: 'Done.',
       toolCalls: [
         { toolCallId: 'rr-s2-nudge', toolName: 'return_result', args: { status: 'success' } },
       ],
@@ -5561,6 +5612,7 @@ describe('Guard 1f: non-progress detector', () => {
           ],
         }, // success — resets the S2 streak to 0
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'rr-reset', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -5622,6 +5674,7 @@ describe('Guard 1f: non-progress detector', () => {
       ...Array.from({ length: 6 }, (_v, i) => fileListCall(`post-${i}`, i)),
       // Turn 14: finalize.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'rr-exempt', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -5703,6 +5756,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -5735,6 +5789,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -5759,6 +5814,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-ls', toolName: 'list_schedules', args: {} }] },
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-tg1',
@@ -5797,6 +5853,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -5828,6 +5885,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             {
               toolCallId: 'tc-tg1',
@@ -5838,6 +5896,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -5888,6 +5947,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
     const llmClient = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-ls', toolName: 'list_schedules', args: {} },
             {
@@ -5925,6 +5985,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
       [
         {
           // Turn 1: same incident shape — held once.
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-tg1', toolName: 'telegram_send_message', args: { text: 'annulé' } },
             { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
@@ -5932,6 +5993,7 @@ describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
         },
         {
           // Turn 2: STILL no verification tool — must pass through unconditionally.
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-tg2', toolName: 'telegram_send_message', args: { text: 'confirmé' } },
             { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
@@ -5985,6 +6047,7 @@ describe('F-8: tool-call heartbeat keeps a long single tool call from being reap
       const llmClient = makeMockLlmClient([
         { toolCalls: [{ toolCallId: 'tc-slow', toolName: 'web_search', args: { query: 'test' } }] },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -6264,6 +6327,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         // Child turn 1 (runs inline, synchronously, same test): returns the
         // file path only — it has no delivery tools to call.
         {
+          text: 'Done.',
           toolCalls: [
             {
               toolCallId: 'tc-rr-child',
@@ -6275,6 +6339,7 @@ describe('delegated workers do NOT inherit the root agent Telegram token', () =>
         // Parent turn 2 (resumed): the ORCHESTRATOR delivers with its own
         // token, then finishes.
         {
+          text: 'Done.',
           toolCalls: [
             {
               toolCallId: 'tc-img-parent',
@@ -6359,6 +6424,7 @@ describe('executeJob — le projet courant de la conversation (P6)', () => {
 
     const llmClient = makeMockLlmClient([
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-p6-rr', toolName: 'return_result', args: { status: 'success' } },
         ],

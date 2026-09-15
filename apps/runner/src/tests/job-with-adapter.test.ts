@@ -398,6 +398,7 @@ describe('job-with-adapter: orchestrator role sees an assigned connector (HIGH f
     const client = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],

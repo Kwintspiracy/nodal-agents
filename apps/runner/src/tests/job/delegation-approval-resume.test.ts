@@ -288,7 +288,10 @@ describe('destructive_gate — worker run_command relaxation', () => {
           },
         ],
       },
-      { toolCalls: [{ toolCallId: 'n2', toolName: 'return_result', args: { status: 'success' } }] },
+      {
+        text: 'Done.',
+        toolCalls: [{ toolCallId: 'n2', toolName: 'return_result', args: { status: 'success' } }],
+      },
     ]);
     const res = await executeJob(job.id as JobId, makeDeps(llm), testEnv);
     expect(res.status).toBe('completed');
@@ -344,8 +347,14 @@ describe('delegation — parent suspends on child gate, resumes after approval',
           },
         ],
       },
-      { toolCalls: [{ toolCallId: 'c2', toolName: 'return_result', args: { status: 'success' } }] },
-      { toolCalls: [{ toolCallId: 'p2', toolName: 'return_result', args: { status: 'success' } }] },
+      {
+        text: 'Done.',
+        toolCalls: [{ toolCallId: 'c2', toolName: 'return_result', args: { status: 'success' } }],
+      },
+      {
+        text: 'Done.',
+        toolCalls: [{ toolCallId: 'p2', toolName: 'return_result', args: { status: 'success' } }],
+      },
     ]);
     const deps = makeDeps(llm);
 
@@ -449,9 +458,11 @@ describe('delegation — synchronous path unchanged', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'sc2', toolName: 'return_result', args: { status: 'success' } }],
       },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'sp2', toolName: 'return_result', args: { status: 'success' } }],
       },
     ]);

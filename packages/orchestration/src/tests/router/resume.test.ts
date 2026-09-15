@@ -153,7 +153,12 @@ describe('resumeDelegated', () => {
     expect(toolResult).toBeDefined();
     expect(toolResult?.toolCallId).toBe(toolUseId);
     expect(toolResult?.toolName).toBe('assign_test_agent');
-    expect(toolResult?.output).toEqual({ type: 'text', value: childResult });
+    // #107 — the parent receives a TYPED record, not the raw string: the child's
+    // text is `summary`, and `status` says whether anything was delivered.
+    expect(toolResult?.output?.type).toBe('text');
+    const payload = JSON.parse(String(toolResult?.output?.value)) as Record<string, unknown>;
+    expect(payload['status']).toBe('completed');
+    expect(payload['summary']).toBe(childResult);
   });
 
   it('sets parent status back to pending', async () => {
@@ -335,10 +340,12 @@ describe('resumeDelegated', () => {
     const last = msgs[msgs.length - 1];
     const tr = last?.content.find((c) => c.type === 'tool-result');
     expect(tr?.output?.type).toBe('error-text');
-    // Wording must invite a fallback, not just "DO NOT retry".
-    expect(tr?.output?.value).toContain('Delegation failed');
+    // Wording must invite a fallback, not just "DO NOT retry" — and it must
+    // forbid the waiting message the incident produced (#107).
+    expect(tr?.output?.value).toContain('"status": "failed"');
     expect(tr?.output?.value).toContain('DO NOT retry the same specialist');
-    expect(tr?.output?.value).toMatch(/fall back|notify the user/i);
+    expect(tr?.output?.value).toContain('DO NOT tell the user the work is in progress');
+    expect(tr?.output?.value).toMatch(/different specialist|tell the user the truth/i);
     expect(tr?.output?.value).toContain('return_result');
   });
 
@@ -411,7 +418,7 @@ describe('resumeDelegated', () => {
     expect(last?.role).toBe('tool');
     const tr = last?.content.find((c) => c.type === 'tool-result' && c.toolCallId === toolUseId);
     expect(tr?.output?.type).toBe('error-text');
-    expect(tr?.output?.value).toContain('Delegation failed');
+    expect(tr?.output?.value).toContain('"status": "failed"');
     expect(tr?.output?.value).toContain('Retry exhausted');
   });
 
