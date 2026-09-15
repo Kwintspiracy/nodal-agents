@@ -46,6 +46,37 @@ Donc : **un next step qui n'a pas d'issue n'existe pas.** Un « à faire par
 Quentin » est une issue `decision`. Un doute à vérifier est une issue `test`.
 Un lot planifié est une issue `product` jusqu'à ce qu'une PR le porte.
 
+## Toute issue ou PR ouverte par un agent porte ses faits vérifiés
+
+**Règle du 16/09/2026, née d'un mensonge de quatre jours.** Le 12/09 un agent a
+ouvert l'issue #68 « Publish 0.8.9 » DE MÉMOIRE : 0.8.9 était sur npm depuis le
+09/09. Le portail l'a portée quatre jours comme un travail à faire, et Quentin :
+« je ne peux ni avoir confiance en toi ni dans mon dashboard ».
+
+Le corps de toute issue ou PR qu'un agent ouvre porte donc une section
+`## Verified` avec **au moins une commande et sa sortie** — pas une affirmation,
+la commande et ce qu'elle a répondu :
+
+```markdown
+## Verified
+
+`npm view nodal-agents version` → 0.8.9
+`git describe --tags --abbrev=0 --match "v*"` → v0.8.9
+`pnpm --filter @nodal-agents/qa test` → 291 passed
+```
+
+Le portail le contrôle lui-même, il ne fait confiance à personne : une carte
+OUVERTE dont le corps porte le pied d'un agent (« Generated with Claude Code »,
+ou la ligne `Claude-Session`) et **pas** de section `## Verified` s'affiche avec
+une pastille « no verified facts » et compte dans l'alerte. Une issue écrite à
+la main par Quentin n'est jamais concernée : la règle vise les agents, et le
+critère est vérifiable plutôt que deviné au style.
+
+Le portail vérifie aussi l'état de publication lui-même (`npm view` + `git`,
+bloc « Release » en tête du tableau) et nomme toute carte ouverte qui demande de
+publier une version déjà sur npm. C'est exactement #68, désormais dit à voix
+haute au lieu d'être cru.
+
 ## Fin de session de code — le rituel
 
 Déclenché **sans que Quentin le demande**, dès qu'une session a produit du

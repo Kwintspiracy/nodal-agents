@@ -83,6 +83,30 @@ then forgotten by its own author, which is why the rule now lives here.
 Claude subagents remain fine for anything that is NOT reviewing a PR: searching
 the codebase, mapping an area, drafting, running suites.
 
+### Tracking — every agent-opened issue or PR carries its verified facts
+
+**This rule exists because the board lied for four days.** On 2026-09-12 an
+agent opened issue #68 "Publish 0.8.9" from memory; 0.8.9 had been on npm since
+2026-09-09. The quality portal carried it as work to do until someone noticed.
+A tracker that repeats what an agent asserts is not a tracker.
+
+- **Any issue or pull request an agent opens carries a `## Verified` section**
+  with at least one command and its output — the command and what it answered,
+  never a claim on its own.
+- The portal checks this itself: an OPEN card whose body carries an agent
+  footer ("Generated with Claude Code", or the `Claude-Session` line) and no
+  `## Verified` section is shown with a "no verified facts" pill and counted in
+  the alert. An issue Quentin wrote by hand is never concerned.
+- The portal also reads the release state (`npm view` + `git`) at collection
+  time and names any open card asking to publish a version npm already serves.
+  When npm cannot be reached it says so, with the time; it never shows the
+  previous answer without its date (invariant #4).
+- The full discipline lives in `.claude/skills/suivi/SKILL.md`.
+
+`pnpm release:check` refuses to run while a dev stack answers on the web or
+runner port: it builds into `apps/web/.next` and would kill that stack. Run it
+from an isolated worktree, or stop the stack first.
+
 ## Commands
 
 ```bash
