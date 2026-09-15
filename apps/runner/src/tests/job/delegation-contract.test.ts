@@ -261,6 +261,55 @@ describe('delegated sub-job deliverable @cap:organiser-equipe/moteur', () => {
     expect(transcriptText(row.messages)).toContain('ta réponse écrite EST le livrable');
   });
 
+  it('un livrable fait d’ESPACES n’est pas un livrable', async () => {
+    // Revue Codex de la PR #108, constat 1 (bloquant). La garde du vide lit le
+    // dernier texte d'assistant APRÈS `trim()`, mais le chemin « texte sans
+    // outil » finalisait le succès sur un simple `if (textContent)` : trois
+    // espaces passaient, et le parent recevait un `completed` visuellement vide,
+    // sans rappel ni `empty_deliverable`. Le faux succès de l'incident, par une
+    // autre porte.
+    const parentId = await insertJob({
+      channel: 'telegram',
+      status: 'awaiting_delegation',
+      pendingDelegation: { toolUseId: 'assign-x', toolName: 'assign_researcher' },
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-x',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+      ],
+    });
+    const childId = await insertJob({ channel: 'internal', parentJobId: parentId });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        { text: '   \n  \t ' },
+        { text: '   ' },
+        { text: '   ' },
+        { text: '   ' },
+        { text: '   ' },
+      ]),
+    );
+
+    const outcome = await executeJob(childId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await jobRow(childId);
+    expect(row.status).toBe('failed');
+    // Le tour blanc retombe sur le chemin du tour VIDE : on redemande, puis on
+    // échoue franchement. Ce qui compte ici : pas de `completed`, et pas
+    // d'espaces stockés comme livrable.
+    expect(row.error).toBe('no_tool_calls_no_text');
+    expect(row.result ?? '').not.toMatch(/^\s+$/);
+  });
+
   it('ACCEPTS the sub-job when the second turn writes the deliverable', async () => {
     const parentId = await insertJob({
       channel: 'telegram',
@@ -536,6 +585,62 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     const transcript = transcriptText(row.messages);
     expect(transcript).toContain("Ne déclare pas un succès qui n'a pas eu lieu");
     expect(transcript).toContain('le travail est lancé ou à venir');
+  });
+
+  it('refuse aussi la promesse rendue en TEXTE SEUL, sans return_result', async () => {
+    // Revue Codex de la PR #108, constat 2 (bloquant). La garde vit dans la
+    // branche `return_result`. Sur `api` et `dashboard`, un parent peut finir
+    // son job par un simple texte : « Recherche lancée, je reviens vers toi »
+    // finalisait alors un succès sans que rien n'ait été produit — exactement
+    // l'incident #107, par la porte d'à côté.
+    const parentId = await insertJob({
+      channel: 'api',
+      status: 'pending',
+      messages: [
+        { role: 'user', content: 'Fais une recherche sur la longueur de Planck' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-9',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-9',
+              toolName: 'assign_researcher',
+              output: {
+                type: 'error-text',
+                value: `${DELEGATION_FAILED_MARKER}
+{"status":"failed"} delivered NOTHING`,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        { text: 'Recherche lancée, je te renvoie la synthèse dès que c’est prêt' },
+        { text: 'Toujours en cours, je reviens vers toi' },
+        { text: 'Encore un instant' },
+      ]),
+    );
+
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    const row = await jobRow(parentId);
+    expect(row.status).not.toBe('completed');
+    expect(outcome.status).toBe('failed');
+    expect(transcriptText(row.messages)).toContain("Ne déclare pas un succès qui n'a pas eu lieu");
   });
 });
 
