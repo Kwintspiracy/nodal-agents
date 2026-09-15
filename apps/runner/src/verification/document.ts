@@ -432,8 +432,9 @@ function isDeclaredEntityComplaint(text: string, message: string): boolean {
   const named = /entity not found\s*:?\s*&?([A-Za-z_:][\w.:-]*)/i.exec(message);
   const name = named?.[1];
   if (name === undefined) return false;
-  // Un nom d'entité XML ne peut contenir aucun métacaractère d'expression
-  // régulière, mais on l'échappe quand même : le message vient du parseur.
+  // Un nom d'entité XML PEUT contenir un point, qui est un métacaractère
+  // d'expression régulière — c'est même le cas dont parle la première limite
+  // ci-dessus. Il est donc échappé, comme tout le reste du nom.
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Les noms XML sont SENSIBLES À LA CASSE : `&X;` n'est pas déclaré par
   // `<!ENTITY x …>`, et le drapeau `i` les confondait. Les commentaires et les
@@ -457,9 +458,12 @@ function isDeclaredEntityComplaint(text: string, message: string): boolean {
  * pas le sous-ensemble INTERNE d'un DOCTYPE : il rapporte `entity not found`
  * pour une entité parfaitement déclarée, et retenir `error` faisait alors
  * rougir du XML valide — un faux rouge sur du travail correct, le pire des
- * verdicts (passe 2 de la dette, constat R3, mesuré sur `runProof`). Devant un
- * sous-ensemble interne, on retombe donc sur `fatalError` seul : la limite est
- * celle du parseur, pas celle du document, et elle ne doit pas coûter un rouge.
+ * verdicts (passe 2 de la dette, constat R3, mesuré sur `runProof`). La plainte
+ * NOMME l'entité, et on ne la fait taire que si CETTE entité-là est déclarée
+ * dans le document — voir `isDeclaredEntityComplaint`. La première forme de ce
+ * correctif retombait sur `fatalError` seul dès qu'un sous-ensemble interne
+ * existait, ce qui rendait muettes les entités vraiment inconnues du même
+ * document ; ce commentaire décrivait encore cette forme-là (passe 7, R3).
  */
 const xmlParses: FormCheck = (text) => {
   try {
@@ -504,10 +508,11 @@ export const documentVerifier: DeliverableVerifier = {
    * Toujours prêt : constater n'est pas un pouvoir, il n'y a rien à approuver
    * ni à configurer. Aucune lecture en base, donc aucun verrou — `tx` fait
    * partie du contrat, pas de ce vérificateur. `epoch` vaut 0 : un document
-   * n'a pas de configuration qui vieillit (`verificationEpoch: null` côté
-   * intention), et la primitive ne verra jamais « la configuration a bougé »
-   * pour lui — ce qui a bougé, c'est le fichier, et c'est la génération sale
-   * qui le dit.
+   * n'a pas de configuration qui vieillit dans le TEMPS (`verificationEpoch:
+   * null` côté intention). Il en a une, en revanche, et elle peut bouger : le
+   * manifeste porte l'empreinte du CONTENU, donc une écriture pendant la preuve
+   * fait bien dire « la configuration a bougé » à la primitive. Ce commentaire
+   * affirmait le contraire, et c'était faux depuis le constat C1 (passe 7, R3).
    */
   async loadConfig(_tx: AnyDrizzleDb, target: VerifierTarget): Promise<LoadedConfig> {
     const path = target.displayPath ?? target.canonicalKey;
@@ -525,9 +530,10 @@ export const documentVerifier: DeliverableVerifier = {
   },
 
   /**
-   * Les constats, dans l'ordre, arrêt au premier rouge. Le chemin est la clé
-   * canonique elle-même : pour un document, l'identité EST le chemin (replié
-   * en casse sur Windows, où le système de fichiers l'est aussi).
+   * Les constats, dans l'ordre, arrêt au premier rouge. Le chemin lu est le
+   * chemin d'AFFICHAGE quand la cible en porte un, et la clé canonique sinon —
+   * la même règle que `loadConfig`, et pour la même raison : la clé est repliée
+   * en casse, ce qui n'ouvre pas un fichier là où la casse compte (constat C2).
    */
   async runProof(config: ReadyConfig, onCommandDone: OnCommandDone): Promise<ProofResult> {
     const path = config.subject;
