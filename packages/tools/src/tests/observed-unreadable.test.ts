@@ -17,18 +17,25 @@ import type * as FsPromises from 'node:fs/promises';
 import type { MutationTarget } from '@nodal-agents/shared';
 
 const lectureRefusee = { valeur: false };
+const statRefuse = { valeur: false };
+
+const refus = (code: string): NodeJS.ErrnoException => {
+  const err = new Error(`${code}: refusé`) as NodeJS.ErrnoException;
+  err.code = code;
+  return err;
+};
 
 vi.mock('node:fs/promises', async () => {
   const vrai = await vi.importActual<typeof FsPromises>('node:fs/promises');
   return {
     ...vrai,
     readFile: async (...args: Parameters<typeof vrai.readFile>) => {
-      if (lectureRefusee.valeur) {
-        const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
-        err.code = 'EACCES';
-        throw err;
-      }
+      if (lectureRefusee.valeur) throw refus('EACCES');
       return vrai.readFile(...args);
+    },
+    stat: async (...args: Parameters<typeof vrai.stat>) => {
+      if (statRefuse.valeur) throw refus('EACCES');
+      return vrai.stat(...args);
     },
   };
 });
@@ -44,6 +51,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   lectureRefusee.valeur = false;
+  statRefuse.valeur = false;
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -83,6 +91,41 @@ describe('un fichier illisible @cap:verifier-un-livrable/moteur', () => {
     // L'état d'avant n'a pas pu être lu : rien à conclure du CONTENU, et
     // conclure « inchangé » serait un faux rouge sur une écriture réelle. La
     // taille, elle, se lit sans ouvrir le fichier — et elle a bougé.
+    expect(await changedFileTargets(cibles, snapshot)).toEqual(cibles);
+  });
+});
+
+describe('un fichier dont l’ÉTAT lui-même est refusé @cap:verifier-un-livrable/moteur', () => {
+  it('un `stat` refusé n’est pas une absence, donc pas une écriture', async () => {
+    // Revue Codex de la dette de la PR #75, passe 3, constat 1. Le troisième
+    // état distinguait le refus de LIRE, pas le refus de `stat` : toute erreur
+    // d'état retombait sur « absent », et une empreinte valide suivie d'un
+    // `EACCES` passait encore pour une écriture. Un résidu d'avant le
+    // correctif, pas une régression — et un faux vert quand même.
+    //
+    // `ENOENT` reste une absence : c'est la seule erreur qui répond à la
+    // question posée, « ce fichier existe-t-il ? ».
+    const p = join(dir, 'etat-refuse.ts');
+    await writeFile(p, 'export const e = 5;');
+    const cibles = [cible(p)];
+    const snapshot = await snapshotFileTargets(cibles);
+
+    statRefuse.valeur = true;
+    try {
+      expect(await changedFileTargets(cibles, snapshot)).toEqual([]);
+    } finally {
+      statRefuse.valeur = false;
+    }
+  });
+
+  it('un fichier VRAIMENT supprimé reste un changement', async () => {
+    const p = join(dir, 'supprime.ts');
+    await writeFile(p, 'export const f = 6;');
+    const cibles = [cible(p)];
+    const snapshot = await snapshotFileTargets(cibles);
+
+    await rm(p);
+
     expect(await changedFileTargets(cibles, snapshot)).toEqual(cibles);
   });
 });

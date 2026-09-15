@@ -63,14 +63,29 @@ export type FileSnapshot = ReadonlyMap<string, FileFingerprint>;
 
 const ABSENT: FileFingerprint = { kind: 'absent' };
 
+/**
+ * « Ce fichier n'est pas là » — la SEULE erreur qui réponde à la question posée.
+ *
+ * Les autres (`EACCES`, `EPERM`, `EBUSY`, un montage tombé) ne disent rien de
+ * son existence, et les ranger dans « absent » faisait d'un refus d'ÉTAT une
+ * écriture constatée : le troisième état distinguait le refus de LIRE, pas
+ * celui de `stat` (revue Codex de la dette de la PR #75, passe 3, constat 1).
+ * `ENOTDIR` compte aussi : un segment du chemin n'est plus un dossier, donc ce
+ * fichier-là n'est plus.
+ */
+function estAbsence(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
 async function fingerprint(path: string): Promise<FileFingerprint> {
   let size: bigint;
   try {
     const s = await stat(path, { bigint: true });
     if (!s.isFile()) return ABSENT;
     size = s.size;
-  } catch {
-    return ABSENT;
+  } catch (error) {
+    return estAbsence(error) ? ABSENT : { kind: 'unreadable', size: null };
   }
   try {
     const bytes = await readFile(path);
