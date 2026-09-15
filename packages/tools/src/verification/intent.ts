@@ -47,7 +47,7 @@ import type { ToolContext } from '../types';
 // (projects/markers.ts) depuis P5b : le registre des projets en a besoin
 // autant que l'intention, et deux copies auraient fini par voir deux projets
 // différents pour la même écriture.
-import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
+import { rebaseOntoLexicalRoots } from '../projects/markers';
 // La déclaration d'un projet vaut manifeste — pour le type comme pour la clé.
 import { loadDeclaredCodeRoots, projectRootPredicate } from '../projects/declared';
 // La clé d'un document se calcule dans UN module, partagé avec la carte de
@@ -162,6 +162,11 @@ export type MutationIntentContext = Pick<ToolContext, 'db' | 'entityId' | 'works
 async function expandWorkspaceRoots(
   targets: readonly MutationTarget[],
   workspaceRoots: readonly string[],
+  // Le MÊME prédicat que partout ailleurs : manifeste sur le disque OU projet
+  // déclaré. C'était le dernier endroit à ne connaître que le manifeste, et une
+  // racine déclarée sans manifeste ni enfant y devenait une intention VIDE
+  // (revue Codex post-merge de la PR #75, constat 1).
+  isProjectRoot: (dir: string) => boolean,
 ): Promise<readonly MutationTarget[]> {
   const rootKeys = new Set(workspaceRoots.map((r) => projectKey(normalizePath(r))));
   const out: MutationTarget[] = [];
@@ -172,8 +177,8 @@ async function expandWorkspaceRoots(
       out.push(target);
       continue;
     }
-    // Racine qui porte un manifeste : c'est ELLE le projet, pas ses enfants.
-    if (hasMarker(path)) {
+    // Racine qui EST un projet : c'est ELLE le projet, pas ses enfants.
+    if (isProjectRoot(path)) {
       out.push({ kind: 'dir', path, deliverableType: target.deliverableType });
       continue;
     }
@@ -295,7 +300,7 @@ async function resolveDeliverables(
             hasMarker: isProjectRoot,
           }).map((p) => p.key),
         );
-        const expanded = await expandWorkspaceRoots(group, workspaceRoots);
+        const expanded = await expandWorkspaceRoots(group, workspaceRoots, isProjectRoot);
         for (const project of resolveProjectRoots({
           targets: expanded,
           workspaceRoots,
