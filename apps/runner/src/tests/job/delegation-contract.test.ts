@@ -634,13 +634,14 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
 
     const outcome = await executeJob(parentId as JobId, deps, testEnv);
 
-    // The first success signal was refused, not accepted.
+    // Le runner ne juge plus si cette phrase est une promesse : il ne sait pas
+    // le dire, et quatre passes de revue l'ont montré. Ce qu'il garantit, c'est
+    // que l'utilisateur lit l'ÉCHEC sous la phrase — nommé, à l'endroit où il
+    // regarde.
+    expect(outcome.status).toBe('completed');
     const row = await jobRow(parentId);
-    expect(row.status).not.toBe('completed');
-    expect(outcome.status).toBe('failed');
-    const transcript = transcriptText(row.messages);
-    expect(transcript).toContain("Ne déclare pas un succès qui n'a pas eu lieu");
-    expect(transcript).toContain('le travail est lancé ou à venir');
+    expect(row.result ?? '').toContain('assign_researcher');
+    expect(row.result ?? '').toContain("n'a rien rendu");
   });
 
   it('une délégation de SECOURS réussie efface l’échec de la première', async () => {
@@ -845,10 +846,12 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
 
     const outcome = await executeJob(parentId as JobId, deps, testEnv);
 
+    // Même règle sur le chemin texte que sur `return_result` : le job finit, et
+    // le résultat livré dit que le spécialiste n'a rien rendu.
+    expect(outcome.status).toBe('completed');
     const row = await jobRow(parentId);
-    expect(row.status).not.toBe('completed');
-    expect(outcome.status).toBe('failed');
-    expect(transcriptText(row.messages)).toContain("Ne déclare pas un succès qui n'a pas eu lieu");
+    expect(row.result ?? '').toContain('assign_researcher');
+    expect(row.result ?? '').toContain("n'a rien rendu");
   });
 });
 
