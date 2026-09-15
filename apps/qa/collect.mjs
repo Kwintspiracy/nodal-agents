@@ -39,9 +39,16 @@ import {
   regressionsFraiches,
   dureesDeReparation,
   intentionDunParcours,
+  fusionnerTableauGitHub,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
+
+// `--github-only` : ne relit que GitHub, et repose le résultat sur la mesure
+// nocturne committée. C'est ce mode que le déploiement des pages lance à chaque
+// issue et à chaque pull request, pour que le tableau ne date pas de 03:17.
+// Il n'écrit NI l'historique NI la mémoire des tests : aucun test n'a tourné.
+const GITHUB_SEUL = process.argv.includes('--github-only');
 
 const ICI = dirname(fileURLToPath(import.meta.url));
 const RACINE = join(ICI, '..', '..');
@@ -533,8 +540,23 @@ function memoire(essais, le, execution) {
 
 // ─── Assemblage ───────────────────────────────────────────────────────────────
 
+/** Le mode `--github-only` : la part lue sur GitHub, reposée sur la mesure. */
+function rafraichirGitHub() {
+  const chemin = join(DATA, 'snapshot.json');
+  const frais = { chantiers: chantiers(), prixCi: prixCi(), le: new Date().toISOString() };
+  const snapshot = fusionnerTableauGitHub(lireJson(chemin), frais);
+  writeFileSync(chemin, JSON.stringify(snapshot, null, 2));
+  const n = snapshot.chantiers?.cartes?.length ?? 0;
+  console.log(
+    frais.chantiers
+      ? `board refreshed: ${n} cards read on GitHub at ${snapshot.tableauLe} (measurement of ${snapshot.genereLe} kept)`
+      : `board NOT refreshed: GitHub stayed silent, the committed board of ${snapshot.tableauLe} is served as is`,
+  );
+}
+
 function main() {
   if (!existsSync(DATA)) mkdirSync(DATA, { recursive: true });
+  if (GITHUB_SEUL) return rafraichirGitHub();
 
   const fichiers = suivis();
   const listePaquets = paquets();
@@ -571,6 +593,9 @@ function main() {
 
   const snapshot = {
     genereLe,
+    // Le tableau est relu bien plus souvent que la mesure : les deux dates
+    // partent d'ici ensemble, puis `--github-only` fait avancer la seconde.
+    tableauLe: genereLe,
     // Le run qui a produit cette collecte. C'est par lui qu'un rouge du portail
     // mène au rapport et aux captures d'écran ; `null` en local, jamais inventé.
     execution: exec,

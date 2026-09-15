@@ -45,7 +45,8 @@ export const EXPLICATIONS = {
       {
         titre: 'Where it comes from',
         texte: `<p>From GitHub, through <code>gh issue list</code> and <code>gh pr list</code>, at collection time. Only the repository's own labels count: <code>decision</code>, <code>test</code>, <code>security</code>, <code>debt</code>, <code>cost</code>, <code>product</code>.</p>
-<p>If GitHub does not answer, the board says "missing" rather than showing an empty or stale list, an absence is never painted as a zero.</p>`,
+<p>The board is read again every time an issue or a pull request moves, and once an hour as a safety net, so it is never older than the last deployment. The rest of the portal comes from the nightly measurement, which is far too heavy to run that often. The two dates sit at the bottom of the left bar: "measured" for what was run, "board as of" for what was read on GitHub.</p>
+<p>If GitHub does not answer, the board says "missing" rather than showing an empty or stale list, an absence is never painted as a zero. A board already collected stays in place and keeps its own date, it is never passed off as fresh.</p>`,
       },
       {
         titre: 'When to act',

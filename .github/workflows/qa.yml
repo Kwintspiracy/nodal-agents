@@ -5,6 +5,10 @@ name: Quality — full measurement
 # historique — donc les réponses à « combien de fois ça tourne » et « à quelle
 # régularité ». Un rendu statique ne les aura jamais.
 #
+# Il reste la SEULE écriture de `apps/qa/data/`. Le tableau des chantiers, lui,
+# est relu à chaque événement GitHub par `docs.yml`, qui repose la part GitHub
+# sur cette mesure sans jamais la committer.
+#
 # Pourquoi la nuit et pas à chaque commit : la mesure complète instrumente
 # 34 paquets et joue 30 parcours navigateur. À chaque push elle doublerait le
 # temps de CI pour un chiffre qui ne bouge pas d'un commit à l'autre. Les

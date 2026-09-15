@@ -1316,7 +1316,8 @@ td.dette{color:var(--ko);font-weight:600}
     <footer>
       ${esc(s.branche ?? '')}<br>
       ${esc(s.commit ?? '')}<br>
-      ${esc(dateFr(s.genereLe))}
+      measured ${esc(dateFr(s.genereLe))}<br>
+      board as of ${esc(dateFr(s.tableauLe ?? s.genereLe))}
     </footer>
   </aside>
   <main class="contenu">

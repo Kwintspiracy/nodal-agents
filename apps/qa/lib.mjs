@@ -1392,3 +1392,36 @@ function couper(t, max = 200) {
   const espace = t.lastIndexOf(' ', max);
   return `${t.slice(0, espace > 0 ? espace : max).trim()}…`;
 }
+
+// ─── Le tableau vivant : la part GitHub, rafraîchie seule ────────────────────
+
+/**
+ * Repose sur une mesure committée la part que GitHub sait donner en une
+ * seconde : le tableau des chantiers et le prix d'une PR.
+ *
+ * La mesure complète instrumente 34 paquets et joue 30 parcours ; elle ne peut
+ * tourner qu'une fois par nuit. Le tableau, lui, vieillit en quelques minutes.
+ * Les deux faits ne datent donc plus du même instant, et la page porte les deux
+ * dates : `genereLe` pour ce qui a été MESURÉ, `tableauLe` pour ce qui a été LU
+ * sur GitHub. Une seule date mentirait sur l'une des deux moitiés.
+ *
+ * GitHub muet : rien n'est écrasé et la date du tableau ne bouge pas. Un
+ * hoquet d'API publierait sinon un portail vide, ou présenterait la liste de la
+ * veille comme celle de l'instant.
+ */
+export function fusionnerTableauGitHub(mesure, frais) {
+  if (!mesure || typeof mesure !== 'object') {
+    throw new Error('no committed measurement to refresh: run the full collection first');
+  }
+  const socle = { ...mesure, tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null };
+  if (!frais?.chantiers) return socle;
+  return {
+    ...socle,
+    chantiers: frais.chantiers,
+    // Le prix d'une PR vient du même GitHub, par une requête distincte. Absent,
+    // on garde le dernier connu : l'effacer ferait clignoter la page à chaque
+    // requête un peu lente.
+    prixCi: frais.prixCi ?? socle.prixCi ?? null,
+    tableauLe: frais.le,
+  };
+}
