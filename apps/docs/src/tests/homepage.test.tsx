@@ -247,10 +247,17 @@ describe('homepage figures match the measurement they cite', () => {
     expect(figure('end-to-end cases')).toBe(String(r.casE2e));
   });
 
-  it('rounds coverage without inflating it', () => {
+  it('rounds coverage DOWN, so the page never reads higher than the measurement', () => {
+    // The two assertions used to be `Math.round(...)` and "never above", which
+    // contradict each other on a value ending in .x5 — 81.75 rounds to 81.8,
+    // which is above. Rounding down is the only rule that satisfies both, and
+    // it is the right one for a public page: the tenth of a point it costs is
+    // cheaper than a figure someone can call overstated.
+    const measured = snapshot.resume.couvertureLignes;
     const shown = Number(figure('line coverage').replace('%', ''));
-    expect(shown).toBe(Math.round(snapshot.resume.couvertureLignes * 10) / 10);
-    expect(shown).toBeLessThanOrEqual(snapshot.resume.couvertureLignes);
+    expect(shown).toBe(Math.floor(measured * 10) / 10);
+    expect(shown).toBeLessThanOrEqual(measured);
+    expect(shown).toBeGreaterThan(measured - 0.1);
   });
 
   it('does not overstate how many capabilities are proven at both levels', () => {
