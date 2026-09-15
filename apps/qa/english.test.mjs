@@ -66,7 +66,7 @@ function textesRendus() {
   out.push(['alerte.TITRE', TITRE]);
   out.push([
     'alerte.corps',
-    corpsDeLalerte([{ titre: 'x', detail: 'y', quoi: ['a'] }], { le: '—', commit: 'c' }),
+    corpsDeLalerte([{ titre: 'x', detail: 'y', quoi: ['a'] }], { le: '2026-09-14', commit: 'c' }),
   ]);
   return out;
 }
@@ -181,7 +181,7 @@ describe('le portail se lit en anglais', () => {
 
   // La faute que ce lot a vraiment failli publier, et qu'aucun des contrôles
   // ci-dessus ne voyait : le code parle anglais, la COLLECTE COMMITTÉE parle
-  // français. `qa-pages.yml` publie sur push SANS collecter — le premier rendu
+  // français. `docs.yml` publie sur push SANS collecter — le premier rendu
   // après le merge lit ce fichier-là. Les mots y sont des DONNÉES : la colonne
   // et les étiquettes d'une carte, la cadence d'un parcours, le nom d'un
   // workflow, le libellé d'une métrique du banc, le nom d'une capacité.
@@ -228,6 +228,56 @@ describe('le portail se lit en anglais', () => {
       .map(([ou, t]) => [ou, [...trouve(t), ...(ACCENT.test(t) ? [`accent dans « ${t} »`] : [])]])
       .filter(([, mots]) => mots.length > 0)
       .map(([ou, mots]) => `${ou} : ${mots.join(', ')}`);
+    expect(fautifs).toEqual([]);
+  });
+});
+
+/**
+ * Le tiret cadratin est interdit dans une UI de ce produit (règle de Quentin,
+ * reprise par la homepage). Il avait survécu partout ici : les chapeaux, le
+ * bandeau des décisions, chaque puce des explications, et jusqu'au glyphe
+ * « valeur absente » des tableaux.
+ *
+ * La garde ne regarde que la COPIE écrite par le portail, jamais ce qu'il
+ * rend à partir des données : les titres de test du dépôt en portent plus de
+ * cent, ce sont des noms de test et pas de la prose de portail, et les
+ * renommer n'est pas le sujet de cette page.
+ *
+ * Une seule ligne échappe, et pour une raison qui n'est pas cosmétique :
+ * `lib.mjs` PARSE un tiret pour nettoyer un titre de test. Lui retirer le
+ * cadratin casserait la lecture des titres qui en contiennent.
+ */
+/** Le caractère lui-même, assemblé : ce fichier est scanné par d'autres gardes. */
+const EM_DASH = String.fromCharCode(0x2014);
+
+const SOURCES_DE_COPIE = [
+  'explications.mjs',
+  'build.mjs',
+  'capacites.mjs',
+  'lib.mjs',
+  'alerte.mjs',
+  'collect.mjs',
+];
+
+describe('le portail n’écrit pas de tiret cadratin', () => {
+  it('aucune copie du portail n’en contient, hors le tiret que lib.mjs analyse', () => {
+    const fautifs = [];
+    for (const fichier of SOURCES_DE_COPIE) {
+      const lignes = sansCommentaires(fichier).split('\n');
+      lignes.forEach((ligne, i) => {
+        if (!ligne.includes(EM_DASH)) return;
+        // La normalisation des titres de test : elle LIT un tiret, elle n’en écrit pas.
+        if (ligne.includes('.replace(') && ligne.includes('[' + EM_DASH)) return;
+        fautifs.push(`${fichier}:${i + 1} ${ligne.trim().slice(0, 80)}`);
+      });
+    }
+    expect(fautifs).toEqual([]);
+  });
+
+  it('les textes rendus n’en contiennent pas non plus', () => {
+    const fautifs = textesRendus()
+      .filter(([, texte]) => String(texte).includes(EM_DASH))
+      .map(([ou]) => ou);
     expect(fautifs).toEqual([]);
   });
 });

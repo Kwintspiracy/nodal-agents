@@ -3,13 +3,29 @@ name: Deploy Docs to GitHub Pages
 # Deux sites, un seul déploiement : GitHub n'accorde qu'un environnement
 # `github-pages` par dépôt. Les docs occupent la racine, le portail qualité
 # vit sous `/qa/`. Ils ne partagent RIEN d'autre que l'hébergeur — le portail
-# est un document autonome, avec son propre design.
+# est un document autonome, sans runtime.
+#
+# Le portail visait Cloudflare Pages (`qa-pages.yml`, supprimé ici). Le motif
+# était de pouvoir mettre une porte devant : le dépôt est public et le portail
+# montre l'état interne du travail. Cette porte n'a jamais été posée, les
+# secrets Cloudflare non plus, et le portail n'a donc JAMAIS été en ligne. Un
+# portail hors ligne ne protège rien, il n'informe personne. Il passe ici, où
+# le déploiement fonctionne déjà.
 
 on:
   push:
     branches: [main]
     paths:
       - 'apps/docs/**'
+      # Le portail est rendu ici : son code ET ses données republient.
+      - 'apps/qa/**'
+  # La mesure nocturne committe `apps/qa/data` avec `GITHUB_TOKEN` et
+  # `[skip ci]` : ce push ne déclenche AUCUN workflow, `paths` compris. Sans ce
+  # `workflow_run`, chaque nuit mesurerait pour rien et le portail en ligne
+  # resterait figé (leçon de la revue Codex du 11/09, héritée de qa-pages.yml).
+  workflow_run:
+    workflows: ['Quality — full measurement']
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -25,8 +41,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Publier ce qu'une mesure RATÉE a laissé derrière elle donnerait un portail
+    # à moitié écrit, présenté comme l'état du jour.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v5
+        with:
+          # `workflow_run` part du SHA qui a déclenché la mesure, pas du commit
+          # de données qu'elle vient de pousser. Sans ce `ref`, on publierait
+          # l'état d'AVANT la mesure.
+          ref: main
 
       - uses: pnpm/action-setup@v4
 
@@ -40,6 +66,18 @@ jobs:
 
       - name: Build docs
         run: pnpm --filter @nodal-agents/docs build
+
+      # `build.mjs` ne lit que `apps/qa/data/*.json` : il REND ce que la mesure
+      # nocturne a committé, il ne mesure pas. S'il mesurait, deux déploiements
+      # du même commit donneraient deux vérités.
+      - name: Rendre le portail qualité
+        run: node apps/qa/build.mjs
+
+      - name: Poser le portail sous /qa/
+        run: |
+          mkdir -p apps/docs/out/qa
+          cp apps/qa/dist/index.html apps/docs/out/qa/index.html
+          test -s apps/docs/out/qa/index.html
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

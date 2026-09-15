@@ -11,7 +11,7 @@
  * marketing page honest six months from now.
  */
 
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -61,6 +61,11 @@ describe('homepage rendering', () => {
     for (const invariant of INVARIANTS) {
       expect(markup).toContain(invariant.text);
     }
+  });
+
+  it('points at the quality portal, in the nav and in the engineering section', () => {
+    expect(markup.split(`href="${BASE_PATH}/qa/"`).length - 1).toBe(2);
+    expect(markup).toContain('Open the portal');
   });
 
   it('carries the two outbound links and the install command', () => {
@@ -186,6 +191,21 @@ describe('homepage assets and configuration', () => {
     expect(sources.filter((s) => s.endsWith('.svg')).length).toBe(
       CONNECTOR_ICONS.length + MCP_ICONS.length + CHANNEL_ICONS.length,
     );
+  });
+
+  // The portal is a standalone HTML document rendered by `apps/qa/build.mjs`,
+  // not a route of this site. Nothing in the Next build would notice if the
+  // deploy stopped copying it, so the link above would rot into a 404 in
+  // silence. This reads the workflow that has to put it there.
+  it('is deployed alongside a portal the docs workflow actually copies', () => {
+    const wf = readFileSync(join(repoRoot, '.github', 'workflows', 'docs.yml'), 'utf8');
+    expect(wf).toContain('node apps/qa/build.mjs');
+    expect(wf).toContain('apps/docs/out/qa/index.html');
+    // It also has to fire after the nightly measurement: that push is made with
+    // GITHUB_TOKEN and triggers no workflow on its own, so without this the
+    // portal would freeze on the day it was first published.
+    expect(wf).toContain("workflows: ['Quality — full measurement']");
+    expect(existsSync(join(repoRoot, '.github', 'workflows', 'qa-pages.yml'))).toBe(false);
   });
 
   it('announces the version that is actually published', () => {

@@ -428,7 +428,7 @@ export interface Practice {
 
 /**
  * Source: CLAUDE.md ("Tests gates per brique", the `@cap:` label, the Codex
- * review rule) and `.github/workflows/ci.yml` / `qa.yml` / `qa-pages.yml`.
+ * review rule) and `.github/workflows/ci.yml` / `qa.yml` / `docs.yml`.
  */
 export const PRACTICES: readonly Practice[] = [
   {
@@ -495,6 +495,12 @@ export const ROADMAP: readonly string[] = [
 /* ── Links ──────────────────────────────────────────────────────────────── */
 
 export const LINK_DOCS = `${BASE_PATH}/docs`;
+/**
+ * The quality portal, published under `/qa/` by the same workflow that
+ * publishes these docs. It is a standalone HTML document, not a route of this
+ * site, so it is linked by path and never with `next/link`.
+ */
+export const LINK_QA = `${BASE_PATH}/qa/`;
 export const LINK_GETTING_STARTED = `${BASE_PATH}/docs/getting-started`;
 export const LINK_CHANGELOG = `${BASE_PATH}/docs/changelog`;
 export const LINK_GITHUB = 'https://github.com/Kwintspiracy/nodal-agents';

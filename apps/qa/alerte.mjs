@@ -38,7 +38,7 @@ export function corpsDeLalerte(liste, meta = {}) {
   const entete = [
     `**${liste.length} thing(s) in the red.** This issue is kept up to date by the nightly measurement; it closes itself when it has nothing left to say.`,
     '',
-    `Collected on ${meta.le ?? '—'} · commit \`${meta.commit ?? '—'}\` · branch \`${meta.branche ?? '—'}\``,
+    `Collected on ${meta.le ?? '·'} · commit \`${meta.commit ?? '·'}\` · branch \`${meta.branche ?? '·'}\``,
     '',
   ];
 
@@ -125,7 +125,7 @@ function main(appliquer) {
   for (const e of liste) console.log(`  · ${e.titre}`);
 
   if (!appliquer) {
-    console.log('\n(nothing written — run again with --appliquer)');
+    console.log('\n(nothing written, run again with --appliquer)');
     return 0;
   }
 

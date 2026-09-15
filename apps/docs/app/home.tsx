@@ -27,6 +27,7 @@ import {
   LINK_GETTING_STARTED,
   LINK_GITHUB,
   LINK_NPM,
+  LINK_QA,
   MEASURED_COMMIT,
   MEASURED_ON,
   MEASURED_RUN_URL,
@@ -203,6 +204,7 @@ export default function Home() {
           </a>
           <nav className="home-bar-nav" aria-label="Main">
             <a href={LINK_DOCS}>Docs</a>
+            <a href={LINK_QA}>Quality</a>
             <a href={LINK_CHANGELOG}>Changelog</a>
             <a href={LINK_GITHUB}>GitHub</a>
           </nav>
@@ -476,6 +478,23 @@ export default function Home() {
               </li>
             ))}
           </ol>
+
+          <div className="home-portal">
+            <div>
+              <p className="home-mono">Open to anyone</p>
+              <h3>The quality portal</h3>
+              <p>
+                Everything on this page is a summary of one public document. The portal shows the
+                measurement itself: every capability and what proves it, the journeys and which ones
+                the last run played, the tests that broke or went flaky, the bench, and the work in
+                flight read from the issues and pull requests. What is not measured is shown as not
+                measured, never as zero and never as green.
+              </p>
+            </div>
+            <a className="home-btn home-btn-primary" href={LINK_QA}>
+              Open the portal
+            </a>
+          </div>
 
           <p className="home-mono" style={{ marginTop: '48px' }}>
             Every pull request

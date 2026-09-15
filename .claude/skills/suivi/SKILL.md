@@ -22,7 +22,7 @@ des faits : issues, PR, exécutions de CI, rapports de tests.
   `pnpm --filter @nodal-agents/qa serve` → http://localhost:4310.
   `collect` avant `render` pour un Kanban et des mesures frais (il interroge
   `gh`, il écrit dans `apps/qa/data/` — ne PAS committer une collecte locale).
-- **En ligne** : Cloudflare Pages, dès que les secrets sont posés (issue #67).
+- **En ligne** : GitHub Pages, sous `/qa/`, publié par `docs.yml` avec les docs.
 - **Nuit** : `qa.yml` mesure tout à 03:17 UTC et pousse ses données sur `main`
   ; `alerte.mjs` ouvre UNE issue quand quelque chose est rouge.
 

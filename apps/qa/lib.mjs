@@ -427,14 +427,14 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   for (const c of registre) {
     if (!c.exigee) continue;
     for (const n of ['ecran', 'moteur']) {
-      if (c[n]?.etat === 'echouee') tombees.push(`${c.nom} — ${MOT_NIVEAU[n]}`);
+      if (c[n]?.etat === 'echouee') tombees.push(`${c.nom} · ${MOT_NIVEAU[n]}`);
     }
   }
   if (tombees.length > 0) {
     out.push({
       gravite: 'haute',
       titre: `${tombees.length} capability proof(s) FAILED at the last measurement`,
-      detail: `The level is named because it changes everything: a fallen SCREEN means the journey no longer chains — the buttons; a fallen ENGINE means the promised thing is no longer done.`,
+      detail: `The level is named because it changes everything: a fallen SCREEN means the journey no longer chains, the buttons; a fallen ENGINE means the promised thing is no longer done.`,
       quoi: tombees,
     });
   }
@@ -458,7 +458,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     if (!c.exigee) continue;
     for (const n of ['ecran', 'moteur']) {
       if (c[n]?.etat === 'ignoree' || c[n]?.etat === 'jamais jouee') {
-        dorment.push(`${c.nom} — ${MOT_NIVEAU[n]}`);
+        dorment.push(`${c.nom} · ${MOT_NIVEAU[n]}`);
       }
     }
   }
@@ -466,7 +466,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'moyenne',
       titre: `${dorment.length} capability proof(s) did not run`,
-      detail: `A test claims them, no run played it — skipped, or never reached. The proof exists and sleeps: that is a hole in the measurement, not in the product.`,
+      detail: `A test claims them, no run played it, skipped, or never reached. The proof exists and sleeps: that is a hole in the measurement, not in the product.`,
       quoi: dorment,
     });
   }
@@ -512,7 +512,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'haute',
       titre: `${frais.length} test(s) turned red in the last two days`,
-      detail: `A fresh red is a regression: something moved, and we know when. An old red is a debt we have learned not to see — the two are not handled the same way.`,
+      detail: `A fresh red is a regression: something moved, and we know when. An old red is a debt we have learned not to see, the two are not handled the same way.`,
       quoi: frais.map((e) => e.titre ?? e.cle),
     });
   }
@@ -540,7 +540,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'haute',
       titre: `${banc.regressions.length} bench section(s) REGRESSED`,
-      detail: `The bench measured it and wrote it down. The nightly measurement ignores it on purpose so as not to stop — here is where it gets said.`,
+      detail: `The bench measured it and wrote it down. The nightly measurement ignores it on purpose so as not to stop, here is where it gets said.`,
       quoi: banc.regressions,
     });
   }
@@ -577,7 +577,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'haute',
       titre: `${nonJoues.length} journeys out of ${r.specsE2e} are never played by the CI`,
-      detail: `${cas} test cases written, versioned, and run by no continuous integration. These are the user journeys — precisely what a regression breaks first and what a unit test does not see.`,
+      detail: `${cas} test cases written, versioned, and run by no continuous integration. These are the user journeys, precisely what a regression breaks first and what a unit test does not see.`,
       quoi: nonJoues.map((p) => p.nom),
     });
   }
@@ -597,7 +597,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'haute',
       titre: `No workflow runs the bench`,
-      detail: `The bench already exits with an error on a metric regression — a gate that works and that nobody walks through. A regression of the approval gate can therefore ship without a word.`,
+      detail: `The bench already exits with an error on a metric regression, a gate that works and that nobody walks through. A regression of the approval gate can therefore ship without a word.`,
       quoi: (s.banc?.sections ?? []).map((b) => b.id),
     });
   }
@@ -631,7 +631,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'moyenne',
       titre: `No workflow measures coverage`,
-      detail: `Without continuous measurement, coverage is a number from the day someone thought to run it — not a property of the repository.`,
+      detail: `Without continuous measurement, coverage is a number from the day someone thought to run it, not a property of the repository.`,
       quoi: [],
     });
   }
@@ -641,7 +641,7 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
     out.push({
       gravite: 'moyenne',
       titre: `${nus.length} packages with no test at all`,
-      detail: `A package without tests is not necessarily a problem — some only carry types or configuration. Those deserve to be named so we stop asking the question.`,
+      detail: `A package without tests is not necessarily a problem, some only carry types or configuration. Those deserve to be named so we stop asking the question.`,
       quoi: nus.map((p) => p.nom),
     });
   }
