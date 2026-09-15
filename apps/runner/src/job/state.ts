@@ -347,10 +347,14 @@ export async function completeJob(
   // no fresh text was written this call (a non-empty `result` is already content;
   // an empty one may still hold an earlier dashboard_publish, so it's checked).
   if (landed && result.length === 0) {
-    await fillResultFromChildrenIfEmpty(db, jobId);
-    // Last resort: capture the agent's own written answer from the transcript so
-    // a leaf job's substantive output is never lost (feeds dependents + delivery).
+    // SON texte d'abord, la compilation de ses enfants ensuite — et l'ordre
+    // compte. Un sous-agent qui délègue une étape puis écrit sa synthèse voyait
+    // la compilation des enfants remplir `result` en premier, donc gagner : le
+    // grand-parent recevait les étapes et jamais la synthèse, alors que le
+    // contrat de cette PR dit l'inverse — le livrable d'un agent EST son texte
+    // final (revue Codex de la PR #108, constat 4).
     if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
+    await fillResultFromChildrenIfEmpty(db, jobId);
   }
   return landed;
 }

@@ -515,6 +515,62 @@ describe('parent receives a typed delegation record @cap:organiser-equipe/moteur
   });
 });
 
+describe('ce qu’un agent qui DÉLÈGUE livre @cap:organiser-equipe/moteur', () => {
+  it('sa synthèse FINALE l’emporte sur la compilation de ses enfants', async () => {
+    // Revue Codex de la PR #108, constat 4. `completeJob` remplissait `result`
+    // avec la compilation des enfants AVANT de regarder le texte final de
+    // l'agent : un sous-agent qui délègue une étape puis écrit sa synthèse
+    // voyait sa synthèse perdue, et le grand-parent recevait les étapes. Le
+    // contrat de cette PR dit l'inverse : le livrable d'un agent EST son texte.
+    const jobId = await insertJob({ channel: 'internal', status: 'processing' });
+    await insertJob({
+      channel: 'internal',
+      parentJobId: jobId,
+      status: 'completed',
+      result: "l'étape intermédiaire du worker",
+    });
+
+    await completeJob(db as never, jobId, '', [], { turn: 1, inputTokens: 0, outputTokens: 0 }, [
+      { role: 'assistant', content: [{ type: 'text', text: 'MA SYNTHÈSE finale' }] },
+    ] as never);
+
+    const row = await jobRow(jobId);
+    expect(row.result).toContain('MA SYNTHÈSE finale');
+    expect(row.result).not.toContain("l'étape intermédiaire du worker");
+  });
+
+  it('un parent dont l’ENFANT a livré n’est pas un livrable vide', async () => {
+    // Constat 5. Le résultat d'un enfant est un message d'OUTIL, pas un texte
+    // d'assistant : la garde du vide ne le voyait pas, échouait en
+    // `empty_deliverable`, et empêchait ainsi la compilation qui aurait rendu
+    // ce contenu. Un faux vide sur du contenu qui existe.
+    const parentId = await insertJob({ channel: 'api', status: 'pending' });
+    await insertJob({
+      channel: 'internal',
+      parentJobId: parentId,
+      status: 'completed',
+      result: 'la longueur de Planck vaut 1,616 × 10⁻³⁵ m',
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(parentId);
+    expect(row.status).toBe('completed');
+    expect(row.result ?? '').toContain('1,616');
+  });
+});
+
 describe('a parent cannot promise over a failed delegation @cap:organiser-equipe/moteur', () => {
   it('nudges the parent that sends a waiting message and then signals success', async () => {
     // Parent state exactly as `resumeDelegated` leaves it after a failed child.
@@ -585,6 +641,87 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     const transcript = transcriptText(row.messages);
     expect(transcript).toContain("Ne déclare pas un succès qui n'a pas eu lieu");
     expect(transcript).toContain('le travail est lancé ou à venir');
+  });
+
+  it('une délégation de SECOURS réussie efface l’échec de la première', async () => {
+    // Revue Codex de la PR #108, constat 3. Le rappel dit au parent : refais-le,
+    // ou confie-le à un autre spécialiste. Mais `assign_a` restait inscrit dans
+    // les échecs non résolus même après que `assign_b` eut livré : le parent
+    // faisait exactement ce qu'on lui demandait et finissait quand même en
+    // échec. Un faux rouge sur du travail réellement fait.
+    const parentId = await insertJob({
+      channel: 'api',
+      status: 'pending',
+      messages: [
+        { role: 'user', content: 'Fais une recherche sur la longueur de Planck' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-a',
+              toolName: 'assign_researcher',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-a',
+              toolName: 'assign_researcher',
+              output: {
+                type: 'error-text',
+                value: `${DELEGATION_FAILED_MARKER}
+{"status":"failed"} delivered NOTHING`,
+              },
+            },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'assign-b',
+              toolName: 'assign_analyst',
+              input: { task: 'recherche' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'assign-b',
+              toolName: 'assign_analyst',
+              output: { type: 'text', value: 'la longueur de Planck vaut 1,616 × 10⁻³⁵ m' },
+            },
+          ],
+        },
+      ],
+    });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          text: "L'analyste a trouvé : la longueur de Planck vaut 1,616 × 10⁻³⁵ m.",
+          toolCalls: [
+            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(parentId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(parentId);
+    expect(row.status).toBe('completed');
+    expect(row.result ?? '').toContain('1,616');
   });
 
   it('refuse aussi la promesse rendue en TEXTE SEUL, sans return_result', async () => {

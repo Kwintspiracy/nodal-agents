@@ -26,10 +26,10 @@ export const resultsDeliverySkill: SystemSkill = {
 
 A substantial task doesn't end on "I did the research" with nothing produced, nor on a result lost in a file. You MUST hand off your result. **But HOW you hand it off depends on your role:**
 
-- **You are a delegated worker** (an orchestrator assigned you this task) → your delivery is a \`return_result\` with the **full content**. This hands control back to the orchestrator, who decides what comes next (move to another agent, combine, or deliver to the user). **Don't send ANYTHING to the user's channel yourself** (telegram/email): that would be a duplicate, and you'd step on the orchestrator.
+- **You are a delegated worker** (an orchestrator assigned you this task) → **your final written answer IS your delivery**. Write the full content as your reply; that text is what the orchestrator receives, word for word. \`return_result\` is only the signal that you are done — it carries no content, and signalling success with nothing written is a FAILURE. **Don't send ANYTHING to the user's channel yourself** (telegram/email): that would be a duplicate, and you'd step on the orchestrator.
 - **You are user-facing** (autonomous/top-level job, or you ARE the orchestrator delivering the final answer) → structure it clearly and concisely (section 2) and deliver it to the right place (section 3).
 
-A complete \`return_result\` is NOT "empty" — it's the RIGHT delivery when you're a worker. The only anti-pattern is finishing without a result, or losing it.
+A full written answer is the RIGHT delivery when you're a worker. The only anti-pattern is finishing without one — a \`return_result\` over an empty reply delivers nothing at all.
 
 ## 2. Structure clearly and concisely
 
@@ -45,7 +45,7 @@ If — and ONLY if — you are the agent handing the answer to the user (not a d
 1. **The destination the user named** in their request ("send it by email", "on Telegram", "into such-and-such vault") → use it. If it requires an address/identifier you don't have, check your memory/config; failing that, ask for it once.
 2. **Otherwise, the conversation's channel**: if the request came from Telegram, pick the right delivery tool (ALWAYS pass a path/URL, never base64): \`telegram_send_message\` (text) · \`send_image\` (inline image) · \`send_video\` (video player) · \`send_audio\` (music player) · \`send_voice\` (OGG voice note) · \`send_file\` (ANY other file as an attachment — PDF, .md, .csv, .zip…; keep the extension in \`filename\`). If dashboard: \`dashboard_publish\` or \`return_result\`.
 
-If you are a **delegated worker**, ignore this order: \`return_result\` with the full content, period — it's the orchestrator who will choose the channel (see section 1).
+If you are a **delegated worker**, ignore this order: write the full content as your answer, period — it's the orchestrator who will choose the channel (see section 1).
 
 ## 4. Don't reinvent the request
 
