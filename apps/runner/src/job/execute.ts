@@ -2329,15 +2329,15 @@ async function runJob(
    * Si le parent a dit lui-même que le spécialiste a échoué, la ligne le répète
    * — une redite vaut mieux qu'un silence, et elle nomme le spécialiste.
    */
-  const withFailedDelegationNotice = (resultText: string): string => {
-    if (failedDelegations.size === 0) return resultText;
-    const noms = [...failedDelegations].sort().join(', ');
-    const notice = `[délégation sans livrable : ${noms} — ce spécialiste n'a rien rendu]`;
-    return resultText
-      ? `${resultText}
+  const failedDelegationNotice = (): string =>
+    failedDelegations.size === 0
+      ? ''
+      : `[delegation stopped: ${[...failedDelegations].sort().join(', ')} — no deliverable]`;
 
-${notice}`
-      : notice;
+  const withFailedDelegationNotice = (resultText: string): string => {
+    const notice = failedDelegationNotice();
+    if (notice === '') return resultText;
+    return resultText ? `${resultText}\n\n${notice}` : notice;
   };
 
   /**
@@ -2361,8 +2361,30 @@ ${notice}`
    * (invariant #2) — même nature que `[livraison effectuée : …]`. Une panne
    * ici est DITE et jamais fatale : le job, lui, a fini.
    */
+  /**
+   * Le descripteur de livraison à poser DANS la transaction terminale, ou
+   * `null` quand il n'y a rien à dire ou aucun canal à outil pour le dire.
+   */
+  const harnessNoticeDelivery = (
+    payload: string,
+  ): { channel: string; chatId: string; payload: string } | null => {
+    const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
+      ? (job.channel ?? '')
+      : (notifyChannelOverride ?? '');
+    if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId || payload.trim() === '')
+      return null;
+    return { channel: canal, chatId: job.chatId, payload };
+  };
+
   const prepareHarnessNotice = async (payload: string, suffixeCle: string): Promise<void> => {
-    const canal = job.channel ?? '';
+    // Le canal de SECOURS, exactement celui que les gardes de livraison
+    // regardent : le canal du job, ou celui que la routine a choisi pour sa
+    // confirmation (`notifyChannelOverride`). Ne prendre que `job.channel`
+    // laissait muets les jobs cron et webhook qui demandent une confirmation,
+    // alors que `requiresToolDelivery` les compte (passe ciblée, constat 4).
+    const canal = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '')
+      ? (job.channel ?? '')
+      : (notifyChannelOverride ?? '');
     if (!TOOL_ONLY_DELIVERY_CHANNELS.has(canal) || !job.chatId || payload.trim() === '') return;
     try {
       await prepareDelivery(db, {
@@ -2396,10 +2418,9 @@ ${notice}`
       .set({ result: avec })
       .where(eq(agentJobs.id, jobId as string));
 
-    // Sur un canal où SEUL un outil atteint l'utilisateur, la ligne en base ne
-    // suffit pas : le parent a envoyé son message AVANT la finalisation, et
-    // rien de ce qu'on écrit ici n'entre dans un message parti.
-    await prepareHarnessNotice(withFailedDelegationNotice(''), 'delegation');
+    // La LIVRAISON de cette ligne, elle, est posée dans la transaction
+    // terminale (T08, voir `harnessNoticeDelivery`) : ici on ne fait plus que
+    // l'écrire dans le résultat.
   };
 
   const withDeliveryNotice = (resultText: string): string => {
@@ -2805,17 +2826,13 @@ ${notice}`
           'error' in (part.output.value as Record<string, unknown>);
         if (!estErreurJson) failedDelegations.delete(name);
       }
-      // Un ÉCHEC que ce job a déjà dit dans un résultat livré reste à dire au
-      // niveau du dessus : un grand-parent qui ne reçoit que la synthèse de son
-      // enfant ne verrait plus l'échec du petit-enfant, et la propagation
-      // retomberait sur ce que le modèle a bien voulu recopier (constat 2).
-      const rendu = typeof part.output?.value === 'string' ? part.output.value : '';
-      for (const m2 of rendu.matchAll(/\[délégation sans livrable : ([^\]]+?) —/g)) {
-        for (const nom of (m2[1] ?? '').split(',')) {
-          const propre = nom.trim();
-          if (propre !== '') failedDelegations.add(propre);
-        }
-      }
+      // L'échec d'un PETIT-enfant ne remonte pas ici, et c'est délibéré : il
+      // faudrait le lire dans le résultat de l'enfant, qui est du texte écrit
+      // par un modèle. Un enfant peut donc écrire cette ligne lui-même, avec le
+      // nom qu'il veut, et le harnais l'enverrait comme un fait — de
+      // l'injection, mesurée (passe ciblée sur la livraison, constat 1). La
+      // remontée passera par l'enregistrement TYPÉ que le harnais écrit,
+      // jamais par de la prose : c'est l'issue de dette ouverte avec cette PR.
     }
   }
 
@@ -3339,12 +3356,17 @@ ${notice}`
             }
             trace('telegram_not_delivered', { turn, via: 'text_branch' });
             await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
-            // Même raison que sur l'autre chemin : rien n'est parti, le job
-            // s'arrête, et le harnais le DIT à l'utilisateur (issue #115). Le
-            // texte que l'agent avait écrit part avec, et la ligne d'échec de
-            // délégation aussi s'il y en a une à dire.
+            // Rien n'est parti, le job s'arrête, et le harnais le DIT à
+            // l'utilisateur (issue #115) — avec SES mots et rien d'autre. Le
+            // texte de l'agent ne part PAS sous un habillage de plateforme :
+            // habiller de la prose de modèle en fait de harnais est exactement
+            // ce que l'invariant #2 interdit, et la passe ciblée l'a dit
+            // (constat 6). Ce que le harnais sait ici : ça s'est arrêté, rien
+            // n'a été livré, et quel spécialiste n'a rien rendu.
             await prepareHarnessNotice(
-              withFailedDelegationNotice(`[arrêt] ${textContent.trim()}`),
+              [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
+                .filter(Boolean)
+                .join('\n\n'),
               'not-delivered',
             );
             return { status: 'failed', error: 'telegram_not_delivered' };
@@ -3352,13 +3374,30 @@ ${notice}`
           // SANS `delivery` : sur ce chemin le canal a déjà été servi par
           // l'outil telegram_send_message pendant le run — préparer une
           // livraison ici DOUBLERAIT le message.
-          const finalized = await finalizeJobSuccess(db, {
-            jobId: jobId as string,
-            result: textContent,
-            toolsUsed,
-            stats: runStats(),
-            messages,
-          });
+          // T08 : l'intention de livrer s'écrit DANS la transaction qui pose le
+          // statut terminal. Posée après, une panne entre les deux laissait un
+          // job fini sans ligne d'outbox, donc une notice perdue pour toujours
+          // (passe ciblée sur la livraison, constat 2). Le point d'extension
+          // existait et n'était branché nulle part.
+          const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
+          const finalized = await finalizeJobSuccess(
+            db,
+            {
+              jobId: jobId as string,
+              result: textContent,
+              toolsUsed,
+              stats: runStats(),
+              messages,
+              ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
+            },
+            {
+              prepareDelivery: async (tx, d) =>
+                void (await prepareDelivery(tx, {
+                  ...d,
+                  channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
+                })),
+            },
+          );
           if (finalized.kind === 'already_terminal') {
             // Course perdue : un autre chemin (reaper, annulation) a fini ce job.
             // Ne PAS prétendre 'completed' — l'ancien code le faisait ici alors
@@ -4391,7 +4430,14 @@ ${notice}`
           // (issue #115). `toolDelivered` dit que l'agent l'a déjà dite — on ne
           // double pas son message.
           if (!toolDelivered) {
-            await prepareHarnessNotice(`[arrêt] ${resultMessage}`, 'blocked');
+            // `errorMessage` vient du champ TYPÉ que le harnais a écrit
+            // lui-même à partir de la raison de l'agent (`shortBlockReason`) :
+            // c'est un statut, pas une phrase relayée. La raison complète reste
+            // dans le résultat, que l'utilisateur voit sur l'écran du job.
+            await prepareHarnessNotice(
+              [`[stopped: ${errorMessage}]`, failedDelegationNotice()].filter(Boolean).join('\n\n'),
+              'blocked',
+            );
           }
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
@@ -4494,10 +4540,11 @@ ${notice}`
           }
           trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
           await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
-          // Rien n'est parti, et le job s'arrête : le harnais dit au moins qu'il
-          // s'arrête, avec ce que l'agent avait écrit (issue #115).
+          // Même chose sur ce chemin : les mots du harnais, pas ceux de l'agent.
           await prepareHarnessNotice(
-            `[arrêt] ${lastAssistantTextSeen || "la tâche s'est arrêtée sans livraison"}`,
+            [`[stopped: nothing was delivered on this channel]`, failedDelegationNotice()]
+              .filter(Boolean)
+              .join('\n\n'),
             'not-delivered',
           );
           return { status: 'failed', error: 'telegram_not_delivered' };
@@ -4610,13 +4657,25 @@ ${notice}`
         trace('finalize_call', { turn, toolsUsed, stats: runStats() });
         // SANS `delivery` — même raison que le chemin texte : le canal a été
         // servi par l'outil de livraison pendant le run.
-        const finalized = await finalizeJobSuccess(db, {
-          jobId: jobId as string,
-          result: finalResult,
-          toolsUsed,
-          stats: runStats(),
-          messages,
-        });
+        const noticeALivrer = harnessNoticeDelivery(failedDelegationNotice());
+        const finalized = await finalizeJobSuccess(
+          db,
+          {
+            jobId: jobId as string,
+            result: finalResult,
+            toolsUsed,
+            stats: runStats(),
+            messages,
+            ...(noticeALivrer ? { delivery: noticeALivrer } : {}),
+          },
+          {
+            prepareDelivery: async (tx, d) =>
+              void (await prepareDelivery(tx, {
+                ...d,
+                channel: d.channel as Parameters<typeof prepareDelivery>[1]['channel'],
+              })),
+          },
+        );
         if (finalized.kind === 'already_terminal') {
           // The conditional terminal write lost the race — another writer (e.g. the
           // orphan reaper) already finalized this row. Do NOT claim 'completed':

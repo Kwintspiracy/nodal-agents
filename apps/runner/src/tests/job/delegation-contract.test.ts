@@ -641,7 +641,7 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(outcome.status).toBe('completed');
     const row = await jobRow(parentId);
     expect(row.result ?? '').toContain('assign_researcher');
-    expect(row.result ?? '').toContain("n'a rien rendu");
+    expect(row.result ?? '').toContain('no deliverable');
   });
 
   it('une délégation de SECOURS réussie efface l’échec de la première', async () => {
@@ -868,62 +868,6 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(livraisons.every((l) => l.chatId === '4242')).toBe(true);
   });
 
-  it('l’échec d’un petit-enfant remonte au grand-parent, même à travers une synthèse', async () => {
-    // Passe de contrôle, constat 2. Le grand-parent ne reçoit de son enfant
-    // qu'un résultat `text` : l'échec du petit-enfant n'était plus dans SON jeu,
-    // et sa transmission retombait sur ce que le modèle avait bien voulu
-    // recopier. La ligne posée par le harnais est désormais RELUE.
-    const grandParentId = await insertJob({
-      channel: 'api',
-      status: 'pending',
-      messages: [
-        { role: 'user', content: 'Fais une recherche' },
-        {
-          role: 'assistant',
-          content: [
-            {
-              type: 'tool-call',
-              toolCallId: 'assign-mid',
-              toolName: 'assign_lead',
-              input: { task: 'recherche' },
-            },
-          ],
-        },
-        {
-          role: 'tool',
-          content: [
-            {
-              type: 'tool-result',
-              toolCallId: 'assign-mid',
-              toolName: 'assign_lead',
-              output: {
-                type: 'text',
-                value:
-                  'Voici ma synthèse.\n\n[délégation sans livrable : assign_researcher — ce spécialiste n’a rien rendu]',
-              },
-            },
-          ],
-        },
-      ],
-    });
-
-    const deps = makeDeps(
-      makeMockLlmClient([
-        {
-          text: 'Voici ce que le lead a trouvé.',
-          toolCalls: [
-            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ]),
-    );
-
-    await executeJob(grandParentId as JobId, deps, testEnv);
-
-    const row = await jobRow(grandParentId);
-    expect(row.result ?? '').toContain('assign_researcher');
-  });
-
   it('la promesse rendue en TEXTE SEUL porte l’échec avec elle', async () => {
     // Revue Codex de la PR #108, constat 2 (bloquant). La garde vit dans la
     // branche `return_result`. Sur `api` et `dashboard`, un parent peut finir
@@ -979,7 +923,7 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(outcome.status).toBe('completed');
     const row = await jobRow(parentId);
     expect(row.result ?? '').toContain('assign_researcher');
-    expect(row.result ?? '').toContain("n'a rien rendu");
+    expect(row.result ?? '').toContain('no deliverable');
   });
 });
 
