@@ -356,6 +356,14 @@ export function cartesDuTableau({ issues, pr } = {}) {
     }
   }
 
+  // La provenance, lue UNE fois ici. Le corps d'une issue pèse plusieurs
+  // kilo-octets et n'a rien à faire dans le snapshot : seuls les deux verdicts
+  // qu'on en tire voyagent.
+  const provenance = (corps) => ({
+    parUnAgent: ecritParUnAgent(corps),
+    faitsVerifies: porteDesFaitsVerifies(corps),
+  });
+
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -367,6 +375,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
       parPr: couvertes.get(i.number) ?? null,
+      ...provenance(i.body),
     })),
     ...pr.map((p) => ({
       type: 'pr',
@@ -379,10 +388,116 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
       ci: etatCi(p.statusCheckRollup),
+      ...provenance(p.body),
     })),
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── Ce que le dépôt sait de sa propre release ────────────────────────────────
+//
+// Le 12/09/2026, un agent a ouvert « Publish 0.8.9 » de mémoire : 0.8.9 était
+// sur npm depuis trois jours. Le portail a porté ce travail fantôme quatre
+// jours, parce qu'il n'avait aucun moyen de le contredire. Il en a un
+// maintenant, et il ne dépend de la bonne volonté de personne : il DEMANDE à
+// npm et à git.
+
+/**
+ * Compare deux numéros de version. `-1`, `0`, `1`, et `null` sur ce qui n'est
+ * pas un semver — plutôt qu'un ordre inventé qui accuserait au hasard.
+ *
+ * Une comparaison de chaînes rendrait `0.8.10 < 0.8.9`, c'est-à-dire
+ * exactement l'erreur que ce lot existe pour empêcher.
+ */
+export function comparerSemver(a, b) {
+  const lire = (v) => /^v?(\d+)\.(\d+)\.(\d+)(?:-([\w.]+))?$/.exec(String(v ?? '').trim());
+  const x = lire(a);
+  const y = lire(b);
+  if (!x || !y) return null;
+  for (let i = 1; i <= 3; i += 1) {
+    const d = Number(x[i]) - Number(y[i]);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  // `0.9.0-rc.1` vient AVANT `0.9.0` : une préversion n'est pas la version.
+  if ((x[4] ?? '') === (y[4] ?? '')) return 0;
+  if (!x[4]) return 1;
+  if (!y[4]) return -1;
+  return x[4] < y[4] ? -1 : 1;
+}
+
+/**
+ * L'état de la release : ce que npm sert, ce que le dépôt porte, et l'écart.
+ *
+ * `npm` est la réponse de `npm view … --json`, ou `null` quand le registre n'a
+ * pas répondu. Dans ce cas RIEN n'est rendu : pas de valeur inventée, pas
+ * l'ancienne sans date. Le portail dira « npm unreachable at <heure> », ce qui
+ * est un fait, là où un chiffre périmé serait un mensonge (invariant #4).
+ */
+export function etatDeLaRelease({ npm, depot, le } = {}) {
+  const surNpm = npm?.version ?? null;
+  const versionDuDepot = depot?.version ?? null;
+  return {
+    npmInjoignable: !npm,
+    verifieLe: le ?? null,
+    surNpm,
+    publieeLe: surNpm ? (npm?.time?.[surNpm] ?? null) : null,
+    versionDuDepot,
+    dernierTag: depot?.dernierTag ?? null,
+    commitsDepuisLeTag: depot?.commitsDepuisLeTag ?? null,
+    // `null` et non `false` quand npm est muet : « pas en avance » et « je ne
+    // sais pas » ne se ressemblent qu'à l'écran.
+    depotEnAvance: surNpm && versionDuDepot ? surNpm !== versionDuDepot : null,
+  };
+}
+
+/** « publish 0.8.9 », « release v0.8.9 » — le vocabulaire des titres de release. */
+const DEMANDE_DE_PUBLICATION = /\b(?:publish|release)\s+v?(\d+\.\d+\.\d+(?:-[\w.]+)?)\b/i;
+
+/**
+ * Les cartes OUVERTES qui demandent de publier une version déjà servie par npm.
+ *
+ * C'est l'issue #68, nommée par le portail au lieu d'être crue sur parole.
+ * Aucune accusation quand npm n'a pas répondu : on ne sait pas ce qui est
+ * publié, et deviner ici serait le même défaut à l'envers.
+ */
+export function publicationsDejaFaites(cartes, release) {
+  if (!Array.isArray(cartes) || !release?.surNpm || release.npmInjoignable) return [];
+  const out = [];
+  for (const c of cartes) {
+    if (c.etat !== 'OPEN') continue;
+    const version = DEMANDE_DE_PUBLICATION.exec(String(c.titre ?? ''))?.[1];
+    if (!version) continue;
+    const ordre = comparerSemver(version, release.surNpm);
+    if (ordre === null || ordre > 0) continue;
+    out.push({ numero: c.numero, type: c.type, titre: c.titre, version, url: c.url ?? null });
+  }
+  return out;
+}
+
+// ─── La provenance d'une carte ────────────────────────────────────────────────
+//
+// Règle du 16/09/2026 : toute issue ou PR ouverte par un agent porte une
+// section `## Verified` avec au moins une commande et sa sortie. Le critère de
+// « écrite par un agent » est VÉRIFIABLE — le pied que les agents posent
+// eux-mêmes — et non une intuition sur le style : une issue écrite à la main
+// par Quentin n'a rien à prouver.
+
+/** Le pied que tout agent de ce dépôt pose au bas de ce qu'il ouvre. */
+export function ecritParUnAgent(corps) {
+  const t = String(corps ?? '');
+  return /generated with[^\n]{0,20}claude code/i.test(t) || /claude-session\s*:/i.test(t);
+}
+
+/** Une SECTION « Verified », pas le mot au fil du texte : un titre markdown. */
+export function porteDesFaitsVerifies(corps) {
+  return /^[ \t]*#{1,6}[ \t]*verified\b/im.test(String(corps ?? ''));
+}
+
+/** Les cartes ouvertes par un agent qui n'apportent aucun fait vérifié. */
+export function sansFaitsVerifies(cartes) {
+  if (!Array.isArray(cartes)) return [];
+  return cartes.filter((c) => c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies);
 }
 
 // ─── La gravité ───────────────────────────────────────────────────────────────
@@ -416,7 +531,44 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const registre = s.capacites?.registre ?? [];
   const mem = s.memoire ?? null;
 
-  // ── Le produit d'abord. Un paquet mal couvert est une question d'ingénieur ;
+  // ── Ce qui passe avant le produit lui-même : un portail qui MENT. Tant que
+  // le tableau raconte un travail fantôme, aucun des écarts suivants n'est
+  // croyable. Quatre jours d'issue #68 l'ont montré.
+  const release = s.release ?? null;
+  const cartes = s.chantiers?.cartes ?? null;
+
+  const dejaPubliees = publicationsDejaFaites(cartes, release);
+  if (dejaPubliees.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${dejaPubliees.length} open card(s) ask to publish a version already on npm`,
+      detail: `npm serves ${release.surNpm}. These cards describe work that is already done, and the board has been carrying them as work to do. Close them, or correct the version they name.`,
+      quoi: dejaPubliees.map((c) => `#${c.numero} ${c.titre}`),
+    });
+  }
+
+  const sansFaits = sansFaitsVerifies(cartes);
+  if (sansFaits.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${sansFaits.length} open card(s) written by an agent carry no verified facts`,
+      detail: `An agent opened them and wrote no "Verified" section, so nothing in them was checked against npm, git or a test run. That is exactly how a version that shipped a week earlier became a task on this board.`,
+      quoi: sansFaits.map((c) => `#${c.numero} ${c.titre}`),
+    });
+  }
+
+  // Une absence de mesure n'est pas un feu vert. Moyenne, jamais haute : le
+  // registre injoignable est une panne de réseau, pas une panne du produit.
+  if (release?.npmInjoignable) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `npm was unreachable at the last collection`,
+      detail: `Nothing is known about what is published, so nothing is claimed. The release block shows the hole rather than the previous answer without its date.`,
+      quoi: release.verifieLe ? [release.verifieLe] : [],
+    });
+  }
+
+  // ── Le produit. Un paquet mal couvert est une question d'ingénieur ;
   // une preuve de capacité tombée est une promesse rompue.
   //
   // Trois familles, et la hiérarchie entre elles est tout le lot : un ÉCHEC
@@ -1413,7 +1565,14 @@ export function fusionnerTableauGitHub(mesure, frais) {
   if (!mesure || typeof mesure !== 'object') {
     throw new Error('no committed measurement to refresh: run the full collection first');
   }
-  const socle = { ...mesure, tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null };
+  const socle = {
+    ...mesure,
+    tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null,
+    // La release vient de npm, pas de GitHub : un GitHub muet n'a aucune raison
+    // de figer l'état de publication, et c'est le rafraîchissement horaire qui
+    // fait qu'une publication est vue dans l'heure et non la nuit suivante.
+    release: frais?.release ?? mesure.release ?? null,
+  };
   if (!frais?.chantiers) return socle;
   return {
     ...socle,
