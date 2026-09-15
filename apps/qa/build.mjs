@@ -989,51 +989,48 @@ a{color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 /* ── Charpente ──────────────────────────────────────────────────────────────
-   La grammaire de la homepage : une barre fine en haut, pas de colonne sombre,
-   une seule gouttière généreuse, et un rythme vertical constant. Les boîtes
-   grises ont disparu : un bloc se définit par son filet, jamais par un fond ni
-   par une ombre. */
-.tete{position:sticky;top:0;z-index:20;background:var(--fond);border-bottom:1px solid var(--regle)}
-.tete__in{width:100%;max-width:1440px;margin-inline:auto;padding-inline:clamp(20px,4vw,52px);
-  display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
-.tete__in:first-child{min-height:56px}
-.marque{display:flex;align-items:baseline;gap:11px;text-decoration:none;color:var(--encre)}
-.marque b{font-family:Archivo,sans-serif;font-size:17px;font-weight:700;letter-spacing:-.02em;
+   Une barre laterale fixe, mais dans la grammaire de la homepage : meme fond
+   que la page, un filet a droite, l'index numerote, des compteurs discrets.
+   Rien de la colonne noire d'avant, sauf la position. Le contenu prend toute
+   la largeur restante, ce dont le tableau de bord a besoin. */
+.app{display:grid;grid-template-columns:256px minmax(0,1fr);min-height:100vh}
+.rail{position:sticky;top:0;height:100vh;overflow-y:auto;
+  border-right:1px solid var(--regle);padding:26px 20px 24px;
+  display:flex;flex-direction:column;gap:30px}
+.marque{display:flex;flex-direction:column;gap:3px;text-decoration:none;color:var(--encre)}
+.marque b{font-family:Archivo,sans-serif;font-size:18px;font-weight:700;letter-spacing:-.02em;
   display:flex;align-items:center;gap:9px}
 .marque b::before{content:'';width:10px;height:10px;border-radius:50%;background:#ff5631;flex:none}
-.marque span{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--encre3);letter-spacing:.12em}
-.tete__meta{margin:0;font-size:11px;color:var(--encre3);letter-spacing:.06em}
-.tete__onglets{padding-bottom:0}
+.marque span{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--encre3);
+  letter-spacing:.14em;padding-left:19px}
 
-/* La barre de navigation : une bande d'onglets, pas une liste verticale. */
-nav{display:flex;align-items:stretch;gap:2px;flex-wrap:wrap;counter-reset:vue;width:100%}
-nav a{display:flex;align-items:center;gap:8px;padding:11px 13px 12px;color:var(--encre2);
-  text-decoration:none;font-size:14px;border-bottom:2px solid transparent;white-space:nowrap}
+nav{display:flex;flex-direction:column;gap:1px;counter-reset:vue}
+nav a{display:flex;align-items:baseline;gap:9px;padding:9px 10px 9px 12px;
+  color:var(--encre2);text-decoration:none;font-size:15px;border-radius:3px;
+  box-shadow:inset 2px 0 0 transparent}
 nav>a{counter-increment:vue}
 nav>a::before{content:counter(vue,decimal-leading-zero);font-family:"JetBrains Mono",monospace;
   font-size:10px;color:var(--encre3);letter-spacing:.04em}
 nav>a.discret{counter-increment:none}
-nav>a.discret::before{content:none}
-nav a b{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;color:var(--encre3)}
-nav a:hover{color:var(--encre)}
-nav a.actif{color:var(--encre);font-weight:600;border-bottom-color:#ff5631}
+nav>a.discret::before{content:none;}
+nav a b{margin-left:auto;font-family:"JetBrains Mono",monospace;font-size:11px;
+  font-weight:400;color:var(--encre3)}
+nav a:hover{color:var(--encre);background:var(--panneau2)}
+nav a.actif{color:var(--encre);font-weight:600;box-shadow:inset 2px 0 0 #ff5631;background:var(--panneau2)}
 nav a.actif::before,nav a.actif b{color:#ff5631}
-nav .rubrique{margin:0;align-self:center;padding:0 16px 0 22px;font-family:"JetBrains Mono",monospace;
-  font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--encre3);
-  border-left:1px solid var(--regle);margin-left:12px}
-nav a.discret{font-size:13px;color:var(--encre3)}
-nav a.discret:hover{color:var(--encre)}
-nav a.discret.actif{color:var(--encre)}
+nav .rubrique{margin:22px 0 4px;padding:14px 12px 0;font-family:"JetBrains Mono",monospace;
+  font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--encre3);
+  border-top:1px solid var(--regle)}
+nav a.discret{font-size:14px;padding-left:12px;color:var(--encre3)}
+nav a.discret:hover,nav a.discret.actif{color:var(--encre)}
 
-.contenu{width:100%;max-width:1440px;margin-inline:auto;
-  padding:clamp(34px,5vw,64px) clamp(20px,4vw,52px) 110px}
-.pied{width:100%;max-width:1440px;margin-inline:auto;
-  padding:26px clamp(20px,4vw,52px) 44px;border-top:1px solid var(--regle);
-  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
-  font-size:11px;color:var(--encre3)}
+.rail footer{margin-top:auto;font-family:"JetBrains Mono",monospace;font-size:11px;
+  color:var(--encre3);line-height:1.8;padding-top:20px;border-top:1px solid var(--regle)}
+
+.contenu{width:100%;padding:clamp(34px,4vw,56px) clamp(20px,3.2vw,48px) 110px}
 
 /* ── Vues ── */
-.vue{display:none;scroll-margin-top:150px}
+.vue{display:none}
 .vue.actif{display:block}
 
 /* L'en-tête d'une page : le rail numéroté de la homepage à gauche, le titre et
@@ -1171,13 +1168,17 @@ tr:last-child td{border-bottom:0}
    la gouttiere et se reprend sa propre marge, et sous 1180 px il defile
    horizontalement plutot que d'ecraser ses colonnes. */
 .kanban{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:18px;
-  align-items:start;width:100vw;margin-left:calc(50% - 50vw);
-  padding-inline:clamp(20px,4vw,52px);padding-bottom:12px}
+  align-items:start;padding-bottom:12px}
 /* Sous 1180 px, six colonnes lisibles ne tiennent plus : le tableau defile
    plutot que d'ecraser ses cartes en bandes de texte. Lui seul defile, pas la
    page. */
-@media(max-width:1180px){
-  .kanban{grid-template-columns:repeat(6,minmax(238px,1fr));overflow-x:auto}
+/* Sous 1400 px, six colonnes lisibles ne tiennent plus a cote de la barre : le
+   tableau defile, et lui seul. Il reprend la gouttiere du contenu pour que la
+   premiere et la derniere carte soient a la meme distance du bord que le reste
+   de la page. */
+@media(max-width:1400px){
+  .kanban{grid-template-columns:repeat(6,minmax(236px,1fr));overflow-x:auto;
+    margin-inline:calc(clamp(20px,3.2vw,48px) * -1);padding-inline:clamp(20px,3.2vw,48px)}
 }
 .colonne{min-width:0}
 .colonne header{display:flex;justify-content:space-between;align-items:baseline;
@@ -1268,10 +1269,19 @@ td.dette{color:var(--ko);font-weight:600}
   border-bottom:1px solid var(--regle);padding:12px 0;margin-bottom:22px}
 .sparkline i{flex:1;min-width:3px;background:var(--accent-doux);border-top:2px solid var(--accent);border-radius:2px 2px 0 0}
 @media(max-width:900px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .rail{position:static;height:auto;overflow:visible;border-right:0;
+    border-bottom:1px solid var(--regle);gap:18px;padding:20px 16px}
+  nav{flex-direction:row;flex-wrap:wrap;gap:2px}
+  nav a{padding:8px 11px;box-shadow:none;border-bottom:2px solid transparent}
+  nav a.actif{box-shadow:none;border-bottom-color:#ff5631;background:transparent}
+  nav .rubrique{margin:0;align-self:center;padding:0 10px 0 14px;border-top:0;
+    border-left:1px solid var(--regle)}
+  .rail footer{margin-top:0;border-top:0;padding-top:0;line-height:1.6}
+  .rail footer br{display:none}
   .entete-page{grid-template-columns:minmax(0,1fr);gap:14px}
   .rail-page{flex-direction:row;align-items:baseline;gap:10px;padding-top:0}
   .ecart{grid-template-columns:minmax(0,1fr);gap:8px}
-  .tete{position:static}
 }
 @media(max-width:620px){
   .cartes{grid-template-columns:minmax(0,1fr)}
@@ -1281,12 +1291,12 @@ td.dette{color:var(--ko);font-weight:600}
 </style>
 </head>
 <body>
-<header class="tete">
-  <div class="tete__in">
-    <a class="marque" href="#chantiers"><b>Quality</b><span>NODAL-AGENTS</span></a>
-    <p class="tete__meta mono">${esc(s.branche ?? '')} · ${esc(s.commit ?? '')} · ${esc(dateFr(s.genereLe))}</p>
-  </div>
-  <div class="tete__in tete__onglets">
+<div class="app">
+  <aside class="rail">
+    <a class="marque" href="#chantiers">
+      <b>Quality</b>
+      <span>NODAL-AGENTS</span>
+    </a>
     <nav id="nav">
       <a href="#chantiers" class="actif">Work in flight <b>${(s.chantiers?.cartes ?? []).filter((c) => c.colonne !== 'Done').length}</b></a>
       <a href="#capacites">Capabilities <b>${
@@ -1303,23 +1313,24 @@ td.dette{color:var(--ko);font-weight:600}
       <a href="#ci" class="discret">Triggers <b>${s.ci.length}</b></a>
       <a href="#historique" class="discret">History <b>${historique.length}</b></a>
     </nav>
-  </div>
-</header>
-<main class="contenu">
-  ${vueChantiers()}
-  ${vueCapacites()}
-  ${vueEnsemble()}
-  ${vueEcarts()}
-  ${vueParcours()}
-  ${vueBanc()}
-  ${vueCi()}
-  ${vueMemoire()}
-  ${vueHistorique()}
-</main>
-<footer class="pied">
-  <span class="mono">Nodal-Agents · quality</span>
-  <span class="mono">${esc(s.branche ?? '')} · ${esc(s.commit ?? '')} · ${esc(dateFr(s.genereLe))}</span>
-</footer>
+    <footer>
+      ${esc(s.branche ?? '')}<br>
+      ${esc(s.commit ?? '')}<br>
+      ${esc(dateFr(s.genereLe))}
+    </footer>
+  </aside>
+  <main class="contenu">
+    ${vueChantiers()}
+    ${vueCapacites()}
+    ${vueEnsemble()}
+    ${vueEcarts()}
+    ${vueParcours()}
+    ${vueBanc()}
+    ${vueCi()}
+    ${vueMemoire()}
+    ${vueHistorique()}
+  </main>
+</div>
 ${modaleExplications()}
 <script>
 (function(){
