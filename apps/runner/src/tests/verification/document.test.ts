@@ -369,7 +369,7 @@ describe('document — bien formé, selon son type', () => {
       // Passe 8, constat R1, puis passe 9 : un en-tête dont la clôture tombe
       // dans un bloc de code n'est PAS un faux vert. `remark-frontmatter`
       // 5.0.0, mesuré hors dépôt, lit le même en-tête et rend le même vert :
-      // le titre est dans le corps pour tout outil qui lit du front matter.
+      // le titre est dans le corps pour la référence de cette convention.
       ['cloture-dans-le-code.md', '---\n\n```\n---\n# faux\n```\n', 'green'],
       // Le titre collé au délimiteur, lui, reste rouge : après l'en-tête il ne
       // reste qu'un bloc de code ouvert. La référence dit la même chose.
