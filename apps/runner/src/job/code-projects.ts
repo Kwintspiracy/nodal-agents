@@ -369,7 +369,7 @@ export interface RawProject {
  * 1500 tool_calls et autant de vérifications disque pour le scan.
  */
 const PROJECTS_TTL_MS = 60_000;
-const projectsCache = new Map<string, { at: number; value: RawProject[] }>();
+const projectsCache = new Map<string, { at: number; sig: string; value: RawProject[] }>();
 
 /**
  * Vide le cache — réservé aux tests.
@@ -533,8 +533,37 @@ export function scannedEditPath(row: {
  * propriétaire — c'est ce qui permet de les appliquer après coup, donc à jour.
  */
 export async function scanProjects(db: RunnerDeps['db'], entityId: string): Promise<RawProject[]> {
+  // Les projets DÉCLARÉS de cette entité : une déclaration vaut manifeste, ici
+  // comme dans `packages/tools/src/projects/declared.ts`.
+  //
+  // Lus AVANT le cache, et leur signature en fait partie : déclarer un projet
+  // est un geste de propriétaire, qui change l'IDENTITÉ des projets annoncés.
+  // Laisser le cache répondre pendant sa minute rendait l'ancienne identité —
+  // donc un projet déclaré puis masqué dont les enfants continuaient d'être
+  // annoncés, la clé masquée ne correspondant à aucune d'elles (revue Codex de
+  // la dette de la PR #75, passe 3, constat 2). C'est exactement ce que la
+  // revue du 26/08 avait déjà tranché pour les préférences : une lecture
+  // indexée d'une table à une ligne par projet, contre 1500 `tool_calls` et
+  // autant de vérifications disque.
+  const declaredRows = await db
+    .select({ path: codeProjects.projectPath })
+    .from(codeProjects)
+    .where(
+      and(
+        eq(codeProjects.entityId, entityId),
+        isNotNull(codeProjects.registeredAt),
+        eq(codeProjects.kind, 'code'),
+      ),
+    );
+  const declaredRoots = new Set(declaredRows.map((r) => projectKey(norm(r.path))));
+  const declaredSig = [...declaredRoots].sort().join('|');
+  const rootIsProjectFor = (dir: string): boolean =>
+    hasMarker(dir) || declaredRoots.has(projectKey(dir));
+
   const cached = projectsCache.get(entityId);
-  if (cached && Date.now() - cached.at < PROJECTS_TTL_MS) return cached.value;
+  if (cached && cached.sig === declaredSig && Date.now() - cached.at < PROJECTS_TTL_MS) {
+    return cached.value;
+  }
 
   // Les dossiers attachés aux agents de l'espace, et qui les détient. Aucun
   // dossier attaché, aucun projet à annoncer.
@@ -598,22 +627,6 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
       .orderBy(desc(toolCalls.createdAt))
       .limit(SCAN_LIMIT);
 
-    // Les projets DÉCLARÉS de cette entité : une déclaration vaut manifeste,
-    // ici comme dans `packages/tools/src/projects/declared.ts`.
-    const declaredRows = await db
-      .select({ path: codeProjects.projectPath })
-      .from(codeProjects)
-      .where(
-        and(
-          eq(codeProjects.entityId, entityId),
-          isNotNull(codeProjects.registeredAt),
-          eq(codeProjects.kind, 'code'),
-        ),
-      );
-    const declaredRoots = new Set(declaredRows.map((r) => projectKey(norm(r.path))));
-    const rootIsProjectFor = (dir: string): boolean =>
-      hasMarker(dir) || declaredRoots.has(projectKey(dir));
-
     const rootMemo = new Map<string, string>();
     const existsMemo = new Map<string, boolean>();
     const existsCached = (p: string): boolean => {
@@ -660,7 +673,7 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
     }
 
     const result = groupScannedWrites(writes);
-    projectsCache.set(entityId, { at: Date.now(), value: result });
+    projectsCache.set(entityId, { at: Date.now(), sig: declaredSig, value: result });
     return result;
   }
 }
