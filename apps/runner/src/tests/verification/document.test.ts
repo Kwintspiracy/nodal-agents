@@ -366,16 +366,19 @@ describe('document — bien formé, selon son type', () => {
       ['front-matter-vide.md', '---\n---\n# Vrai\n\n---\n\ncorps\n', 'green'],
       // Jamais refermé : ce n'est pas un en-tête, c'est le document lui-même.
       ['front-matter-non-ferme.md', '---\ntitle: x\n\ncorps\n', 'red'],
-      // Passe 8, constat R1 — un FAUX VERT que la boucle de lignes ne pouvait
-      // pas voir : la clôture cherchée est dans un BLOC DE CODE, et le retrait
-      // emporte l'ouverture du bloc avec elle. Le seul titre du document est
-      // celui qui vivait dans le code. Il faut donc le voir des DEUX côtés.
-      ['cloture-dans-le-code.md', '---\n\n```\n---\n# faux\n```\n', 'red'],
-      // Et son symétrique, rouge lui aussi, et à dessein : un `# Vrai` posé
-      // juste après `---` est exactement ce qu'un COMMENTAIRE YAML donne à lire
-      // (constat C5). Un titre qui ne survit pas au retrait de l'en-tête n'en
-      // est pas un.
+      // Passe 8, constat R1, puis passe 9 : un en-tête dont la clôture tombe
+      // dans un bloc de code n'est PAS un faux vert. `remark-frontmatter`
+      // 5.0.0, mesuré hors dépôt, lit le même en-tête et rend le même vert :
+      // le titre est dans le corps pour tout outil qui lit du front matter.
+      ['cloture-dans-le-code.md', '---\n\n```\n---\n# faux\n```\n', 'green'],
+      // Le titre collé au délimiteur, lui, reste rouge : après l'en-tête il ne
+      // reste qu'un bloc de code ouvert. La référence dit la même chose.
       ['titre-colle-a-l-en-tete.md', '---\n# Vrai\n\n```\n---\n```\n', 'red'],
+      // Passe 9, constat R2 — la conjonction de la passe 8 rendait ROUGE ce
+      // document-ci, dont l'en-tête est parfaitement valide : `example` est un
+      // scalaire littéral qui contient trois backticks, et la lecture brute y
+      // voyait un bloc de code jamais refermé qui cachait le vrai titre.
+      ['bloc-scalaire-yaml.md', '---\nexample: |\n  ```\n---\n# Vrai\n', 'green'],
     ];
     for (const [name, content, attendu] of cas) {
       expect((await prove(write(name, content))).verdict, name).toBe(attendu);

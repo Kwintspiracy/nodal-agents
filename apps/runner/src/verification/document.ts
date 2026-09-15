@@ -182,23 +182,27 @@ function stripFrontMatter(lf: string): string {
  * ramenées au LF d'abord : une convention d'éditeur n'est pas une propriété du
  * document.
  *
- * MAIS le retrait ne décide pas seul, et c'est la leçon de la passe 8 : où que
- * s'arrête l'en-tête, un retrait de lignes ne sait pas qu'un `---` peut vivre
- * dans un bloc de code, et il emportait alors l'ouverture du bloc — le titre du
- * document devenait celui qui était ÉCRIT DANS LE CODE (constat R1, un faux
- * vert). Le titre doit donc se voir des DEUX côtés : avec l'en-tête et sans.
- * Un titre qui n'apparaît qu'après le retrait était dans le code ; un titre qui
- * disparaît avec le retrait était dans l'en-tête, c'est-à-dire un commentaire
- * YAML — le constat C5 lui-même. Aucun des deux n'est le titre du document.
+ * UNE SEULE LECTURE, celle du document sans son en-tête. La passe 8 m'avait
+ * fait exiger le titre des DEUX côtés du retrait, pour refuser un document dont
+ * la clôture d'en-tête vivait dans un bloc de code. C'était une règle inventée
+ * de plus, et la passe 9 l'a défaite en une ligne : deux TÉMOINS DIFFÉRENTS
+ * suffisaient à la satisfaire. Mesuré depuis, hors dépôt, contre
+ * `remark-frontmatter` 5.0.0, la mise en œuvre de référence de cette
+ * convention : elle lit l'en-tête exactement comme cette boucle — première
+ * ligne délimiteur, puis jusqu'au délimiteur suivant, où qu'il soit — et rend
+ * le même verdict sur les dix cas sondés, sauf deux où CETTE règle est plus
+ * stricte (elle connaît la clôture `...` et l'en-tête `+++`, pas elle). Le
+ * document dont l'en-tête recouvre une ouverture de bloc n'est donc pas un
+ * faux vert : son titre EST dans le corps, pour tout outil qui lit du front
+ * matter. La conjonction, elle, rendait rouge un en-tête parfaitement valide
+ * dont un scalaire contenait trois backticks (passe 9, constat R2).
  */
-const hasTopLevelHeading = (markdown: string): boolean =>
-  (unified().use(remarkParse).parse(markdown).children ?? []).some(
-    (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,
-  );
-
 const markdownHasTitle: FormCheck = (text) => {
   const lf = text.replace(/\r\n?/g, '\n');
-  const hasTitle = hasTopLevelHeading(lf) && hasTopLevelHeading(stripFrontMatter(lf));
+  const tree = unified().use(remarkParse).parse(stripFrontMatter(lf));
+  const hasTitle = (tree.children ?? []).some(
+    (node) => node.type === 'heading' && (node as { depth?: number }).depth === 1,
+  );
   return hasTitle ? null : 'no title: expected a top-level heading (`# Title`)';
 };
 
