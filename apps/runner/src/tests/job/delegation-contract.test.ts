@@ -724,7 +724,7 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
     expect(row.result ?? '').toContain('1,616');
   });
 
-  it('un parent qui REFAIT le travail lui-même peut finir honnêtement', async () => {
+  it('un parent qui DIT LA VÉRITÉ finit honnêtement, sans échec de job', async () => {
     // Revue Codex de la PR #108, passe 2, constat 2. Le rappel propose trois
     // issues : refaire, confier à un autre, dire la vérité. Les deux premières
     // étaient impossibles à valider — l'échec `assign_*` restait inscrit quoi
@@ -761,39 +761,22 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
             },
           ],
         },
-        // Puis il le fait LUI-MÊME : un outil, qui réussit. C'est ce que la
-        // machine peut constater ; qu'il réponde à la même question, non.
-        {
-          role: 'assistant',
-          content: [
-            {
-              type: 'tool-call',
-              toolCallId: 'search-1',
-              toolName: 'web_search',
-              input: { query: 'longueur de Planck' },
-            },
-          ],
-        },
-        {
-          role: 'tool',
-          content: [
-            {
-              type: 'tool-result',
-              toolCallId: 'search-1',
-              toolName: 'web_search',
-              output: { type: 'text', value: '1,616 × 10⁻³⁵ m' },
-            },
-          ],
-        },
       ],
     });
 
     const deps = makeDeps(
       makeMockLlmClient([
         {
-          text: "Je l'ai fait moi-même : la longueur de Planck vaut 1,616 × 10⁻³⁵ m.",
+          text: "Le spécialiste n'a rien rendu. Je n'ai donc pas la synthèse, et je préfère te le dire.",
           toolCalls: [
-            { toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } },
+            {
+              toolCallId: 'rr-1',
+              toolName: 'return_result',
+              args: {
+                status: 'blocked',
+                reason: "le spécialiste n'a rien produit ; rien à livrer",
+              },
+            },
           ],
         },
       ]),
@@ -801,10 +784,14 @@ describe('a parent cannot promise over a failed delegation @cap:organiser-equipe
 
     const outcome = await executeJob(parentId as JobId, deps, testEnv);
 
-    expect(outcome.status).toBe('completed');
+    // La troisième issue du rappel — dire la vérité. Le job ÉCHOUE, et c'est
+    // juste : le travail délégué n'a pas eu lieu. Ce qui compte, et ce que ce
+    // test garde, c'est que la RAISON arrive jusqu'à l'utilisateur au lieu d'un
+    // code opaque — et qu'aucun rappel n'ait été nécessaire pour l'obtenir.
+    expect(outcome.status).toBe('failed');
     const row = await jobRow(parentId);
-    expect(row.status).toBe('completed');
-    expect(row.result ?? '').toContain('1,616');
+    expect(row.result ?? '').toContain("n'a rien produit");
+    expect(row.error ?? '').not.toBe('unresolved_tool_failure');
   });
 
   it('refuse aussi la promesse rendue en TEXTE SEUL, sans return_result', async () => {

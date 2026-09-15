@@ -2625,7 +2625,7 @@ async function runJob(
   let unresolvedFailureNudges = 0;
 
   /**
-   * Du travail a-t-il eu lieu DEPUIS l'échec non résolu ?
+   * Du travail a-t-il eu lieu DEPUIS le dernier échec de délégation ?
    *
    * La garde 3b veut empêcher un parent d'annoncer un résultat qui n'existe
    * pas. Elle ne peut pas juger si le travail refait RÉPOND à la même question
@@ -2635,11 +2635,25 @@ async function runJob(
    * (passe 1, constat 3), effacer dès qu'une autre délégation livre rendait un
    * FAUX VERT si elle portait sur autre chose (passe 2, constat 1).
    *
-   * Ce qui se constate, en revanche : un appel d'outil qui a RÉUSSI après
-   * l'échec — une autre délégation, une recherche, une écriture. L'incident
-   * #107 n'en avait aucun : le parent n'a rien fait entre l'échec et sa
-   * promesse. C'est cette frontière-là qui est tenue ici, et le vide pur reste
-   * couvert par la garde 3c.
+   * UNE seule réparation se constate : une autre DÉLÉGATION a livré. C'est la
+   * deuxième des trois issues que le rappel propose (« confie-le à un autre
+   * spécialiste »), et l'ordre des `assign_*` entre eux est fiable — c'est le
+   * résultat que la reprise range.
+   *
+   * Trois critères plus larges ont été essayés et mesurés FAUX (revue Codex de
+   * la PR #108, passes 2 et 3) : « n'importe quel outil a réussi » comptait une
+   * lecture sans rapport, l'envoi de la PROMESSE elle-même, et — relu dans la
+   * transcription — une erreur sérialisée en `text` ou un transfert simplement
+   * REPORTÉ ; la relecture ne dit pas non plus l'ordre, `resumeDelegated`
+   * rangeant le résultat de l'enfant avant des appels pourtant antérieurs.
+   *
+   * Les deux autres issues du rappel — refaire soi-même, dire la vérité — ne
+   * finissent pas en SUCCÈS, et c'est voulu : le travail délégué n'a pas eu
+   * lieu. `status='blocked'` est fait pour ça et porte la raison jusqu'à
+   * l'utilisateur, ce qui est la question qui compte.
+   *
+   * Le drapeau se remet À FAUX à chaque nouvel échec : « depuis l'échec »
+   * voulait dire « depuis un échec quelconque, même ancien ».
    */
   let workDoneSinceFailure = false;
 
@@ -2694,17 +2708,10 @@ async function runJob(
     }>) {
       if (!part || part.type !== 'tool-result') continue;
       const name = typeof part.toolName === 'string' ? part.toolName : '';
-      // Un outil QUELCONQUE qui a réussi APRÈS une délégation ratée est du
-      // travail constaté, et il compte au même titre à la relecture qu'en cours
-      // d'exécution : sans ça, « je l'ai refait moi-même » était invisible dès
-      // qu'une approbation avait coupé le run en deux (revue Codex de la PR
-      // #108, passe 2, constat 2).
-      if (!name.startsWith('assign_')) {
-        if (part.output?.type !== 'error-text' && unresolvedToolFailures.size > 0) {
-          workDoneSinceFailure = true;
-        }
-        continue;
-      }
+      // Seules les délégations sont relues ici. L'ordre des AUTRES résultats
+      // n'est pas fiable dans une transcription reprise, et s'y fier faisait
+      // passer une lecture antérieure pour une réparation (passe 3, constat 1).
+      if (!name.startsWith('assign_')) continue;
       // Only a delegation that DELIVERED NOTHING counts. The other error-text an
       // assign_* result can carry is a DEFERRAL ("another handoff took priority,
       // call me again") — not a failure, and reading it as one would refuse the
@@ -2714,10 +2721,9 @@ async function runJob(
         unresolvedToolFailures.add(name);
       } else {
         unresolvedToolFailures.delete(name);
-        // Une délégation qui a LIVRÉ après une autre qui a raté est du travail
-        // constaté : même règle qu'en cours d'exécution, et même frontière — la
-        // machine constate qu'il s'est passé quelque chose, pas que ça répond à
-        // la même question.
+        // Une délégation qui a LIVRÉ pendant qu'une autre restait en échec est
+        // du travail constaté, et l'ordre des `assign_*` entre eux, lui, est
+        // fiable : c'est ce résultat-là que la reprise range.
         if (unresolvedToolFailures.size > 0) workDoneSinceFailure = true;
       }
     }
@@ -3941,13 +3947,20 @@ async function runJob(
         // probably already arrived.
         if (toolResult.outcome === 'success') {
           unresolvedToolFailures.delete(call.name);
-          // Du TRAVAIL a eu lieu depuis. C'est le seul fait que la machine peut
-          // constater ici, et il décide de la suite (voir `workDoneSinceFailure`).
-          if (unresolvedToolFailures.size > 0 || workDoneSinceFailure) {
+          // Une autre DÉLÉGATION qui livre, et rien d'autre : c'est la seule
+          // réparation que la machine sache reconnaître (voir
+          // `workDoneSinceFailure`). Les cas où le parent fait le travail
+          // lui-même ne finissent PAS en succès, et c'est le produit qui le veut :
+          // il dit la vérité avec `status='blocked'`, qui porte sa raison jusqu'à
+          // l'utilisateur.
+          if (call.name.startsWith('assign_') && unresolvedToolFailures.size > 0) {
             workDoneSinceFailure = true;
           }
         } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
           unresolvedToolFailures.add(call.name);
+          // Un NOUVEL échec réouvre la question : le travail d'avant ne répare
+          // pas ce qui vient de rater.
+          if (call.name.startsWith('assign_')) workDoneSinceFailure = false;
         }
 
         // Punch list V1.1 — transition du pipeline code notifiée au canal
