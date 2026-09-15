@@ -9,9 +9,10 @@
 //
 // Ce module dérive la liste (nom, chemin, détenteurs) depuis les éditions
 // RÉELLES enregistrées, avec la même règle que l'onglet Code : un projet est
-// un enfant direct d'un dossier attaché, sauf si ce dossier porte lui-même un
-// manifeste — auquel cas c'est lui le projet. Rien n'est stocké : un projet
-// naît de son activité, comme dans l'onglet.
+// un enfant direct d'un dossier attaché, sauf si ce dossier EST lui-même un
+// projet — il porte un manifeste, ou il est DÉCLARÉ projet de code — auquel cas
+// c'est lui le projet. Rien n'est stocké : un projet naît de son activité,
+// comme dans l'onglet.
 //
 // Le rendu final vit dans buildRuntimeBlock (packages/orchestration) — ce
 // module ne fabrique QUE des données.
@@ -558,17 +559,19 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
       ),
     );
   const declaredRoots = new Set(declaredRows.map((r) => projectKey(norm(r.path))));
-  const declaredSig = [...declaredRoots].sort().join('|');
   const rootIsProjectFor = (dir: string): boolean =>
     hasMarker(dir) || declaredRoots.has(projectKey(dir));
 
-  const cached = projectsCache.get(entityId);
-  if (cached && cached.sig === declaredSig && Date.now() - cached.at < PROJECTS_TTL_MS) {
-    return cached.value;
-  }
-
   // Les dossiers attachés aux agents de l'espace, et qui les détient. Aucun
   // dossier attaché, aucun projet à annoncer.
+  //
+  // Lus avant le cache eux aussi : ATTACHER un dossier imbriqué change
+  // l'identité des projets autant que déclarer un projet, et ne touche pas la
+  // même table. Sans eux dans la signature, attacher `w/app/src` puis le masquer
+  // laissait `w/app` annoncé pendant la minute du cache, le filtre de masquage
+  // ne reconnaissant pas un PARENT comme appartenant au sous-arbre masqué
+  // (revue Codex de la dette de la PR #75, passe 4, constat 1). Le scan les lit
+  // de toute façon : cette requête n'est pas ajoutée, elle est avancée.
   const wsRows = await db
     .select({
       agentId: agentWorkspaces.agentId,
@@ -580,6 +583,21 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
     .from(agentWorkspaces)
     .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
     .where(eq(agents.entityId, entityId));
+
+  // La signature de TOUT ce qui décide de l'identité d'un projet : les
+  // déclarations, et les dossiers attachés avec leur masquage.
+  const sig = [
+    [...declaredRoots].sort().join(','),
+    wsRows
+      .map((r) => `${projectKey(norm(r.path))}:${r.hiddenFromCode ? 'h' : '-'}`)
+      .sort()
+      .join(','),
+  ].join('|');
+
+  const cached = projectsCache.get(entityId);
+  if (cached && cached.sig === sig && Date.now() - cached.at < PROJECTS_TTL_MS) {
+    return cached.value;
+  }
   if (wsRows.length === 0) return [];
 
   {
@@ -675,7 +693,7 @@ export async function scanProjects(db: RunnerDeps['db'], entityId: string): Prom
     }
 
     const result = groupScannedWrites(writes);
-    projectsCache.set(entityId, { at: Date.now(), sig: declaredSig, value: result });
+    projectsCache.set(entityId, { at: Date.now(), sig, value: result });
     return result;
   }
 }

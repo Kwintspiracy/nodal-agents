@@ -10,7 +10,9 @@
 //
 // Le refus se simule, parce qu'il ne se fabrique pas : les droits POSIX ne
 // veulent rien dire sous Windows, et un verrou Windows ne se pose pas sous
-// Linux. `readFile` seul est remplacé ; `stat` reste le vrai.
+// Linux. `readFile` et `stat` sont remplacés, chacun par un interrupteur à lui :
+// les deux refus se testent séparément, et le reste de `node:fs/promises` est
+// le vrai.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type * as FsPromises from 'node:fs/promises';
