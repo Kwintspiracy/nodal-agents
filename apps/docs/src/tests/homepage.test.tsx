@@ -248,8 +248,12 @@ describe('homepage figures match the measurement they cite', () => {
   });
 
   it('rounds coverage without inflating it', () => {
+    // TRUNCATED to one decimal, not rounded. The two assertions contradicted
+    // each other on any measurement ending in .x5 — `Math.round` turns 81.75
+    // into 81.8, which the next line then rejects as inflated. "Without
+    // inflating it" is the rule the title states, so the figure rounds DOWN.
     const shown = Number(figure('line coverage').replace('%', ''));
-    expect(shown).toBe(Math.round(snapshot.resume.couvertureLignes * 10) / 10);
+    expect(shown).toBe(Math.floor(snapshot.resume.couvertureLignes * 10) / 10);
     expect(shown).toBeLessThanOrEqual(snapshot.resume.couvertureLignes);
   });
 
