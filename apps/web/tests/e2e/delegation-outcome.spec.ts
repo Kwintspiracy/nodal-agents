@@ -274,10 +274,16 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
     await expect(delegation.getByText(`Delegated to ${childName}`)).toBeVisible();
     await expect(delegation.locator('span.bg-ok').first()).toBeVisible();
 
-    // The deliverable is the sub-agent's own text, reachable in the thread —
-    // the thing that was empty in #107 and is now the contract.
+    // Closed, the row already shows the head of what came back — proof there is
+    // something rather than the "No result yet" a missing deliverable earns.
+    await expect(delegation.getByText('Planck length: 1.616255e-35')).toBeVisible();
+
+    // Opened, the WHOLE deliverable is there. The assertion deliberately lands
+    // on the tail of the text: `delegationTitle` truncates the closed line at 80
+    // characters, so anything past it can only come from the sub-agent's own
+    // reply in the body — the thing that was empty in #107.
     await delegation.getByRole('button').first().click();
-    await expect(delegation.getByText('1.616255e-35')).toBeVisible();
+    await expect(delegation.getByText('NIST CODATA 2022')).toBeVisible();
 
     const text = await threadText(page);
     expect(text).not.toContain('(no output)');
