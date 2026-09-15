@@ -242,7 +242,9 @@
   grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
   gap: clamp(16px, 2.5vw, 28px);
   padding-bottom: clamp(56px, 8vw, 96px);
-  align-items: start;
+  /* The two captures have very different heights. Bottom-aligned, the pair
+     reads as a deliberate stagger; top-aligned it read as a hole. */
+  align-items: end;
 }
 .home-shot {
   margin: 0;
@@ -424,7 +426,9 @@
 
 .home-figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  /* Six figures, so three by two. `auto-fit` laid out five and left a sixth
+     cell of empty grey the width of four. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   margin-top: 44px;
   background: var(--home-line-soft);
@@ -457,6 +461,8 @@
 }
 .home-figures-note a {
   color: var(--home-ink-soft);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* ── CI list ───────────────────────────────────────────────────────────── */
@@ -564,6 +570,12 @@
   }
   .home-steps li::before {
     padding-top: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .home-figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
