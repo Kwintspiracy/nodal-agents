@@ -60,6 +60,20 @@ const WORKER_DISCOVERY_BLOCK = `## Capitalize what you learn
 When you discover something durable while working a task — the real path of a file or workflow, parameters that worked, a convention — save it via \`save_memory\` before you finish. One fact per call, short and verified.`;
 
 /**
+ * Le même bloc SANS son outil — donc sans un ordre que la surface ne peut pas
+ * exécuter.
+ *
+ * Sur `chat`, `save_memory` n'existe pas : la phrase entière était
+ * inexécutable, et elle passait quand même (revue Codex de la dette de la
+ * PR #73, constat 2 — la PR promettait « rien que d'exécutable » et ne
+ * vérifiait que des titres). La retirer tout court aurait retiré la règle ; la
+ * règle reste vraie ici, seul le geste change.
+ */
+const WORKER_DISCOVERY_BLOCK_CHAT = `## Capitalize what you learn
+
+When you discover something durable in conversation — the real path of a file or workflow, parameters that worked, a convention — it is worth keeping. You cannot record it from here: put the fact itself in the brief of the job that will need it.`;
+
+/**
  * Orchestrator-only — delegation discipline. From the same audit: the root
  * agent was doing its workers' prep work itself, editing shared/template
  * files to smuggle in per-run parameters, and prescribing tools in briefs
@@ -68,6 +82,19 @@ When you discover something durable while working a task — the real path of a 
 const DELEGATION_DISCIPLINE_BLOCK = `## Delegation discipline
 
 When you delegate: (1) pass the PARAMETERS in the brief (paths, prompts, values) — do not do the prep work yourself that the worker can do with its own tools; (2) NEVER edit a shared or template file to encode a run's parameters — templates are immutable, values are passed as arguments; (3) only name a specific tool in a brief if you know the target agent has it — otherwise state the expected RESULT (the worker returns it via \`return_result\`) and deliver it yourself once it comes back; (4) a brief states the goal, the parameters, and the constraints — not a step-by-step procedure that forbids the worker from adapting.`;
+
+/**
+ * La même discipline, dite pour une surface qui ne délègue pas elle-même.
+ *
+ * Sur `chat`, l'agent n'a pas d'outil de délégation : il escalade par
+ * `run_task`, et c'est le job ainsi créé qui délègue. Nommer ici les outils du
+ * worker donnait des ordres inexécutables (revue Codex de la dette de la
+ * PR #73, constat 2), alors que ce qui vaut sur cette surface — ce qu'un brief
+ * doit porter — est exactement le même.
+ */
+const DELEGATION_DISCIPLINE_BLOCK_CHAT = `## Delegation discipline
+
+What you hand off is a brief, and it carries: (1) the PARAMETERS — paths, prompts, values, the user's own words where they matter; (2) the goal and the constraints, never a step-by-step procedure that stops the worker adapting; (3) the expected RESULT rather than the means of getting it. Do not do a worker's prep work in conversation, and never rewrite a shared or template file to carry a run's values.`;
 
 /** Layer 1 — intrinsic discipline for every agent (+ model-aware reinforcement). */
 export function buildBaselineBlock(
@@ -118,23 +145,40 @@ export function buildBaselineBlock(
   if (!nodalTools) return '';
   const surface = opts.surface ?? 'job';
   const parts = contentOfKind('baseline', surface);
+  // Le renforcement nomme `skill_view` et `run_skill_script` : deux outils de
+  // plus que le chat n'a pas, et deux ordres de plus qu'il ne peut pas suivre
+  // (revue Codex de la dette de la PR #73, constat 2). Sa moitié portable —
+  // vérifier avant de dire que c'est fait, ne jamais inventer une sortie
+  // d'outil, être décisif — vaut sur les deux surfaces et reste sur les deux.
   const reinforcement =
-    parts.length > 0 && NEEDS_FIRMER_VERIFY.test(model)
-      ? '\n\n**Especially you — execution discipline:** ' +
-        'Actually run or check your work before you say a task is done, and never write tool output ' +
-        'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
-        'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
-        'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded ' +
-        'with skill_view ships run_skill_script and ready-made workflows/templates) ' +
-        'instead of writing ' +
-        'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
-        'steps that finish the task, then deliver the result with its output path.'
-      : '';
+    parts.length === 0 || !NEEDS_FIRMER_VERIFY.test(model)
+      ? ''
+      : surface === 'chat'
+        ? '\n\n**Especially you — execution discipline:** ' +
+          'Actually check your work before you say something is done, and never write tool output ' +
+          'you did not really get back. Be decisive: once you know what the user is asking for, ' +
+          'hand it over as one job instead of re-asking, re-listing, or narrating what you are ' +
+          'about to do. Take the fewest steps that finish the task.'
+        : '\n\n**Especially you — execution discipline:** ' +
+          'Actually run or check your work before you say a task is done, and never write tool output ' +
+          'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
+          'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
+          'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded ' +
+          'with skill_view ships run_skill_script and ready-made workflows/templates) ' +
+          'instead of writing ' +
+          'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
+          'steps that finish the task, then deliver the result with its output path.';
   const catalogBlock =
     parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}` : '';
 
   const roleBlock =
-    opts.role === 'orchestrator' ? DELEGATION_DISCIPLINE_BLOCK : WORKER_DISCOVERY_BLOCK;
+    opts.role === 'orchestrator'
+      ? surface === 'chat'
+        ? DELEGATION_DISCIPLINE_BLOCK_CHAT
+        : DELEGATION_DISCIPLINE_BLOCK
+      : surface === 'chat'
+        ? WORKER_DISCOVERY_BLOCK_CHAT
+        : WORKER_DISCOVERY_BLOCK;
 
   // Le chat n'a pas `save_memory` : la discipline qui l'ordonne n'y va pas.
   const memoryBlock = surface === 'chat' ? '' : MEMORY_DISCIPLINE_BLOCK;
