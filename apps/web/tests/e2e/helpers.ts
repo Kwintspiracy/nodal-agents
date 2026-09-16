@@ -5,15 +5,20 @@ import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { createClient } from '@nodal-agents/db';
 import type { CredentialType } from '@nodal-agents/shared';
 import {
-  blockedCredentialsMessage,
-  isE2ECredentialName,
-  planCredentialCleanup,
+  cleanCredentialsOfType,
+  cleanupOptionsFromEnv,
+  dropRunCredentials,
+  E2E_RUN_ID,
 } from './credential-cleanup.ts';
 
 export {
-  E2E_CREDENTIAL_MARKER,
+  E2E_CREDENTIAL_MARKER_OPEN,
+  E2E_CREDENTIAL_MARKER_CLOSE,
+  E2E_RUN_ID,
+  e2eCredentialMarker,
   e2eCredentialName,
   isE2ECredentialName,
+  isCredentialOfRun,
 } from './credential-cleanup.ts';
 
 /**
@@ -583,40 +588,33 @@ export async function waitForNoProcessingJobs(timeoutMs = 60_000): Promise<void>
  * `credentials-reuse` avait laissé son propre identifiant Google derrière lui.
  *
  * Il y a maintenant un marqueur : tout identifiant créé par un parcours porte
- * `[nodalai-e2e]` dans son nom (`e2eCredentialName`). Ceux-là sont effacés sans
- * rien demander ; ceux qui ne l'ont pas — un compte connecté à la main — ne
- * sont JAMAIS effacés sans `NODALAI_E2E_WIPE_CREDENTIALS=1`, et leur présence
- * fait échouer bruyamment le `beforeAll` avec la marche à suivre.
+ * `[nodalai-e2e:<runId>]` À LA FIN de son nom (`e2eCredentialName`). Ceux de CE
+ * run sont effacés sans rien demander ; ceux d'un AUTRE run e2e sont laissés en
+ * place et signalés (deux machines peuvent partager `NODALAI_E2E_DB_URL`) ; ceux
+ * qui n'ont pas de marqueur — un compte connecté à la main — ne sont JAMAIS
+ * effacés sans `NODALAI_E2E_WIPE_CREDENTIALS=1`, et leur présence fait échouer
+ * bruyamment le `beforeAll` avec la marche à suivre.
+ *
+ * La décision ET la suppression vivent dans `credential-cleanup.ts`, qui est
+ * testé sous vitest contre un vrai Postgres. Ici il ne reste que le câblage :
+ * qui agit, sur quelle base.
  */
 export async function cleanCredentialsByType(type: CredentialType): Promise<void> {
-  const { credentials, eq, and, inArray } = await import('@nodal-agents/db');
   const { userId } = await resolveActingUser();
   const { db, close } = makeDbClient();
   try {
-    const owned = and(eq(credentials.ownerUserId, userId), eq(credentials.type, type));
-    const existing = await db
-      .select({ id: credentials.id, name: credentials.name })
-      .from(credentials)
-      .where(owned);
-    if (existing.length === 0) return;
-
-    const plan = planCredentialCleanup(existing, {
-      allowWipe: process.env['NODALAI_E2E_WIPE_CREDENTIALS'] === '1',
+    await cleanCredentialsOfType(db, userId, type, {
+      runId: E2E_RUN_ID,
+      ...cleanupOptionsFromEnv(),
     });
-    if (plan.blocked.length > 0) {
-      throw new Error(blockedCredentialsMessage(type, plan.blocked));
-    }
-    if (plan.deleteIds.length === 0) return;
-
-    await db.delete(credentials).where(and(owned, inArray(credentials.id, plan.deleteIds)));
   } finally {
     await close();
   }
 }
 
 /**
- * Nettoyage de FIN de parcours : efface les identifiants que CE parcours a
- * créés, et eux seuls (marqueur `[nodalai-e2e]`).
+ * Nettoyage de FIN de parcours : efface les identifiants que CE run a créés, et
+ * eux seuls (marqueur `[nodalai-e2e:<runId>]` en fin de nom).
  *
  * À appeler dans un `afterAll`, y compris quand le parcours a échoué en cours
  * de route — c'est ce qui rend les parcours indépendants de leur ordre. Ne
@@ -625,18 +623,10 @@ export async function cleanCredentialsByType(type: CredentialType): Promise<void
  */
 export async function dropE2ECredentials(type: CredentialType): Promise<void> {
   try {
-    const { credentials, eq, and, inArray } = await import('@nodal-agents/db');
     const { userId } = await resolveActingUser();
     const { db, close } = makeDbClient();
     try {
-      const owned = and(eq(credentials.ownerUserId, userId), eq(credentials.type, type));
-      const existing = await db
-        .select({ id: credentials.id, name: credentials.name })
-        .from(credentials)
-        .where(owned);
-      const mine = existing.filter((r) => isE2ECredentialName(r.name)).map((r) => r.id);
-      if (mine.length === 0) return;
-      await db.delete(credentials).where(and(owned, inArray(credentials.id, mine)));
+      await dropRunCredentials(db, userId, type, E2E_RUN_ID);
     } finally {
       await close();
     }
