@@ -141,16 +141,20 @@ jobs:
       # workflow : le 10/09/2026, la première exécution des 28 parcours que la
       # CI ne jouait pas a rendu 25 rouges. Personne ne pouvait le savoir.
       #
-      # `agent-flows.spec.ts` est exclu, et c'est la seule exclusion : il sonde
-      # un LM Studio sur localhost:1234, qui n'existe pas sur un runner. Il
-      # échouerait à sa première ligne pour une raison qui n'apprend rien.
-      # La liste est construite ici plutôt que passée à un drapeau : Playwright
-      # n'a pas d'option d'exclusion par FICHIER (`--grep-invert` filtre sur les
-      # titres, `--ignore` n'existe pas), et un drapeau inventé aurait fait
-      # échouer le workflow sur sa syntaxe plutôt que sur les tests.
+      # PLUS AUCUNE EXCLUSION depuis l'issue #110. `agent-flows.spec.ts` était
+      # la seule, parce qu'il sondait un LM Studio sur localhost:1234 qui
+      # n'existe sur aucun runner ; il est supprimé, et aucun parcours n'exige
+      # plus de modèle. Un fichier présent dans le dossier est donc un fichier
+      # joué — c'est ce que le portail vérifie, et un parcours jamais joué y
+      # est désormais un rouge nommé.
+      # La liste reste construite par un `ls` plutôt que passée en dossier : le
+      # portail LIT ce workflow pour savoir quels parcours tournent
+      # (`parcoursDunWorkflow`), et c'est cette forme-là qu'il sait lire. Un
+      # `playwright test tests/e2e` ferait passer les trente parcours pour
+      # jamais joués sur la page Journeys.
       - name: Tous les parcours
         run: |
-          mapfile -t specs < <(ls tests/e2e/*.spec.ts | grep -v 'agent-flows.spec.ts')
+          mapfile -t specs < <(ls tests/e2e/*.spec.ts)
           echo "${#specs[@]} parcours à jouer"
           npx playwright test "${specs[@]}" --reporter=json > playwright-raw.json || true
         working-directory: apps/web

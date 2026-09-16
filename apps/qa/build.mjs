@@ -11,7 +11,16 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe, verdictDuBanc, tendance, MOT_ETAT, publicationsDejaFaites } from './lib.mjs';
+import {
+  ecartsDe,
+  verdictDuBanc,
+  tendance,
+  etatDunParcours,
+  cadenceAffichee,
+  ORDRE_DES_BACS,
+  MOT_ETAT,
+  publicationsDejaFaites,
+} from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -238,6 +247,14 @@ function vueEnsemble() {
         : `${tCouv.direction === 'monte' ? 'Up' : 'Down'} ${Math.abs(tCouv.delta)} point(s) over 7 days.`;
   const couvert = pct(r.couvertureLignes);
   const partJouee = r.specsE2e > 0 ? Math.round((r.specsE2eJoueesParLaCi / r.specsE2e) * 100) : 0;
+  // La carte comptait `specsE2e - specsE2eJoueesParLaCi`, une soustraction à elle
+  // seule, sans passer par `etatDunParcours`. Sous un workflow illisible, la page
+  // Journeys et l'alerte ne montraient aucun rouge pendant que cette carte-ci
+  // annonçait « 30 never played » : trois endroits, deux réponses (revue de la
+  // PR #113, 3e passe). Elle lit désormais la même définition que les deux autres.
+  const etats = (s.parcours ?? []).map((p) => etatDunParcours(p).cle);
+  const jamaisJoues = etats.filter((c) => c === 'jamais joué').length;
+  const illisibles = etats.filter((c) => c === 'ci illisible').length;
 
   return `
 <section id="vue" class="vue">
@@ -261,10 +278,16 @@ function vueEnsemble() {
       <p class="sous">in ${n(r.fichiersDeTest)} files, end-to-end aside</p>
     </article>
 
-    <article class="carte ${partJouee < 50 ? 'carte--alerte' : ''}">
+    <article class="carte ${jamaisJoues > 0 ? 'carte--alerte' : ''}">
       <h3>Journeys played by the CI</h3>
       <p class="chiffre">${r.specsE2eJoueesParLaCi} <span class="sur">/ ${r.specsE2e}</span></p>
-      <p class="sous">${n(r.casE2e)} cases written · <b>${r.specsE2e - r.specsE2eJoueesParLaCi} journey${r.specsE2e - r.specsE2eJoueesParLaCi > 1 ? 's' : ''} never run</b></p>
+      <p class="sous">${n(r.casE2e)} cases written · ${
+        illisibles > 0
+          ? `<b>${illisibles} of unknown fate</b>: a workflow cannot be read`
+          : jamaisJoues > 0
+            ? `<b>${jamaisJoues} never played</b>`
+            : 'every one of them played'
+      }</p>
       ${barre(partJouee, 'journeys played')}
     </article>
 
@@ -316,22 +339,24 @@ function vueParcours() {
   // qui ne garde rien.
   const parCadence = new Map();
   for (const p of s.parcours) {
-    const c = p.cadence ?? 'never played';
+    // Le libellé vient de `lib.mjs`, jamais d'un calcul refait ici : le bac et
+    // la couleur de la ligne doivent sortir de la même définition.
+    const c = cadenceAffichee(p);
     parCadence.set(c, [...(parCadence.get(c) ?? []), p]);
   }
-  const ORDRE = [
-    'every pull request',
-    'every push to main',
-    'every night',
-    'by hand',
-    'never played',
-  ];
+  const ORDRE = ORDRE_DES_BACS;
 
   const ligne = (p) => {
     const r = p.resultat;
+    const e = etatDunParcours(p);
     let etat;
-    if (!r) {
-      etat = '<span class="pastille pastille--inconnu">never run here</span>';
+    if (e.rouge) {
+      // ROUGE, et nommé. Un fichier que personne ne joue garde zéro
+      // régression, et il ne le disait pas : il portait le même gris qu'un
+      // parcours sain dont le rapport manque (issue #110).
+      etat = `<span class="pastille pastille--ko">${e.mot}</span>`;
+    } else if (!r) {
+      etat = `<span class="pastille pastille--inconnu">${e.mot}</span>`;
     } else {
       // Quatre sorts, montrés SÉPARÉMENT. Un cas ignoré n'est pas un cas rouge :
       // les confondre, c'est le défaut que ce portail dénonce ailleurs.
@@ -350,7 +375,8 @@ function vueParcours() {
           ? `<span class="intention">${esc(p.intention)}</span>`
           : '<span class="intention intention--absente">no description</span>'
       }
-        ${r?.rouge ? lienRun(s.execution?.url) : ''}</td>
+        ${r?.rouge ? lienRun(s.execution?.url) : ''}
+        ${e.rouge ? '<br><span class="intention intention--absente">Nothing runs it: this file guards nothing.</span>' : ''}</td>
       <td class="num">${p.cas}</td>
       <td>${etat}</td>
       <td class="num dim">${r?.dureeMs ? `${(r.dureeMs / 1000).toFixed(1)} s` : '·'}</td>
@@ -366,8 +392,10 @@ function vueParcours() {
         : cadence === 'every night'
           ? 'These OBSERVE it the next day. They guard no pull request.'
           : cadence === 'never played'
-            ? 'Written, versioned, and run by no continuous integration.'
-            : '';
+            ? 'Written, versioned, and run by no continuous integration. These are reds, not blanks: they guard nothing.'
+            : cadence === 'workflow unreadable'
+              ? 'A workflow names the e2e directory in a shape the portal cannot read, so nothing can be said about these files. Neither green nor red: the reader is what needs fixing.'
+              : '';
     return `<h3 class="sous-titre">${esc(cadence)} <span class="compte">${dedans.length}</span></h3>
       ${note ? `<p class="note-section">${note}</p>` : ''}
       <div class="tableau"><table>
@@ -377,10 +405,16 @@ function vueParcours() {
   };
 
   const bloque = (parCadence.get('every pull request') ?? []).length;
+  const jamais = s.parcours.filter((p) => etatDunParcours(p).rouge);
   return `
 <section id="parcours" class="vue">
   ${entete('parcours', 'Journeys')}
   <p class="chapo">${s.parcours.length} versioned, and <b>only ${bloque} guard a pull request</b>: the others observe after the fact, or never.</p>
+  ${
+    jamais.length > 0
+      ? `<div class="alerte"><b>${jamais.length} journey${jamais.length > 1 ? 's are' : ' is'} never played.</b> A journey nobody runs is a claim of coverage that does not exist. Delete it, or put it in a workflow.</div>`
+      : ''
+  }
   ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
 </section>`;

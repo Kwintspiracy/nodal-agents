@@ -1,11 +1,22 @@
 // rendu.test.mjs — ce que la PAGE montre, lu sur la page.
 //
-// Les mécanismes du lot « faits vérifiés » étaient prouvés dans `lib.mjs` et
-// affichés par `build.mjs` — mais le rendu, lui, n'était vérifié qu'en
-// CHERCHANT des chaînes dans le source du script. Supprimer le paragraphe qui
-// nomme les cartes « already on npm », ou la condition `OPEN` de la pastille
-// « no verified facts », laissait la suite verte : le texte cherché restait
-// écrit ailleurs dans le fichier.
+// Deux lots ont eu besoin du même moyen, et ce fichier est leur point de
+// rencontre.
+//
+// « Faits vérifiés » (#120) : les mécanismes étaient prouvés dans `lib.mjs` et
+// affichés par `build.mjs`, mais le rendu n'était vérifié qu'en CHERCHANT des
+// chaînes dans le source du script. Supprimer le paragraphe qui nomme les
+// cartes « already on npm », ou la condition `OPEN` de la pastille « no
+// verified facts », laissait la suite verte : le texte cherché restait écrit
+// ailleurs dans le fichier.
+//
+// « Parcours morts » (#113) : le portail avait trois endroits pour répondre à
+// « combien de parcours ne sont joués par personne » — la page Journeys,
+// l'alerte, et la carte d'ensemble. Les deux premiers passaient par
+// `etatDunParcours` ; la troisième faisait sa propre soustraction. Sous un
+// workflow illisible, les deux premiers ne montraient aucun rouge pendant que
+// la carte annonçait « 30 never played ». Une définition unique dans `lib.mjs`
+// ne suffit donc pas : il faut que la page la lise.
 //
 // Le portail est donc RENDU pour de vrai, dans une copie jetable, à partir d'un
 // instantané fabriqué ici, et les assertions portent sur le HTML produit. Le
@@ -18,7 +29,33 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-/** L'instantané committé, dont seules la release et les cartes sont refaites. */
+const lireSource = (nom) => readFileSync(new URL(`./${nom}`, import.meta.url), 'utf8');
+
+/**
+ * TOUT ce que le renderer a besoin de trouver à côté de lui.
+ *
+ * Le piège, déjà payé une fois : un module manquant ne fait PAS rougir ces
+ * tests. Le `beforeAll` meurt sur l'import et vitest range ses cas en
+ * « ignorés », au milieu d'un run vert — trois preuves éteintes sans un mot,
+ * constaté le 16/09 en extrayant `depot.mjs` du collecteur. Le premier test
+ * ci-dessous suit les imports de `build.mjs` EN PROFONDEUR et compare.
+ */
+const MODULES_DU_BAC = ['build.mjs', 'lib.mjs', 'explications.mjs', 'capacites.mjs', 'porte.mjs'];
+
+/** Les modules locaux qu'un fichier importe, et ceux que ceux-là importent. */
+function modulesAtteints(depuis) {
+  const vus = new Set();
+  const aVoir = [depuis];
+  while (aVoir.length > 0) {
+    const nom = aVoir.pop();
+    if (vus.has(nom)) continue;
+    vus.add(nom);
+    for (const m of lireSource(nom).matchAll(/from\s+'\.\/([\w.-]+\.mjs)'/g)) aVoir.push(m[1]);
+  }
+  return vus;
+}
+
+/** L'instantané committé, dont seules les parties sous test sont refaites. */
 const SOCLE = JSON.parse(readFileSync(new URL('./data/snapshot.json', import.meta.url), 'utf8'));
 
 const carte = (o) => ({
@@ -69,9 +106,7 @@ let rendus = 0;
 const rendre = (instantane) => {
   const app = join(bac, `rendu-${(rendus += 1)}`, 'apps', 'qa');
   mkdirSync(join(app, 'data'), { recursive: true });
-  for (const f of ['build.mjs', 'lib.mjs', 'explications.mjs', 'capacites.mjs']) {
-    cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
-  }
+  for (const f of MODULES_DU_BAC) cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
   writeFileSync(join(app, 'data', 'snapshot.json'), JSON.stringify(instantane));
   execFileSync(process.execPath, [join(app, 'build.mjs')], { encoding: 'utf8' });
   return readFileSync(join(app, 'dist', 'index.html'), 'utf8');
@@ -89,6 +124,14 @@ beforeAll(() => {
 });
 
 afterAll(() => rmSync(bac, { recursive: true, force: true }));
+
+describe('le bac à sable du renderer porte tout ce que le renderer atteint', () => {
+  it('aucun module local, même indirect, ne manque à la copie', () => {
+    const atteints = modulesAtteints('build.mjs');
+    expect(atteints.size).toBeGreaterThan(1);
+    for (const m of atteints) expect(MODULES_DU_BAC).toContain(m);
+  });
+});
 
 describe('le bloc Release, sur la page', () => {
   it('montre les trois chiffres lus, pas un verdict', () => {
@@ -184,5 +227,101 @@ describe('la pastille « no verified facts », sur la carte', () => {
   // « Done » transformerait l'historique en dette permanente.
   it('ne marque PAS la carte fermée, même sans fait vérifié', () => {
     expect(ticketDe(72)).not.toContain('no verified facts');
+  });
+});
+
+// ─── La carte d'ensemble des parcours (#113) ──────────────────────────────────
+
+/** Un parcours, réduit à ce dont la page a besoin pour le ranger et le peindre. */
+const parcours = (nom, extra = {}) => ({
+  fichier: `apps/web/tests/e2e/${nom}`,
+  nom,
+  cas: 3,
+  jouParLaCi: false,
+  cadence: null,
+  ciIllisible: false,
+  resultat: null,
+  intention: 'a journey',
+  ...extra,
+});
+
+const workflow = (fichier, extra = {}) => ({
+  fichier,
+  nom: fichier,
+  declencheurs: ['pull_request'],
+  jobs: ['build'],
+  specsNommees: [],
+  balayeLesParcours: false,
+  parcoursExclus: [],
+  parcoursIllisibles: false,
+  cadence: 'every pull request',
+  lanceBanc: true,
+  lanceCouverture: true,
+  ...extra,
+});
+
+/** Le socle, dont SEULS les parcours et les workflows sont refaits. */
+const avecParcours = (liste, ci) => ({
+  ...INSTANTANE,
+  ci,
+  parcours: liste,
+  resume: {
+    ...INSTANTANE.resume,
+    specsE2e: liste.length,
+    casE2e: liste.length * 3,
+    specsE2eJoueesParLaCi: liste.filter((p) => p.jouParLaCi).length,
+  },
+});
+
+/** Le texte de la carte d'ensemble, sans ses balises. */
+function carteDesParcours(html) {
+  const i = html.indexOf('Journeys played by the CI');
+  expect(i, 'carte des parcours absente de la page').toBeGreaterThan(-1);
+  return html.slice(i, i + 700).replace(/<[^>]+>/g, ' ');
+}
+
+describe('la carte d’ensemble parle la même langue que la page Journeys', () => {
+  const CI_LISIBLE = [workflow('.github/workflows/ci.yml')];
+  const CI_ILLISIBLE = [workflow('.github/workflows/qa.yml', { parcoursIllisibles: true })];
+
+  it('des parcours que personne ne joue : la carte le dit, et elle alerte', () => {
+    const html = rendre(avecParcours([parcours('a.spec.ts'), parcours('b.spec.ts')], CI_LISIBLE));
+    expect(carteDesParcours(html)).toContain('2 never played');
+  });
+
+  it('un workflow ILLISIBLE : la carte ne dit PAS « never played »', () => {
+    // La mutation du lot : la carte recalculait `specsE2e -
+    // specsE2eJoueesParLaCi`, donc « 2 never played » en rouge, pendant que la
+    // page Journeys et l'alerte ne montraient aucun rouge. Trois endroits, deux
+    // réponses.
+    const html = rendre(
+      avecParcours(
+        [
+          parcours('a.spec.ts', { ciIllisible: true }),
+          parcours('b.spec.ts', { ciIllisible: true }),
+        ],
+        CI_ILLISIBLE,
+      ),
+    );
+    const bloc = carteDesParcours(html);
+    expect(bloc).not.toContain('never played');
+    expect(bloc).toContain('a workflow cannot be read');
+    // Et la page Journeys les range bien sous leur propre titre, pas en rouge.
+    expect(html).toContain('workflow unreadable');
+  });
+
+  it('tous joués : la carte ne crie pas, et n’invente pas de rouge', () => {
+    const html = rendre(
+      avecParcours(
+        [
+          parcours('a.spec.ts', { jouParLaCi: true, cadence: 'every pull request' }),
+          parcours('b.spec.ts', { jouParLaCi: true, cadence: 'every night' }),
+        ],
+        CI_LISIBLE,
+      ),
+    );
+    const bloc = carteDesParcours(html);
+    expect(bloc).toContain('every one of them played');
+    expect(bloc).not.toContain('never played');
   });
 });

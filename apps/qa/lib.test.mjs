@@ -46,10 +46,62 @@ import {
   tendance,
   prixDeLaCi,
   intentionDunParcours,
+  etatDunParcours,
+  cadenceParParcours,
+  sansCommentairesYaml,
+  exclusionsDuBalayage,
+  cadenceAffichee,
+  ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
 import { corpsDeLalerte, trouverLeBillet } from './alerte.mjs';
+
+describe('etatDunParcours — un parcours que personne ne joue est un rouge, pas un gris', () => {
+  // Issue #110. `agent-flows.spec.ts` vivait dans le dépôt depuis un an en
+  // réclamant un LM Studio que personne ne lançait. Le portail l'affichait
+  // « never run here » en gris neutre, au milieu des parcours simplement non
+  // rapportés — un fichier mort avait donc exactement la même couleur qu'un
+  // fichier sain dont le rapport manquait.
+  it('jouParLaCi false ⇒ rouge, et le mot le dit', () => {
+    const e = etatDunParcours({ nom: 'a.spec.ts', cas: 3, jouParLaCi: false, resultat: null });
+    expect(e.rouge).toBe(true);
+    expect(e.mot).toBe('never played');
+  });
+
+  it('un rapport local ne rachète pas un parcours qu’aucune CI ne joue', () => {
+    // Le fait mesuré est « joué par une intégration continue », pas « quelqu’un
+    // l’a lancé une fois ». Un vert obtenu sur la machine d’un développeur ne
+    // garde aucune régression.
+    const e = etatDunParcours({
+      nom: 'a.spec.ts',
+      cas: 3,
+      jouParLaCi: false,
+      resultat: { total: 3, vert: 3, rouge: 0, instable: 0, ignoré: 0 },
+    });
+    expect(e.rouge).toBe(true);
+    expect(e.mot).toBe('never played');
+  });
+
+  it('joué par la CI mais sans rapport ici ⇒ inconnu, jamais rouge', () => {
+    // Un rendu local n’a pas de rapport Playwright. Peindre ces trente lignes
+    // en rouge ferait une page entièrement rouge qui ne veut plus rien dire.
+    const e = etatDunParcours({ nom: 'a.spec.ts', cas: 3, jouParLaCi: true, resultat: null });
+    expect(e.rouge).toBe(false);
+    expect(e.mot).toBe('never run here');
+  });
+
+  it('joué et rapporté ⇒ le détail du rapport parle, pas l’état', () => {
+    const e = etatDunParcours({
+      nom: 'a.spec.ts',
+      cas: 3,
+      jouParLaCi: true,
+      resultat: { total: 3, vert: 3, rouge: 0, instable: 0, ignoré: 0 },
+    });
+    expect(e.rouge).toBe(false);
+    expect(e.mot).toBe(null);
+  });
+});
 
 describe('etatCi — le vert ne s’accorde qu’à ce qui a réussi', () => {
   it('tout en succès ⇒ vert', () => {
@@ -387,6 +439,194 @@ describe('parcoursDunWorkflow — nommés et balayés', () => {
   });
 });
 
+describe('parcoursDunWorkflow — un commentaire n’exécute rien', () => {
+  const TOUS = ['smoke.spec.ts', 'foo.spec.ts'];
+
+  // La PR #113 confie à ce parseur le rouge de la page Journeys et l'alerte
+  // nocturne. Or nos workflows portent plus de commentaires que de YAML, et
+  // ces commentaires NOMMENT les parcours dont ils parlent : `qa.yml` explique
+  // sur six lignes pourquoi `agent-flows.spec.ts` était exclu. Une phrase
+  // d'explication suffisait donc à déclarer un fichier joué.
+  it('une ligne de commentaire ne marque aucun parcours joué', () => {
+    const wf = `
+      # see tests/e2e/foo.spec.ts for the journey this replaces
+      - name: Typecheck
+        run: pnpm typecheck`;
+    const r = parcoursDunWorkflow(wf, TOUS);
+    expect(r.joues).toEqual([]);
+    expect(r.nommes).toEqual([]);
+  });
+
+  it('un commentaire EN FIN DE LIGNE ne marque rien non plus', () => {
+    const wf = `
+      - name: Smoke
+        run: npx playwright test tests/e2e/smoke.spec.ts  # and not tests/e2e/foo.spec.ts`;
+    const r = parcoursDunWorkflow(wf, TOUS);
+    expect(r.joues).toEqual(['smoke.spec.ts']);
+  });
+
+  it('un # entre guillemets reste du texte, pas un commentaire', () => {
+    const wf = `
+      - run: echo "tests/e2e/smoke.spec.ts # tests/e2e/foo.spec.ts"`;
+    const r = parcoursDunWorkflow(wf, TOUS);
+    expect(r.joues.sort()).toEqual(['foo.spec.ts', 'smoke.spec.ts']);
+  });
+
+  it('sansCommentairesYaml garde la ligne, il la tronque', () => {
+    const SAUT = String.fromCharCode(10);
+    expect(sansCommentairesYaml(`a: 1 # note${SAUT}b: 2`)).toBe(`a: 1 ${SAUT}b: 2`);
+    // Un `#` collé à un mot n'ouvre pas de commentaire en YAML.
+    expect(sansCommentairesYaml("- cron: '17 3 * * *'")).toBe("- cron: '17 3 * * *'");
+    expect(sansCommentairesYaml('run: gh issue view #12')).toBe('run: gh issue view ');
+  });
+});
+
+describe('cadenceAffichee — le bac et la couleur sortent de la MÊME définition', () => {
+  // La page Journeys recalculait son libellé de bac (`p.cadence ?? (p.ciIllisible
+  // ? … : …)`). Deux définitions pour une même chose : le jour où un état
+  // s'ajoute, le bac et la couleur de la ligne se contredisent en silence.
+  it('un parcours joué se range sous sa cadence', () => {
+    expect(cadenceAffichee({ jouParLaCi: true, cadence: 'every night' })).toBe('every night');
+  });
+
+  it('sans CI, le bac est le MOT d’etatDunParcours — les deux, toujours', () => {
+    for (const p of [
+      { jouParLaCi: false },
+      { jouParLaCi: false, ciIllisible: true },
+      { jouParLaCi: true, cadence: 'every pull request' },
+    ]) {
+      const attendu = p.cadence ?? etatDunParcours(p).mot;
+      expect(cadenceAffichee(p)).toBe(attendu);
+    }
+  });
+
+  it('tout bac que cadenceAffichee peut rendre existe dans l’ORDRE de la page', () => {
+    const possibles = [
+      { jouParLaCi: true, cadence: 'every pull request' },
+      { jouParLaCi: true, cadence: 'every push to main' },
+      { jouParLaCi: true, cadence: 'every night' },
+      { jouParLaCi: true, cadence: 'by hand' },
+      { jouParLaCi: false },
+      { jouParLaCi: false, ciIllisible: true },
+    ].map(cadenceAffichee);
+    for (const bac of possibles) expect(ORDRE_DES_BACS).toContain(bac);
+  });
+
+  it('la page ne recalcule plus le libellé : elle prend celui de lib.mjs', () => {
+    const build = readFileSync(join(RACINE, 'apps', 'qa', 'build.mjs'), 'utf8');
+    expect(build).toContain('cadenceAffichee(p)');
+    expect(build).toContain('ORDRE_DES_BACS');
+    // Aucune reconstruction locale du bac : c'est la forme exacte qui avait
+    // créé la seconde définition.
+    expect(build).not.toMatch(/p\.cadence\s*\?\?/);
+  });
+});
+
+describe('parcoursDunWorkflow — une exclusion se lit sous TOUTES ses formes', () => {
+  const TOUS = ['smoke.spec.ts', 'foo.spec.ts', 'bar.spec.ts'];
+  const avec = (tuyau) =>
+    parcoursDunWorkflow(
+      `      - run: |
+          mapfile -t specs < <(ls tests/e2e/*.spec.ts${tuyau})
+          npx playwright test`,
+      TOUS,
+    );
+
+  // Le parseur ne connaissait que les simples quotes. Réintroduire une
+  // exclusion autrement la rendait INVISIBLE : le parcours exclu restait dans
+  // `joues`, donc vert et hors de l'alerte, et rien ne se levait puisque le
+  // `ls` était bien reconnu. Un faux vert, dans le lot écrit pour les tuer.
+  it('à guillemets DOUBLES, l’exclusion compte', () => {
+    const r = avec(` | grep -v "foo.spec.ts"`);
+    expect(r.illisible).toBe(false);
+    expect(r.exclus).toEqual(['foo.spec.ts']);
+    expect(r.joues).not.toContain('foo.spec.ts');
+  });
+
+  it('SANS quotes, l’exclusion compte aussi', () => {
+    const r = avec(' | grep -v foo.spec.ts');
+    expect(r.illisible).toBe(false);
+    expect(r.exclus).toEqual(['foo.spec.ts']);
+    expect(r.joues).not.toContain('foo.spec.ts');
+  });
+
+  it('deux exclusions à la file comptent toutes les deux', () => {
+    const r = avec(` | grep -v 'foo.spec.ts' | grep -v "bar.spec.ts"`);
+    expect(r.exclus.sort()).toEqual(['bar.spec.ts', 'foo.spec.ts']);
+    expect(r.joues).toEqual(['smoke.spec.ts']);
+  });
+
+  it('une forme INCONNUE rend illisible, jamais « tout est joué »', () => {
+    for (const tuyau of [
+      ` | grep -vE 'foo.spec.ts|bar.spec.ts'`,
+      ` | grep -v -e 'foo.spec.ts'`,
+      ' | head -n 3',
+      ` | sed '1d'`,
+    ]) {
+      const r = avec(tuyau);
+      expect(r.illisible).toBe(true);
+      expect(r.joues).toEqual([]);
+    }
+  });
+
+  it('un balayage SANS tuyau joue tout, et n’est pas illisible', () => {
+    const r = avec('');
+    expect(r.illisible).toBe(false);
+    expect(r.joues.sort()).toEqual(['bar.spec.ts', 'foo.spec.ts', 'smoke.spec.ts']);
+  });
+
+  it('exclusionsDuBalayage ne prend pas la parenthèse de fin pour un filtre', () => {
+    expect(exclusionsDuBalayage(')')).toEqual({ exclus: [], illisible: false });
+    expect(exclusionsDuBalayage('')).toEqual({ exclus: [], illisible: false });
+  });
+});
+
+describe('cadenceParParcours — un workflow qu’on lance à la main ne garde rien', () => {
+  // Le trou du parseur : `jouParLaCi` était `Map.has(nom)`, et la carte prenait
+  // TOUS les workflows, cadence comprise. Un `workflow_dispatch` seul — que
+  // personne ne déclenche — rendait donc un parcours « joué », donc non rouge.
+  it('un workflow dispatch-only ne marque rien joué', () => {
+    const c = cadenceParParcours([
+      { fichier: '.github/workflows/manuel.yml', cadence: 'by hand', specsNommees: ['a.spec.ts'] },
+    ]);
+    expect(c.has('a.spec.ts')).toBe(false);
+  });
+
+  it('chaque PR l’emporte sur la nuit, quel que soit l’ordre', () => {
+    const nuit = { cadence: 'every night', specsNommees: ['a.spec.ts'] };
+    const pr = { cadence: 'every pull request', specsNommees: ['a.spec.ts'] };
+    expect(cadenceParParcours([nuit, pr]).get('a.spec.ts')).toBe('every pull request');
+    expect(cadenceParParcours([pr, nuit]).get('a.spec.ts')).toBe('every pull request');
+  });
+});
+
+describe('parcoursDunWorkflow — une forme non comprise se DIT', () => {
+  // Quand la forme de balayage de `qa.yml` change, tout devenait « jamais
+  // joué » : trente parcours affichés morts pour une panne de LECTURE, et
+  // l'alerte pointait le mauvais fichier.
+  it('un workflow qui joue le dossier sans forme connue est ILLISIBLE, pas vide', () => {
+    const r = parcoursDunWorkflow('- run: npx playwright test tests/e2e', ['a.spec.ts']);
+    expect(r.illisible).toBe(true);
+    expect(r.joues).toEqual([]);
+  });
+
+  it('un workflow qui ne parle pas du dossier n’est pas illisible', () => {
+    expect(parcoursDunWorkflow('- run: pnpm typecheck', ['a.spec.ts']).illisible).toBe(false);
+  });
+
+  it('un parcours sous un workflow illisible n’est NI vert NI rouge', () => {
+    const e = etatDunParcours({ nom: 'a.spec.ts', jouParLaCi: false, ciIllisible: true });
+    expect(e.rouge).toBe(false);
+    expect(e.mot).toBe('workflow unreadable');
+  });
+
+  it('sans le drapeau, le même parcours reste un rouge nommé', () => {
+    const e = etatDunParcours({ nom: 'a.spec.ts', jouParLaCi: false });
+    expect(e.rouge).toBe(true);
+    expect(e.mot).toBe('never played');
+  });
+});
+
 // ─── La gravité (issue #65) ───────────────────────────────────────────────────
 
 describe('ecartsDe — le produit passe avant le dépôt', () => {
@@ -407,6 +647,45 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
     paquets: [],
     ci: [],
     ...extra,
+  });
+
+  // Issue #110 — le portail doit compter ce que personne ne joue.
+  it('un seul parcours non joué suffit à réveiller quelqu’un', () => {
+    const e = ecartsDe(SNAP({ parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: false }] }), [
+      {},
+      {},
+    ]);
+    const x = e.find((y) => /never played/.test(y.titre));
+    expect(x).toBeTruthy();
+    expect(x.gravite).toBe('haute');
+    expect(alertes(e)).toContain(x);
+    expect(x.quoi).toContain('a.spec.ts');
+  });
+
+  it('tous les parcours joués ⇒ pas d’écart du tout', () => {
+    const e = ecartsDe(SNAP({ parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: true }] }), [
+      {},
+      {},
+    ]);
+    expect(e.some((y) => /never played/.test(y.titre))).toBe(false);
+  });
+
+  // Une panne de lecture n'est pas un parcours mort, et elle ne s'adresse pas
+  // au même fichier. L'écart nomme le WORKFLOW, et la ligne du parcours cesse
+  // d'être rouge.
+  it('un workflow illisible se dit comme tel, et ne tue aucun parcours', () => {
+    const e = ecartsDe(
+      SNAP({
+        parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: false, ciIllisible: true }],
+        ci: [{ fichier: '.github/workflows/qa.yml', parcoursIllisibles: true }],
+      }),
+      [{}, {}],
+    );
+    const x = e.find((y) => /unreadable/.test(y.titre));
+    expect(x).toBeTruthy();
+    expect(x.gravite).toBe('haute');
+    expect(x.quoi).toEqual(['.github/workflows/qa.yml']);
+    expect(e.some((y) => /never played/.test(y.titre))).toBe(false);
   });
 
   it('une preuve d’ÉCRAN qui échoue est haute, et le titre dit QUEL niveau', () => {

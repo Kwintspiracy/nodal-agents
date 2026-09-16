@@ -117,6 +117,67 @@ export function sortDuCas(essais) {
   return 'rouge';
 }
 
+/**
+ * Ce qu'il faut dire d'un parcours AVANT de regarder son dernier rapport.
+ *
+ * Trois états, et le premier est le seul qui soit une faute du dépôt :
+ *
+ *  - `jamais joué` — le fichier existe, aucune intégration continue ne le
+ *    lance. C'est un ROUGE, et il porte son nom. Le portail l'affichait
+ *    « never run here » en gris neutre, la même couleur qu'un parcours sain
+ *    dont le rapport manque : `agent-flows.spec.ts` a passé un an ainsi, à
+ *    réclamer un LM Studio que personne ne lançait (issue #110). Un gris ne
+ *    demande rien à personne.
+ *  - `sans rapport` — la CI le joue, ce rendu-ci n'a simplement pas son
+ *    rapport Playwright (un rendu local n'en a jamais). Inconnu, pas rouge :
+ *    peindre trente lignes en rouge sur une machine de développeur ferait une
+ *    page qui ne veut plus rien dire.
+ *  - `joué` — le rapport parle, et c'est lui qui décide de la couleur.
+ *
+ * Un rapport local ne rachète PAS un parcours qu'aucune CI ne joue : le fait
+ * mesuré est « gardé par une intégration continue », pas « lancé une fois ».
+ */
+export function etatDunParcours(p) {
+  // Un workflow dont on n'a pas su lire la forme ne prouve RIEN, ni dans un
+  // sens ni dans l'autre. Le dire « jamais joué » serait une affirmation qu'on
+  // ne peut pas faire — et elle peindrait trente lignes en rouge sur une panne
+  // de lecture du portail, pas du dépôt.
+  if (!p?.jouParLaCi && p?.ciIllisible) {
+    return { cle: 'ci illisible', rouge: false, mot: 'workflow unreadable' };
+  }
+  if (!p?.jouParLaCi) return { cle: 'jamais joué', rouge: true, mot: 'never played' };
+  if (!p.resultat) return { cle: 'sans rapport', rouge: false, mot: 'never run here' };
+  return { cle: 'joué', rouge: false, mot: null };
+}
+
+/**
+ * Sous quel titre un parcours se range sur la page Journeys.
+ *
+ * Sa cadence quand une CI le joue ; sinon le MOT d'`etatDunParcours`, et non un
+ * libellé recalculé. La page en avait un à elle (`p.cadence ?? (p.ciIllisible ?
+ * … : …)`) : deux définitions d'une même chose, donc un bac et une couleur de
+ * ligne qui se contrediront le jour où un quatrième état apparaîtra, sans que
+ * rien ne le dise (revue de la PR #113, 2e passe).
+ */
+export function cadenceAffichee(p) {
+  return p?.cadence ?? etatDunParcours(p).mot;
+}
+
+/**
+ * Les bacs de la page Journeys, du plus protecteur au moins protecteur.
+ *
+ * Tout ce que `cadenceAffichee` peut rendre DOIT figurer ici : un libellé
+ * absent de cette liste ferait disparaître ses parcours de la page en silence.
+ */
+export const ORDRE_DES_BACS = [
+  'every pull request',
+  'every push to main',
+  'every night',
+  'by hand',
+  'never played',
+  'workflow unreadable',
+];
+
 /** Le compte d'un fichier de parcours, par sort. */
 export function compterParcours(cas) {
   const c = { total: 0, vert: 0, rouge: 0, ignoré: 0, instable: 0 };
@@ -130,6 +191,44 @@ export function compterParcours(cas) {
 // ─── Ce qui déclenche un workflow, et à quelle cadence ────────────────────────
 
 /**
+ * Le texte d'un workflow SANS ses commentaires.
+ *
+ * Tout ce que ce fichier lit d'un workflow — ses déclencheurs, les parcours
+ * qu'il joue — se lisait dans le texte entier, commentaires compris. Or nos
+ * workflows sont abondamment commentés, et ces commentaires nomment les choses
+ * dont ils parlent : `qa.yml` explique en toutes lettres pourquoi
+ * `agent-flows.spec.ts` était exclu, `docs.yml` pourquoi il prend
+ * `pull_request_target` « et non `pull_request` ». Une phrase d'explication
+ * suffisait donc à déclarer un parcours joué, ou à inventer un déclencheur.
+ *
+ * Un commentaire YAML commence à un `#` en début de ligne ou précédé d'une
+ * espace, hors chaîne — `- cron: '17 3 * * *'` et `echo "a # b"` n'en portent
+ * aucun. Les lignes sont GARDÉES (tronquées, jamais supprimées) : les regex
+ * ancrées sur `^` qui lisent ce texte comptent sur la structure des lignes.
+ */
+export function sansCommentairesYaml(texte) {
+  return String(texte ?? '')
+    .split('\n')
+    .map((ligne) => {
+      let guillemet = null;
+      for (let i = 0; i < ligne.length; i += 1) {
+        const c = ligne[i];
+        if (guillemet) {
+          if (c === guillemet) guillemet = null;
+          continue;
+        }
+        if (c === "'" || c === '"') {
+          guillemet = c;
+          continue;
+        }
+        if (c === '#' && (i === 0 || /\s/.test(ligne[i - 1]))) return ligne.slice(0, i);
+      }
+      return ligne;
+    })
+    .join('\n');
+}
+
+/**
  * Les événements qui lancent un workflow, lus dans son texte.
  *
  * Vit ici, sous test, parce que la première version a passé une journée à
@@ -141,7 +240,8 @@ export function compterParcours(cas) {
  *
  * Une détection muette qui se trompe est pire qu'une absente : elle répond.
  */
-export function declencheursDunWorkflow(texte) {
+export function declencheursDunWorkflow(texte0) {
+  const texte = sansCommentairesYaml(texte0);
   if (!/^on:/m.test(texte)) return [];
   const out = [];
   if (/^\s*push:/m.test(texte)) out.push('push');
@@ -158,12 +258,17 @@ export function declencheursDunWorkflow(texte) {
  * régression avant le merge ; joué chaque nuit, il la constate après. Les
  * confondre, c'est appeler « couvert » un parcours qui ne garde rien.
  */
+/** La cadence qui BLOQUE — la plus forte des quatre. */
+export const CADENCE_CHAQUE_PR = 'every pull request';
+/** La cadence qui ne garde rien : personne ne la déclenche tout seul. */
+export const CADENCE_A_LA_MAIN = 'by hand';
+
 export function cadenceDe(declencheurs) {
   const d = declencheurs ?? [];
-  if (d.includes('pull_request')) return 'every pull request';
+  if (d.includes('pull_request')) return CADENCE_CHAQUE_PR;
   if (d.includes('schedule')) return 'every night';
   if (d.includes('push')) return 'every push to main';
-  return 'by hand';
+  return CADENCE_A_LA_MAIN;
 }
 
 // ─── Ce qu'une PR coûte en contrôles ──────────────────────────────────────────
@@ -276,6 +381,48 @@ export function prixDeLaCi(runs) {
 
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
+/** Le balayage, et TOUT ce qui le suit sur sa ligne — c'est là que les filtres vivent. */
+const BALAYAGE = /ls\s+tests\/e2e\/\*\.spec\.ts([^\n]*)/;
+
+/**
+ * Un segment de tuyau qui retire un parcours : `grep -v` et son motif, dans
+ * les trois façons de l'écrire en shell.
+ */
+const EXCLUSION =
+  /^grep\s+-v\s+(?:'([\w.-]+\.spec\.ts)'|"([\w.-]+\.spec\.ts)"|([\w.-]+\.spec\.ts))$/;
+
+/**
+ * Ce que le tuyau qui suit le balayage retire — ou l'aveu qu'on ne sait pas.
+ *
+ * La première version ne connaissait QUE `grep -v 'x.spec.ts'` à simples
+ * quotes. Réintroduire une exclusion sous n'importe quelle autre forme
+ * (`"x.spec.ts"`, sans quotes, `grep -vE`, `grep -v -e`, `head`, `sed`…) la
+ * rendait invisible : le parcours exclu restait dans `joues`, donc VERT et
+ * absent de l'alerte, et aucun drapeau ne se levait puisque le `ls` était bien
+ * reconnu. C'est le faux-vert que ce lot existe pour tuer, à l'endroit même où
+ * il le tue (revue de la PR #113, 2e passe).
+ *
+ * Trois formes se lisent. Tout le reste rend `illisible` : un tuyau qu'on ne
+ * comprend pas ne vaut pas mieux qu'un tuyau absent, et « workflow unreadable »
+ * est une réponse honnête là où « tout est joué » est une invention.
+ */
+export function exclusionsDuBalayage(suite) {
+  // La queue de la substitution de processus — `…)` de `< <(ls … )` — n'est pas
+  // un segment de tuyau. Les quotes, elles, sont GARDÉES : les retirer casserait
+  // la forme à guillemets doubles, qui est justement une de celles à lire.
+  const tuyau = String(suite ?? '').replace(/[\s)]*$/, '');
+  if (tuyau.trim() === '') return { exclus: [], illisible: false };
+
+  const exclus = [];
+  for (const segment of tuyau.split('|').map((s) => s.trim())) {
+    if (segment === '') continue;
+    const m = EXCLUSION.exec(segment);
+    if (!m) return { exclus: [], illisible: true };
+    exclus.push(m[1] ?? m[2] ?? m[3]);
+  }
+  return { exclus, illisible: false };
+}
+
 /**
  * Les parcours qu'un workflow exécute.
  *
@@ -290,18 +437,68 @@ export function prixDeLaCi(runs) {
  * que 28 parcours ne tournent jamais alors qu'ils tournaient chaque nuit
  * (revue Codex, PR #51).
  */
-export function parcoursDunWorkflow(texte, tousLesParcours) {
+export function parcoursDunWorkflow(texte0, tousLesParcours) {
+  // Les commentaires ne jouent rien. Ils EXPLIQUENT, souvent en nommant le
+  // parcours dont ils parlent — `qa.yml` raconte sur six lignes pourquoi
+  // `agent-flows.spec.ts` était exclu. Les lire, c'était laisser une phrase
+  // d'explication tenir lieu d'exécution.
+  const texte = sansCommentairesYaml(texte0);
   const nommes = [...texte.matchAll(/tests\/e2e\/([\w.-]+\.spec\.ts)/g)].map((m) => m[1]);
 
   // Un balayage : `ls tests/e2e/*.spec.ts`, avec ses exclusions éventuelles.
-  const balaye = /ls\s+tests\/e2e\/\*\.spec\.ts/.test(texte);
-  if (!balaye) return { nommes: [...new Set(nommes)], balaye: false, joues: [...new Set(nommes)] };
+  const balayage = BALAYAGE.exec(texte);
+  const balaye = balayage !== null;
+  if (!balaye) {
+    // Le workflow parle du dossier des parcours, et pourtant on n'en a tiré
+    // NI un nom NI un balayage : sa forme a changé sous nos pieds (un
+    // `playwright test tests/e2e` suffit). Rendre « aucun parcours joué »
+    // serait répondre à une question qu'on n'a pas comprise — et le portail
+    // afficherait trente parcours morts sur une panne de LECTURE. On le dit.
+    const illisible = nommes.length === 0 && /tests\/e2e/.test(texte);
+    const uniques = [...new Set(nommes)];
+    return { nommes: uniques, balaye: false, exclus: [], joues: uniques, illisible };
+  }
 
-  const exclus = new Set(
-    [...texte.matchAll(/grep\s+-v\s+'([\w.-]+\.spec\.ts)'/g)].map((m) => m[1]),
-  );
+  const filtre = exclusionsDuBalayage(balayage[1] ?? '');
+  if (filtre.illisible) {
+    // Le `ls` est là ; la SUITE du tuyau ne se lit pas. Répondre « tout est
+    // joué » inventerait un vert sur un filtre qu'on n'a pas compris — le
+    // faux-vert que ce lot existe pour tuer. On ne sait pas, et on le dit.
+    return { nommes: [...new Set(nommes)], balaye: true, exclus: [], joues: [], illisible: true };
+  }
+  const exclus = new Set(filtre.exclus);
   const joues = (tousLesParcours ?? []).filter((n) => !exclus.has(n));
-  return { nommes: [...new Set(nommes)], balaye: true, exclus: [...exclus], joues };
+  return {
+    nommes: [...new Set(nommes)],
+    balaye: true,
+    exclus: [...exclus],
+    joues,
+    illisible: false,
+  };
+}
+
+/**
+ * Quel workflow joue quel parcours, et à quelle cadence — la SEULE définition.
+ *
+ * Deux choses s'y décident, et elles se lisaient nulle part :
+ *
+ *  - Un workflow qu'il faut lancer À LA MAIN ne garde rien. Le compter,
+ *    c'était laisser un `workflow_dispatch` que personne ne déclenche rendre
+ *    un parcours « joué », donc non rouge : exactement le gris que ce lot
+ *    remplace par un rouge nommé (issue #110).
+ *  - « chaque PR » est la cadence la plus forte : elle l'emporte sur une
+ *    mesure nocturne qui joue le même fichier.
+ */
+export function cadenceParParcours(workflows) {
+  const parNom = new Map();
+  for (const w of workflows ?? []) {
+    if (!w?.cadence || w.cadence === CADENCE_A_LA_MAIN) continue;
+    for (const nom of w.specsNommees ?? []) {
+      if (parNom.get(nom) === CADENCE_CHAQUE_PR) continue;
+      parNom.set(nom, w.cadence);
+    }
+  }
+  return parNom;
 }
 
 /**
@@ -928,7 +1125,22 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   }
 
   // ── Le dépôt. Réel, mais jamais au-dessus du produit.
-  const nonJoues = (s.parcours ?? []).filter((p) => !p.jouParLaCi);
+  // Même définition que la page Journeys, une seule fois : l'écart et la
+  // couleur d'une ligne ne peuvent pas diverger.
+  // Une panne de LECTURE se dit avant tout ce qu'on croit avoir lu. Sans elle,
+  // un workflow dont la forme a changé faisait afficher « 30 parcours jamais
+  // joués » — un diagnostic faux, et adressé au mauvais fichier.
+  const illisibles = (s.ci ?? []).filter((w) => w.parcoursIllisibles);
+  if (illisibles.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${illisibles.length} workflow(s) unreadable: the journeys they play cannot be told`,
+      detail: `The file names the e2e directory, but neither a named spec nor the sweep the portal knows how to read. Nothing is said about those journeys: this is a hole in the portal's reading, not a dead journey in the repository. Fix the reader, or put the sweep back in the shape it knows.`,
+      quoi: illisibles.map((w) => w.fichier),
+    });
+  }
+
+  const nonJoues = (s.parcours ?? []).filter((p) => etatDunParcours(p).rouge);
   if (nonJoues.length > 0) {
     const cas = nonJoues.reduce((a, p) => a + p.cas, 0);
     out.push({

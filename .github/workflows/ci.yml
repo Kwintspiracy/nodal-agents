@@ -304,11 +304,9 @@ jobs:
   #
   # Si ce job flake, la cause est à traiter — pas le drapeau à remettre.
   #
-  # Deux parcours, pas trois : l'app démarre et se navigue, l'onglet Autonomie
-  # répond. Le troisième du plan (agent-flows) est sorti le 10/08 — il sonde un
-  # LLM local sur localhost:1234, qu'aucun runner n'aura jamais. Lancer les 31
-  # fichiers coûterait un ordre de grandeur de plus que ce que ça rapporte
-  # aujourd'hui.
+  # Deux parcours seulement : l'app démarre et se navigue, l'onglet Autonomie
+  # répond. Lancer tous les fichiers ici coûterait un ordre de grandeur de plus
+  # que ce que ça rapporte ; la mesure nocturne (`qa.yml`) les joue TOUS.
   e2e-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -353,19 +351,21 @@ jobs:
           done
           echo "dashboard never answered on :3000"; exit 1
 
-      # agent-flows.spec.ts is deliberately NOT in this list. It calls
-      # requireLmStudio(), which probes a local LLM server on localhost:1234 —
-      # it cannot exist on a GitHub runner, so the spec fails at its first line
-      # ("LM_Studio_unresponsive") no matter how healthy the stack is. It stays
-      # a local-only suite until those journeys run against a stubbed LLM.
-      # delegation-outcome.spec.ts joins the list because it needs no model: it
-      # seeds the rows and reads the thread, so it runs anywhere the stack does.
-      - name: Three journeys — boot/navigation, the autonomy tab, delegation outcomes
+      # Les autres parcours ne sont pas ici pour une raison de COÛT, pas de
+      # capacité : depuis la sortie d'`agent-flows.spec.ts` (issue #110), plus
+      # aucun fichier de `tests/e2e` n'exige de modèle, donc tous tournent sur
+      # un runner. La mesure nocturne les joue tous, sans exception.
+      # memory-kept.spec.ts joins the list because it is NEW (issue #110) and
+      # because the whole point of that issue is that a journey nobody plays
+      # proves nothing. It needs no model: it records a fact through the
+      # screen and asks for it back.
+      - name: Four journeys — boot/navigation, the autonomy tab, delegation outcomes, memory
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
           tests/e2e/autonomy-approvals.spec.ts
           tests/e2e/delegation-outcome.spec.ts
+          tests/e2e/memory-kept.spec.ts
 
       - name: Upload the report on failure
         if: failure()
