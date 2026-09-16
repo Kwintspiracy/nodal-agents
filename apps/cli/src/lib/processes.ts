@@ -6,6 +6,23 @@ import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 import { rotateLogIfNeeded } from './log-rotation.ts';
+import {
+  confirmRecordedPid,
+  confirmTree,
+  formatRefusal,
+  type LiveProcess,
+  type RecordedProcess,
+} from './pid-confirm.ts';
+
+/** A snapshot row as `pid-confirm` wants it. A row with no name is still a row. */
+function asLiveRecord(rec: ProcessRecord): LiveProcess {
+  return { pid: rec.pid, startedAt: rec.startedAt, name: rec.name ?? '' };
+}
+
+/** The same, for a row that may be absent. */
+function asLive(rec: ProcessRecord | undefined): LiveProcess | undefined {
+  return rec === undefined ? undefined : asLiveRecord(rec);
+}
 
 export type SpawnResult = ResultPromise;
 
@@ -87,6 +104,20 @@ export interface ProcessRecord {
   pid: number;
   ppid: number;
   startedAt: string;
+  /**
+   * The executable name, e.g. `node.exe`.
+   *
+   * Added for #100. A creation tick tells one GENERATION of a pid from the
+   * next, which is enough to catch an ordinary recycled number — but it says
+   * nothing about what the number now IS, and the kill that actually hurts is
+   * the one aimed at a foreign `postgres.exe`. The tick and the name answer two
+   * different questions and neither replaces the other.
+   *
+   * Optional in the type because a pid file written before #100 carries records
+   * without it; `confirmRecordedPid` treats a missing recorded name as one less
+   * proof, never as a pass.
+   */
+  name?: string;
 }
 
 /**
@@ -177,14 +208,18 @@ async function readProcessTableWin(timeoutMs: number): Promise<Map<number, Proce
       // WRONG one, which is the failure mode worth fearing here: this list
       // decides what gets killed.
       const parts = line.trim().split('|');
-      if (parts.length !== 3) continue;
+      if (parts.length !== 4) continue;
       const pid = Number.parseInt(parts[0] ?? '', 10);
       const ppid = Number.parseInt(parts[1] ?? '', 10);
       const startedAt = (parts[2] ?? '').trim();
+      // The executable name comes LAST, after the three numbers, for the same
+      // reason the command line does in `orphans.ts`: it is the field most
+      // likely to surprise the split, so nothing sits behind it.
+      const name = (parts[3] ?? '').trim();
       // No parent and no creation time means the row cannot serve either
       // purpose — walking the tree, or proving identity before a kill.
       if (!Number.isInteger(pid) || !Number.isInteger(ppid) || startedAt === '') continue;
-      out.set(pid, { pid, ppid, startedAt });
+      out.set(pid, { pid, ppid, startedAt, name });
     }
 
     if (out.size > 0) {
@@ -215,8 +250,8 @@ const PROCESS_TABLE_QUERIES = [
     name: 'Get-CimInstance',
     // -Property keeps WMI from materialising every column of every process.
     command:
-      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate | ' +
-      'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)" }',
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name | ' +
+      'ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)|$($_.Name)" }',
   },
   {
     name: 'Get-WmiObject',
@@ -236,7 +271,8 @@ const PROCESS_TABLE_QUERIES = [
     // row, which the parser correctly discarded.)
     command:
       'Get-WmiObject Win32_Process | ForEach-Object { ' +
-      '"$($_.ProcessId)|$($_.ParentProcessId)|$($_.ConvertToDateTime($_.CreationDate).Ticks)" }',
+      '"$($_.ProcessId)|$($_.ParentProcessId)|' +
+      '$($_.ConvertToDateTime($_.CreationDate).Ticks)|$($_.Name)" }',
   },
 ] as const;
 
@@ -283,7 +319,135 @@ export function walkDescendants(
   return out;
 }
 
-export async function killPidTree(pid: number): Promise<void> {
+/**
+ * The postgres pids this install can PROVE are its own, asked of the one place
+ * that decides (`postgresProcessesForDataDir`, the rule #98 arrived at).
+ *
+ * Reached by dynamic import rather than a top-level one so the module graph
+ * stays a line — `postgres.ts` is the heavier module and nothing here needs it
+ * unless a kill is actually about to happen.
+ */
+async function ownedPostgres(): Promise<ReadonlySet<number>> {
+  const { postgresProcessesForDataDir } = await import('./postgres.ts');
+  return new Set((await postgresProcessesForDataDir()).owned);
+}
+
+/**
+ * The same, but only when there is actually a Postgres to arbitrate.
+ *
+ * The probe is a PowerShell CIM query: ~0.5s warm, ten seconds on a machine
+ * that will not answer. Asking it on every shutdown — the first shape of this
+ * fix — put that on the critical path of every `killPidTree`, and the GitHub
+ * Windows runner, which cannot enumerate its process table at all, timed out a
+ * `detach.test.ts` case that had never been near a database.
+ *
+ * Nothing is lost by asking late: the question only ever decides the fate of a
+ * `postgres.exe`, so where there is none in the reading, the empty answer is
+ * the correct one and it is free.
+ */
+async function ownedPostgresIfAnyInvolved(
+  candidates: readonly { name?: string }[],
+): Promise<ReadonlySet<number>> {
+  const EMPTY: ReadonlySet<number> = new Set();
+  const anyPostgres = candidates.some((c) => (c.name ?? '').toLowerCase() === 'postgres.exe');
+  return anyPostgres ? await ownedPostgres() : EMPTY;
+}
+
+/**
+ * Root refusals that stop the ROOT from being signalled, whoever asked.
+ *
+ * `PID_GONE` is not among them — there is nothing left to signal, which is not
+ * a refusal to report. `IDENTITY_NOT_RECORDED` is not here either, because it
+ * means two different things depending on who asked; `vetoesRoot` below is
+ * where that is decided.
+ */
+const ROOT_KILL_VETO: ReadonlySet<string> = new Set([
+  'FOREIGN_POSTGRES',
+  'BINARY_CHANGED',
+  'PID_RECYCLED',
+]);
+
+/**
+ * May this root be signalled, given who asked?
+ *
+ * `IDENTITY_NOT_RECORDED` is the one verdict whose meaning depends on the
+ * caller, and reading it as one thing was a hole (review pass 2 of #114):
+ *
+ *   · a caller with NO record — `killProcessTree(child)` — is holding the
+ *     process it spawned seconds ago. There is nothing to compare and nothing
+ *     to prove; the handle is the identity, and refusing would mean no spawned
+ *     child could be stopped;
+ *   · a caller WITH a record that carries neither a creation tick nor an
+ *     executable name — a `processes.json` written before #100 — handed over a
+ *     bare number, and `confirmRecordedPid` has just said that number proves
+ *     nothing. Killing it anyway walks straight around the refusal. No caller
+ *     does this today, since `down` and `up` pre-confirm; it was a hole waiting
+ *     for the next one.
+ */
+function vetoesRoot(code: string, fromRecord: boolean): boolean {
+  if (ROOT_KILL_VETO.has(code)) return true;
+  return fromRecord && code === 'IDENTITY_NOT_RECORDED';
+}
+
+/**
+ * The members, judged again against a reading taken NOW.
+ *
+ * What each member is held to is the identity the first reading recorded for
+ * it — its creation tick and its executable name — which is a real record, not
+ * a bare number, so `confirmRecordedPid` can do its work unchanged.
+ *
+ * When the second reading cannot be taken at all, the members are swept as
+ * before and the line says the identity was not re-confirmed. That is not the
+ * root's case turned around: a reading DID happen, and it established that
+ * these pids were descendants of a process we had proved ours. Refusing on the
+ * failure of a second look would throw that fact away and leave the workers
+ * this sweep exists to catch — the ones `/T` missed — running for good.
+ */
+async function reconfirmMembers(
+  members: readonly LiveProcess[],
+  rootPid: number,
+  ownedPostgresPids: ReadonlySet<number>,
+): Promise<LiveProcess[]> {
+  const fresh = await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS);
+  if (fresh.size === 0) {
+    process.stderr.write(
+      `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${rootPid} the tree members are swept on the ` +
+        `earlier reading: the table would not answer a second time\n`,
+    );
+    return [...members];
+  }
+  const out: LiveProcess[] = [];
+  for (const member of members) {
+    const verdict = confirmRecordedPid({
+      // An empty name is a row WMI gave us without one; offering it as a
+      // recorded name would read as "it changed" the moment the second reading
+      // has one. One less proof, never a false refusal.
+      recorded: {
+        pid: member.pid,
+        startedAt: member.startedAt,
+        ...(member.name === '' ? {} : { name: member.name }),
+      },
+      live: asLive(fresh.get(member.pid)),
+      tableRead: true,
+      ownedPostgresPids,
+    });
+    if (verdict.killable) {
+      out.push(member);
+      continue;
+    }
+    // Gone is not a refusal to report — the root kill above usually takes the
+    // tree with it, which is exactly why this sweep is a backstop and not the
+    // main path.
+    if (verdict.code !== 'PID_GONE') process.stderr.write(`${formatRefusal(verdict)}\n`);
+  }
+  return out;
+}
+
+export async function killPidTree(
+  pid: number,
+  ownedPostgresPids?: ReadonlySet<number>,
+  recorded?: RecordedProcess,
+): Promise<void> {
   if (process.platform === 'win32') {
     // Snapshot the descendants BEFORE killing anything.
     //
@@ -296,23 +460,131 @@ export async function killPidTree(pid: number): Promise<void> {
     //
     // Once the parent is dead the parent/child link is gone with it, so the list
     // has to be taken first. Cheap: one WMI call, and only on the shutdown path.
-    const descendants = await descendantPidsWin(pid, SHUTDOWN_SNAPSHOT_BUDGET_MS);
+    const snapshot = await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS);
+    const descendants = walkDescendants(snapshot, pid);
 
-    try {
-      // /T = kill children too. /F = force. We don't care if it failed (the
-      // process may already be gone); the next call site already handles
-      // unreachable services.
-      await execa('taskkill', ['/T', '/F', '/PID', String(pid)], { reject: false });
-    } catch {
-      /* best-effort */
+    // WHAT IS IN THE TREE, before `/T` empties it without saying (issue #100).
+    //
+    // `taskkill /T` walks the tree at the moment it runs and force-kills every
+    // member, and until now nobody asked what those members were. A service we
+    // started can perfectly well have started a Postgres of its own against
+    // ANOTHER data directory; `/T` would take it down with the rest, which is
+    // the 2026-09-14 incident arrived at from a new direction. So: a postgres
+    // in this tree that our data dir does not claim vetoes `/T` entirely, and
+    // the rest of the tree is then killed one pid at a time, around it.
+    const owned =
+      ownedPostgresPids ??
+      (await ownedPostgresIfAnyInvolved([...descendants, snapshot.get(pid) ?? {}]));
+    // WHO ASKED — a record, or a handle. The two are not the same claim, and
+    // `vetoesRoot` is where the difference is spent. `{ pid }` stands in below
+    // only so `confirmRecordedPid` has a row to read; it is never mistaken for
+    // a record the caller actually produced.
+    const fromRecord = recorded !== undefined;
+    const { treeKillAllowed, root, foreign, killable } = confirmTree(
+      {
+        recorded: recorded ?? { pid },
+        live: asLive(snapshot.get(pid)),
+        tableRead: snapshot.size > 0,
+        ownedPostgresPids: owned,
+      },
+      descendants.map(asLiveRecord),
+      owned,
+    );
+
+    // A READING THAT NEVER HAPPENED CONFIRMS NOTHING (issue #114, review pass).
+    //
+    // `tableRead` false means the OS declined to answer — not "the tree is
+    // empty". What follows from that depends on WHERE the pid came from, and
+    // the distinction is the same one the `recorded` parameter draws:
+    //
+    //   · from a RECORD — a number written to processes.json minutes or days
+    //     ago. Nothing confirms it, so nothing is signalled. The code used to
+    //     fall through to `taskkill /F /PID <root>` here on the strength of
+    //     that number alone, which is exactly the claim #100 retired.
+    //   · from a live HANDLE — `killProcessTree(child)`, a process we spawned
+    //     seconds ago and are still holding. There is nothing to confirm: the
+    //     handle is the identity. Refusing here would mean a Windows machine
+    //     whose WMI is slow or blocked could no longer stop its own children —
+    //     which is not a hypothesis. The GitHub Windows runner does exactly
+    //     that, and the first shape of this fix left `detach.test.ts`'s
+    //     grandchild alive there. The old reach stands, and the line says the
+    //     identity was not confirmed rather than implying it was.
+    if (!root.killable && root.code === 'TABLE_UNREADABLE') {
+      if (fromRecord) {
+        process.stderr.write(`${formatRefusal(root)}\n`);
+        return;
+      }
+      process.stderr.write(
+        `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${pid} is a live handle, not a record: ` +
+          `the tree kill proceeds with the identity unconfirmed\n`,
+      );
+    }
+
+    // The root was read and the reading does not vouch for it: the number has
+    // been recycled onto another process, onto a Postgres we cannot claim, or
+    // it was written down as a bare number that proves nothing. The MEMBERS
+    // were observed as descendants in that same reading, so their parentage is
+    // current and they are still swept below — only the root is spared.
+    const rootVetoed = !root.killable && vetoesRoot(root.code, fromRecord);
+    if (rootVetoed) process.stderr.write(`${formatRefusal(root)}\n`);
+    // Nothing to signal: the pid is not in the table at all.
+    const rootGone = !root.killable && root.code === 'PID_GONE';
+
+    for (const stranger of foreign) {
+      process.stderr.write(
+        `KILL_REFUSED code=FOREIGN_POSTGRES pid=${stranger.pid} is a ${stranger.name} in the tree ` +
+          `of pid ${pid} that our data dir does not claim; the tree kill was done pid by pid around it\n`,
+      );
+    }
+
+    if (treeKillAllowed) {
+      try {
+        // /T = kill children too. /F = force. We don't care if it failed (the
+        // process may already be gone); the next call site already handles
+        // unreachable services.
+        await execa('taskkill', ['/T', '/F', '/PID', String(pid)], { reject: false });
+      } catch {
+        /* best-effort */
+      }
+    } else if (!rootVetoed && !rootGone) {
+      // No `/T`: the root alone, then the members we vouched for below.
+      try {
+        await execa('taskkill', ['/F', '/PID', String(pid)], { reject: false });
+      } catch {
+        /* best-effort */
+      }
     }
 
     // Then sweep whatever the tree walk missed. Each of these was a descendant
-    // of OUR process when we looked, so killing it is never someone else's work.
-    for (const child of descendants) {
-      if (!isPidAlive(child)) continue;
+    // of OUR process when we looked, so killing it is never someone else's work
+    // — except for the postgres exclusion above, which is why this iterates the
+    // vouched-for list and not the raw descendants.
+    //
+    // THE WINDOW. Between the reading above and the kills below sits the root
+    // kill, which takes as long as `taskkill` takes; and Windows hands a freed
+    // number to the next process that asks. So a member confirmed a moment ago
+    // can be a stranger by the time its turn comes — the same hazard the root
+    // is already held to, and it was documented for the root only (review pass
+    // 3 of #114). Each member is now re-confirmed against a FRESH reading,
+    // against the identity the FIRST reading recorded for it: same rule, same
+    // codes, same refusals.
+    //
+    // Two windows this does NOT close, said rather than implied:
+    //
+    //   · `taskkill /T` walks the tree itself, inside taskkill, and kills what
+    //     it finds. A child spawned after our reading and before that walk is
+    //     killed without ever having been seen here. It IS a descendant of a
+    //     process we proved ours, which is the whole licence `/T` runs on;
+    //     what is lost is the ability to say afterwards what was in there.
+    //   · the same gap remains between this second reading and each taskkill
+    //     below. It is smaller — no root kill sits in it — but it is not zero,
+    //     and no reading can close it. A pid is not a handle; on Windows this
+    //     is the floor.
+    const vouched = killable.length > 0 ? await reconfirmMembers(killable, pid, owned) : [];
+    for (const child of vouched) {
+      if (!isPidAlive(child.pid)) continue;
       try {
-        await execa('taskkill', ['/F', '/PID', String(child)], { reject: false });
+        await execa('taskkill', ['/F', '/PID', String(child.pid)], { reject: false });
       } catch {
         /* best-effort */
       }
@@ -620,6 +892,11 @@ export interface PidFile {
    * the tree was still intact. See `recordServiceTree`.
    */
   children?: ProcessRecord[];
+  /**
+   * The runner and web pids as the process table saw them at startup — creation
+   * tick and executable name, not just the number. See `recordServiceTree`.
+   */
+  roots?: ProcessRecord[];
 }
 
 /**
@@ -658,16 +935,38 @@ export async function recordServiceTree(pids: PidFile): Promise<void> {
   if (snapshot.size === 0) return;
 
   const children: ProcessRecord[] = [];
+  const roots: ProcessRecord[] = [];
   const seen = new Set<number>();
   for (const root of [pids.runner, pids.web]) {
     if (!root) continue;
+    // The ROOTS are recorded too, and that is the whole of #100 for the two
+    // services. `runner` and `web` were stored as bare NUMBERS, so a later
+    // `down` or `up` had nothing whatsoever to check them against: no creation
+    // tick, no executable name. A number alone is not an identity, and the next
+    // boot was killing on it.
+    const rec = snapshot.get(root);
+    if (rec) roots.push(rec);
     for (const rec of walkDescendants(snapshot, root)) {
       if (seen.has(rec.pid)) continue;
       seen.add(rec.pid);
       children.push(rec);
     }
   }
-  writePids({ ...pids, children });
+  writePids({ ...pids, children, roots });
+}
+
+/**
+ * What we recorded about a root service pid, or a bare record when the pid file
+ * predates #100 (or was written before `recordServiceTree` got to run).
+ *
+ * A bare record is REFUSED by `confirmRecordedPid`, not waved through: that is
+ * the point. `up` then reports the pid it declined to kill instead of killing
+ * a number it cannot identify.
+ */
+export function recordedRoot(pids: PidFile | null, pid: number): RecordedProcess {
+  const found = pids?.roots?.find((r) => r.pid === pid);
+  if (!found) return { pid };
+  return { pid, startedAt: found.startedAt, ...(found.name ? { name: found.name } : {}) };
 }
 
 /**
@@ -681,18 +980,37 @@ export async function recordServiceTree(pids: PidFile): Promise<void> {
  *
  * Returns the pids actually killed, so the caller can say what it did.
  */
-export async function sweepRecordedChildren(children: ProcessRecord[]): Promise<number[]> {
+export async function sweepRecordedChildren(
+  children: ProcessRecord[],
+  ownedPostgresPids?: ReadonlySet<number>,
+): Promise<number[]> {
   if (process.platform !== 'win32' || children.length === 0) return [];
   const alive = children.filter((c) => isPidAlive(c.pid));
   if (alive.length === 0) return [];
 
   const snapshot = await processSnapshotWin();
+  // An unreadable table used to mean "kill nothing", by accident: every lookup
+  // missed and every record was skipped in silence. It now means that on
+  // purpose, and says so — `confirmRecordedPid` refuses with TABLE_UNREADABLE
+  // rather than letting a guard switch itself off without a word (#100).
+  const tableRead = snapshot.size > 0;
+  const owned =
+    ownedPostgresPids ??
+    (await ownedPostgresIfAnyInvolved(alive.flatMap((rec) => [rec, snapshot.get(rec.pid) ?? {}])));
   const killed: number[] = [];
   for (const rec of alive) {
-    const now = snapshot.get(rec.pid);
-    // No entry means it died between the two probes. A different creation tick
-    // means the number was recycled and belongs to someone else now.
-    if (!now || now.startedAt !== rec.startedAt) continue;
+    const verdict = confirmRecordedPid({
+      recorded: rec,
+      live: asLive(snapshot.get(rec.pid)),
+      tableRead,
+      ownedPostgresPids: owned,
+    });
+    if (!verdict.killable) {
+      // PID_GONE is not a refusal, it is a process that died between the two
+      // probes — reporting it would turn an ordinary race into a warning.
+      if (verdict.code !== 'PID_GONE') process.stderr.write(`${formatRefusal(verdict)}\n`);
+      continue;
+    }
     try {
       await execa('taskkill', ['/F', '/PID', String(rec.pid)], { reject: false });
       killed.push(rec.pid);
