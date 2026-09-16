@@ -10,6 +10,92 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.10 — Sep 16, 2026
+
+A release about trust in what Nodal tells you. The launcher no longer kills a
+process it cannot identify, Postgres keeps a log so a crash can be read instead
+of guessed, an agent's work is credited only when the file on disk really
+changed, and the quality portal reports what nobody verified rather than
+painting it green. Every one of the six changes went through review passes
+before merging, and every finding was closed by a test that failed first.
+
+**The launcher stops what is yours, and nothing else**
+
+- **No recorded pid is killed unproven.** `up` and `down` used to signal the
+  numbers they had written down at the last start. Windows recycles numbers,
+  so a process that took the place of a dead worker could be killed in its
+  stead. A pid is now signalled only when a fresh reading of the process table
+  agrees on its name and its creation time. When the table cannot be read,
+  nothing is signalled and the line says so.
+- **A Postgres that is not yours survives a tree kill.** A service Nodal started
+  can start a Postgres of its own; the tree kill now walks around it.
+- **`up` refuses to kill a healthy stack it did not start.** A live install on
+  the configured ports was treated as leftovers to clean up. It is now named,
+  with its pids, and `up` stops there.
+- **Postgres keeps a log.** `~/.nodalai/logs/postgres/`, one directory per data
+  directory, rotated daily. A backend crash can now be read instead of
+  attributed by guesswork.
+- **`down` never sits silently.** The graceful stop has a budget; past it,
+  `down` reports what the postmaster is still doing and the exact command to
+  end it, for a pid it confirmed. A wrong database password fails at once
+  instead of waiting three minutes with a live cluster left behind.
+
+**An agent's work is credited when the disk says so**
+
+- **A write is recognised by its content.** The fingerprint of a file carried
+  its size and a timestamp whose resolution depends on the filesystem, up to
+  two seconds on FAT. It now carries a hash of the content: a rewrite of the
+  same size in the same second is seen.
+- **A refused read is not an absent file.** A file the runner cannot open after
+  the tool ran is neither credited nor invented; the line says it could not
+  read it.
+- **A project is a project everywhere.** Six places decided whether a folder
+  was a code project; some asked for the manifest, some for the marker. They
+  now share one rule, and a job is attached to the project the agent meant to
+  write in, never to a registered subfolder of it. A folder you hid from the
+  Code screen stays hidden in the agent's context too.
+- **The chat states how delegation happens instead of ordering it.** The
+  system prompt of the chat no longer contains an imperative the chat cannot
+  carry out.
+
+**The quality portal says what nobody verified**
+
+- **The portal checks the release itself.** It reads what npm serves, what the
+  repository carries, and names the gap, prerelease versions included. When
+  npm does not answer, it says "unreachable at <time>" rather than showing a
+  stale figure.
+- **A card opened by an agent must carry proof.** Any issue or pull request
+  that bears the agent footer and no `## Verified` section with a command and
+  its output is flagged, so "done" always comes with evidence.
+- **A journey nobody plays is red, not grey.** The portal reads the CI
+  workflows themselves, comments excluded, to know which end-to-end journeys
+  actually run; a journey no workflow plays is red, and a workflow the portal
+  cannot read is said to be unreadable rather than counted as green. Two
+  journeys only one machine could ever play were retired.
+- **The homepage reads the nightly measurement.** The figures on the docs
+  homepage were typed by hand and compared to the live snapshot, which turned
+  `main` red after every nightly measurement. They are now derived from the
+  snapshot at build time, rounded down, and a missing or absurd figure stops
+  the build naming the field.
+- **`release:check` refuses to run over a live dev stack.** Building in place
+  used to overwrite the running dashboard and empty the package folder. The
+  check now probes the configured ports first, on both address families, and
+  fails loud on an unreadable configuration instead of falling back to
+  defaults.
+
+**Fixes**
+
+- **End-to-end journeys clean up their own credentials, and only their own.**
+  A journey deleted every test credential of its type, including those of a
+  run on another machine sharing the database. Each run now marks what it
+  creates and removes only that.
+- **A delegated job that produced nothing is a failure, not a completed job.**
+  The parent no longer tells you the work is "launched" when the specialist
+  returned no deliverable; the failure is delivered, in the harness's own
+  words.
+
+---
+
 ## v0.8.9 — Sep 9, 2026
 
 Nodal now proves what it builds. Until this release its verification engine had
