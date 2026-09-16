@@ -1,8 +1,9 @@
 // ports.test.ts — findFreePort returns a usable port
 
 import { describe, it, expect } from 'vitest';
-import { findFreePort, isPortBindable, DEFAULT_PORTS } from '../lib/ports.ts';
+import { findFreePort, isPortBindable, DEFAULT_PORTS, formatPortRotation } from '../lib/ports.ts';
 import { createServer } from 'net';
+import { readFileSync } from 'node:fs';
 
 /** Bind one port, resolving to false instead of throwing when the OS refuses. */
 function tryListen(server: ReturnType<typeof createServer>, port: number): Promise<boolean> {
@@ -152,5 +153,51 @@ describe('DEFAULT_PORTS', () => {
     expect(DEFAULT_PORTS.web).toBe(3000);
     expect(DEFAULT_PORTS.runner).toBe(3001);
     expect(DEFAULT_PORTS.postgres).toBe(25432);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('formatPortRotation @cap:installer-et-demarrer/moteur', () => {
+  // Review pass 3 of #114. After a hard Ctrl+C on a machine whose process table
+  // will not answer, a recorded child can still hold :3000. Every path refuses
+  // it — nothing is killed on an unconfirmed identity — and `up` rotates around
+  // it. The stack comes back on :3001 and that worker is still there, holding
+  // the old port, and nobody was ever told.
+  it('names the pid left running and says the port was abandoned, not freed', () => {
+    const lines = formatPortRotation([{ name: 'web', from: 3000, to: 3001, heldBy: 4242 }]);
+    const text = lines.join(' ');
+    expect(text).toContain('web: 3000 → 3001');
+    expect(text).toContain('pid 4242');
+    expect(text).toContain('abandoned, not freed');
+    expect(text).toMatch(/was not stopped/);
+  });
+
+  it('says nothing about a holder when no pid was measured', () => {
+    // A Windows reservation, or a ghost socket bound to a dead pid: the port is
+    // unbindable and there is nobody to name. Inventing one here is the mistake
+    // #97 made thirteen times in one incident report.
+    const lines = formatPortRotation([{ name: 'postgres', from: 25432, to: 25433, heldBy: null }]);
+    expect(lines).toEqual(['  - postgres: 25432 → 25433']);
+  });
+
+  it('is what `up` prints when it rotates, with the holder actually measured', () => {
+    // Read from source: the rotation block runs inside `runUp`, which cannot be
+    // driven here without a real config and real ports. What IS checkable is
+    // that `up` asks who holds the old port and hands the answer to this
+    // formatter — remove either and this goes red.
+    const up = readFileSync(new URL('../commands/up.ts', import.meta.url), 'utf-8');
+    const block = up.slice(up.indexOf('const portChanges'), up.indexOf('writeConfig(config)'));
+    expect(block).toContain('heldBy: await pidListeningOnPort(configured)');
+    expect(block).toContain('formatPortRotation(portChanges)');
+  });
+
+  it('reports each rotated port on its own', () => {
+    const lines = formatPortRotation([
+      { name: 'web', from: 3000, to: 3001, heldBy: 11 },
+      { name: 'runner', from: 3001, to: 3002, heldBy: null },
+    ]);
+    expect(lines.filter((l) => l.includes('→'))).toHaveLength(2);
+    expect(lines.filter((l) => l.includes('STILL HELD'))).toHaveLength(1);
   });
 });

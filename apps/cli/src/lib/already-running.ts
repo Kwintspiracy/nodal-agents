@@ -74,6 +74,20 @@ export function decideStart(evidence: RunningStackEvidence): StartVerdict {
  * What the user reads. It names the pids, because the next thing they will want
  * is to look at them — and because a refusal that cannot be checked is just an
  * obstruction.
+ *
+ * It also says exactly WHAT WAS OBSERVED rather than what we take it to mean.
+ * The first wording ended on "so this is the product running, not leftovers to
+ * clean up", and that is one reading of the evidence, not the evidence (review
+ * pass 3 of #114). The two readings that produce this refusal are a 200 on the
+ * configured runner port and a live postmaster for our data directory — and a
+ * postmaster of ours orphaned from an earlier run, sitting next to somebody
+ * else's server on that port, would produce them both. Refusing is still the
+ * right move there, since `up` signals nothing either way. Telling the user
+ * they are looking at their own running stack, when they may not be, is not:
+ * they would go hunting for a window that does not exist.
+ *
+ * So the message states the two facts, and then says what to do when they do
+ * not add up to "my stack is up".
  */
 export function formatAlreadyRunning(evidence: RunningStackEvidence): string {
   const parts = [
@@ -81,10 +95,15 @@ export function formatAlreadyRunning(evidence: RunningStackEvidence): string {
     evidence.webPid === null ? null : `web pid ${evidence.webPid}`,
     `postgres pid ${String(evidence.postmasterPid)}`,
   ].filter((p): p is string => p !== null);
+  const runnerRef = evidence.runnerPid === null ? 'that port' : `pid ${evidence.runnerPid}`;
   return (
-    `Nodal-Agents is already running (${parts.join(', ')}) — use \`nodal-agents down\` first.\n` +
-    `  Nothing was stopped. The runner is answering /api/health and the data directory\n` +
-    `  names a live postmaster, so this is the product running, not leftovers to clean up.`
+    `Nodal-Agents looks already running (${parts.join(', ')}) — use \`nodal-agents down\` first.\n` +
+    `  Nothing was stopped, and nothing was signalled.\n` +
+    `  What was observed, and only that: something answered /api/health with 200 on the\n` +
+    `  configured runner port, and postmaster.pid in our data directory names a live\n` +
+    `  postmaster. That is usually this install, up and serving.\n` +
+    `  If it is NOT yours: check ${runnerRef} to see whose server is on that port, free the\n` +
+    `  port or change it in ~/.nodalai/config.json, then run \`up\` again.`
   );
 }
 

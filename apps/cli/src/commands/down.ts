@@ -116,6 +116,38 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<bo
 }
 
 /**
+ * How long a graceful Postgres stop may take before `down` stops waiting on it.
+ *
+ * Generous: `pg_ctl stop -m fast` is normally a second or two, and a postmaster
+ * winding down background workers can be slower. What this exists to rule out
+ * is the UNBOUNDED case — a cluster in crash recovery, where the stop was
+ * measured not returning at all (issue #127, closed by this budget rather than
+ * deferred).
+ */
+const GRACEFUL_STOP_BUDGET_MS = 60_000;
+
+/**
+ * `pg.stop()`, with a deadline. True when it returned inside the budget —
+ * including when it threw, which is a real answer and the caller's re-probe
+ * knows what to do with it. False when the budget ran out first.
+ *
+ * The stop is not cancelled, because it cannot be: `pg_ctl` is a process and it
+ * keeps going. What is abandoned is the WAIT.
+ */
+export async function stopWithinBudget(
+  pg: { stop: () => Promise<void> },
+  budgetMs: number,
+): Promise<boolean> {
+  return await Promise.race([
+    pg
+      .stop()
+      .then(() => true)
+      .catch(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), budgetMs)),
+  ]);
+}
+
+/**
  * Stop the embedded Postgres gracefully via `pg.stop()` (which invokes
  * `pg_ctl stop -m fast`). A clean shutdown releases the Win32 shared-memory
  * section properly; a hard SIGTERM/SIGKILL on the postmaster pid leaves
@@ -176,7 +208,27 @@ async function stopPostgresGracefully(ctx: KillContext): Promise<boolean> {
       onError: () => {},
       onLog: () => {},
     });
-    await pg.stop();
+    // BOUNDED. `pg_ctl stop -m fast` returns once the postmaster has rolled
+    // back and detached its shared memory, and a postmaster in CRASH RECOVERY
+    // does not get there quickly — measured not returning at all within 60s on
+    // GitHub's Linux runner, after a backend had been killed from outside
+    // (`postgres-logging.pg.test.ts`, 2026-09-16). Unbounded, that is a `down`
+    // that sits in the user's terminal saying nothing, forever.
+    //
+    // Past the budget the stop is abandoned, not retried harder: the re-probe
+    // below is already the part that decides what to claim, and it has the
+    // right message for a Postgres that is still up — including the force-kill
+    // command, printed only for a pid we confirmed.
+    if (!(await stopWithinBudget(pg, GRACEFUL_STOP_BUDGET_MS))) {
+      console.log(
+        chalk.yellow(
+          `  postgres (pid ${pgPid ?? 'unknown'}) did not finish a graceful stop within ` +
+            `${GRACEFUL_STOP_BUDGET_MS / 1000}s.\n` +
+            `    A postmaster that is recovering from a crashed backend can take longer than\n` +
+            `    that. Nothing else was signalled; what it is doing now is reported below.`,
+        ),
+      );
+    }
 
     // RE-PROBE before claiming anything. `pg.stop()` resolving means pg_ctl was
     // invoked, not that the postmaster is gone — and this is the one service

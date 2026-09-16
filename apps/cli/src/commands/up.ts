@@ -22,7 +22,13 @@ import {
   buildDatabaseUrl,
   resolveAuthMode,
 } from '../lib/env.ts';
-import { isPortBindable, findFreePort, pidListeningOnPort } from '../lib/ports.ts';
+import {
+  isPortBindable,
+  findFreePort,
+  pidListeningOnPort,
+  formatPortRotation,
+  type PortRotation,
+} from '../lib/ports.ts';
 import { measuredPort } from '../lib/orphans.ts';
 import { decideStartFromProbes, AlreadyRunningError } from '../lib/already-running.ts';
 import {
@@ -591,19 +597,28 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // not bindable, rotate to a free one nearby and persist so the next boot
   // uses the working port directly.
 
-  const portChanges: Array<{ name: 'web' | 'runner' | 'postgres'; from: number; to: number }> = [];
+  const portChanges: PortRotation[] = [];
   for (const name of ['web', 'runner', 'postgres'] as const) {
     const configured = config.ports[name];
     if (await isPortBindable(configured)) continue;
     const next = await findFreePort(configured + 1);
-    portChanges.push({ name, from: configured, to: next });
+    // WHO still holds it. Asked here, at the moment of the move, because this
+    // is the only place that knows the port is being abandoned — and after a
+    // hard Ctrl+C with an unreadable process table, the answer is a pid we
+    // declined to kill and would otherwise never have mentioned again.
+    portChanges.push({
+      name,
+      from: configured,
+      to: next,
+      heldBy: await pidListeningOnPort(configured),
+    });
     config.ports[name] = next;
   }
 
   if (portChanges.length > 0) {
     console.log(chalk.yellow('Configured ports unavailable — rotating:'));
-    for (const c of portChanges) {
-      console.log(chalk.gray(`  - ${c.name}: ${c.from} → ${c.to}`));
+    for (const line of formatPortRotation(portChanges)) {
+      console.log(line.trimStart().startsWith('-') ? chalk.gray(line) : chalk.yellow(line));
     }
     writeConfig(config);
     console.log(chalk.gray('  Updated ~/.nodalai/config.json.\n'));

@@ -130,6 +130,41 @@ describe('formatAlreadyRunning @cap:installer-et-demarrer/moteur', () => {
     expect(msg).toContain('nodal-agents down');
   });
 
+  it('states what was OBSERVED, not what it takes the observation to mean', () => {
+    // Review pass 3 of #114. The message used to end on "so this is the product
+    // running, not leftovers to clean up" — one reading of the evidence, not the
+    // evidence. A postmaster of ours orphaned from an earlier run, next to
+    // somebody else's server on the configured port, produces both readings.
+    // Refusing is still right; telling the user they are looking at their own
+    // stack, when they may not be, sends them hunting for a window that does
+    // not exist.
+    const msg = formatAlreadyRunning({
+      runnerHealthy: true,
+      postmasterPid: 41956,
+      runnerPid: 111,
+      webPid: 222,
+    });
+    expect(msg).toContain('/api/health');
+    expect(msg).toContain('postmaster.pid');
+    expect(msg).not.toMatch(/this is the product running/);
+    // And a way out when the two facts are not this install: which pid to look
+    // at, what to do about the port, and that `up` is then worth retrying.
+    expect(msg).toContain('If it is NOT yours');
+    expect(msg).toContain('pid 111');
+    expect(msg).toContain('~/.nodalai/config.json');
+  });
+
+  it('points at the port itself when no runner pid could be measured', () => {
+    const msg = formatAlreadyRunning({
+      runnerHealthy: true,
+      postmasterPid: 41956,
+      runnerPid: null,
+      webPid: null,
+    });
+    expect(msg).toContain('check that port');
+    expect(msg).not.toMatch(/check pid/);
+  });
+
   it('omits a port whose pid was never measured rather than inventing one', () => {
     // Issue #97: a pid printed next to a port nobody measured is a lie that
     // sent thirteen lines of a real incident report to the wrong place.

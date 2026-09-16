@@ -91,3 +91,45 @@ export const DEFAULT_PORTS = {
   runner: 3001,
   postgres: 25432,
 } as const;
+
+/** One configured port that had to be abandoned for a free neighbour. */
+export interface PortRotation {
+  readonly name: string;
+  readonly from: number;
+  readonly to: number;
+  /**
+   * The pid still holding the old port, when a probe measured one. Null when
+   * the port is unbindable for another reason — a Windows reservation, a ghost
+   * socket bound to a dead pid — and there is nobody to name.
+   */
+  readonly heldBy: number | null;
+}
+
+/**
+ * What the user reads when `up` moves to another port.
+ *
+ * It used to print the move and nothing else, and that hid the more important
+ * half (review pass 3 of #114). After a hard Ctrl+C on a machine whose process
+ * table will not answer, a recorded child can still hold :3000: every path
+ * refuses it, correctly — nothing is killed on an unconfirmed identity — and
+ * `up` then rotates around it. The stack comes back on :3001 and the old worker
+ * is still there, holding the old port, invisible.
+ *
+ * Refusing remains the right behaviour. Saying nothing about it is not: the
+ * user is the only one who can decide what that pid is, and they cannot decide
+ * about a process nobody told them existed.
+ */
+export function formatPortRotation(changes: readonly PortRotation[]): string[] {
+  const lines: string[] = [];
+  for (const c of changes) {
+    lines.push(`  - ${c.name}: ${c.from} → ${c.to}`);
+    if (c.heldBy === null) continue;
+    lines.push(
+      `    :${c.from} is STILL HELD by pid ${c.heldBy}, which was not stopped: nothing here` +
+        ` could confirm what it is.`,
+      `    It is left running and the port is abandoned, not freed. Check that pid and stop` +
+        ` it yourself if it is ours.`,
+    );
+  }
+  return lines;
+}
