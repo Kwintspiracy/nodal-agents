@@ -26,6 +26,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import {
+  configHoteDepuis,
   FAMILLES_SONDEES,
   portsDeLaStack,
   verdictDuneSonde,
@@ -75,20 +76,23 @@ async function sonder(port) {
   return { port, vivant: verdictDuneSonde(erreurs) };
 }
 
-const configHote = (() => {
+/** La lecture BRUTE du fichier ; le verdict, lui, est pur et vit dans la lib. */
+const lectureDeLaConfig = (() => {
   try {
-    return JSON.parse(readFileSync(join(homedir(), '.nodalai', 'config.json'), 'utf8'));
-  } catch {
-    return null;
+    return { texte: readFileSync(join(homedir(), '.nodalai', 'config.json'), 'utf8') };
+  } catch (err) {
+    return { err };
   }
 })();
 
 let portsASonder;
 try {
-  portsASonder = portsDeLaStack(configHote);
+  // Une configuration illisible, ou un port configuré invalide : on ne devine
+  // pas, on le dit et on sort — AVANT toute écriture, donc avant que
+  // `build-pack` ne vide `pack/`. Un fichier simplement ABSENT garde les ports
+  // par défaut : c'est le cas courant, et il est légitime.
+  portsASonder = portsDeLaStack(configHoteDepuis(lectureDeLaConfig));
 } catch (err) {
-  // Un port configuré mais illisible : on ne devine pas, on le dit et on sort —
-  // AVANT toute écriture, donc avant que `build-pack` ne vide `pack/`.
   console.log(`\n✗ ${err.message}`);
   process.exit(1);
 }

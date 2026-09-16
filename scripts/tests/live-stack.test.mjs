@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  configHoteDepuis,
   estUnRefusDeConnexion,
   portsDeLaStack,
   verdictDuneSonde,
@@ -17,6 +18,52 @@ import {
 /** Ce que `fetch` jette vraiment : une enveloppe, la cause au fond. */
 const echecFetch = (cause) => Object.assign(new TypeError('fetch failed'), { cause });
 const refus = () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+
+describe('configHoteDepuis', () => {
+  const echecDeLecture = (code) => ({ err: Object.assign(new Error(code), { code }) });
+
+  it('fichier ABSENT : pas de configuration, et c’est légitime', () => {
+    expect(configHoteDepuis(echecDeLecture('ENOENT'))).toBe(null);
+    expect(configHoteDepuis({})).toBe(null);
+  });
+
+  it('lit la configuration présente', () => {
+    expect(configHoteDepuis({ texte: '{"ports":{"web":4000}}' })).toEqual({ ports: { web: 4000 } });
+  });
+
+  // Un fichier PRÉSENT mais illisible retombait en silence sur 3000/3001 : les
+  // ports réellement configurés devenaient invisibles, la sonde ne trouvait
+  // personne, et le build écrasait la stack en cours.
+  it('permission refusée : ÉCHEC, en nommant le fichier et la cause', () => {
+    expect(() => configHoteDepuis(echecDeLecture('EACCES'))).toThrow(
+      'cannot read ~/.nodalai/config.json: EACCES',
+    );
+  });
+
+  it('une erreur de lecture sans code est dite quand même', () => {
+    expect(() => configHoteDepuis({ err: new Error('disk on fire') })).toThrow(
+      'cannot read ~/.nodalai/config.json: disk on fire',
+    );
+  });
+
+  it('JSON invalide : ÉCHEC, jamais un repli sur les défauts', () => {
+    expect(() => configHoteDepuis({ texte: '{ports: 3000' })).toThrow(
+      'cannot parse ~/.nodalai/config.json',
+    );
+  });
+
+  it('un BOM UTF-8 en tête est un fichier illisible, pas une absence', () => {
+    expect(() => configHoteDepuis({ texte: '﻿{"ports":{"web":4000}}' })).toThrow(
+      'cannot parse ~/.nodalai/config.json',
+    );
+  });
+
+  it('un JSON qui n’est pas un objet ne passe pas pour une configuration', () => {
+    expect(() => configHoteDepuis({ texte: '[]' })).toThrow('does not hold a JSON object');
+    expect(() => configHoteDepuis({ texte: 'null' })).toThrow('does not hold a JSON object');
+    expect(() => configHoteDepuis({ texte: '"3000"' })).toThrow('does not hold a JSON object');
+  });
+});
 
 describe('portsDeLaStack', () => {
   it('lit les ports du fichier de configuration', () => {

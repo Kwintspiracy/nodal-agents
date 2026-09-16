@@ -14,6 +14,51 @@
 /** Les ports où une stack de dev sert : le web et le runner. */
 const DEFAUTS = { web: 3000, runner: 3001 };
 
+/** Le fichier où l'utilisateur déclare ses ports, nommé dans chaque message. */
+export const FICHIER_DE_CONFIG = '~/.nodalai/config.json';
+
+/**
+ * La configuration de l'hôte, à partir d'une TENTATIVE de lecture déjà faite :
+ * `{ texte }` quand le fichier a été lu, `{ err }` quand elle a échoué.
+ *
+ * ABSENT et ILLISIBLE ne sont pas le même fait, et les confondre coûtait la
+ * stack. Un `catch { return null }` faisait retomber sur 3000/3001 un fichier
+ * PRÉSENT mais impossible à lire — JSON invalide, BOM UTF-8, permission
+ * refusée. Les ports réellement configurés devenaient invisibles, la sonde ne
+ * trouvait personne, et le build écrasait la stack en cours.
+ *
+ * `ENOENT` seul vaut « pas de configuration », et rend `null` : c'est le cas
+ * courant et il est légitime. Tout le reste JETTE, en nommant le fichier et la
+ * cause — le même échec fort qu'un port invalide (invariant #4).
+ */
+export function configHoteDepuis({ texte, err } = {}) {
+  if (err) {
+    if (err.code === 'ENOENT') return null;
+    throw new Error(
+      `cannot read ${FICHIER_DE_CONFIG}: ${err.code ?? err.message ?? 'unknown error'} ` +
+        `(the file is there but unreadable; fix it or move it away)`,
+    );
+  }
+  // Aucune tentative de lecture du tout : rien n'a été dit, donc rien à lire.
+  // Un fichier VIDE, lui, arrive ici comme `''` et échouera : ce n'est pas du
+  // JSON, et le dire vaut mieux que de deviner.
+  if (texte === undefined || texte === null) return null;
+  let lu;
+  try {
+    lu = JSON.parse(String(texte));
+  } catch (cause) {
+    // Le BOM UTF-8 tombe ici : `JSON.parse` refuse le caractère invisible de
+    // tête, et PowerShell en pose un avec `Set-Content -Encoding utf8`.
+    throw new Error(`cannot parse ${FICHIER_DE_CONFIG}: ${cause.message}`);
+  }
+  if (lu === null || typeof lu !== 'object' || Array.isArray(lu)) {
+    throw new Error(
+      `${FICHIER_DE_CONFIG} does not hold a JSON object (read ${JSON.stringify(lu)})`,
+    );
+  }
+  return lu;
+}
+
 /**
  * Les ports à sonder, lus dans `~/.nodalai/config.json` quand il existe.
  *
