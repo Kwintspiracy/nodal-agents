@@ -246,6 +246,14 @@ function vueEnsemble() {
         : `${tCouv.direction === 'monte' ? 'Up' : 'Down'} ${Math.abs(tCouv.delta)} point(s) over 7 days.`;
   const couvert = pct(r.couvertureLignes);
   const partJouee = r.specsE2e > 0 ? Math.round((r.specsE2eJoueesParLaCi / r.specsE2e) * 100) : 0;
+  // La carte comptait `specsE2e - specsE2eJoueesParLaCi`, une soustraction à elle
+  // seule, sans passer par `etatDunParcours`. Sous un workflow illisible, la page
+  // Journeys et l'alerte ne montraient aucun rouge pendant que cette carte-ci
+  // annonçait « 30 never played » : trois endroits, deux réponses (revue de la
+  // PR #113, 3e passe). Elle lit désormais la même définition que les deux autres.
+  const etats = (s.parcours ?? []).map((p) => etatDunParcours(p).cle);
+  const jamaisJoues = etats.filter((c) => c === 'jamais joué').length;
+  const illisibles = etats.filter((c) => c === 'ci illisible').length;
 
   return `
 <section id="vue" class="vue">
@@ -269,13 +277,15 @@ function vueEnsemble() {
       <p class="sous">in ${n(r.fichiersDeTest)} files, end-to-end aside</p>
     </article>
 
-    <article class="carte ${r.specsE2eJoueesParLaCi < r.specsE2e ? 'carte--alerte' : ''}">
+    <article class="carte ${jamaisJoues > 0 ? 'carte--alerte' : ''}">
       <h3>Journeys played by the CI</h3>
       <p class="chiffre">${r.specsE2eJoueesParLaCi} <span class="sur">/ ${r.specsE2e}</span></p>
       <p class="sous">${n(r.casE2e)} cases written · ${
-        r.specsE2e - r.specsE2eJoueesParLaCi > 0
-          ? `<b>${r.specsE2e - r.specsE2eJoueesParLaCi} never played</b>`
-          : 'every one of them played'
+        illisibles > 0
+          ? `<b>${illisibles} of unknown fate</b>: a workflow cannot be read`
+          : jamaisJoues > 0
+            ? `<b>${jamaisJoues} never played</b>`
+            : 'every one of them played'
       }</p>
       ${barre(partJouee, 'journeys played')}
     </article>

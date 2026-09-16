@@ -143,8 +143,11 @@ describe('le câblage du portail — un faux dépôt, lu de bout en bout', () =>
     // `ciIllisible` sur la ligne du parcours. Le portail annonce alors trois
     // parcours morts pour une panne de LECTURE.
     const perdu = mkdtempSync(join(tmpdir(), 'qa-depot-illisible-'));
+    // `avant` est repris dans le FINALLY : une assertion qui échoue ici laissait
+    // `racine` sur un dossier effacé, et les tests suivants tombaient pour une
+    // raison qui n'était pas la leur (revue de la PR #113, 3e passe).
+    const avant = racine;
     try {
-      const avant = racine;
       racine = perdu;
       ecrire({
         '.github/workflows/nuit.yml': NUIT.replace(
@@ -167,8 +170,8 @@ describe('le câblage du portail — un faux dépôt, lu de bout en bout', () =>
         expect(par(parcours, nom).jouParLaCi).toBe(false);
         expect(par(parcours, nom).ciIllisible).toBe(true);
       }
-      racine = avant;
     } finally {
+      racine = avant;
       rmSync(perdu, { recursive: true, force: true });
     }
   });
