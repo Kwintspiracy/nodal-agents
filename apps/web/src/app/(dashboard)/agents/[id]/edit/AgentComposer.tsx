@@ -72,6 +72,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
 import { SectionCard, SectionHead } from './SectionCard.tsx';
+import CommandAllowlistSection from './CommandAllowlistSection.tsx';
 import {
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -655,6 +656,7 @@ export default function AgentComposer({
               autoRunPaused={autoRunPaused}
               isOwner={isOwner}
               cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+              commandAllowlist={agent.commandAllowlist ?? null}
             />
           </>
         )}
@@ -1625,6 +1627,7 @@ function AutonomyTab({
   autoRunPaused,
   isOwner,
   cliDailyBudgetUsd,
+  commandAllowlist,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
@@ -1634,6 +1637,8 @@ function AutonomyTab({
   autoRunPaused: boolean;
   isOwner: boolean;
   cliDailyBudgetUsd: number;
+  /** agents.command_allowlist — NULL = no list (see CommandAllowlistSection). */
+  commandAllowlist: string[] | null;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1843,6 +1848,20 @@ function AutonomyTab({
         rules={rules}
         onRulesChange={setRules}
         autoRunPaused={autoRunPaused}
+        isOwner={isOwner}
+      />
+
+      {/*
+        Next to the Yolo toggle above, and deliberately NOT gated on the
+        command-execution skill: it is the control an owner sets BEFORE handing
+        an agent a shell, and a safety list that only appears once the danger is
+        on is a list nobody sets in time. The section says so itself when the
+        tool group is off.
+      */}
+      <CommandAllowlistSection
+        agentId={agentId}
+        allowlist={commandAllowlist}
+        hasCommandSkill={attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG)}
         isOwner={isOwner}
       />
 
