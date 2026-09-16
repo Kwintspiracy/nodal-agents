@@ -29,14 +29,23 @@
  * `apps/web/tests/memories-search-is-server-side.test.tsx`, and the stemming
  * itself in `packages/memory/src/tests/search.test.ts`.
  *
- * Every row created is deleted in afterAll.
+ * Every row this run creates carries `[nodalai-e2e-memory:<runId>]` and is
+ * deleted in afterAll. A run killed before that leaves its rows behind, so
+ * beforeAll looks: it names what another run left and sweeps it only under
+ * `NODALAI_E2E_SWEEP_STALE=1`, the convention PR #118 introduced for
+ * credentials. The decision lives in `memory-cleanup.ts`, under test.
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { makeDbClient, requireLiveStack, resolveActingUser, testSlugSuffix } from './helpers.ts';
-
-/** Written into every fact so the cleanup can find exactly what this file made. */
-const MARK = `e2e-memory-${testSlugSuffix()}`;
+import { makeDbClient, requireLiveStack, resolveActingUser } from './helpers.ts';
+import {
+  applyMemoryCleanup,
+  e2eMemoryFact,
+  memoryCleanupOptionsFromEnv,
+  planMemoryCleanup,
+  selectE2EMemories,
+  staleMemoriesMessage,
+} from './memory-cleanup.ts';
 
 /** The word the fact contains, in the singular. */
 const WORD_IN_THE_FACT = 'clarinet';
@@ -55,29 +64,43 @@ const WORD_IN_THE_FACT = 'clarinet';
  */
 const SEARCHED_WORD = 'clarinets';
 
-const FACT = `Quentin plays the ${WORD_IN_THE_FACT} on Sunday mornings. [${MARK}]`;
+const FACT = e2eMemoryFact(`Quentin plays the ${WORD_IN_THE_FACT} on Sunday mornings.`);
 /** A second fact, so "the search filters" means something: one row in, one out. */
-const OTHER_FACT = `Quentin bakes sourdough on Saturdays. [${MARK}]`;
+const OTHER_FACT = e2eMemoryFact('Quentin bakes sourdough on Saturdays.');
 
-test.beforeAll(async () => {
-  await requireLiveStack();
-});
-
-test.afterAll(async () => {
-  const { agentMemory, like, and, eq } = await import('@nodal-agents/db');
-  // Scoped to the acting entity, not just the marker. A `like` alone reaches
-  // every entity in the database, and this file runs against whatever stack is
-  // in front of it — a cleanup has no business deleting another tenant's rows,
-  // however unlikely the collision (review of PR #113).
+/** Delete what THIS run may delete, and say what it is leaving behind. */
+async function cleanup(sweep: boolean): Promise<void> {
   const { entityId } = await resolveActingUser();
   const { db, close } = makeDbClient();
   try {
-    await db
-      .delete(agentMemory)
-      .where(and(eq(agentMemory.entityId, entityId), like(agentMemory.fact, `%${MARK}%`)));
+    const rows = await selectE2EMemories(db, entityId);
+    const plan = planMemoryCleanup(rows, {
+      sweepStaleRuns: sweep || memoryCleanupOptionsFromEnv().sweepStaleRuns,
+    });
+    await applyMemoryCleanup(db, entityId, plan);
+    // Named, never deleted in silence. A run killed before its afterAll used to
+    // leave its rows in the database with nothing to notice them: the next run
+    // did not look, and the Memory page filled up with facts about a clarinet.
+    if (plan.foreign.length > 0) console.warn(staleMemoriesMessage(plan.foreign));
   } finally {
     await close();
   }
+}
+
+test.beforeAll(async () => {
+  await requireLiveStack();
+  // What an interrupted run left behind is NAMED here, and swept only when
+  // NODALAI_E2E_SWEEP_STALE=1 says so — the convention PR #118 introduced for
+  // credentials. Sweeping by default would delete the rows of a run happening
+  // right now on the same database.
+  await cleanup(false);
+});
+
+// Scoped to the acting entity AND to this run's marker. A `like '%MARK%'` alone
+// reached every entity in the database, and this file runs against whatever
+// stack is in front of it (review of PR #113).
+test.afterAll(async () => {
+  await cleanup(false);
 });
 
 /** Record one fact through the New Memory modal, the way a user does. */
@@ -119,7 +142,7 @@ test.describe('a fact taught on the screen is kept @cap:se-souvenir/ecran', () =
   });
 
   test('archiving a fact takes it out of what the agent is given', async ({ page }) => {
-    const archived = `Quentin drives a diesel van. [${MARK}]`;
+    const archived = e2eMemoryFact('Quentin drives a diesel van.');
     await page.goto('/memories');
     await recordFact(page, archived);
 
