@@ -175,9 +175,14 @@ describe('assertCommandAllowed @cap:assigner-outils/moteur', () => {
       expect(() => assertCommandAllowed('node -e "a;b"', REVIEWER)).not.toThrow();
     });
 
-    it('does not split on a separator inside a single-quoted argument', () => {
-      expect(() => assertCommandAllowed("node -e 'a && b'", REVIEWER)).not.toThrow();
-    });
+    it.runIf(process.platform !== 'win32')(
+      'does not split on a separator inside a single-quoted argument, where sh reads one',
+      () => {
+        // ONLY off Windows. cmd.exe has no single-quoted string, so treating
+        // one as a string there hid a second command — see the win32 block.
+        expect(() => assertCommandAllowed("node -e 'a && b'", REVIEWER)).not.toThrow();
+      },
+    );
 
     it('still refuses a REAL second command that follows a quoted one', () => {
       expect(() => assertCommandAllowed('node -e "a" ; rm x', REVIEWER)).toThrow(
@@ -367,5 +372,104 @@ describe('assertNoProgramShadowedByCwd @cap:assigner-outils/moteur', () => {
   it('reads nothing and refuses nothing when no allowlist is configured', async () => {
     await plant(process.platform === 'win32' ? 'node.cmd' : 'node');
     await expect(assertNoProgramShadowedByCwd('node -v', null, dir)).resolves.toBeUndefined();
+  });
+});
+
+// ─── The single quote is a string to sh, and nothing to cmd.exe ─────────────
+
+describe('the single quote, per shell @cap:assigner-outils/moteur', () => {
+  const onWindows = process.platform === 'win32';
+  const REVIEWER_LIST = ['node'];
+
+  it.runIf(onWindows)('refuses a single quote outright while a list is set', () => {
+    // `node -e 'x & calc'` scanned as ONE quoted segment and cmd.exe ran TWO
+    // programs: it does not read '...' as a string, so the `&` is a separator.
+    // Refusing is the direction that protects, and costs nothing — the double
+    // quote is what works on cmd.exe anyway.
+    expect(() => assertCommandAllowed("node -e 'x & calc'", REVIEWER_LIST)).toThrow(
+      CommandNotAllowedError,
+    );
+  });
+
+  it.runIf(onWindows)('says WHY, naming cmd.exe rather than the list', () => {
+    try {
+      assertCommandAllowed("node -e 'x & calc'", REVIEWER_LIST);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toMatch(/cmd\.exe/i);
+    }
+  });
+
+  it.runIf(onWindows)('still accepts the double-quoted form as ONE segment', () => {
+    expect(() => assertCommandAllowed('node -e "x & calc"', REVIEWER_LIST)).not.toThrow();
+  });
+
+  it.runIf(onWindows)('leaves an unrestricted agent alone — no list, no refusal', () => {
+    expect(() => assertCommandAllowed("node -e 'x & calc'", null)).not.toThrow();
+  });
+
+  it.runIf(!onWindows)('keeps the single quote a string off Windows, where sh reads it', () => {
+    expect(() => assertCommandAllowed("node -e 'a;b'", REVIEWER_LIST)).not.toThrow();
+    expect(() => assertCommandAllowed("node -e 'a && b'", REVIEWER_LIST)).not.toThrow();
+  });
+
+  it.runIf(!onWindows)('still refuses a REAL second command off Windows', () => {
+    expect(() => assertCommandAllowed("node -e 'a' ; rm x", REVIEWER_LIST)).toThrow(
+      CommandNotAllowedError,
+    );
+  });
+});
+
+// ─── Both shells' rules, proven from ONE machine ────────────────────────────
+// The blocks above run only on the platform they describe, so a Windows CI job
+// never exercises the sh branch and a Linux one never exercises cmd.exe's.
+// Stubbing process.platform proves both everywhere — and only works because
+// the module reads the platform at CALL time, not at import time. That is the
+// property this block also pins.
+
+describe('both shells, by stubbing the platform @cap:assigner-outils/moteur', () => {
+  const LIST = ['node'];
+  const realPlatform = process.platform;
+
+  function pretend(platform: string): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  }
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+  });
+
+  it('as cmd.exe: a single quote is refused, because it is not a string there', () => {
+    pretend('win32');
+    expect(() => assertCommandAllowed("node -e 'x & calc'", LIST)).toThrow(CommandNotAllowedError);
+  });
+
+  it('as cmd.exe: the double-quoted form is ONE segment and passes', () => {
+    pretend('win32');
+    expect(() => assertCommandAllowed('node -e "x & calc"', LIST)).not.toThrow();
+  });
+
+  it('as cmd.exe: a single quote INSIDE double quotes is fine — cmd.exe is not reading it', () => {
+    // The shape everybody writes. Refusing it outright broke two tool-level
+    // tests on the first version of this guard; a guard that refuses working
+    // commands gets widened until it means nothing.
+    pretend('win32');
+    expect(() => assertCommandAllowed(`node -e "console.log('ok')"`, LIST)).not.toThrow();
+  });
+
+  it('as /bin/sh: a single-quoted separator is part of the argument', () => {
+    pretend('linux');
+    expect(() => assertCommandAllowed("node -e 'a;b'", LIST)).not.toThrow();
+    expect(() => assertCommandAllowed("node -e 'a && b'", LIST)).not.toThrow();
+  });
+
+  it('as /bin/sh: a separator OUTSIDE the quotes is still a second command', () => {
+    pretend('linux');
+    expect(() => assertCommandAllowed("node -e 'a' ; rm x", LIST)).toThrow(CommandNotAllowedError);
+  });
+
+  it('as /bin/sh: no single-quote refusal — that rule is cmd.exe-only', () => {
+    pretend('linux');
+    expect(() => assertCommandAllowed("node -e 'ok'", LIST)).not.toThrow();
   });
 });

@@ -86,6 +86,30 @@ const HIDES_A_COMMAND = /\$\(|`/;
  */
 const EXPANDS_LATER = /\$\{|\$[A-Za-z_]|%[^%\s]*%/;
 
+/**
+ * Does `command` carry a single quote that cmd.exe would NOT read as a string?
+ *
+ * `cmd.exe` has no single-quoted string. `node -e 'x & calc'` therefore scans
+ * as one quoted argument and RUNS TWO PROGRAMS — the `&` inside is a separator
+ * to the shell and was one to nobody else. Same inversion for `;`, `|`, `&&`
+ * and a newline.
+ *
+ * Refused rather than parsed, in the direction that protects. But only OUTSIDE
+ * a double-quoted region: inside `"..."` cmd.exe is already not reading
+ * separators, and `node -e "console.log('x')"` is both safe and the shape
+ * everybody writes. A blanket refusal would have broken it — measured, two
+ * tool-level tests went red on the first version of this guard. Refusing a
+ * working command is how a guard gets widened until it means nothing.
+ */
+function hasBareSingleQuote(command: string): boolean {
+  let inDoubleQuotes = false;
+  for (const c of command) {
+    if (c === '"') inDoubleQuotes = !inDoubleQuotes;
+    else if (c === "'" && !inDoubleQuotes) return true;
+  }
+  return false;
+}
+
 /** One command between two separators, with its tokens already extracted. */
 interface Segment {
   readonly tokens: readonly string[];
@@ -129,6 +153,16 @@ export function assertCommandAllowed(
       'Variable expansion (%NAME%, $NAME, ${NAME}) is refused while an allowlist is set: the check ' +
         'runs before the shell expands it, so it cannot see which program would start. ' +
         'Write the value literally.',
+    );
+  }
+
+  if (isWindows() && hasBareSingleQuote(command)) {
+    throw new CommandNotAllowedError(
+      command.trim(),
+      allowlist,
+      'A single quote outside double quotes is refused while an allowlist is set on Windows: ' +
+        "cmd.exe does not read '...' as a string, so what looks like one quoted argument can be " +
+        'several commands. Use double quotes.',
     );
   }
 
@@ -183,10 +217,18 @@ function matches(entry: readonly string[], tokens: readonly string[]): boolean {
   return true;
 }
 
-const WINDOWS = process.platform === 'win32';
+/**
+ * Which shell `shell-engine.ts` will actually spawn. Read at call time, not
+ * captured at module load: a test must be able to prove BOTH shells' rules
+ * from one machine, and the two differ in ways that decide whether a command
+ * is one program or two.
+ */
+function isWindows(): boolean {
+  return process.platform === 'win32';
+}
 
 function normalizeProgram(token: string): string {
-  if (!WINDOWS) return token;
+  if (!isWindows()) return token;
   return token.toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
 }
 
@@ -244,8 +286,12 @@ function splitIntoSegments(command: string): Segment[] | typeof UNTERMINATED_QUO
       continue;
     }
 
-    if (c === '"' || c === "'") {
-      quote = c;
+    // `"` is a string in BOTH shells. `'` is one to /bin/sh and NOTHING to
+    // cmd.exe, so on Windows it stays an ordinary character and any separator
+    // inside it stays a separator. assertCommandAllowed refuses the construct
+    // outright there; this keeps the scanner honest either way.
+    if (c === '"' || (c === "'" && !isWindows())) {
+      quote = c as '"' | "'";
       tokenStarted = true; // `node -e ""` passes an empty argument, not nothing
       continue;
     }
@@ -428,10 +474,10 @@ export async function assertNoProgramShadowedByCwd(
   } catch {
     return;
   }
-  const present = new Set(WINDOWS ? names.map((n) => n.toLowerCase()) : names);
+  const present = new Set(isWindows() ? names.map((n) => n.toLowerCase()) : names);
 
   for (const { program, raw } of programs) {
-    const candidates = WINDOWS
+    const candidates = isWindows()
       ? [program, ...windowsExecutableExtensions().map((ext) => `${program}${ext}`)].map((c) =>
           c.toLowerCase(),
         )
