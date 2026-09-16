@@ -73,10 +73,19 @@ async function readAllowlist(): Promise<string[] | null> {
   }
 }
 
-test.beforeAll(async () => {
-  await requireLiveStack();
-  entityId = await resolveEntity();
+/**
+ * Every journey gets its OWN agent, created before it and deleted after it.
+ *
+ * Two things that buys, both found in review: a journey no longer inherits the
+ * state its predecessor left behind (the checkbox stayed on, and the next
+ * journey typed into a disabled field), so each one runs alone, under --grep,
+ * or in any order; and no agent survives a setup that fails half-way, because
+ * the id is recorded the instant the row exists and the sweep at the end
+ * deletes whatever is still recorded.
+ */
+const createdAgentIds: string[] = [];
 
+async function createAgent(): Promise<string> {
   const { agents } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
@@ -91,21 +100,44 @@ test.beforeAll(async () => {
         active: true,
       })
       .returning({ id: agents.id });
-    agentId = agent!.id;
+    const id = agent!.id;
+    createdAgentIds.push(id);
+    return id;
   } finally {
     await close();
   }
-});
+}
 
-test.afterAll(async () => {
-  if (!agentId) return;
-  const { agents, eq } = await import('@nodal-agents/db');
+async function deleteAgents(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { agents, inArray } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
-    await db.delete(agents).where(eq(agents.id, agentId));
+    await db.delete(agents).where(inArray(agents.id, ids));
   } finally {
     await close();
   }
+}
+
+test.beforeAll(async () => {
+  await requireLiveStack();
+  entityId = await resolveEntity();
+});
+
+test.beforeEach(async () => {
+  agentId = await createAgent();
+});
+
+test.afterEach(async () => {
+  const mine = createdAgentIds.splice(0, createdAgentIds.length);
+  await deleteAgents(mine);
+  agentId = '';
+});
+
+// Belt and braces: an agent created by a setup that then failed is swept here,
+// even though afterEach already emptied the list on the normal path.
+test.afterAll(async () => {
+  await deleteAgents(createdAgentIds.splice(0, createdAgentIds.length));
 });
 
 test.describe.configure({ timeout: 90_000 });
@@ -171,6 +203,9 @@ test('"Refuse every command" saves an empty list, which is not the same as no li
 }) => {
   await openAutonomyTab(page);
 
+  // Starting point, stated rather than inherited: a fresh agent, no list.
+  await expect(page.getByTestId('command-allowlist-state')).toContainText('No list');
+
   await page.getByTestId('command-allowlist-refuse-every').check();
   await page.getByTestId('command-allowlist-save').click();
 
@@ -194,8 +229,9 @@ test('a shell on the list is refused, and the reason is shown next to the field'
 }) => {
   await openAutonomyTab(page);
 
-  // The previous test left "Refuse every command" on, which disables the field.
-  await page.getByTestId('command-allowlist-refuse-every').uncheck();
+  // This journey's own agent has no list, so the field is enabled and empty:
+  // nothing here depends on what another journey left behind.
+  await expect(page.getByTestId('command-allowlist-refuse-every')).not.toBeChecked();
   await page.getByTestId('command-allowlist-entries').fill('powershell');
   await page.getByTestId('command-allowlist-save').click();
 
