@@ -28,6 +28,8 @@ import {
   sortDuCas,
   compterParcours,
   parcoursDunWorkflow,
+  cadenceParParcours,
+  sansCommentairesYaml,
   declencheursDunWorkflow,
   cadenceDe,
   croiserPreuves,
@@ -204,7 +206,10 @@ function banc() {
 function ci(fichiers, tousLesParcours) {
   const wfs = fichiers.filter((f) => f.startsWith('.github/workflows/') && /\.ya?ml$/.test(f));
   return wfs.map((f) => {
-    const texte = readFileSync(join(RACINE, f), 'utf8');
+    // Sans les commentaires : nos workflows en portent plus que de YAML, et ils
+    // NOMMENT ce dont ils parlent (`pnpm bench`, `--coverage`, un parcours).
+    // Un paragraphe d'explication suffisait à déclarer une étape exécutée.
+    const texte = sansCommentairesYaml(readFileSync(join(RACINE, f), 'utf8'));
     const jobs = [...texte.matchAll(/^ {2}([a-z0-9_-]+):\s*$/gim)].map((m) => m[1]);
     const declencheurs = declencheursDunWorkflow(texte);
     const parcours = parcoursDunWorkflow(texte, tousLesParcours);
@@ -219,6 +224,9 @@ function ci(fichiers, tousLesParcours) {
       specsNommees: parcours.joues,
       balayeLesParcours: parcours.balaye,
       parcoursExclus: parcours.exclus ?? [],
+      // La forme du workflow n'a pas été comprise. Ce n'est PAS « aucun
+      // parcours » : c'est « on ne sait pas », et le portail le dit ainsi.
+      parcoursIllisibles: parcours.illisible === true,
       cadence: cadenceDe(declencheurs),
       lanceBanc: /pnpm bench|@nodal-agents\/bench/.test(texte),
       lanceCouverture: /--coverage/.test(texte),
@@ -235,15 +243,12 @@ function parcours(fichiers, workflows) {
   // Qui joue quoi, et à quelle cadence. Un parcours joué chaque nuit n'est pas
   // joué à chaque PR : les confondre, c'est appeler « couvert » un parcours qui
   // ne garde aucune PR.
-  const cadenceParParcours = new Map();
-  for (const w of workflows) {
-    for (const nom of w.specsNommees) {
-      const dejaVue = cadenceParParcours.get(nom);
-      // « chaque PR » est la cadence la plus forte : elle l'emporte.
-      if (dejaVue === 'chaque PR') continue;
-      cadenceParParcours.set(nom, w.cadence);
-    }
-  }
+  // Une seule définition, dans `lib.mjs` et sous test : un workflow qu'il faut
+  // lancer à la main ne garde rien, et « chaque PR » l'emporte sur la nuit.
+  const cadences = cadenceParParcours(workflows);
+  // Un workflow illisible ne dit rien des parcours — surtout pas qu'ils sont
+  // morts. Tant qu'il y en a un, aucune ligne ne porte le rouge « jamais joué ».
+  const ciIllisible = workflows.some((w) => w.parcoursIllisibles);
 
   const resultats = lireJson(join(DATA, 'playwright-run.json'));
   const parFichier = new Map();
@@ -299,8 +304,9 @@ function parcours(fichiers, workflows) {
       fichier: f,
       nom,
       cas: (texte.match(/^\s*test(\.\w+)*\s*\(/gm) ?? []).length,
-      jouParLaCi: cadenceParParcours.has(nom),
-      cadence: cadenceParParcours.get(nom) ?? null,
+      jouParLaCi: cadences.has(nom),
+      cadence: cadences.get(nom) ?? null,
+      ciIllisible,
       resultat: r,
       // La première phrase UTILE du fichier — voir `intentionDunParcours`.
       // La regex d'avant prenait la première ligne `//` du fichier, et rendait

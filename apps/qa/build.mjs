@@ -320,7 +320,9 @@ function vueParcours() {
   // qui ne garde rien.
   const parCadence = new Map();
   for (const p of s.parcours) {
-    const c = p.cadence ?? 'never played';
+    // « on ne sait pas » a son propre bac. Le confondre avec « jamais joué »
+    // ferait afficher une panne de lecture du portail comme une faute du dépôt.
+    const c = p.cadence ?? (p.ciIllisible ? 'workflow unreadable' : 'never played');
     parCadence.set(c, [...(parCadence.get(c) ?? []), p]);
   }
   const ORDRE = [
@@ -329,6 +331,7 @@ function vueParcours() {
     'every night',
     'by hand',
     'never played',
+    'workflow unreadable',
   ];
 
   const ligne = (p) => {
@@ -378,7 +381,9 @@ function vueParcours() {
           ? 'These OBSERVE it the next day. They guard no pull request.'
           : cadence === 'never played'
             ? 'Written, versioned, and run by no continuous integration. These are reds, not blanks: they guard nothing.'
-            : '';
+            : cadence === 'workflow unreadable'
+              ? 'A workflow names the e2e directory in a shape the portal cannot read, so nothing can be said about these files. Neither green nor red: the reader is what needs fixing.'
+              : '';
     return `<h3 class="sous-titre">${esc(cadence)} <span class="compte">${dedans.length}</span></h3>
       ${note ? `<p class="note-section">${note}</p>` : ''}
       <div class="tableau"><table>

@@ -47,6 +47,8 @@ import {
   prixDeLaCi,
   intentionDunParcours,
   etatDunParcours,
+  cadenceParParcours,
+  sansCommentairesYaml,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -434,6 +436,94 @@ describe('parcoursDunWorkflow — nommés et balayés', () => {
   });
 });
 
+describe('parcoursDunWorkflow — un commentaire n’exécute rien', () => {
+  const TOUS = ['smoke.spec.ts', 'foo.spec.ts'];
+
+  // La PR #113 confie à ce parseur le rouge de la page Journeys et l'alerte
+  // nocturne. Or nos workflows portent plus de commentaires que de YAML, et
+  // ces commentaires NOMMENT les parcours dont ils parlent : `qa.yml` explique
+  // sur six lignes pourquoi `agent-flows.spec.ts` était exclu. Une phrase
+  // d'explication suffisait donc à déclarer un fichier joué.
+  it('une ligne de commentaire ne marque aucun parcours joué', () => {
+    const wf = `
+      # see tests/e2e/foo.spec.ts for the journey this replaces
+      - name: Typecheck
+        run: pnpm typecheck`;
+    const r = parcoursDunWorkflow(wf, TOUS);
+    expect(r.joues).toEqual([]);
+    expect(r.nommes).toEqual([]);
+  });
+
+  it('un commentaire EN FIN DE LIGNE ne marque rien non plus', () => {
+    const wf = `
+      - name: Smoke
+        run: npx playwright test tests/e2e/smoke.spec.ts  # and not tests/e2e/foo.spec.ts`;
+    const r = parcoursDunWorkflow(wf, TOUS);
+    expect(r.joues).toEqual(['smoke.spec.ts']);
+  });
+
+  it('un # entre guillemets reste du texte, pas un commentaire', () => {
+    const wf = `
+      - run: echo "tests/e2e/smoke.spec.ts # tests/e2e/foo.spec.ts"`;
+    const r = parcoursDunWorkflow(wf, TOUS);
+    expect(r.joues.sort()).toEqual(['foo.spec.ts', 'smoke.spec.ts']);
+  });
+
+  it('sansCommentairesYaml garde la ligne, il la tronque', () => {
+    const SAUT = String.fromCharCode(10);
+    expect(sansCommentairesYaml(`a: 1 # note${SAUT}b: 2`)).toBe(`a: 1 ${SAUT}b: 2`);
+    // Un `#` collé à un mot n'ouvre pas de commentaire en YAML.
+    expect(sansCommentairesYaml("- cron: '17 3 * * *'")).toBe("- cron: '17 3 * * *'");
+    expect(sansCommentairesYaml('run: gh issue view #12')).toBe('run: gh issue view ');
+  });
+});
+
+describe('cadenceParParcours — un workflow qu’on lance à la main ne garde rien', () => {
+  // Le trou du parseur : `jouParLaCi` était `Map.has(nom)`, et la carte prenait
+  // TOUS les workflows, cadence comprise. Un `workflow_dispatch` seul — que
+  // personne ne déclenche — rendait donc un parcours « joué », donc non rouge.
+  it('un workflow dispatch-only ne marque rien joué', () => {
+    const c = cadenceParParcours([
+      { fichier: '.github/workflows/manuel.yml', cadence: 'by hand', specsNommees: ['a.spec.ts'] },
+    ]);
+    expect(c.has('a.spec.ts')).toBe(false);
+  });
+
+  it('chaque PR l’emporte sur la nuit, quel que soit l’ordre', () => {
+    const nuit = { cadence: 'every night', specsNommees: ['a.spec.ts'] };
+    const pr = { cadence: 'every pull request', specsNommees: ['a.spec.ts'] };
+    expect(cadenceParParcours([nuit, pr]).get('a.spec.ts')).toBe('every pull request');
+    expect(cadenceParParcours([pr, nuit]).get('a.spec.ts')).toBe('every pull request');
+  });
+});
+
+describe('parcoursDunWorkflow — une forme non comprise se DIT', () => {
+  // Quand la forme de balayage de `qa.yml` change, tout devenait « jamais
+  // joué » : trente parcours affichés morts pour une panne de LECTURE, et
+  // l'alerte pointait le mauvais fichier.
+  it('un workflow qui joue le dossier sans forme connue est ILLISIBLE, pas vide', () => {
+    const r = parcoursDunWorkflow('- run: npx playwright test tests/e2e', ['a.spec.ts']);
+    expect(r.illisible).toBe(true);
+    expect(r.joues).toEqual([]);
+  });
+
+  it('un workflow qui ne parle pas du dossier n’est pas illisible', () => {
+    expect(parcoursDunWorkflow('- run: pnpm typecheck', ['a.spec.ts']).illisible).toBe(false);
+  });
+
+  it('un parcours sous un workflow illisible n’est NI vert NI rouge', () => {
+    const e = etatDunParcours({ nom: 'a.spec.ts', jouParLaCi: false, ciIllisible: true });
+    expect(e.rouge).toBe(false);
+    expect(e.mot).toBe('workflow unreadable');
+  });
+
+  it('sans le drapeau, le même parcours reste un rouge nommé', () => {
+    const e = etatDunParcours({ nom: 'a.spec.ts', jouParLaCi: false });
+    expect(e.rouge).toBe(true);
+    expect(e.mot).toBe('never played');
+  });
+});
+
 // ─── La gravité (issue #65) ───────────────────────────────────────────────────
 
 describe('ecartsDe — le produit passe avant le dépôt', () => {
@@ -474,6 +564,24 @@ describe('ecartsDe — le produit passe avant le dépôt', () => {
       {},
       {},
     ]);
+    expect(e.some((y) => /never played/.test(y.titre))).toBe(false);
+  });
+
+  // Une panne de lecture n'est pas un parcours mort, et elle ne s'adresse pas
+  // au même fichier. L'écart nomme le WORKFLOW, et la ligne du parcours cesse
+  // d'être rouge.
+  it('un workflow illisible se dit comme tel, et ne tue aucun parcours', () => {
+    const e = ecartsDe(
+      SNAP({
+        parcours: [{ nom: 'a.spec.ts', cas: 3, jouParLaCi: false, ciIllisible: true }],
+        ci: [{ fichier: '.github/workflows/qa.yml', parcoursIllisibles: true }],
+      }),
+      [{}, {}],
+    );
+    const x = e.find((y) => /unreadable/.test(y.titre));
+    expect(x).toBeTruthy();
+    expect(x.gravite).toBe('haute');
+    expect(x.quoi).toEqual(['.github/workflows/qa.yml']);
     expect(e.some((y) => /never played/.test(y.titre))).toBe(false);
   });
 
