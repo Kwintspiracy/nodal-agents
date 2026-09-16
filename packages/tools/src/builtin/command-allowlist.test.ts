@@ -108,6 +108,48 @@ describe('assertCommandAllowed @cap:assigner-outils/moteur', () => {
     });
   });
 
+  describe('what the shell expands AFTER the scan has read it', () => {
+    // The scan reads the string the agent wrote; `shell-engine.ts` spawns it
+    // with shell:true, so cmd.exe / sh expand it FIRST and then run it. With
+    // `EVIL=&& calc` in the environment, `node s.js %EVIL%` scans as one
+    // allowed `node` segment and runs as two commands. The value is not ours
+    // to read, so the construct itself is refused.
+    it('refuses cmd.exe variable expansion (%NAME%)', () => {
+      expect(() => assertCommandAllowed('node s.js %EVIL%', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('refuses sh variable expansion ($NAME)', () => {
+      expect(() => assertCommandAllowed('node s.js $EVIL', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('refuses sh brace expansion (${NAME})', () => {
+      expect(() => assertCommandAllowed('node s.js ${EVIL}', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('says WHY an expansion is refused, not just that it is absent from the list', () => {
+      try {
+        assertCommandAllowed('node s.js $EVIL', REVIEWER);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).toMatch(/expan/i);
+      }
+    });
+
+    it('leaves an unrestricted agent (null allowlist) free to expand variables', () => {
+      // No list = no scan to defeat. Refusing here would break every existing
+      // agent for no gain in protection.
+      expect(() => assertCommandAllowed('node s.js %EVIL%', null)).not.toThrow();
+      expect(() => assertCommandAllowed('node s.js $EVIL', null)).not.toThrow();
+      expect(() => assertCommandAllowed('node s.js ${EVIL}', undefined)).not.toThrow();
+    });
+  });
+
   describe('matching is on whole tokens', () => {
     it('does not let a longer executable pass on a prefix match', () => {
       // `nodemon` starts with `node` — a substring check would allow it.
