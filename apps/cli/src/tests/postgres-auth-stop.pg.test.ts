@@ -1,0 +1,97 @@
+// postgres-auth-stop.pg.test.ts — after the password is refused, nothing is
+// left running.
+//
+// `postgres-auth-failure.test.ts` proves the DECISION against a fake handle:
+// a SQLSTATE 28 error fails at the first refusal instead of being retried for
+// 180s, and `stop` is called. Review pass 2 of #114 asked for the other half,
+// and it is a fair ask — `stop` having been CALLED is not the same fact as no
+// postmaster being left behind, and the two come apart the moment the package
+// has nothing to signal yet.
+//
+// (It does. `embedded-postgres@18.3.0-beta.17` assigns `this.process = spawn(…)`
+// synchronously inside `start()`, before the cluster accepts a single
+// connection — dist/index.js, the `spawn(postgres, ['-D', …])` call. So there is
+// always a process to stop by the time our probe loop runs. That was checked in
+// the source rather than assumed, and this file checks the CONSEQUENCE against
+// a real cluster instead of taking either of us at our word.)
+//
+// The shape: start a real cluster in a temp directory on a free port, stop it,
+// then start it again with the WRONG password. The second start must fail with
+// the SQLSTATE in the message, and the data directory must be left with no live
+// postmaster.
+
+import { afterAll, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startEmbeddedPostgres, livePostmasterPid } from '../lib/postgres.ts';
+import { findFreePort } from '../lib/ports.ts';
+
+const root = mkdtempSync(join(tmpdir(), 'nodal-pg-auth-'));
+const dataDir = join(root, 'pg-data');
+const logDir = join(root, 'logs');
+const RIGHT = 'nodalai-right';
+const WRONG = 'nodalai-wrong';
+
+/**
+ * Can this machine start a cluster at all? Asked by doing it, then stopping it
+ * — the same judgement `embedded-postgres-available.ts` makes, and for the same
+ * reason: GitHub's Windows runner cannot, and a test that asserts a capability
+ * the OS declines to provide reports nothing about the product.
+ */
+const port = await findFreePort(25480);
+const setup = await (async (): Promise<{ ok: boolean; reason: string }> => {
+  try {
+    const handle = await startEmbeddedPostgres(dataDir, port, RIGHT, logDir);
+    await handle.stop();
+    return { ok: true, reason: '' };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+})();
+
+if (!setup.ok) {
+  console.warn(
+    `\n[tests] SKIPPING the wrong-password case: ${setup.reason}\n` +
+      '        The decision itself is still proven, unconditionally, by\n' +
+      '        postgres-auth-failure.test.ts.\n',
+  );
+}
+
+afterAll(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+describe('a refused password leaves nothing running @cap:installer-et-demarrer/moteur', () => {
+  it.skipIf(!setup.ok)(
+    'fails with the SQLSTATE and stops the cluster it started',
+    async () => {
+      // The cluster exists and its role has RIGHT. Starting it with WRONG makes
+      // a postmaster come up, accept the TCP connection, and refuse the login —
+      // which is exactly the case that used to wait 180 seconds and then report
+      // a readiness timeout over a cluster nobody could stop any more.
+      await expect(startEmbeddedPostgres(dataDir, port, WRONG, logDir)).rejects.toThrow(
+        /authentication failed \(SQLSTATE 28/,
+      );
+
+      // THE ASSERTION THIS FILE EXISTS FOR. `postmaster.pid` is written by the
+      // postmaster that holds this directory and removed by a clean stop, so a
+      // null here is the directory itself saying nothing of ours is alive on it.
+      expect(livePostmasterPid(dataDir)).toBeNull();
+    },
+    120_000,
+  );
+
+  it.skipIf(!setup.ok)(
+    'and the right password still works afterwards',
+    async () => {
+      // The stop was clean, not a kill: the very next start succeeds. A
+      // teardown that left a shared-memory segment behind would fail here with
+      // "pre-existing shared memory block is still in use".
+      const handle = await startEmbeddedPostgres(dataDir, port, RIGHT, logDir);
+      await handle.stop();
+      expect(livePostmasterPid(dataDir)).toBeNull();
+    },
+    120_000,
+  );
+});
