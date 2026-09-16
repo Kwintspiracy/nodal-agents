@@ -58,7 +58,22 @@ export interface CommandRunResult {
 }
 
 /** Ce qu'on lance : une commande shell, ou un exécutable avec ses arguments. */
-export type CommandTarget = { command: string } | { file: string; args: readonly string[] };
+export type CommandTarget =
+  | { command: string }
+  | {
+      file: string;
+      args: readonly string[];
+      /**
+       * Windows : passer argv TEL QUEL, sans le requotage de Node. Un seul
+       * appelant le pose — `run_command` sous liste blanche, pour lancer un
+       * `.cmd` via `cmd.exe /d /s /c "<ligne>"`, la seule forme mesurée qui
+       * marche (sans verbatim Node échappe les guillemets en \" que cmd ne
+       * lit pas). Absent partout ailleurs, donc SHELL_POLICY_VERSION ne bouge
+       * PAS : ce que fait une commande de preuve déjà approuvée est inchangé,
+       * octet pour octet.
+       */
+      windowsVerbatimArguments?: boolean;
+    };
 
 export interface CommandSpec {
   target: CommandTarget;
@@ -157,7 +172,11 @@ export function runShellCommand(
     const child =
       'command' in spec.target
         ? spawn(spec.target.command, { ...spawnOpts, shell: true })
-        : spawn(spec.target.file, [...spec.target.args], { ...spawnOpts, shell: false });
+        : spawn(spec.target.file, [...spec.target.args], {
+            ...spawnOpts,
+            shell: false,
+            windowsVerbatimArguments: spec.target.windowsVerbatimArguments === true,
+          });
 
     const out = new StreamCapture(cap, keep);
     const err = new StreamCapture(cap, keep);

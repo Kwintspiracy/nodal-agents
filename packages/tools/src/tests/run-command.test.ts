@@ -8,9 +8,6 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommandTool } from '../builtin/run-command';
-import { shellLookupHardening } from '../builtin/command-allowlist';
-import { runShellCommand } from '../builtin/shell-engine';
-import { buildChildEnv } from '../builtin/child-env';
 import { WorkspaceError } from '../builtin/file-ops/workspace';
 import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
 import { createToolRegistry } from '../registry';
@@ -291,138 +288,128 @@ describe('run_command — per-agent command allowlist @cap:executer-une-commande
   });
 });
 
-// ─── A program PLANTED in the working directory ─────────────────────────────
-// cmd.exe resolves an unqualified executable from the CURRENT DIRECTORY before
-// the PATH. An agent that can write files (file_write) can therefore drop a
-// `node.cmd` in its own workspace and have `node x.js` — a command the
-// allowlist accepts — start that script instead of the real node. The
-// allowlist compares the TOKEN, never the binary the shell will resolve.
+// ─── With a list: NO SHELL AT ALL ───────────────────────────────────────────
+// Five review passes found five holes in one scanner that tried to read a
+// command the way cmd.exe would. The sixth was always coming. So when a list
+// is set the command no longer reaches a shell: it is read as one program and
+// its arguments, and spawned with argv literal. Everything the simple reader
+// cannot understand is refused, with a message naming what to remove.
 
-describe('run_command — a program planted in the cwd @cap:executer-une-commande/moteur', () => {
-  let shadowDir: string;
-  let witness: string;
-  const planted = process.platform === 'win32' ? 'node.cmd' : 'node';
+describe('run_command with a list runs NO shell @cap:executer-une-commande/moteur', () => {
+  const LIST = ['node', 'npx vitest'];
 
-  beforeAll(async () => {
-    shadowDir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-shadow-')));
-    witness = join(shadowDir, 'planted-ran.txt');
-    const { writeFile, chmod } = await import('node:fs/promises');
-    if (process.platform === 'win32') {
-      await writeFile(
-        join(shadowDir, planted),
-        `@echo off\r\necho planted > ${JSON.stringify(witness)}\r\n`,
-        'utf8',
-      );
-    } else {
-      await writeFile(
-        join(shadowDir, planted),
-        `#!/bin/sh\necho planted > ${JSON.stringify(witness)}\n`,
-        'utf8',
-      );
-      await chmod(join(shadowDir, planted), 0o755);
-    }
+  it('runs a listed program and returns its real output', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'version', command: 'node -v' },
+      ctx({ commandAllowlist: LIST }),
+    );
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout.trim()).toMatch(/^v\d+\./);
   });
 
-  afterAll(async () => {
-    for (let i = 0; i < 5; i++) {
-      try {
-        await rm(shadowDir, { recursive: true, force: true });
-        return;
-      } catch {
-        await new Promise((r) => setTimeout(r, 300));
-      }
-    }
+  it('groups an argument with double quotes, and a single quote inside is just a character', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'snippet', command: `node -e "console.log('ok-no-shell')"` },
+      ctx({ commandAllowlist: LIST }),
+    );
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('ok-no-shell');
   });
 
-  function shadowCtx(overrides?: Partial<ToolContext>): ToolContext {
-    return ctx({ workspaces: [{ label: 'ws', path: shadowDir }], ...overrides });
-  }
-
-  it('refuses a listed program when a file of that name sits in the working directory', async () => {
+  it('refuses chaining: there is no shell to chain with', async () => {
     await expect(
       runCommandTool.execute(
-        { purpose: 'shadowed', command: 'node -v' },
-        shadowCtx({ commandAllowlist: ['node'] }),
+        { purpose: 'chain', command: 'node -v && calc' },
+        ctx({ commandAllowlist: LIST }),
       ),
-    ).rejects.toThrow(/not on this agent's command allowlist/);
-    const { existsSync } = await import('node:fs');
-    expect(existsSync(witness)).toBe(false);
+    ).rejects.toThrow(/not on this agent's command allowlist|cannot be read/i);
   });
 
-  it('says WHY: the working directory, not the list, is what changed', async () => {
+  it('refuses the caret, which five passes of scanner could never read safely', async () => {
+    await expect(
+      runCommandTool.execute(
+        { purpose: 'caret', command: `node x ^>& calc` },
+        ctx({ commandAllowlist: LIST }),
+      ),
+    ).rejects.toThrow(/cannot be read|not on this agent/i);
+  });
+
+  it('refuses a variable, which nothing would expand anyway', async () => {
+    await expect(
+      runCommandTool.execute(
+        { purpose: 'expansion', command: 'node x %EVIL%' },
+        ctx({ commandAllowlist: LIST }),
+      ),
+    ).rejects.toThrow(/cannot be read|not on this agent/i);
+  });
+
+  it('names the character to remove, so the agent can rewrite its command', async () => {
     try {
       await runCommandTool.execute(
-        { purpose: 'shadowed', command: 'node -v' },
-        shadowCtx({ commandAllowlist: ['node'] }),
+        { purpose: 'chain', command: 'node -v && calc' },
+        ctx({ commandAllowlist: LIST }),
       );
       expect.unreachable('should have thrown');
     } catch (err) {
-      expect((err as Error).message).toMatch(/working directory/i);
+      expect((err as Error).message).toMatch(/&/);
     }
   });
 
-  it('leaves behaviour unchanged when no allowlist is configured', async () => {
-    // No list = no promise to keep. The planted program runs, exactly as it
-    // did before this guard existed — refusing here would change what an
-    // unrestricted agent can do, which is not this PR's business.
+  it('runs a multi-word entry (npx vitest) through its real launcher', async () => {
     const out = await runCommandTool.execute(
-      { purpose: 'no allowlist', command: 'node -v' },
-      shadowCtx(),
+      { purpose: 'vitest', command: 'npx vitest --version' },
+      ctx({ commandAllowlist: ['npx vitest'] }),
     );
-    expect(out.exitCode).toBe(0);
-  });
+    // A .cmd on PATH: proven to START, whatever it then prints.
+    expect(out.stdout.length + out.stderr.length).toBeGreaterThan(0);
+  }, 120_000);
 
-  it('still runs a listed program whose name is NOT planted in the cwd', async () => {
-    const out = await runCommandTool.execute(
-      { purpose: 'clean cwd', command: `node -e "process.stdout.write('ok-clean')"` },
-      ctx({ commandAllowlist: ['node'] }),
-    );
-    expect(out.stdout).toContain('ok-clean');
-  });
-});
-
-// ─── Defence in depth: the env switch, proven on its own ────────────────────
-// The refusal above means the shell is never reached, so it cannot show that
-// the SECOND guard works. This one does: it spawns for real, in a directory
-// holding a planted `node.cmd`, with the env `run_command` builds when a list
-// is set — and asserts the REAL node answered.
-
-describe('shellLookupHardening — the shell stops reading the cwd @cap:executer-une-commande/moteur', () => {
-  it.runIf(process.platform === 'win32')(
-    'cmd.exe runs the real program, not the one planted next to it',
-    async () => {
-      const dir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-harden-')));
-      const witness = join(dir, 'planted-ran.txt');
-      const { writeFile } = await import('node:fs/promises');
+  it('resolves the program from the PATH, never from the working directory', async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-noshell-')));
+    const witness = join(dir, 'planted-ran.txt');
+    const { writeFile } = await import('node:fs/promises');
+    if (process.platform === 'win32') {
       await writeFile(
         join(dir, 'node.cmd'),
-        `@echo off\r\necho planted > ${JSON.stringify(witness)}\r\necho i-am-planted\r\n`,
+        `@echo off
+echo planted > ${JSON.stringify(witness)}
+echo i-am-planted
+`,
         'utf8',
       );
-      try {
-        const run = await runShellCommand({
-          target: { command: 'node -v' },
-          cwd: dir,
-          timeoutMs: 30_000,
-          env: buildChildEnv(process.env, shellLookupHardening(process.env)),
-          keep: 'head',
-        });
-        // Without the switch this prints `i-am-planted` and writes the witness
-        // — measured on Windows 11 before the guard existed.
-        expect(run.stdout.trim()).toMatch(/^v\d+\./);
-        const { existsSync } = await import('node:fs');
-        expect(existsSync(witness)).toBe(false);
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
-    },
-  );
+    } else {
+      const { chmod } = await import('node:fs/promises');
+      await writeFile(
+        join(dir, 'node'),
+        `#!/bin/sh
+echo planted > ${JSON.stringify(witness)}
+`,
+        'utf8',
+      );
+      await chmod(join(dir, 'node'), 0o755);
+    }
+    try {
+      const out = await runCommandTool.execute(
+        { purpose: 'planted', command: 'node -v' },
+        ctx({ workspaces: [{ label: 'ws', path: dir }], commandAllowlist: ['node'] }),
+      );
+      expect(out.stdout.trim()).toMatch(/^v\d+\./);
+      const { existsSync } = await import('node:fs');
+      expect(existsSync(witness)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
-  it.runIf(process.platform !== 'win32')('drops "." and the empty entry from PATH', () => {
-    expect(shellLookupHardening({ PATH: '/usr/bin:.:/bin::/sbin' })).toEqual({
-      PATH: '/usr/bin:/bin:/sbin',
-    });
-    // A PATH that needs nothing changed returns nothing — no pointless override.
-    expect(shellLookupHardening({ PATH: '/usr/bin:/bin' })).toEqual({});
+  it('leaves an agent with NO list on the shell, unchanged', async () => {
+    const out = await runCommandTool.execute(
+      {
+        purpose: 'no list',
+        command: `node -e "process.stdout.write('a')" && node -e "process.stdout.write('b')"`,
+      },
+      ctx(),
+    );
+    expect(out.stdout).toContain('a');
+    expect(out.stdout).toContain('b');
   });
 });
