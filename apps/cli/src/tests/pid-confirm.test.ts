@@ -12,11 +12,13 @@
 // was extracted from it.
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   confirmRecordedPid,
   confirmTree,
   formatRefusal,
   type Confirmation,
+  unconfirmedIdentityNotice,
   type LiveProcess,
 } from '../lib/pid-confirm.ts';
 
@@ -223,5 +225,36 @@ describe('confirmTree @cap:installer-et-demarrer/moteur', () => {
     );
     expect(v.treeKillAllowed).toBe(false);
     expect(verdict(v.root)).toBe('PID_RECYCLED');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('unconfirmedIdentityNotice @cap:installer-et-demarrer/moteur', () => {
+  // Review of PR #114 (2026-09-16): `down` said this out loud where no process
+  // table exists, and `up`'s orphan loop sent SIGKILL in silence on exactly the
+  // same evidence. One fact, one sentence, said in both places.
+  it('names the pid and says the identity was NOT confirmed', () => {
+    const line = unconfirmedIdentityNotice('runner', 4242);
+    expect(line).toContain('4242');
+    expect(line).toContain('runner');
+    expect(line).toMatch(/no process table on this platform to confirm it with/);
+  });
+
+  it('is what `up` prints before the SIGKILL it cannot confirm', () => {
+    // Read from source: this branch runs only where no process table exists,
+    // which is never the machine running these cases, and `runUp` cannot be
+    // driven here without a real config and real processes. What IS checkable
+    // is that the kill does not stand alone — remove the call and this goes red.
+    const up = readFileSync(new URL('../commands/up.ts', import.meta.url), 'utf-8');
+    const branch = up.slice(
+      up.indexOf('// The non-postgres orphans.'),
+      up.indexOf('// Wait for OS to release the port'),
+    );
+    expect(branch).toContain('unconfirmedIdentityNotice(o.name, o.pid)');
+    const notice = branch.indexOf('unconfirmedIdentityNotice(o.name, o.pid)');
+    const sigkill = branch.indexOf("process.kill(o.pid, 'SIGKILL')");
+    expect(notice).toBeGreaterThan(-1);
+    expect(sigkill).toBeGreaterThan(notice);
   });
 });

@@ -25,7 +25,11 @@ import {
 import { isPortBindable, findFreePort, pidListeningOnPort } from '../lib/ports.ts';
 import { measuredPort } from '../lib/orphans.ts';
 import { decideStartFromProbes, AlreadyRunningError } from '../lib/already-running.ts';
-import { confirmRecordedPid, formatRefusal } from '../lib/pid-confirm.ts';
+import {
+  confirmRecordedPid,
+  formatRefusal,
+  unconfirmedIdentityNotice,
+} from '../lib/pid-confirm.ts';
 import { logLauncherEvent, LAUNCHER_LOG } from '../lib/launcher-log.ts';
 import {
   spawnRunner,
@@ -503,9 +507,14 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       try {
         if (process.platform === 'win32') {
           // The tree, but a JUDGED tree: `killPidTree` drops `/T` when it finds
-          // a postgres in there that our data dir does not claim.
-          await killPidTree(o.pid, ownedPgPids);
+          // a postgres in there that our data dir does not claim, and refuses
+          // the root outright when the fresh reading disowns it.
+          await killPidTree(o.pid, ownedPgPids, recordedRoot(known, o.pid));
         } else {
+          // SAID, not implied: nothing here confirmed what this pid now is, and
+          // it is about to be killed anyway. Same sentence as `down` prints in
+          // the same situation — one wording for one fact.
+          console.log(chalk.gray(`  - ${unconfirmedIdentityNotice(o.name, o.pid)}`));
           process.kill(o.pid, 'SIGKILL');
         }
       } catch {

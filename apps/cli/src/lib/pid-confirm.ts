@@ -205,3 +205,15 @@ export function confirmTree(
 export function formatRefusal(refusal: Extract<Confirmation, { killable: false }>): string {
   return `KILL_REFUSED code=${refusal.code} ${refusal.detail}`;
 }
+
+/**
+ * The line printed when a pid is signalled WITHOUT its identity having been
+ * confirmed — the platforms where there is no process table to ask.
+ *
+ * One sentence in one place, because two of them had drifted: `down` said it,
+ * and `up`'s orphan loop killed in silence. A reader comparing two logs should
+ * not have to work out whether the two situations are the same one. They are.
+ */
+export function unconfirmedIdentityNotice(label: string, pid: number): string {
+  return `${label} (pid ${pid}) — no process table on this platform to confirm it with`;
+}
