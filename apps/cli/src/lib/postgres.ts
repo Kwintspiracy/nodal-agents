@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
-import { applyPostgresLoggingConfig, PG_LOG_DIR } from './pg-logging.ts';
+import { applyPostgresLoggingConfig, postgresLogDirFor } from './pg-logging.ts';
 import {
   formatForeignSkip,
   ownedPostgresPids,
@@ -710,9 +710,12 @@ export async function startEmbeddedPostgres(
   dataDir: string = PG_DATA_DIR,
   port: number = 25432,
   password: string = LEGACY_PG_PASSWORD,
-  // Overridable so a test can start a cluster without writing into the user's
-  // own `~/.nodalai/logs/`. The product never passes it.
-  logDirectory: string = PG_LOG_DIR,
+  // Derived from the data directory, one subdirectory per cluster: the file
+  // name is a day and a day name is TRUNCATED when it comes round, so two
+  // clusters sharing one directory would blank each other's crash history
+  // (review pass 2 of #114). Still overridable, so a test can start a cluster
+  // without writing into the user's own `~/.nodalai/logs/`.
+  logDirectory: string = postgresLogDirFor(dataDir),
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep
   const EmbeddedPostgres = (await import('embedded-postgres')).default;

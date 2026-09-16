@@ -12,11 +12,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   applyPostgresLoggingConfig,
   mergeAutoConf,
   postgresLoggingSettings,
+  postgresLogDirFor,
+  PG_LOG_DIR,
   quoteGuc,
 } from '../lib/pg-logging.ts';
 
@@ -140,5 +142,40 @@ describe('applyPostgresLoggingConfig @cap:installer-et-demarrer/moteur', () => {
     expect(readFileSync(join(dataDir, 'postgresql.auto.conf'), 'utf-8')).toContain(
       "logging_collector = 'on'",
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('postgresLogDirFor @cap:installer-et-demarrer/moteur', () => {
+  // Review pass 2 of #114. The log file is named after a DAY, and
+  // `log_truncate_on_rotation` empties that name when the day comes round, so a
+  // shared directory means two clusters blanking each other's crash history —
+  // the exact record #111 exists to keep. A `pnpm dev` stack and an isolated
+  // review worktree side by side is the ordinary case on this machine.
+  const A = join('C:', 'Users', 'kwint', 'AppData', 'Roaming', 'nodalai', 'pg-data');
+  const B = join('D:', 'APPS', 'wt-review', '.nodalai', 'pg-data');
+
+  it('gives two data directories two directories, even when both are named pg-data', () => {
+    expect(postgresLogDirFor(A)).not.toBe(postgresLogDirFor(B));
+  });
+
+  it('keeps every cluster under the one place a human already opens', () => {
+    expect(postgresLogDirFor(A).startsWith(PG_LOG_DIR)).toBe(true);
+    expect(postgresLogDirFor(B).startsWith(PG_LOG_DIR)).toBe(true);
+  });
+
+  it('names the directory after the data directory, so the two can be told apart', () => {
+    expect(postgresLogDirFor(A)).toMatch(/pg-data-[0-9a-f]{8}$/);
+  });
+
+  it('answers the same for the same directory spelled differently', () => {
+    // A trailing separator, and on Windows a different case, are the SAME
+    // directory. Two log directories for one cluster would split its history in
+    // half, which is the failure this whole function exists to avoid.
+    expect(postgresLogDirFor(A + sep)).toBe(postgresLogDirFor(A));
+    if (process.platform === 'win32') {
+      expect(postgresLogDirFor(A.toUpperCase())).toBe(postgresLogDirFor(A));
+    }
   });
 });

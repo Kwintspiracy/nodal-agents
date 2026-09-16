@@ -39,6 +39,19 @@
 // knows. The default would be `pg-data/log/`, inside the directory whose
 // ownership rules the rest of the CLI spends so much care on; a log is for
 // reading after the cluster is gone, so it does not belong there.
+//
+// ## One subdirectory PER DATA DIRECTORY
+//
+// Not one shared directory (review pass 2 of #114). The file name is a DAY —
+// `postgresql-2026-09-16.log` — and `log_truncate_on_rotation` empties that
+// name when the day comes round again. Two clusters pointed at one directory
+// therefore write into the same file and blank each other's history, which is
+// the exact record #111 exists to keep: a `pnpm dev` stack and an isolated
+// review worktree, side by side, is the ordinary case on this machine.
+//
+// The subdirectory is named after the data directory: its own name, so a human
+// can tell the two apart, plus a short digest of the absolute path, because two
+// different clusters can both be called `pg-data`.
 
 import {
   existsSync,
@@ -48,18 +61,57 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { LOG_DIR } from './config.ts';
 
-/** Where the cluster writes its own log. Absolute: Postgres never guesses. */
+/** The root all cluster logs live under. Absolute: Postgres never guesses. */
 export const PG_LOG_DIR = join(LOG_DIR, 'postgres');
 
 /**
- * One log file per day, capped, two things at once on purpose:
- * `log_rotation_age` gives a name a human can reason about ("what happened on
- * the 15th"), `log_rotation_size` stops a single loud day from filling a disk.
- * `log_truncate_on_rotation` makes the day names recycle instead of piling up
- * forever — same policy as `log-rotation.ts` applies to the service logs.
+ * Where THIS data directory's cluster writes its log.
+ *
+ * A directory of its own, because the file name is a day and
+ * `log_truncate_on_rotation` empties a day name when it comes round: two
+ * clusters sharing one directory would blank each other's crash history. See
+ * the header.
+ *
+ * The name carries the data directory's own last segment so a human reading
+ * `~/.nodalai/logs/postgres/` can tell which cluster is which, and a digest of
+ * the absolute path because two clusters are very often both called `pg-data`.
+ * The digest is taken over the path as `sameDirectory` in `postgres.ts` compares
+ * it — resolved, forward slashes, case-folded on Windows only — so the same
+ * directory spelled two ways lands in one place, and two directories that differ
+ * only by case land in two places on a filesystem where that matters.
+ */
+export function postgresLogDirFor(dataDir: string): string {
+  const normalised = normaliseDataDir(dataDir);
+  const digest = createHash('sha256').update(normalised).digest('hex').slice(0, 8);
+  const leaf = normalised.split('/').filter(Boolean).pop() ?? 'pg-data';
+  return join(PG_LOG_DIR, `${leaf.replace(/[^A-Za-z0-9._-]/g, '_')}-${digest}`);
+}
+
+/** The same spelling rule `postgres.ts` uses to decide two paths are one. */
+function normaliseDataDir(dataDir: string): string {
+  const resolved = toPosixPath(resolve(dataDir)).replace(/\/+$/, '');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * One log file per day, with a size backstop. Two settings, and they do NOT do
+ * the same thing — the first wording here said "capped, truncated" as if they
+ * did, which is wrong and worth being exact about (review pass 2 of #114):
+ *
+ *   · `log_rotation_age = 1d` gives a name a human can reason about ("what
+ *     happened on the 15th"), and `log_truncate_on_rotation` applies TO THIS
+ *     ONE: when a day name comes round again, the old file is emptied rather
+ *     than appended to, so the names recycle instead of piling up forever.
+ *   · `log_rotation_size` is a backstop against a single loud day filling a
+ *     disk. Truncation does NOT apply to it: a size-triggered rotation on a
+ *     name that has not changed does not overwrite the file, so a very loud day
+ *     leaves more than one file behind. That is the intended trade — losing the
+ *     rest of a crash-day's log to stay under a cap would defeat the point of
+ *     keeping one at all.
  */
 export const PG_LOG_ROTATION_SIZE_KB = 20 * 1024;
 
