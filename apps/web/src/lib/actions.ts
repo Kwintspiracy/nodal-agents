@@ -2067,7 +2067,7 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
       });
     }
 
-    revalidatePath('/jobs');
+    revalidatePath('/logs');
     return ok({ jobId: job.id });
   } catch (err) {
     console.error('[sendTaskAction]', err);
@@ -2707,7 +2707,7 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
         AND status = 'pending'
     `);
 
-    revalidatePath('/jobs');
+    revalidatePath('/logs');
     revalidatePath(`/jobs/${id}`);
     return ok({ status: 'cancelled' });
   } catch (err) {
@@ -5942,7 +5942,7 @@ export async function resolveApprovalAction(
 
     const body = (await res.json()) as { jobId: string; decision: string; answer?: string | null };
     revalidatePath('/approvals');
-    revalidatePath('/jobs');
+    revalidatePath('/logs');
     revalidatePath(`/jobs/${body.jobId}`);
     return ok({ jobId: body.jobId, decision: body.decision, answer: body.answer ?? null });
   } catch (err) {
@@ -9832,7 +9832,7 @@ export async function runScheduleNowAction(
     // NOTE: lastRun / nextRun are intentionally left untouched — a manual run is
     // out-of-band and must not reschedule the cron.
     revalidatePath('/automations');
-    revalidatePath('/jobs');
+    revalidatePath('/logs');
     return ok({ jobId: job.id });
   } catch (err) {
     console.error('[runScheduleNowAction]', err);
