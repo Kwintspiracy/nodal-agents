@@ -14,8 +14,9 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import Home from '../../app/home';
 import {
@@ -295,26 +296,48 @@ describe('homepage figures come from the measurement, not from a transcription',
     );
   });
 
-  // The guard against someone typing the numbers back in. It compares the page
-  // to the GENERATED file, never to the live snapshot, so a fresh measurement
-  // cannot redden a pull request while a transcription still does.
-  it('takes its figures from the generated file, never from a transcription', () => {
-    const generated = JSON.parse(
-      readFileSync(join(docsRoot, 'lib', 'measured-facts.json'), 'utf8'),
-    ) as {
-      measuredOn: string;
-      commit: string;
-      runUrl: string;
-      capabilities: number;
-      capabilitiesVerified: number;
-      figures: { value: string; label: string }[];
+  // The guard against someone typing the numbers back in. Comparing `FIGURES`
+  // to the committed `measured-facts.json` did NOT do that: both sides read the
+  // same file, so typing today's values into `home-content.ts` as constants
+  // left it green. Proving the import means putting a DIFFERENT file in front
+  // of the page and rendering it — only a page that really reads the generated
+  // file can print what the substitute says.
+  it('renders whatever the generated file says, not numbers of its own', async () => {
+    const substitute = {
+      note: 'substituted by the test',
+      measuredOn: '7 March 1999',
+      commit: 'deadbee',
+      runUrl: 'https://github.com/Kwintspiracy/nodal-agents/actions/runs/424242',
+      capabilities: 41,
+      capabilitiesVerified: 7,
+      figures: [
+        { value: '7770', label: 'packages measured' },
+        { value: '8,881', label: 'test cases' },
+        { value: '7772', label: 'test files' },
+        { value: '7773', label: 'end-to-end cases' },
+        { value: '7.4%', label: 'line coverage' },
+        { value: '7 / 41', label: 'capabilities green at both levels' },
+      ],
     };
-    expect(FIGURES).toEqual(generated.figures);
-    expect(MEASURED_ON).toBe(generated.measuredOn);
-    expect(MEASURED_COMMIT).toBe(generated.commit);
-    expect(MEASURED_RUN_URL).toBe(generated.runUrl);
-    expect(CAPABILITIES).toBe(generated.capabilities);
-    expect(CAPABILITIES_VERIFIED).toBe(generated.capabilitiesVerified);
+    vi.resetModules();
+    vi.doMock('../../lib/measured-facts.json', () => ({ default: substitute }));
+    try {
+      const { default: SubstitutedHome } = (await import('../../app/home')) as {
+        default: () => ReactElement;
+      };
+      const rendered = renderToStaticMarkup(<SubstitutedHome />);
+      for (const f of substitute.figures) expect(rendered).toContain(f.value);
+      expect(rendered).toContain(substitute.measuredOn);
+      expect(rendered).toContain(substitute.commit);
+      expect(rendered).toContain(substitute.runUrl);
+      expect(rendered).toContain('7 of the 41 capabilities');
+      expect(rendered).toContain('The other 34 are missing one level');
+      // And nothing of the real measurement leaked through a second source.
+      expect(rendered).not.toContain(MEASURED_COMMIT);
+    } finally {
+      vi.doUnmock('../../lib/measured-facts.json');
+      vi.resetModules();
+    }
   });
 
   it('cites the date, the commit and the run the figures were measured on', () => {

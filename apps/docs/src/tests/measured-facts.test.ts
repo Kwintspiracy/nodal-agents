@@ -128,16 +128,37 @@ describe('measured facts are read from the nightly snapshot', () => {
     expect(withValue('casDeTest', -42)).toThrow(/resume\.casDeTest is negative/);
     expect(withValue('capacitesVerifiees', -3)).toThrow(/resume\.capacitesVerifiees is negative/);
     expect(withValue('couvertureLignes', -0.5)).toThrow(/resume\.couvertureLignes is negative/);
-    // Zero is a real measurement for a count of things; it is not one for the
-    // total the page divides by, which the next case covers.
-    expect(withValue('casE2e', 0)).not.toThrow();
   });
 
-  it('refuses a measurement with no capabilities at all', () => {
+  // A collector that fell silent writes zeros, not nothing, and zero passed
+  // every guard: "0 packages measured", "0 test cases", "0.0% line coverage",
+  // "0 of the 0 capabilities", all under a green build. Zero is now refused by
+  // name for every count this repository always has some of.
+  it('refuses a zero where no measurement of this repository produces one', () => {
+    const withZero = (field: string) => {
+      const copy = structuredClone(snapshot) as { resume: Record<string, unknown> };
+      copy.resume[field] = 0;
+      if (field === 'capacites') copy.resume.capacitesVerifiees = 0;
+      return () => deriveMeasuredFacts(copy);
+    };
+    expect(withZero('paquets')).toThrow(/resume\.paquets is zero/);
+    expect(withZero('casDeTest')).toThrow(/resume\.casDeTest is zero/);
+    expect(withZero('fichiersDeTest')).toThrow(/resume\.fichiersDeTest is zero/);
+    expect(withZero('couvertureLignes')).toThrow(/resume\.couvertureLignes is zero/);
+    expect(withZero('capacites')).toThrow(/resume\.capacites is zero/);
+  });
+
+  // The other side of the same rule. Zero IS a result for these two, and a
+  // guard that refused it would stop the build on an honest measurement.
+  it('accepts a zero where zero is a real result', () => {
     const copy = structuredClone(snapshot) as { resume: Record<string, unknown> };
-    copy.resume.capacites = 0;
+    copy.resume.casE2e = 0;
     copy.resume.capacitesVerifiees = 0;
-    expect(() => deriveMeasuredFacts(copy)).toThrow(/resume\.capacites is zero/);
+    const facts = deriveMeasuredFacts(copy);
+    expect(facts.figures.find((f) => f.label === 'end-to-end cases')?.value).toBe('0');
+    expect(facts.figures.find((f) => f.label === 'capabilities green at both levels')?.value).toBe(
+      `0 / ${(snapshot.resume as { capacites: number }).capacites}`,
+    );
   });
 
   it('refuses a coverage that is not a share of a hundred', () => {
@@ -149,7 +170,9 @@ describe('measured facts are read from the nightly snapshot', () => {
     expect(withCoverage(150)).toThrow(/resume\.couvertureLignes is above 100 \(150\)/);
     expect(withCoverage(100.01)).toThrow(/resume\.couvertureLignes is above 100/);
     expect(withCoverage(100)).not.toThrow();
-    expect(withCoverage(0)).not.toThrow();
+    // Zero coverage is covered by the zero case below, which refuses it: a
+    // repository with 6,999 test cases does not measure 0.0%.
+    expect(withCoverage(0.1)).not.toThrow();
   });
 
   it('refuses a measurement claiming more proven capabilities than it has', () => {

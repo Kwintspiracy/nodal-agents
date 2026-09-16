@@ -58,12 +58,25 @@ function count(source: Record<string, unknown>, field: string, path: string): nu
 }
 
 /**
+ * A count of something this repository always has some of: packages, test
+ * files, test cases, capabilities, a coverage percentage. Zero is a real
+ * measurement for `casE2e` or for capabilities proven at both levels, and it is
+ * never one here — a collector that fell silent writes zeros, and the page then
+ * announced "0 packages measured" and "0.0% line coverage" under a green build.
+ */
+function positive(source: Record<string, unknown>, field: string, path: string): number {
+  const value = count(source, field, path);
+  if (value === 0) fail(path, 'is zero, which no measurement of this repository produces');
+  return value;
+}
+
+/**
  * A count that also has to be a share of a hundred. A coverage of 150 rendered
  * as `150.0%` and a coverage of -4 as `-4.0%`; both are a broken measurement
  * announcing itself as a result.
  */
 function percentage(source: Record<string, unknown>, field: string, path: string): number {
-  const value = count(source, field, path);
+  const value = positive(source, field, path);
   if (value > 100) fail(path, `is above 100 (${value})`);
   return value;
 }
@@ -115,10 +128,11 @@ export function deriveMeasuredFacts(snapshot: unknown): MeasuredFacts {
   const summary = record(root.resume, 'resume');
   const run = record(root.execution, 'execution');
 
-  const capabilities = count(summary, 'capacites', 'resume.capacites');
   // Zero capabilities is not a product with nothing to prove, it is a
   // measurement that found nothing. The page said "0 of the 0 capabilities".
-  if (capabilities === 0) fail('resume.capacites', 'is zero, so there is nothing to report');
+  const capabilities = positive(summary, 'capacites', 'resume.capacites');
+  // Zero PROVEN capabilities, on the other hand, is a result: a repository can
+  // legitimately have none green at both levels, and the page must say so.
   const capabilitiesVerified = count(summary, 'capacitesVerifiees', 'resume.capacitesVerifiees');
   if (capabilitiesVerified > capabilities) {
     fail('resume.capacitesVerifiees', 'is greater than resume.capacites');
@@ -132,13 +146,13 @@ export function deriveMeasuredFacts(snapshot: unknown): MeasuredFacts {
     capabilities,
     capabilitiesVerified,
     figures: [
-      { value: String(count(summary, 'paquets', 'resume.paquets')), label: 'packages measured' },
+      { value: String(positive(summary, 'paquets', 'resume.paquets')), label: 'packages measured' },
       {
-        value: count(summary, 'casDeTest', 'resume.casDeTest').toLocaleString('en-US'),
+        value: positive(summary, 'casDeTest', 'resume.casDeTest').toLocaleString('en-US'),
         label: 'test cases',
       },
       {
-        value: String(count(summary, 'fichiersDeTest', 'resume.fichiersDeTest')),
+        value: String(positive(summary, 'fichiersDeTest', 'resume.fichiersDeTest')),
         label: 'test files',
       },
       { value: String(count(summary, 'casE2e', 'resume.casE2e')), label: 'end-to-end cases' },
