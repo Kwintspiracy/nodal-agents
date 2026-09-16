@@ -150,6 +150,34 @@ export function etatDunParcours(p) {
   return { cle: 'joué', rouge: false, mot: null };
 }
 
+/**
+ * Sous quel titre un parcours se range sur la page Journeys.
+ *
+ * Sa cadence quand une CI le joue ; sinon le MOT d'`etatDunParcours`, et non un
+ * libellé recalculé. La page en avait un à elle (`p.cadence ?? (p.ciIllisible ?
+ * … : …)`) : deux définitions d'une même chose, donc un bac et une couleur de
+ * ligne qui se contrediront le jour où un quatrième état apparaîtra, sans que
+ * rien ne le dise (revue de la PR #113, 2e passe).
+ */
+export function cadenceAffichee(p) {
+  return p?.cadence ?? etatDunParcours(p).mot;
+}
+
+/**
+ * Les bacs de la page Journeys, du plus protecteur au moins protecteur.
+ *
+ * Tout ce que `cadenceAffichee` peut rendre DOIT figurer ici : un libellé
+ * absent de cette liste ferait disparaître ses parcours de la page en silence.
+ */
+export const ORDRE_DES_BACS = [
+  'every pull request',
+  'every push to main',
+  'every night',
+  'by hand',
+  'never played',
+  'workflow unreadable',
+];
+
 /** Le compte d'un fichier de parcours, par sort. */
 export function compterParcours(cas) {
   const c = { total: 0, vert: 0, rouge: 0, ignoré: 0, instable: 0 };
@@ -353,6 +381,48 @@ export function prixDeLaCi(runs) {
 
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
+/** Le balayage, et TOUT ce qui le suit sur sa ligne — c'est là que les filtres vivent. */
+const BALAYAGE = /ls\s+tests\/e2e\/\*\.spec\.ts([^\n]*)/;
+
+/**
+ * Un segment de tuyau qui retire un parcours : `grep -v` et son motif, dans
+ * les trois façons de l'écrire en shell.
+ */
+const EXCLUSION =
+  /^grep\s+-v\s+(?:'([\w.-]+\.spec\.ts)'|"([\w.-]+\.spec\.ts)"|([\w.-]+\.spec\.ts))$/;
+
+/**
+ * Ce que le tuyau qui suit le balayage retire — ou l'aveu qu'on ne sait pas.
+ *
+ * La première version ne connaissait QUE `grep -v 'x.spec.ts'` à simples
+ * quotes. Réintroduire une exclusion sous n'importe quelle autre forme
+ * (`"x.spec.ts"`, sans quotes, `grep -vE`, `grep -v -e`, `head`, `sed`…) la
+ * rendait invisible : le parcours exclu restait dans `joues`, donc VERT et
+ * absent de l'alerte, et aucun drapeau ne se levait puisque le `ls` était bien
+ * reconnu. C'est le faux-vert que ce lot existe pour tuer, à l'endroit même où
+ * il le tue (revue de la PR #113, 2e passe).
+ *
+ * Trois formes se lisent. Tout le reste rend `illisible` : un tuyau qu'on ne
+ * comprend pas ne vaut pas mieux qu'un tuyau absent, et « workflow unreadable »
+ * est une réponse honnête là où « tout est joué » est une invention.
+ */
+export function exclusionsDuBalayage(suite) {
+  // La queue de la substitution de processus — `…)` de `< <(ls … )` — n'est pas
+  // un segment de tuyau. Les quotes, elles, sont GARDÉES : les retirer casserait
+  // la forme à guillemets doubles, qui est justement une de celles à lire.
+  const tuyau = String(suite ?? '').replace(/[\s)]*$/, '');
+  if (tuyau.trim() === '') return { exclus: [], illisible: false };
+
+  const exclus = [];
+  for (const segment of tuyau.split('|').map((s) => s.trim())) {
+    if (segment === '') continue;
+    const m = EXCLUSION.exec(segment);
+    if (!m) return { exclus: [], illisible: true };
+    exclus.push(m[1] ?? m[2] ?? m[3]);
+  }
+  return { exclus, illisible: false };
+}
+
 /**
  * Les parcours qu'un workflow exécute.
  *
@@ -376,7 +446,8 @@ export function parcoursDunWorkflow(texte0, tousLesParcours) {
   const nommes = [...texte.matchAll(/tests\/e2e\/([\w.-]+\.spec\.ts)/g)].map((m) => m[1]);
 
   // Un balayage : `ls tests/e2e/*.spec.ts`, avec ses exclusions éventuelles.
-  const balaye = /ls\s+tests\/e2e\/\*\.spec\.ts/.test(texte);
+  const balayage = BALAYAGE.exec(texte);
+  const balaye = balayage !== null;
   if (!balaye) {
     // Le workflow parle du dossier des parcours, et pourtant on n'en a tiré
     // NI un nom NI un balayage : sa forme a changé sous nos pieds (un
@@ -388,9 +459,14 @@ export function parcoursDunWorkflow(texte0, tousLesParcours) {
     return { nommes: uniques, balaye: false, exclus: [], joues: uniques, illisible };
   }
 
-  const exclus = new Set(
-    [...texte.matchAll(/grep\s+-v\s+'([\w.-]+\.spec\.ts)'/g)].map((m) => m[1]),
-  );
+  const filtre = exclusionsDuBalayage(balayage[1] ?? '');
+  if (filtre.illisible) {
+    // Le `ls` est là ; la SUITE du tuyau ne se lit pas. Répondre « tout est
+    // joué » inventerait un vert sur un filtre qu'on n'a pas compris — le
+    // faux-vert que ce lot existe pour tuer. On ne sait pas, et on le dit.
+    return { nommes: [...new Set(nommes)], balaye: true, exclus: [], joues: [], illisible: true };
+  }
+  const exclus = new Set(filtre.exclus);
   const joues = (tousLesParcours ?? []).filter((n) => !exclus.has(n));
   return {
     nommes: [...new Set(nommes)],

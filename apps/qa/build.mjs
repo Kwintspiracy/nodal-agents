@@ -11,7 +11,15 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe, verdictDuBanc, tendance, etatDunParcours, MOT_ETAT } from './lib.mjs';
+import {
+  ecartsDe,
+  verdictDuBanc,
+  tendance,
+  etatDunParcours,
+  cadenceAffichee,
+  ORDRE_DES_BACS,
+  MOT_ETAT,
+} from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -320,19 +328,12 @@ function vueParcours() {
   // qui ne garde rien.
   const parCadence = new Map();
   for (const p of s.parcours) {
-    // « on ne sait pas » a son propre bac. Le confondre avec « jamais joué »
-    // ferait afficher une panne de lecture du portail comme une faute du dépôt.
-    const c = p.cadence ?? (p.ciIllisible ? 'workflow unreadable' : 'never played');
+    // Le libellé vient de `lib.mjs`, jamais d'un calcul refait ici : le bac et
+    // la couleur de la ligne doivent sortir de la même définition.
+    const c = cadenceAffichee(p);
     parCadence.set(c, [...(parCadence.get(c) ?? []), p]);
   }
-  const ORDRE = [
-    'every pull request',
-    'every push to main',
-    'every night',
-    'by hand',
-    'never played',
-    'workflow unreadable',
-  ];
+  const ORDRE = ORDRE_DES_BACS;
 
   const ligne = (p) => {
     const r = p.resultat;

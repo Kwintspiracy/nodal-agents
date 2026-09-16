@@ -49,6 +49,9 @@ import {
   etatDunParcours,
   cadenceParParcours,
   sansCommentairesYaml,
+  exclusionsDuBalayage,
+  cadenceAffichee,
+  ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -475,6 +478,106 @@ describe('parcoursDunWorkflow — un commentaire n’exécute rien', () => {
     // Un `#` collé à un mot n'ouvre pas de commentaire en YAML.
     expect(sansCommentairesYaml("- cron: '17 3 * * *'")).toBe("- cron: '17 3 * * *'");
     expect(sansCommentairesYaml('run: gh issue view #12')).toBe('run: gh issue view ');
+  });
+});
+
+describe('cadenceAffichee — le bac et la couleur sortent de la MÊME définition', () => {
+  // La page Journeys recalculait son libellé de bac (`p.cadence ?? (p.ciIllisible
+  // ? … : …)`). Deux définitions pour une même chose : le jour où un état
+  // s'ajoute, le bac et la couleur de la ligne se contredisent en silence.
+  it('un parcours joué se range sous sa cadence', () => {
+    expect(cadenceAffichee({ jouParLaCi: true, cadence: 'every night' })).toBe('every night');
+  });
+
+  it('sans CI, le bac est le MOT d’etatDunParcours — les deux, toujours', () => {
+    for (const p of [
+      { jouParLaCi: false },
+      { jouParLaCi: false, ciIllisible: true },
+      { jouParLaCi: true, cadence: 'every pull request' },
+    ]) {
+      const attendu = p.cadence ?? etatDunParcours(p).mot;
+      expect(cadenceAffichee(p)).toBe(attendu);
+    }
+  });
+
+  it('tout bac que cadenceAffichee peut rendre existe dans l’ORDRE de la page', () => {
+    const possibles = [
+      { jouParLaCi: true, cadence: 'every pull request' },
+      { jouParLaCi: true, cadence: 'every push to main' },
+      { jouParLaCi: true, cadence: 'every night' },
+      { jouParLaCi: true, cadence: 'by hand' },
+      { jouParLaCi: false },
+      { jouParLaCi: false, ciIllisible: true },
+    ].map(cadenceAffichee);
+    for (const bac of possibles) expect(ORDRE_DES_BACS).toContain(bac);
+  });
+
+  it('la page ne recalcule plus le libellé : elle prend celui de lib.mjs', () => {
+    const build = readFileSync(join(RACINE, 'apps', 'qa', 'build.mjs'), 'utf8');
+    expect(build).toContain('cadenceAffichee(p)');
+    expect(build).toContain('ORDRE_DES_BACS');
+    // Aucune reconstruction locale du bac : c'est la forme exacte qui avait
+    // créé la seconde définition.
+    expect(build).not.toMatch(/p\.cadence\s*\?\?/);
+  });
+});
+
+describe('parcoursDunWorkflow — une exclusion se lit sous TOUTES ses formes', () => {
+  const TOUS = ['smoke.spec.ts', 'foo.spec.ts', 'bar.spec.ts'];
+  const avec = (tuyau) =>
+    parcoursDunWorkflow(
+      `      - run: |
+          mapfile -t specs < <(ls tests/e2e/*.spec.ts${tuyau})
+          npx playwright test`,
+      TOUS,
+    );
+
+  // Le parseur ne connaissait que les simples quotes. Réintroduire une
+  // exclusion autrement la rendait INVISIBLE : le parcours exclu restait dans
+  // `joues`, donc vert et hors de l'alerte, et rien ne se levait puisque le
+  // `ls` était bien reconnu. Un faux vert, dans le lot écrit pour les tuer.
+  it('à guillemets DOUBLES, l’exclusion compte', () => {
+    const r = avec(` | grep -v "foo.spec.ts"`);
+    expect(r.illisible).toBe(false);
+    expect(r.exclus).toEqual(['foo.spec.ts']);
+    expect(r.joues).not.toContain('foo.spec.ts');
+  });
+
+  it('SANS quotes, l’exclusion compte aussi', () => {
+    const r = avec(' | grep -v foo.spec.ts');
+    expect(r.illisible).toBe(false);
+    expect(r.exclus).toEqual(['foo.spec.ts']);
+    expect(r.joues).not.toContain('foo.spec.ts');
+  });
+
+  it('deux exclusions à la file comptent toutes les deux', () => {
+    const r = avec(` | grep -v 'foo.spec.ts' | grep -v "bar.spec.ts"`);
+    expect(r.exclus.sort()).toEqual(['bar.spec.ts', 'foo.spec.ts']);
+    expect(r.joues).toEqual(['smoke.spec.ts']);
+  });
+
+  it('une forme INCONNUE rend illisible, jamais « tout est joué »', () => {
+    for (const tuyau of [
+      ` | grep -vE 'foo.spec.ts|bar.spec.ts'`,
+      ` | grep -v -e 'foo.spec.ts'`,
+      ' | head -n 3',
+      ` | sed '1d'`,
+    ]) {
+      const r = avec(tuyau);
+      expect(r.illisible).toBe(true);
+      expect(r.joues).toEqual([]);
+    }
+  });
+
+  it('un balayage SANS tuyau joue tout, et n’est pas illisible', () => {
+    const r = avec('');
+    expect(r.illisible).toBe(false);
+    expect(r.joues.sort()).toEqual(['bar.spec.ts', 'foo.spec.ts', 'smoke.spec.ts']);
+  });
+
+  it('exclusionsDuBalayage ne prend pas la parenthèse de fin pour un filtre', () => {
+    expect(exclusionsDuBalayage(')')).toEqual({ exclus: [], illisible: false });
+    expect(exclusionsDuBalayage('')).toEqual({ exclus: [], illisible: false });
   });
 });
 
