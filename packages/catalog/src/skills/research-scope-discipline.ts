@@ -25,14 +25,14 @@ When asked for an encyclopedic synthesis or in-depth research, aim for **5-8 KB 
 
 1. **Frame the scope**: at the start of the task, identify 4-6 key sections (not 12+). If the orchestrator asks for a "complete synthesis on X", it's UP TO YOU to pick the 4-6 most representative angles and stick to them.
 2. **Targeted research**: 3-5 searches/scrapes MAX (not 10+). You have what you need to write a clean synthesis from 3 solid sources. More scrapes = more tokens in context = more timeout risk.
-3. **Write straight away**: after research, \`file_write\` (if the destination is a vault), \`dashboard_publish\` (if it's a dashboard deliverable), or \`return_result\` directly. No pointless intermediate saves.
+3. **Write straight away**: after research, \`file_write\` (if the destination is a vault), \`dashboard_publish\` (if it's a dashboard deliverable), or simply your written answer — which IS what a delegating orchestrator receives. No pointless intermediate saves.
 
 ## If you sense it's going to overflow
 
 If you realize mid-job that the topic genuinely warrants 15+ KB (rare case: a truly dense subject, an explicit "exhaustive" request), **STOP**. Instead of pressing on in "full encyclopedia" mode:
 
 - Finish what you've already written: 5-8 KB focused on the fundamentals ✅
-- In your \`return_result\` or your \`file_write\`, flag it clearly to the orchestrator: *"This synthesis covers the fundamentals of X. The related topics (sub-theme A, sub-theme B, sub-theme C) would warrant dedicated research if the user wants to go further."*
+- In your written answer or your \`file_write\`, flag it clearly to the orchestrator: *"This synthesis covers the fundamentals of X. The related topics (sub-theme A, sub-theme B, sub-theme C) would warrant dedicated research if the user wants to go further."*
 
 This lets the orchestrator re-delegate into focused sub-tasks instead of one mega-call that times out.
 

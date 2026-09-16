@@ -1015,9 +1015,15 @@ export async function buildSystemPrompt(
   const subAgentBlock = jobContext?.isDelegated
     ? '## Delegated sub-task\n\n' +
       'You are handling a sub-task delegated by an orchestrator — you are NOT addressing ' +
-      'the end user directly. Deliver your result by calling `return_result` with your ' +
-      'findings; the orchestrator collects it and sends the ONE final reply to the user on ' +
-      'their original channel. Do NOT contact the user yourself — no email (e.g. ' +
+      'the end user directly. **Your final written reply IS your deliverable: it is exactly ' +
+      'what the orchestrator receives, and it is the only thing it receives.** When you have ' +
+      'finished, write that reply — the outcomes, not your intentions: what you found, what ' +
+      'you changed, the values and paths that matter, and anything that failed. Then call ' +
+      '`return_result` to signal you are done. `return_result` carries NO content: signalling ' +
+      'success without writing your reply hands the orchestrator an empty delegation, and the ' +
+      'run is failed rather than accepted. The orchestrator collects your reply and sends the ' +
+      'ONE final message to the user on their original channel. Do NOT contact the user ' +
+      'yourself — no email (e.g. ' +
       '`gmail_send_email`), no channel messages (`telegram_send_message` / `send_message`). ' +
       'A direct send from you is a duplicate and breaks the single-channel-return contract. ' +
       '(Producing a requested deliverable — a file, a document — is fine; it is messaging the ' +

@@ -280,6 +280,7 @@ describe('job-with-mcp-server: MCP resolver path', () => {
     const client = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -467,6 +468,7 @@ describe('job-with-mcp-server: Lot A3 — lazy MCP connect cache', () => {
     const client = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -531,6 +533,7 @@ describe('job-with-mcp-server: Lot A3 — lazy MCP connect cache', () => {
     const client = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -677,6 +680,7 @@ describe('job-with-mcp-server: orchestrator role (HIGH fix regression)', () => {
       [
         { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -738,6 +742,7 @@ describe('job-with-mcp-server: orchestrator role (HIGH fix regression)', () => {
     const client = makeMockLlmClient(
       [
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
           ],

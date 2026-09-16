@@ -227,6 +227,7 @@ describe('ask_user — la boucle complète dans le runner', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-1', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -308,6 +309,7 @@ describe('ask_user — la boucle complète dans le runner', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -361,6 +363,7 @@ describe('ask_user — la boucle complète dans le runner', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success' } },
         ],

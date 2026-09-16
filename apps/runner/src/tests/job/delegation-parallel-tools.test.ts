@@ -273,6 +273,7 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
       },
       // Child turn 1 — publish + return so child completes immediately
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-pub',
@@ -288,6 +289,7 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
       },
       // Parent turn 2 — return_result after seeing child output
       {
+        text: 'Done.',
         toolCalls: [
           {
             toolCallId: 'tc-rr-parent',
@@ -473,12 +475,14 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-pub-2', toolName: 'dashboard_publish', args: { text: 'ok' } },
           { toolCallId: 'tc-rr-child-2', toolName: 'return_result', args: { status: 'success' } },
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-parent-2', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -522,6 +526,7 @@ describe('unified orchestrator — one orchestrator drives BOTH delegation style
       },
       // Turn 2: acknowledge — the task board takes over from here.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-ack', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -580,6 +585,7 @@ describe('unified orchestrator — one orchestrator drives BOTH delegation style
       },
       // Child turn 1: publish + return so it completes synchronously.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-pub-u', toolName: 'dashboard_publish', args: { text: 'done' } },
           { toolCallId: 'tc-rr-child-u', toolName: 'return_result', args: { status: 'success' } },
@@ -587,6 +593,7 @@ describe('unified orchestrator — one orchestrator drives BOTH delegation style
       },
       // Parent turn 2: finalize after the delegation result is injected.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-parent-u', toolName: 'return_result', args: { status: 'success' } },
         ],

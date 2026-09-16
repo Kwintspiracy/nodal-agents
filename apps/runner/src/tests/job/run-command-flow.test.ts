@@ -296,6 +296,7 @@ describe('run_command — E2E runner integration', () => {
       },
       // Turn 2 (after approval + real execution): agent finishes.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-1', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -395,6 +396,7 @@ describe('run_command — E2E runner integration', () => {
       // A second turn is provided in case the loop re-enters; the job should
       // fail before consuming it.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-ie-2', toolName: 'return_result', args: { status: 'success' } },
         ],
@@ -483,6 +485,7 @@ describe('run_command — E2E runner integration', () => {
         },
         // Turn 2: agent finishes.
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -573,6 +576,7 @@ describe('run_command — E2E runner integration', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-3', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -633,6 +637,7 @@ describe('run_command — E2E runner integration', () => {
           ],
         },
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-4', toolName: 'return_result', args: { status: 'success' } },
           ],
@@ -699,6 +704,7 @@ describe('run_command — E2E runner integration', () => {
       // of failing loud — left here so a regression back to the old behavior
       // shows up as a mismatched status rather than an unrelated mock error.
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr-5', toolName: 'return_result', args: { status: 'success' } },
         ],

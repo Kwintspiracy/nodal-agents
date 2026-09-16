@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@nodal-agents/db": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/test-kit": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
