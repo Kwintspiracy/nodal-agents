@@ -20,11 +20,24 @@ const DEFAUTS = { web: 3000, runner: 3001 };
  * Postgres est délibérément absent : il survit très bien à un build, et le
  * sonder ferait échouer la commande sur une base laissée en route, qui ne
  * risque rien.
+ *
+ * Une clé ABSENTE garde le défaut — c'est le cas « pas de configuration », et
+ * il est légitime. Une clé PRÉSENTE mais invalide (`"4000"`, `0`, `3000.5`)
+ * JETTE : retomber en silence sur 3000 sonderait un port que personne n'a
+ * demandé, laisserait la vraie stack invisible, et le build la tuerait. C'est
+ * exactement l'invariant #4 — pas de repli intelligent silencieux.
  */
 export function portsDeLaStack(config) {
   const lu = (cle) => {
     const v = config?.ports?.[cle];
-    return Number.isInteger(v) && v > 0 && v < 65536 ? v : DEFAUTS[cle];
+    if (v === undefined || v === null) return DEFAUTS[cle];
+    if (!Number.isInteger(v) || v <= 0 || v >= 65536) {
+      throw new Error(
+        `ports.${cle} = ${JSON.stringify(v)} in ~/.nodalai/config.json is not a port ` +
+          `(expected an integer between 1 and 65535)`,
+      );
+    }
+    return v;
   };
   return [...new Set([lu('web'), lu('runner')])];
 }

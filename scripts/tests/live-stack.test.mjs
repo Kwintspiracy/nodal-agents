@@ -8,7 +8,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { portsDeLaStack, verdictStackVivante } from '../lib/live-stack.mjs';
-
 describe('portsDeLaStack', () => {
   it('lit les ports du fichier de configuration', () => {
     expect(portsDeLaStack({ ports: { web: 4000, runner: 4001, postgres: 25444 } })).toEqual([
@@ -29,8 +28,25 @@ describe('portsDeLaStack', () => {
     expect(portsDeLaStack({ ports: { web: 3000, runner: 3000 } })).toEqual([3000]);
   });
 
-  it('un port qui n’est pas un entier valide retombe sur le défaut', () => {
-    expect(portsDeLaStack({ ports: { web: 'oui', runner: 0 } })).toEqual([3000, 3001]);
+  // Un port présent mais illisible ne retombe PAS sur le défaut : la commande
+  // sonderait 3000 pendant que la vraie stack sert ailleurs, ne verrait
+  // personne, et la tuerait. Invariant #4 : échouer fort, et nommer la valeur.
+  it('une chaîne au lieu d’un entier fait échouer, en nommant la clé et la valeur', () => {
+    expect(() => portsDeLaStack({ ports: { web: '4000' } })).toThrow(
+      'ports.web = "4000" in ~/.nodalai/config.json is not a port',
+    );
+  });
+
+  it('un port hors des bornes ou fractionnaire fait échouer aussi', () => {
+    expect(() => portsDeLaStack({ ports: { runner: 0 } })).toThrow('ports.runner = 0');
+    expect(() => portsDeLaStack({ ports: { web: 70000 } })).toThrow('ports.web = 70000');
+    expect(() => portsDeLaStack({ ports: { web: 3000.5 } })).toThrow('ports.web = 3000.5');
+    expect(() => portsDeLaStack({ ports: { web: -1 } })).toThrow('ports.web = -1');
+  });
+
+  it('une clé absente garde le défaut : « pas de configuration » est légitime', () => {
+    expect(portsDeLaStack({ ports: {} })).toEqual([3000, 3001]);
+    expect(portsDeLaStack({ ports: { web: undefined, runner: null } })).toEqual([3000, 3001]);
   });
 });
 

@@ -65,9 +65,17 @@ const configHote = (() => {
   }
 })();
 
-const stack = verdictStackVivante(
-  await Promise.all(portsDeLaStack(configHote).map((p) => sonder(p))),
-);
+let portsASonder;
+try {
+  portsASonder = portsDeLaStack(configHote);
+} catch (err) {
+  // Un port configuré mais illisible : on ne devine pas, on le dit et on sort —
+  // AVANT toute écriture, donc avant que `build-pack` ne vide `pack/`.
+  console.log(`\n✗ ${err.message}`);
+  process.exit(1);
+}
+
+const stack = verdictStackVivante(await Promise.all(portsASonder.map((p) => sonder(p))));
 if (stack.vivante) {
   console.log(`\n✗ ${stack.message}`);
   process.exit(1);
