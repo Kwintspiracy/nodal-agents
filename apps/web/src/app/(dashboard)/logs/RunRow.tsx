@@ -28,6 +28,7 @@ import { truncate } from '@/lib/format-time';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import { Tr, Td } from '@/components/ui/Table';
+import RowActionButton from '@/components/ui/RowActionButton';
 import ToolBlock from '../spaces/ToolBlock.tsx';
 import { formatMs, formatCost } from '../spaces/format.ts';
 import ModelCallBlock from './ModelCallBlock.tsx';
@@ -203,7 +204,6 @@ export default function RunRow({
               <Link
                 href={`/jobs/${run.id}`}
                 className="text-medium-13 text-ink-3 transition-colors hover:text-ink"
-                onClick={(e) => e.stopPropagation()}
               >
                 Open run
               </Link>
@@ -234,17 +234,14 @@ export default function RunRow({
             </div>
 
             {hasMore && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void loadPage(pageCount.current + 1);
-                }}
-                disabled={loading}
-                className="mt-3 rounded-md border border-rule-2 px-3 py-1.5 text-medium-13 text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-50"
-              >
-                Show {CALLS_PAGE_SIZE} more
-              </button>
+              <div className="mt-3">
+                <RowActionButton
+                  onClick={() => void loadPage(pageCount.current + 1)}
+                  disabled={loading}
+                >
+                  Show {CALLS_PAGE_SIZE} more
+                </RowActionButton>
+              </div>
             )}
           </Td>
         </Tr>

@@ -43,7 +43,8 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     for (const label of [
       'Home',
       'Chat',
-      'Runs',
+      // « Runs » n'est plus une entree du menu depuis #134 : la liste des runs
+      // EST Activity, le premier onglet de Logs, deja verifie plus bas.
       'LLM Providers',
       'Agents',
       'Skills',
