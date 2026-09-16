@@ -25,13 +25,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import {
-  configHoteDepuis,
-  FAMILLES_SONDEES,
-  portsDeLaStack,
-  verdictDuneSonde,
-  verdictStackVivante,
-} from './lib/live-stack.mjs';
+import { configHoteDepuis, portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
+import { sonderUnPort } from './lib/sonde.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skipSlow = process.argv.includes('--fast');
@@ -46,35 +41,9 @@ const started = Date.now();
 // stack de dev qui tourne. Le message qu'on lit à ce moment-là parle de build,
 // jamais de la stack qu'on vient de tuer, et on cherche la mauvaise panne.
 //
-// Le verdict est PUR et testé (`scripts/lib/live-stack.mjs`) ; seule la sonde
-// est ici.
-
-/**
- * Une sonde, sur les DEUX familles d'adresses.
- *
- * `localhost` ne suffisait pas : selon la machine il résout en 127.0.0.1 ou en
- * ::1, et une stack liée à l'autre famille refusait la connexion — elle était
- * donc déclarée absente, et le build la tuait. On essaie les deux
- * explicitement, et seul un refus de connexion PROUVÉ des deux côtés vaut
- * « personne n'écoute ». Le verdict est pur et testé dans
- * `scripts/lib/live-stack.mjs`.
- */
-async function sonder(port) {
-  const erreurs = await Promise.all(
-    FAMILLES_SONDEES.map(async (hote) => {
-      const autorite = hote.includes(':') ? `[${hote}]` : hote;
-      try {
-        await fetch(`http://${autorite}:${port}/api/health`, {
-          signal: AbortSignal.timeout(1500),
-        });
-        return null;
-      } catch (err) {
-        return err;
-      }
-    }),
-  );
-  return { port, vivant: verdictDuneSonde(erreurs) };
-}
+// Le verdict est PUR et testé (`scripts/lib/live-stack.mjs`), la sonde réseau
+// vit dans `scripts/lib/sonde.mjs` et se teste contre un vrai serveur. Il ne
+// reste ici que la lecture du fichier de configuration et la décision.
 
 /** La lecture BRUTE du fichier ; le verdict, lui, est pur et vit dans la lib. */
 const lectureDeLaConfig = (() => {
@@ -97,7 +66,7 @@ try {
   process.exit(1);
 }
 
-const stack = verdictStackVivante(await Promise.all(portsASonder.map((p) => sonder(p))));
+const stack = verdictStackVivante(await Promise.all(portsASonder.map((p) => sonderUnPort(p))));
 if (stack.vivante) {
   console.log(`\n✗ ${stack.message}`);
   process.exit(1);
