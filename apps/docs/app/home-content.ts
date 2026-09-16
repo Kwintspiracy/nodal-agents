@@ -403,22 +403,22 @@ export interface Figure {
 
 /**
  * Every figure below was read from `apps/qa/data/snapshot.json`, produced by the
- * nightly measurement (`.github/workflows/qa.yml`) on 15 September 2026, run
- * 34995269564, commit 76761ae9. The date is printed next to the table on the
+ * nightly measurement (`.github/workflows/qa.yml`) on 14 September 2026, run
+ * 34825077357, commit 3e067fb1. The date is printed next to the table on the
  * page: a number without its measurement date is a number nobody can check.
  */
-export const MEASURED_ON = '15 September 2026';
-export const MEASURED_COMMIT = '76761ae9';
+export const MEASURED_ON = '14 September 2026';
+export const MEASURED_COMMIT = '13329166';
 export const MEASURED_RUN_URL =
-  'https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564';
+  'https://github.com/Kwintspiracy/nodal-agents/actions/runs/34825077357';
 
 export const FIGURES: readonly Figure[] = [
   { value: '34', label: 'packages measured' },
-  { value: '6,999', label: 'test cases' },
-  { value: '565', label: 'test files' },
-  { value: '234', label: 'end-to-end cases' },
+  { value: '6,982', label: 'test cases' },
+  { value: '564', label: 'test files' },
+  { value: '229', label: 'end-to-end cases' },
   { value: '81.7%', label: 'line coverage' },
-  { value: '13 / 24', label: 'capabilities green at both levels' },
+  { value: '12 / 24', label: 'capabilities green at both levels' },
 ];
 
 export interface Practice {
