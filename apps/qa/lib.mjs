@@ -404,6 +404,39 @@ export function cartesDuTableau({ issues, pr } = {}) {
 // npm et à git.
 
 /**
+ * Compare deux identifiants de préversion, segment par segment, selon
+ * semver 2.0 §11 : on découpe sur `.`, deux segments numériques se comparent
+ * en NOMBRES, un numérique passe avant un alphanumérique, et un identifiant
+ * plus court qui préfixe l'autre vient avant (`rc` < `rc.1`).
+ *
+ * Comparer les identifiants comme des chaînes rendait `rc.10 < rc.2` : une
+ * carte « Publish 1.0.0-rc.10 » face à un npm en `rc.2` était accusée en
+ * gravité haute de demander une version déjà publiée, alors qu'elle était la
+ * plus récente. C'est la même faute que `0.8.10 < 0.8.9`, un cran plus loin.
+ */
+function comparerPrerelease(a, b) {
+  const xs = a.split('.');
+  const ys = b.split('.');
+  for (let i = 0; i < Math.max(xs.length, ys.length); i += 1) {
+    const u = xs[i];
+    const v = ys[i];
+    if (u === undefined) return -1;
+    if (v === undefined) return 1;
+    const uNum = /^\d+$/.test(u);
+    const vNum = /^\d+$/.test(v);
+    if (uNum && vNum) {
+      const d = Number(u) - Number(v);
+      if (d !== 0) return d < 0 ? -1 : 1;
+    } else if (uNum !== vNum) {
+      return uNum ? -1 : 1;
+    } else if (u !== v) {
+      return u < v ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/**
  * Compare deux numéros de version. `-1`, `0`, `1`, et `null` sur ce qui n'est
  * pas un semver — plutôt qu'un ordre inventé qui accuserait au hasard.
  *
@@ -423,7 +456,7 @@ export function comparerSemver(a, b) {
   if ((x[4] ?? '') === (y[4] ?? '')) return 0;
   if (!x[4]) return 1;
   if (!y[4]) return -1;
-  return x[4] < y[4] ? -1 : 1;
+  return comparerPrerelease(x[4], y[4]);
 }
 
 /**

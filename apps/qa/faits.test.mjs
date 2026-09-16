@@ -82,6 +82,28 @@ describe('comparerSemver', () => {
   it('une préversion vient avant sa version', () => {
     expect(comparerSemver('0.9.0-rc.1', '0.9.0')).toBe(-1);
     expect(comparerSemver('0.9.0', '0.9.0-rc.1')).toBe(1);
+    expect(comparerSemver('1.0.0-rc.1', '1.0.0')).toBe(-1);
+  });
+
+  // Comparées comme des chaînes, `rc.10` passait AVANT `rc.2` : une carte
+  // « Publish 1.0.0-rc.10 » face à un npm en rc.2 était accusée en gravité
+  // haute de demander une version déjà publiée. semver 2.0 §11 : segment par
+  // segment, en nombres quand les deux le sont.
+  it('les préversions se comparent segment par segment, en nombres', () => {
+    expect(comparerSemver('1.0.0-rc.10', '1.0.0-rc.2')).toBe(1);
+    expect(comparerSemver('1.0.0-rc.2', '1.0.0-rc.10')).toBe(-1);
+  });
+
+  it('un segment de texte se compare en texte, et le numérique passe devant', () => {
+    expect(comparerSemver('1.0.0-alpha', '1.0.0-beta')).toBe(-1);
+    expect(comparerSemver('1.0.0-beta', '1.0.0-alpha')).toBe(1);
+    expect(comparerSemver('1.0.0-1', '1.0.0-alpha')).toBe(-1);
+  });
+
+  it('un identifiant plus court qui préfixe l’autre vient avant', () => {
+    expect(comparerSemver('1.0.0-rc', '1.0.0-rc.1')).toBe(-1);
+    expect(comparerSemver('1.0.0-rc.1', '1.0.0-rc')).toBe(1);
+    expect(comparerSemver('1.0.0-rc.1', '1.0.0-rc.1')).toBe(0);
   });
 
   it('rend null sur ce qui n’est pas un semver, pas un ordre inventé', () => {
@@ -106,6 +128,15 @@ describe('publicationsDejaFaites', () => {
 
   it('ne dit rien d’une publication encore à faire', () => {
     expect(publicationsDejaFaites([carte({ titre: 'Publish 0.8.10' })], release)).toEqual([]);
+  });
+
+  it('une préversion plus récente que celle de npm n’est pas accusée', () => {
+    expect(
+      publicationsDejaFaites([carte({ titre: 'Publish 1.0.0-rc.10' })], {
+        surNpm: '1.0.0-rc.2',
+        npmInjoignable: false,
+      }),
+    ).toEqual([]);
   });
 
   it('« release 0.8.9 » compte autant que « publish 0.8.9 »', () => {
