@@ -72,6 +72,10 @@ une pastille « no verified facts » et compte dans l'alerte. Une issue écrite 
 la main par Quentin n'est jamais concernée : la règle vise les agents, et le
 critère est vérifiable plutôt que deviné au style.
 
+Attention à ce qui compte comme section : un `## Verified` **cité dans un bloc
+de code** (le modèle ci-dessus, recopié) n'en est pas une. Le portail retire les
+blocs clôturés avant de chercher le titre.
+
 Le portail vérifie aussi l'état de publication lui-même (`npm view` + `git`,
 bloc « Release » en tête du tableau) et nomme toute carte ouverte qui demande de
 publier une version déjà sur npm. C'est exactement #68, désormais dit à voix

@@ -196,6 +196,45 @@ describe('porteDesFaitsVerifies', () => {
     expect(porteDesFaitsVerifies('I verified this by hand, trust me.')).toBe(false);
     expect(porteDesFaitsVerifies('')).toBe(false);
   });
+
+  // Un agent qui CITE le modèle de SKILL.md dans un bloc de code écrit bien la
+  // ligne, sans rien avoir vérifié. Le bloc de code n'est pas une section.
+  it('un titre « Verified » cité dans un bloc de code ne compte pas', () => {
+    const cite = [
+      'Here is the template I will follow:',
+      '',
+      '```markdown',
+      '## Verified',
+      '',
+      '`pnpm test` → green',
+      '```',
+      '',
+      'Doing it later.',
+    ].join('\n');
+    expect(porteDesFaitsVerifies(cite)).toBe(false);
+  });
+
+  it('un bloc en ~~~ ne compte pas davantage, ni un bloc laissé ouvert', () => {
+    expect(porteDesFaitsVerifies(['~~~', '## Verified', '~~~'].join('\n'))).toBe(false);
+    expect(porteDesFaitsVerifies(['```', '## Verified'].join('\n'))).toBe(false);
+  });
+
+  it('une vraie section reste lue, même suivie d’un bloc qui cite le mot', () => {
+    const vrai = [
+      '## Verified',
+      '',
+      '```',
+      '$ pnpm test',
+      '## Verified is just quoted here',
+      '```',
+    ].join('\n');
+    expect(porteDesFaitsVerifies(vrai)).toBe(true);
+  });
+
+  it('une vraie section APRÈS un bloc de code est lue elle aussi', () => {
+    const vrai = ['```', 'code', '```', '', '## Verified', '', '`npm view` → 0.8.9'].join('\n');
+    expect(porteDesFaitsVerifies(vrai)).toBe(true);
+  });
 });
 
 describe('sansFaitsVerifies', () => {

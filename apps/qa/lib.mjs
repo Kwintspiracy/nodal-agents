@@ -522,9 +522,36 @@ export function ecritParUnAgent(corps) {
   return /generated with[^\n]{0,20}claude code/i.test(t) || /claude-session\s*:/i.test(t);
 }
 
-/** Une SECTION « Verified », pas le mot au fil du texte : un titre markdown. */
+/**
+ * Le texte débarrassé de ses blocs de code clôturés (``` et ~~~).
+ *
+ * Un agent qui CITE le modèle de `SKILL.md` dans un bloc de code écrit bien la
+ * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié. Le
+ * balayage est fait ligne à ligne plutôt qu'en une regex : une clôture se ferme
+ * par le même caractère et au moins autant de marques, et un bloc laissé ouvert
+ * va jusqu'à la fin du corps.
+ */
+function horsDesBlocsDeCode(texte) {
+  const gardees = [];
+  let cloture = null;
+  for (const ligne of texte.split('\n')) {
+    const marque = /^[ \t]*(`{3,}|~{3,})/.exec(ligne)?.[1];
+    if (cloture) {
+      if (marque && marque[0] === cloture[0] && marque.length >= cloture.length) cloture = null;
+      continue;
+    }
+    if (marque) {
+      cloture = marque;
+      continue;
+    }
+    gardees.push(ligne);
+  }
+  return gardees.join('\n');
+}
+
+/** Une SECTION « Verified », pas le mot au fil du texte ni cité dans un bloc. */
 export function porteDesFaitsVerifies(corps) {
-  return /^[ \t]*#{1,6}[ \t]*verified\b/im.test(String(corps ?? ''));
+  return /^[ \t]*#{1,6}[ \t]*verified\b/im.test(horsDesBlocsDeCode(String(corps ?? '')));
 }
 
 /** Les cartes ouvertes par un agent qui n'apportent aucun fait vérifié. */
