@@ -460,6 +460,26 @@ export function comparerSemver(a, b) {
 }
 
 /**
+ * Le nombre de commits depuis le dernier tag, à partir des sorties de git.
+ *
+ * `origin/main` d'abord : le nombre qui intéresse est celui de la branche
+ * PUBLIÉE, pas de la branche de travail d'où la collecte est lancée. Une
+ * référence absente (checkout superficiel de la CI) retombe sur `HEAD`, parce
+ * que git sait répondre là — ce n'est pas un repli inventé, c'est une seconde
+ * question posée.
+ *
+ * Une sortie qui n'est pas un entier rend `null` et non `0` : `Number('')` vaut
+ * zéro, et « aucun commit depuis le tag » est une affirmation, pas une absence.
+ */
+export function commitsDepuisLeTag({ surLaBranchePubliee, surHead } = {}) {
+  for (const sortie of [surLaBranchePubliee, surHead]) {
+    const t = String(sortie ?? '').trim();
+    if (/^\d+$/.test(t)) return Number(t);
+  }
+  return null;
+}
+
+/**
  * L'état de la release : ce que npm sert, ce que le dépôt porte, et l'écart.
  *
  * `npm` est la réponse de `npm view … --json`, ou `null` quand le registre n'a

@@ -41,6 +41,7 @@ import {
   intentionDunParcours,
   fusionnerTableauGitHub,
   etatDeLaRelease,
+  commitsDepuisLeTag,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -380,14 +381,6 @@ function release() {
   if (!npm) console.warn('[qa] npm did not answer, the release state is MISSING, not green.');
 
   const dernierTag = sh('git describe --tags --abbrev=0 --match "v*"') || null;
-  // `origin/main` d'abord : le nombre qui intéresse est celui de la branche
-  // publiée, pas de la branche de travail d'où la collecte est lancée. Une
-  // référence absente (checkout superficiel de la CI) retombe sur HEAD plutôt
-  // que de rendre une absence là où git sait répondre.
-  const depuis = dernierTag
-    ? sh(`git rev-list --count ${dernierTag}..origin/main`) ||
-      sh(`git rev-list --count ${dernierTag}..HEAD`)
-    : '';
   const versionDuDepot = lireJson(join(RACINE, 'apps', 'cli', 'package.json'))?.version ?? null;
 
   return etatDeLaRelease({
@@ -395,7 +388,12 @@ function release() {
     depot: {
       version: versionDuDepot,
       dernierTag,
-      commitsDepuisLeTag: /^\d+$/.test(depuis) ? Number(depuis) : null,
+      commitsDepuisLeTag: dernierTag
+        ? commitsDepuisLeTag({
+            surLaBranchePubliee: sh(`git rev-list --count ${dernierTag}..origin/main`),
+            surHead: sh(`git rev-list --count ${dernierTag}..HEAD`),
+          })
+        : null,
     },
     le: new Date().toISOString(),
   });

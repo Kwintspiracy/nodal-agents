@@ -16,6 +16,7 @@ import {
   fusionnerTableauGitHub,
   comparerSemver,
   ecartsDe,
+  commitsDepuisLeTag,
   ecritParUnAgent,
   etatDeLaRelease,
   porteDesFaitsVerifies,
@@ -68,6 +69,31 @@ describe('etatDeLaRelease', () => {
 
   it('npm injoignable ne rend PAS un verdict « en avance » : on ne sait pas', () => {
     expect(etatDeLaRelease({ npm: null, depot, le: 'x' }).depotEnAvance).toBe(null);
+  });
+});
+
+describe('commitsDepuisLeTag', () => {
+  it('prend le nombre de la branche PUBLIÉE quand git sait répondre', () => {
+    expect(commitsDepuisLeTag({ surLaBranchePubliee: '14\n', surHead: '3' })).toBe(14);
+  });
+
+  // Checkout superficiel de la CI : `origin/main` n'existe pas. Sans ce repli,
+  // le portail rendait une absence là où git savait répondre.
+  it('sans référence `origin/main`, retombe sur HEAD', () => {
+    expect(commitsDepuisLeTag({ surLaBranchePubliee: '', surHead: '3' })).toBe(3);
+  });
+
+  // `Number('')` vaut ZÉRO : sans ce garde, une commande muette affichait
+  // « 0 commit depuis le tag », une affirmation, là où il n'y a qu'une absence.
+  it('une sortie qui n’est pas un entier rend null, jamais zéro', () => {
+    expect(commitsDepuisLeTag({ surLaBranchePubliee: '', surHead: '' })).toBe(null);
+    expect(commitsDepuisLeTag({ surLaBranchePubliee: 'fatal: bad revision' })).toBe(null);
+    expect(commitsDepuisLeTag({})).toBe(null);
+    expect(commitsDepuisLeTag()).toBe(null);
+  });
+
+  it('zéro commit depuis le tag reste zéro, et se distingue de l’absence', () => {
+    expect(commitsDepuisLeTag({ surLaBranchePubliee: '0' })).toBe(0);
   });
 });
 
