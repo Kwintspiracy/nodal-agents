@@ -179,7 +179,7 @@ describe('ecritParUnAgent', () => {
     expect(ecritParUnAgent('body\nClaude-Session: https://claude.ai/code/session_x')).toBe(true);
   });
 
-  it('une issue écrite à la main par Quentin n’est pas concernée', () => {
+  it('un corps SANS ce pied n’est pas reconnu comme écrit par un agent', () => {
     expect(ecritParUnAgent('Le bouton ne marche pas sur /agents.')).toBe(false);
     expect(ecritParUnAgent('')).toBe(false);
     expect(ecritParUnAgent(null)).toBe(false);
@@ -290,7 +290,7 @@ describe('sansFaitsVerifies', () => {
     expect(sansFaitsVerifies([carte({ parUnAgent: true, faitsVerifies: true })])).toEqual([]);
   });
 
-  it('une carte humaine n’est jamais signalée : la règle vise les agents', () => {
+  it('une carte SANS le pied d’agent n’est pas signalée : c’est le seul critère', () => {
     expect(sansFaitsVerifies([carte({ parUnAgent: false, faitsVerifies: false })])).toEqual([]);
   });
 
