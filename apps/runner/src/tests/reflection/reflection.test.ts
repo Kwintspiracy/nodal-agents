@@ -764,6 +764,10 @@ describe('reflection — non-blocking', () => {
         if (call === 1) {
           return {
             content: [
+              // The deliverable: a sub-job or head job that signals success
+              // without writing anything is now a failure (#107), so the work
+              // turn carries its answer like a real one.
+              { type: 'text' as const, text: 'Done.' },
               {
                 type: 'tool-call' as const,
                 toolCallId: 'rr',

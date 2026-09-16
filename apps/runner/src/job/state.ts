@@ -140,6 +140,13 @@ export const TERMINAL_STATUSES: JobStatus[] = ['completed', 'failed', 'cancelled
  * in agent_jobs.error for diagnostics; this string is the last-resort prose the
  * user reads when neither the agent nor a delivery tool left anything.
  */
+/**
+ * What a delegation that produced nothing reads as. Same invariant #2 exception
+ * as `genericFailExplanation` below: last-resort prose so a failure is never
+ * silent. It must name the failure — never imply an empty but valid answer.
+ */
+const NO_DELIVERABLE = '⚠️ This agent produced no deliverable — treat it as a failed delegation.';
+
 function genericFailExplanation(errorCode: string): string {
   return `⚠️ The task could not be completed (${errorCode}) and no explanation was provided.`;
 }
@@ -170,9 +177,17 @@ async function compileChildResults(db: AnyDrizzleDb, parentJobId: string): Promi
     .map((k) => {
       const who = k.name ?? k.slug ?? 'Agent';
       const tag = k.status === 'completed' ? '' : ` [${k.status ?? 'pending'}]`;
+      // #107 — a child with nothing to show is NOT a child that answered
+      // "(no output)". The old placeholder was indistinguishable from a real
+      // answer, and the parent read it as one (job f1852d35: the orchestrator
+      // then promised the user a synthesis that never existed). The runner now
+      // fails such a child before it can get here (empty-deliverable guard), so
+      // this is the last-resort wording — and it says FAILURE, not emptiness.
       const body =
         (k.result ?? '').trim() ||
-        (k.status === 'failed' ? (k.error ?? '(failed, no detail)') : '(no output)');
+        (k.status === 'failed'
+          ? (k.error ?? NO_DELIVERABLE)
+          : `${NO_DELIVERABLE} (status: ${k.status ?? 'pending'})`);
       return `## ${who}${tag}\n${body}`;
     })
     .join('\n\n---\n\n');
@@ -227,11 +242,15 @@ function lastAssistantText(messages: unknown): string {
 }
 
 /**
- * Final result-capture fallback (Result-capture fix): after children-compile, if
- * the job's `result` is STILL empty, capture the agent's last written answer from
- * the transcript. Guarantees a leaf agent's substantive output is never lost just
- * because it forgot to call a delivery tool — the captured result then flows to
- * dependents, run memory, and delivery. No-op if there is no usable text.
+ * Le livrable d'un agent : son dernier texte écrit, relu dans la transcription.
+ *
+ * Appelé AVANT la compilation des enfants, et non après comme ces lignes le
+ * disaient : un agent qui délègue une étape puis écrit sa synthèse voyait la
+ * compilation gagner, et sa synthèse disparaître (revue Codex de la PR #108,
+ * constat 4). Garantit qu'une production substantielle n'est jamais perdue
+ * parce que l'agent a oublié d'appeler un outil de livraison — le texte capturé
+ * part ensuite vers les dépendants, la mémoire de run et la livraison. Sans
+ * effet s'il n'y a aucun texte utilisable.
  */
 async function fillResultFromFinalTextIfEmpty(
   db: AnyDrizzleDb,
@@ -332,10 +351,14 @@ export async function completeJob(
   // no fresh text was written this call (a non-empty `result` is already content;
   // an empty one may still hold an earlier dashboard_publish, so it's checked).
   if (landed && result.length === 0) {
-    await fillResultFromChildrenIfEmpty(db, jobId);
-    // Last resort: capture the agent's own written answer from the transcript so
-    // a leaf job's substantive output is never lost (feeds dependents + delivery).
+    // SON texte d'abord, la compilation de ses enfants ensuite — et l'ordre
+    // compte. Un sous-agent qui délègue une étape puis écrit sa synthèse voyait
+    // la compilation des enfants remplir `result` en premier, donc gagner : le
+    // grand-parent recevait les étapes et jamais la synthèse, alors que le
+    // contrat de cette PR dit l'inverse — le livrable d'un agent EST son texte
+    // final (revue Codex de la PR #108, constat 4).
     if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
+    await fillResultFromChildrenIfEmpty(db, jobId);
   }
   return landed;
 }

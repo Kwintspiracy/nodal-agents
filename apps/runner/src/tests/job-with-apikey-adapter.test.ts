@@ -270,6 +270,7 @@ describe('job-with-apikey-adapter: api_key resolver path', () => {
         toolCalls: [{ toolCallId: 'tc-list', toolName: 'airtable_list_bases', args: {} }],
       },
       {
+        text: 'Done.',
         toolCalls: [
           { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
         ],

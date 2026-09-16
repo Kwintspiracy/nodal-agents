@@ -358,11 +358,14 @@ jobs:
       # it cannot exist on a GitHub runner, so the spec fails at its first line
       # ("LM_Studio_unresponsive") no matter how healthy the stack is. It stays
       # a local-only suite until those journeys run against a stubbed LLM.
-      - name: Two journeys — boot/navigation and the autonomy tab
+      # delegation-outcome.spec.ts joins the list because it needs no model: it
+      # seeds the rows and reads the thread, so it runs anywhere the stack does.
+      - name: Three journeys — boot/navigation, the autonomy tab, delegation outcomes
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
           tests/e2e/autonomy-approvals.spec.ts
+          tests/e2e/delegation-outcome.spec.ts
 
       - name: Upload the report on failure
         if: failure()

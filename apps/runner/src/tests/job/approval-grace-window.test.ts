@@ -309,7 +309,10 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
           },
         ],
       },
-      { toolCalls: [{ toolCallId: 'g2', toolName: 'return_result', args: { status: 'success' } }] },
+      {
+        text: 'Done.',
+        toolCalls: [{ toolCallId: 'g2', toolName: 'return_result', args: { status: 'success' } }],
+      },
     ]);
     const graceEnv: RunnerEnv = { ...testEnv, NODALAI_APPROVAL_GRACE_MS: 2000 };
 
@@ -363,6 +366,7 @@ describe('approval grace window (Lot A1, NODALAI_APPROVAL_GRACE_MS)', () => {
         ],
       },
       {
+        text: 'Done.',
         toolCalls: [{ toolCallId: 'gr2', toolName: 'return_result', args: { status: 'success' } }],
       },
     ]);

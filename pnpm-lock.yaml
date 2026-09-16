@@ -752,6 +752,9 @@ importers:
 
   packages/bench:
     dependencies:
+      '@nodal-agents/db':
+        specifier: workspace:*
+        version: link:../db
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared

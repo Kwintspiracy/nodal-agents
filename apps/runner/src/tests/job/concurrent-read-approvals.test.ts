@@ -299,6 +299,7 @@ describe('concurrent gated reads — approval re-pairing (audit RT-3 / #17)', ()
         },
         // Turn 3 (after B's approval resolves): agent finishes.
         {
+          text: 'Done.',
           toolCalls: [
             { toolCallId: 'tc-rr-1', toolName: 'return_result', args: { status: 'success' } },
           ],
