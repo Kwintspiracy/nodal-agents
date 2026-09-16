@@ -17,7 +17,12 @@ import {
 } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
 import { readPostmasterPid, postgresProcessesForDataDir } from '../lib/postgres.ts';
-import { confirmRecordedPid, formatRefusal, type LiveProcess } from '../lib/pid-confirm.ts';
+import {
+  confirmRecordedPid,
+  formatRefusal,
+  unconfirmedIdentityNotice,
+  type LiveProcess,
+} from '../lib/pid-confirm.ts';
 
 /** Everything a kill decision needs, read ONCE and shared by the whole run. */
 interface KillContext {
@@ -66,9 +71,7 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<bo
     return false;
   }
   if (!ctx.tableAvailable) {
-    console.log(
-      chalk.gray(`  ${label} (pid ${pid}) — no process table on this platform to confirm it with`),
-    );
+    console.log(chalk.gray(`  ${unconfirmedIdentityNotice(label, pid)}`));
     await killPidTree(pid, ctx.ownedPostgresPids);
     if (isPidAlive(pid)) {
       console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
@@ -101,7 +104,9 @@ async function killPid(pid: number, label: string, ctx: KillContext): Promise<bo
     process.stderr.write(`${formatRefusal(verdict)}\n`);
     return false;
   }
-  await killPidTree(pid, ctx.ownedPostgresPids);
+  // The record travels WITH the kill: `killPidTree` takes its own fresh reading
+  // of the table, later than this one, and a pid can be recycled in between.
+  await killPidTree(pid, ctx.ownedPostgresPids, recordedRoot(ctx.pids, pid));
   if (isPidAlive(pid)) {
     console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
     return false;

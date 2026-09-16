@@ -1,0 +1,175 @@
+// kill-tree-refusal.test.ts — what `killPidTree` does when the fresh reading
+// disagrees with the record, or when there is no reading at all.
+//
+// The hole this closes (review of PR #114, 2026-09-16). `killPidTree` already
+// judged the tree — a foreign postgres among the members vetoed `taskkill /T`
+// — but the ROOT fell through to an unconditional `taskkill /F /PID <root>` in
+// the very same branch, including the two cases where the reading had just said
+// the root must not be touched:
+//
+//   · the process table did not answer at all (`tableRead` false): nothing was
+//     confirmed, and the old code killed on the strength of a bare number —
+//     precisely the claim the pull request makes it no longer makes;
+//   · the table answered and DISOWNED the root: the pid now carries another
+//     executable, or another generation of the same one. Windows hands a freed
+//     number to the next process that asks, and the caller's confirmation was
+//     taken against an EARLIER reading than this one.
+//
+// Everything real is mocked at the `execa` boundary, which is where both the
+// process-table query and every `taskkill` go through. So the assertions are on
+// the actual argument arrays a real Windows would have received, and no live
+// process is signalled by this file — `isPidAlive` uses signal 0, which kills
+// nothing.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('execa', () => ({ execa: vi.fn() }));
+
+import { execa } from 'execa';
+import { killPidTree } from '../lib/processes.ts';
+
+const mockExeca = vi.mocked(execa);
+
+/** A row in the exact shape `readProcessTableWin` parses: pid|ppid|ticks|name. */
+interface Row {
+  pid: number;
+  ppid: number;
+  ticks: string;
+  name: string;
+}
+
+const ROOT = 999_001;
+const TICK_RECORDED = '638000000000000000';
+const TICK_OTHER = '638999999999999999';
+
+/** A member that must really be alive, or the sweep skips it before execa. */
+const LIVE_MEMBER = process.pid;
+
+let originalPlatform: PropertyDescriptor | undefined;
+let stderrLines: string[];
+let restoreStderr: () => void;
+
+/** Drive the mocked process table, and record every taskkill argument array. */
+function tableReturns(rows: Row[]): void {
+  const stdout = rows.map((r) => `${r.pid}|${r.ppid}|${r.ticks}|${r.name}`).join('\r\n');
+  mockExeca.mockImplementation(((file: string) => {
+    if (file === 'powershell') {
+      return Promise.resolve({ stdout, stderr: '', exitCode: 0, timedOut: false });
+    }
+    return Promise.resolve({ stdout: '', stderr: '', exitCode: 0, timedOut: false });
+  }) as unknown as typeof execa);
+}
+
+/** Every `taskkill` invocation, as (file, args) pairs. */
+function taskkills(): string[][] {
+  return mockExeca.mock.calls
+    .filter((c) => c[0] === 'taskkill')
+    .map((c) => (c[1] as string[]).slice());
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  // The whole branch under test is the Windows one. The table it reads is
+  // mocked, so the OS underneath is irrelevant — and the Linux CI job must run
+  // these cases, not skip them.
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+  stderrLines = [];
+  const original = process.stderr.write.bind(process.stderr);
+  const spy = vi.spyOn(process.stderr, 'write');
+  spy.mockImplementation(((chunk: string | Uint8Array) => {
+    stderrLines.push(String(chunk));
+    return true;
+  }) as unknown as typeof process.stderr.write);
+  restoreStderr = () => {
+    spy.mockRestore();
+    void original;
+  };
+});
+
+afterEach(() => {
+  restoreStderr();
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+  vi.restoreAllMocks();
+});
+
+describe('killPidTree — the root is not signalled unproven @cap:installer-et-demarrer/moteur', () => {
+  it('signals NOTHING when the process table could not be read', async () => {
+    // An empty answer is not an empty machine. `readProcessTableWin` returns an
+    // empty map, `tableRead` is false, and nothing below has been confirmed.
+    tableReturns([]);
+
+    await killPidTree(ROOT, new Set(), {
+      pid: ROOT,
+      name: 'node.exe',
+      startedAt: TICK_RECORDED,
+    });
+
+    expect(taskkills()).toEqual([]);
+    const said = stderrLines.join('');
+    expect(said).toContain('KILL_REFUSED code=TABLE_UNREADABLE');
+    expect(said).toContain(String(ROOT));
+  });
+
+  it('spares a recycled root and still kills the members the same reading vouched for', async () => {
+    // The number is alive, and it is somebody else's: recorded as node.exe,
+    // the table now reports chrome.exe.
+    tableReturns([
+      { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'chrome.exe' },
+      { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' },
+    ]);
+
+    await killPidTree(ROOT, new Set(), {
+      pid: ROOT,
+      name: 'node.exe',
+      startedAt: TICK_RECORDED,
+    });
+
+    // The root: never, under any form — neither `/T` nor alone.
+    expect(taskkills().some((args) => args.includes(String(ROOT)))).toBe(false);
+    // The member: observed as a descendant in THIS reading, so it is killed.
+    expect(taskkills()).toEqual([['/F', '/PID', String(LIVE_MEMBER)]]);
+    expect(stderrLines.join('')).toContain('KILL_REFUSED code=BINARY_CHANGED');
+  });
+
+  it('spares a root whose generation changed, by the creation tick alone', async () => {
+    tableReturns([{ pid: ROOT, ppid: 4, ticks: TICK_OTHER, name: 'node.exe' }]);
+
+    await killPidTree(ROOT, new Set(), {
+      pid: ROOT,
+      name: 'node.exe',
+      startedAt: TICK_RECORDED,
+    });
+
+    expect(taskkills()).toEqual([]);
+    expect(stderrLines.join('')).toContain('KILL_REFUSED code=PID_RECYCLED');
+  });
+
+  it('kills the tree in one `/T` when the reading AGREES with the record', async () => {
+    tableReturns([
+      { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' },
+      { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' },
+    ]);
+
+    await killPidTree(ROOT, new Set(), {
+      pid: ROOT,
+      name: 'node.exe',
+      startedAt: TICK_RECORDED,
+    });
+
+    expect(taskkills()[0]).toEqual(['/T', '/F', '/PID', String(ROOT)]);
+    expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
+  });
+
+  it('still kills a root the caller holds a handle to, with no record to compare', async () => {
+    // `killProcessTree(child)` has no record and needs none: the handle IS the
+    // identity. `IDENTITY_NOT_RECORDED` must not become a refusal here, or
+    // every spawned child would survive its own shutdown.
+    tableReturns([{ pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' }]);
+
+    await killPidTree(ROOT, new Set());
+
+    expect(taskkills()).toEqual([['/F', '/PID', String(ROOT)]]);
+  });
+});

@@ -353,9 +353,24 @@ async function ownedPostgresIfAnyInvolved(
   return anyPostgres ? await ownedPostgres() : EMPTY;
 }
 
+/**
+ * Root refusals that stop the ROOT from being signalled at all.
+ *
+ * `PID_GONE` is not among them — there is nothing left to signal, which is not
+ * a refusal to report. `IDENTITY_NOT_RECORDED` is not among them either: a
+ * caller holding a live child handle has no record to offer and does not need
+ * one, which is why `recorded` is optional below.
+ */
+const ROOT_KILL_VETO: ReadonlySet<string> = new Set([
+  'FOREIGN_POSTGRES',
+  'BINARY_CHANGED',
+  'PID_RECYCLED',
+]);
+
 export async function killPidTree(
   pid: number,
   ownedPostgresPids?: ReadonlySet<number>,
+  recorded?: RecordedProcess,
 ): Promise<void> {
   if (process.platform === 'win32') {
     // Snapshot the descendants BEFORE killing anything.
@@ -384,12 +399,14 @@ export async function killPidTree(
     const owned =
       ownedPostgresPids ??
       (await ownedPostgresIfAnyInvolved([...descendants, snapshot.get(pid) ?? {}]));
-    const { treeKillAllowed, foreign, killable } = confirmTree(
-      // The ROOT's own identity is the caller's business — `killPidTree` is
-      // also called with a handle to a child we spawned ourselves seconds ago,
-      // where the record IS the handle. What is judged here is the tree.
+    const { treeKillAllowed, root, foreign, killable } = confirmTree(
+      // The ROOT's recorded identity comes from the caller when it has one —
+      // `killPidTree` is also called with a handle to a child we spawned
+      // ourselves seconds ago, where the record IS the handle and there is
+      // nothing to compare. What the reading below ALWAYS decides, record or
+      // no record, is whether this pid may be signalled at all.
       {
-        recorded: { pid },
+        recorded: recorded ?? { pid },
         live: asLive(snapshot.get(pid)),
         tableRead: snapshot.size > 0,
         ownedPostgresPids: owned,
@@ -397,6 +414,29 @@ export async function killPidTree(
       descendants.map(asLiveRecord),
       owned,
     );
+
+    // A READING THAT NEVER HAPPENED LICENSES NOTHING (issue #114, review pass).
+    //
+    // `tableRead` false means the OS declined to answer — not "the tree is
+    // empty". The code used to fall through to `taskkill /F /PID <root>` here,
+    // on the strength of a number and nothing else, which is precisely the
+    // claim #100 set out to retire: a pid is signalled only when a FRESH
+    // reading agrees. So: no `/T`, no root, no members, and the reason said out
+    // loud rather than a silent kill (invariant #4).
+    if (!root.killable && root.code === 'TABLE_UNREADABLE') {
+      process.stderr.write(`${formatRefusal(root)}\n`);
+      return;
+    }
+
+    // The root was read, and the reading disagrees with the record: the number
+    // has been recycled onto another process, or onto a Postgres we cannot
+    // claim. The MEMBERS were observed as descendants in that same reading, so
+    // their parentage is current and they are still swept below — only the root
+    // is spared.
+    const rootVetoed = !root.killable && ROOT_KILL_VETO.has(root.code);
+    if (rootVetoed) process.stderr.write(`${formatRefusal(root)}\n`);
+    // Nothing to signal: the pid is not in the table at all.
+    const rootGone = !root.killable && root.code === 'PID_GONE';
 
     for (const stranger of foreign) {
       process.stderr.write(
@@ -414,7 +454,7 @@ export async function killPidTree(
       } catch {
         /* best-effort */
       }
-    } else {
+    } else if (!rootVetoed && !rootGone) {
       // No `/T`: the root alone, then the members we vouched for below.
       try {
         await execa('taskkill', ['/F', '/PID', String(pid)], { reject: false });
