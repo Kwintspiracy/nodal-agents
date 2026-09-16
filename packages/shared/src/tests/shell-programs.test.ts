@@ -19,6 +19,37 @@ describe('isShellProgram @cap:assigner-outils/moteur', () => {
     expect(isShellProgram('wsl npm test')).toBe(true);
   });
 
+  it('names the LAUNCHERS too, which are not shells but start anything', () => {
+    // A shell is not the only program whose job is to run another one.
+    // `env FOO=1 curl x`, `xargs curl`, `sudo anything`, `start calc`,
+    // `timeout 5 curl x` — each reads as one listed word and grants the rest.
+    for (const program of [
+      'env',
+      'start',
+      'nohup',
+      'xargs',
+      'timeout',
+      'sudo',
+      'runas',
+      'call',
+      'for',
+      'doskey',
+      'exec',
+      'eval',
+      'script',
+    ]) {
+      expect(isShellProgram(program), `${program} should be refused`).toBe(true);
+    }
+  });
+
+  it('leaves node alone — running a snippet IS the intended use', () => {
+    // node can spawn too. It is the entry a reviewer actually needs, and the
+    // limit is stated in run-command.ts's security model rather than pretended
+    // away here.
+    expect(isShellProgram('node')).toBe(false);
+    expect(isShellProgram('node -e')).toBe(false);
+  });
+
   it('leaves ordinary programs alone', () => {
     for (const program of ['node', 'npx vitest', 'git', 'python', 'shellcheck', 'bashful']) {
       expect(isShellProgram(program), `${program} should not be a shell`).toBe(false);

@@ -17,13 +17,22 @@
 // the limit in its own header.
 
 /**
- * Programs that start another program of the caller's choosing. Lower-case,
- * without an executable suffix — `isShellProgram` normalises before comparing.
+ * Programs whose PURPOSE is to start another program of the caller's choosing.
+ * Lower-case, without an executable suffix — `isShellProgram` normalises before
+ * comparing.
  *
- * Deliberately short: this is the set whose PURPOSE is to run arbitrary
- * commands, not every program that can spawn something. `node` can spawn too,
- * and is a legitimate entry — that limit is stated in `run-command.ts`'s
- * security model and is not what this list is for.
+ * Two families, and the second is the one that gets forgotten:
+ *
+ *  - SHELLS, which read a command line: cmd, powershell, sh, bash, wsl…
+ *  - LAUNCHERS, which are not shells and start anything all the same:
+ *    `env FOO=1 curl x`, `xargs curl`, `sudo anything`, `start calc`,
+ *    `timeout 5 curl x`. Each reads as one listed word on an allowlist and
+ *    hands over the rest of the line.
+ *
+ * `node` is deliberately NOT here. It can spawn too, but running a snippet is
+ * the intended use and the entry a reviewer actually needs; that limit is
+ * stated in `run-command.ts`'s security model rather than pretended away by a
+ * list that refuses the only useful entry.
  */
 export const SHELL_PROGRAMS: readonly string[] = [
   'cmd',
@@ -40,6 +49,20 @@ export const SHELL_PROGRAMS: readonly string[] = [
   'fish',
   'wsl',
   'busybox',
+  // Launchers: not shells, same effect.
+  'env',
+  'start',
+  'nohup',
+  'xargs',
+  'timeout',
+  'sudo',
+  'runas',
+  'call',
+  'for',
+  'doskey',
+  'exec',
+  'eval',
+  'script',
 ];
 
 /**
