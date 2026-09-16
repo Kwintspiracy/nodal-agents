@@ -359,13 +359,18 @@ jobs:
       # because the whole point of that issue is that a journey nobody plays
       # proves nothing. It needs no model: it records a fact through the
       # screen and asks for it back.
-      - name: Four journeys — boot/navigation, the autonomy tab, delegation outcomes, memory
+      # activity-runs.spec.ts joins for the same reason memory-kept did: it is
+      # NEW (issue #134) and it is the only screen proof that Activity lists
+      # runs. A journey nobody plays proves nothing, and the nightly comes too
+      # late to tell the PR that opened the screen.
+      - name: Five journeys — boot/navigation, the autonomy tab, delegation outcomes, memory, the runs list
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
           tests/e2e/autonomy-approvals.spec.ts
           tests/e2e/delegation-outcome.spec.ts
           tests/e2e/memory-kept.spec.ts
+          tests/e2e/activity-runs.spec.ts
 
       - name: Upload the report on failure
         if: failure()
