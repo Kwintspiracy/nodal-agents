@@ -60,9 +60,9 @@ import {
   isNotNull,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { isWithinRoot, projectKey } from '@nodal-agents/shared';
+import { projectKey } from '@nodal-agents/shared';
 import { registerCodeProjects } from '@nodal-agents/tools';
-import { hasMarker, listHiddenWorkspaceRoots, scanProjects } from '../job/code-projects.ts';
+import { hasMarker, hiddenSubtreePredicate, scanProjects } from '../job/code-projects.ts';
 
 export interface RegistryBackfillReport {
   /** Lignes déclarées par CETTE passe. */
@@ -91,10 +91,10 @@ export async function backfillRegisteredProjects(
   for (const { id: entityId } of entityRows) {
     const raw = await scanProjects(db, entityId);
     if (raw.length === 0) continue;
-    const hiddenRoots = await listHiddenWorkspaceRoots(db, entityId);
+    const sousDossierMasque = await hiddenSubtreePredicate(db, entityId);
 
     for (const project of raw) {
-      if (hiddenRoots.some((r) => isWithinRoot(project.path, r))) {
+      if (sousDossierMasque(project.path)) {
         report.skipped.hidden += 1;
         continue;
       }

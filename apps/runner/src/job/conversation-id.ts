@@ -29,6 +29,9 @@ import { stripGroupPrefix } from '@nodal-agents/shared';
 import { REGISTERED_PROJECTS_IN_PROMPT } from '@nodal-agents/orchestration';
 import type { ConversationContext } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
+// Le masquage d'un dossier attaché se lit dans UNE fonction, partagée avec le
+// bloc `## Runtime` et le backfill du registre : trois lecteurs, une règle.
+import { hiddenSubtreePredicate } from './code-projects.ts';
 
 /** Une conversation, réduite à ce que l'insertion d'un job en demande. */
 export interface ConversationRef {
@@ -292,13 +295,21 @@ async function listRegisteredProjects(
         eq(codeProjects.hidden, false),
       ),
     )
-    .orderBy(desc(codeProjects.registeredAt))
-    .limit(REGISTERED_PROJECTS_IN_PROMPT);
-  return rows.map((r) => ({
-    name: r.displayName ?? basename(r.path),
-    path: r.path,
-    kind: r.kind === 'documents' ? ('documents' as const) : ('code' as const),
-  }));
+    .orderBy(desc(codeProjects.registeredAt));
+
+  // Le masquage porte aussi par SOUS-ARBRE : une racine attachée rangée
+  // (`hidden_from_code`) emporte les projets enregistrés dessous, comme dans le
+  // bloc `## Runtime`. Le plafond s'applique APRÈS, sinon ranger un dossier
+  // ferait un trou dans la liste au lieu de laisser la place au suivant.
+  const sousDossierMasque = await hiddenSubtreePredicate(db, entityId);
+  return rows
+    .filter((r) => !sousDossierMasque(r.path))
+    .slice(0, REGISTERED_PROJECTS_IN_PROMPT)
+    .map((r) => ({
+      name: r.displayName ?? basename(r.path),
+      path: r.path,
+      kind: r.kind === 'documents' ? ('documents' as const) : ('code' as const),
+    }));
 }
 
 /**

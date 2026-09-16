@@ -412,8 +412,7 @@ export async function listCodeProjectsForContext(
     // racine masquée laisserait un dossier PARENT visible ramasser ses
     // écritures. `/data` suivi, `/data/vault` masqué, et une note du coffre
     // ressortirait comme projet — le masquage contourné par le haut.
-    const hiddenWorkspaces = await listHiddenWorkspaceRoots(db, entityId);
-    const sousDossierMasque = (p: string): boolean => hiddenWorkspaces.some((r) => within(p, r));
+    const sousDossierMasque = await hiddenSubtreePredicate(db, entityId);
 
     // Les deux gestes du propriétaire, relus à CHAQUE appel. Le MASQUAGE porte
     // jusqu'ici : jusqu'au 26/08 l'archivage n'était lu que par l'interface,
@@ -498,6 +497,32 @@ export async function listHiddenWorkspaceRoots(
   )
     .map((r) => norm(r.path))
     .filter((p) => p !== '');
+}
+
+/**
+ * « Ce chemin est-il sous un dossier attaché MASQUÉ ? » — la question que les
+ * trois lecteurs du registre posent, en UNE fonction.
+ *
+ * Ils la posaient chacun de leur côté, et l'un d'eux ne la posait pas du tout :
+ * le bloc `## Conversation` (`conversation-id.ts`) ne filtrait que
+ * `code_projects.hidden`, si bien qu'un projet enregistré sous une racine
+ * rangée disparaissait du bloc `## Runtime` et revenait par la question « où
+ * écrire ? » (revue de la PR #103, Reviewer C, passe 2). Un quatrième lecteur
+ * qui recopierait la ligne rouvrirait le même écart : il appelle ceci.
+ *
+ * Le chemin testé est NORMALISÉ ici : les racines le sont déjà, et un appelant
+ * qui lit `code_projects.project_path` ne l'est pas forcément.
+ */
+export async function hiddenSubtreePredicate(
+  db: RunnerDeps['db'],
+  entityId: string,
+): Promise<(path: string) => boolean> {
+  const roots = await listHiddenWorkspaceRoots(db, entityId);
+  if (roots.length === 0) return () => false;
+  return (path: string): boolean => {
+    const p = norm(path);
+    return p !== '' && roots.some((r) => within(p, r));
+  };
 }
 
 /**
