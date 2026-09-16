@@ -68,9 +68,12 @@ la commande et ce qu'elle a répondu :
 Le portail le contrôle lui-même, il ne fait confiance à personne : une carte
 OUVERTE dont le corps porte le pied d'un agent (« Generated with Claude Code »,
 ou la ligne `Claude-Session`) et **pas** de section `## Verified` s'affiche avec
-une pastille « no verified facts » et compte dans l'alerte. Une issue écrite à
-la main par Quentin n'est jamais concernée : la règle vise les agents, et le
-critère est vérifiable plutôt que deviné au style.
+une pastille « no verified facts » et compte dans l'alerte. Le critère est ce
+pied, et rien d'autre : **toute carte qui porte le pied d'agent** est concernée,
+y compris celle d'un humain qui l'aurait collé. Le compromis est assumé — le
+pied est le seul signal vérifiable, et une intuition sur le style se tromperait
+bien plus souvent, dans les deux sens. Une issue écrite à la main SANS ce pied
+n'est pas concernée, et c'est le cas courant.
 
 Attention à ce qui compte comme section : un `## Verified` **cité dans un bloc
 de code** (le modèle ci-dessus, recopié) n'en est pas une. Le portail retire les

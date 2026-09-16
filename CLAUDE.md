@@ -96,7 +96,11 @@ A tracker that repeats what an agent asserts is not a tracker.
 - The portal checks this itself: an OPEN card whose body carries an agent
   footer ("Generated with Claude Code", or the `Claude-Session` line) and no
   `## Verified` section is shown with a "no verified facts" pill and counted in
-  the alert. An issue Quentin wrote by hand is never concerned.
+  the alert. The criterion is that footer and nothing else: any card carrying
+  it is concerned, a human who pastes it included. The trade-off is deliberate,
+  because the footer is the only verifiable signal and a style heuristic would
+  be wrong far more often, in both directions. An issue written by hand without
+  that footer is not concerned, and that is the common case.
 - The portal also reads the release state (`npm view` + `git`) at collection
   time and names any open card asking to publish a version npm already serves.
   When npm cannot be reached it says so, with the time; it never shows the

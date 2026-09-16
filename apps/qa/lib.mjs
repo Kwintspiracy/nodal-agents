@@ -513,8 +513,14 @@ export function publicationsDejaFaites(cartes, release) {
 // Règle du 16/09/2026 : toute issue ou PR ouverte par un agent porte une
 // section `## Verified` avec au moins une commande et sa sortie. Le critère de
 // « écrite par un agent » est VÉRIFIABLE — le pied que les agents posent
-// eux-mêmes — et non une intuition sur le style : une issue écrite à la main
-// par Quentin n'a rien à prouver.
+// eux-mêmes — et non une intuition sur le style.
+//
+// Ce que ce critère dit exactement, et rien de plus : TOUTE CARTE QUI PORTE LE
+// PIED D'AGENT est concernée. Un humain qui colle ce pied dans son propre corps
+// d'issue reçoit donc la pastille. C'est un compromis assumé : le pied est le
+// seul signal vérifiable, et une heuristique de style se tromperait bien plus
+// souvent, dans les deux sens. Une issue écrite à la main SANS ce pied n'a
+// rien à prouver, et c'est le cas courant.
 
 /** Le pied que tout agent de ce dépôt pose au bas de ce qu'il ouvre. */
 export function ecritParUnAgent(corps) {
