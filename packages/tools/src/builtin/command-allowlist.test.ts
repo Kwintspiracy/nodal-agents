@@ -499,6 +499,51 @@ describe('both shells, by stubbing the platform @cap:assigner-outils/moteur', ()
     expect(() => assertCommandAllowed(`node -e "console.log('ok')"`, LIST)).not.toThrow();
   });
 
+  it('as cmd.exe: a caret is refused, because it hides what the scan reads', () => {
+    pretend('win32');
+    // `node x ^>& calc` scanned as ONE segment: the `&` looked like a
+    // redirection because a `>` sits before it. cmd.exe reads `^>` as a
+    // LITERAL `>`, so the `&` is a bare separator and calc starts.
+    expect(() => assertCommandAllowed('node x ^>& calc', LIST)).toThrow(CommandNotAllowedError);
+  });
+
+  it('as cmd.exe: refuses the whole CLASS, not just the redirection shape', () => {
+    pretend('win32');
+    expect(() => assertCommandAllowed('node x ^& calc', LIST)).toThrow(CommandNotAllowedError);
+    expect(() => assertCommandAllowed('node x ^<& calc', LIST)).toThrow(CommandNotAllowedError);
+  });
+
+  it('as cmd.exe: refuses a caret even where it is harmless — assumed', () => {
+    // `node "a^b"` does nothing dangerous. Refused all the same: telling
+    // the harmless caret from the load-bearing one means imitating cmd.exe,
+    // and every pass of this review found one more notch in that imitation.
+    // A reviewer running node or vitest never needs a caret.
+    pretend('win32');
+    expect(() => assertCommandAllowed('node "a^b"', LIST)).toThrow(CommandNotAllowedError);
+  });
+
+  it('as cmd.exe: says WHY, naming the caret', () => {
+    pretend('win32');
+    try {
+      assertCommandAllowed('node x ^>& calc', LIST);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toMatch(/caret/i);
+    }
+  });
+
+  it('as cmd.exe: an unrestricted agent keeps the caret', () => {
+    pretend('win32');
+    expect(() => assertCommandAllowed('node x ^>& calc', null)).not.toThrow();
+  });
+
+  it('as /bin/sh: the caret is an ordinary character, nothing changes', () => {
+    pretend('linux');
+    // sh has no caret escape: `^>&` is just a token, and the command still
+    // reads as ONE segment starting with an allowed program.
+    expect(() => assertCommandAllowed('node x ^>& calc', LIST)).not.toThrow();
+  });
+
   it('as /bin/sh: a single-quoted separator is part of the argument', () => {
     pretend('linux');
     expect(() => assertCommandAllowed("node -e 'a;b'", LIST)).not.toThrow();

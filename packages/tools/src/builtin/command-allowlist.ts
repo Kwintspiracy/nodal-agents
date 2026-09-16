@@ -19,8 +19,18 @@
 // `cmd.exe /d /s /c "<command>"` on Windows and `/bin/sh -c "<command>"`
 // elsewhere. The scan therefore runs on the string BEFORE the shell rewrites
 // it. Every construct whose rewrite could produce a program the scan never saw
-// is refused outright rather than guessed at: command substitution AND
-// variable expansion (HIDES_A_COMMAND / EXPANDS_LATER below).
+// is refused outright rather than guessed at, on both platforms: command
+// substitution and variable expansion (HIDES_A_COMMAND / EXPANDS_LATER below).
+// On Windows two more, because cmd.exe reads them unlike any other shell: the
+// SINGLE QUOTE, which it does not treat as a string at all, and the CARET,
+// which is its escape character. Those five are the LIMITS SAID OUT LOUD: a
+// command using one is refused while a list is set, and an agent restricted to
+// node or vitest never needs any of them.
+//
+// The rule behind all five is the same, and it is the lesson of five review
+// passes: do not imitate the shell. Every finer imitation left one more notch
+// (`2>&1`, then quoted separators, then `^>&`), and the only end to that is to
+// refuse the construct.
 //
 // WHAT IT GOVERNS, AND WHAT IT DOES NOT. `run_command`, and nothing else.
 // `run_skill_script`, `code_task` (the Claude Code / Codex CLIs) and the
@@ -172,6 +182,27 @@ export function assertCommandAllowed(
       'A single quote outside double quotes is refused while an allowlist is set on Windows: ' +
         "cmd.exe does not read '...' as a string, so what looks like one quoted argument can be " +
         'several commands. Use double quotes.',
+    );
+  }
+
+  // The caret is cmd.exe's escape character, and it changes what the NEXT
+  // character means to the shell without changing what it looks like here.
+  // `node x ^>& calc` scans as one segment — the `&` reads as a redirection
+  // because a `>` sits before it — while cmd.exe takes `^>` as a literal `>`,
+  // leaving the `&` a bare separator that starts `calc`.
+  //
+  // The whole CLASS is refused rather than that one shape. Teaching the
+  // scanner about `^>` would leave `^&`, then `^|`, then a caret before a
+  // quote: every pass of this review found one more notch in the imitation,
+  // and the only end to that is to stop imitating. A reviewer running node or
+  // vitest never needs a caret, so the cost is nil and the rule is one anybody
+  // can hold in their head.
+  if (isWindows() && command.includes('^')) {
+    throw new CommandNotAllowedError(
+      command.trim(),
+      allowlist,
+      'A caret is refused while an allowlist is set on Windows: it is cmd.exe’s escape ' +
+        'character, so the check cannot see what it changes. Write the command without one.',
     );
   }
 
