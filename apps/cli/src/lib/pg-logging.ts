@@ -40,7 +40,14 @@
 // ownership rules the rest of the CLI spends so much care on; a log is for
 // reading after the cluster is gone, so it does not belong there.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { LOG_DIR } from './config.ts';
 
@@ -159,6 +166,43 @@ export function applyPostgresLoggingConfig(dataDir: string, logDirectory: string
       existing = '';
     }
   }
-  writeFileSync(target, mergeAutoConf(existing, postgresLoggingSettings(logDirectory)), 'utf-8');
+  writeAtomically(target, mergeAutoConf(existing, postgresLoggingSettings(logDirectory)));
   return logDirectory;
+}
+
+/** The name of the scratch file `writeAtomically` uses, so a test can look for it. */
+export function tempConfPath(target: string): string {
+  return `${target}.nodalai.tmp`;
+}
+
+/**
+ * Write a file whole, or not at all.
+ *
+ * `writeFileSync` truncates first and then writes: a crash, a full disk or a
+ * killed process in between leaves a TRUNCATED `postgresql.auto.conf`, and a
+ * Postgres that reads a half line refuses to start — this file is applied on
+ * every start, so a failure here would lock the cluster out of every future
+ * boot rather than just this one.
+ *
+ * The scratch file sits in the SAME directory as the target, because `rename`
+ * is only atomic within a filesystem. The target is NOT unlinked first, on any
+ * platform: `fs.renameSync` replaces an existing destination on Windows too
+ * (MoveFileEx with MOVEFILE_REPLACE_EXISTING), and unlinking would open a
+ * window where a failing rename leaves no config at all — which is how the
+ * first shape of this fix was caught, by the third case in
+ * `pg-logging-atomic.test.ts`.
+ */
+function writeAtomically(target: string, contents: string): void {
+  const tmp = tempConfPath(target);
+  writeFileSync(tmp, contents, 'utf-8');
+  try {
+    renameSync(tmp, target);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* the scratch file is not worth a second failure */
+    }
+    throw err;
+  }
 }
