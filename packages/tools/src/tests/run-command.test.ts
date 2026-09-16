@@ -234,3 +234,182 @@ describe('présentation (P1) — run_command', () => {
     });
   });
 });
+
+// ─── Per-agent command allowlist ────────────────────────────────────────────
+// The pure matcher is proven in builtin/command-allowlist.test.ts. What is
+// proven HERE is that run_command actually consults it, and that a refused
+// command never reaches a process — the file the command would have written
+// does not exist afterwards.
+
+describe('run_command — per-agent command allowlist @cap:executer-une-commande/moteur', () => {
+  it('runs a command that is on the allowlist', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'allowed', command: `node -e "process.stdout.write('ok-allowed')"` },
+      ctx({ commandAllowlist: ['node', 'npx vitest'] }),
+    );
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('ok-allowed');
+  });
+
+  it('refuses a command that is not on the allowlist, and nothing runs', async () => {
+    const marker = join(workspaceDir, 'should-not-exist.txt');
+    await expect(
+      runCommandTool.execute(
+        {
+          purpose: 'refused',
+          command: `npx rimraf --version && node -e "require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')"`,
+        },
+        ctx({ commandAllowlist: ['node'] }),
+      ),
+    ).rejects.toThrow(/not on this agent's command allowlist/);
+    const { existsSync } = await import('node:fs');
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('refuses the unlisted half of a compound command that starts with a listed one', async () => {
+    const marker = join(workspaceDir, 'should-not-exist-2.txt');
+    await expect(
+      runCommandTool.execute(
+        {
+          purpose: 'refused compound',
+          command: `node -e "1" && npx rimraf ${JSON.stringify(marker)}`,
+        },
+        ctx({ commandAllowlist: ['node'] }),
+      ),
+    ).rejects.toThrow(/not on this agent's command allowlist/);
+  });
+
+  it('leaves behaviour unchanged when no allowlist is configured', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'no allowlist', command: `node -e "process.stdout.write('no-list')"` },
+      ctx(),
+    );
+    expect(out.stdout).toContain('no-list');
+  });
+});
+
+// ─── With a list: NO SHELL AT ALL ───────────────────────────────────────────
+// Five review passes found five holes in one scanner that tried to read a
+// command the way cmd.exe would. The sixth was always coming. So when a list
+// is set the command no longer reaches a shell: it is read as one program and
+// its arguments, and spawned with argv literal. Everything the simple reader
+// cannot understand is refused, with a message naming what to remove.
+
+describe('run_command with a list runs NO shell @cap:executer-une-commande/moteur', () => {
+  const LIST = ['node', 'npx vitest'];
+
+  it('runs a listed program and returns its real output', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'version', command: 'node -v' },
+      ctx({ commandAllowlist: LIST }),
+    );
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout.trim()).toMatch(/^v\d+\./);
+  });
+
+  it('groups an argument with double quotes, and a single quote inside is just a character', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'snippet', command: `node -e "console.log('ok-no-shell')"` },
+      ctx({ commandAllowlist: LIST }),
+    );
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('ok-no-shell');
+  });
+
+  it('refuses chaining: there is no shell to chain with', async () => {
+    await expect(
+      runCommandTool.execute(
+        { purpose: 'chain', command: 'node -v && calc' },
+        ctx({ commandAllowlist: LIST }),
+      ),
+    ).rejects.toThrow(/not on this agent's command allowlist|cannot be read/i);
+  });
+
+  it('refuses the caret, which five passes of scanner could never read safely', async () => {
+    await expect(
+      runCommandTool.execute(
+        { purpose: 'caret', command: `node x ^>& calc` },
+        ctx({ commandAllowlist: LIST }),
+      ),
+    ).rejects.toThrow(/cannot be read|not on this agent/i);
+  });
+
+  it('refuses a variable, which nothing would expand anyway', async () => {
+    await expect(
+      runCommandTool.execute(
+        { purpose: 'expansion', command: 'node x %EVIL%' },
+        ctx({ commandAllowlist: LIST }),
+      ),
+    ).rejects.toThrow(/cannot be read|not on this agent/i);
+  });
+
+  it('names the character to remove, so the agent can rewrite its command', async () => {
+    try {
+      await runCommandTool.execute(
+        { purpose: 'chain', command: 'node -v && calc' },
+        ctx({ commandAllowlist: LIST }),
+      );
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toMatch(/&/);
+    }
+  });
+
+  it('runs a multi-word entry (npx vitest) through its real launcher', async () => {
+    const out = await runCommandTool.execute(
+      { purpose: 'vitest', command: 'npx vitest --version' },
+      ctx({ commandAllowlist: ['npx vitest'] }),
+    );
+    // A .cmd on PATH: proven to START, whatever it then prints.
+    expect(out.stdout.length + out.stderr.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('resolves the program from the PATH, never from the working directory', async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-noshell-')));
+    const witness = join(dir, 'planted-ran.txt');
+    const { writeFile } = await import('node:fs/promises');
+    if (process.platform === 'win32') {
+      await writeFile(
+        join(dir, 'node.cmd'),
+        `@echo off
+echo planted > ${JSON.stringify(witness)}
+echo i-am-planted
+`,
+        'utf8',
+      );
+    } else {
+      const { chmod } = await import('node:fs/promises');
+      await writeFile(
+        join(dir, 'node'),
+        `#!/bin/sh
+echo planted > ${JSON.stringify(witness)}
+`,
+        'utf8',
+      );
+      await chmod(join(dir, 'node'), 0o755);
+    }
+    try {
+      const out = await runCommandTool.execute(
+        { purpose: 'planted', command: 'node -v' },
+        ctx({ workspaces: [{ label: 'ws', path: dir }], commandAllowlist: ['node'] }),
+      );
+      expect(out.stdout.trim()).toMatch(/^v\d+\./);
+      const { existsSync } = await import('node:fs');
+      expect(existsSync(witness)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves an agent with NO list on the shell, unchanged', async () => {
+    const out = await runCommandTool.execute(
+      {
+        purpose: 'no list',
+        command: `node -e "process.stdout.write('a')" && node -e "process.stdout.write('b')"`,
+      },
+      ctx(),
+    );
+    expect(out.stdout).toContain('a');
+    expect(out.stdout).toContain('b');
+  });
+});

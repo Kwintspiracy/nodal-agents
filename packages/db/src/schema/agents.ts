@@ -122,6 +122,24 @@ export const agents = pgTable(
       mode?: 'read' | 'write';
       extraDisallowed?: string[];
     } | null>(),
+    /**
+     * Les commandes que `run_command` accepte de lancer POUR CET AGENT, comme
+     * DATA (invariant #1) — `['node', 'npx vitest']` et rien d'autre.
+     *
+     * NULL = pas de liste : comportement historique, inchangé, n'importe quelle
+     * commande. Un tableau VIDE est une décision, pas une absence — il refuse
+     * tout. Chaque entrée est un ou plusieurs mots (`npx vitest`) comparés
+     * token à token au début de CHAQUE segment de la commande.
+     *
+     * Existe parce que `run_command` n'avait que deux contrôles : la skill
+     * `command-execution` (l'agent a un shell, ou pas) et la porte
+     * d'approbation (un humain lit chaque commande). Aucun des deux ne sait
+     * dire « celui-ci exécute un extrait pour vérifier une affirmation, et
+     * rien de plus » — un relecteur devait donc recevoir, sans surveillance,
+     * un shell capable de tout. Ce n'est PAS un bac à sable : `node` ouvre une
+     * socket et écrit des fichiers. La liste dit quel PROGRAMME démarre.
+     */
+    commandAllowlist: text('command_allowlist').array(),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user

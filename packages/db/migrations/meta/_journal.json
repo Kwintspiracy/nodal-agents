@@ -750,6 +750,13 @@
       "when": 1786000500000,
       "tag": "0107_agent_reflection_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1786000560000,
+      "tag": "0108_agent_command_allowlist",
+      "breakpoints": true
     }
   ]
 }

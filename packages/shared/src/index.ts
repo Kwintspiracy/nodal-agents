@@ -37,6 +37,7 @@ export * from './untrusted';
 export * from './redact-transcript';
 export * from './agent-slug';
 export * from './catastrophic-command';
+export * from './shell-programs';
 export * from './project-key';
 export * from './group-prefix';
 export * from './project-roots';
