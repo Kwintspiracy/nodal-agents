@@ -594,8 +594,41 @@ const READY_TIMEOUT_MS = 180_000;
  * when the postmaster exits during startup, which is a failure this poll would
  * otherwise sit through until the deadline.
  */
-async function startAndWaitUntilReady(pg: {
+/**
+ * Is this connection error an AUTHENTICATION refusal rather than "not ready
+ * yet"?
+ *
+ * The distinction is the whole of issue #114's third review finding. Once
+ * `logging_collector` is on the package's own promise never settles, so the
+ * `resolvedItself` branch below — the one that used to catch "the cluster is up
+ * but the probe is refused" — never runs. A wrong password therefore looked
+ * exactly like a cluster still starting: the poll retried it every 500ms for
+ * 180 SECONDS and then threw a message about readiness, leaving a live
+ * postmaster nobody had a handle on.
+ *
+ * SQLSTATE class 28 is `invalid_authorization_specification` — 28000, and 28P01
+ * for a bad password. Those never become true by waiting. Nothing else is
+ * treated as fatal: a class this poll does not recognise stays a retry, because
+ * the cost of retrying a real startup error is one deadline, and the cost of
+ * giving up on a cluster that WAS coming up is a failed boot.
+ */
+export function isPostgresAuthFailure(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' && code.length === 5 && code.startsWith('28');
+}
+
+/** `pg_ctl stop -m fast` through the package, never at the cost of the real error. */
+async function stopQuietly(pg: { stop?: () => Promise<void> }): Promise<void> {
+  try {
+    await pg.stop?.();
+  } catch {
+    /* the failure being reported is the one worth reporting */
+  }
+}
+
+export async function startAndWaitUntilReady(pg: {
   start: () => Promise<void>;
+  stop?: () => Promise<void>;
   getPgClient: (database?: string) => { connect: () => Promise<void>; end: () => Promise<void> };
 }): Promise<void> {
   let exitedEarly: unknown = null;
@@ -620,8 +653,18 @@ async function startAndWaitUntilReady(pg: {
       await probe.connect();
       await probe.end();
       return;
-    } catch {
+    } catch (err) {
       await probe.end().catch(() => {});
+      // FAIL LOUD, IMMEDIATELY (invariant #4). Waiting cannot fix a password.
+      if (isPostgresAuthFailure(err)) {
+        await stopQuietly(pg);
+        const code = (err as { code?: string }).code;
+        throw new Error(
+          `Postgres refused the connection: authentication failed (SQLSTATE ${code}). ` +
+            'The cluster started and was stopped again. The password the CLI holds does not ' +
+            'match the one this data directory was initialised with.',
+        );
+      }
     }
     if (resolvedItself) {
       // The package saw its line, so the cluster is up even if this probe is
@@ -630,6 +673,9 @@ async function startAndWaitUntilReady(pg: {
       return;
     }
     if (Date.now() > deadline) {
+      // Same reason as the auth path: whatever we give up on, we do not leave a
+      // postmaster running that no handle of ours can stop.
+      await stopQuietly(pg);
       throw new Error(
         `Postgres did not accept a connection within ${READY_TIMEOUT_MS / 1000}s of starting`,
       );
