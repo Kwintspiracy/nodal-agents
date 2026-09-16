@@ -364,6 +364,48 @@ describe('assertNoProgramShadowedByCwd @cap:assigner-outils/moteur', () => {
     );
   });
 
+  it.runIf(onWindows)('checks EVERY segment, not just the first', async () => {
+    // `node ok.js && npx x` with an npx.cmd planted: the first program is
+    // clean, the second is shadowed. Scanning only the head would run the
+    // planted one on the far side of a command that looked fine.
+    await plant('npx.cmd');
+    await expect(
+      assertNoProgramShadowedByCwd('node ok.js && npx x', ['node', 'npx x'], dir),
+    ).rejects.toBeInstanceOf(CommandNotAllowedError);
+  });
+
+  it.runIf(onWindows)('names the SHADOWED segment, not the clean first one', async () => {
+    await plant('npx.cmd');
+    try {
+      await assertNoProgramShadowedByCwd('node ok.js && npx x', ['node', 'npx x'], dir);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect((err as CommandNotAllowedError).refused).toBe('npx x');
+    }
+  });
+
+  it.runIf(onWindows)('splits on a CRLF line break, not only on a bare LF', async () => {
+    // A command written on Windows arrives with CRLF. If the carriage return
+    // is not a separator, the second line joins the first as one long token
+    // and its program is never checked.
+    await plant('npx.cmd');
+    await expect(
+      assertNoProgramShadowedByCwd('node ok.js\r\nnpx x', ['node', 'npx x'], dir),
+    ).rejects.toBeInstanceOf(CommandNotAllowedError);
+  });
+
+  it.runIf(onWindows)('splits on a LONE carriage return too', async () => {
+    // The CRLF case above proves nothing about the carriage return: the line
+    // feed half already splits it. A LONE carriage return does. Without it in
+    // the separator set the second line joins the first as one token and its
+    // program is never checked. Measured: dropping it while keeping only the
+    // CRLF case left the whole suite green.
+    await plant('npx.cmd');
+    await expect(
+      assertNoProgramShadowedByCwd('node ok.js\rnpx x', ['node', 'npx x'], dir),
+    ).rejects.toBeInstanceOf(CommandNotAllowedError);
+  });
+
   it.runIf(onWindows)('lets an unrelated file through', async () => {
     await plant('readme.md');
     await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).resolves.toBeUndefined();
