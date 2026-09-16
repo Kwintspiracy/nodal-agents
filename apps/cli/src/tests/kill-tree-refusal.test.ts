@@ -179,10 +179,28 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
   });
 
+  it('spares a root whose RECORD is a bare number, proving nothing', async () => {
+    // A `processes.json` written before #100 carries pids and no identity.
+    // `confirmRecordedPid` answers IDENTITY_NOT_RECORDED, and the number is
+    // then signalled anyway unless that verdict is spent — which is the hole
+    // this closes. No caller does it today; the next one would have.
+    tableReturns([
+      { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' },
+      { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' },
+    ]);
+
+    await killPidTree(ROOT, new Set(), { pid: ROOT });
+
+    expect(taskkills().some((args) => args.includes(String(ROOT)))).toBe(false);
+    expect(taskkills()).toEqual([['/F', '/PID', String(LIVE_MEMBER)]]);
+    expect(stderrLines.join('')).toContain('KILL_REFUSED code=IDENTITY_NOT_RECORDED');
+  });
+
   it('still kills a root the caller holds a handle to, with no record to compare', async () => {
     // `killProcessTree(child)` has no record and needs none: the handle IS the
     // identity. `IDENTITY_NOT_RECORDED` must not become a refusal here, or
-    // every spawned child would survive its own shutdown.
+    // every spawned child would survive its own shutdown — the same verdict as
+    // the case above, read the other way because the caller is not the same.
     tableReturns([{ pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' }]);
 
     await killPidTree(ROOT, new Set());

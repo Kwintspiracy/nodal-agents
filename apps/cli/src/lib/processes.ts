@@ -354,18 +354,40 @@ async function ownedPostgresIfAnyInvolved(
 }
 
 /**
- * Root refusals that stop the ROOT from being signalled at all.
+ * Root refusals that stop the ROOT from being signalled, whoever asked.
  *
  * `PID_GONE` is not among them — there is nothing left to signal, which is not
- * a refusal to report. `IDENTITY_NOT_RECORDED` is not among them either: a
- * caller holding a live child handle has no record to offer and does not need
- * one, which is why `recorded` is optional below.
+ * a refusal to report. `IDENTITY_NOT_RECORDED` is not here either, because it
+ * means two different things depending on who asked; `vetoesRoot` below is
+ * where that is decided.
  */
 const ROOT_KILL_VETO: ReadonlySet<string> = new Set([
   'FOREIGN_POSTGRES',
   'BINARY_CHANGED',
   'PID_RECYCLED',
 ]);
+
+/**
+ * May this root be signalled, given who asked?
+ *
+ * `IDENTITY_NOT_RECORDED` is the one verdict whose meaning depends on the
+ * caller, and reading it as one thing was a hole (review pass 2 of #114):
+ *
+ *   · a caller with NO record — `killProcessTree(child)` — is holding the
+ *     process it spawned seconds ago. There is nothing to compare and nothing
+ *     to prove; the handle is the identity, and refusing would mean no spawned
+ *     child could be stopped;
+ *   · a caller WITH a record that carries neither a creation tick nor an
+ *     executable name — a `processes.json` written before #100 — handed over a
+ *     bare number, and `confirmRecordedPid` has just said that number proves
+ *     nothing. Killing it anyway walks straight around the refusal. No caller
+ *     does this today, since `down` and `up` pre-confirm; it was a hole waiting
+ *     for the next one.
+ */
+function vetoesRoot(code: string, fromRecord: boolean): boolean {
+  if (ROOT_KILL_VETO.has(code)) return true;
+  return fromRecord && code === 'IDENTITY_NOT_RECORDED';
+}
 
 export async function killPidTree(
   pid: number,
@@ -399,12 +421,12 @@ export async function killPidTree(
     const owned =
       ownedPostgresPids ??
       (await ownedPostgresIfAnyInvolved([...descendants, snapshot.get(pid) ?? {}]));
+    // WHO ASKED — a record, or a handle. The two are not the same claim, and
+    // `vetoesRoot` is where the difference is spent. `{ pid }` stands in below
+    // only so `confirmRecordedPid` has a row to read; it is never mistaken for
+    // a record the caller actually produced.
+    const fromRecord = recorded !== undefined;
     const { treeKillAllowed, root, foreign, killable } = confirmTree(
-      // The ROOT's recorded identity comes from the caller when it has one —
-      // `killPidTree` is also called with a handle to a child we spawned
-      // ourselves seconds ago, where the record IS the handle and there is
-      // nothing to compare. What the reading below ALWAYS decides, record or
-      // no record, is whether this pid may be signalled at all.
       {
         recorded: recorded ?? { pid },
         live: asLive(snapshot.get(pid)),
@@ -434,7 +456,7 @@ export async function killPidTree(
     //     grandchild alive there. The old reach stands, and the line says the
     //     identity was not confirmed rather than implying it was.
     if (!root.killable && root.code === 'TABLE_UNREADABLE') {
-      if (recorded !== undefined) {
+      if (fromRecord) {
         process.stderr.write(`${formatRefusal(root)}\n`);
         return;
       }
@@ -444,12 +466,12 @@ export async function killPidTree(
       );
     }
 
-    // The root was read, and the reading disagrees with the record: the number
-    // has been recycled onto another process, or onto a Postgres we cannot
-    // claim. The MEMBERS were observed as descendants in that same reading, so
-    // their parentage is current and they are still swept below — only the root
-    // is spared.
-    const rootVetoed = !root.killable && ROOT_KILL_VETO.has(root.code);
+    // The root was read and the reading does not vouch for it: the number has
+    // been recycled onto another process, onto a Postgres we cannot claim, or
+    // it was written down as a bare number that proves nothing. The MEMBERS
+    // were observed as descendants in that same reading, so their parentage is
+    // current and they are still swept below — only the root is spared.
+    const rootVetoed = !root.killable && vetoesRoot(root.code, fromRecord);
     if (rootVetoed) process.stderr.write(`${formatRefusal(root)}\n`);
     // Nothing to signal: the pid is not in the table at all.
     const rootGone = !root.killable && root.code === 'PID_GONE';
