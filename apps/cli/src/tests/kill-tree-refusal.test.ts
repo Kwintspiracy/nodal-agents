@@ -47,6 +47,9 @@ const TICK_OTHER = '638999999999999999';
 /** A member that must really be alive, or the sweep skips it before execa. */
 const LIVE_MEMBER = process.pid;
 
+/** The line separator WMI emits. Assembled here so no shell can eat it. */
+const EOL = String.fromCharCode(13, 10);
+
 let originalPlatform: PropertyDescriptor | undefined;
 let stderrLines: string[];
 let restoreStderr: () => void;
@@ -56,6 +59,30 @@ function tableReturns(rows: Row[]): void {
   const stdout = rows.map((r) => `${r.pid}|${r.ppid}|${r.ticks}|${r.name}`).join('\r\n');
   mockExeca.mockImplementation(((file: string) => {
     if (file === 'powershell') {
+      return Promise.resolve({ stdout, stderr: '', exitCode: 0, timedOut: false });
+    }
+    return Promise.resolve({ stdout: '', stderr: '', exitCode: 0, timedOut: false });
+  }) as unknown as typeof execa);
+}
+
+/**
+ * Drive SUCCESSIVE readings: the Nth process-table query gets the Nth table,
+ * and the last one repeats. `killPidTree` reads the table twice — once to walk
+ * the tree, once to re-confirm the members just before signalling them — and
+ * what happens BETWEEN those two readings is the whole subject of the cases
+ * that use this.
+ *
+ * One entry is consumed per powershell call, not per snapshot: a reading that
+ * comes back empty falls through to the second query, so an unreadable table
+ * costs two entries.
+ */
+function tableSequence(tables: readonly Row[][]): void {
+  let call = 0;
+  mockExeca.mockImplementation(((file: string) => {
+    if (file === 'powershell') {
+      const rows = tables[Math.min(call, tables.length - 1)] ?? [];
+      call += 1;
+      const stdout = rows.map((r) => `${r.pid}|${r.ppid}|${r.ticks}|${r.name}`).join(EOL);
       return Promise.resolve({ stdout, stderr: '', exitCode: 0, timedOut: false });
     }
     return Promise.resolve({ stdout: '', stderr: '', exitCode: 0, timedOut: false });
@@ -206,5 +233,72 @@ describe('killPidTree — the root is not signalled unproven @cap:installer-et-d
     await killPidTree(ROOT, new Set());
 
     expect(taskkills()).toEqual([['/F', '/PID', String(ROOT)]]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('killPidTree — the members are re-read before they are signalled @cap:installer-et-demarrer/moteur', () => {
+  // Review pass 3 of #114. Between the reading that walks the tree and the kills
+  // that follow sits the ROOT kill, which takes as long as taskkill takes — and
+  // Windows hands a freed number to the next process that asks. The root was
+  // already held to a fresh reading; its children were not.
+  const ROOT_ROW: Row = { pid: ROOT, ppid: 4, ticks: TICK_RECORDED, name: 'node.exe' };
+  const MEMBER_ROW: Row = { pid: LIVE_MEMBER, ppid: ROOT, ticks: TICK_RECORDED, name: 'node.exe' };
+  const RECORD = { pid: ROOT, name: 'node.exe', startedAt: TICK_RECORDED };
+
+  it('spares a member the second reading no longer recognises', async () => {
+    // Same number, another process: recycled while the root was being killed.
+    tableSequence([[ROOT_ROW, MEMBER_ROW], [{ ...MEMBER_ROW, name: 'chrome.exe' }]]);
+
+    await killPidTree(ROOT, new Set(), RECORD);
+
+    expect(taskkills()).toEqual([['/T', '/F', '/PID', String(ROOT)]]);
+    expect(stderrLines.join('')).toContain('KILL_REFUSED code=BINARY_CHANGED');
+  });
+
+  it('spares a member whose generation changed under the same name', async () => {
+    tableSequence([[ROOT_ROW, MEMBER_ROW], [{ ...MEMBER_ROW, ticks: TICK_OTHER }]]);
+
+    await killPidTree(ROOT, new Set(), RECORD);
+
+    expect(taskkills().some((args) => args.includes(String(LIVE_MEMBER)))).toBe(false);
+    expect(stderrLines.join('')).toContain('KILL_REFUSED code=PID_RECYCLED');
+  });
+
+  it('says nothing about a member that is simply gone', async () => {
+    // The root kill usually takes the tree with it. That is the ordinary case,
+    // not a refusal, and it must not print one.
+    tableSequence([[ROOT_ROW, MEMBER_ROW], [ROOT_ROW]]);
+
+    await killPidTree(ROOT, new Set(), RECORD);
+
+    expect(taskkills().some((args) => args.includes(String(LIVE_MEMBER)))).toBe(false);
+    expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
+  });
+
+  it('sweeps the members on the earlier reading when the table will not answer twice', async () => {
+    // A reading DID happen and it established these pids as descendants of a
+    // process we proved ours. Refusing on the failure of a SECOND look would
+    // throw that away and leave the workers this sweep exists to catch running
+    // for good — the ones `/T` missed.
+    tableSequence([[ROOT_ROW, MEMBER_ROW], [], []]);
+
+    await killPidTree(ROOT, new Set(), RECORD);
+
+    expect(taskkills()).toContainEqual(['/F', '/PID', String(LIVE_MEMBER)]);
+    expect(stderrLines.join('')).toContain('KILL_UNCONFIRMED code=TABLE_UNREADABLE');
+  });
+
+  it('kills the member the second reading still vouches for', async () => {
+    tableSequence([
+      [ROOT_ROW, MEMBER_ROW],
+      [ROOT_ROW, MEMBER_ROW],
+    ]);
+
+    await killPidTree(ROOT, new Set(), RECORD);
+
+    expect(taskkills()).toContainEqual(['/F', '/PID', String(LIVE_MEMBER)]);
+    expect(stderrLines.join('')).not.toContain('KILL_REFUSED');
   });
 });

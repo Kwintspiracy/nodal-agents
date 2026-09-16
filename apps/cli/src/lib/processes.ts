@@ -389,6 +389,60 @@ function vetoesRoot(code: string, fromRecord: boolean): boolean {
   return fromRecord && code === 'IDENTITY_NOT_RECORDED';
 }
 
+/**
+ * The members, judged again against a reading taken NOW.
+ *
+ * What each member is held to is the identity the first reading recorded for
+ * it — its creation tick and its executable name — which is a real record, not
+ * a bare number, so `confirmRecordedPid` can do its work unchanged.
+ *
+ * When the second reading cannot be taken at all, the members are swept as
+ * before and the line says the identity was not re-confirmed. That is not the
+ * root's case turned around: a reading DID happen, and it established that
+ * these pids were descendants of a process we had proved ours. Refusing on the
+ * failure of a second look would throw that fact away and leave the workers
+ * this sweep exists to catch — the ones `/T` missed — running for good.
+ */
+async function reconfirmMembers(
+  members: readonly LiveProcess[],
+  rootPid: number,
+  ownedPostgresPids: ReadonlySet<number>,
+): Promise<LiveProcess[]> {
+  const fresh = await processSnapshotWin(SHUTDOWN_SNAPSHOT_BUDGET_MS);
+  if (fresh.size === 0) {
+    process.stderr.write(
+      `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${rootPid} the tree members are swept on the ` +
+        `earlier reading: the table would not answer a second time\n`,
+    );
+    return [...members];
+  }
+  const out: LiveProcess[] = [];
+  for (const member of members) {
+    const verdict = confirmRecordedPid({
+      // An empty name is a row WMI gave us without one; offering it as a
+      // recorded name would read as "it changed" the moment the second reading
+      // has one. One less proof, never a false refusal.
+      recorded: {
+        pid: member.pid,
+        startedAt: member.startedAt,
+        ...(member.name === '' ? {} : { name: member.name }),
+      },
+      live: asLive(fresh.get(member.pid)),
+      tableRead: true,
+      ownedPostgresPids,
+    });
+    if (verdict.killable) {
+      out.push(member);
+      continue;
+    }
+    // Gone is not a refusal to report — the root kill above usually takes the
+    // tree with it, which is exactly why this sweep is a backstop and not the
+    // main path.
+    if (verdict.code !== 'PID_GONE') process.stderr.write(`${formatRefusal(verdict)}\n`);
+  }
+  return out;
+}
+
 export async function killPidTree(
   pid: number,
   ownedPostgresPids?: ReadonlySet<number>,
@@ -505,7 +559,29 @@ export async function killPidTree(
     // of OUR process when we looked, so killing it is never someone else's work
     // — except for the postgres exclusion above, which is why this iterates the
     // vouched-for list and not the raw descendants.
-    for (const child of killable) {
+    //
+    // THE WINDOW. Between the reading above and the kills below sits the root
+    // kill, which takes as long as `taskkill` takes; and Windows hands a freed
+    // number to the next process that asks. So a member confirmed a moment ago
+    // can be a stranger by the time its turn comes — the same hazard the root
+    // is already held to, and it was documented for the root only (review pass
+    // 3 of #114). Each member is now re-confirmed against a FRESH reading,
+    // against the identity the FIRST reading recorded for it: same rule, same
+    // codes, same refusals.
+    //
+    // Two windows this does NOT close, said rather than implied:
+    //
+    //   · `taskkill /T` walks the tree itself, inside taskkill, and kills what
+    //     it finds. A child spawned after our reading and before that walk is
+    //     killed without ever having been seen here. It IS a descendant of a
+    //     process we proved ours, which is the whole licence `/T` runs on;
+    //     what is lost is the ability to say afterwards what was in there.
+    //   · the same gap remains between this second reading and each taskkill
+    //     below. It is smaller — no root kill sits in it — but it is not zero,
+    //     and no reading can close it. A pid is not a handle; on Windows this
+    //     is the floor.
+    const vouched = killable.length > 0 ? await reconfirmMembers(killable, pid, owned) : [];
+    for (const child of vouched) {
       if (!isPidAlive(child.pid)) continue;
       try {
         await execa('taskkill', ['/F', '/PID', String(child.pid)], { reject: false });
