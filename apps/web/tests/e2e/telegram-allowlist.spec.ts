@@ -136,6 +136,20 @@ test.afterAll(async () => {
 // agent from Telegram. It used to sit on a scenario of `agent-flows.spec.ts`
 // that inserted a `channel='telegram'` job and waited for a real model to run
 // it (issue #110) — a journey no CI could ever play. This one plays anywhere.
+//
+// WHAT THIS SCREEN LEVEL PROVES, spelled out because moving the tag changed the
+// claim (review of PR #113, second pass): that the owner of an agent can SEE
+// who is allowed to talk to it from Telegram, tell the three states apart on
+// the page — owner, waiting for approval, member — and reach the controls that
+// change them (Approve, Deny, Revoke). It is the screen of the PERMISSION to
+// talk, and that is the whole of it.
+//
+// What it does NOT prove, and no longer claims to: that a message arriving
+// from Telegram becomes a job, reaches the agent and is answered. That is the
+// ENGINE level of the same capability, and it lives in
+// `apps/runner/src/tests/telegram/handler.test.ts`, where no model is needed
+// either. Both levels exist, so the capability is verified at both; neither
+// stands in for the other.
 test('A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran', async ({
   page,
 }) => {
