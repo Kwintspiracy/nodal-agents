@@ -37,12 +37,22 @@ import { SectionCard, SectionHead } from './SectionCard.tsx';
 // is rendered as it comes, under the field. A second copy of those rules in the
 // browser would be a second thing to keep true.
 
-/** One entry per line, trimmed, inner runs of spaces collapsed, blanks dropped. */
+/**
+ * One entry per line, trimmed, inner runs of spaces collapsed, blanks dropped,
+ * and each entry kept once.
+ *
+ * The duplicate is dropped EXACTLY, never case-insensitively: the engine
+ * compares an entry's arguments byte-exact on every platform (to npx, `vitest`
+ * and `VITEST` are different packages), and only the leading program is
+ * case-folded, and only on Windows. Folding here would tell the owner that two
+ * entries are the same when the engine will not agree.
+ */
 export function parseAllowlistDraft(draft: string): string[] {
-  return draft
+  const entries = draft
     .split('\n')
     .map((line) => line.trim().replace(/\s+/g, ' '))
     .filter((line) => line.length > 0);
+  return [...new Set(entries)];
 }
 
 /** What the owner is about to save: the checkbox wins, an empty field is NULL. */
@@ -132,6 +142,10 @@ export default function CommandAllowlistSection({
         <p className="mt-1 text-body-12 text-ink-4">
           An entry is one or more words, matched against the start of the command. Clear the field
           and save to remove the list.
+        </p>
+        <p className="mt-1 text-body-12 text-ink-4">
+          With a list, a command is one program and its arguments, double quotes to group; no
+          chaining, no redirection, no shell.
         </p>
       </div>
 

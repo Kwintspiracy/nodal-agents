@@ -138,6 +138,34 @@ describe('CommandAllowlistSection — what the owner saves @cap:assigner-outils/
     expect((lastArgument() as { allowlist: string[] }).allowlist).toEqual(['node', 'npx vitest']);
   });
 
+  it('the same entry written twice is saved once', async () => {
+    // A duplicate is not a second permission, and ['node','node'] read back as
+    // "2 entries" would tell the owner the list grants more than it does.
+    await render(null);
+    await typeEntries('node\n  node\nnpx vitest');
+    await save();
+
+    expect(lastArgument().allowlist).toEqual(['node', 'npx vitest']);
+  });
+
+  it('two entries differing only in case are BOTH kept', async () => {
+    // Not a duplicate: the engine compares arguments byte-exact, and folds the
+    // leading program only on Windows. Merging them here would promise a
+    // sameness the engine does not honour.
+    await render(null);
+    await typeEntries('npx vitest\nnpx VITEST');
+    await save();
+
+    expect(lastArgument().allowlist).toEqual(['npx vitest', 'npx VITEST']);
+  });
+
+  it('says how a command must be written once a list exists', async () => {
+    await render(null);
+    expect(container.textContent).toContain(
+      'With a list, a command is one program and its arguments, double quotes to group; no chaining, no redirection, no shell.',
+    );
+  });
+
   it('the three states are said in words', async () => {
     await render(null);
     expect(container.textContent).toContain(
