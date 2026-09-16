@@ -10,6 +10,9 @@
 // arguments, double quotes to group, everything else refused by name.
 
 import { describe, it, expect } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import {
   assertCommandAllowed,
   tokenizeSimpleCommand,
@@ -214,6 +217,81 @@ describe('planAllowedRun @cap:assigner-outils/moteur', () => {
       /not found on the PATH/,
     );
   });
+
+  it.runIf(process.platform === 'win32')(
+    'resolves only what it can launch, and prefers .exe over a same-named script',
+    async () => {
+      // A `node.js` earlier on the PATH than `node.exe`. PATHEXT lists .JS, so
+      // unioning it resolved the .js and then failed to spawn with a raw Node
+      // error. We are not cmd.exe: only .exe/.com/.cmd/.bat are launchable
+      // here, so the .js is ignored and the search carries on.
+      const early = await mkdtemp(join(tmpdir(), 'nodal-early-'));
+      const late = await mkdtemp(join(tmpdir(), 'nodal-late-'));
+      try {
+        await writeFile(join(early, 'probe.js'), 'console.log(1)', 'utf8');
+        await writeFile(join(early, 'probe.vbs'), 'WScript.Echo 1', 'utf8');
+        await writeFile(join(late, 'probe.exe'), 'MZ', 'utf8');
+        const plan = planAllowedRun('probe -v', ['probe'], {
+          PATH: [early, late].join(delimiter),
+        });
+        expect(plan!.file).toBe(join(late, 'probe.exe'));
+      } finally {
+        await rm(early, { recursive: true, force: true });
+        await rm(late, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'refuses when the PATH holds only a same-named file it cannot launch',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'nodal-unlaunchable-'));
+      try {
+        await writeFile(join(dir, 'probe.js'), 'console.log(1)', 'utf8');
+        expect(() => planAllowedRun('probe -v', ['probe'], { PATH: dir })).toThrow(
+          /not found on the PATH/,
+        );
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'refuses a caret inside an argument bound for the batch line',
+    () => {
+      // The line is `"prog" "arg" ...`. A caret inside an argument would
+      // escape the next character for cmd.exe, so it is refused rather than
+      // escaped — escaping is the imitation this design stopped doing.
+      //
+      // A caret only gets this far INSIDE double quotes; bare, the tokenizer
+      // refuses it first. A double quote cannot get here at all, since quotes
+      // are delimiters and never end up inside a token. The guard keeps both
+      // anyway: it costs one regex and it is what makes the built line safe by
+      // its own reading, not by a property of some other function.
+      expect(() => planAllowedRun('npx vitest "a^b"', ['npx vitest'], env)).toThrow(
+        /double quote or a caret/,
+      );
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'a %VAR% never reaches the batch line: the tokenizer refuses it first',
+    () => {
+      // cmd.exe expands %VAR% even inside double quotes, so an argument
+      // carrying one would be substituted on the line we build. It cannot get
+      // there: `%` is refused while the command is still being read, and the
+      // error names the character rather than mentioning cmd.exe at all.
+      try {
+        planAllowedRun('npx vitest %EVIL%', ['npx vitest'], env);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).toMatch(/%/);
+        expect((err as Error).message).toMatch(/NO SHELL/);
+        expect((err as Error).message).not.toMatch(/batch line|must run through cmd\.exe/);
+      }
+    },
+  );
 
   it.runIf(process.platform === 'win32')(
     'runs a .cmd through cmd.exe, with the line built here from allowed tokens',

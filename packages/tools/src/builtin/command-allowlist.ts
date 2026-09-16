@@ -239,26 +239,24 @@ export function assertCommandAllowed(
 
 // ─── Finding the program, on the PATH and nowhere else ───────────────────────
 
-/** Windows' out-of-the-box PATHEXT, used only when the host holds none. */
-const WINDOWS_DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
-
 /**
- * Extensions to try for an unqualified name: the HOST's PATHEXT union the
- * Windows default. The union, not one or the other — PATHEXT can be narrower
- * than the default in an ordinary process (measured: a vitest worker on
- * Windows 11 runs without `.JS` while `.JSE` is still there), and a resolver
- * that shrinks with the environment finds nothing where the OS would.
+ * The ONLY extensions this module resolves on Windows, in the order it prefers
+ * them. Not the PATHEXT: PATHEXT lists everything `cmd.exe` knows how to hand
+ * to some interpreter, and we are not `cmd.exe`.
+ *
+ * `.exe` and `.com` are spawned directly; `.cmd` and `.bat` go through the
+ * batch line below. Everything else — `.js`, `.vbs`, `.ps1`, `.msc` — is NOT
+ * launchable here, so resolving it would only trade a clear refusal for a raw
+ * spawn error from Node. An earlier version unioned the default PATHEXT and
+ * did exactly that: a `node.js` sitting earlier on the PATH than `node.exe`
+ * resolved, then failed to spawn.
+ *
+ * So a same-named file with any other extension is IGNORED, and the search
+ * carries on down the PATH. If nothing launchable is found the command is
+ * refused with "not found on the PATH", which is the truth: nothing the
+ * allowlist can start is there.
  */
-function windowsExecutableExtensions(): string[] {
-  const parse = (value: string): string[] =>
-    value
-      .split(';')
-      .map((entry) => entry.trim().toLowerCase())
-      .filter((entry) => entry.startsWith('.') && entry.length > 1);
-  const extensions = new Set(parse(WINDOWS_DEFAULT_PATHEXT));
-  for (const entry of parse(process.env['PATHEXT'] ?? '')) extensions.add(entry);
-  return [...extensions];
-}
+const LAUNCHABLE_WINDOWS_EXTENSIONS = ['.exe', '.com', '.cmd', '.bat'] as const;
 
 function isFile(path: string): boolean {
   try {
@@ -296,16 +294,16 @@ function resolveOnPath(program: string, env: Record<string, string | undefined>)
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '' && entry !== '.' && isAbsolute(entry));
 
-  // On Windows an extensionless file is NOT executable: CreateProcess needs a
-  // PATHEXT extension, which is why `cmd.exe` appends one. Trying the bare
-  // name first would pick up the extensionless `npx` shell script that ships
-  // next to `npx.cmd` for Git Bash — measured here — and hand Node a file it
-  // cannot spawn. So the bare name is tried only when it already carries a
-  // known extension.
-  const extensions = isWindows() ? windowsExecutableExtensions() : [];
-  const alreadyExecutable =
+  // On Windows an extensionless file is NOT executable: CreateProcess needs an
+  // extension, which is why `cmd.exe` appends one. Trying the bare name first
+  // would pick up the extensionless `npx` shell script that ships next to
+  // `npx.cmd` for Git Bash — measured here — and hand Node a file it cannot
+  // spawn. So the bare name is tried only when it already carries one of the
+  // extensions we can actually launch.
+  const extensions: readonly string[] = isWindows() ? LAUNCHABLE_WINDOWS_EXTENSIONS : [];
+  const alreadyLaunchable =
     !isWindows() || extensions.some((ext) => program.toLowerCase().endsWith(ext));
-  const candidates = alreadyExecutable ? [program] : extensions.map((ext) => `${program}${ext}`);
+  const candidates = alreadyLaunchable ? [program] : extensions.map((ext) => `${program}${ext}`);
 
   for (const directory of directories) {
     for (const candidate of candidates) {
