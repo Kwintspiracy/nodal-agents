@@ -415,17 +415,33 @@ export async function killPidTree(
       owned,
     );
 
-    // A READING THAT NEVER HAPPENED LICENSES NOTHING (issue #114, review pass).
+    // A READING THAT NEVER HAPPENED CONFIRMS NOTHING (issue #114, review pass).
     //
     // `tableRead` false means the OS declined to answer — not "the tree is
-    // empty". The code used to fall through to `taskkill /F /PID <root>` here,
-    // on the strength of a number and nothing else, which is precisely the
-    // claim #100 set out to retire: a pid is signalled only when a FRESH
-    // reading agrees. So: no `/T`, no root, no members, and the reason said out
-    // loud rather than a silent kill (invariant #4).
+    // empty". What follows from that depends on WHERE the pid came from, and
+    // the distinction is the same one the `recorded` parameter draws:
+    //
+    //   · from a RECORD — a number written to processes.json minutes or days
+    //     ago. Nothing confirms it, so nothing is signalled. The code used to
+    //     fall through to `taskkill /F /PID <root>` here on the strength of
+    //     that number alone, which is exactly the claim #100 retired.
+    //   · from a live HANDLE — `killProcessTree(child)`, a process we spawned
+    //     seconds ago and are still holding. There is nothing to confirm: the
+    //     handle is the identity. Refusing here would mean a Windows machine
+    //     whose WMI is slow or blocked could no longer stop its own children —
+    //     which is not a hypothesis. The GitHub Windows runner does exactly
+    //     that, and the first shape of this fix left `detach.test.ts`'s
+    //     grandchild alive there. The old reach stands, and the line says the
+    //     identity was not confirmed rather than implying it was.
     if (!root.killable && root.code === 'TABLE_UNREADABLE') {
-      process.stderr.write(`${formatRefusal(root)}\n`);
-      return;
+      if (recorded !== undefined) {
+        process.stderr.write(`${formatRefusal(root)}\n`);
+        return;
+      }
+      process.stderr.write(
+        `KILL_UNCONFIRMED code=TABLE_UNREADABLE pid=${pid} is a live handle, not a record: ` +
+          `the tree kill proceeds with the identity unconfirmed\n`,
+      );
     }
 
     // The root was read, and the reading disagrees with the record: the number
