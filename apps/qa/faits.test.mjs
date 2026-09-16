@@ -219,6 +219,47 @@ describe('porteDesFaitsVerifies', () => {
     expect(porteDesFaitsVerifies(['```', '## Verified'].join('\n'))).toBe(false);
   });
 
+  // Un bloc de code INDENTÉ (4 espaces, pas de clôture) n'a rien à retirer :
+  // c'est la borne d'indentation du TITRE qui l'écarte, comme en markdown, où
+  // une ligne décalée de quatre espaces est du code et non un titre.
+  it('un titre décalé de quatre espaces est du code indenté, pas une section', () => {
+    expect(
+      porteDesFaitsVerifies(['Template:', '', '    ## Verified', '', '    `pnpm test`'].join('\n')),
+    ).toBe(false);
+    expect(porteDesFaitsVerifies(['Template:', '', '\t## Verified'].join('\n'))).toBe(false);
+  });
+
+  it('jusqu’à trois espaces, un titre reste un titre', () => {
+    expect(porteDesFaitsVerifies('   ## Verified\n\n`pnpm test` → green')).toBe(true);
+  });
+
+  // CommonMark : une clôture jamais refermée court jusqu'à la fin du corps.
+  // C'est aussi le choix prudent — un corps qu'on ne sait pas lire ne vaut pas
+  // un feu vert, et l'agent voit la pastille tout de suite.
+  it('une clôture jamais refermée avale la suite, y compris une vraie section', () => {
+    expect(
+      porteDesFaitsVerifies(['```sh', 'pnpm test', '', '## Verified', '', 'x'].join('\n')),
+    ).toBe(false);
+  });
+
+  it('la même section, une fois le bloc refermé, est bien lue', () => {
+    expect(
+      porteDesFaitsVerifies(['```sh', 'pnpm test', '```', '', '## Verified', '', 'x'].join('\n')),
+    ).toBe(true);
+  });
+
+  it('un marqueur suivi de texte ne referme rien', () => {
+    expect(
+      porteDesFaitsVerifies(['```', 'code', '``` and more', '', '## Verified'].join('\n')),
+    ).toBe(false);
+  });
+
+  it('une clôture décalée de quatre espaces n’ouvre pas de bloc', () => {
+    // À quatre espaces la ligne appartient déjà à un bloc indenté : elle
+    // n'ouvre rien, et la vraie section qui suit reste lue.
+    expect(porteDesFaitsVerifies(['    ```', '', '## Verified', '', 'x'].join('\n'))).toBe(true);
+  });
+
   it('une vraie section reste lue, même suivie d’un bloc qui cite le mot', () => {
     const vrai = [
       '## Verified',

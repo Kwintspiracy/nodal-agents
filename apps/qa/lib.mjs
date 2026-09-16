@@ -529,21 +529,35 @@ export function ecritParUnAgent(corps) {
 }
 
 /**
- * Le texte débarrassé de ses blocs de code clôturés (``` et ~~~).
+ * Le texte débarrassé de ses blocs de code CLÔTURÉS (``` et ~~~).
  *
  * Un agent qui CITE le modèle de `SKILL.md` dans un bloc de code écrit bien la
- * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié. Le
- * balayage est fait ligne à ligne plutôt qu'en une regex : une clôture se ferme
- * par le même caractère et au moins autant de marques, et un bloc laissé ouvert
- * va jusqu'à la fin du corps.
+ * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié.
+ *
+ * Le balayage suit CommonMark d'assez près pour ne pas surprendre :
+ *   — une clôture s'ouvre avec AU PLUS 3 espaces d'indentation ; à 4, la ligne
+ *     appartient déjà à un bloc de code indenté et n'ouvre rien ;
+ *   — elle se ferme par le même caractère, au moins autant de marques, et rien
+ *     d'autre que des espaces après ;
+ *   — un bloc laissé OUVERT court jusqu'à la fin du corps. C'est la règle
+ *     CommonMark, et c'est aussi la prudente : une clôture jamais refermée est
+ *     un corps qu'on ne sait pas lire, et l'agent le voit tout de suite sous la
+ *     forme d'une pastille « no verified facts ». L'inverse — refermer d'office
+ *     à la fin du bloc suivant — validerait un `## Verified` qui n'est peut-être
+ *     que du texte cité.
  */
 function horsDesBlocsDeCode(texte) {
   const gardees = [];
   let cloture = null;
   for (const ligne of texte.split('\n')) {
-    const marque = /^[ \t]*(`{3,}|~{3,})/.exec(ligne)?.[1];
+    const marque = /^ {0,3}(`{3,}|~{3,})/.exec(ligne)?.[1];
     if (cloture) {
-      if (marque && marque[0] === cloture[0] && marque.length >= cloture.length) cloture = null;
+      const ferme =
+        marque &&
+        marque[0] === cloture[0] &&
+        marque.length >= cloture.length &&
+        /^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(ligne);
+      if (ferme) cloture = null;
       continue;
     }
     if (marque) {
@@ -555,9 +569,17 @@ function horsDesBlocsDeCode(texte) {
   return gardees.join('\n');
 }
 
-/** Une SECTION « Verified », pas le mot au fil du texte ni cité dans un bloc. */
+/**
+ * Une SECTION « Verified » : ni le mot au fil du texte, ni une ligne citée dans
+ * un bloc de code.
+ *
+ * L'indentation est bornée à 3 espaces, comme en markdown : à 4 espaces ou
+ * après une tabulation, la ligne est un BLOC DE CODE INDENTÉ, pas un titre.
+ * Sans cette borne, coller le modèle de `SKILL.md` en le décalant suffisait à
+ * passer pour vérifié — un bloc indenté n'a pas de clôture à retirer.
+ */
 export function porteDesFaitsVerifies(corps) {
-  return /^[ \t]*#{1,6}[ \t]*verified\b/im.test(horsDesBlocsDeCode(String(corps ?? '')));
+  return /^ {0,3}#{1,6}[ \t]*verified\b/im.test(horsDesBlocsDeCode(String(corps ?? '')));
 }
 
 /** Les cartes ouvertes par un agent qui n'apportent aucun fait vérifié. */
