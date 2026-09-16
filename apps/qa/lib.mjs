@@ -468,8 +468,20 @@ export function comparerSemver(a, b) {
  * d'établir, et laissait croire qu'on ne savait pas.
  *
  * `sortie` est le stdout, `erreur` le stderr (ou le message de l'échec).
- * Avec `--json`, npm range souvent l'erreur dans le stdout lui-même, d'où les
- * deux endroits regardés.
+ * Avec `--json`, npm range son erreur dans le stdout lui-même, d'où les deux
+ * endroits regardés.
+ *
+ * Seul le CODE de npm compte, pas un « 404 » croisé n'importe où : un proxy
+ * d'entreprise qui répond 404 pour une tout autre raison écrit lui aussi ce
+ * nombre dans stderr, et le prendre pour un verdict du registre transformerait
+ * une panne d'accès en « ce paquet n'existe pas ». C'est le même défaut à
+ * l'envers. Sortie réelle de `npm view paquet-inexistant --json` (npm 11) :
+ *
+ *     npm error code E404
+ *     npm error 404 Not Found - GET https://registry.npmjs.org/… - Not found
+ *
+ * et sur les npm plus anciens, `npm ERR! code E404`. La ligne reconnue est donc
+ * celle du CODE, et elle seule.
  */
 export function lectureDeNpm({ sortie, erreur } = {}) {
   let lu = null;
@@ -478,8 +490,9 @@ export function lectureDeNpm({ sortie, erreur } = {}) {
   } catch {
     lu = null;
   }
-  const codes = `${lu?.error?.code ?? ''} ${erreur ?? ''}`;
-  if (/\bE?404\b/.test(codes)) return { etat: 'jamais-publiee', npm: null };
+  const dansLeJson = lu?.error?.code === 'E404';
+  const dansStderr = /npm\s+(?:error|ERR!)\s+code\s+E404\b/i.test(String(erreur ?? ''));
+  if (dansLeJson || dansStderr) return { etat: 'jamais-publiee', npm: null };
   // `version` est la chaîne attendue ; tout le reste est une réponse qu'on ne
   // sait pas lire, donc une absence, jamais une valeur approchée.
   if (typeof lu?.version === 'string') {

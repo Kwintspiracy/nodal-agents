@@ -102,12 +102,36 @@ describe('lectureDeNpm', () => {
   // Un paquet jamais publié fait répondre npm par E404 : le registre a PARLÉ.
   // L'afficher en « npm unreachable » accusait le réseau d'un fait établi.
   it('un E404 est « jamais publiée », pas « injoignable »', () => {
+    // La sortie réelle de `npm view paquet-inexistant --json`, npm 11.
     expect(
-      lectureDeNpm({ sortie: '', erreur: 'npm error code E404\nnpm error 404 Not Found' }).etat,
+      lectureDeNpm({
+        sortie: '',
+        erreur:
+          'npm error code E404\n' +
+          'npm error 404 Not Found - GET https://registry.npmjs.org/absent - Not found',
+      }).etat,
     ).toBe('jamais-publiee');
+    // Et la forme des npm plus anciens.
+    expect(lectureDeNpm({ sortie: '', erreur: 'npm ERR! code E404' }).etat).toBe('jamais-publiee');
     expect(lectureDeNpm({ sortie: '{"error":{"code":"E404","summary":"Not found"}}' }).etat).toBe(
       'jamais-publiee',
     );
+  });
+
+  // Un proxy d'entreprise qui répond 404 pour une autre raison écrit ce nombre
+  // dans stderr sans être le registre. Le prendre pour un verdict de npm
+  // transformerait une panne d'accès en « ce paquet n'existe pas ».
+  it('un 404 qui ne vient PAS du code npm reste « injoignable »', () => {
+    expect(
+      lectureDeNpm({
+        sortie: '',
+        erreur: 'npm error code E500\nrequest to proxy failed, 404 Not Found from corp-proxy',
+      }).etat,
+    ).toBe('injoignable');
+    expect(lectureDeNpm({ sortie: '', erreur: 'HTTP 404 from proxy' }).etat).toBe('injoignable');
+    expect(
+      lectureDeNpm({ sortie: '{"error":{"code":"E500","summary":"404 somewhere"}}' }).etat,
+    ).toBe('injoignable');
   });
 
   it('une panne réseau reste « injoignable » : on ne sait pas', () => {
