@@ -21,6 +21,7 @@ import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   agentJobs,
   agents,
+  agentWorkspaces,
   chatMessages,
   conversations,
   codeProjects,
@@ -610,6 +611,30 @@ describe('loadConversationContext — les projets déclarés (P10b)', () => {
     const ctx = await loadConversationContext(db, ref.id);
     expect(ctx?.registeredProjects).toEqual([
       { name: 'Vrai', path: 'D:/Terrain/vrai', kind: 'documents' },
+    ]);
+  });
+
+  it('un projet sous un dossier attaché MASQUÉ ne se propose pas non plus', async () => {
+    // Revue de la PR #103 (Reviewer C, passe 2), constat mineur 2. Le bloc
+    // `## Runtime` exclut un projet par SOUS-ARBRE dès que le dossier attaché
+    // porte `hidden_from_code` ; ce bloc-ci ne regardait que `code_projects.
+    // hidden`. Un dossier rangé revenait donc par la question « où écrire ? »,
+    // alors que « que ça retire le dossier du contexte » est la demande même
+    // qui a créé le masquage.
+    const ref = await resolveConversation(key('chat-p10b-masque'));
+    await db.insert(agentWorkspaces).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      label: 'rangé',
+      path: 'D:/Range',
+      hiddenFromCode: true,
+    });
+    await projet({ path: 'D:/Range/dedans', displayName: 'Dedans' });
+    await projet({ path: 'D:/Terrain/dehors', displayName: 'Dehors' });
+
+    const ctx = await loadConversationContext(db, ref.id);
+    expect(ctx?.registeredProjects).toEqual([
+      { name: 'Dehors', path: 'D:/Terrain/dehors', kind: 'documents' },
     ]);
   });
 

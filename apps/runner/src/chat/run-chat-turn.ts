@@ -3,9 +3,13 @@
 // Conversation-first (V4): a chat turn is NOT a job. This produces a pure-text
 // reply using the agent's personality + AUTO-INJECTED memory (recall is free —
 // `buildSystemPrompt` splices the entity's durable facts into the prompt) +
-// the recent history of THIS conversation. No tools are exposed, so nothing here
-// can create a job. Action escalation (the agent uses a tool → a real
-// `agent_jobs` row) is a later increment.
+// the recent history of THIS conversation.
+//
+// ONE tool is exposed, and one only: `run_task` (see `CHAT_TOOLS` below), which
+// is how a chat turn escalates to a real `agent_jobs` row. These lines said the
+// opposite — « no tools are exposed, so nothing here can create a job » — long
+// after the escalation shipped, and a comment that states a rule gets read as
+// one (revue Codex de la dette de la PR #73, passe 3).
 
 import { eq, and, desc, sql } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';

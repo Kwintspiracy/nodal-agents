@@ -16,7 +16,7 @@
 // des fonctions async — ces helpers sync (et testables) doivent vivre ici.
 
 import { existsSync as fsExistsSync } from 'node:fs';
-import { isAbsolutePath, isWindowsPath, normalizePath } from '@nodal-agents/shared';
+import { isAbsolutePath, isWindowsPath, normalizePath, projectKey } from '@nodal-agents/shared';
 
 /** Chemin absolu ? (POSIX `/…`, Windows `C:/…` ou UNC `//srv/part`.) */
 const isAbsoluteChangePath = isAbsolutePath;
@@ -183,9 +183,11 @@ function hasProjectMarker(dir: string, memo: Map<string, string | null>): boolea
  * dossier au premier niveau »), donc l'affichage et la consigne disent la même
  * chose.
  *
- * SEULE exception, et elle est nécessaire : si le dossier attaché porte
- * lui-même un manifeste, c'est LUI le projet. Sans ça, attacher directement un
- * dépôt afficherait `apps`, `packages` et `docs` comme trois projets. Une
+ * DEUX exceptions, et elles sont nécessaires : si le dossier attaché EST un
+ * projet — il porte un manifeste, ou il est DÉCLARÉ projet de code —, c'est LUI
+ * le projet. Sans la première, attacher directement un dépôt afficherait
+ * `apps`, `packages` et `docs` comme trois projets ; sans la seconde, cet écran
+ * dirait d'un dossier déclaré le contraire de ce que le moteur en dit. Une
  * seule vérification, à la racine du dossier attaché — jamais de remontée.
  *
  * Un fichier posé à la racine même du dossier attaché rend ce dossier.
@@ -194,7 +196,14 @@ function projectUnderWorkspace(
   dir: string,
   wsRoot: string,
   memo: Map<string, string | null>,
+  // Les projets DÉCLARÉS, par clé. Une déclaration vaut manifeste : sans
+  // elle, ce calcul éclatait en ses enfants un dossier attaché déclaré projet
+  // de code sans manifeste, pendant que l'intention, l'observation, le registre
+  // et le contexte des agents nommaient la racine (revue Codex de la dette de
+  // la PR #75, passe 2, constat 1).
+  declaredRoots?: ReadonlySet<string>,
 ): string {
+  if (declaredRoots?.has(projectKey(wsRoot)) === true) return wsRoot;
   if (hasProjectMarker(wsRoot, memo)) return wsRoot;
 
   const isWin = isWindowsPath(dir) || isWindowsPath(wsRoot);
@@ -270,6 +279,8 @@ export function deriveProjectRoot(
    */
   pipelineWorkspaces: WorkspaceRef[],
   memo: Map<string, string | null>,
+  /** Les clés des projets DÉCLARÉS de l'entité — une déclaration vaut manifeste. */
+  declaredRoots?: ReadonlySet<string>,
 ): string | null {
   const roots = workspaceRoots(pipelineWorkspaces);
   if (roots.length === 0) return null;
@@ -285,7 +296,7 @@ export function deriveProjectRoot(
     // Écriture hors de tout dossier attaché : on ne sait pas la rattacher.
     if (!wsRoot) continue;
 
-    const project = projectUnderWorkspace(dir, wsRoot, memo);
+    const project = projectUnderWorkspace(dir, wsRoot, memo, declaredRoots);
     // Masqué par le propriétaire, à n'importe quel niveau au-dessus (0087).
     if (isUnderHiddenWorkspace(project, pipelineWorkspaces)) continue;
     if (!existsMemo(project, memo)) continue;

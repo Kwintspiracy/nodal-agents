@@ -38,7 +38,8 @@ import {
   resolveProjectRoots,
   type MutationTarget,
 } from '@nodal-agents/shared';
-import { hasMarker, realPathOf, rebaseOntoLexicalRoots } from './markers';
+import { realPathOf, rebaseOntoLexicalRoots } from './markers';
+import { loadDeclaredCodeRoots, projectRootPredicate } from './declared';
 import { registerCodeProjects } from './register';
 
 /**
@@ -133,41 +134,72 @@ interface RegisteredProject {
   readonly matchPath: string;
 }
 
-/**
- * Le projet enregistré qui CONTIENT cette cible, ou `null`.
- *
- * La règle de frontière est celle de tout le dépôt (`isWithinRoot`,
- * @nodal-agents/shared) : racine égale ou frontière de segment, casse repliée
- * seulement sur un chemin Windows. Une cible FICHIER se compare telle quelle —
- * inutile de remonter au dossier, un fichier dans un projet est déjà dans ce
- * projet, et remonter ferait perdre le cas du fichier posé à la racine.
- *
- * Racines triées de la plus LONGUE à la plus courte : deux projets imbriqués
- * (`terrain/app` et `terrain/app/packages/ui`) sont l'un des cas normaux du
- * registre, et le travail appartient au plus niché.
- */
-function projectContaining(
-  target: MutationTarget,
-  projects: readonly RegisteredProject[],
-): RegisteredProject | null {
-  const path = normalizePath(target.path);
-  if (path === '') return null;
-  return projects.find((p) => isWithinRoot(path, p.matchPath)) ?? null;
-}
-
 /** Les racines de la PLUS LONGUE à la plus courte — le plus niché gagne. */
 function byDepth(projects: readonly RegisteredProject[]): RegisteredProject[] {
   return [...projects].sort((a, b) => b.matchPath.length - a.matchPath.length);
 }
 
-/** La première cible qui tombe dans un projet décide — l'ordre est celui de l'outil. */
-function firstMatch(
-  targets: readonly MutationTarget[],
+/**
+ * Une cible, et la racine que L'INTENTION de mutation nomme pour elle.
+ *
+ * `intendedRoot` est `null` quand l'intention ne nomme rien pour cette cible :
+ * pas de dossier attaché, cible hors de tout terrain, ou cible dont l'identité
+ * n'est pas un projet (un document a la sienne, `resolveFileDeliverables`).
+ * Le rattachement retombe alors sur le plus niché — le comportement d'avant ce
+ * correctif, mot pour mot.
+ */
+interface TargetIntent {
+  readonly target: MutationTarget;
+  /** Le chemin normalisé de la racine nommée par `resolveProjectRoots`, ou `null`. */
+  readonly intendedRoot: string | null;
+}
+
+/** `p` est-il DANS `root` sans être `root` ? (la casse est repliée par `isWithinRoot`) */
+function isStrictlyUnder(p: string, root: string): boolean {
+  // Les deux sens : `isWithinRoot(p, root)` seul rendrait vrai pour deux casses
+  // du même dossier Windows, et un descendant serait vu là où il y a égalité.
+  return isWithinRoot(p, root) && !isWithinRoot(root, p);
+}
+
+/**
+ * Le projet enregistré auquel ce travail se rattache — par la règle de
+ * L'INTENTION, pas par une seconde définition.
+ *
+ * La première cible qui tombe dans un projet décide : l'ordre est celui de
+ * l'outil. La règle de frontière est celle de tout le dépôt (`isWithinRoot`,
+ * @nodal-agents/shared) : racine égale ou frontière de segment, casse repliée
+ * seulement sur un chemin Windows. Une cible FICHIER se compare telle quelle —
+ * inutile de remonter au dossier, un fichier dans un projet est déjà dans ce
+ * projet, et remonter ferait perdre le cas du fichier posé à la racine.
+ *
+ * DEUX projets enregistrés imbriqués sont un cas normal du registre, et le
+ * travail appartient au plus niché — SAUF quand l'intention en nomme un autre.
+ * Elle raisonne, elle, sur les racines du TERRAIN (`resolveProjectRoots`), et
+ * les deux règles divergeaient dès qu'un sous-dossier d'un projet déclaré était
+ * lui-même au registre (revue de la PR #103, Reviewer C) : trois niveaux
+ * enregistrés `app`, `app/src`, `app/src/lib`, une cible `app/src/lib/mod.ts`,
+ * et l'intention salissait `app` pendant que le job partait sur `app/src/lib`.
+ * Le job portait alors un ENFANT du projet dont l'état de vérification est
+ * tenu, et `declare_verification` sur `app` refusait un travail réellement
+ * fait. Un descendant enregistré de la racine nommée ne la double donc plus.
+ *
+ * Quand la racine nommée n'est elle-même PAS au registre, le plus niché reprend
+ * la main : rattacher à un projet voisin reste de la comptabilité, et ne rien
+ * rattacher du tout perdrait la seule trace de l'endroit où le travail a eu
+ * lieu.
+ */
+function chooseProject(
+  intents: readonly TargetIntent[],
   projects: readonly RegisteredProject[],
 ): RegisteredProject | null {
-  for (const target of targets) {
-    const found = projectContaining(target, projects);
-    if (found) return found;
+  for (const { target, intendedRoot } of intents) {
+    const path = normalizePath(target.path);
+    if (path === '') continue;
+    const candidates = projects.filter((p) => isWithinRoot(path, p.matchPath));
+    if (candidates.length === 0) continue;
+    if (intendedRoot === null) return candidates[0] ?? null;
+    const named = candidates.filter((p) => !isStrictlyUnder(p.matchPath, intendedRoot));
+    return named[0] ?? candidates[0] ?? null;
   }
   return null;
 }
@@ -229,7 +261,7 @@ export async function attachProductionToProject(
       // terrain, `terrain/vrac`) n'est pas un projet : elle attend la question
       // « où écrire ? » (P10). C'est la ligne qui sépare « rien ne se crée en
       // silence » (les dossiers de documents) d'un dépôt qui se reconnaît seul.
-      const registered = await registerManifestProjects({ ...ctx, db: tx }, targets);
+      const { registered, intents } = await declareAndResolveIntent({ ...ctx, db: tx }, targets);
 
       const rows = await tx
         .select({ id: codeProjects.id, path: codeProjects.projectPath })
@@ -250,7 +282,7 @@ export async function attachProductionToProject(
       // déclarée contient la cible par construction.)
       if (projects.length === 0) return { kind: 'no_project' as const };
 
-      let chosen = firstMatch(targets, byDepth(projects));
+      let chosen = chooseProject(intents, byDepth(projects));
       // Aucun rattachement LEXICAL : on retente sur les chemins RÉELS avant de
       // conclure. Le disque n'est touché que dans ce second passage — sur une
       // machine sans lien ni jonction, il n'a jamais lieu.
@@ -258,8 +290,14 @@ export async function attachProductionToProject(
         const reels = byDepth(
           projects.map((p) => ({ id: p.id, path: p.path, matchPath: realPathOf(p.path) })),
         );
-        chosen = firstMatch(
-          targets.map((t) => ({ ...t, path: realPathOf(t.path) })),
+        chosen = chooseProject(
+          intents.map((e) => ({
+            target: { ...e.target, path: realPathOf(e.target.path) },
+            // La racine nommée suit les cibles : comparée lexicale à des
+            // chemins réels, elle ne contiendrait plus rien et la règle de
+            // l'intention disparaîtrait du second passage.
+            intendedRoot: e.intendedRoot === null ? null : realPathOf(e.intendedRoot),
+          })),
           reels,
         );
       }
@@ -344,7 +382,12 @@ export async function attachProductionToProject(
 
 /**
  * Déclare au registre les racines de code À MANIFESTE où une cible atterrit,
- * et rend les ids déclarés par cet appel (vide si rien de neuf).
+ * et rend DEUX choses : les ids déclarés par cet appel (vide si rien de neuf),
+ * et la racine que l'intention nomme pour chaque cible — la règle sur laquelle
+ * le rattachement choisit ensuite parmi les projets enregistrés
+ * (`chooseProject`). Les deux sortent d'ICI, du même `resolveProjectRoots` et
+ * du même prédicat, parce qu'une seconde définition de « le projet de cette
+ * cible » est exactement ce que cette PR referme.
  *
  * Les cibles de code passent par `rebaseOntoLexicalRoots` puis
  * `resolveProjectRoots`, EXACTEMENT comme dans l'intention de mutation : la
@@ -352,9 +395,14 @@ export async function attachProductionToProject(
  * sinon le registre créerait une seconde ligne `code_projects` pour le même
  * dossier — l'état sale d'un côté, la déclaration de l'autre.
  *
- * `hasMarker` sur la racine DÉRIVÉE, pas sur le dossier de la cible : un
+ * Le prédicat sur la racine DÉRIVÉE, pas sur le dossier de la cible : un
  * fichier dans `app/src/` appartient au projet `app`, et c'est `app` qui doit
- * porter le manifeste.
+ * être un projet. Le prédicat, et non `hasMarker` seul : il connaît aussi les
+ * projets DÉCLARÉS, comme l'intention et l'observation. Sans lui, un projet
+ * déclaré sans manifeste dont un sous-dossier en porte un se faisait doubler
+ * par ce sous-dossier — déclaré au registre, puis choisi comme projet du job,
+ * pendant que l'état `produced` restait sur le projet déclaré (revue Codex
+ * post-merge de la PR #75, constat 2).
  *
  * Les cibles FICHIER seulement (revue Codex, passe 32). Une cible `dir` est un
  * PÉRIMÈTRE conservatif — le terrain entier d'une commande shell, ou d'un tour
@@ -365,34 +413,73 @@ export async function attachProductionToProject(
  * dossiers : rattacher à un projet DÉJÀ déclaré est réversible et bon marché ;
  * une déclaration ne l'est pas.
  */
-async function registerManifestProjects(
+async function declareAndResolveIntent(
   ctx: AttachContext,
   targets: readonly MutationTarget[],
-): Promise<readonly string[]> {
+): Promise<{ readonly registered: readonly string[]; readonly intents: readonly TargetIntent[] }> {
+  /** Rien de nommé : chaque cible retombe sur la règle du plus niché. */
+  const sansIntention = targets.map((target) => ({ target, intendedRoot: null }));
+
+  // Les cibles de CODE et de type FICHIER — les seules dont l'intention nomme
+  // une racine sans lire le disque. Une cible `dir` qui EST un terrain est
+  // ÉCLATÉE en ses enfants par l'intention (`expandWorkspaceRoots`, un
+  // `readdir`) : lui appliquer `resolveProjectRoots` telle quelle nommerait le
+  // terrain, que l'intention ne nomme jamais — une troisième règle, pas la
+  // sienne. Ces cibles gardent donc le plus niché.
   const codeTargets = targets.filter(
     (t) => t.deliverableType === 'code_project' && t.kind === 'file',
   );
-  if (codeTargets.length === 0) return [];
+  if (codeTargets.length === 0) return { registered: [], intents: sansIntention };
   const workspaceRoots = ctx.workspaces.map((w) => normalizePath(w.path)).filter((p) => p !== '');
-  if (workspaceRoots.length === 0) return [];
+  if (workspaceRoots.length === 0) return { registered: [], intents: sansIntention };
+
+  const declared = projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId));
+  // Le manifeste d'une racine est lu une fois pour TOUT cet appel — le
+  // résolveur mémoïse par appel, et il y en a un par cible ci-dessous.
+  const memo = new Map<string, boolean>();
+  const isProjectRoot = (dir: string): boolean => {
+    const cached = memo.get(dir);
+    if (cached !== undefined) return cached;
+    const value = declared(dir);
+    memo.set(dir, value);
+    return value;
+  };
+
+  const rebased = rebaseOntoLexicalRoots(codeTargets, workspaceRoots);
+  // La racine nommée CIBLE PAR CIBLE, par la fonction de l'intention elle-même :
+  // le résolveur dédoublonne, et une liste de racines ne dit plus laquelle
+  // vient de quelle cible.
+  const named = new Map<MutationTarget, string>();
+  codeTargets.forEach((target, i) => {
+    const one = rebased[i];
+    if (!one) return;
+    const [root] = resolveProjectRoots({
+      targets: [one],
+      workspaceRoots,
+      hasMarker: isProjectRoot,
+    });
+    if (root) named.set(target, root.path);
+  });
+  const intents = targets.map((target) => ({ target, intendedRoot: named.get(target) ?? null }));
 
   const roots = resolveProjectRoots({
-    targets: rebaseOntoLexicalRoots(codeTargets, workspaceRoots),
+    targets: rebased,
     workspaceRoots,
-    hasMarker,
-  }).filter((root) => hasMarker(root.path));
-  if (roots.length === 0) return [];
+    hasMarker: isProjectRoot,
+  }).filter((root) => isProjectRoot(root.path));
+  if (roots.length === 0) return { registered: [], intents };
 
   const rows = await registerCodeProjects(ctx.db, {
     entityId: ctx.entityId,
-    // P5b : seules les racines à MANIFESTE arrivent ici — c'est du code.
+    // P5b : seules les racines qui SONT des projets arrivent ici — manifeste sur
+    // le disque, ou déclaration en base. C'est du code dans les deux cas.
     kind: 'code' as const,
     agentId: ctx.agentId,
     registeredJobId: ctx.jobId,
     registeredAt: new Date(),
     roots,
   });
-  return rows.map((r) => r.id);
+  return { registered: rows.map((r) => r.id), intents };
 }
 
 /** Ce que la ligne `agent_jobs` porte après le passage de `markJob`. */

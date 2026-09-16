@@ -664,6 +664,35 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(await projectRow(keyOf(ws))).toBeUndefined();
   });
 
+  it('une racine attachée DÉCLARÉE projet, sans manifeste ni enfant, EST le projet visé', async () => {
+    // Revue Codex post-merge de la PR #75, constat 1. `expandWorkspaceRoots`
+    // était le SEUL des quatre calculs de clé à connaître encore `hasMarker`
+    // tout seul : une racine déclarée depuis l'écran Spaces, sans manifeste et
+    // sans sous-dossier, y était éclatée en ses enfants — il n'y en avait
+    // aucun. L'intention devenait vide, l'écriture passait, et plus rien ne
+    // pouvait marquer le projet produit : `declare_verification` refusait
+    // ensuite un travail réel comme jamais touché. Un faux rouge.
+    await db.insert(codeProjects).values({
+      entityId: seed.entityId,
+      projectPath: normalizePath(ws),
+      projectKey: keyOf(ws),
+      kind: 'code',
+      registeredAt: new Date(),
+      registeredFrom: 'spaces',
+    });
+
+    const res = await executeTool(
+      runCommandTool as never,
+      { purpose: 'test', command: 'echo ok', cwd: '.' },
+      ctx(),
+      autoApprove('run_command'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+
+    const rows = await statesOf(jobId);
+    expect(rows.map((r) => [r.canonicalKey, r.addressed])).toEqual([[keyOf(ws), true]]);
+  });
+
   it('racine attachée par un LIEN (jonction / symlink) ⇒ l’intention est posée, sous l’identité LEXICALE de la racine', async () => {
     // Le symptôme de la CI Windows (PR #46) : `os.tmpdir()` y rend la forme
     // courte 8.3, `resolveAndCheckPath` rend la forme réelle, et la cible ne
