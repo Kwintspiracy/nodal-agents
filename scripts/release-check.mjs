@@ -25,7 +25,12 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
+import {
+  FAMILLES_SONDEES,
+  portsDeLaStack,
+  verdictDuneSonde,
+  verdictStackVivante,
+} from './lib/live-stack.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skipSlow = process.argv.includes('--fast');
@@ -43,18 +48,31 @@ const started = Date.now();
 // Le verdict est PUR et testé (`scripts/lib/live-stack.mjs`) ; seule la sonde
 // est ici.
 
-/** Une réponse, quelle qu'elle soit, prouve que quelqu'un écoute. */
+/**
+ * Une sonde, sur les DEUX familles d'adresses.
+ *
+ * `localhost` ne suffisait pas : selon la machine il résout en 127.0.0.1 ou en
+ * ::1, et une stack liée à l'autre famille refusait la connexion — elle était
+ * donc déclarée absente, et le build la tuait. On essaie les deux
+ * explicitement, et seul un refus de connexion PROUVÉ des deux côtés vaut
+ * « personne n'écoute ». Le verdict est pur et testé dans
+ * `scripts/lib/live-stack.mjs`.
+ */
 async function sonder(port) {
-  try {
-    await fetch(`http://localhost:${port}/api/health`, { signal: AbortSignal.timeout(1500) });
-    return { port, vivant: true };
-  } catch (err) {
-    // Une réponse HTTP d'erreur ne jette pas ; un refus de connexion, si. Un
-    // TIMEOUT n'est PAS une preuve d'absence : un serveur occupé met plus de
-    // 1,5 s à répondre et reste bien vivant. On le compte donc comme vivant,
-    // dans le sens qui protège la stack.
-    return { port, vivant: err?.name === 'TimeoutError' };
-  }
+  const erreurs = await Promise.all(
+    FAMILLES_SONDEES.map(async (hote) => {
+      const autorite = hote.includes(':') ? `[${hote}]` : hote;
+      try {
+        await fetch(`http://${autorite}:${port}/api/health`, {
+          signal: AbortSignal.timeout(1500),
+        });
+        return null;
+      } catch (err) {
+        return err;
+      }
+    }),
+  );
+  return { port, vivant: verdictDuneSonde(erreurs) };
 }
 
 const configHote = (() => {

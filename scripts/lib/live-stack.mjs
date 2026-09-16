@@ -7,8 +7,8 @@
 // tuer. On perd la session à chercher la mauvaise panne.
 //
 // La décision est donc prise AVANT tout le reste, elle échoue fort, et elle dit
-// quoi faire : un worktree isolé, ou arrêter la stack. Les deux fonctions ici
-// sont PURES — la sonde réseau vit dans `release-check.mjs` — pour que le
+// quoi faire : un worktree isolé, ou arrêter la stack. Toutes les fonctions
+// ici sont PURES — la sonde réseau vit dans `release-check.mjs` — pour que le
 // verdict se teste sans ouvrir une seule socket.
 
 /** Les ports où une stack de dev sert : le web et le runner. */
@@ -40,6 +40,55 @@ export function portsDeLaStack(config) {
     return v;
   };
   return [...new Set([lu('web'), lu('runner')])];
+}
+
+/** Les familles d'adresses qu'une sonde doit couvrir avant de conclure. */
+export const FAMILLES_SONDEES = ['127.0.0.1', '::1'];
+
+/**
+ * Le code d'erreur au fond d'un échec de `fetch`, quand il y en a un.
+ *
+ * `fetch` enveloppe : `TypeError: fetch failed` porte la vraie cause dans
+ * `.cause`, qui peut elle-même être un `AggregateError` (Happy Eyeballs essaie
+ * plusieurs adresses). On descend jusqu'à trouver un `code`.
+ */
+function codesDeLerreur(err, vus = new Set()) {
+  if (!err || typeof err !== 'object' || vus.has(err)) return [];
+  vus.add(err);
+  const codes = typeof err.code === 'string' ? [err.code] : [];
+  for (const sous of Array.isArray(err.errors) ? err.errors : []) {
+    codes.push(...codesDeLerreur(sous, vus));
+  }
+  codes.push(...codesDeLerreur(err.cause, vus));
+  return codes;
+}
+
+/**
+ * Cette erreur PROUVE-t-elle que personne n'écoute ?
+ *
+ * Seul un refus de connexion le prouve. Un reset (`ECONNRESET`), une réponse
+ * malformée, un timeout, une erreur inconnue : quelqu'un a répondu, ou a au
+ * moins accepté la connexion. Dans le doute on protège la stack.
+ */
+export function estUnRefusDeConnexion(err) {
+  if (!err) return false;
+  const codes = codesDeLerreur(err);
+  return codes.length > 0 && codes.every((c) => c === 'ECONNREFUSED');
+}
+
+/**
+ * Le verdict d'UNE sonde, à partir des erreurs d'une tentative par famille
+ * d'adresses (`null` = quelqu'un a répondu).
+ *
+ * Une stack liée à `::1` seulement, sondée via une `localhost` qui résout en
+ * 127.0.0.1, refusait la connexion sur cette famille-là : elle était déclarée
+ * absente, et le build la tuait. Il faut donc un refus PROUVÉ sur TOUTES les
+ * familles pour conclure à l'absence. Tout le reste vaut « vivant ».
+ */
+export function verdictDuneSonde(erreursParFamille) {
+  const tentatives = erreursParFamille ?? [];
+  if (tentatives.length === 0) return false;
+  return !tentatives.every((err) => estUnRefusDeConnexion(err));
 }
 
 /**
