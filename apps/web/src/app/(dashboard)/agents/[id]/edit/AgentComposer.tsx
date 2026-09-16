@@ -71,6 +71,7 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
+import { SectionCard, SectionHead } from './SectionCard.tsx';
 import {
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -1025,37 +1026,13 @@ function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }
   );
 }
 
-// ─── Section card wrapper ────────────────────────────────────────────────────
-
-function SectionCard({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-rule-2 bg-paper p-6">{children}</div>;
-}
+// SectionCard / SectionHead live in ./SectionCard.tsx (imported above).
 
 // The v1 informational banner that used to sit on top of Skills / Tools /
 // Autonomy is gone (retour Quentin 20/08): it announced that the settings
 // below had no effect while still letting the user change them, which is the
 // trap it was supposed to prevent. Those tabs are now DISABLED for a CLI
 // runtime (RUNTIME_INERT_TABS), and RuntimeInertTabPanel explains why.
-
-function SectionHead({
-  label,
-  hint,
-  right,
-}: {
-  label: string;
-  hint?: string;
-  right?: React.ReactNode;
-}) {
-  return (
-    <div className="mb-4 flex items-start justify-between gap-4">
-      <div>
-        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">{label}</div>
-        {hint && <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">{hint}</p>}
-      </div>
-      {right}
-    </div>
-  );
-}
 
 // ─── Overview tab — real data, no empty placeholder boxes ─────────────────────
 
