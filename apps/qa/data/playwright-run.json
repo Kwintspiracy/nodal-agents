@@ -12,24 +12,24 @@
     "maxFailures": 0,
     "metadata": {
       "ci": {
-        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/76761ae9904dd8208e137779cde14c6c91c52847",
-        "commitHash": "76761ae9904dd8208e137779cde14c6c91c52847",
-        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564"
+        "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/953c91bb39d5c1562ccf3e039ecb31a12f847138",
+        "commitHash": "953c91bb39d5c1562ccf3e039ecb31a12f847138",
+        "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35070698272"
       },
       "gitCommit": {
-        "shortHash": "76761ae9",
-        "hash": "76761ae9904dd8208e137779cde14c6c91c52847",
-        "subject": "fix(delegation): the harness says only what it knows, in its own words",
-        "body": "fix(delegation): the harness says only what it knows, in its own words\n\nQuentin's call on the targeted pass, and the end of the loop on this PR.\n\n- BLOCKER, mine: the grandchild's failure travelled UP through the child's\n  result TEXT. That text is written by a model, so a child could write the line\n  itself, with any name in it, and the harness would deliver it as a fact.\n  Removed. The typed record is the right carrier and that is filed as debt.\n- VOICE: the stop notices relayed the agent's own sentence under a platform\n  wrapper, which is exactly what invariant #2 forbids. The harness now says only\n  what it knows — that the job stopped, that nothing was delivered on this\n  channel, and which specialist returned no deliverable — in its own words. The\n  agent's reason stays in the result, where the job screen shows it.\n- ATOMICITY: the delivery intent is written INSIDE the terminal transaction\n  through the T08 seam (`finalizeJobSuccess`'s `prepareDelivery`), which existed\n  and was wired nowhere. Written after, a crash in between left a finished job\n  with no outbox row and the notice lost for good.\n- A cron or webhook job that asked for a confirmation was left out of the\n  fallback although `requiresToolDelivery` counts it: the channel now follows\n  `notifyChannelOverride`, like every other delivery guard.\n- The delegation line is on both `return_result` stop paths too, not only the\n  text one.\n\nNot covered by a test, and said rather than implied: the SUCCESS path's\natomicity. A tool-only channel cannot complete in this fixture — the send tool\nis not in the seeded agent's whitelist — so what the delivery test exercises is\nthe failure path. The two remaining findings of that pass (a propagated failure\nsurviving a real repair; `failJob` paths still non-atomic) go to the same debt\nissue, named.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01SQY7YUPXj5sftJLmm4XtGN\n",
+        "shortHash": "953c91bb",
+        "hash": "953c91bb39d5c1562ccf3e039ecb31a12f847138",
+        "subject": "Merge pull request #103 from Kwintspiracy/fix/review-debt-tools",
+        "body": "Merge pull request #103 from Kwintspiracy/fix/review-debt-tools\n\nReview debt: the findings of the post-merge passes on #75",
         "author": {
-          "name": "Kwintspiracy",
-          "email": "quentinbeau@gmail.com",
-          "time": 1789486269000
-        },
-        "committer": {
           "name": "Quentin Beau de Loménie",
           "email": "quentinbeau@gmail.com",
-          "time": 1789487437000
+          "time": 1789544480000
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "time": 1789544480000
         },
         "branch": "main"
       },
@@ -43,24 +43,24 @@
         "retries": 2,
         "metadata": {
           "ci": {
-            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/76761ae9904dd8208e137779cde14c6c91c52847",
-            "commitHash": "76761ae9904dd8208e137779cde14c6c91c52847",
-            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564"
+            "commitHref": "https://github.com/Kwintspiracy/nodal-agents/commit/953c91bb39d5c1562ccf3e039ecb31a12f847138",
+            "commitHash": "953c91bb39d5c1562ccf3e039ecb31a12f847138",
+            "buildHref": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35070698272"
           },
           "gitCommit": {
-            "shortHash": "76761ae9",
-            "hash": "76761ae9904dd8208e137779cde14c6c91c52847",
-            "subject": "fix(delegation): the harness says only what it knows, in its own words",
-            "body": "fix(delegation): the harness says only what it knows, in its own words\n\nQuentin's call on the targeted pass, and the end of the loop on this PR.\n\n- BLOCKER, mine: the grandchild's failure travelled UP through the child's\n  result TEXT. That text is written by a model, so a child could write the line\n  itself, with any name in it, and the harness would deliver it as a fact.\n  Removed. The typed record is the right carrier and that is filed as debt.\n- VOICE: the stop notices relayed the agent's own sentence under a platform\n  wrapper, which is exactly what invariant #2 forbids. The harness now says only\n  what it knows — that the job stopped, that nothing was delivered on this\n  channel, and which specialist returned no deliverable — in its own words. The\n  agent's reason stays in the result, where the job screen shows it.\n- ATOMICITY: the delivery intent is written INSIDE the terminal transaction\n  through the T08 seam (`finalizeJobSuccess`'s `prepareDelivery`), which existed\n  and was wired nowhere. Written after, a crash in between left a finished job\n  with no outbox row and the notice lost for good.\n- A cron or webhook job that asked for a confirmation was left out of the\n  fallback although `requiresToolDelivery` counts it: the channel now follows\n  `notifyChannelOverride`, like every other delivery guard.\n- The delegation line is on both `return_result` stop paths too, not only the\n  text one.\n\nNot covered by a test, and said rather than implied: the SUCCESS path's\natomicity. A tool-only channel cannot complete in this fixture — the send tool\nis not in the seeded agent's whitelist — so what the delivery test exercises is\nthe failure path. The two remaining findings of that pass (a propagated failure\nsurviving a real repair; `failJob` paths still non-atomic) go to the same debt\nissue, named.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01SQY7YUPXj5sftJLmm4XtGN\n",
+            "shortHash": "953c91bb",
+            "hash": "953c91bb39d5c1562ccf3e039ecb31a12f847138",
+            "subject": "Merge pull request #103 from Kwintspiracy/fix/review-debt-tools",
+            "body": "Merge pull request #103 from Kwintspiracy/fix/review-debt-tools\n\nReview debt: the findings of the post-merge passes on #75",
             "author": {
-              "name": "Kwintspiracy",
-              "email": "quentinbeau@gmail.com",
-              "time": 1789486269000
-            },
-            "committer": {
               "name": "Quentin Beau de Loménie",
               "email": "quentinbeau@gmail.com",
-              "time": 1789487437000
+              "time": 1789544480000
+            },
+            "committer": {
+              "name": "GitHub",
+              "email": "noreply@github.com",
+              "time": 1789544480000
             },
             "branch": "main"
           },
@@ -126,12 +126,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2360,
+                      "duration": 2407,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:33.751Z",
+                      "startTime": "2026-09-16T08:10:00.851Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -162,12 +162,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1473,
+                      "duration": 1355,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:36.264Z",
+                      "startTime": "2026-09-16T08:10:03.454Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -215,12 +215,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 11059,
+                      "duration": 11220,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:37.772Z",
+                      "startTime": "2026-09-16T08:10:04.844Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -251,12 +251,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2826,
+                      "duration": 2845,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:49.032Z",
+                      "startTime": "2026-09-16T08:10:16.234Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -287,12 +287,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2443,
+                      "duration": 2369,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:51.876Z",
+                      "startTime": "2026-09-16T08:10:19.107Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -323,12 +323,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3756,
+                      "duration": 3754,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:54.336Z",
+                      "startTime": "2026-09-16T08:10:21.501Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -386,12 +386,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 995,
+                      "duration": 1275,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:58.161Z",
+                      "startTime": "2026-09-16T08:10:25.322Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -428,7 +428,7 @@
         {
           "title": "Airtable OAuth flow (wizard-driven)",
           "file": "airtable-oauth.spec.ts",
-          "line": 28,
+          "line": 36,
           "column": 6,
           "specs": [
             {
@@ -447,12 +447,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9819,
+                      "duration": 10345,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:45:59.186Z",
+                      "startTime": "2026-09-16T08:10:26.631Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -462,7 +462,7 @@
               ],
               "id": "a511bc8aaf5f42c12305-9ab422b33ea056be2c45",
               "file": "airtable-oauth.spec.ts",
-              "line": 29,
+              "line": 37,
               "column": 3
             }
           ]
@@ -498,12 +498,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3897,
+                      "duration": 3958,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:09.131Z",
+                      "startTime": "2026-09-16T08:10:37.229Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -549,12 +549,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2804,
+                      "duration": 3119,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:13.089Z",
+                      "startTime": "2026-09-16T08:10:41.232Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -591,12 +591,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3703,
+                      "duration": 3742,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:15.926Z",
+                      "startTime": "2026-09-16T08:10:44.388Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -633,12 +633,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4239,
+                      "duration": 4330,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:19.640Z",
+                      "startTime": "2026-09-16T08:10:48.142Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -686,12 +686,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1363,
+                      "duration": 1406,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:23.897Z",
+                      "startTime": "2026-09-16T08:10:52.491Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -722,12 +722,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2013,
+                      "duration": 2069,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:25.293Z",
+                      "startTime": "2026-09-16T08:10:53.934Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -758,12 +758,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2246,
+                      "duration": 1931,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:27.316Z",
+                      "startTime": "2026-09-16T08:10:56.015Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -804,12 +804,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2121,
+                      "duration": 1688,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:29.575Z",
+                      "startTime": "2026-09-16T08:10:57.960Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -865,12 +865,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2311,
+                      "duration": 4282,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:31.728Z",
+                      "startTime": "2026-09-16T08:10:59.690Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -909,12 +909,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2797,
+                      "duration": 3142,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:34.080Z",
+                      "startTime": "2026-09-16T08:11:04.074Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -961,12 +961,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 308,
+                      "duration": 267,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:36.889Z",
+                      "startTime": "2026-09-16T08:11:07.233Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1013,12 +1013,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 12494,
+                      "duration": 13487,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:37.209Z",
+                      "startTime": "2026-09-16T08:11:07.516Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1055,12 +1055,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2801,
+                      "duration": 2478,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:49.726Z",
+                      "startTime": "2026-09-16T08:11:21.028Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1108,12 +1108,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2804,
+                      "duration": 2992,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:52.560Z",
+                      "startTime": "2026-09-16T08:11:23.542Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1144,12 +1144,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1886,
+                      "duration": 1801,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:55.434Z",
+                      "startTime": "2026-09-16T08:11:26.609Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1180,12 +1180,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1202,
+                      "duration": 1287,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:57.331Z",
+                      "startTime": "2026-09-16T08:11:28.422Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1226,12 +1226,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 846,
+                      "duration": 818,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:58.545Z",
+                      "startTime": "2026-09-16T08:11:29.719Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -1272,12 +1272,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1332,
+                      "duration": 1389,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:46:59.403Z",
+                      "startTime": "2026-09-16T08:11:30.548Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1308,12 +1308,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 756,
+                      "duration": 769,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:00.747Z",
+                      "startTime": "2026-09-16T08:11:31.947Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1359,12 +1359,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8898,
+                      "duration": 8992,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:01.563Z",
+                      "startTime": "2026-09-16T08:11:32.775Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1410,12 +1410,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1467,
+                      "duration": 1488,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:10.511Z",
+                      "startTime": "2026-09-16T08:11:41.803Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1444,12 +1444,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2965,
+                      "duration": 2982,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:12.015Z",
+                      "startTime": "2026-09-16T08:11:43.328Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1478,12 +1478,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1483,
+                      "duration": 1529,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:14.991Z",
+                      "startTime": "2026-09-16T08:11:46.320Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1510,7 +1510,7 @@
         {
           "title": "Credential reuse — Drive + Gmail share one Google credential",
           "file": "credentials-reuse.spec.ts",
-          "line": 35,
+          "line": 43,
           "column": 6,
           "specs": [
             {
@@ -1529,12 +1529,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8800,
+                      "duration": 9432,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:16.496Z",
+                      "startTime": "2026-09-16T08:11:47.871Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1544,7 +1544,7 @@
               ],
               "id": "024cae9551a39fd01b0b-c9537161098aa635de3d",
               "file": "credentials-reuse.spec.ts",
-              "line": 36,
+              "line": 44,
               "column": 3
             }
           ]
@@ -1582,12 +1582,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7330,
+                      "duration": 7957,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:25.472Z",
+                      "startTime": "2026-09-16T08:11:57.561Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1618,12 +1618,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1602,
+                      "duration": 1463,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:32.878Z",
+                      "startTime": "2026-09-16T08:12:05.588Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1655,7 +1655,7 @@
           "specs": [
             {
               "title": "wizard shows 4 Google API links and format hint",
-              "ok": false,
+              "ok": true,
               "tags": [
                 "cap:consulter-l-aide/ecran"
               ],
@@ -1670,139 +1670,18 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 0,
-                      "error": {
-                        "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).",
-                        "stack": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:19:3",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                          "column": 13,
-                          "line": 590
-                        },
-                        "snippet": "   at helpers.ts:590\n\n\u001b[0m \u001b[90m 588 |\u001b[39m\n \u001b[90m 589 |\u001b[39m     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv[\u001b[32m'NODALAI_E2E_WIPE_CREDENTIALS'\u001b[39m] \u001b[33m!==\u001b[39m \u001b[32m'1'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 590 |\u001b[39m       \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\n \u001b[90m     |\u001b[39m             \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 591 |\u001b[39m         \u001b[32m`Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 592 |\u001b[39m           \u001b[32m`${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 593 |\u001b[39m           \u001b[32m\"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \"\u001b[39m \u001b[33m+\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                            "column": 13,
-                            "line": 590
-                          },
-                          "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n\n   at helpers.ts:590\n\n  588 |\n  589 |     if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {\n> 590 |       throw new Error(\n      |             ^\n  591 |         `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +\n  592 |           `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +\n  593 |           \"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \" +\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:19:3"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 2283,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:34.552Z",
+                      "startTime": "2026-09-16T08:12:07.115Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/help-guides-Help-guides-—--ec730-e-API-links-and-format-hint-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                        "column": 13,
-                        "line": 590
-                      }
-                    },
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 0,
-                      "error": {
-                        "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).",
-                        "stack": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:19:3",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                          "column": 13,
-                          "line": 590
-                        },
-                        "snippet": "   at helpers.ts:590\n\n\u001b[0m \u001b[90m 588 |\u001b[39m\n \u001b[90m 589 |\u001b[39m     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv[\u001b[32m'NODALAI_E2E_WIPE_CREDENTIALS'\u001b[39m] \u001b[33m!==\u001b[39m \u001b[32m'1'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 590 |\u001b[39m       \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\n \u001b[90m     |\u001b[39m             \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 591 |\u001b[39m         \u001b[32m`Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 592 |\u001b[39m           \u001b[32m`${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 593 |\u001b[39m           \u001b[32m\"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \"\u001b[39m \u001b[33m+\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                            "column": 13,
-                            "line": 590
-                          },
-                          "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n\n   at helpers.ts:590\n\n  588 |\n  589 |     if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {\n> 590 |       throw new Error(\n      |             ^\n  591 |         `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +\n  592 |           `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +\n  593 |           \"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \" +\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:19:3"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-15T16:47:36.612Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/help-guides-Help-guides-—--ec730-e-API-links-and-format-hint-chromium-retry1/error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/help-guides-Help-guides-—--ec730-e-API-links-and-format-hint-chromium-retry1/trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                        "column": 13,
-                        "line": 590
-                      }
-                    },
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 0,
-                      "error": {
-                        "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).",
-                        "stack": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:19:3",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                          "column": 13,
-                          "line": 590
-                        },
-                        "snippet": "   at helpers.ts:590\n\n\u001b[0m \u001b[90m 588 |\u001b[39m\n \u001b[90m 589 |\u001b[39m     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv[\u001b[32m'NODALAI_E2E_WIPE_CREDENTIALS'\u001b[39m] \u001b[33m!==\u001b[39m \u001b[32m'1'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 590 |\u001b[39m       \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\n \u001b[90m     |\u001b[39m             \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 591 |\u001b[39m         \u001b[32m`Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 592 |\u001b[39m           \u001b[32m`${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 593 |\u001b[39m           \u001b[32m\"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \"\u001b[39m \u001b[33m+\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                            "column": 13,
-                            "line": 590
-                          },
-                          "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n\n   at helpers.ts:590\n\n  588 |\n  589 |     if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {\n> 590 |       throw new Error(\n      |             ^\n  591 |         `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +\n  592 |           `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +\n  593 |           \"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \" +\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/help-guides.spec.ts:19:3"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 2,
-                      "startTime": "2026-09-15T16:47:38.763Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/help-guides-Help-guides-—--ec730-e-API-links-and-format-hint-chromium-retry2/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                        "column": 13,
-                        "line": 590
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "d4853b38d7985a293f8b-5042eaf24ad888147e69",
@@ -1833,46 +1712,20 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1898,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:34.855Z",
-                      "annotations": [],
-                      "attachments": []
-                    },
-                    {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-15T16:47:37.025Z",
-                      "annotations": [],
-                      "attachments": []
-                    },
-                    {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 2,
-                      "startTime": "2026-09-15T16:47:38.995Z",
+                      "startTime": "2026-09-16T08:12:09.612Z",
                       "annotations": [],
                       "attachments": []
                     }
                   ],
-                  "status": "skipped"
+                  "status": "expected"
                 }
               ],
               "id": "d4853b38d7985a293f8b-dc714f8b32f02fbc66b6",
@@ -1910,15 +1763,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3389,
+                      "duration": 3333,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:40.511Z",
+                      "startTime": "2026-09-16T08:12:11.534Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1944,15 +1797,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3456,
+                      "duration": 3438,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:44.055Z",
+                      "startTime": "2026-09-16T08:12:14.902Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1978,15 +1831,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5251,
+                      "duration": 5353,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:47.533Z",
+                      "startTime": "2026-09-16T08:12:18.354Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2012,15 +1865,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5081,
+                      "duration": 5370,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:52.800Z",
+                      "startTime": "2026-09-16T08:12:23.717Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2065,15 +1918,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2696,
+                      "duration": 2749,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:47:57.902Z",
+                      "startTime": "2026-09-16T08:12:29.109Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2101,15 +1954,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1277,
+                      "duration": 1240,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:00.663Z",
+                      "startTime": "2026-09-16T08:12:31.912Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2137,15 +1990,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 493,
+                      "duration": 955,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:01.963Z",
+                      "startTime": "2026-09-16T08:12:33.171Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2173,15 +2026,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 753,
+                      "duration": 728,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:02.469Z",
+                      "startTime": "2026-09-16T08:12:34.142Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2224,15 +2077,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2983,
+                      "duration": 3100,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:03.245Z",
+                      "startTime": "2026-09-16T08:12:34.890Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2258,15 +2111,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1222,
+                      "duration": 1286,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:06.401Z",
+                      "startTime": "2026-09-16T08:12:38.143Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2277,6 +2130,95 @@
               "id": "8c41ae660dba460af137-aab2c01dc1f72bf040b7",
               "file": "mcp-connectors.spec.ts",
               "line": 122,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "memory-kept.spec.ts",
+      "file": "memory-kept.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "a fact taught on the screen is kept @cap:se-souvenir/ecran",
+          "file": "memory-kept.spec.ts",
+          "line": 117,
+          "column": 6,
+          "specs": [
+            {
+              "title": "it is written, it survives a reload, and the search finds it again",
+              "ok": true,
+              "tags": [
+                "cap:se-souvenir/ecran"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4161,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-16T08:12:39.481Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "edc5eba9996df6f3a660-bbc9a5047852ae95d0ea",
+              "file": "memory-kept.spec.ts",
+              "line": 118,
+              "column": 3
+            },
+            {
+              "title": "archiving a fact takes it out of what the agent is given",
+              "ok": true,
+              "tags": [
+                "cap:se-souvenir/ecran"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1409,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-16T08:12:43.830Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "edc5eba9996df6f3a660-f2ad3850849ce74eee10",
+              "file": "memory-kept.spec.ts",
+              "line": 144,
               "column": 3
             }
           ]
@@ -2319,15 +2261,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 2425,
+                      "duration": 3054,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:07.679Z",
+                      "startTime": "2026-09-16T08:12:45.428Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -2371,15 +2313,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4230,
+                      "duration": 4364,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:10.142Z",
+                      "startTime": "2026-09-16T08:12:48.520Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2413,15 +2355,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1676,
+                      "duration": 1744,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:14.383Z",
+                      "startTime": "2026-09-16T08:12:52.894Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2455,15 +2397,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2161,
+                      "duration": 2158,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:16.069Z",
+                      "startTime": "2026-09-16T08:12:54.647Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2506,15 +2448,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4878,
+                      "duration": 4973,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:18.252Z",
+                      "startTime": "2026-09-16T08:12:56.823Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2541,7 +2483,7 @@
         {
           "title": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran",
           "file": "notion-oauth.spec.ts",
-          "line": 36,
+          "line": 44,
           "column": 6,
           "specs": [
             {
@@ -2559,15 +2501,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4185,
+                      "duration": 4423,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:23.178Z",
+                      "startTime": "2026-09-16T08:13:01.845Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2577,7 +2519,7 @@
               ],
               "id": "9d1c00672ff3bb72dae3-241e1604de6c8b8c0b22",
               "file": "notion-oauth.spec.ts",
-              "line": 37,
+              "line": 45,
               "column": 3
             }
           ]
@@ -2594,12 +2536,12 @@
         {
           "title": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran",
           "file": "oauth-flow.spec.ts",
-          "line": 35,
+          "line": 43,
           "column": 6,
           "specs": [
             {
               "title": "connect via wizard → callback → connected status and toast",
-              "ok": false,
+              "ok": true,
               "tags": [
                 "cap:connecter-un-service/ecran"
               ],
@@ -2612,146 +2554,25 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 3,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 0,
-                      "error": {
-                        "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).",
-                        "stack": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:32:3",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                          "column": 13,
-                          "line": 590
-                        },
-                        "snippet": "   at helpers.ts:590\n\n\u001b[0m \u001b[90m 588 |\u001b[39m\n \u001b[90m 589 |\u001b[39m     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv[\u001b[32m'NODALAI_E2E_WIPE_CREDENTIALS'\u001b[39m] \u001b[33m!==\u001b[39m \u001b[32m'1'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 590 |\u001b[39m       \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\n \u001b[90m     |\u001b[39m             \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 591 |\u001b[39m         \u001b[32m`Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 592 |\u001b[39m           \u001b[32m`${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 593 |\u001b[39m           \u001b[32m\"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \"\u001b[39m \u001b[33m+\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                            "column": 13,
-                            "line": 590
-                          },
-                          "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n\n   at helpers.ts:590\n\n  588 |\n  589 |     if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {\n> 590 |       throw new Error(\n      |             ^\n  591 |         `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +\n  592 |           `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +\n  593 |           \"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \" +\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:32:3"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 4230,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:27.566Z",
+                      "startTime": "2026-09-16T08:13:06.665Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/oauth-flow-Google-Drive-OA-2513b--connected-status-and-toast-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                        "column": 13,
-                        "line": 590
-                      }
-                    },
-                    {
-                      "workerIndex": 4,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 0,
-                      "error": {
-                        "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).",
-                        "stack": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:32:3",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                          "column": 13,
-                          "line": 590
-                        },
-                        "snippet": "   at helpers.ts:590\n\n\u001b[0m \u001b[90m 588 |\u001b[39m\n \u001b[90m 589 |\u001b[39m     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv[\u001b[32m'NODALAI_E2E_WIPE_CREDENTIALS'\u001b[39m] \u001b[33m!==\u001b[39m \u001b[32m'1'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 590 |\u001b[39m       \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\n \u001b[90m     |\u001b[39m             \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 591 |\u001b[39m         \u001b[32m`Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 592 |\u001b[39m           \u001b[32m`${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 593 |\u001b[39m           \u001b[32m\"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \"\u001b[39m \u001b[33m+\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                            "column": 13,
-                            "line": 590
-                          },
-                          "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n\n   at helpers.ts:590\n\n  588 |\n  589 |     if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {\n> 590 |       throw new Error(\n      |             ^\n  591 |         `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +\n  592 |           `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +\n  593 |           \"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \" +\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:32:3"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 1,
-                      "startTime": "2026-09-15T16:48:29.253Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/oauth-flow-Google-Drive-OA-2513b--connected-status-and-toast-chromium-retry1/error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/oauth-flow-Google-Drive-OA-2513b--connected-status-and-toast-chromium-retry1/trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                        "column": 13,
-                        "line": 590
-                      }
-                    },
-                    {
-                      "workerIndex": 5,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 0,
-                      "error": {
-                        "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).",
-                        "stack": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:32:3",
-                        "location": {
-                          "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                          "column": 13,
-                          "line": 590
-                        },
-                        "snippet": "   at helpers.ts:590\n\n\u001b[0m \u001b[90m 588 |\u001b[39m\n \u001b[90m 589 |\u001b[39m     \u001b[36mif\u001b[39m (process\u001b[33m.\u001b[39menv[\u001b[32m'NODALAI_E2E_WIPE_CREDENTIALS'\u001b[39m] \u001b[33m!==\u001b[39m \u001b[32m'1'\u001b[39m) {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 590 |\u001b[39m       \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\n \u001b[90m     |\u001b[39m             \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 591 |\u001b[39m         \u001b[32m`Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 592 |\u001b[39m           \u001b[32m`${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer `\u001b[39m \u001b[33m+\u001b[39m\n \u001b[90m 593 |\u001b[39m           \u001b[32m\"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \"\u001b[39m \u001b[33m+\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                            "column": 13,
-                            "line": 590
-                          },
-                          "message": "Error: Ce parcours part d'une base sans identifiant « google-oauth », et cette pile en a 1 (My Google (reuse test)). Les supprimer effacerait un compte que quelqu'un a connecté à la main. Relancer avec NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile isolée (NODALAI_E2E_DB_URL).\n\n   at helpers.ts:590\n\n  588 |\n  589 |     if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {\n> 590 |       throw new Error(\n      |             ^\n  591 |         `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +\n  592 |           `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +\n  593 |           \"effacerait un compte que quelqu'un a connecté à la main. Relancer avec \" +\n    at cleanCredentialsByType (/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts:590:13)\n    at /home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/oauth-flow.spec.ts:32:3"
-                        }
-                      ],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 2,
-                      "startTime": "2026-09-15T16:48:30.990Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/runner/work/nodal-agents/nodal-agents/apps/web/test-results/oauth-flow-Google-Drive-OA-2513b--connected-status-and-toast-chromium-retry2/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/runner/work/nodal-agents/nodal-agents/apps/web/tests/e2e/helpers.ts",
-                        "column": 13,
-                        "line": 590
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "959ef144cd95482078c8-dab82b45727fec11e4b6",
               "file": "oauth-flow.spec.ts",
-              "line": 36,
+              "line": 44,
               "column": 3
             }
           ]
@@ -2786,15 +2607,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1513,
+                      "duration": 1578,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:32.762Z",
+                      "startTime": "2026-09-16T08:13:11.193Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2822,15 +2643,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4565,
+                      "duration": 4071,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:34.441Z",
+                      "startTime": "2026-09-16T08:13:12.812Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2875,15 +2696,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2027,
+                      "duration": 2119,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:39.042Z",
+                      "startTime": "2026-09-16T08:13:16.903Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2911,15 +2732,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 963,
+                      "duration": 976,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:41.110Z",
+                      "startTime": "2026-09-16T08:13:19.057Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2947,15 +2768,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1861,
+                      "duration": 1605,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:42.083Z",
+                      "startTime": "2026-09-16T08:13:20.046Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -2983,15 +2804,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2530,
+                      "duration": 2700,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:43.961Z",
+                      "startTime": "2026-09-16T08:13:21.662Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3034,15 +2855,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 752,
+                      "duration": 780,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:46.513Z",
+                      "startTime": "2026-09-16T08:13:24.386Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3068,15 +2889,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 997,
+                      "duration": 1055,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:47.300Z",
+                      "startTime": "2026-09-16T08:13:25.201Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3102,15 +2923,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1146,
+                      "duration": 1181,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:48.308Z",
+                      "startTime": "2026-09-16T08:13:26.267Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3155,15 +2976,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 700,
+                      "duration": 676,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:49.481Z",
+                      "startTime": "2026-09-16T08:13:27.466Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3191,15 +3012,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 799,
+                      "duration": 837,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:50.538Z",
+                      "startTime": "2026-09-16T08:13:28.174Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3236,15 +3057,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 9833,
+                      "duration": 10267,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:48:51.350Z",
+                      "startTime": "2026-09-16T08:13:29.022Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3280,15 +3101,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 16943,
+                      "duration": 16893,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:49:01.200Z",
+                      "startTime": "2026-09-16T08:13:39.302Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3321,15 +3142,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1864,
+                      "duration": 1718,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:49:18.154Z",
+                      "startTime": "2026-09-16T08:13:56.206Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -3358,9 +3179,11 @@
       "line": 0,
       "specs": [
         {
-          "title": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
+          "title": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
           "ok": true,
-          "tags": [],
+          "tags": [
+            "cap:parler-par-canal-externe/ecran"
+          ],
           "tests": [
             {
               "timeout": 30000,
@@ -3370,15 +3193,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 8671,
+                  "duration": 8417,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:20.041Z",
+                  "startTime": "2026-09-16T08:13:57.964Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3386,9 +3209,9 @@
               "status": "expected"
             }
           ],
-          "id": "1bc293ed4b1358eba0da-df3d7a478a75bf7be6f7",
+          "id": "1bc293ed4b1358eba0da-547ee6ac9b23cd0b2cc3",
           "file": "telegram-allowlist.spec.ts",
-          "line": 135,
+          "line": 153,
           "column": 1
         },
         {
@@ -3404,15 +3227,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4270,
+                  "duration": 4428,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:28.816Z",
+                  "startTime": "2026-09-16T08:14:06.469Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3422,7 +3245,7 @@
           ],
           "id": "1bc293ed4b1358eba0da-ffb2352e6bfc9dae76b6",
           "file": "telegram-allowlist.spec.ts",
-          "line": 156,
+          "line": 174,
           "column": 1
         },
         {
@@ -3438,15 +3261,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3791,
+                  "duration": 3879,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:33.110Z",
+                  "startTime": "2026-09-16T08:14:10.918Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3456,7 +3279,7 @@
           ],
           "id": "1bc293ed4b1358eba0da-d2f96b69960214dbdca5",
           "file": "telegram-allowlist.spec.ts",
-          "line": 181,
+          "line": 199,
           "column": 1
         }
       ]
@@ -3492,15 +3315,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 725,
+                  "duration": 648,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:36.972Z",
+                  "startTime": "2026-09-16T08:14:14.868Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3546,15 +3369,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 668,
+                  "duration": 716,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:37.743Z",
+                  "startTime": "2026-09-16T08:14:15.563Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3600,15 +3423,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 733,
+                  "duration": 558,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:38.423Z",
+                  "startTime": "2026-09-16T08:14:16.287Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3656,15 +3479,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "skipped",
-                  "duration": 642,
+                  "duration": 530,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:39.171Z",
+                  "startTime": "2026-09-16T08:14:16.856Z",
                   "annotations": [
                     {
                       "type": "skip",
@@ -3710,15 +3533,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3776,
+                  "duration": 3203,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:39.862Z",
+                  "startTime": "2026-09-16T08:14:17.435Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3744,15 +3567,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3554,
+                  "duration": 3497,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:43.677Z",
+                  "startTime": "2026-09-16T08:14:20.674Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3778,15 +3601,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3602,
+                  "duration": 3542,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:47.240Z",
+                  "startTime": "2026-09-16T08:14:24.182Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3812,15 +3635,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 3288,
+                  "duration": 3609,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:50.853Z",
+                  "startTime": "2026-09-16T08:14:27.734Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3846,15 +3669,15 @@
               "projectName": "chromium",
               "results": [
                 {
-                  "workerIndex": 6,
+                  "workerIndex": 0,
                   "parallelIndex": 0,
                   "status": "passed",
-                  "duration": 4874,
+                  "duration": 5803,
                   "errors": [],
                   "stdout": [],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-09-15T16:49:54.157Z",
+                  "startTime": "2026-09-16T08:14:31.356Z",
                   "annotations": [],
                   "attachments": []
                 }
@@ -3907,15 +3730,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "skipped",
-                      "duration": 5592,
+                      "duration": 4418,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:49:59.056Z",
+                      "startTime": "2026-09-16T08:14:37.184Z",
                       "annotations": [
                         {
                           "type": "skip",
@@ -3970,15 +3793,15 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 6,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4805,
+                      "duration": 5060,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-09-15T16:50:04.714Z",
+                      "startTime": "2026-09-16T08:14:41.658Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -3998,11 +3821,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-09-15T16:45:21.692Z",
-    "duration": 287945.672,
-    "expected": 68,
-    "skipped": 11,
-    "unexpected": 2,
+    "startTime": "2026-09-16T08:09:48.771Z",
+    "duration": 298065.924,
+    "expected": 73,
+    "skipped": 10,
+    "unexpected": 0,
     "flaky": 0
   }
 }
