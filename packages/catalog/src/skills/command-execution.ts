@@ -26,7 +26,7 @@ This skill unlocks the \`run_command\` tool, which runs a shell command in the a
 
 ### Discipline
 
-1. **Run, then finish.** As soon as a command gives you the output you need, STOP — deliver the result to the user with \`return_result\` (or \`dashboard_publish\`) and end your turn. A successful command (exit 0) is DONE; re-running it, or running another just to "double-check", only re-prompts the user for approval and goes nowhere. Run another command ONLY if the task genuinely requires a different one.
+1. **Run, then finish.** As soon as a command gives you the output you need, STOP — write the result as your answer (or publish it with \`dashboard_publish\`), signal with \`return_result\`, and end your turn. The signal carries no content: an empty answer delivers nothing. A successful command (exit 0) is DONE; re-running it, or running another just to "double-check", only re-prompts the user for approval and goes nowhere. Run another command ONLY if the task genuinely requires a different one.
 2. **Batch multi-step work into ONE call.** A compound command (\`npm install && node download_font.js && node draw_text.js\`) runs as a single \`run_command\` — and, in approval mode, is **one approval** instead of three. Prefer this over three separate calls.
 3. **A non-zero exit code is data, not a crash.** It is returned to you with stderr — read it, fix the cause, and retry a corrected command. Do not silently repeat the same failing command.
 4. **Stay in the workspace.** Read/write files with the \`file_*\` tools and target the workspace; \`cwd\` cannot point outside it.

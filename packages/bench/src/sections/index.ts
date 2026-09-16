@@ -7,6 +7,7 @@ import { gateSection } from './gate';
 import { trustBoundarySection } from './trust-boundary';
 import { catalogSection } from './catalog';
 import { catalogDriftSection } from './catalog-drift';
+import { delegationSection } from './delegation';
 
 /** Sections that need no network. The default run. */
 export const OFFLINE_SECTIONS: readonly Section[] = [
@@ -17,7 +18,7 @@ export const OFFLINE_SECTIONS: readonly Section[] = [
 ];
 
 /** Sections that reach a third party. Opt-in with `--online`. */
-export const ONLINE_SECTIONS: readonly Section[] = [catalogDriftSection];
+export const ONLINE_SECTIONS: readonly Section[] = [catalogDriftSection, delegationSection];
 
 export const ALL_SECTIONS: readonly Section[] = [...OFFLINE_SECTIONS, ...ONLINE_SECTIONS];
 

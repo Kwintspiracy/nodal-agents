@@ -71,11 +71,13 @@ mutation oubliée dans l'arbre de travail est un piège pour la session suivante
 
 ```bash
 # Review — lecture seule
-codex exec --sandbox read-only --skip-git-repo-check --ignore-user-config "<consigne>" < /dev/null
+codex exec --sandbox read-only --skip-git-repo-check --ignore-user-config -c windows.sandbox="elevated" -m gpt-5.6-sol "<consigne>" < /dev/null
 
 # Test — écriture dans le workspace, demande l'accord de Quentin AVANT
-codex exec --sandbox workspace-write --skip-git-repo-check --ignore-user-config "<consigne>" < /dev/null
+codex exec --sandbox workspace-write --skip-git-repo-check --ignore-user-config -c windows.sandbox="elevated" -m gpt-5.6-sol "<consigne>" < /dev/null
 ```
+
+**`-m gpt-5.6-sol` est la décision de Quentin (15/09/2026)** : le quota est commun à tous les modèles (vérifié : sol répond « usage limit » en même temps qu'astra), la qualité des constats s'est montrée équivalente sur #108, et le coût par passe n'est pas mesurable (`codex exec` n'imprime ses jetons qu'à la coupure). On reste sur sol jusqu'à nouvel ordre.
 
 **`< /dev/null` n'est pas décoratif.** Lancé en tâche de fond sans lui,
 `codex exec` affiche `Reading additional input from stdin...` et **attend

@@ -288,7 +288,11 @@ export async function buildTeamBlock(
         'single delegation, or when the next step depends on this one’s result (reactive / ' +
         'sequential work). Only one assignment per turn; after the agent returns, either ' +
         'finish with `return_result` or assign the next step. Do NOT delegate again unless ' +
-        'the request needs another step.',
+        'the request needs another step. What comes back is a typed record — `status`, ' +
+        '`summary`, `error` — where `summary` is the agent’s own final reply. A `status` ' +
+        'other than `completed` means that delegation delivered NOTHING: do the work ' +
+        'yourself, hand it to a different agent, or tell the user what failed — never ' +
+        'announce that the work is under way, because it is not.',
     );
     lines.push(
       '- **`create_task` — parallel fan-out.** Create several INDEPENDENT tasks at once, ' +
