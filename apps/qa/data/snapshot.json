@@ -1,11 +1,11 @@
 {
-  "genereLe": "2026-09-16T08:14:49.335Z",
-  "tableauLe": "2026-09-16T08:14:49.335Z",
+  "genereLe": "2026-09-16T08:48:39.428Z",
+  "tableauLe": "2026-09-16T08:48:39.428Z",
   "execution": {
-    "id": "35070698272",
-    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35070698272"
+    "id": "35074548449",
+    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35074548449"
   },
-  "commit": "953c91bb",
+  "commit": "0bb8239b",
   "branche": "main",
   "paquets": [
     {
@@ -619,7 +619,7 @@
       },
       "couverture": {
         "instructions": 75.05,
-        "branches": 66.33,
+        "branches": 66.35,
         "fonctions": 75.51,
         "lignes": 77.33,
         "lignesCouvertes": 5465,
@@ -6147,362 +6147,362 @@
     "casses": 22,
     "pires": [
       {
+        "cle": "apps/web/tests/e2e/mcp-connectors.spec.ts::MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
+        "fichier": "apps/web/tests/e2e/mcp-connectors.spec.ts",
+        "titre": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
+        "tours": 11,
+        "echecs": 6,
+        "recents": "rrrrrrvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dureeMs": 2094,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "verdict": "instable",
+        "tauxEchec": 54.5,
+        "fenetre": 11,
+        "rouges": 6,
+        "verts": 5
+      },
+      {
         "cle": "apps/web/tests/e2e/help-guides.spec.ts::Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
         "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
         "titre": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
-        "tours": 5,
+        "tours": 6,
         "echecs": 3,
-        "recents": "vrrrv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "vrrrvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-15T16:50:11.180Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-14T09:10:31.227Z",
         "repareLe": "2026-09-16T08:14:49.335Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564",
-        "dureeMs": 2283,
+        "dureeMs": 1902,
         "verdict": "instable",
-        "tauxEchec": 60,
-        "fenetre": 5,
+        "tauxEchec": 50,
+        "fenetre": 6,
         "rouges": 3,
-        "verts": 2
-      },
-      {
-        "cle": "apps/web/tests/e2e/mcp-connectors.spec.ts::MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
-        "fichier": "apps/web/tests/e2e/mcp-connectors.spec.ts",
-        "titre": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
-        "tours": 10,
-        "echecs": 6,
-        "recents": "rrrrrrvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dureeMs": 3100,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "verdict": "instable",
-        "tauxEchec": 60,
-        "fenetre": 10,
-        "rouges": 6,
-        "verts": 4
+        "verts": 3
       },
       {
         "cle": "apps/web/tests/e2e/oauth-flow.spec.ts::Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
         "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
         "titre": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
-        "tours": 5,
+        "tours": 6,
         "echecs": 3,
-        "recents": "vrrrv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "vrrrvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-15T16:50:11.180Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-14T09:10:31.227Z",
         "repareLe": "2026-09-16T08:14:49.335Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564",
-        "dureeMs": 4230,
+        "dureeMs": 3534,
         "verdict": "instable",
-        "tauxEchec": 60,
-        "fenetre": 5,
+        "tauxEchec": 50,
+        "fenetre": 6,
         "rouges": 3,
-        "verts": 2
+        "verts": 3
       },
       {
         "cle": "apps/web/tests/e2e/airtable-oauth.spec.ts::Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
         "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
         "titre": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "rrrrrvvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rrrrrvvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 10345,
+        "dureeMs": 6918,
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/apify-apikey.spec.ts::Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
         "fichier": "apps/web/tests/e2e/apify-apikey.spec.ts",
         "titre": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "rrrrrvvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rrrrrvvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 3958,
+        "dureeMs": 3343,
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "rrrrrvvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rrrrrvvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 4282,
+        "dureeMs": 1727,
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/connector-multi-instance.spec.ts::Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
         "fichier": "apps/web/tests/e2e/connector-multi-instance.spec.ts",
         "titre": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "rrrrrvvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rrrrrvvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 8992,
+        "dureeMs": 7483,
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "vrrrrrvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "vrrrrrvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
-        "dureeMs": 1488,
+        "dureeMs": 1120,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
         "dernierRougeDepuis": "2026-09-11T16:44:25.687Z",
         "repareLe": "2026-09-14T09:10:31.227Z",
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Sheets and Docs disclose their reach too",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "vrrrrrvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "vrrrrrvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
-        "dureeMs": 2982,
+        "dureeMs": 2398,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
         "dernierRougeDepuis": "2026-09-11T16:44:25.687Z",
         "repareLe": "2026-09-14T09:10:31.227Z",
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/credentials-reuse.spec.ts::Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
         "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
         "titre": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "rrrrrvvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rrrrrvvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 9432,
+        "dureeMs": 6991,
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/notion-internal.spec.ts::Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
         "fichier": "apps/web/tests/e2e/notion-internal.spec.ts",
         "titre": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
-        "tours": 10,
+        "tours": 11,
         "echecs": 5,
-        "recents": "rrrrrvvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rrrrrvvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 4973,
+        "dureeMs": 3830,
         "verdict": "instable",
-        "tauxEchec": 50,
-        "fenetre": 10,
+        "tauxEchec": 45.5,
+        "fenetre": 11,
         "rouges": 5,
-        "verts": 5
+        "verts": 6
       },
       {
         "cle": "apps/web/tests/e2e/agent-recipes.spec.ts::agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
         "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
         "titre": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 2407,
+        "dureeMs": 1515,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
         "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
         "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 11220,
+        "dureeMs": 5700,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
         "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
         "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 2845,
+        "dureeMs": 3398,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
         "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
         "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 2369,
+        "dureeMs": 2184,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
         "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
         "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 3754,
+        "dureeMs": 3618,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
-        "tours": 10,
+        "tours": 11,
         "echecs": 1,
-        "recents": "iiiiirvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "iiiiirvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
-        "dureeMs": 2478,
+        "dureeMs": 1473,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/tools-tab.spec.ts::tool groups are absent from the agent's Skills tab, command-execution is NOT",
         "fichier": "apps/web/tests/e2e/tools-tab.spec.ts",
         "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 3609,
+        "dureeMs": 2626,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/webhooks-flows.spec.ts::Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
         "fichier": "apps/web/tests/e2e/webhooks-flows.spec.ts",
         "titre": "Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
-        "tours": 5,
+        "tours": 6,
         "echecs": 1,
-        "recents": "rvvvv",
-        "dernierTourLe": "2026-09-16T08:14:49.335Z",
+        "recents": "rvvvvv",
+        "dernierTourLe": "2026-09-16T08:48:39.428Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 5060,
+        "dureeMs": 3077,
         "verdict": "instable",
-        "tauxEchec": 20,
-        "fenetre": 5,
+        "tauxEchec": 16.7,
+        "fenetre": 6,
         "rouges": 1,
-        "verts": 4
+        "verts": 5
       },
       {
         "cle": "apps/web/tests/e2e/telegram-allowlist.spec.ts::A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
@@ -7150,8 +7150,8 @@
     ],
     "dernierRun": {
       "run": {
-        "startedAt": "2026-09-16T08:08:54.556Z",
-        "gitSha": "953c91bb",
+        "startedAt": "2026-09-16T08:44:44.122Z",
+        "gitSha": "0bb8239b",
         "sections": [
           {
             "sectionId": "architecture",
@@ -7228,7 +7228,7 @@
                 "detail": []
               }
             ],
-            "durationMs": 872
+            "durationMs": 496
           },
           {
             "sectionId": "gate",
@@ -7286,7 +7286,7 @@
                 "direction": "exact"
               }
             ],
-            "durationMs": 11
+            "durationMs": 6
           },
           {
             "sectionId": "trust-boundary",
@@ -7401,7 +7401,7 @@
                 ]
               }
             ],
-            "durationMs": 0
+            "durationMs": 1
           }
         ]
       },
@@ -7902,19 +7902,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3762,
+        "dureeMs": 2518,
         "cas": [
           {
             "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "sort": "vert",
-            "dureeMs": 2407
+            "dureeMs": 1515
           },
           {
             "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran \"Customize a new agent\" is selected by default and Next opens the empty form",
             "sort": "vert",
-            "dureeMs": 1355
+            "dureeMs": 1003
           }
         ]
       },
@@ -7933,31 +7933,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 20188,
+        "dureeMs": 14900,
         "cas": [
           {
             "titre": "Scenario A — Tools & Connectors section renders with the test connector",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
             "sort": "vert",
-            "dureeMs": 11220
+            "dureeMs": 5700
           },
           {
             "titre": "Scenario B — checking connector checkbox creates assignment row in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
             "sort": "vert",
-            "dureeMs": 2845
+            "dureeMs": 3398
           },
           {
             "titre": "Scenario C — unchecking connector removes assignment from DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
             "sort": "vert",
-            "dureeMs": 2369
+            "dureeMs": 2184
           },
           {
             "titre": "Scenario D — Enable all button keeps enabledOperations=null in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
             "sort": "vert",
-            "dureeMs": 3754
+            "dureeMs": 3618
           }
         ]
       },
@@ -7976,13 +7976,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 1275,
+        "dureeMs": 684,
         "cas": [
           {
             "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
             "titreComplet": "Agents page redesign @cap:organiser-equipe/ecran render, dark mode, add-worker modal, keyboard drag round-trip",
             "sort": "ignoré",
-            "dureeMs": 1275
+            "dureeMs": 684
           }
         ]
       },
@@ -8001,13 +8001,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 10345,
+        "dureeMs": 6918,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status",
             "titreComplet": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
             "sort": "vert",
-            "dureeMs": 10345
+            "dureeMs": 6918
           }
         ]
       },
@@ -8026,13 +8026,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3958,
+        "dureeMs": 3343,
         "cas": [
           {
             "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
             "titreComplet": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
             "sort": "vert",
-            "dureeMs": 3958
+            "dureeMs": 3343
           }
         ]
       },
@@ -8051,25 +8051,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11191,
+        "dureeMs": 8652,
         "cas": [
           {
             "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
             "titreComplet": "Scenario A — Garde-fou: Telegram notify warning for bot-less agent shows warning when notify checked + bot-less agent; hides on uncheck",
             "sort": "vert",
-            "dureeMs": 3119
+            "dureeMs": 2228
           },
           {
             "titre": "creates a schedule then clicks Run now and sees success toast",
             "titreComplet": "Scenario B — Run now button shows success toast creates a schedule then clicks Run now and sees success toast",
             "sort": "vert",
-            "dureeMs": 3742
+            "dureeMs": 2930
           },
           {
             "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "titreComplet": "Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "sort": "vert",
-            "dureeMs": 4330
+            "dureeMs": 3494
           }
         ]
       },
@@ -8088,31 +8088,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 7094,
+        "dureeMs": 5707,
         "cas": [
           {
             "titre": "find an existing agent to navigate to",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran find an existing agent to navigate to",
             "sort": "vert",
-            "dureeMs": 1406
+            "dureeMs": 1052
           },
           {
             "titre": "Autonomy tab is visible in the agent editor",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran Autonomy tab is visible in the agent editor",
             "sort": "vert",
-            "dureeMs": 2069
+            "dureeMs": 1501
           },
           {
             "titre": "Autonomy tab renders without errors (empty state or tool list)",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran Autonomy tab renders without errors (empty state or tool list)",
             "sort": "vert",
-            "dureeMs": 1931
+            "dureeMs": 1570
           },
           {
             "titre": "3-way control is present and interactive when write tools exist",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran 3-way control is present and interactive when write tools exist",
             "sort": "ignoré",
-            "dureeMs": 1688
+            "dureeMs": 1584
           }
         ]
       },
@@ -8131,37 +8131,37 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 23656,
+        "dureeMs": 10458,
         "cas": [
           {
             "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
             "titreComplet": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
             "sort": "vert",
-            "dureeMs": 4282
+            "dureeMs": 1727
           },
           {
             "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
             "titreComplet": "Test B — Agent edit picks LLM provider @cap:choisir-modele/ecran change LLM provider dropdown on agent edit → model field updates → save → toast",
             "sort": "vert",
-            "dureeMs": 3142
+            "dureeMs": 1796
           },
           {
             "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "titreComplet": "Test C — Send-task with Telegram checkbox (Brique 31 acceptance) job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "sort": "ignoré",
-            "dureeMs": 267
+            "dureeMs": 191
           },
           {
             "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
             "titreComplet": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
             "sort": "vert",
-            "dureeMs": 13487
+            "dureeMs": 5271
           },
           {
             "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "titreComplet": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "sort": "vert",
-            "dureeMs": 2478
+            "dureeMs": 1473
           }
         ]
       },
@@ -8180,43 +8180,43 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 9056,
+        "dureeMs": 5550,
         "cas": [
           {
             "titre": "A — configurer puis approuver, hash écrit EN BASE",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
             "sort": "vert",
-            "dureeMs": 2992
+            "dureeMs": 1914
           },
           {
             "titre": "B — éditer une commande approuvée retire l’approbation",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran B — éditer une commande approuvée retire l’approbation",
             "sort": "vert",
-            "dureeMs": 1801
+            "dureeMs": 1013
           },
           {
             "titre": "C — le cap de cinq est visible : l’ajout disparaît",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran C — le cap de cinq est visible : l’ajout disparaît",
             "sort": "vert",
-            "dureeMs": 1287
+            "dureeMs": 792
           },
           {
             "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "sort": "ignoré",
-            "dureeMs": 818
+            "dureeMs": 495
           },
           {
             "titre": "E — un échec serveur ne ment pas",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran E — un échec serveur ne ment pas",
             "sort": "vert",
-            "dureeMs": 1389
+            "dureeMs": 874
           },
           {
             "titre": "F — le tiroir Other sessions n’a aucun panneau",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran F — le tiroir Other sessions n’a aucun panneau",
             "sort": "vert",
-            "dureeMs": 769
+            "dureeMs": 462
           }
         ]
       },
@@ -8235,13 +8235,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8992,
+        "dureeMs": 7483,
         "cas": [
           {
             "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
             "titreComplet": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
             "sort": "vert",
-            "dureeMs": 8992
+            "dureeMs": 7483
           }
         ]
       },
@@ -8260,25 +8260,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5999,
+        "dureeMs": 4612,
         "cas": [
           {
             "titre": "Google Drive states it reaches the ENTIRE Drive",
             "titreComplet": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
             "sort": "vert",
-            "dureeMs": 1488
+            "dureeMs": 1120
           },
           {
             "titre": "Google Sheets and Docs disclose their reach too",
             "titreComplet": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
             "sort": "vert",
-            "dureeMs": 2982
+            "dureeMs": 2398
           },
           {
             "titre": "a connector whose reach matches its name shows NO disclosure",
             "titreComplet": "Connector scope disclosure a connector whose reach matches its name shows NO disclosure",
             "sort": "vert",
-            "dureeMs": 1529
+            "dureeMs": 1094
           }
         ]
       },
@@ -8297,13 +8297,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9432,
+        "dureeMs": 6991,
         "cas": [
           {
             "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
             "titreComplet": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
             "sort": "vert",
-            "dureeMs": 9432
+            "dureeMs": 6991
           }
         ]
       },
@@ -8322,19 +8322,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9420,
+        "dureeMs": 5909,
         "cas": [
           {
             "titre": "a delegation that produced nothing shows its reason, never a promise",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that produced nothing shows its reason, never a promise",
             "sort": "vert",
-            "dureeMs": 7957
+            "dureeMs": 3966
           },
           {
             "titre": "a delegation that delivered puts the specialist’s own work in the thread",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that delivered puts the specialist’s own work in the thread",
             "sort": "vert",
-            "dureeMs": 1463
+            "dureeMs": 1943
           }
         ]
       },
@@ -8353,19 +8353,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4181,
+        "dureeMs": 3719,
         "cas": [
           {
             "titre": "wizard shows 4 Google API links and format hint",
             "titreComplet": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
             "sort": "vert",
-            "dureeMs": 2283
+            "dureeMs": 1902
           },
           {
             "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
             "titreComplet": "Help guides — api_key connector (Apify) @cap:consulter-l-aide/ecran \"Where do I get this?\" expander reveals console.apify.com link",
             "sort": "vert",
-            "dureeMs": 1898
+            "dureeMs": 1817
           }
         ]
       },
@@ -8384,31 +8384,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 17494,
+        "dureeMs": 13206,
         "cas": [
           {
             "titre": "the section lists the built-in tools, always — no fixtures needed",
             "titreComplet": "Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
             "sort": "vert",
-            "dureeMs": 3333
+            "dureeMs": 2923
           },
           {
             "titre": "return_result is shown but locked, with the reason",
             "titreComplet": "Built-in tools — per-tool controls return_result is shown but locked, with the reason",
             "sort": "vert",
-            "dureeMs": 3438
+            "dureeMs": 2442
           },
           {
             "titre": "blocking a built-in tool persists across a reload",
             "titreComplet": "Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
             "sort": "vert",
-            "dureeMs": 5353
+            "dureeMs": 3946
           },
           {
             "titre": "and can be handed back — the restriction is reversible",
             "titreComplet": "Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
             "sort": "vert",
-            "dureeMs": 5370
+            "dureeMs": 3895
           }
         ]
       },
@@ -8427,31 +8427,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5672,
+        "dureeMs": 3826,
         "cas": [
           {
             "titre": "renders the Learned Skills page at /learned-skills",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran renders the Learned Skills page at /learned-skills",
             "sort": "vert",
-            "dureeMs": 2749
+            "dureeMs": 2060
           },
           {
             "titre": "toggle switches the reflection_enabled flag (UI responds)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran toggle switches the reflection_enabled flag (UI responds)",
             "sort": "vert",
-            "dureeMs": 1240
+            "dureeMs": 606
           },
           {
             "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 955
+            "dureeMs": 610
           },
           {
             "titre": "assignment-mode control renders both options and is interactive",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran assignment-mode control renders both options and is interactive",
             "sort": "vert",
-            "dureeMs": 728
+            "dureeMs": 550
           }
         ]
       },
@@ -8470,19 +8470,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4386,
+        "dureeMs": 3046,
         "cas": [
           {
             "titre": "Scenario A — /mcp renders the connected Cogni Cortex server",
             "titreComplet": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
             "sort": "vert",
-            "dureeMs": 3100
+            "dureeMs": 2094
           },
           {
             "titre": "Scenario B — sidebar shows API Connectors and MCP Connectors",
             "titreComplet": "MCP Connectors page Scenario B — sidebar shows API Connectors and MCP Connectors",
             "sort": "vert",
-            "dureeMs": 1286
+            "dureeMs": 952
           }
         ]
       },
@@ -8501,19 +8501,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5570,
+        "dureeMs": 4205,
         "cas": [
           {
             "titre": "it is written, it survives a reload, and the search finds it again",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran it is written, it survives a reload, and the search finds it again",
             "sort": "vert",
-            "dureeMs": 4161
+            "dureeMs": 3161
           },
           {
             "titre": "archiving a fact takes it out of what the agent is given",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran archiving a fact takes it out of what the agent is given",
             "sort": "vert",
-            "dureeMs": 1409
+            "dureeMs": 1044
           }
         ]
       },
@@ -8532,31 +8532,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 11320,
+        "dureeMs": 8705,
         "cas": [
           {
             "titre": "create with explicit Telegram channel, persists across reload + edit",
             "titreComplet": "Scenario 1 — Schedule form: Notify via lists only the agent's real active channels create with explicit Telegram channel, persists across reload + edit",
             "sort": "ignoré",
-            "dureeMs": 3054
+            "dureeMs": 2092
           },
           {
             "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "titreComplet": "Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "sort": "vert",
-            "dureeMs": 4364
+            "dureeMs": 3560
           },
           {
             "titre": "warns for a channel-less agent, clears when switching to a connected one",
             "titreComplet": "Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent warns for a channel-less agent, clears when switching to a connected one",
             "sort": "vert",
-            "dureeMs": 1744
+            "dureeMs": 1375
           },
           {
             "titre": "schedule form notify controls render correctly in both themes",
             "titreComplet": "Scenario 4 — Dark mode: notify controls stay theme-aware schedule form notify controls render correctly in both themes",
             "sort": "vert",
-            "dureeMs": 2158
+            "dureeMs": 1678
           }
         ]
       },
@@ -8575,13 +8575,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4973,
+        "dureeMs": 3830,
         "cas": [
           {
             "titre": "connect with api_key shows connected status and persists",
             "titreComplet": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
             "sort": "vert",
-            "dureeMs": 4973
+            "dureeMs": 3830
           }
         ]
       },
@@ -8600,13 +8600,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4423,
+        "dureeMs": 3200,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status (no Refresh button)",
             "titreComplet": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status (no Refresh button)",
             "sort": "vert",
-            "dureeMs": 4423
+            "dureeMs": 3200
           }
         ]
       },
@@ -8625,13 +8625,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4230,
+        "dureeMs": 3534,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status and toast",
             "titreComplet": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
             "sort": "vert",
-            "dureeMs": 4230
+            "dureeMs": 3534
           }
         ]
       },
@@ -8650,19 +8650,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5649,
+        "dureeMs": 4345,
         "cas": [
           {
             "titre": "is present with a default of 5 on the New schedule form",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran is present with a default of 5 on the New schedule form",
             "sort": "vert",
-            "dureeMs": 1578
+            "dureeMs": 1197
           },
           {
             "titre": "persists a custom value on create, and an edit updates it",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran persists a custom value on create, and an edit updates it",
             "sort": "vert",
-            "dureeMs": 4071
+            "dureeMs": 3148
           }
         ]
       },
@@ -8681,31 +8681,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 7400,
+        "dureeMs": 4269,
         "cas": [
           {
             "titre": "Network section renders with radio buttons and read-only URL fields",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran Network section renders with radio buttons and read-only URL fields",
             "sort": "vert",
-            "dureeMs": 2119
+            "dureeMs": 1259
           },
           {
             "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "sort": "vert",
-            "dureeMs": 976
+            "dureeMs": 508
           },
           {
             "titre": "re-saving the mode already in force reports no restart needed",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran re-saving the mode already in force reports no restart needed",
             "sort": "vert",
-            "dureeMs": 1605
+            "dureeMs": 940
           },
           {
             "titre": "saving the other mode persists it, demands a restart, and is put back",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran saving the other mode persists it, demands a restart, and is put back",
             "sort": "vert",
-            "dureeMs": 2700
+            "dureeMs": 1562
           }
         ]
       },
@@ -8724,25 +8724,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3016,
+        "dureeMs": 1727,
         "cas": [
           {
             "titre": "la section rend ses quatre cases et la pilule owner only",
             "titreComplet": "Verification surfaces — /settings la section rend ses quatre cases et la pilule owner only",
             "sort": "vert",
-            "dureeMs": 780
+            "dureeMs": 471
           },
           {
             "titre": "décocher demande confirmation, annuler laisse la case cochée",
             "titreComplet": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
             "sort": "vert",
-            "dureeMs": 1055
+            "dureeMs": 570
           },
           {
             "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "titreComplet": "Verification surfaces — /settings décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "sort": "vert",
-            "dureeMs": 1181
+            "dureeMs": 686
           }
         ]
       },
@@ -8761,37 +8761,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 30391,
+        "dureeMs": 13695,
         "cas": [
           {
             "titre": "the root page IS the dashboard — no login form, no redirect away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the root page IS the dashboard — no login form, no redirect away",
             "sort": "vert",
-            "dureeMs": 676
+            "dureeMs": 578
           },
           {
             "titre": "sidebar links every dashboard section",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran sidebar links every dashboard section",
             "sort": "vert",
-            "dureeMs": 837
+            "dureeMs": 536
           },
           {
             "titre": "creates an agent, sends a task, and shows the job in the list",
             "titreComplet": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
             "sort": "vert",
-            "dureeMs": 10267
+            "dureeMs": 5241
           },
           {
             "titre": "every (dashboard) route returns 200 and renders an h1",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran every (dashboard) route returns 200 and renders an h1",
             "sort": "vert",
-            "dureeMs": 16893
+            "dureeMs": 6111
           },
           {
             "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran les routes à paramètre rendent, atteintes par les liens de l’app",
             "sort": "vert",
-            "dureeMs": 1718
+            "dureeMs": 1229
           }
         ]
       },
@@ -8810,25 +8810,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 16724,
+        "dureeMs": 10675,
         "cas": [
           {
             "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "titreComplet": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "sort": "vert",
-            "dureeMs": 8417
+            "dureeMs": 4088
           },
           {
             "titre": "B — Approve a pending chat activates it",
             "titreComplet": "B — Approve a pending chat activates it",
             "sort": "vert",
-            "dureeMs": 4428
+            "dureeMs": 3193
           },
           {
             "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "titreComplet": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 3879
+            "dureeMs": 3394
           }
         ]
       },
@@ -8847,31 +8847,31 @@
         "rouge": 0,
         "ignoré": 4,
         "instable": 0,
-        "dureeMs": 2452,
+        "dureeMs": 1375,
         "cas": [
           {
             "titre": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "titreComplet": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "sort": "ignoré",
-            "dureeMs": 648
+            "dureeMs": 342
           },
           {
             "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "titreComplet": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "sort": "ignoré",
-            "dureeMs": 716
+            "dureeMs": 350
           },
           {
             "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "titreComplet": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "sort": "ignoré",
-            "dureeMs": 558
+            "dureeMs": 341
           },
           {
             "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "titreComplet": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "sort": "ignoré",
-            "dureeMs": 530
+            "dureeMs": 342
           }
         ]
       },
@@ -8890,37 +8890,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 19654,
+        "dureeMs": 14071,
         "cas": [
           {
             "titre": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "titreComplet": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 3203
+            "dureeMs": 2457
           },
           {
             "titre": "disclosure expands to show the gated tool names as chips",
             "titreComplet": "disclosure expands to show the gated tool names as chips",
             "sort": "vert",
-            "dureeMs": 3497
+            "dureeMs": 2604
           },
           {
             "titre": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "titreComplet": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "sort": "vert",
-            "dureeMs": 3542
+            "dureeMs": 2815
           },
           {
             "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "titreComplet": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "sort": "vert",
-            "dureeMs": 3609
+            "dureeMs": 2626
           },
           {
             "titre": "a tool group assigned to this agent is still absent from /skills Assigned",
             "titreComplet": "a tool group assigned to this agent is still absent from /skills Assigned",
             "sort": "vert",
-            "dureeMs": 5803
+            "dureeMs": 3569
           }
         ]
       },
@@ -8939,13 +8939,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 4418,
+        "dureeMs": 4215,
         "cas": [
           {
             "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
             "titreComplet": "UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran shows email in sidebar, signs out, redirects to /login, re-logs in",
             "sort": "ignoré",
-            "dureeMs": 4418
+            "dureeMs": 4215
           }
         ]
       },
@@ -8964,13 +8964,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5060,
+        "dureeMs": 3077,
         "cas": [
           {
             "titre": "create, copy URL, toggle, rotate, delete, empty state",
             "titreComplet": "Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
             "sort": "vert",
-            "dureeMs": 5060
+            "dureeMs": 3077
           }
         ]
       },
@@ -8993,7 +8993,7 @@
         "number": 128,
         "state": "OPEN",
         "title": "The board says a PR is 'in review' but never says where the review stands: pass count, verdict, reviewer",
-        "updatedAt": "2026-09-16T05:14:57Z",
+        "updatedAt": "2026-09-16T08:22:47Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/128"
       },
       {
@@ -9150,7 +9150,7 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/72"
       },
       {
-        "body": "**4 thing(s) in the red.** This issue is kept up to date by the nightly measurement; it closes itself when it has nothing left to say.\n\n\n\nCollected on 2026-09-15T16:50:11.180Z · commit `76761ae9` · branch `main`\n\n\n\n### 2 capability proof(s) FAILED at the last measurement\n\nThe level is named because it changes everything: a fallen SCREEN means the journey no longer chains, the buttons; a fallen ENGINE means the promised thing is no longer done.\n\n- `Connect a service · screen`\n- `Find out how · screen`\n\n### 2 test(s) turned red in the last two days\n\nA fresh red is a regression: something moved, and we know when. An old red is a debt we have learned not to see, the two are not handled the same way.\n\n- `Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint`\n- `Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast`\n\n### 1 journeys out of 31 are never played by the CI\n\n26 test cases written, versioned, and run by no continuous integration. These are the user journeys, precisely what a regression breaks first and what a unit test does not see.\n\n- `agent-flows.spec.ts`\n\n### 1 packages carry tests whose coverage has never been measured\n\nThe coverage configuration had always existed; the package that runs it was not installed. None of these packages can say how much of its code its tests go through.\n\n- `@nodal-agents/docs`",
+        "body": "**1 thing(s) in the red.** This issue is kept up to date by the nightly measurement; it closes itself when it has nothing left to say.\n\n\n\nCollected on 2026-09-16T08:14:49.335Z · commit `953c91bb` · branch `main`\n\n\n\n### 1 packages carry tests whose coverage has never been measured\n\nThe coverage configuration had always existed; the package that runs it was not installed. None of these packages can say how much of its code its tests go through.\n\n- `@nodal-agents/docs`",
         "createdAt": "2026-09-11T16:44:32Z",
         "labels": [
           {
@@ -9163,7 +9163,7 @@
         "number": 71,
         "state": "OPEN",
         "title": "Portal: what is red",
-        "updatedAt": "2026-09-15T16:50:23Z",
+        "updatedAt": "2026-09-16T08:15:05Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/71"
       },
       {
@@ -9770,6 +9770,66 @@
       }
     ],
     "pr": [
+      {
+        "body": "Version bump 0.8.9 → 0.8.10 (`apps/cli/package.json`) and the CHANGELOG entry for the six pull requests of the milestone, all merged on 2026-09-16 after their Reviewer C loops: #103, #112, #113, #114, #118, #120.\n\nNo code change. The entry is written for the person who runs Nodal, grouped by what changes for them: the launcher, the crediting of an agent's work, the quality portal, and two fixes.\n\n## Verified\n\n```\n$ head -c3 CHANGELOG.md | od -An -tx1        → 23 20 43 (no BOM)\n$ head -c3 apps/cli/package.json | od -An -tx1 → 7b 0a 20 (no BOM)\n$ prettier --check CHANGELOG.md apps/cli/package.json\nAll matched files use Prettier code style!\n$ git log --oneline -1 origin/main\n0bb8239b chore(qa): mesure du 2026-09-16 [skip ci]   (six milestone PRs merged, CI green, full measurement 73 green / 0 red / 10 skipped)\n```\n\n`pnpm release:check` runs after merge, on `main`, in an isolated worktree (it verifies the version is absent from npm and the branch is merged).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n\n## Review pass (Reviewer C, 2026-09-16)\n\nRead-only review of the CHANGELOG entry against the tree at 2b688623. Every sentence the reviewer could read (launcher pid confirmation, Postgres log, content fingerprint, refused read, attach to the intended project, release-check guard) is backed by the code; no contradiction found. Three checks fell outside its reading budget and were done by hand:\n\n- **Both address families** — `scripts/lib/live-stack.mjs` `FAMILLES_SONDEES = ['127.0.0.1', '::1']`, probed by `scripts/lib/sonde.mjs`. Holds.\n- **Unreadable workflow said, not counted green** — `apps/qa/lib.mjs` (`illisible`, « workflow unreadable »). Holds.\n- **A second carrier of the version** — `apps/docs/app/home-content.ts` `VERSION`, compared to `apps/cli/package.json` by `homepage.test.tsx`. Bumped in this PR (second commit).\n",
+        "createdAt": "2026-09-16T08:38:20Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 129,
+        "state": "OPEN",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35075365944/job/104726581946",
+            "name": "ci",
+            "startedAt": "2026-09-16T08:44:18Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35075365944/job/104726581858",
+            "name": "ci-windows",
+            "startedAt": "2026-09-16T08:44:18Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35075365944/job/104726581789",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-16T08:44:18Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T08:46:50Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35075365944/job/104726581601",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-16T08:44:17Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-16T08:43:43Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/3ae3a17a-9025-4194-a422-a4b8a35ff96f"
+          }
+        ],
+        "title": "release(0.8.10): the launcher kills nothing unproven, work is credited by the disk, the portal names what nobody verified",
+        "updatedAt": "2026-09-16T08:43:38Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/129"
+      },
       {
         "body": "## Why\n\n`run_command` had exactly two controls:\n\n1. the per-agent `command-execution` skill — the agent gets a shell, or it does not;\n2. the approval gate — a human reads each command before it runs.\n\nNeither can express *this agent runs `node` and `npx vitest`, and nothing else*. An agent whose job requires **executing** a snippet in order to check a claim (rather than reasoning about it) therefore had to be handed an unattended shell capable of anything, because an auto-approve rule turns the second control off entirely.\n\nMilestone 0.8.10.\n\n## What\n\n`agents.command_allowlist` (`text[]`), as DATA on the agent row — invariant #1, no per-agent branch in the runtime.\n\n- `NULL` = no list. Unchanged, unrestricted behaviour.\n- `[]` = a decision, not an absence. Refuses every command.\n- `['node', 'npx vitest']` = entries of one or more words, matched whole-token against the leading tokens of **every segment** of the command.\n\nEnforced in `packages/tools/src/builtin/run-command.ts` before anything is resolved, and populated by the runner at the three `ToolContext` construction sites in `apps/runner/src/job/execute.ts`. Settable through the product path via `setAgentCommandAllowlistAction` (owner-only, same gate shape as `setCliRuntimeModeAction`).\n\n### What it is not\n\nNot a sandbox, and `command-allowlist.ts` says so in its own header: `node` can open a socket, read outside the workspace and write files. The allowlist governs **which program starts**, not what it then does. It is the third control alongside the skill and the approval gate, and it is the one that makes an auto-approved shell a defensible choice for a narrow job.\n\n## Verified\n\n- `packages/tools/src/builtin/command-allowlist.test.ts` — 17 tests, written before the implementation and red against a missing module. Covers `&&` / `;` / `|` / newline segments, `$()` and backtick substitution refused outright, and whole-token matching (`node` does not admit `nodemon`).\n- `packages/tools/src/tests/run-command.test.ts` — 4 tool-level tests against real spawned processes. The refusal test asserts the file the refused half of the command would have written **does not exist** afterwards.\n- **Mutation**: with `assertCommandAllowed(...)` disabled in `run-command.ts`, 2 of those 4 go red; restored, 16/16 pass.\n- `npx vitest run packages/tools packages/db` — 91 files, 1310 passed, 1 skipped.\n- `npx tsc --noEmit` on `packages/tools`, `packages/db`, `apps/runner`, `apps/web` — clean.\n- `pnpm capacites:check` — the product ↔ proofs link holds (24/24 required).\n- `npx eslint` on every touched file — 7 pre-existing errors in `apps/web/src/lib/actions.ts`, identical count before and after this branch; no new ones.\n\nMigration `0108_agent_command_allowlist.sql` ships with its `_journal.json` entry and the matching column in the inline test SQL (`packages/db/src/tests/helpers.ts`) — the three places CLAUDE.md requires.\n\n## Not in this PR\n\nNo dashboard control yet. The action exists and is the official write path; the agent editor does not surface it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01SQY7YUPXj5sftJLmm4XtGN",
         "createdAt": "2026-09-15T18:11:30Z",
@@ -12981,7 +13041,7 @@
         "etiquettes": [
           "product"
         ],
-        "majLe": "2026-09-16T05:14:57Z",
+        "majLe": "2026-09-16T08:22:47Z",
         "creeLe": "2026-09-16T05:14:57Z",
         "parPr": null,
         "parUnAgent": false,
@@ -13141,7 +13201,7 @@
         "etiquettes": [
           "test"
         ],
-        "majLe": "2026-09-15T16:50:23Z",
+        "majLe": "2026-09-16T08:15:05Z",
         "creeLe": "2026-09-11T16:44:32Z",
         "parPr": null,
         "parUnAgent": false,
@@ -13667,6 +13727,21 @@
         "parUnAgent": false,
         "faitsVerifies": false,
         "colonne": "Done"
+      },
+      {
+        "type": "pr",
+        "numero": 129,
+        "titre": "release(0.8.10): the launcher kills nothing unproven, work is credited by the disk, the portal names what nobody verified",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/129",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-16T08:43:38Z",
+        "creeLe": "2026-09-16T08:38:20Z",
+        "ci": "en cours",
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In review"
       },
       {
         "type": "pr",
@@ -14438,12 +14513,12 @@
   "release": {
     "npmInjoignable": false,
     "jamaisPubliee": false,
-    "verifieLe": "2026-09-16T08:14:57.085Z",
+    "verifieLe": "2026-09-16T08:48:51.056Z",
     "surNpm": "0.8.9",
     "publieeLe": "2026-09-09T16:25:05.725Z",
     "versionDuDepot": "0.8.9",
     "dernierTag": "v0.8.9",
-    "commitsDepuisLeTag": 315,
+    "commitsDepuisLeTag": 316,
     "depotEnAvance": false
   }
 }
