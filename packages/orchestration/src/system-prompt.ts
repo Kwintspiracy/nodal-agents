@@ -427,8 +427,12 @@ function buildJobContextBlock(ctx: JobContext): string {
         'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
         'loaded below). For ANY action — using a connector or skill, delegating to your team, ' +
         'sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, ' +
-        'skills, MCP servers, connectors or automations — you MUST call the `run_task` tool ' +
-        'with a clear, self-contained instruction. CRITICAL: writing in text that you will do ' +
+        // Un FAIT, pas un ordre : sur cette surface, une consigne impérative est
+        // exactement ce que le garde de `chat-surface-cost.test.ts` refuse, et le
+        // fait porte le même effet — il n'existe aucun autre chemin vers l'action.
+        'skills, MCP servers, connectors or automations — the `run_task` tool is the only way ' +
+        'it happens, and it takes a clear, self-contained instruction. CRITICAL: writing in ' +
+        'text that you will do ' +
         'something (e.g. "Je lance X…") does NOT start anything — ONLY an actual `run_task` ' +
         'tool call performs the action. If you intend to act, the `run_task` tool call is ' +
         'mandatory; a text-only reply about an action accomplishes nothing. It runs as a ' +
