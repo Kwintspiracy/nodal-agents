@@ -41,6 +41,7 @@ import {
   intentionDunParcours,
   fusionnerTableauGitHub,
   etatDeLaRelease,
+  lectureDeNpm,
   commitsDepuisLeTag,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -365,26 +366,41 @@ function chantiers() {
 // contredire. Le portail interroge donc npm et git lui-même, à chaque collecte,
 // et l'écrit dans le snapshot.
 
-function release() {
-  const brut = sh('npm view nodal-agents version time --json');
-  let npm = null;
-  if (brut) {
-    try {
-      const j = JSON.parse(brut);
-      // `version` est la chaîne attendue ; tout le reste est une réponse qu'on
-      // ne sait pas lire, donc une absence, jamais une valeur approchée.
-      npm = typeof j?.version === 'string' ? { version: j.version, time: j.time ?? null } : null;
-    } catch {
-      npm = null;
-    }
+/** Comme `sh`, mais stderr CAPTURÉ au lieu d'être jeté. */
+const DIT_TOUT = {
+  cwd: RACINE,
+  encoding: 'utf8',
+  maxBuffer: 1e8,
+  stdio: ['ignore', 'pipe', 'pipe'],
+};
+
+/**
+ * `npm view`, stderr COMPRIS : c'est là que le registre dit `E404`, et ce code
+ * est toute la différence entre « jamais publié » et « npm n'a pas répondu ».
+ */
+function interrogerNpm() {
+  try {
+    return { sortie: execSync('npm view nodal-agents version time --json', DIT_TOUT) };
+  } catch (err) {
+    return { sortie: err?.stdout ?? '', erreur: `${err?.stderr ?? ''} ${err?.message ?? ''}` };
   }
-  if (!npm) console.warn('[qa] npm did not answer, the release state is MISSING, not green.');
+}
+
+function release() {
+  const { etat, npm } = lectureDeNpm(interrogerNpm());
+  if (etat === 'injoignable') {
+    console.warn('[qa] npm did not answer, the release state is MISSING, not green.');
+  }
+  if (etat === 'jamais-publiee') {
+    console.warn('[qa] npm answered: nodal-agents is NOT published yet.');
+  }
 
   const dernierTag = sh('git describe --tags --abbrev=0 --match "v*"') || null;
   const versionDuDepot = lireJson(join(RACINE, 'apps', 'cli', 'package.json'))?.version ?? null;
 
   return etatDeLaRelease({
     npm,
+    etatNpm: etat,
     depot: {
       version: versionDuDepot,
       dernierTag,

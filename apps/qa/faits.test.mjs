@@ -19,6 +19,7 @@ import {
   commitsDepuisLeTag,
   ecritParUnAgent,
   etatDeLaRelease,
+  lectureDeNpm,
   porteDesFaitsVerifies,
   publicationsDejaFaites,
   sansFaitsVerifies,
@@ -69,6 +70,56 @@ describe('etatDeLaRelease', () => {
 
   it('npm injoignable ne rend PAS un verdict « en avance » : on ne sait pas', () => {
     expect(etatDeLaRelease({ npm: null, depot, le: 'x' }).depotEnAvance).toBe(null);
+  });
+
+  // « Jamais publié » est un fait que npm vient d'établir. Le ranger dans
+  // « injoignable » accuse le réseau et fait croire qu'on ne sait pas.
+  it('un paquet jamais publié n’est PAS un npm injoignable', () => {
+    const r = etatDeLaRelease({ npm: null, etatNpm: 'jamais-publiee', depot, le: 'x' });
+    expect(r.jamaisPubliee).toBe(true);
+    expect(r.npmInjoignable).toBe(false);
+    expect(r.surNpm).toBe(null);
+    // Rien n'étant publié, tout ce que le dépôt porte est en avance.
+    expect(r.depotEnAvance).toBe(true);
+  });
+
+  it('npm muet reste injoignable, et n’est pas « jamais publié »', () => {
+    const r = etatDeLaRelease({ npm: null, etatNpm: 'injoignable', depot, le: 'x' });
+    expect(r.npmInjoignable).toBe(true);
+    expect(r.jamaisPubliee).toBe(false);
+  });
+});
+
+describe('lectureDeNpm', () => {
+  it('lit la version et les dates quand npm répond', () => {
+    const r = lectureDeNpm({
+      sortie: '{"version":"0.8.9","time":{"0.8.9":"2026-09-09T12:00:00.000Z"}}',
+    });
+    expect(r.etat).toBe('lue');
+    expect(r.npm).toEqual({ version: '0.8.9', time: { '0.8.9': '2026-09-09T12:00:00.000Z' } });
+  });
+
+  // Un paquet jamais publié fait répondre npm par E404 : le registre a PARLÉ.
+  // L'afficher en « npm unreachable » accusait le réseau d'un fait établi.
+  it('un E404 est « jamais publiée », pas « injoignable »', () => {
+    expect(
+      lectureDeNpm({ sortie: '', erreur: 'npm error code E404\nnpm error 404 Not Found' }).etat,
+    ).toBe('jamais-publiee');
+    expect(lectureDeNpm({ sortie: '{"error":{"code":"E404","summary":"Not found"}}' }).etat).toBe(
+      'jamais-publiee',
+    );
+  });
+
+  it('une panne réseau reste « injoignable » : on ne sait pas', () => {
+    expect(
+      lectureDeNpm({ sortie: '', erreur: 'getaddrinfo ENOTFOUND registry.npmjs.org' }).etat,
+    ).toBe('injoignable');
+    expect(lectureDeNpm({}).etat).toBe('injoignable');
+  });
+
+  it('une réponse qu’on ne sait pas lire est une absence, pas une valeur approchée', () => {
+    expect(lectureDeNpm({ sortie: '{"version":123}' }).etat).toBe('injoignable');
+    expect(lectureDeNpm({ sortie: 'not json at all' }).etat).toBe('injoignable');
   });
 });
 

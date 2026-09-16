@@ -460,6 +460,35 @@ export function comparerSemver(a, b) {
 }
 
 /**
+ * Ce que `npm view <paquet> version time --json` a VRAIMENT répondu.
+ *
+ * Trois faits, pas deux. Un paquet JAMAIS PUBLIÉ fait répondre npm par une
+ * erreur `E404` — le registre a parlé, et il a dit « ce nom n'existe pas ».
+ * L'afficher en « npm unreachable » accusait le réseau d'un fait que npm venait
+ * d'établir, et laissait croire qu'on ne savait pas.
+ *
+ * `sortie` est le stdout, `erreur` le stderr (ou le message de l'échec).
+ * Avec `--json`, npm range souvent l'erreur dans le stdout lui-même, d'où les
+ * deux endroits regardés.
+ */
+export function lectureDeNpm({ sortie, erreur } = {}) {
+  let lu = null;
+  try {
+    lu = JSON.parse(String(sortie ?? ''));
+  } catch {
+    lu = null;
+  }
+  const codes = `${lu?.error?.code ?? ''} ${erreur ?? ''}`;
+  if (/\bE?404\b/.test(codes)) return { etat: 'jamais-publiee', npm: null };
+  // `version` est la chaîne attendue ; tout le reste est une réponse qu'on ne
+  // sait pas lire, donc une absence, jamais une valeur approchée.
+  if (typeof lu?.version === 'string') {
+    return { etat: 'lue', npm: { version: lu.version, time: lu.time ?? null } };
+  }
+  return { etat: 'injoignable', npm: null };
+}
+
+/**
  * Le nombre de commits depuis le dernier tag, à partir des sorties de git.
  *
  * `origin/main` d'abord : le nombre qui intéresse est celui de la branche
@@ -486,12 +515,19 @@ export function commitsDepuisLeTag({ surLaBranchePubliee, surHead } = {}) {
  * pas répondu. Dans ce cas RIEN n'est rendu : pas de valeur inventée, pas
  * l'ancienne sans date. Le portail dira « npm unreachable at <heure> », ce qui
  * est un fait, là où un chiffre périmé serait un mensonge (invariant #4).
+ *
+ * `etatNpm` vient de `lectureDeNpm` et distingue le troisième cas : un paquet
+ * jamais publié n'est ni une version, ni un silence du registre.
  */
-export function etatDeLaRelease({ npm, depot, le } = {}) {
+export function etatDeLaRelease({ npm, etatNpm, depot, le } = {}) {
   const surNpm = npm?.version ?? null;
   const versionDuDepot = depot?.version ?? null;
+  const jamaisPubliee = etatNpm === 'jamais-publiee';
   return {
-    npmInjoignable: !npm,
+    // Jamais publié n'est PAS injoignable : npm a répondu, et sa réponse est
+    // « ce nom n'existe pas ». Les confondre accuse le réseau d'un fait établi.
+    npmInjoignable: !npm && !jamaisPubliee,
+    jamaisPubliee,
     verifieLe: le ?? null,
     surNpm,
     publieeLe: surNpm ? (npm?.time?.[surNpm] ?? null) : null,
@@ -499,8 +535,15 @@ export function etatDeLaRelease({ npm, depot, le } = {}) {
     dernierTag: depot?.dernierTag ?? null,
     commitsDepuisLeTag: depot?.commitsDepuisLeTag ?? null,
     // `null` et non `false` quand npm est muet : « pas en avance » et « je ne
-    // sais pas » ne se ressemblent qu'à l'écran.
-    depotEnAvance: surNpm && versionDuDepot ? surNpm !== versionDuDepot : null,
+    // sais pas » ne se ressemblent qu'à l'écran. Un paquet jamais publié, lui,
+    // est un fait connu : tout ce que le dépôt porte est en avance.
+    depotEnAvance: jamaisPubliee
+      ? versionDuDepot
+        ? true
+        : null
+      : surNpm && versionDuDepot
+        ? surNpm !== versionDuDepot
+        : null,
   };
 }
 

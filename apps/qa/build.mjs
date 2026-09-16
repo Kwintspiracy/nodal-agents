@@ -837,6 +837,12 @@ function cadreRelease() {
     return `<div class="cadre-release cadre-release--absent">
       <b>npm unreachable at ${esc(dateFr(r.verifieLe))}.</b> Nothing is known about what is published. The repo carries <code>${esc(r.versionDuDepot ?? '·')}</code>.</div>`;
   }
+  // npm a répondu « ce nom n'existe pas ». C'est un FAIT, pas un silence : le
+  // dire en « unreachable » accuserait le réseau et laisserait croire au doute.
+  if (r.jamaisPubliee) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>Not published on npm yet</b>, checked at ${esc(dateFr(r.verifieLe))}. npm answered, and the name is free. The repo carries <code>${esc(r.versionDuDepot ?? '·')}</code>.</div>`;
+  }
   const dejaFait = publicationsDejaFaites(s.chantiers?.cartes ?? null, r);
   const chiffre = (valeur, libelle) =>
     `<div class="chiffre-release"><b>${esc(valeur)}</b><span>${esc(libelle)}</span></div>`;
