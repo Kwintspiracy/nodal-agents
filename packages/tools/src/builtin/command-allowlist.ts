@@ -77,6 +77,12 @@ const HIDES_A_COMMAND = /\$\(|`/;
  * Both syntaxes are refused on BOTH platforms. A rule that depends on which
  * machine the agent happens to run on is a rule nobody can reason about, and
  * the inert one costs a listed agent nothing: it writes the value literally.
+ *
+ * KNOWN FALSE REFUSAL, accepted: a literal `%` pair inside a filename or an
+ * argument (`node build.js report%20final.txt`) reads as an expansion and is
+ * refused. Telling the two apart means knowing what cmd.exe will find in the
+ * environment, which is the thing this check cannot do — so the error stays on
+ * the conservative side, where the fix is to rename the file.
  */
 const EXPANDS_LATER = /\$\{|\$[A-Za-z_]|%[^%\s]*%/;
 
@@ -306,12 +312,48 @@ function tokenizeEntry(value: string): string[] {
 //     binary and leaving the planted one for the next call.
 
 /**
- * Extensions `cmd.exe` appends to an unqualified name — the default PATHEXT.
- * Listed here rather than read from the environment on purpose: the child's
- * PATHEXT is whatever the host happens to hold, and a guard that shrinks when
- * the environment shrinks is not a guard.
+ * Windows' actual out-of-the-box PATHEXT, used only when the host holds none.
+ * Worth noting what a hand-written version of this list got wrong here, in the
+ * dangerous direction: it carried `.ps1` (NOT in the default) and omitted
+ * `.VBS .VBE .JS .JSE .WSF .WSH .MSC` — so a planted `node.js` or `node.vbs`
+ * walked past the guard, which is exactly the case it exists to catch.
  */
-const WINDOWS_EXECUTABLE_EXTENSIONS = ['.com', '.exe', '.bat', '.cmd', '.ps1'];
+const WINDOWS_DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
+
+/**
+ * Extensions `cmd.exe` would append to an unqualified name: the HOST's PATHEXT
+ * UNION the Windows default, plus `.ps1`. Never one or the other.
+ *
+ * The host's, because that is the PATHEXT the child gets — `child-env.ts`
+ * passes it through untouched — and an admin who adds an extension must not
+ * end up with a guard narrower than the shell it guards.
+ *
+ * The default as well, and not merely as a fallback for an unset variable,
+ * because PATHEXT can be narrower than the default in a perfectly ordinary
+ * process. Measured while writing this: a vitest worker on Windows 11 runs
+ * with `.JS` missing from PATHEXT while `.JSE` is still there. Intersecting
+ * with an environment nobody audits would silently stop refusing a planted
+ * `node.js` — the exact file this guard exists for.
+ *
+ * `.ps1` is kept on top of both. It is not in the Windows default and
+ * `cmd.exe` will not run it, but PowerShell will, and a `node.ps1` in an
+ * agent's workspace is worth refusing on sight either way.
+ *
+ * Read at call time, not at module load, so a test can stub PATHEXT and a
+ * long-lived runner picks up an environment that changed under it.
+ */
+function windowsExecutableExtensions(): string[] {
+  const parse = (value: string): string[] =>
+    value
+      .split(';')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry.startsWith('.') && entry.length > 1);
+
+  const extensions = new Set(parse(WINDOWS_DEFAULT_PATHEXT));
+  for (const entry of parse(process.env['PATHEXT'] ?? '')) extensions.add(entry);
+  extensions.add('.ps1');
+  return [...extensions];
+}
 
 /** A token carrying a path is not resolved from the cwd, and the list refuses it anyway. */
 function isQualifiedPath(token: string): boolean {
@@ -390,7 +432,7 @@ export async function assertNoProgramShadowedByCwd(
 
   for (const { program, raw } of programs) {
     const candidates = WINDOWS
-      ? [program, ...WINDOWS_EXECUTABLE_EXTENSIONS.map((ext) => `${program}${ext}`)].map((c) =>
+      ? [program, ...windowsExecutableExtensions().map((ext) => `${program}${ext}`)].map((c) =>
           c.toLowerCase(),
         )
       : [program];

