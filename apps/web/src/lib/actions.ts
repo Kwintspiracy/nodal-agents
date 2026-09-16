@@ -184,6 +184,7 @@ import {
   type ApprovalExplanation,
   findModelCatalogEntry,
   LIVE_JOB_STATUSES,
+  isShellProgram,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
@@ -7161,7 +7162,16 @@ const SetAgentCommandAllowlistSchema = z.object({
         .trim()
         .min(1)
         .max(120)
-        .regex(/^[A-Za-z0-9._\-@/]+( [A-Za-z0-9._\-@/]+)*$/, 'Use plain command words'),
+        .regex(/^[A-Za-z0-9._\-@/]+( [A-Za-z0-9._\-@/]+)*$/, 'Use plain command words')
+        // A shell on the list is a list that means nothing: `cmd` reads as
+        // "this agent may run cmd" and grants `cmd /c <anything>`, because the
+        // check has already passed by the time the shell picks its child.
+        // Refused HERE, when the owner saves it, rather than silently later.
+        .refine((entry) => !isShellProgram(entry), {
+          message:
+            'A shell cannot be on the list: it would run anything. ' +
+            'Name the programs the agent needs (node, npx vitest, git) instead.',
+        }),
     )
     .max(50)
     .nullable(),

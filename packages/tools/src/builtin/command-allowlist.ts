@@ -31,6 +31,15 @@
 // worse than no control: it buys a decision (turning auto-approve on) with a
 // guarantee it does not provide.
 //
+// A SHELL ON THE LIST IS A LIST THAT MEANS NOTHING. `cmd` reads as "this agent
+// may run cmd" and grants `cmd /c <anything>`, because this check has already
+// passed by the time the shell picks its child. Same for `powershell -c`,
+// `sh -c`, `bash -lc`, `wsl <x>`. The set is `SHELL_PROGRAMS`
+// (`@nodal-agents/shared`) and the settings action refuses such an entry when
+// the owner SAVES it — the honest moment to say the product cannot honour that
+// intention, rather than three weeks later inside a job. Nothing re-checks it
+// here: this module compares a program name, which is what it is good at.
+//
 // The list is DATA on the agent row (`agents.command_allowlist`), never a
 // hardcoded per-agent branch — invariant #1. It is read ONCE per job, when the
 // runner loads the agent row (`apps/runner/src/job/execute.ts`), and the same
