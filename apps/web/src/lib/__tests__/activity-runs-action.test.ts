@@ -52,8 +52,14 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
   };
 });
 
-/** Un instant fixe, pour que l'ordre du temps soit une donnée et non un hasard. */
-const T0 = new Date('2026-09-17T08:00:00.000Z');
+/**
+ * L'instant de référence des runs écrits ici : une heure DEVANT l'horloge.
+ *
+ * `seedMinimal` crée un job daté de `now()`, et la liste rend du plus récent au
+ * plus ancien. Une date en dur aurait fait basculer l'ordre attendu le jour où
+ * l'horloge la dépasse — ce qui ne se serait vu qu'un matin, en CI, loin d'ici.
+ */
+const T0 = new Date(Date.now() + 60 * 60 * 1000);
 const at = (secondes: number): Date => new Date(T0.getTime() + secondes * 1000);
 
 /** La sortie d'outil qui ne doit JAMAIS apparaître dans la liste des runs. */
@@ -61,6 +67,12 @@ const SORTIE_OUTIL = 'marqueur-sortie-outil-qui-ne-doit-pas-voyager';
 
 let chatRunId: string;
 let cronRunId: string;
+/** Le run dont deux appels portent LA MÊME date, à la milliseconde. */
+let exAequoRunId: string;
+// Deux ids choisis, pas tirés au sort : c'est l'id qui tranche une égalité de
+// date, donc le test doit savoir lequel passe devant.
+const ID_OUTIL_EX_AEQUO = '11111111-1111-4111-8111-aaaaaaaaaaaa';
+const ID_MODELE_EX_AEQUO = '99999999-9999-4999-8999-ffffffffffff';
 
 beforeAll(async () => {
   const result = await spinUpTestDb();
@@ -172,6 +184,47 @@ beforeAll(async () => {
       createdAt: at(200 + i),
     })),
   );
+
+  // Run C — deux appels ÉCRITS À LA MÊME MILLISECONDE, un d'outil et un de
+  // modèle. C'est le cas que les autres runs ne peuvent pas poser : leurs
+  // dates sont toutes distinctes, donc le départage d'une égalité n'y est
+  // jamais exercé, et l'ordre y resterait stable même sans départage. Daté
+  // AVANT les deux autres pour ne pas déplacer ce que la pagination attend.
+  const [exAequo] = await testDb
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      task: 'Deux appels dans la même milliseconde',
+      status: 'completed',
+      createdAt: at(-1000),
+    })
+    .returning({ id: agentJobs.id });
+  exAequoRunId = exAequo!.id;
+
+  const MEME_INSTANT = at(-900);
+  await testDb.insert(toolCalls).values({
+    id: ID_OUTIL_EX_AEQUO,
+    entityId: seed.entityId,
+    jobId: exAequoRunId,
+    toolName: 'ex_aequo_tool',
+    toolInput: {},
+    toolOutput: 'ok',
+    turn: 1,
+    createdAt: MEME_INSTANT,
+  });
+  await testDb.insert(llmCalls).values({
+    id: ID_MODELE_EX_AEQUO,
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    jobId: exAequoRunId,
+    source: 'job',
+    provider: 'openrouter',
+    modelEffective: 'ex-aequo-model',
+    turn: 1,
+    createdAt: MEME_INSTANT,
+  });
 });
 
 describe('listActivityRunsAction @cap:suivre-execution/moteur', () => {
@@ -272,6 +325,25 @@ describe('listRunCallsAction @cap:suivre-execution/moteur', () => {
     // L'appel porte ce que le bloc du chat sait montrer : sa sortie, son issue.
     expect(second.kind === 'tool' && second.step.outputText).toBe(SORTIE_OUTIL);
     expect(second.kind === 'tool' && second.step.outcome).toBe('success');
+  });
+
+  it('à date ÉGALE, l’id tranche : l’ordre ne change pas d’un chargement à l’autre', async () => {
+    const { listRunCallsAction } = await import('../actions.ts');
+    // Deux fois la même lecture : deux appels de la même milliseconde ne
+    // doivent pas échanger leur place selon ce que la base a rendu en premier.
+    const un = await listRunCallsAction({ jobId: exAequoRunId });
+    const deux = await listRunCallsAction({ jobId: exAequoRunId });
+    expect(un.ok && deux.ok).toBe(true);
+    if (!un.ok || !deux.ok) return;
+
+    expect(un.data.items).toHaveLength(2);
+    expect(new Date(un.data.items[0]!.createdAt!).getTime()).toBe(
+      new Date(un.data.items[1]!.createdAt!).getTime(),
+    );
+    // Le plus petit id passe devant — ici l'appel d'outil.
+    expect(un.data.items.map((c) => c.id)).toEqual([ID_OUTIL_EX_AEQUO, ID_MODELE_EX_AEQUO]);
+    expect(un.data.items.map((c) => c.kind)).toEqual(['tool', 'model']);
+    expect(deux.data.items.map((c) => c.id)).toEqual(un.data.items.map((c) => c.id));
   });
 
   it('ne rend que les appels de CE run', async () => {

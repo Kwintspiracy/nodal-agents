@@ -12,8 +12,8 @@
 //   — les appels ne sont demandés QU'AU DÉPLIAGE (`listRunCallsAction`, un run
 //     à la fois). La page, elle, ne charge que des runs et leur compte ;
 //   — un run qui tourne encore GRANDIT : tant qu'il est vivant et déplié, la
-//     dernière page de ses appels est relue toutes les trois secondes et le
-//     compteur de la ligne repliée suit. Même mécanisme que le fil de
+//     dernière page de ses appels est relue (voir les garde-fous du suivi plus
+//     bas) et le compteur de la ligne repliée suit. Même mécanisme que le fil de
 //     conversation (`spaces/LiveRefresh.tsx` : un intervalle, une relecture,
 //     pas un second chemin de données) — seule la portée change, parce que les
 //     appels d'une ligne dépliée sont un état du navigateur qu'un
@@ -36,7 +36,30 @@ import ModelCallBlock from './ModelCallBlock.tsx';
 /** Combien d'appels une page de dépliage porte, et ce que « show more » ajoute. */
 export const CALLS_PAGE_SIZE = 50;
 
-const REFRESH_MS = 3000;
+/**
+ * Le suivi d'une ligne dépliée, et ses trois garde-fous.
+ *
+ * Suivre un run vivant coûte une requête par tour. Sans limite, un run resté
+ * bloqué en `processing` — ça arrive, c'est même ce que la page sert à voir —
+ * ferait battre un onglet oublié toute la nuit : à trois secondes, presque
+ * trente mille requêtes. Donc :
+ *
+ *   — l'onglet CACHÉ ne demande rien (personne ne lit) ;
+ *   — le rythme s'espace : trois secondes pendant cinq minutes, le temps de
+ *     regarder un run travailler, puis trente secondes ;
+ *   — au bout d'une demi-heure le suivi S'ARRÊTE, et la ligne le DIT. Un
+ *     suivi qui s'arrête en silence se lirait comme un run qui ne fait plus
+ *     rien (invariant #4).
+ */
+const FOLLOW_FAST_MS = 3_000;
+const FOLLOW_SLOW_MS = 30_000;
+const FOLLOW_SLOWS_AFTER_MS = 5 * 60_000;
+const FOLLOW_STOPS_AFTER_MS = 30 * 60_000;
+
+/** Le délai avant la prochaine relecture, selon le temps déjà passé à suivre. */
+export function followDelayMs(elapsedMs: number): number {
+  return elapsedMs < FOLLOW_SLOWS_AFTER_MS ? FOLLOW_FAST_MS : FOLLOW_SLOW_MS;
+}
 
 export function statusVariant(status: string | null): StatusVariant {
   if (status === 'completed') return 'done';
@@ -85,6 +108,8 @@ export default function RunRow({
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Le plafond de suivi est atteint : la ligne ne demande plus rien, et le dit. */
+  const [stoppedFollowing, setStoppedFollowing] = useState(false);
   // Le nombre de pages déjà chargées, lisible depuis l'intervalle sans le
   // relancer à chaque page ajoutée.
   const pageCount = useRef(0);
@@ -124,13 +149,29 @@ export default function RunRow({
   // Tant que le run tourne : la DERNIÈRE page relue, là où les nouveaux appels
   // se posent. Les pages précédentes sont closes, les relire ne dirait rien de
   // neuf et ferait sauter ce que le lecteur est en train de lire.
+  //
+  // Une chaîne de `setTimeout`, pas un `setInterval` : le délai change en
+  // cours de route (voir followDelayMs), et un intervalle fixe ne sait pas
+  // s'espacer.
   useEffect(() => {
-    if (!expanded || !runIsLive(run.status)) return;
-    const id = setInterval(() => {
-      void loadPage(Math.max(1, pageCount.current));
-    }, REFRESH_MS);
-    return () => clearInterval(id);
-  }, [expanded, run.status, loadPage]);
+    if (!expanded || !runIsLive(run.status) || stoppedFollowing) return;
+    const startedAt = Date.now();
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = (): void => {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= FOLLOW_STOPS_AFTER_MS) {
+        setStoppedFollowing(true);
+        return;
+      }
+      // Onglet caché : on garde le rythme, on ne demande rien.
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+        void loadPage(Math.max(1, pageCount.current));
+      }
+      timer = setTimeout(tick, followDelayMs(Date.now() - startedAt));
+    };
+    timer = setTimeout(tick, followDelayMs(0));
+    return () => clearTimeout(timer);
+  }, [expanded, run.status, stoppedFollowing, loadPage]);
 
   const calls = pages.flat();
   const count = total ?? run.callCount;
@@ -232,6 +273,12 @@ export default function RunRow({
                 ),
               )}
             </div>
+
+            {stoppedFollowing && runIsLive(run.status) && (
+              <div className="mt-3 text-body-13 text-ink-4" data-testid="run-follow-stopped">
+                Stopped following, reload to resume.
+              </div>
+            )}
 
             {hasMore && (
               <div className="mt-3">

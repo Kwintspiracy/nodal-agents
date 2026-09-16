@@ -297,3 +297,116 @@ describe('RunRow — la ligne dépliée @cap:suivre-execution/ecran', () => {
     }
   });
 });
+
+// ─── Ce que suivre un run coûte ───────────────────────────────────────────────
+//
+// Un run bloqué en `processing` — le cas même que cette page sert à voir — est
+// suivi par une ligne que personne ne referme. Sans garde-fou, un onglet oublié
+// demande ses appels toutes les trois secondes jusqu'au matin : près de trente
+// mille requêtes. Ces trois cas tiennent les trois garde-fous, et chacun tombe
+// en rouge si on retire le sien (mutations vérifiées : plafond retiré, délai
+// constant, `visibilityState` ignoré).
+
+/** Monte la ligne d'un run EN COURS, déjà dépliée, et rend le premier appel. */
+async function renderEnCours(): Promise<void> {
+  const enCours: ActivityRunRow = { ...run, status: 'processing', callCount: 1 };
+  listRunCallsAction.mockResolvedValue({
+    ok: true,
+    data: {
+      items: [toolCall('t1', 'notion_search')],
+      page: 1,
+      pageSize: 50,
+      hasMore: false,
+      total: 1,
+    },
+  });
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root.render(
+      <table>
+        <tbody>
+          <RunRow run={enCours} columns={8} defaultExpanded />
+        </tbody>
+      </table>,
+    );
+  });
+}
+
+describe('RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran', () => {
+  it('s’espace : après cinq minutes, trois secondes ne demandent plus rien, trente secondes si', async () => {
+    vi.useFakeTimers();
+    try {
+      await renderEnCours();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+      });
+      const apresCinqMinutes = listRunCallsAction.mock.calls.length;
+      // Le rythme rapide a bien tourné pendant ces cinq minutes.
+      expect(apresCinqMinutes).toBeGreaterThan(50);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_100);
+      });
+      expect(listRunCallsAction.mock.calls.length).toBe(apresCinqMinutes);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(listRunCallsAction.mock.calls.length).toBe(apresCinqMinutes + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('s’arrête au bout d’une demi-heure, et le DIT', async () => {
+    vi.useFakeTimers();
+    try {
+      await renderEnCours();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31 * 60_000);
+      });
+      const auPlafond = listRunCallsAction.mock.calls.length;
+
+      // La ligne le dit — un suivi qui s'arrête en silence se lirait comme un
+      // run qui ne fait plus rien.
+      expect(container.querySelector('[data-testid="run-follow-stopped"]')?.textContent).toContain(
+        'Stopped following',
+      );
+
+      // Et plus rien n'est demandé, jamais : une heure de plus ne bouge pas.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60 * 60_000);
+      });
+      expect(listRunCallsAction.mock.calls.length).toBe(auPlafond);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ne demande rien quand l’onglet est caché', async () => {
+    vi.useFakeTimers();
+    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    });
+    try {
+      await renderEnCours();
+      // Le dépliage lui-même a lu une fois : c'est le geste du lecteur.
+      const auDepliage = listRunCallsAction.mock.calls.length;
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(listRunCallsAction.mock.calls.length).toBe(auDepliage);
+    } finally {
+      delete (document as unknown as Record<string, unknown>)['visibilityState'];
+      if (visibility) Object.defineProperty(Document.prototype, 'visibilityState', visibility);
+      vi.useRealTimers();
+    }
+  });
+});
