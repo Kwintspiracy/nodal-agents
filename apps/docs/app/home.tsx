@@ -28,6 +28,8 @@ import {
   LINK_GITHUB,
   LINK_NPM,
   LINK_QA,
+  CAPABILITIES,
+  CAPABILITIES_VERIFIED,
   MEASURED_COMMIT,
   MEASURED_ON,
   MEASURED_RUN_URL,
@@ -463,9 +465,10 @@ export default function Home() {
           </div>
           <p className="home-figures-note">
             Measured by the nightly run on {MEASURED_ON}, commit {MEASURED_COMMIT}.{' '}
-            <a href={MEASURED_RUN_URL}>See the run</a>. Twelve of the twenty-four capabilities are
-            green at both levels today. The other twelve are missing one level, and the page that
-            tracks them says so in grey rather than in green.
+            <a href={MEASURED_RUN_URL}>See the run</a>. {CAPABILITIES_VERIFIED} of the{' '}
+            {CAPABILITIES} capabilities are green at both levels today. The other{' '}
+            {CAPABILITIES - CAPABILITIES_VERIFIED} are missing one level, and the page that tracks
+            them says so in grey rather than in green.
           </p>
 
           <ol className="home-steps">

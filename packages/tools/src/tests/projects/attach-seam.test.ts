@@ -143,8 +143,20 @@ describe('le registre au seam d’exécution', () => {
       .where(eq(toolCalls.jobId, jobId));
     expect(audit.map((r) => r.toolName)).toContain('file_write');
 
-    // 3. Le job porte le projet — la trace qui n'existait pas avant P5.
-    expect(await projetDuJob(jobId)).toBe(projetId);
+    // 3. Le job porte le projet — la trace qui n'existait pas avant P5 — ET
+    //    c'est celui que L'INTENTION vient de salir, pas son sous-dossier
+    //    enregistré. Le terrain porte un manifeste : l'intention le nomme, lui.
+    //    Ce cas est le constat de la revue de la PR #103 (Reviewer C) pris au
+    //    VRAI seam — le job partait sur `projet-x`, un enfant du projet dont
+    //    l'état de vérification est tenu, et `declare_verification` sur le
+    //    terrain refusait alors un travail réellement fait.
+    const [ligneTerrain] = await db
+      .select({ id: codeProjects.id })
+      .from(codeProjects)
+      .where(eq(codeProjects.projectKey, projectKey(terrain)));
+    expect(ligneTerrain, 'le terrain à manifeste est déclaré par le seam').toBeDefined();
+    expect(await projetDuJob(jobId)).toBe(ligneTerrain!.id);
+    expect(await projetDuJob(jobId)).not.toBe(projetId);
   });
 
   it('un chemin HORS terrain reste refusé, et n’attache rien', async () => {

@@ -50,6 +50,7 @@ import {
 } from './coding-changes.ts';
 import {
   entityWorkspaceRoots,
+  entityDeclaredCodeRoots,
   sharedWorkspacePath as sharedWorkspacePathOf,
 } from './workspace-roots.ts';
 import {
@@ -12380,6 +12381,10 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       // Paths are CANONICALIZED (absolute CLI form vs workspace-relative
       // Nodal form = the same file) so the count never doubles.
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
+      // Une déclaration vaut manifeste : même règle d'identité que l'intention,
+      // l'observation, le registre et le contexte des agents (revue Codex de la
+      // dette de la PR #75, passe 2, constat 1).
+      const declaredCodeRoots = await entityDeclaredCodeRoots(db, entityId);
       const filesByRoot = new Map<string, Set<string>>();
       for (const [root, calls] of callsByRoot) {
         if (!candidateJobIds.includes(root)) continue;
@@ -12467,7 +12472,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         // a rien à nommer.
         const aVisePro = jobChanges.some((c) => isInsideWorkspace(c, ws));
         const projectPath =
-          deriveProjectRoot(jobChanges, ws, devMemo) ??
+          deriveProjectRoot(jobChanges, ws, devMemo, declaredCodeRoots) ??
           (!aVisePro && j.agentId
             ? fallbackProjectFromAgentWorkspaces(workspacesByAgent.get(j.agentId) ?? [], devMemo)
             : null);
@@ -12908,6 +12913,10 @@ export async function getCodingProcessDetailAction(
       // absolute form and the Nodal tools' workspace-relative form collapse
       // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
       const workspaceRoots = await entityWorkspaceRoots(db, entityId);
+      // Une déclaration vaut manifeste : même règle d'identité que l'intention,
+      // l'observation, le registre et le contexte des agents (revue Codex de la
+      // dette de la PR #75, passe 2, constat 1).
+      const declaredCodeRoots = await entityDeclaredCodeRoots(db, entityId);
 
       // Les dossiers des agents du pipeline — MÊME règle que la liste (revue
       // Codex, 26/08). Sans ça, la liste annonçait un fichier et le détail en
@@ -13099,7 +13108,12 @@ export async function getCodingProcessDetailAction(
         jobDurationMs > 0 ? jobDurationMs : cliDurationMs > 0 ? cliDurationMs : null;
 
       const detailMemo = new Map<string, string | null>();
-      let detailProjectPath = deriveProjectRoot(rawChanges, detailWorkspaces, detailMemo);
+      let detailProjectPath = deriveProjectRoot(
+        rawChanges,
+        detailWorkspaces,
+        detailMemo,
+        declaredCodeRoots,
+      );
       // Même repli que la liste, MÊME condition : uniquement quand il n'y avait
       // aucun fichier à ancrer. Sinon il rattraperait les cas où la dérivation
       // a délibérément renoncé (projet supprimé, écritures toutes refusées) et

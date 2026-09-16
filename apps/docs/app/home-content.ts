@@ -1,4 +1,5 @@
 import facts from '../lib/catalog-facts.json';
+import measured from '../lib/measured-facts.json';
 
 /**
  * Everything the homepage states, in one place.
@@ -402,24 +403,26 @@ export interface Figure {
 }
 
 /**
- * Every figure below was read from `apps/qa/data/snapshot.json`, produced by the
- * nightly measurement (`.github/workflows/qa.yml`) on 14 September 2026, run
- * 34825077357, commit 3e067fb1. The date is printed next to the table on the
- * page: a number without its measurement date is a number nobody can check.
+ * Every figure below comes from `lib/measured-facts.json`, derived on each build
+ * from `apps/qa/data/snapshot.json` — the nightly measurement
+ * (`.github/workflows/qa.yml`) — by `scripts/gen-reference.ts`.
+ *
+ * They were transcribed by hand until issue #109. The nightly rewrites the
+ * snapshot with `[skip ci]`, so the constants went stale the moment it ran, and
+ * the next pull request opened inherited a red check for a drift it had not
+ * caused. A figure typed by hand is a figure that goes stale; there is one
+ * source now, and a snapshot missing a figure fails the build by name.
+ *
+ * The measurement date is printed next to the table: a number without its
+ * measurement date is a number nobody can check.
  */
-export const MEASURED_ON = '14 September 2026';
-export const MEASURED_COMMIT = '13329166';
-export const MEASURED_RUN_URL =
-  'https://github.com/Kwintspiracy/nodal-agents/actions/runs/34825077357';
+export const MEASURED_ON = measured.measuredOn;
+export const MEASURED_COMMIT = measured.commit;
+export const MEASURED_RUN_URL = measured.runUrl;
+export const CAPABILITIES = measured.capabilities;
+export const CAPABILITIES_VERIFIED = measured.capabilitiesVerified;
 
-export const FIGURES: readonly Figure[] = [
-  { value: '34', label: 'packages measured' },
-  { value: '6,982', label: 'test cases' },
-  { value: '564', label: 'test files' },
-  { value: '229', label: 'end-to-end cases' },
-  { value: '81.7%', label: 'line coverage' },
-  { value: '12 / 24', label: 'capabilities green at both levels' },
-];
+export const FIGURES: readonly Figure[] = measured.figures;
 
 export interface Practice {
   readonly title: string;
@@ -482,7 +485,7 @@ export const CI_JOBS: readonly CiJob[] = [
 /* ── Section 06 ─────────────────────────────────────────────────────────── */
 
 /** Source: apps/cli/package.json (version) and CHANGELOG.md (headline). */
-export const VERSION = '0.8.9';
+export const VERSION = '0.8.10';
 export const VERSION_DATE = 'September 2026';
 
 /** Source: README.md, "On the roadmap". */

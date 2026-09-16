@@ -469,6 +469,38 @@ describe('keywordSearchMemories', () => {
     expect(results.some((m) => m.fact.includes('integration token'))).toBe(true);
   });
 
+  it('stems the other way too — plural "clarinets" finds the singular "clarinet"', async () => {
+    // The e2e journey `apps/web/tests/e2e/memory-kept.spec.ts` rests on exactly
+    // this: it searches for a form the stored fact does NOT contain, so that
+    // the page's instant client-side substring filter cannot answer and only
+    // the server can. If this stopped being true, that journey would go green
+    // on an empty table instead of proving the server search (review of PR
+    // #113) — so the very words it uses are pinned here, not assumed.
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+    for (const fact of [
+      'Quentin plays the clarinet on Sunday mornings.',
+      'Quentin bakes sourdough on Saturdays.',
+    ]) {
+      await createMemory(freshDb, {
+        entity_id: freshSeed.entityId,
+        fact,
+        category: 'preference',
+        importance: 3,
+        source: 'manual',
+        skill_tags: [],
+      });
+    }
+
+    const results = await keywordSearchMemories(freshDb, {
+      query: 'clarinets',
+      entityId: freshSeed.entityId,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.fact).toContain('clarinet on Sunday');
+  });
+
   it('returns memories matching the query keywords', async () => {
     const results = await keywordSearchMemories(db, {
       query: 'user',

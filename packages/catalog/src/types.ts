@@ -52,9 +52,11 @@ export interface SystemSkill {
   kind?: SkillKind;
   /**
    * Les SURFACES où le texte de cette skill peut être suivi. Omis = `job`
-   * seulement pour une `baseline` qui prescrit des outils ; les autres kinds ne
-   * lisent pas ce champ (une `capability` se charge à la demande, un `channel`
-   * suit son canal).
+   * seulement, pour tout kind qui passe par `skillContentOn` — aujourd'hui les
+   * `baseline` ET les `channel`, qui sont assemblés par le même chemin. Une
+   * `capability` ne le lit pas : elle se charge à la demande. Ces lignes
+   * disaient « les autres kinds ne lisent pas ce champ », ce qui n'est pas vrai
+   * des channels (revue Codex de la dette de la PR #73, passe 3).
    *
    * Pourquoi c'est déclaré ICI et pas déduit par le runtime (invariant #3) :
    * une skill baseline dit « `file_read` before `file_write` », « `save_memory`
@@ -64,6 +66,24 @@ export interface SystemSkill {
    * skill sait si ses règles dépendent d'un outil ; elle le dit.
    */
   surfaces?: readonly PromptSurface[];
+  /**
+   * Ce qui reste VRAI de cette skill sur une surface sans outils — le texte
+   * injecté sur `chat` quand `surfaces` n'y met pas le texte complet.
+   *
+   * Pourquoi ce champ existe : `surfaces` est un interrupteur, et un
+   * interrupteur emporte tout. « Verify before done » et « Safe tool use »
+   * prescrivent des outils de fichiers, mais leurs règles ne sont pas toutes
+   * des gestes d'outil — « ne dis pas que c'est fait si tu ne l'as pas
+   * vérifié », « dis franchement que tu ne peux pas vérifier », « recoupe deux
+   * ou trois valeurs quand tu reformates des données » se suivent en
+   * conversation, sans rien appeler. Les perdre rendait le chat PLUS enclin à
+   * affirmer sans preuve, c'est-à-dire l'inverse du but (revue Codex de la
+   * dette de la PR #73, constat 1).
+   *
+   * C'est la skill qui écrit cette version, pas le runtime : l'invariant #3
+   * vaut pour ce champ comme pour `surfaces`. Omis = rien sur `chat`.
+   */
+  contentOnChat?: string;
   /**
    * Present this skill as a TOOL GROUP on the agent's Tools tab, and hide it
    * from every Skills surface.

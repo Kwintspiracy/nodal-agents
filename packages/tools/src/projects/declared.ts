@@ -18,9 +18,18 @@
 // L'intention salit alors une clé dont aucune configuration de vérification
 // n'existe, et la preuve du projet déclaré ne couvre pas ce qui vient d'être
 // écrit. Le prédicat ci-dessous met les deux faits au même niveau : une racine
-// est un projet si elle porte un manifeste OU si elle est déclarée. Les trois
-// endroits qui calculent une clé de projet le partagent, pour qu'aucun d'eux
-// ne voie un projet là où un autre n'en voit pas.
+// est un projet si elle porte un manifeste OU si elle est déclarée.
+//
+// SIX endroits calculent une clé de projet, et ils doivent tous répondre pareil
+// — sinon l'un voit un projet là où un autre n'en voit pas. Les quatre du
+// paquet `tools` appellent cette fonction : les deux résolutions d'intention,
+// l'observation, et le registre d'attachement. Les deux autres vivent hors de
+// ce paquet et REFONT la même règle, parce qu'ils ne peuvent pas dépendre de
+// `tools` : le contexte injecté aux agents
+// (`apps/runner/src/job/code-projects.ts`) et l'écran Code
+// (`apps/web/src/lib/code-projects.ts`). Ce commentaire en annonçait trois, et
+// il en manquait deux à l'appel (revue Codex de la dette de la PR #75, passes 2
+// et 3) : si un septième apparaît, c'est ici qu'on l'écrit.
 
 import { and, eq, isNotNull, codeProjects } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';

@@ -104,6 +104,26 @@ export function skillKind(s: SystemSkill): SkillKind {
 export function skillAppliesOn(s: SystemSkill, surface: PromptSurface): boolean {
   return (s.surfaces ?? ['job']).includes(surface);
 }
+
+/**
+ * Le TEXTE de cette skill pour cette surface, ou `null` — elle n'y dit rien.
+ *
+ * Deux façons d'être présente : la surface est déclarée, et tout le texte s'y
+ * suit ; ou la skill a écrit ce qui en reste vrai sans outil (`contentOnChat`),
+ * et c'est cela qui part sur le chat.
+ *
+ * Ce second chemin existe parce que `surfaces` est un interrupteur, et qu'un
+ * interrupteur emporte tout : les règles d'une baseline ne sont pas toutes des
+ * gestes d'outil, et perdre « ne dis pas que c'est fait si tu ne l'as pas
+ * vérifié » rendait le chat PLUS enclin à affirmer sans preuve — l'inverse du
+ * but poursuivi (revue Codex de la dette de la PR #73, constat 1).
+ */
+export function skillContentOn(s: SystemSkill, surface: PromptSurface): string | null {
+  if (skillAppliesOn(s, surface)) return s.content.trim();
+  if (surface === 'chat' && s.contentOnChat !== undefined) return s.contentOnChat.trim();
+  return null;
+}
+
 /** Kind of a system skill by slug; null when the slug is not a system skill. */
 export function skillKindOfSlug(slug: string): SkillKind | null {
   const s = systemSkills.find((x) => x.slug === slug);

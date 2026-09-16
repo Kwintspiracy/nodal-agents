@@ -40,7 +40,9 @@ export const EXPLICATIONS = {
 </ul>
 <p>The left bar follows the same order as the eye: Work in flight, Capabilities, Gaps, Journeys, Test memory. Those five pages are the ones you steer with, and they read in that order.</p>
 <p>Under the "How it runs" heading sit the four plumbing pages: the test overview, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
-<p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>`,
+<p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>
+<p>A "no verified facts" pill marks an open card that an agent opened without a <code>Verified</code> section stating the commands it ran and what they answered. Nothing in such a card was checked against npm, git or a test run, and that is precisely how a version published a week earlier became a task on this board.</p>
+<p>Above the columns, the release block says what npm serves, what the repository carries, and how many commits sit on main since the last tag. If an open card asks to publish a version npm already has, it is named right there.</p>`,
       },
       {
         titre: 'Where it comes from',
@@ -57,7 +59,10 @@ export const EXPLICATIONS = {
         texte: `<p>Neither the priority between two cards in the same column, nor the time spent. An "In progress" card does not say whether anyone is actually working on it, only that it is neither settled, nor carried by a pull request, nor closed.</p>`,
       },
     ],
-    blocs: {},
+    blocs: {
+      release:
+        'What npm serves right now, against what this repository carries. Both numbers are read from npm and from git at collection time, never typed in, so a card asking to publish a version that is already published gets named here instead of being believed for four days.',
+    },
   },
 
   capacites: {
@@ -202,13 +207,14 @@ export const EXPLICATIONS = {
 <li><b>Every pull request</b>: played before every merge: it BLOCKS a regression. Two journeys only (the smoke test).</li>
 <li><b>Every night</b>: played by the nightly measurement: it OBSERVES a regression after the fact, without blocking it.</li>
 <li><b>By hand</b>: versioned, played by no CI. It only exists on paper.</li>
+<li><b>Never played</b>: no workflow names it at all. The portal marks these <b>red</b>, not grey: a file nobody runs guards nothing, and a grey badge asks nothing of anyone. <code>agent-flows.spec.ts</code> sat there for a year expecting a local model server, looking exactly like a healthy journey whose report was missing.</li>
 </ul>
 <p>Under the file name, the <b>description</b>: the first sentence of its header, the one its author wrote to say what the journey does. When the file carries none, the row says "no description" rather than nothing, that is something to fix in the file, not in the portal.</p>
-<p>Every row carries its last result, case by case: <b>green</b>, <b>red</b>, <b>skipped</b> (the test turned itself off, often because an external service is missing), <b>flaky</b> (passed on the second attempt, that is not a green). A "red" journey is not necessarily a product fault: on a fresh runner, with neither Google nor Notion configured, a journey that expects them fails for an environment reason.</p>`,
+<p>A journey no workflow plays carries <b>never played</b> in red, whatever a local run may have said about it: the fact being measured is "guarded by a continuous integration", not "ran once somewhere". Every other row carries its last result, case by case: <b>green</b>, <b>red</b>, <b>skipped</b> (the test turned itself off, often because an external service is missing), <b>flaky</b> (passed on the second attempt, that is not a green). A "red" journey is not necessarily a product fault: on a fresh runner, with neither Google nor Notion configured, a journey that expects them fails for an environment reason.</p>`,
       },
       {
         titre: 'Where it comes from',
-        texte: `<p>From the <code>apps/web/tests/e2e/*.spec.ts</code> files (Playwright). The description is read from the file itself: the first comment block, imports aside, up to its first blank line, decorative banners (<code>── Constants ───</code>) are skipped, and failing a header it is the title of the first <code>describe</code>. The cadence is READ from the CI workflow files, not declared: if nobody runs a journey, the portal says so. The last result comes from Playwright's JSON report, produced by the nightly measurement, which plays 29 journeys out of 30 (<code>agent-flows</code> is excluded: it expects an LM Studio on Quentin's machine).</p>`,
+        texte: `<p>From the <code>apps/web/tests/e2e/*.spec.ts</code> files (Playwright). The description is read from the file itself: the first comment block, imports aside, up to its first blank line, decorative banners (<code>── Constants ───</code>) are skipped, and failing a header it is the title of the first <code>describe</code>. The cadence is READ from the CI workflow files, not declared: if nobody runs a journey, the portal says so. The last result comes from Playwright's JSON report, produced by the nightly measurement, which plays every journey in the folder: there is no exclusion left, and no journey needs a model.</p>`,
       },
       {
         titre: 'When to act',

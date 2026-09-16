@@ -11,7 +11,16 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ecartsDe, verdictDuBanc, tendance, MOT_ETAT } from './lib.mjs';
+import {
+  ecartsDe,
+  verdictDuBanc,
+  tendance,
+  etatDunParcours,
+  cadenceAffichee,
+  ORDRE_DES_BACS,
+  MOT_ETAT,
+  publicationsDejaFaites,
+} from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
 const ICI = dirname(fileURLToPath(import.meta.url));
@@ -238,6 +247,14 @@ function vueEnsemble() {
         : `${tCouv.direction === 'monte' ? 'Up' : 'Down'} ${Math.abs(tCouv.delta)} point(s) over 7 days.`;
   const couvert = pct(r.couvertureLignes);
   const partJouee = r.specsE2e > 0 ? Math.round((r.specsE2eJoueesParLaCi / r.specsE2e) * 100) : 0;
+  // La carte comptait `specsE2e - specsE2eJoueesParLaCi`, une soustraction à elle
+  // seule, sans passer par `etatDunParcours`. Sous un workflow illisible, la page
+  // Journeys et l'alerte ne montraient aucun rouge pendant que cette carte-ci
+  // annonçait « 30 never played » : trois endroits, deux réponses (revue de la
+  // PR #113, 3e passe). Elle lit désormais la même définition que les deux autres.
+  const etats = (s.parcours ?? []).map((p) => etatDunParcours(p).cle);
+  const jamaisJoues = etats.filter((c) => c === 'jamais joué').length;
+  const illisibles = etats.filter((c) => c === 'ci illisible').length;
 
   return `
 <section id="vue" class="vue">
@@ -261,10 +278,16 @@ function vueEnsemble() {
       <p class="sous">in ${n(r.fichiersDeTest)} files, end-to-end aside</p>
     </article>
 
-    <article class="carte ${partJouee < 50 ? 'carte--alerte' : ''}">
+    <article class="carte ${jamaisJoues > 0 ? 'carte--alerte' : ''}">
       <h3>Journeys played by the CI</h3>
       <p class="chiffre">${r.specsE2eJoueesParLaCi} <span class="sur">/ ${r.specsE2e}</span></p>
-      <p class="sous">${n(r.casE2e)} cases written · <b>${r.specsE2e - r.specsE2eJoueesParLaCi} journey${r.specsE2e - r.specsE2eJoueesParLaCi > 1 ? 's' : ''} never run</b></p>
+      <p class="sous">${n(r.casE2e)} cases written · ${
+        illisibles > 0
+          ? `<b>${illisibles} of unknown fate</b>: a workflow cannot be read`
+          : jamaisJoues > 0
+            ? `<b>${jamaisJoues} never played</b>`
+            : 'every one of them played'
+      }</p>
       ${barre(partJouee, 'journeys played')}
     </article>
 
@@ -316,22 +339,24 @@ function vueParcours() {
   // qui ne garde rien.
   const parCadence = new Map();
   for (const p of s.parcours) {
-    const c = p.cadence ?? 'never played';
+    // Le libellé vient de `lib.mjs`, jamais d'un calcul refait ici : le bac et
+    // la couleur de la ligne doivent sortir de la même définition.
+    const c = cadenceAffichee(p);
     parCadence.set(c, [...(parCadence.get(c) ?? []), p]);
   }
-  const ORDRE = [
-    'every pull request',
-    'every push to main',
-    'every night',
-    'by hand',
-    'never played',
-  ];
+  const ORDRE = ORDRE_DES_BACS;
 
   const ligne = (p) => {
     const r = p.resultat;
+    const e = etatDunParcours(p);
     let etat;
-    if (!r) {
-      etat = '<span class="pastille pastille--inconnu">never run here</span>';
+    if (e.rouge) {
+      // ROUGE, et nommé. Un fichier que personne ne joue garde zéro
+      // régression, et il ne le disait pas : il portait le même gris qu'un
+      // parcours sain dont le rapport manque (issue #110).
+      etat = `<span class="pastille pastille--ko">${e.mot}</span>`;
+    } else if (!r) {
+      etat = `<span class="pastille pastille--inconnu">${e.mot}</span>`;
     } else {
       // Quatre sorts, montrés SÉPARÉMENT. Un cas ignoré n'est pas un cas rouge :
       // les confondre, c'est le défaut que ce portail dénonce ailleurs.
@@ -350,7 +375,8 @@ function vueParcours() {
           ? `<span class="intention">${esc(p.intention)}</span>`
           : '<span class="intention intention--absente">no description</span>'
       }
-        ${r?.rouge ? lienRun(s.execution?.url) : ''}</td>
+        ${r?.rouge ? lienRun(s.execution?.url) : ''}
+        ${e.rouge ? '<br><span class="intention intention--absente">Nothing runs it: this file guards nothing.</span>' : ''}</td>
       <td class="num">${p.cas}</td>
       <td>${etat}</td>
       <td class="num dim">${r?.dureeMs ? `${(r.dureeMs / 1000).toFixed(1)} s` : '·'}</td>
@@ -366,8 +392,10 @@ function vueParcours() {
         : cadence === 'every night'
           ? 'These OBSERVE it the next day. They guard no pull request.'
           : cadence === 'never played'
-            ? 'Written, versioned, and run by no continuous integration.'
-            : '';
+            ? 'Written, versioned, and run by no continuous integration. These are reds, not blanks: they guard nothing.'
+            : cadence === 'workflow unreadable'
+              ? 'A workflow names the e2e directory in a shape the portal cannot read, so nothing can be said about these files. Neither green nor red: the reader is what needs fixing.'
+              : '';
     return `<h3 class="sous-titre">${esc(cadence)} <span class="compte">${dedans.length}</span></h3>
       ${note ? `<p class="note-section">${note}</p>` : ''}
       <div class="tableau"><table>
@@ -377,10 +405,16 @@ function vueParcours() {
   };
 
   const bloque = (parCadence.get('every pull request') ?? []).length;
+  const jamais = s.parcours.filter((p) => etatDunParcours(p).rouge);
   return `
 <section id="parcours" class="vue">
   ${entete('parcours', 'Journeys')}
   <p class="chapo">${s.parcours.length} versioned, and <b>only ${bloque} guard a pull request</b>: the others observe after the fact, or never.</p>
+  ${
+    jamais.length > 0
+      ? `<div class="alerte"><b>${jamais.length} journey${jamais.length > 1 ? 's are' : ' is'} never played.</b> A journey nobody runs is a claim of coverage that does not exist. Delete it, or put it in a workflow.</div>`
+      : ''
+  }
   ${repere('parcours', 'cadence')}
   ${ORDRE.map(bloc).join('\n')}
 </section>`;
@@ -816,10 +850,57 @@ const TONS_ETIQUETTE = {
   product: 'rose',
 };
 
+/**
+ * Ce que npm sert, face à ce que le dépôt porte.
+ *
+ * Le bloc qui manquait le 12/09/2026, quand une issue « Publish 0.8.9 » a vécu
+ * quatre jours sur ce tableau alors que 0.8.9 était publiée depuis trois jours.
+ * Aucun de ces chiffres n'est saisi : ils viennent de `npm view` et de `git`, à
+ * la collecte.
+ *
+ * npm muet : le bloc DIT le trou et son heure. Jamais l'ancienne réponse sans
+ * sa date, jamais un vert par défaut.
+ */
+function cadreRelease() {
+  const r = s.release ?? null;
+  if (!r) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>Release state not collected.</b> This measurement predates the check, so nothing is claimed about what is published.</div>`;
+  }
+  if (r.npmInjoignable) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>npm unreachable at ${esc(dateFr(r.verifieLe))}.</b> Nothing is known about what is published. The repo carries <code>${esc(r.versionDuDepot ?? '·')}</code>.</div>`;
+  }
+  // npm a répondu « ce nom n'existe pas ». C'est un FAIT, pas un silence : le
+  // dire en « unreachable » accuserait le réseau et laisserait croire au doute.
+  if (r.jamaisPubliee) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>Not published on npm yet</b>, checked at ${esc(dateFr(r.verifieLe))}. npm answered, and the name is free. The repo carries <code>${esc(r.versionDuDepot ?? '·')}</code>.</div>`;
+  }
+  const dejaFait = publicationsDejaFaites(s.chantiers?.cartes ?? null, r);
+  const chiffre = (valeur, libelle) =>
+    `<div class="chiffre-release"><b>${esc(valeur)}</b><span>${esc(libelle)}</span></div>`;
+  return `<div class="cadre-release">
+    <div class="chiffres-release">
+      ${chiffre(r.surNpm ?? '·', `latest on npm, published ${jourFr(r.publieeLe)}`)}
+      ${chiffre(r.versionDuDepot ?? '·', 'version in the repo')}
+      ${chiffre(n(r.commitsDepuisLeTag), `commits on main since ${r.dernierTag ?? 'no tag'}`)}
+    </div>
+    ${
+      dejaFait.length
+        ? `<p class="avertissement-release"><b>${dejaFait.length} open card${dejaFait.length > 1 ? 's ask' : ' asks'} to publish a version already on npm:</b> ${dejaFait
+            .map((c) => `<span class="jeton mono">#${c.numero} ${esc(c.titre)}</span>`)
+            .join(' ')}</p>`
+        : ''
+    }
+  </div>`;
+}
+
 function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
     return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Work in flight')}
+      ${repere('chantiers', 'release')}${cadreRelease()}
       <div class="alerte">GitHub did not answer, the portal shows nothing rather than a stale list.</div></section>`;
   }
 
@@ -835,8 +916,15 @@ function vueChantiers() {
           : c.ci === 'en cours'
             ? '<span class="pastille pastille--inconnu">CI running</span>'
             : '';
+    // La provenance, sur la carte elle-même : une issue ouverte par un agent
+    // sans section « Verified » est une affirmation que personne n'a vérifiée.
+    // C'est exactement ce qu'était #68, et rien ne le disait.
+    const sansFaits =
+      c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies
+        ? '<span class="pastille pastille--ko">no verified facts</span>'
+        : '';
     return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}</span>
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}${sansFaits}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
     </a>`;
@@ -862,6 +950,7 @@ function vueChantiers() {
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
+  ${repere('chantiers', 'release')}${cadreRelease()}
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   <div class="kanban">${colonnes}</div>
 </section>`;
@@ -1158,6 +1247,18 @@ tr:last-child td{border-bottom:0}
 .unite{color:var(--encre3);font-size:11px}
 .ligne-meta{margin:0 0 7px;font-size:13px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 .ligne-meta b{color:var(--encre3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-right:3px}
+
+/* ── Release : ce que npm sert, face a ce que le depot porte ── */
+.cadre-release{border:1px solid var(--regle);padding:16px 20px;margin:0 0 26px;max-width:80ch}
+.cadre-release--absent{color:var(--encre2);font-size:15px;line-height:1.55}
+.cadre-release--absent b{color:var(--encre);font-family:Archivo,sans-serif}
+.chiffres-release{display:flex;flex-wrap:wrap;gap:34px}
+.chiffre-release{display:flex;flex-direction:column;gap:2px}
+.chiffre-release b{font-family:Archivo,sans-serif;font-size:26px;line-height:1;color:var(--encre)}
+.chiffre-release span{font-size:12px;color:var(--encre2)}
+.avertissement-release{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--regle);
+  font-size:14px;color:var(--ko);line-height:1.6}
+.avertissement-release b{font-family:Archivo,sans-serif}
 
 /* ── Kanban ── */
 .rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;

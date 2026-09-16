@@ -117,6 +117,67 @@ export function sortDuCas(essais) {
   return 'rouge';
 }
 
+/**
+ * Ce qu'il faut dire d'un parcours AVANT de regarder son dernier rapport.
+ *
+ * Trois états, et le premier est le seul qui soit une faute du dépôt :
+ *
+ *  - `jamais joué` — le fichier existe, aucune intégration continue ne le
+ *    lance. C'est un ROUGE, et il porte son nom. Le portail l'affichait
+ *    « never run here » en gris neutre, la même couleur qu'un parcours sain
+ *    dont le rapport manque : `agent-flows.spec.ts` a passé un an ainsi, à
+ *    réclamer un LM Studio que personne ne lançait (issue #110). Un gris ne
+ *    demande rien à personne.
+ *  - `sans rapport` — la CI le joue, ce rendu-ci n'a simplement pas son
+ *    rapport Playwright (un rendu local n'en a jamais). Inconnu, pas rouge :
+ *    peindre trente lignes en rouge sur une machine de développeur ferait une
+ *    page qui ne veut plus rien dire.
+ *  - `joué` — le rapport parle, et c'est lui qui décide de la couleur.
+ *
+ * Un rapport local ne rachète PAS un parcours qu'aucune CI ne joue : le fait
+ * mesuré est « gardé par une intégration continue », pas « lancé une fois ».
+ */
+export function etatDunParcours(p) {
+  // Un workflow dont on n'a pas su lire la forme ne prouve RIEN, ni dans un
+  // sens ni dans l'autre. Le dire « jamais joué » serait une affirmation qu'on
+  // ne peut pas faire — et elle peindrait trente lignes en rouge sur une panne
+  // de lecture du portail, pas du dépôt.
+  if (!p?.jouParLaCi && p?.ciIllisible) {
+    return { cle: 'ci illisible', rouge: false, mot: 'workflow unreadable' };
+  }
+  if (!p?.jouParLaCi) return { cle: 'jamais joué', rouge: true, mot: 'never played' };
+  if (!p.resultat) return { cle: 'sans rapport', rouge: false, mot: 'never run here' };
+  return { cle: 'joué', rouge: false, mot: null };
+}
+
+/**
+ * Sous quel titre un parcours se range sur la page Journeys.
+ *
+ * Sa cadence quand une CI le joue ; sinon le MOT d'`etatDunParcours`, et non un
+ * libellé recalculé. La page en avait un à elle (`p.cadence ?? (p.ciIllisible ?
+ * … : …)`) : deux définitions d'une même chose, donc un bac et une couleur de
+ * ligne qui se contrediront le jour où un quatrième état apparaîtra, sans que
+ * rien ne le dise (revue de la PR #113, 2e passe).
+ */
+export function cadenceAffichee(p) {
+  return p?.cadence ?? etatDunParcours(p).mot;
+}
+
+/**
+ * Les bacs de la page Journeys, du plus protecteur au moins protecteur.
+ *
+ * Tout ce que `cadenceAffichee` peut rendre DOIT figurer ici : un libellé
+ * absent de cette liste ferait disparaître ses parcours de la page en silence.
+ */
+export const ORDRE_DES_BACS = [
+  'every pull request',
+  'every push to main',
+  'every night',
+  'by hand',
+  'never played',
+  'workflow unreadable',
+];
+
 /** Le compte d'un fichier de parcours, par sort. */
 export function compterParcours(cas) {
   const c = { total: 0, vert: 0, rouge: 0, ignoré: 0, instable: 0 };
@@ -130,6 +191,44 @@ export function compterParcours(cas) {
 // ─── Ce qui déclenche un workflow, et à quelle cadence ────────────────────────
 
 /**
+ * Le texte d'un workflow SANS ses commentaires.
+ *
+ * Tout ce que ce fichier lit d'un workflow — ses déclencheurs, les parcours
+ * qu'il joue — se lisait dans le texte entier, commentaires compris. Or nos
+ * workflows sont abondamment commentés, et ces commentaires nomment les choses
+ * dont ils parlent : `qa.yml` explique en toutes lettres pourquoi
+ * `agent-flows.spec.ts` était exclu, `docs.yml` pourquoi il prend
+ * `pull_request_target` « et non `pull_request` ». Une phrase d'explication
+ * suffisait donc à déclarer un parcours joué, ou à inventer un déclencheur.
+ *
+ * Un commentaire YAML commence à un `#` en début de ligne ou précédé d'une
+ * espace, hors chaîne — `- cron: '17 3 * * *'` et `echo "a # b"` n'en portent
+ * aucun. Les lignes sont GARDÉES (tronquées, jamais supprimées) : les regex
+ * ancrées sur `^` qui lisent ce texte comptent sur la structure des lignes.
+ */
+export function sansCommentairesYaml(texte) {
+  return String(texte ?? '')
+    .split('\n')
+    .map((ligne) => {
+      let guillemet = null;
+      for (let i = 0; i < ligne.length; i += 1) {
+        const c = ligne[i];
+        if (guillemet) {
+          if (c === guillemet) guillemet = null;
+          continue;
+        }
+        if (c === "'" || c === '"') {
+          guillemet = c;
+          continue;
+        }
+        if (c === '#' && (i === 0 || /\s/.test(ligne[i - 1]))) return ligne.slice(0, i);
+      }
+      return ligne;
+    })
+    .join('\n');
+}
+
+/**
  * Les événements qui lancent un workflow, lus dans son texte.
  *
  * Vit ici, sous test, parce que la première version a passé une journée à
@@ -141,7 +240,8 @@ export function compterParcours(cas) {
  *
  * Une détection muette qui se trompe est pire qu'une absente : elle répond.
  */
-export function declencheursDunWorkflow(texte) {
+export function declencheursDunWorkflow(texte0) {
+  const texte = sansCommentairesYaml(texte0);
   if (!/^on:/m.test(texte)) return [];
   const out = [];
   if (/^\s*push:/m.test(texte)) out.push('push');
@@ -158,12 +258,17 @@ export function declencheursDunWorkflow(texte) {
  * régression avant le merge ; joué chaque nuit, il la constate après. Les
  * confondre, c'est appeler « couvert » un parcours qui ne garde rien.
  */
+/** La cadence qui BLOQUE — la plus forte des quatre. */
+export const CADENCE_CHAQUE_PR = 'every pull request';
+/** La cadence qui ne garde rien : personne ne la déclenche tout seul. */
+export const CADENCE_A_LA_MAIN = 'by hand';
+
 export function cadenceDe(declencheurs) {
   const d = declencheurs ?? [];
-  if (d.includes('pull_request')) return 'every pull request';
+  if (d.includes('pull_request')) return CADENCE_CHAQUE_PR;
   if (d.includes('schedule')) return 'every night';
   if (d.includes('push')) return 'every push to main';
-  return 'by hand';
+  return CADENCE_A_LA_MAIN;
 }
 
 // ─── Ce qu'une PR coûte en contrôles ──────────────────────────────────────────
@@ -276,6 +381,48 @@ export function prixDeLaCi(runs) {
 
 // ─── Ce que la CI joue vraiment ───────────────────────────────────────────────
 
+/** Le balayage, et TOUT ce qui le suit sur sa ligne — c'est là que les filtres vivent. */
+const BALAYAGE = /ls\s+tests\/e2e\/\*\.spec\.ts([^\n]*)/;
+
+/**
+ * Un segment de tuyau qui retire un parcours : `grep -v` et son motif, dans
+ * les trois façons de l'écrire en shell.
+ */
+const EXCLUSION =
+  /^grep\s+-v\s+(?:'([\w.-]+\.spec\.ts)'|"([\w.-]+\.spec\.ts)"|([\w.-]+\.spec\.ts))$/;
+
+/**
+ * Ce que le tuyau qui suit le balayage retire — ou l'aveu qu'on ne sait pas.
+ *
+ * La première version ne connaissait QUE `grep -v 'x.spec.ts'` à simples
+ * quotes. Réintroduire une exclusion sous n'importe quelle autre forme
+ * (`"x.spec.ts"`, sans quotes, `grep -vE`, `grep -v -e`, `head`, `sed`…) la
+ * rendait invisible : le parcours exclu restait dans `joues`, donc VERT et
+ * absent de l'alerte, et aucun drapeau ne se levait puisque le `ls` était bien
+ * reconnu. C'est le faux-vert que ce lot existe pour tuer, à l'endroit même où
+ * il le tue (revue de la PR #113, 2e passe).
+ *
+ * Trois formes se lisent. Tout le reste rend `illisible` : un tuyau qu'on ne
+ * comprend pas ne vaut pas mieux qu'un tuyau absent, et « workflow unreadable »
+ * est une réponse honnête là où « tout est joué » est une invention.
+ */
+export function exclusionsDuBalayage(suite) {
+  // La queue de la substitution de processus — `…)` de `< <(ls … )` — n'est pas
+  // un segment de tuyau. Les quotes, elles, sont GARDÉES : les retirer casserait
+  // la forme à guillemets doubles, qui est justement une de celles à lire.
+  const tuyau = String(suite ?? '').replace(/[\s)]*$/, '');
+  if (tuyau.trim() === '') return { exclus: [], illisible: false };
+
+  const exclus = [];
+  for (const segment of tuyau.split('|').map((s) => s.trim())) {
+    if (segment === '') continue;
+    const m = EXCLUSION.exec(segment);
+    if (!m) return { exclus: [], illisible: true };
+    exclus.push(m[1] ?? m[2] ?? m[3]);
+  }
+  return { exclus, illisible: false };
+}
+
 /**
  * Les parcours qu'un workflow exécute.
  *
@@ -290,18 +437,68 @@ export function prixDeLaCi(runs) {
  * que 28 parcours ne tournent jamais alors qu'ils tournaient chaque nuit
  * (revue Codex, PR #51).
  */
-export function parcoursDunWorkflow(texte, tousLesParcours) {
+export function parcoursDunWorkflow(texte0, tousLesParcours) {
+  // Les commentaires ne jouent rien. Ils EXPLIQUENT, souvent en nommant le
+  // parcours dont ils parlent — `qa.yml` raconte sur six lignes pourquoi
+  // `agent-flows.spec.ts` était exclu. Les lire, c'était laisser une phrase
+  // d'explication tenir lieu d'exécution.
+  const texte = sansCommentairesYaml(texte0);
   const nommes = [...texte.matchAll(/tests\/e2e\/([\w.-]+\.spec\.ts)/g)].map((m) => m[1]);
 
   // Un balayage : `ls tests/e2e/*.spec.ts`, avec ses exclusions éventuelles.
-  const balaye = /ls\s+tests\/e2e\/\*\.spec\.ts/.test(texte);
-  if (!balaye) return { nommes: [...new Set(nommes)], balaye: false, joues: [...new Set(nommes)] };
+  const balayage = BALAYAGE.exec(texte);
+  const balaye = balayage !== null;
+  if (!balaye) {
+    // Le workflow parle du dossier des parcours, et pourtant on n'en a tiré
+    // NI un nom NI un balayage : sa forme a changé sous nos pieds (un
+    // `playwright test tests/e2e` suffit). Rendre « aucun parcours joué »
+    // serait répondre à une question qu'on n'a pas comprise — et le portail
+    // afficherait trente parcours morts sur une panne de LECTURE. On le dit.
+    const illisible = nommes.length === 0 && /tests\/e2e/.test(texte);
+    const uniques = [...new Set(nommes)];
+    return { nommes: uniques, balaye: false, exclus: [], joues: uniques, illisible };
+  }
 
-  const exclus = new Set(
-    [...texte.matchAll(/grep\s+-v\s+'([\w.-]+\.spec\.ts)'/g)].map((m) => m[1]),
-  );
+  const filtre = exclusionsDuBalayage(balayage[1] ?? '');
+  if (filtre.illisible) {
+    // Le `ls` est là ; la SUITE du tuyau ne se lit pas. Répondre « tout est
+    // joué » inventerait un vert sur un filtre qu'on n'a pas compris — le
+    // faux-vert que ce lot existe pour tuer. On ne sait pas, et on le dit.
+    return { nommes: [...new Set(nommes)], balaye: true, exclus: [], joues: [], illisible: true };
+  }
+  const exclus = new Set(filtre.exclus);
   const joues = (tousLesParcours ?? []).filter((n) => !exclus.has(n));
-  return { nommes: [...new Set(nommes)], balaye: true, exclus: [...exclus], joues };
+  return {
+    nommes: [...new Set(nommes)],
+    balaye: true,
+    exclus: [...exclus],
+    joues,
+    illisible: false,
+  };
+}
+
+/**
+ * Quel workflow joue quel parcours, et à quelle cadence — la SEULE définition.
+ *
+ * Deux choses s'y décident, et elles se lisaient nulle part :
+ *
+ *  - Un workflow qu'il faut lancer À LA MAIN ne garde rien. Le compter,
+ *    c'était laisser un `workflow_dispatch` que personne ne déclenche rendre
+ *    un parcours « joué », donc non rouge : exactement le gris que ce lot
+ *    remplace par un rouge nommé (issue #110).
+ *  - « chaque PR » est la cadence la plus forte : elle l'emporte sur une
+ *    mesure nocturne qui joue le même fichier.
+ */
+export function cadenceParParcours(workflows) {
+  const parNom = new Map();
+  for (const w of workflows ?? []) {
+    if (!w?.cadence || w.cadence === CADENCE_A_LA_MAIN) continue;
+    for (const nom of w.specsNommees ?? []) {
+      if (parNom.get(nom) === CADENCE_CHAQUE_PR) continue;
+      parNom.set(nom, w.cadence);
+    }
+  }
+  return parNom;
 }
 
 /**
@@ -356,6 +553,14 @@ export function cartesDuTableau({ issues, pr } = {}) {
     }
   }
 
+  // La provenance, lue UNE fois ici. Le corps d'une issue pèse plusieurs
+  // kilo-octets et n'a rien à faire dans le snapshot : seuls les deux verdicts
+  // qu'on en tire voyagent.
+  const provenance = (corps) => ({
+    parUnAgent: ecritParUnAgent(corps),
+    faitsVerifies: porteDesFaitsVerifies(corps),
+  });
+
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -367,6 +572,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
       parPr: couvertes.get(i.number) ?? null,
+      ...provenance(i.body),
     })),
     ...pr.map((p) => ({
       type: 'pr',
@@ -379,10 +585,321 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
       ci: etatCi(p.statusCheckRollup),
+      ...provenance(p.body),
     })),
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── Ce que le dépôt sait de sa propre release ────────────────────────────────
+//
+// Le 12/09/2026, un agent a ouvert « Publish 0.8.9 » de mémoire : 0.8.9 était
+// sur npm depuis trois jours. Le portail a porté ce travail fantôme quatre
+// jours, parce qu'il n'avait aucun moyen de le contredire. Il en a un
+// maintenant, et il ne dépend de la bonne volonté de personne : il DEMANDE à
+// npm et à git.
+
+/**
+ * Compare deux identifiants de préversion, segment par segment, selon
+ * semver 2.0 §11 : on découpe sur `.`, deux segments numériques se comparent
+ * en NOMBRES, un numérique passe avant un alphanumérique, et un identifiant
+ * plus court qui préfixe l'autre vient avant (`rc` < `rc.1`).
+ *
+ * Comparer les identifiants comme des chaînes rendait `rc.10 < rc.2` : une
+ * carte « Publish 1.0.0-rc.10 » face à un npm en `rc.2` était accusée en
+ * gravité haute de demander une version déjà publiée, alors qu'elle était la
+ * plus récente. C'est la même faute que `0.8.10 < 0.8.9`, un cran plus loin.
+ */
+function comparerPrerelease(a, b) {
+  const xs = a.split('.');
+  const ys = b.split('.');
+  for (let i = 0; i < Math.max(xs.length, ys.length); i += 1) {
+    const u = xs[i];
+    const v = ys[i];
+    if (u === undefined) return -1;
+    if (v === undefined) return 1;
+    const uNum = /^\d+$/.test(u);
+    const vNum = /^\d+$/.test(v);
+    if (uNum && vNum) {
+      const d = Number(u) - Number(v);
+      if (d !== 0) return d < 0 ? -1 : 1;
+    } else if (uNum !== vNum) {
+      return uNum ? -1 : 1;
+    } else if (u !== v) {
+      return u < v ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Compare deux numéros de version. `-1`, `0`, `1`, et `null` sur ce qui n'est
+ * pas un semver — plutôt qu'un ordre inventé qui accuserait au hasard.
+ *
+ * Une comparaison de chaînes rendrait `0.8.10 < 0.8.9`, c'est-à-dire
+ * exactement l'erreur que ce lot existe pour empêcher.
+ */
+export function comparerSemver(a, b) {
+  const lire = (v) => /^v?(\d+)\.(\d+)\.(\d+)(?:-([\w.]+))?$/.exec(String(v ?? '').trim());
+  const x = lire(a);
+  const y = lire(b);
+  if (!x || !y) return null;
+  for (let i = 1; i <= 3; i += 1) {
+    const d = Number(x[i]) - Number(y[i]);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  // `0.9.0-rc.1` vient AVANT `0.9.0` : une préversion n'est pas la version.
+  if ((x[4] ?? '') === (y[4] ?? '')) return 0;
+  if (!x[4]) return 1;
+  if (!y[4]) return -1;
+  return comparerPrerelease(x[4], y[4]);
+}
+
+/**
+ * Ce que `npm view <paquet> version time --json` a VRAIMENT répondu.
+ *
+ * Trois faits, pas deux. Un paquet JAMAIS PUBLIÉ fait répondre npm par une
+ * erreur `E404` — le registre a parlé, et il a dit « ce nom n'existe pas ».
+ * L'afficher en « npm unreachable » accusait le réseau d'un fait que npm venait
+ * d'établir, et laissait croire qu'on ne savait pas.
+ *
+ * `sortie` est le stdout, `erreur` le stderr (ou le message de l'échec).
+ * Avec `--json`, npm range son erreur dans le stdout lui-même, d'où les deux
+ * endroits regardés.
+ *
+ * Seul le CODE de npm compte, pas un « 404 » croisé n'importe où : un proxy
+ * d'entreprise qui répond 404 pour une tout autre raison écrit lui aussi ce
+ * nombre dans stderr, et le prendre pour un verdict du registre transformerait
+ * une panne d'accès en « ce paquet n'existe pas ». C'est le même défaut à
+ * l'envers. Sortie réelle de `npm view paquet-inexistant --json` (npm 11) :
+ *
+ *     npm error code E404
+ *     npm error 404 Not Found - GET https://registry.npmjs.org/… - Not found
+ *
+ * et sur les npm plus anciens, `npm ERR! code E404`. La ligne reconnue est donc
+ * celle du CODE, et elle seule.
+ */
+export function lectureDeNpm({ sortie, erreur } = {}) {
+  let lu = null;
+  try {
+    lu = JSON.parse(String(sortie ?? ''));
+  } catch {
+    lu = null;
+  }
+  const dansLeJson = lu?.error?.code === 'E404';
+  const dansStderr = /npm\s+(?:error|ERR!)\s+code\s+E404\b/i.test(String(erreur ?? ''));
+  if (dansLeJson || dansStderr) return { etat: 'jamais-publiee', npm: null };
+  // `version` est la chaîne attendue ; tout le reste est une réponse qu'on ne
+  // sait pas lire, donc une absence, jamais une valeur approchée.
+  if (typeof lu?.version === 'string') {
+    return { etat: 'lue', npm: { version: lu.version, time: lu.time ?? null } };
+  }
+  return { etat: 'injoignable', npm: null };
+}
+
+/**
+ * Le nombre de commits depuis le dernier tag, à partir des sorties de git.
+ *
+ * `origin/main` d'abord : le nombre qui intéresse est celui de la branche
+ * PUBLIÉE, pas de la branche de travail d'où la collecte est lancée. Une
+ * référence absente (checkout superficiel de la CI) retombe sur `HEAD`, parce
+ * que git sait répondre là — ce n'est pas un repli inventé, c'est une seconde
+ * question posée.
+ *
+ * Une sortie qui n'est pas un entier rend `null` et non `0` : `Number('')` vaut
+ * zéro, et « aucun commit depuis le tag » est une affirmation, pas une absence.
+ */
+export function commitsDepuisLeTag({ surLaBranchePubliee, surHead } = {}) {
+  for (const sortie of [surLaBranchePubliee, surHead]) {
+    const t = String(sortie ?? '').trim();
+    if (/^\d+$/.test(t)) return Number(t);
+  }
+  return null;
+}
+
+/**
+ * L'état de la release : ce que npm sert, ce que le dépôt porte, et l'écart.
+ *
+ * `npm` est la réponse de `npm view … --json`, ou `null` quand le registre n'a
+ * pas répondu. Dans ce cas RIEN n'est rendu : pas de valeur inventée, pas
+ * l'ancienne sans date. Le portail dira « npm unreachable at <heure> », ce qui
+ * est un fait, là où un chiffre périmé serait un mensonge (invariant #4).
+ *
+ * `etatNpm` vient de `lectureDeNpm` et distingue le troisième cas : un paquet
+ * jamais publié n'est ni une version, ni un silence du registre.
+ */
+export function etatDeLaRelease({ npm, etatNpm, depot, le } = {}) {
+  const surNpm = npm?.version ?? null;
+  const versionDuDepot = depot?.version ?? null;
+  const jamaisPubliee = etatNpm === 'jamais-publiee';
+  return {
+    // Jamais publié n'est PAS injoignable : npm a répondu, et sa réponse est
+    // « ce nom n'existe pas ». Les confondre accuse le réseau d'un fait établi.
+    npmInjoignable: !npm && !jamaisPubliee,
+    jamaisPubliee,
+    verifieLe: le ?? null,
+    surNpm,
+    publieeLe: surNpm ? (npm?.time?.[surNpm] ?? null) : null,
+    versionDuDepot,
+    dernierTag: depot?.dernierTag ?? null,
+    commitsDepuisLeTag: depot?.commitsDepuisLeTag ?? null,
+    // `null` et non `false` quand npm est muet : « pas en avance » et « je ne
+    // sais pas » ne se ressemblent qu'à l'écran. Un paquet jamais publié, lui,
+    // est un fait connu : tout ce que le dépôt porte est en avance.
+    depotEnAvance: jamaisPubliee
+      ? versionDuDepot
+        ? true
+        : null
+      : surNpm && versionDuDepot
+        ? surNpm !== versionDuDepot
+        : null,
+  };
+}
+
+/** « publish 0.8.9 », « release v0.8.9 » — le vocabulaire des titres de release. */
+const DEMANDE_DE_PUBLICATION = /\b(?:publish|release)\s+v?(\d+\.\d+\.\d+(?:-[\w.]+)?)\b/i;
+
+/**
+ * Les cartes OUVERTES qui demandent de publier une version déjà servie par npm.
+ *
+ * C'est l'issue #68, nommée par le portail au lieu d'être crue sur parole.
+ * Aucune accusation quand npm n'a pas répondu : on ne sait pas ce qui est
+ * publié, et deviner ici serait le même défaut à l'envers.
+ */
+export function publicationsDejaFaites(cartes, release) {
+  if (!Array.isArray(cartes) || !release?.surNpm || release.npmInjoignable) return [];
+  const out = [];
+  for (const c of cartes) {
+    if (c.etat !== 'OPEN') continue;
+    const version = DEMANDE_DE_PUBLICATION.exec(String(c.titre ?? ''))?.[1];
+    if (!version) continue;
+    const ordre = comparerSemver(version, release.surNpm);
+    if (ordre === null || ordre > 0) continue;
+    out.push({ numero: c.numero, type: c.type, titre: c.titre, version, url: c.url ?? null });
+  }
+  return out;
+}
+
+// ─── La provenance d'une carte ────────────────────────────────────────────────
+//
+// Règle du 16/09/2026 : toute issue ou PR ouverte par un agent porte une
+// section `## Verified` avec au moins une commande et sa sortie — c'est-à-dire
+// DU CODE sous le titre : une portion en ligne (la forme du modèle), un bloc
+// clôturé, ou un bloc indenté. Un titre vide ne compte pas, et du texte seul
+// non plus : la pastille s'achetait sinon avec cinq caractères. Le critère de
+// « écrite par un agent » est VÉRIFIABLE — le pied que les agents posent
+// eux-mêmes — et non une intuition sur le style.
+//
+// Ce que ce critère dit exactement, et rien de plus : TOUTE CARTE QUI PORTE LE
+// PIED D'AGENT est concernée. Un humain qui colle ce pied dans son propre corps
+// d'issue reçoit donc la pastille. C'est un compromis assumé : le pied est le
+// seul signal vérifiable, et une heuristique de style se tromperait bien plus
+// souvent, dans les deux sens. Une issue écrite à la main SANS ce pied n'a
+// rien à prouver, et c'est le cas courant.
+
+/** Le pied que tout agent de ce dépôt pose au bas de ce qu'il ouvre. */
+export function ecritParUnAgent(corps) {
+  const t = String(corps ?? '');
+  return /generated with[^\n]{0,20}claude code/i.test(t) || /claude-session\s*:/i.test(t);
+}
+
+/**
+ * Les lignes du corps, chacune sachant si elle appartient à un bloc de code
+ * CLÔTURÉ (``` ou ~~~).
+ *
+ * Un agent qui CITE le modèle de `SKILL.md` dans un bloc de code écrit bien la
+ * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié. Une
+ * ligne dans un bloc n'est donc ni un titre, ni un texte.
+ *
+ * Le balayage suit CommonMark d'assez près pour ne pas surprendre :
+ *   — une clôture s'ouvre avec AU PLUS 3 espaces d'indentation ; à 4, la ligne
+ *     appartient déjà à un bloc de code indenté et n'ouvre rien ;
+ *   — elle se ferme par le même caractère, au moins autant de marques, et rien
+ *     d'autre que des espaces après ;
+ *   — un bloc laissé OUVERT court jusqu'à la fin du corps. C'est la règle
+ *     CommonMark, et c'est aussi la prudente : une clôture jamais refermée est
+ *     un corps qu'on ne sait pas lire, et l'agent le voit tout de suite sous la
+ *     forme d'une pastille « no verified facts ». L'inverse — refermer d'office
+ *     à la fin du bloc suivant — validerait un `## Verified` qui n'est peut-être
+ *     que du texte cité.
+ */
+function lignesAnnotees(texte) {
+  const out = [];
+  let cloture = null;
+  for (const ligne of texte.split('\n')) {
+    const marque = /^ {0,3}(`{3,}|~{3,})/.exec(ligne)?.[1];
+    if (cloture) {
+      const ferme =
+        marque &&
+        marque[0] === cloture[0] &&
+        marque.length >= cloture.length &&
+        /^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(ligne);
+      out.push({ ligne, dansUnBloc: true });
+      if (ferme) cloture = null;
+      continue;
+    }
+    if (marque) {
+      cloture = marque;
+      out.push({ ligne, dansUnBloc: true });
+      continue;
+    }
+    out.push({ ligne, dansUnBloc: false });
+  }
+  return out;
+}
+
+/** `## Verified` : un titre markdown, hors bloc, indenté d'au plus 3 espaces. */
+const TITRE = /^ {0,3}(#{1,6})[ \t]*(.*)$/;
+
+/**
+ * Une SECTION « Verified » qui porte VRAIMENT quelque chose.
+ *
+ * La règle dit « au moins une commande et sa sortie ». Le titre seul ne la
+ * satisfait pas, et un `## Verified` vide passait pourtant — la pastille
+ * s'achetait avec cinq caractères, ce qui vidait la règle de son objet.
+ *
+ * La forme minimale d'« une commande et sa sortie » est DU CODE : un bloc
+ * clôturé (```…```), un bloc indenté de 4 espaces, ou une portion de code en
+ * ligne (`` `npm view …` → 0.8.9 ``). Cette troisième forme n'est pas une
+ * tolérance : c'est CELLE DU MODÈLE de `SKILL.md`, donc celle que portent les
+ * cartes correctement remplies. L'exiger en bloc les recalerait toutes.
+ *
+ * Du texte seul, lui, ne compte pas : c'est une affirmation, et la règle existe
+ * précisément contre les affirmations. La section court jusqu'au prochain titre
+ * de niveau INFÉRIEUR OU ÉGAL au sien, ou jusqu'à la fin du corps — un
+ * sous-titre reste dedans.
+ *
+ * L'indentation du titre est bornée à 3 espaces, comme en markdown : à 4
+ * espaces ou après une tabulation, la ligne est un bloc de code indenté et non
+ * un titre. Sans cette borne, coller le modèle de `SKILL.md` en le décalant
+ * suffisait à passer pour vérifié.
+ */
+export function porteDesFaitsVerifies(corps) {
+  const lignes = lignesAnnotees(String(corps ?? ''));
+  for (let i = 0; i < lignes.length; i += 1) {
+    if (lignes[i].dansUnBloc) continue;
+    const titre = TITRE.exec(lignes[i].ligne);
+    if (!titre || !/^verified\b/i.test(titre[2].trim())) continue;
+    const niveau = titre[1].length;
+    for (let j = i + 1; j < lignes.length; j += 1) {
+      const { ligne, dansUnBloc } = lignes[j];
+      if (dansUnBloc) return true;
+      const suivant = TITRE.exec(ligne);
+      if (suivant && suivant[1].length <= niveau) break;
+      // Un bloc de code INDENTÉ : quatre espaces ou une tabulation, du contenu.
+      if (/^(?: {4}|\t)[ \t]*\S/.test(ligne)) return true;
+      // Du code EN LIGNE, la forme du modèle : `commande` → sortie.
+      if (/`[^`\n]*\S[^`\n]*`/.test(ligne)) return true;
+    }
+  }
+  return false;
+}
+
+/** Les cartes ouvertes par un agent qui n'apportent aucun fait vérifié. */
+export function sansFaitsVerifies(cartes) {
+  if (!Array.isArray(cartes)) return [];
+  return cartes.filter((c) => c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies);
 }
 
 // ─── La gravité ───────────────────────────────────────────────────────────────
@@ -416,7 +933,44 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const registre = s.capacites?.registre ?? [];
   const mem = s.memoire ?? null;
 
-  // ── Le produit d'abord. Un paquet mal couvert est une question d'ingénieur ;
+  // ── Ce qui passe avant le produit lui-même : un portail qui MENT. Tant que
+  // le tableau raconte un travail fantôme, aucun des écarts suivants n'est
+  // croyable. Quatre jours d'issue #68 l'ont montré.
+  const release = s.release ?? null;
+  const cartes = s.chantiers?.cartes ?? null;
+
+  const dejaPubliees = publicationsDejaFaites(cartes, release);
+  if (dejaPubliees.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${dejaPubliees.length} open card(s) ask to publish a version already on npm`,
+      detail: `npm serves ${release.surNpm}. These cards describe work that is already done, and the board has been carrying them as work to do. Close them, or correct the version they name.`,
+      quoi: dejaPubliees.map((c) => `#${c.numero} ${c.titre}`),
+    });
+  }
+
+  const sansFaits = sansFaitsVerifies(cartes);
+  if (sansFaits.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${sansFaits.length} open card(s) written by an agent carry no verified facts`,
+      detail: `An agent opened them and wrote no "Verified" section, so nothing in them was checked against npm, git or a test run. That is exactly how a version that shipped a week earlier became a task on this board.`,
+      quoi: sansFaits.map((c) => `#${c.numero} ${c.titre}`),
+    });
+  }
+
+  // Une absence de mesure n'est pas un feu vert. Moyenne, jamais haute : le
+  // registre injoignable est une panne de réseau, pas une panne du produit.
+  if (release?.npmInjoignable) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `npm was unreachable at the last collection`,
+      detail: `Nothing is known about what is published, so nothing is claimed. The release block shows the hole rather than the previous answer without its date.`,
+      quoi: release.verifieLe ? [release.verifieLe] : [],
+    });
+  }
+
+  // ── Le produit. Un paquet mal couvert est une question d'ingénieur ;
   // une preuve de capacité tombée est une promesse rompue.
   //
   // Trois familles, et la hiérarchie entre elles est tout le lot : un ÉCHEC
@@ -571,7 +1125,22 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   }
 
   // ── Le dépôt. Réel, mais jamais au-dessus du produit.
-  const nonJoues = (s.parcours ?? []).filter((p) => !p.jouParLaCi);
+  // Même définition que la page Journeys, une seule fois : l'écart et la
+  // couleur d'une ligne ne peuvent pas diverger.
+  // Une panne de LECTURE se dit avant tout ce qu'on croit avoir lu. Sans elle,
+  // un workflow dont la forme a changé faisait afficher « 30 parcours jamais
+  // joués » — un diagnostic faux, et adressé au mauvais fichier.
+  const illisibles = (s.ci ?? []).filter((w) => w.parcoursIllisibles);
+  if (illisibles.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${illisibles.length} workflow(s) unreadable: the journeys they play cannot be told`,
+      detail: `The file names the e2e directory, but neither a named spec nor the sweep the portal knows how to read. Nothing is said about those journeys: this is a hole in the portal's reading, not a dead journey in the repository. Fix the reader, or put the sweep back in the shape it knows.`,
+      quoi: illisibles.map((w) => w.fichier),
+    });
+  }
+
+  const nonJoues = (s.parcours ?? []).filter((p) => etatDunParcours(p).rouge);
   if (nonJoues.length > 0) {
     const cas = nonJoues.reduce((a, p) => a + p.cas, 0);
     out.push({
@@ -1413,7 +1982,14 @@ export function fusionnerTableauGitHub(mesure, frais) {
   if (!mesure || typeof mesure !== 'object') {
     throw new Error('no committed measurement to refresh: run the full collection first');
   }
-  const socle = { ...mesure, tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null };
+  const socle = {
+    ...mesure,
+    tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null,
+    // La release vient de npm, pas de GitHub : un GitHub muet n'a aucune raison
+    // de figer l'état de publication, et c'est le rafraîchissement horaire qui
+    // fait qu'une publication est vue dans l'heure et non la nuit suivante.
+    release: frais?.release ?? mesure.release ?? null,
+  };
   if (!frais?.chantiers) return socle;
   return {
     ...socle,

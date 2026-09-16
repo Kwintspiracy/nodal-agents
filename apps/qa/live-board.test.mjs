@@ -101,6 +101,26 @@ describe('rafraîchir la part GitHub sans toucher aux mesures', () => {
   });
 });
 
+/**
+ * TOUT ce que `collect.mjs` importe du dossier, et qu'il faut donc copier.
+ *
+ * En oublier un ne fait PAS rougir les trois tests ci-dessous : le `beforeAll`
+ * meurt sur l'import manquant et vitest range ses cas en « ignorés », au milieu
+ * d'un run vert. Constaté le 16/09 en extrayant `depot.mjs` — trois preuves
+ * éteintes sans un mot. Le test qui suit la liste compare celle-ci aux imports
+ * réels du collecteur, pour que l'oubli suivant soit rouge.
+ */
+const MODULES_DU_BAC = ['collect.mjs', 'lib.mjs', 'depot.mjs', 'capacites.mjs', 'porte.mjs'];
+
+describe('le bac à sable du collecteur porte tout ce que le collecteur importe', () => {
+  it('aucun module local de collect.mjs ne manque à la copie', () => {
+    const source = lire('./collect.mjs');
+    const importes = [...source.matchAll(/from\s+'\.\/([\w.-]+\.mjs)'/g)].map((m) => m[1]);
+    expect(importes.length).toBeGreaterThan(0);
+    for (const m of importes) expect(MODULES_DU_BAC).toContain(m);
+  });
+});
+
 describe('le collecteur sait ne rafraîchir que GitHub', () => {
   // Le mode est joué POUR DE VRAI, dans une copie jetable, avec un `gh` qui
   // refuse de répondre. C'est le chemin le plus dur : GitHub muet. Il prouve
@@ -114,7 +134,7 @@ describe('le collecteur sait ne rafraîchir que GitHub', () => {
 
   beforeAll(() => {
     mkdirSync(data, { recursive: true });
-    for (const f of ['collect.mjs', 'lib.mjs', 'capacites.mjs', 'porte.mjs']) {
+    for (const f of MODULES_DU_BAC) {
       cpSync(new URL(`./${f}`, import.meta.url), join(app, f));
     }
     writeFileSync(join(data, 'snapshot.json'), JSON.stringify(MESURE(), null, 2));

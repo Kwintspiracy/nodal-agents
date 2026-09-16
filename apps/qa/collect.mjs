@@ -25,11 +25,6 @@ import { execSync } from 'node:child_process';
 import {
   cartesDuTableau,
   fusionnerEtats,
-  sortDuCas,
-  compterParcours,
-  parcoursDunWorkflow,
-  declencheursDunWorkflow,
-  cadenceDe,
   croiserPreuves,
   regrouperParCapacite,
   fautesDuRegistre,
@@ -38,9 +33,12 @@ import {
   instabiliteDe,
   regressionsFraiches,
   dureesDeReparation,
-  intentionDunParcours,
   fusionnerTableauGitHub,
+  etatDeLaRelease,
+  lectureDeNpm,
+  commitsDepuisLeTag,
 } from './lib.mjs';
+import { ciDuDepot, parcoursDuDepot } from './depot.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
 
@@ -201,114 +199,15 @@ function banc() {
 // La question de Quentin — « qu'est-ce qui les déclenche » — se lit dans les
 // workflows, pas dans une intention. On lit les fichiers.
 
-function ci(fichiers, tousLesParcours) {
-  const wfs = fichiers.filter((f) => f.startsWith('.github/workflows/') && /\.ya?ml$/.test(f));
-  return wfs.map((f) => {
-    const texte = readFileSync(join(RACINE, f), 'utf8');
-    const jobs = [...texte.matchAll(/^ {2}([a-z0-9_-]+):\s*$/gim)].map((m) => m[1]);
-    const declencheurs = declencheursDunWorkflow(texte);
-    const parcours = parcoursDunWorkflow(texte, tousLesParcours);
-    return {
-      fichier: f,
-      nom: (texte.match(/^name:\s*(.+)$/m)?.[1] ?? f).trim().replace(/^['"]|['"]$/g, ''),
-      declencheurs,
-      jobs,
-      // Un workflow qui BALAIE les parcours en joue autant qu'un qui les
-      // nomme — ne lire que les noms littéraux laissait le portail annoncer
-      // « 2 en CI » pour toujours (revue Codex, PR #51).
-      specsNommees: parcours.joues,
-      balayeLesParcours: parcours.balaye,
-      parcoursExclus: parcours.exclus ?? [],
-      cadence: cadenceDe(declencheurs),
-      lanceBanc: /pnpm bench|@nodal-agents\/bench/.test(texte),
-      lanceCouverture: /--coverage/.test(texte),
-    };
-  });
-}
+const ci = (fichiers, tousLesParcours) => ciDuDepot(fichiers, tousLesParcours, RACINE);
 
 // ─── 6. Les parcours e2e : versionnés vs joués ────────────────────────────────
 
-function parcours(fichiers, workflows) {
-  const specs = fichiers.filter(
-    (f) => f.startsWith('apps/web/tests/e2e/') && f.endsWith('.spec.ts'),
-  );
-  // Qui joue quoi, et à quelle cadence. Un parcours joué chaque nuit n'est pas
-  // joué à chaque PR : les confondre, c'est appeler « couvert » un parcours qui
-  // ne garde aucune PR.
-  const cadenceParParcours = new Map();
-  for (const w of workflows) {
-    for (const nom of w.specsNommees) {
-      const dejaVue = cadenceParParcours.get(nom);
-      // « chaque PR » est la cadence la plus forte : elle l'emporte.
-      if (dejaVue === 'chaque PR') continue;
-      cadenceParParcours.set(nom, w.cadence);
-    }
-  }
-
-  const resultats = lireJson(join(DATA, 'playwright-run.json'));
-  const parFichier = new Map();
-  if (resultats?.suites) {
-    // `chemin` accumule les titres des `describe` traversés. Sans lui, seul le
-    // titre du cas est connu — or une étiquette `@cap:` posée sur le describe
-    // vaut pour tous ses cas, et c'est la façon la moins verbeuse de
-    // l'écrire. La perdre reviendrait à exiger une étiquette par cas.
-    const marcher = (suites, chemin = [], niveau = 0) => {
-      for (const s of suites ?? []) {
-        const f = s.file ? `apps/web/tests/e2e/${s.file}` : null;
-        // Le niveau 0 est le FICHIER : son titre est le nom du fichier, déjà
-        // porté par `fichier`. L'inclure doublerait chaque clé de la mémoire.
-        const ici = niveau > 0 && s.title ? [...chemin, s.title] : chemin;
-        for (const spec of s.specs ?? []) {
-          if (!f) continue;
-          const essais = (spec.tests ?? []).flatMap((t) => t.results ?? []);
-          // Quatre sorts, gardés séparés : `vert`, `rouge`, `ignoré`,
-          // `instable`. Les écraser en un booléen faisait passer 36 cas
-          // IGNORÉS pour des régressions (revue Codex, PR #51) — le défaut même
-          // que ce portail dénonce ailleurs.
-          const sort = sortDuCas(essais);
-          const duree = essais.reduce((n, r) => n + (r.duration ?? 0), 0);
-          const b = parFichier.get(f) ?? { sorts: [], dureeMs: 0, cas: [] };
-          b.sorts.push(sort);
-          b.dureeMs += duree;
-          b.cas.push({
-            titre: spec.title,
-            titreComplet: [...ici, spec.title].join(' '),
-            sort,
-            dureeMs: duree,
-          });
-          parFichier.set(f, b);
-        }
-        marcher(s.suites, ici, niveau + 1);
-      }
-    };
-    marcher(resultats.suites);
-  }
-  return specs.map((f) => {
-    const nom = f.split('/').pop();
-    const brut = parFichier.get(f) ?? null;
-    const r = brut
-      ? { ...compterParcours(brut.sorts), dureeMs: brut.dureeMs, cas: brut.cas }
-      : null;
-    let texte = '';
-    try {
-      texte = readFileSync(join(RACINE, f), 'utf8');
-    } catch {
-      /* le fichier est suivi mais absent de cette branche */
-    }
-    return {
-      fichier: f,
-      nom,
-      cas: (texte.match(/^\s*test(\.\w+)*\s*\(/gm) ?? []).length,
-      jouParLaCi: cadenceParParcours.has(nom),
-      cadence: cadenceParParcours.get(nom) ?? null,
-      resultat: r,
-      // La première phrase UTILE du fichier — voir `intentionDunParcours`.
-      // La regex d'avant prenait la première ligne `//` du fichier, et rendait
-      // `── Constants ─────` sous la moitié des parcours (Quentin, 13/09).
-      intention: intentionDunParcours(texte),
-    };
+const parcours = (fichiers, workflows) =>
+  parcoursDuDepot(fichiers, workflows, {
+    racine: RACINE,
+    resultats: lireJson(join(DATA, 'playwright-run.json')),
   });
-}
 
 // ─── 7. Chantiers : issues et PR, depuis GitHub ───────────────────────────────
 
@@ -327,7 +226,10 @@ function chantiers() {
   // auraient évincé une PR ouverte plus ancienne — disparue de « En review »
   // sans un mot (revue Codex, 3e passe). L'ouvert est demandé en entier, le
   // fermé seulement pour ce qui vient d'être fait.
-  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url';
+  // `body` sur les issues aussi : c'est là que se lit la PROVENANCE — le pied
+  // que les agents posent, et la section `## Verified` qu'ils doivent porter.
+  // Le corps ne va pas dans le snapshot, seuls les deux verdicts qu'on en tire.
+  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url,body';
   // `body` : c'est là que « Closes #n » vit — sans lui le tableau ne peut pas
   // savoir qu'une issue a sa PR.
   const CHAMPS_PR =
@@ -351,6 +253,62 @@ function chantiers() {
   }
 
   return { issues, pr, cartes };
+}
+
+// ─── 7 ter. L'état de la release, DEMANDÉ, jamais raconté ─────────────────────
+//
+// Le 12/09/2026 une issue « Publish 0.8.9 » a vécu quatre jours sur ce tableau
+// alors que 0.8.9 était sur npm depuis le 09/09. Personne n'avait de quoi la
+// contredire. Le portail interroge donc npm et git lui-même, à chaque collecte,
+// et l'écrit dans le snapshot.
+
+/** Comme `sh`, mais stderr CAPTURÉ au lieu d'être jeté. */
+const DIT_TOUT = {
+  cwd: RACINE,
+  encoding: 'utf8',
+  maxBuffer: 1e8,
+  stdio: ['ignore', 'pipe', 'pipe'],
+};
+
+/**
+ * `npm view`, stderr COMPRIS : c'est là que le registre dit `E404`, et ce code
+ * est toute la différence entre « jamais publié » et « npm n'a pas répondu ».
+ */
+function interrogerNpm() {
+  try {
+    return { sortie: execSync('npm view nodal-agents version time --json', DIT_TOUT) };
+  } catch (err) {
+    return { sortie: err?.stdout ?? '', erreur: `${err?.stderr ?? ''} ${err?.message ?? ''}` };
+  }
+}
+
+function release() {
+  const { etat, npm } = lectureDeNpm(interrogerNpm());
+  if (etat === 'injoignable') {
+    console.warn('[qa] npm did not answer, the release state is MISSING, not green.');
+  }
+  if (etat === 'jamais-publiee') {
+    console.warn('[qa] npm answered: nodal-agents is NOT published yet.');
+  }
+
+  const dernierTag = sh('git describe --tags --abbrev=0 --match "v*"') || null;
+  const versionDuDepot = lireJson(join(RACINE, 'apps', 'cli', 'package.json'))?.version ?? null;
+
+  return etatDeLaRelease({
+    npm,
+    etatNpm: etat,
+    depot: {
+      version: versionDuDepot,
+      dernierTag,
+      commitsDepuisLeTag: dernierTag
+        ? commitsDepuisLeTag({
+            surLaBranchePubliee: sh(`git rev-list --count ${dernierTag}..origin/main`),
+            surHead: sh(`git rev-list --count ${dernierTag}..HEAD`),
+          })
+        : null,
+    },
+    le: new Date().toISOString(),
+  });
 }
 
 // ─── 7 bis. Ce qu'une PR coûte en contrôles ───────────────────────────────────
@@ -543,7 +501,12 @@ function memoire(essais, le, execution) {
 /** Le mode `--github-only` : la part lue sur GitHub, reposée sur la mesure. */
 function rafraichirGitHub() {
   const chemin = join(DATA, 'snapshot.json');
-  const frais = { chantiers: chantiers(), prixCi: prixCi(), le: new Date().toISOString() };
+  const frais = {
+    chantiers: chantiers(),
+    prixCi: prixCi(),
+    release: release(),
+    le: new Date().toISOString(),
+  };
   const snapshot = fusionnerTableauGitHub(lireJson(chemin), frais);
   writeFileSync(chemin, JSON.stringify(snapshot, null, 2));
   const n = snapshot.chantiers?.cartes?.length ?? 0;
@@ -641,6 +604,9 @@ function main() {
     prixCi: prixCi(),
     parcours: e2e,
     chantiers: chantiers(),
+    // Ce que npm sert VRAIMENT, face à ce que le dépôt porte. Le seul fait qui
+    // pouvait contredire l'issue #68, et qui manquait.
+    release: release(),
   };
 
   writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(snapshot, null, 2));
@@ -668,6 +634,12 @@ function main() {
   );
   console.log(
     `capabilities: ${r.capacites} named · ${r.capacitesVerifiees} verified at both levels · ${r.capacitesSansMoteur} without an engine · ${r.capacitesSansPreuve} with no proof at all`,
+  );
+  const rel = snapshot.release;
+  console.log(
+    rel.npmInjoignable
+      ? `release: npm unreachable at ${rel.verifieLe} · repo at ${rel.versionDuDepot ?? '·'}`
+      : `release: npm serves ${rel.surNpm} (${rel.publieeLe ?? 'date unknown'}) · repo at ${rel.versionDuDepot} · ${rel.commitsDepuisLeTag ?? '·'} commits since ${rel.dernierTag ?? 'no tag'}`,
   );
   console.log(
     `memory: ${r.testsEnMemoire} tests tracked (${mem.joues} played this time) · ${r.testsInstables} flaky · ${r.testsCasses} broken`,

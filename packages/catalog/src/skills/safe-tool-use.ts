@@ -16,6 +16,15 @@ export const safeToolUseSkill: SystemSkill = {
   kind: 'baseline',
   // Ce texte prescrit des outils de fichiers et de shell : seul un job les a.
   surfaces: ['job'],
+  // Ce qui en reste vrai sans aucun outil — même raison que pour
+  // « Verify before done » (revue Codex de la dette de la PR #73, constat 1).
+  contentOnChat: `## Safe tool use
+
+Everything you hand off has side effects, even though you trigger none of them yourself.
+
+- Before asking for something destructive or irreversible — deleting, overwriting, sending, publishing — say what will be affected and get a clear yes.
+- Pass what you were given, not what you remember: the user's own words, the exact paths, the real values.
+- If a job comes back with a failure, report the failure. Do not retry the same thing unchanged, and do not describe it as done.`,
   content: `## Safe tool use
 
 Tools have side effects. Apply them with intent: read first, confirm before destroying, stop and report on failure.
