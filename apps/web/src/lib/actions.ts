@@ -46,6 +46,7 @@ import {
   extractChange,
   extractFilePath,
   isRefusedToolCall,
+  lineCountsOfCall,
   type CodingChangeView,
 } from './coding-changes.ts';
 import {
@@ -200,7 +201,14 @@ import {
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
-import type { ConversationFeed } from './conversation-feed.ts';
+import type { ConversationFeed, Step } from './conversation-feed.ts';
+import {
+  parsePresented,
+  outcomeOfToolOutput,
+  callHappened,
+  isToolCard,
+} from './tool-card-payload.ts';
+import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
@@ -1969,7 +1977,7 @@ export type JobDetailRow = JobRow & {
   parentJobId: string | null;
   agentName: string | null;
   agentSlug: string | null;
-  /** Cache-aware input tokens (see DelegationRunRow doc) — null pre-migration 0036. */
+  /** Cache-aware input tokens (cache reads excluded) — null pre-migration 0036. */
   effectiveInputTokens: number | null;
   /** Cron provenance (migration 0061) — null unless this job was schedule-fired. */
   triggerContext: JobTriggerContext | null;
@@ -2098,172 +2106,6 @@ export async function listJobsAction(
   } catch (err) {
     console.error('[listJobsAction]', err);
     return fail('db_error', 'Failed to load jobs');
-  }
-}
-
-/**
- * A run enriched with its DELEGATION role — feeds the Runs page delegation view.
- *   - `orchestrator`: this job delegated to at least one child (lime).
- *   - `delegated`:    this job was spawned by a parent (blue) — `fromAgentName`
- *                      is the parent's agent.
- *   - `standalone`:   neither (neutral).
- */
-export type DelegationRunRow = {
-  id: string;
-  agentName: string;
-  agentSlug: string | null;
-  agentAvatarUrl: string | null;
-  role: 'orchestrator' | 'delegated' | 'standalone';
-  fromAgentName: string | null;
-  task: string;
-  channel: string;
-  status: string | null;
-  inputTokens: number;
-  outputTokens: number;
-  /**
-   * Cumulative EFFECTIVE (non-cached) input tokens — the cache-aware figure
-   * the token budget actually measures. Falls back to `inputTokens` at read
-   * time for rows predating the effective_input_tokens column (migration
-   * 0036), where it defaults to 0. See DB column comment for the full story.
-   */
-  effectiveInputTokens: number;
-  costUsd: number;
-  createdAt: Date | null;
-  completedAt: Date | null;
-  /** Jobs page grouping (migration 0059) — null for non-conversational jobs. */
-  conversationId: string | null;
-  /** Feeds classifyJob() (chat vs task) in jobs-grouping.ts. */
-  toolsUsed: string[];
-  /**
-   * Name of the schedule that fired this job (from `trigger_context`,
-   * migration 0061) — null for jobs not fired by a cron trigger, and for
-   * cron rows predating that column.
-   */
-  scheduleName: string | null;
-};
-
-export async function listDelegationRunsAction(
-  opts: { limit?: number; agentId?: string | null } = {},
-): Promise<ActionResult<DelegationRunRow[]>> {
-  try {
-    const session = await getSession();
-    const limit = Math.min(opts.limit ?? 50, 100);
-    const db = getDb();
-
-    const rows = await db
-      .select({
-        id: agentJobs.id,
-        agentName: agents.name,
-        agentSlug: agents.slug,
-        agentAvatarUrl: agents.avatarUrl,
-        task: agentJobs.task,
-        channel: agentJobs.channel,
-        status: agentJobs.status,
-        inputTokens: agentJobs.inputTokens,
-        outputTokens: agentJobs.outputTokens,
-        effectiveInputTokens: agentJobs.effectiveInputTokens,
-        costUsd: agentJobs.totalCostUsd,
-        createdAt: agentJobs.createdAt,
-        completedAt: agentJobs.completedAt,
-        parentJobId: agentJobs.parentJobId,
-        conversationId: agentJobs.conversationId,
-        toolsUsed: agentJobs.toolsUsed,
-        triggerContext: agentJobs.triggerContext,
-      })
-      .from(agentJobs)
-      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(
-        and(
-          eq(agentJobs.entityId, session.entityId),
-          opts.agentId ? eq(agentJobs.agentId, opts.agentId) : undefined,
-        ),
-      )
-      .orderBy(desc(agentJobs.createdAt))
-      .limit(limit);
-
-    const ids = rows.map((r) => r.id);
-
-    // Orchestrators = jobs that some other job was delegated FROM (their id
-    // appears as a parent_job_id). One distinct query, no per-row subselect.
-    const childParents = ids.length
-      ? await db
-          .selectDistinct({ p: agentJobs.parentJobId })
-          .from(agentJobs)
-          .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.parentJobId, ids)))
-      : [];
-    const orchestratorIds = new Set(
-      childParents.map((c) => c.p).filter((p): p is string => p !== null),
-    );
-
-    // "from X": resolve each parent job's agent name.
-    const parentJobIds = [
-      ...new Set(rows.map((r) => r.parentJobId).filter((p): p is string => p !== null)),
-    ];
-    const parentName = new Map<string, string>();
-    if (parentJobIds.length) {
-      const pj = await db
-        .select({ id: agentJobs.id, name: agents.name })
-        .from(agentJobs)
-        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-        .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.id, parentJobIds)));
-      for (const p of pj) parentName.set(p.id, p.name ?? 'Agent');
-    }
-
-    // Order parent-then-children: each orchestrator sits immediately ABOVE the
-    // delegated runs it spawned (recursively), so the delegation tree reads
-    // top-down instead of interleaving by raw creation time.
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    const childrenOf = new Map<string, typeof rows>();
-    for (const r of rows) {
-      if (r.parentJobId && byId.has(r.parentJobId)) {
-        const arr = childrenOf.get(r.parentJobId) ?? [];
-        arr.push(r);
-        childrenOf.set(r.parentJobId, arr);
-      }
-    }
-    const seen = new Set<string>();
-    const ordered: typeof rows = [];
-    const emit = (r: (typeof rows)[number]) => {
-      if (seen.has(r.id)) return;
-      seen.add(r.id);
-      ordered.push(r);
-      for (const c of childrenOf.get(r.id) ?? []) emit(c);
-    };
-    for (const r of rows) if (!r.parentJobId || !byId.has(r.parentJobId)) emit(r);
-    for (const r of rows) emit(r); // sweep any orphan / cyclic leftovers
-
-    const result: DelegationRunRow[] = ordered.map((r) => {
-      const role: DelegationRunRow['role'] = r.parentJobId
-        ? 'delegated'
-        : orchestratorIds.has(r.id)
-          ? 'orchestrator'
-          : 'standalone';
-      const name = r.agentName ?? 'Unknown';
-      return {
-        id: r.id,
-        agentName: name,
-        agentSlug: r.agentSlug,
-        agentAvatarUrl: r.agentAvatarUrl ?? null,
-        role,
-        fromAgentName: r.parentJobId ? (parentName.get(r.parentJobId) ?? null) : null,
-        task: r.task,
-        channel: r.channel,
-        status: r.status,
-        inputTokens: r.inputTokens ?? 0,
-        outputTokens: r.outputTokens ?? 0,
-        effectiveInputTokens: r.effectiveInputTokens ?? 0,
-        costUsd: r.costUsd ?? 0,
-        createdAt: r.createdAt,
-        completedAt: r.completedAt,
-        conversationId: r.conversationId,
-        toolsUsed: r.toolsUsed ?? [],
-        scheduleName: r.triggerContext?.type === 'cron' ? r.triggerContext.scheduleName : null,
-      };
-    });
-    return ok(result);
-  } catch (err) {
-    console.error('[listDelegationRunsAction]', err);
-    return fail('db_error', 'Failed to load delegation runs');
   }
 }
 
@@ -8588,128 +8430,6 @@ export async function setSkillFilesWritableAction(raw: unknown): Promise<ActionR
 
 // ─── Log Actions ──────────────────────────────────────────────────────────────
 
-export type ToolCallLogRow = {
-  id: string;
-  jobId: string | null;
-  agentId: string | null;
-  agentName: string | null;
-  agentSlug: string | null;
-  toolName: string;
-  toolInput: unknown;
-  toolOutput: string | null;
-  durationMs: number | null;
-  turn: number | null;
-  createdAt: Date | null;
-};
-
-const ListToolCallsSchema = z.object({
-  agentId: z.string().guid().optional(),
-  toolName: z.string().min(1).max(120).optional(),
-  jobId: z.string().guid().optional(),
-  page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(200).default(50),
-});
-
-export type ToolCallLogResult = {
-  items: ToolCallLogRow[];
-  page: number;
-  pageSize: number;
-};
-
-export async function listToolCallsAction(
-  raw: unknown = {},
-): Promise<ActionResult<ToolCallLogResult>> {
-  try {
-    const session = await getSession();
-    const parsed = ListToolCallsSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const db = getDb();
-
-    const conditions = [eq(toolCalls.entityId, session.entityId)];
-    if (parsed.data.toolName) conditions.push(eq(toolCalls.toolName, parsed.data.toolName));
-    if (parsed.data.jobId) conditions.push(eq(toolCalls.jobId, parsed.data.jobId));
-    // Filtering by agentId requires a join via agentJobs — we add it conditionally
-    // below since the query shape changes when joined.
-
-    const offset = (parsed.data.page - 1) * parsed.data.pageSize;
-
-    const baseRows = parsed.data.agentId
-      ? await db
-          .select({
-            id: toolCalls.id,
-            jobId: toolCalls.jobId,
-            agentId: agentJobs.agentId,
-            toolName: toolCalls.toolName,
-            toolInput: toolCalls.toolInput,
-            toolOutput: toolCalls.toolOutput,
-            durationMs: toolCalls.durationMs,
-            turn: toolCalls.turn,
-            createdAt: toolCalls.createdAt,
-          })
-          .from(toolCalls)
-          .leftJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
-          .where(and(...conditions, eq(agentJobs.agentId, parsed.data.agentId)))
-          .orderBy(desc(toolCalls.createdAt))
-          .limit(parsed.data.pageSize)
-          .offset(offset)
-      : await db
-          .select({
-            id: toolCalls.id,
-            jobId: toolCalls.jobId,
-            agentId: agentJobs.agentId,
-            toolName: toolCalls.toolName,
-            toolInput: toolCalls.toolInput,
-            toolOutput: toolCalls.toolOutput,
-            durationMs: toolCalls.durationMs,
-            turn: toolCalls.turn,
-            createdAt: toolCalls.createdAt,
-          })
-          .from(toolCalls)
-          .leftJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
-          .where(and(...conditions))
-          .orderBy(desc(toolCalls.createdAt))
-          .limit(parsed.data.pageSize)
-          .offset(offset);
-
-    // Resolve agent name+slug per unique agentId.
-    const agentIds = Array.from(
-      new Set(baseRows.map((r) => r.agentId).filter((x): x is string => x !== null)),
-    );
-    const lookup = new Map<string, { name: string; slug: string }>();
-    if (agentIds.length > 0) {
-      const rows = await db
-        .select({ id: agents.id, name: agents.name, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, agentIds));
-      for (const r of rows) lookup.set(r.id, { name: r.name, slug: r.slug });
-    }
-
-    const items: ToolCallLogRow[] = baseRows.map((r) => {
-      const agent = r.agentId ? lookup.get(r.agentId) : null;
-      return {
-        id: r.id,
-        jobId: r.jobId,
-        agentId: r.agentId,
-        agentName: agent?.name ?? null,
-        agentSlug: agent?.slug ?? null,
-        toolName: r.toolName,
-        toolInput: r.toolInput,
-        toolOutput: r.toolOutput,
-        durationMs: r.durationMs,
-        turn: r.turn,
-        createdAt: r.createdAt,
-      };
-    });
-
-    return ok({ items, page: parsed.data.page, pageSize: parsed.data.pageSize });
-  } catch (err) {
-    console.error('[listToolCallsAction]', err);
-    return fail('db_error', 'Failed to load tool calls');
-  }
-}
-
 /**
  * Distinct tool_name values for the current entity, sorted alphabetically.
  * Brique 36 — feeds the /logs Tool Name filter <select> so the user doesn't
@@ -8728,6 +8448,339 @@ export async function listToolNamesAction(): Promise<ActionResult<string[]>> {
   } catch (err) {
     console.error('[listToolNamesAction]', err);
     return fail('db_error', 'Failed to load tool names');
+  }
+}
+
+// ─── Activity: the list of runs (#134) ───────────────────────────────────────
+//
+// La vue Activity comptait des appels d'outils : treize lignes pour un seul
+// run, et la liste devenait illisible dès que deux agents travaillaient en même
+// temps. Elle compte maintenant des RUNS. Les deux actions ci-dessous sont
+// séparées pour une raison qui est le cœur de la décision : la liste ne charge
+// AUCUN appel. Les appels d'un run sont lus au dépliage, run par run — sans
+// quoi ouvrir la page lirait des milliers de lignes pour en montrer cinquante.
+
+export type ActivityRunRow = {
+  id: string;
+  agentId: string | null;
+  agentName: string | null;
+  agentSlug: string | null;
+  agentAvatarUrl: string | null;
+  /** D'où vient la demande, dérivée du canal et de la provenance — jamais tapée. */
+  origin: RunOrigin;
+  task: string;
+  status: string | null;
+  /** Durée totale du run, telle que le runner l'a écrite (0 tant qu'il tourne). */
+  durationMs: number | null;
+  costUsd: number | null;
+  /** Appels d'outils + appels de modèle. Un COMPTE, pas les appels. */
+  callCount: number;
+  createdAt: Date | null;
+};
+
+export type ActivityRunsResult = {
+  items: ActivityRunRow[];
+  page: number;
+  pageSize: number;
+  /** Une page de plus existe — le compte des RUNS, jamais celui des appels. */
+  hasMore: boolean;
+};
+
+const ListActivityRunsSchema = z.object({
+  agentId: z.string().guid().optional(),
+  toolName: z.string().min(1).max(120).optional(),
+  /** Lien profond : la liste se réduit à ce run, et l'écran le déplie. */
+  jobId: z.string().guid().optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(50),
+});
+
+export async function listActivityRunsAction(
+  raw: unknown = {},
+): Promise<ActionResult<ActivityRunsResult>> {
+  try {
+    const session = await getSession();
+    const parsed = ListActivityRunsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const { agentId, toolName, jobId, page, pageSize } = parsed.data;
+
+    const conditions = [eq(agentJobs.entityId, session.entityId)];
+    if (agentId) conditions.push(eq(agentJobs.agentId, agentId));
+    if (jobId) conditions.push(eq(agentJobs.id, jobId));
+    if (toolName) {
+      // Filtrer par outil garde son sens quand l'unité devient le run : les
+      // runs qui ONT appelé cet outil. Une sous-requête, pas une jointure —
+      // une jointure rendrait un run autant de fois qu'il a appelé l'outil.
+      conditions.push(
+        inArray(
+          agentJobs.id,
+          db
+            .select({ id: toolCalls.jobId })
+            .from(toolCalls)
+            .where(and(eq(toolCalls.entityId, session.entityId), eq(toolCalls.toolName, toolName))),
+        ),
+      );
+    }
+
+    const offset = (page - 1) * pageSize;
+    // Une ligne de plus que la page : dit s'il y a une suite sans compter
+    // l'ensemble de la table.
+    const rows = await db
+      .select({
+        id: agentJobs.id,
+        agentId: agentJobs.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
+        task: agentJobs.task,
+        channel: agentJobs.channel,
+        triggerContext: agentJobs.triggerContext,
+        conversationId: agentJobs.conversationId,
+        status: agentJobs.status,
+        durationMs: agentJobs.totalDurationMs,
+        costUsd: agentJobs.totalCostUsd,
+        createdAt: agentJobs.createdAt,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(and(...conditions))
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(pageSize + 1)
+      .offset(offset);
+
+    const hasMore = rows.length > pageSize;
+    const pageRows = hasMore ? rows.slice(0, pageSize) : rows;
+    const ids = pageRows.map((r) => r.id);
+
+    // Le nombre d'appels de chaque run : DEUX agrégats, jamais les lignes.
+    const counts = new Map<string, number>();
+    if (ids.length > 0) {
+      const [toolCounts, modelCounts] = await Promise.all([
+        db
+          .select({ jobId: toolCalls.jobId, n: sql<number>`count(*)::int` })
+          .from(toolCalls)
+          .where(inArray(toolCalls.jobId, ids))
+          .groupBy(toolCalls.jobId),
+        db
+          .select({ jobId: llmCalls.jobId, n: sql<number>`count(*)::int` })
+          .from(llmCalls)
+          .where(inArray(llmCalls.jobId, ids))
+          .groupBy(llmCalls.jobId),
+      ]);
+      for (const c of [...toolCounts, ...modelCounts]) {
+        if (c.jobId === null) continue;
+        counts.set(c.jobId, (counts.get(c.jobId) ?? 0) + Number(c.n));
+      }
+    }
+
+    const items: ActivityRunRow[] = pageRows.map((r) => ({
+      id: r.id,
+      agentId: r.agentId,
+      agentName: r.agentName,
+      agentSlug: r.agentSlug,
+      agentAvatarUrl: r.agentAvatarUrl ?? null,
+      origin: originOfRun({
+        channel: r.channel,
+        triggerContext: r.triggerContext ?? null,
+        conversationId: r.conversationId,
+      }),
+      task: r.task,
+      status: r.status,
+      durationMs: r.durationMs ?? null,
+      costUsd: r.costUsd ?? null,
+      callCount: counts.get(r.id) ?? 0,
+      createdAt: r.createdAt,
+    }));
+
+    return ok({ items, page, pageSize, hasMore });
+  } catch (err) {
+    console.error('[listActivityRunsAction]', err);
+    return fail('db_error', 'Failed to load runs');
+  }
+}
+
+/** Un appel d'outil du run, dans la forme que le bloc du chat sait rendre. */
+export type RunToolCall = {
+  kind: 'tool';
+  id: string;
+  createdAt: Date | null;
+  turn: number | null;
+  step: Extract<Step, { kind: 'tool' }>;
+};
+
+/** Un appel de modèle du run : ce qui a répondu, ce qu'il a coûté. */
+export type RunModelCall = {
+  kind: 'model';
+  id: string;
+  createdAt: Date | null;
+  turn: number | null;
+  /** Le modèle qui a EFFECTIVEMENT répondu, jamais celui qu'on a demandé. */
+  model: string;
+  provider: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  durationMs: number | null;
+  failover: boolean;
+  error: string | null;
+};
+
+export type RunCall = RunToolCall | RunModelCall;
+
+export type RunCallsResult = {
+  items: RunCall[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  /** Le total du run — ce que la ligne repliée affiche, y compris pendant. */
+  total: number;
+};
+
+const ListRunCallsSchema = z.object({
+  jobId: z.string().guid(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(200).default(50),
+});
+
+/**
+ * Les appels d'UN run, du plus ancien au plus récent, outils et modèles
+ * entrelacés — appelée au dépliage d'une ligne, et à nouveau tant que le run
+ * tourne.
+ *
+ * Les deux tables sont lues jusqu'au bord de la page demandée (`take`), puis
+ * fusionnées : c'est la seule façon d'entrelacer deux tables sans que la
+ * pagination ne coupe au mauvais endroit. Une page de 50 sur un run de 200
+ * appels lit donc 50 lignes de chaque table, pas 200.
+ */
+export async function listRunCallsAction(raw: unknown): Promise<ActionResult<RunCallsResult>> {
+  try {
+    const session = await getSession();
+    const parsed = ListRunCallsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const { jobId, page, pageSize } = parsed.data;
+
+    // Le run appartient-il à cette entité ? Sans cette lecture, l'id d'un run
+    // d'une autre entité rendrait ses appels.
+    const [job] = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, session.entityId)));
+    if (!job) return fail('not_found', 'Run not found');
+
+    const offset = (page - 1) * pageSize;
+    const take = offset + pageSize + 1;
+
+    const [toolRows, modelRows, toolTotal, modelTotal] = await Promise.all([
+      db
+        .select({
+          id: toolCalls.id,
+          toolName: toolCalls.toolName,
+          toolCallId: toolCalls.toolCallId,
+          toolInput: toolCalls.toolInput,
+          toolOutput: toolCalls.toolOutput,
+          durationMs: toolCalls.durationMs,
+          turn: toolCalls.turn,
+          card: toolCalls.card,
+          presented: toolCalls.presented,
+          createdAt: toolCalls.createdAt,
+        })
+        .from(toolCalls)
+        .where(eq(toolCalls.jobId, jobId))
+        .orderBy(asc(toolCalls.createdAt))
+        .limit(take),
+      db
+        .select({
+          id: llmCalls.id,
+          modelEffective: llmCalls.modelEffective,
+          provider: llmCalls.provider,
+          inputTokens: llmCalls.inputTokens,
+          outputTokens: llmCalls.outputTokens,
+          costUsd: llmCalls.costUsd,
+          durationMs: llmCalls.durationMs,
+          failover: llmCalls.failover,
+          error: llmCalls.error,
+          turn: llmCalls.turn,
+          createdAt: llmCalls.createdAt,
+        })
+        .from(llmCalls)
+        .where(eq(llmCalls.jobId, jobId))
+        .orderBy(asc(llmCalls.createdAt))
+        .limit(take),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(toolCalls)
+        .where(eq(toolCalls.jobId, jobId)),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(llmCalls)
+        .where(eq(llmCalls.jobId, jobId)),
+    ]);
+
+    const tools: RunCall[] = toolRows.map((r) => {
+      const outcome = outcomeOfToolOutput(r.toolOutput);
+      return {
+        kind: 'tool',
+        id: r.id,
+        createdAt: r.createdAt,
+        turn: r.turn,
+        step: {
+          kind: 'tool',
+          toolName: r.toolName,
+          toolCallId: r.toolCallId,
+          jobId,
+          card: isToolCard(r.card) ? r.card : null,
+          presented: parsePresented(r.presented),
+          input: r.toolInput,
+          outputText: r.toolOutput,
+          outcome,
+          durationMs: r.durationMs,
+          // Ce que l'appel a écrit, compté comme le fil le compte (même
+          // fonction) : un appel qui n'a pas abouti n'a rien écrit.
+          lineCounts: callHappened(outcome)
+            ? lineCountsOfCall(r.toolName, r.toolInput, r.toolOutput)
+            : {},
+          // Les questions d'approbation sont l'affaire du fil, où l'on peut
+          // répondre. La liste des runs montre l'appel, pas ses boutons.
+          question: null,
+        },
+      };
+    });
+
+    const models: RunCall[] = modelRows.map((r) => ({
+      kind: 'model',
+      id: r.id,
+      createdAt: r.createdAt,
+      turn: r.turn,
+      model: r.modelEffective,
+      provider: r.provider,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      costUsd: r.costUsd,
+      durationMs: r.durationMs,
+      failover: r.failover,
+      error: r.error,
+    }));
+
+    const merged = inTimeOrder([...tools, ...models]);
+    const items = merged.slice(offset, offset + pageSize);
+    const total = Number(toolTotal[0]?.n ?? 0) + Number(modelTotal[0]?.n ?? 0);
+
+    return ok({
+      items,
+      page,
+      pageSize,
+      hasMore: merged.length > offset + pageSize,
+      total,
+    });
+  } catch (err) {
+    console.error('[listRunCallsAction]', err);
+    return fail('db_error', 'Failed to load the calls of this run');
   }
 }
 

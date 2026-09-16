@@ -24,10 +24,15 @@
 // réutilisé et non copié — plan, « ce qu'on garde ». Les parties `reasoning`
 // (persistées par le runner, execute.ts) sont lues ici, en amont.
 
-import { SENT_TEXT_KINDS, TOOL_CARDS } from '@nodal-agents/shared';
+import { SENT_TEXT_KINDS } from '@nodal-agents/shared';
 import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
 import { blocksFromContent } from '@/components/JobMessages.tsx';
-import { parsePresented, outcomeOfToolOutput, callHappened } from './tool-card-payload.ts';
+import {
+  parsePresented,
+  outcomeOfToolOutput,
+  callHappened,
+  isToolCard,
+} from './tool-card-payload.ts';
 import { lineCountsOfCall, type LineCounts } from './coding-changes.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
 
@@ -351,10 +356,6 @@ export function showsAlone(step: Extract<Step, { kind: 'tool' }>): boolean {
 }
 
 // ─── Lecture des lignes ───────────────────────────────────────────────────────
-
-function isToolCard(value: string | null): value is ToolCard {
-  return value !== null && (TOOL_CARDS as readonly string[]).includes(value);
-}
 
 type ReasoningPart = { type: 'reasoning'; text: string };
 

@@ -119,9 +119,10 @@ test.describe('agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-
     await expect(page.getByText(agentName)).toBeVisible({ timeout: 10_000 });
 
     // ── Send task ─────────────────────────────────────────────────────────
-    // SendTaskForm lives on /jobs (creates an agent_jobs row, redirects to
-    // /jobs/<id>). /tasks is reserved for the planner orchestrator's task board.
-    await page.goto('/jobs');
+    // SendTaskForm lives on the runs list, which is Activity since #134 (it
+    // creates an agent_jobs row and redirects to /jobs/<id>). /tasks is
+    // reserved for the planner orchestrator's task board.
+    await page.goto('/logs');
     // The CTA is labelled "New task" (SendTaskForm.tsx), not "Send task" — and
     // the submit button inside the modal carries the SAME label, so the toolbar
     // click must happen while it is still the only one on the page.
@@ -213,12 +214,21 @@ test.describe('settings pages render without runtime errors @cap:installer-et-de
     // Le détail d'un run n'existe que s'il y a eu un run. Sur une installation
     // fraîche il n'y en a pas, et exiger le contraire ferait échouer la CI pour
     // une raison qui n'est pas un défaut — on saute, en le disant.
-    await page.goto('/jobs');
-    const lienRun = page.locator('a[href*="/jobs/"]').first();
-    if ((await lienRun.count()) === 0) {
+    //
+    // La liste des runs est Activity depuis #134 : un run s'atteint en dépliant
+    // sa ligne, qui porte alors le lien « Open run ». C'est le chemin qu'un
+    // lecteur prend, et donc celui qu'on vérifie.
+    await page.goto('/logs');
+    const ligneRun = page.locator('[data-testid^="run-row-"]').first();
+    if ((await ligneRun.count()) === 0) {
       test.info().annotations.push({ type: 'skip', description: 'aucun run dans cet espace' });
       return;
     }
+    await ligneRun.click();
+    const lienRun = page.getByRole('link', { name: /open run/i }).first();
+    await expect(lienRun, 'une ligne dépliée sans lien vers son run').toBeVisible({
+      timeout: 10_000,
+    });
     const hrefRun = await lienRun.getAttribute('href');
     const rRun = await page.goto(hrefRun!);
     expect(rRun?.status(), `${hrefRun} HTTP status`).toBeLessThan(400);

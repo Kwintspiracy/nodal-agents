@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import {
   House,
   ChatCircle,
-  Graph,
   Code,
   CardsThree,
   CalendarCheck,
@@ -70,7 +69,6 @@ const NAV: Group[] = [
     items: [
       { href: '/', label: 'Home', icon: House },
       { href: '/chat', label: 'Chat', icon: ChatCircle },
-      { href: '/jobs', label: 'Runs', icon: Graph },
       { href: '/code', label: 'Code', icon: Code },
       { href: '/spaces', label: 'Spaces', icon: CardsThree },
       { href: '/scheduled', label: 'Scheduled', icon: CalendarCheck },

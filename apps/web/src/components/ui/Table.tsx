@@ -124,6 +124,7 @@ export function Td({
   className = '',
   onClick,
   style,
+  'data-testid': dataTestid,
 }: {
   children?: ReactNode;
   align?: 'left' | 'right';
@@ -133,12 +134,15 @@ export function Td({
   className?: string;
   onClick?: MouseEventHandler<HTMLTableCellElement>;
   style?: CSSProperties;
+  /** Comme sur <Tr> : une cellule qu'un parcours ou un test doit pouvoir viser. */
+  'data-testid'?: string;
 }) {
   return (
     <td
       colSpan={colSpan}
       onClick={onClick}
       style={style}
+      data-testid={dataTestid}
       className={`px-5 py-3.5 ${top ? 'align-top' : 'align-middle'} ${
         align === 'right' ? 'text-right' : ''
       } ${className}`}
