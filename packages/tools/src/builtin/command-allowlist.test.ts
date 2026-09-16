@@ -150,6 +150,61 @@ describe('assertCommandAllowed @cap:assigner-outils/moteur', () => {
     });
   });
 
+  describe('what a naive split on separators gets WRONG', () => {
+    // Both of these break a working command, which is the failure nobody
+    // reports as a security bug and everybody works around by widening the
+    // list until it means nothing.
+    it('treats 2>&1 as a redirection, not as a separator followed by `1`', () => {
+      expect(() => assertCommandAllowed('node x.js > out.log 2>&1', REVIEWER)).not.toThrow();
+    });
+
+    it('treats any N>&M / N<&M the same way', () => {
+      expect(() => assertCommandAllowed('node x.js 3>&2 0<&1', REVIEWER)).not.toThrow();
+    });
+
+    it('does not split on a separator inside a double-quoted argument', () => {
+      // `node -e "a;b"` passes ONE argument to node. Splitting on the `;`
+      // invents a segment `b"` that no allowlist can ever contain.
+      expect(() => assertCommandAllowed('node -e "a;b"', REVIEWER)).not.toThrow();
+    });
+
+    it('does not split on a separator inside a single-quoted argument', () => {
+      expect(() => assertCommandAllowed("node -e 'a && b'", REVIEWER)).not.toThrow();
+    });
+
+    it('still refuses a REAL second command that follows a quoted one', () => {
+      expect(() => assertCommandAllowed('node -e "a" ; rm x', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('names the second segment — not the whole command — when it is the refused one', () => {
+      try {
+        assertCommandAllowed('node -e "a" ; rm x', REVIEWER);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect((err as CommandNotAllowedError).refused).toBe('rm x');
+      }
+    });
+
+    it('refuses a command with an unterminated quote instead of guessing', () => {
+      // The shell would not run it either. Refusing is the direction that
+      // protects: a half-read command is not a command.
+      expect(() => assertCommandAllowed('node -e "a ; rm x', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('says WHY an unterminated quote is refused', () => {
+      try {
+        assertCommandAllowed('node -e "a ; rm x', REVIEWER);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect((err as Error).message).toMatch(/quote/i);
+      }
+    });
+  });
+
   describe('matching is on whole tokens', () => {
     it('does not let a longer executable pass on a prefix match', () => {
       // `nodemon` starts with `node` — a substring check would allow it.

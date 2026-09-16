@@ -68,12 +68,14 @@ const HIDES_A_COMMAND = /\$\(|`/;
  */
 const EXPANDS_LATER = /\$\{|\$[A-Za-z_]|%[^%\s]*%/;
 
-/**
- * Separators that start a NEW command in both cmd.exe and /bin/sh. Each side
- * of one is checked on its own: `node -v && rm -rf /` must be refused on its
- * second half, not allowed on its first.
- */
-const SEGMENT_SEPARATORS = /&&|\|\||[;&|\n\r]/;
+/** One command between two separators, with its tokens already extracted. */
+interface Segment {
+  readonly tokens: readonly string[];
+  readonly raw: string;
+}
+
+/** A quote opened and never closed — the shell would not run this either. */
+const UNTERMINATED_QUOTE = Symbol('unterminated_quote');
 
 /**
  * Refuse `command` unless every one of its segments starts with an entry of
@@ -112,18 +114,130 @@ export function assertCommandAllowed(
     );
   }
 
-  const entries = allowlist.map((entry) => tokenize(entry)).filter((tokens) => tokens.length > 0);
+  const split = splitIntoSegments(command);
+  if (split === UNTERMINATED_QUOTE) {
+    throw new CommandNotAllowedError(
+      command.trim(),
+      allowlist,
+      'Unterminated quote: the command cannot be read reliably, so it is refused.',
+    );
+  }
 
-  for (const segment of command.split(SEGMENT_SEPARATORS)) {
-    const tokens = tokenize(segment);
-    if (tokens.length === 0) continue; // empty side of a separator — nothing runs
-    const allowed = entries.some((entry) => entry.every((token, i) => tokens[i] === token));
+  const entries = allowlist
+    .map((entry) => tokenizeEntry(entry))
+    .filter((tokens) => tokens.length > 0);
+
+  for (const segment of split) {
+    if (segment.tokens.length === 0) continue; // empty side of a separator — nothing runs
+    const allowed = entries.some(
+      (entry) =>
+        segment.tokens.length >= entry.length &&
+        entry.every((token, i) => segment.tokens[i] === token),
+    );
     if (!allowed) {
-      throw new CommandNotAllowedError(segment.trim(), allowlist);
+      throw new CommandNotAllowedError(segment.raw.trim(), allowlist);
     }
   }
 }
 
-function tokenize(value: string): string[] {
+/**
+ * Split a command into the commands the shell would actually start, and
+ * tokenize each one.
+ *
+ * Two things a plain `String.split(/&&|\|\||[;&|\n\r]/)` gets wrong, both of
+ * them in the direction that breaks a working command — the failure nobody
+ * reports as a security bug and everybody works around by widening the list
+ * until it means nothing:
+ *
+ *  - `2>&1` (and any `N>&M` / `N<&M`) is a REDIRECTION, not a separator.
+ *    Splitting on its `&` leaves a segment `1`, refused against every
+ *    allowlist, so `node x.js > out.log 2>&1` could not be run at all.
+ *  - a separator inside a quoted string is not a separator. `node -e "a;b"`
+ *    passes ONE argument to node; splitting it invents a segment `b"`.
+ *
+ * Quotes are consumed the way both shells do: the content joins the token, the
+ * quote characters do not. Backslash is NOT an escape here — on Windows it is
+ * the path separator, and reading a path as an escape would corrupt every one
+ * of them. A quote left open yields UNTERMINATED_QUOTE and the caller refuses,
+ * in the direction that protects.
+ */
+function splitIntoSegments(command: string): Segment[] | typeof UNTERMINATED_QUOTE {
+  const segments: Segment[] = [];
+  let tokens: string[] = [];
+  let token = '';
+  let tokenStarted = false;
+  let segmentStart = 0;
+  let quote: '"' | "'" | null = null;
+
+  const endToken = (): void => {
+    if (tokenStarted) {
+      tokens.push(token);
+      token = '';
+      tokenStarted = false;
+    }
+  };
+  const endSegment = (endIndex: number): void => {
+    endToken();
+    segments.push({ tokens, raw: command.slice(segmentStart, endIndex) });
+    tokens = [];
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+
+    if (quote !== null) {
+      if (c === quote) quote = null;
+      else {
+        token += c;
+        tokenStarted = true;
+      }
+      continue;
+    }
+
+    if (c === '"' || c === "'") {
+      quote = c;
+      tokenStarted = true; // `node -e ""` passes an empty argument, not nothing
+      continue;
+    }
+
+    // `N>&M` / `N<&M`: this `&` belongs to the redirection that precedes it.
+    if (c === '&' && i > 0 && (command[i - 1] === '>' || command[i - 1] === '<')) {
+      token += c;
+      tokenStarted = true;
+      continue;
+    }
+
+    if ((c === '&' && command[i + 1] === '&') || (c === '|' && command[i + 1] === '|')) {
+      endSegment(i);
+      i++; // consume the second character of the pair
+      segmentStart = i + 1;
+      continue;
+    }
+
+    if (c === '&' || c === '|' || c === ';' || c === '\n' || c === '\r') {
+      endSegment(i);
+      segmentStart = i + 1;
+      continue;
+    }
+
+    if (c === ' ' || c === '\t') {
+      endToken();
+      continue;
+    }
+
+    token += c;
+    tokenStarted = true;
+  }
+
+  if (quote !== null) return UNTERMINATED_QUOTE;
+  endSegment(command.length);
+  return segments;
+}
+
+/**
+ * An allowlist entry is written by a human in the agent settings, not produced
+ * by a shell: splitting on whitespace is the whole job.
+ */
+function tokenizeEntry(value: string): string[] {
   return value.trim().split(/\s+/).filter(Boolean);
 }
