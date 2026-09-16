@@ -206,44 +206,8 @@ describe('la promesse « rien que d’exécutable » se vérifie sur le TEXTE, p
   // par la phrase, et la liste s'allonge chaque fois qu'une passe en trouve un.
   it('aucune phrase du chat n’ordonne un geste que le chat ne peut pas poser', async () => {
     const c = await chat();
-    for (const ordre of ['Call them directly', '`attach_connector`']) {
+    for (const ordre of ['Call them directly', '`attach_connector`', 'you MUST call']) {
       expect(c, `ordre inexécutable sur le chat : « ${ordre} »`).not.toContain(ordre);
-    }
-  });
-
-  /**
-   * « you MUST call » était banni AU MOT par la passe 3, et ce mot-là se
-   * contredisait lui-même : `run_task` est l'unique outil du chat
-   * (`OUTILS_DU_CHAT` ci-dessus), l'escalade vers lui est toute la surface — le
-   * test du bloc d'équipe EXIGE plus haut que le prompt la porte —, et le
-   * prompt de chat l'ordonne depuis la 0.4.2 (`buildJobContextBlock`, branche
-   * `surface === 'chat'`). Bannir la phrase refusait donc la seule consigne que
-   * le chat peut suivre, et la CI de la PR #103 était rouge sur ce seul cas.
-   *
-   * Ce qui est inexécutable, ce n'est pas la tournure : c'est cette tournure
-   * DIRIGÉE VERS UN AUTRE OUTIL. On lit donc la phrase jusqu'au point, et on
-   * exige qu'elle nomme un outil du chat, et aucun autre — une phrase qui
-   * n'en nommerait aucun (« you MUST call it right away ») est refusée elle
-   * aussi, puisque personne ne saurait quoi appeler.
-   */
-  it('un ordre « you MUST call » sur le chat ne vise que les outils du chat', async () => {
-    const c = await chat();
-    const phrases = [...c.matchAll(/you MUST call ([^.]*)/g)].map((m) => m[1]!);
-    expect(phrases.length, 'aucune phrase à vérifier — le prompt a changé de mots').toBeGreaterThan(
-      0,
-    );
-    for (const phrase of phrases) {
-      const nommes = [...phrase.matchAll(/\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g)]
-        .map((m) => m[1]!)
-        .filter((nom) => !PAS_DES_OUTILS.has(nom));
-      expect(
-        nommes.filter((nom) => !OUTILS_DU_CHAT.has(nom)),
-        `ordre vers un outil absent du chat : « ${phrase} »`,
-      ).toEqual([]);
-      expect(
-        nommes.some((nom) => OUTILS_DU_CHAT.has(nom)),
-        `« you MUST call » sans nommer d’outil du chat : « ${phrase} »`,
-      ).toBe(true);
     }
   });
 
