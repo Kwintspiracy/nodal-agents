@@ -20,6 +20,8 @@ import { test, expect } from '@playwright/test';
 import {
   requireLiveStack,
   cleanCredentialsByType,
+  dropE2ECredentials,
+  e2eCredentialName,
   openConnectorLibrary,
   connectorCard,
   openInstalledConnectors,
@@ -30,6 +32,12 @@ test.beforeAll(async () => {
   await requireLiveStack();
   // Clean up any credentials from previous runs so the card renders the wizard button.
   await cleanCredentialsByType('google-oauth');
+});
+
+// Les parcours ne doivent pas dépendre de leur ordre : ce qui est créé ici est
+// effacé ici, même si le parcours a échoué en route.
+test.afterAll(async () => {
+  await dropE2ECredentials('google-oauth');
 });
 
 test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran', () => {
@@ -94,10 +102,13 @@ test.describe('Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service
     await wizard.locator('input[name="clientId"]').fill('test-google-client-id');
     await wizard.locator('input[name="clientSecret"]').fill('test-google-client-secret');
     // Optional display name
+    // Le nom PORTE le marqueur e2e : c'est lui qui autorise le nettoyage
+    // (`afterAll`) et la garde du parcours suivant à effacer cet identifiant
+    // sans jamais toucher au compte d'un humain. Le champ existe toujours dans
+    // l'assistant, donc on l'attend au lieu de le remplir « si visible ».
     const nameInput = wizard.locator('input[name="name"]');
-    if (await nameInput.isVisible()) {
-      await nameInput.fill('My Google Drive (e2e)');
-    }
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    await nameInput.fill(e2eCredentialName('My Google Drive (e2e)'));
 
     // ── 6. Intercept the /start POST — forward to server, capture Location header
     let capturedRedirectUri = '';
