@@ -19,6 +19,7 @@ import {
   cadenceAffichee,
   ORDRE_DES_BACS,
   MOT_ETAT,
+  publicationsDejaFaites,
 } from './lib.mjs';
 import { EXPLICATIONS } from './explications.mjs';
 
@@ -849,10 +850,57 @@ const TONS_ETIQUETTE = {
   product: 'rose',
 };
 
+/**
+ * Ce que npm sert, face à ce que le dépôt porte.
+ *
+ * Le bloc qui manquait le 12/09/2026, quand une issue « Publish 0.8.9 » a vécu
+ * quatre jours sur ce tableau alors que 0.8.9 était publiée depuis trois jours.
+ * Aucun de ces chiffres n'est saisi : ils viennent de `npm view` et de `git`, à
+ * la collecte.
+ *
+ * npm muet : le bloc DIT le trou et son heure. Jamais l'ancienne réponse sans
+ * sa date, jamais un vert par défaut.
+ */
+function cadreRelease() {
+  const r = s.release ?? null;
+  if (!r) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>Release state not collected.</b> This measurement predates the check, so nothing is claimed about what is published.</div>`;
+  }
+  if (r.npmInjoignable) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>npm unreachable at ${esc(dateFr(r.verifieLe))}.</b> Nothing is known about what is published. The repo carries <code>${esc(r.versionDuDepot ?? '·')}</code>.</div>`;
+  }
+  // npm a répondu « ce nom n'existe pas ». C'est un FAIT, pas un silence : le
+  // dire en « unreachable » accuserait le réseau et laisserait croire au doute.
+  if (r.jamaisPubliee) {
+    return `<div class="cadre-release cadre-release--absent">
+      <b>Not published on npm yet</b>, checked at ${esc(dateFr(r.verifieLe))}. npm answered, and the name is free. The repo carries <code>${esc(r.versionDuDepot ?? '·')}</code>.</div>`;
+  }
+  const dejaFait = publicationsDejaFaites(s.chantiers?.cartes ?? null, r);
+  const chiffre = (valeur, libelle) =>
+    `<div class="chiffre-release"><b>${esc(valeur)}</b><span>${esc(libelle)}</span></div>`;
+  return `<div class="cadre-release">
+    <div class="chiffres-release">
+      ${chiffre(r.surNpm ?? '·', `latest on npm, published ${jourFr(r.publieeLe)}`)}
+      ${chiffre(r.versionDuDepot ?? '·', 'version in the repo')}
+      ${chiffre(n(r.commitsDepuisLeTag), `commits on main since ${r.dernierTag ?? 'no tag'}`)}
+    </div>
+    ${
+      dejaFait.length
+        ? `<p class="avertissement-release"><b>${dejaFait.length} open card${dejaFait.length > 1 ? 's ask' : ' asks'} to publish a version already on npm:</b> ${dejaFait
+            .map((c) => `<span class="jeton mono">#${c.numero} ${esc(c.titre)}</span>`)
+            .join(' ')}</p>`
+        : ''
+    }
+  </div>`;
+}
+
 function vueChantiers() {
   const cartes = s.chantiers?.cartes ?? null;
   if (!cartes) {
     return `<section id="chantiers" class="vue actif">${entete('chantiers', 'Work in flight')}
+      ${repere('chantiers', 'release')}${cadreRelease()}
       <div class="alerte">GitHub did not answer, the portal shows nothing rather than a stale list.</div></section>`;
   }
 
@@ -868,8 +916,15 @@ function vueChantiers() {
           : c.ci === 'en cours'
             ? '<span class="pastille pastille--inconnu">CI running</span>'
             : '';
+    // La provenance, sur la carte elle-même : une issue ouverte par un agent
+    // sans section « Verified » est une affirmation que personne n'a vérifiée.
+    // C'est exactement ce qu'était #68, et rien ne le disait.
+    const sansFaits =
+      c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies
+        ? '<span class="pastille pastille--ko">no verified facts</span>'
+        : '';
     return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}</span>
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${ci}${sansFaits}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
     </a>`;
@@ -895,6 +950,7 @@ function vueChantiers() {
   return `
 <section id="chantiers" class="vue actif">
   ${entete('chantiers', 'Work in flight')}
+  ${repere('chantiers', 'release')}${cadreRelease()}
   ${aFaire > 0 ? `<div class="rappel"><b>${aFaire} decision${aFaire > 1 ? 's' : ''} waiting on you</b>: they block the rest until they are settled.${enReview > 0 ? ` And ${enReview} pull request${enReview > 1 ? 's are' : ' is'} waiting for your merge.` : ''}</div>` : ''}
   <div class="kanban">${colonnes}</div>
 </section>`;
@@ -1191,6 +1247,18 @@ tr:last-child td{border-bottom:0}
 .unite{color:var(--encre3);font-size:11px}
 .ligne-meta{margin:0 0 7px;font-size:13px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 .ligne-meta b{color:var(--encre3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-right:3px}
+
+/* ── Release : ce que npm sert, face a ce que le depot porte ── */
+.cadre-release{border:1px solid var(--regle);padding:16px 20px;margin:0 0 26px;max-width:80ch}
+.cadre-release--absent{color:var(--encre2);font-size:15px;line-height:1.55}
+.cadre-release--absent b{color:var(--encre);font-family:Archivo,sans-serif}
+.chiffres-release{display:flex;flex-wrap:wrap;gap:34px}
+.chiffre-release{display:flex;flex-direction:column;gap:2px}
+.chiffre-release b{font-family:Archivo,sans-serif;font-size:26px;line-height:1;color:var(--encre)}
+.chiffre-release span{font-size:12px;color:var(--encre2)}
+.avertissement-release{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--regle);
+  font-size:14px;color:var(--ko);line-height:1.6}
+.avertissement-release b{font-family:Archivo,sans-serif}
 
 /* ── Kanban ── */
 .rappel{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:0 0 30px;

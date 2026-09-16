@@ -21,6 +21,8 @@ import { test, expect } from '@playwright/test';
 import {
   requireLiveStack,
   cleanCredentialsByType,
+  dropE2ECredentials,
+  e2eCredentialName,
   openConnectorLibrary,
   connectorCard,
   openInstalledConnectors,
@@ -31,6 +33,12 @@ test.beforeAll(async () => {
   await requireLiveStack();
   // Clean up any credentials from previous runs so the card renders the wizard button.
   await cleanCredentialsByType('notion-oauth');
+});
+
+// Les parcours ne doivent pas dépendre de leur ordre : ce qui est créé ici est
+// effacé ici, même si le parcours a échoué en route.
+test.afterAll(async () => {
+  await dropE2ECredentials('notion-oauth');
 });
 
 test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran', () => {
@@ -81,6 +89,12 @@ test.describe('Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran
     // ── 4. Fill wizard form ───────────────────────────────────────────────────
     await wizard.locator('input[name="clientId"]').fill('notion-test-client-id');
     await wizard.locator('input[name="clientSecret"]').fill('notion-test-client-secret');
+    // Le nom porte le marqueur e2e : c'est lui qui autorise le nettoyage de fin
+    // de parcours à effacer cet identifiant sans jamais toucher au compte d'un
+    // humain.
+    const nameInput = wizard.locator('input[name="name"]');
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    await nameInput.fill(e2eCredentialName('My Notion (e2e)'));
 
     // ── 5. Intercept /start POST ──────────────────────────────────────────────
     let capturedRedirectUri = '';

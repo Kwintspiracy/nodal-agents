@@ -40,7 +40,9 @@ export const EXPLICATIONS = {
 </ul>
 <p>The left bar follows the same order as the eye: Work in flight, Capabilities, Gaps, Journeys, Test memory. Those five pages are the ones you steer with, and they read in that order.</p>
 <p>Under the "How it runs" heading sit the four plumbing pages: the test overview, the bench, the triggers and the history. You open them when you doubt a number, not every day.</p>
-<p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>`,
+<p>On a pull request card, the CI pill says whether its checks are green, red or still running. "CI green" does not mean "reviewed": a pull request is merged after a review AND green checks.</p>
+<p>A "no verified facts" pill marks an open card that an agent opened without a <code>Verified</code> section stating the commands it ran and what they answered. Nothing in such a card was checked against npm, git or a test run, and that is precisely how a version published a week earlier became a task on this board.</p>
+<p>Above the columns, the release block says what npm serves, what the repository carries, and how many commits sit on main since the last tag. If an open card asks to publish a version npm already has, it is named right there.</p>`,
       },
       {
         titre: 'Where it comes from',
@@ -57,7 +59,10 @@ export const EXPLICATIONS = {
         texte: `<p>Neither the priority between two cards in the same column, nor the time spent. An "In progress" card does not say whether anyone is actually working on it, only that it is neither settled, nor carried by a pull request, nor closed.</p>`,
       },
     ],
-    blocs: {},
+    blocs: {
+      release:
+        'What npm serves right now, against what this repository carries. Both numbers are read from npm and from git at collection time, never typed in, so a card asking to publish a version that is already published gets named here instead of being believed for four days.',
+    },
   },
 
   capacites: {

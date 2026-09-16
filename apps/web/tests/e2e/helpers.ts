@@ -4,6 +4,22 @@ import { join } from 'node:path';
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
 import { createClient } from '@nodal-agents/db';
 import type { CredentialType } from '@nodal-agents/shared';
+import {
+  cleanCredentialsOfType,
+  cleanupOptionsFromEnv,
+  dropRunCredentials,
+  E2E_RUN_ID,
+} from './credential-cleanup.ts';
+
+export {
+  E2E_CREDENTIAL_MARKER_OPEN,
+  E2E_CREDENTIAL_MARKER_CLOSE,
+  E2E_RUN_ID,
+  e2eCredentialMarker,
+  e2eCredentialName,
+  isE2ECredentialName,
+  isCredentialOfRun,
+} from './credential-cleanup.ts';
 
 /**
  * Skip the entire test file when the Nodal-Agents stack isn't reachable. Every
@@ -359,39 +375,56 @@ export async function resolveActingUser(): Promise<{ userId: string; entityId: s
  *
  * Restait la moitié du danger : le filtre protège les AUTRES types, pas le
  * compte Google réel du développeur quand le type demandé est justement
- * `google-oauth`. Rien ne distingue en base un identifiant posé par un parcours
- * d'un identifiant posé par un humain — il n'y a pas de marqueur à filtrer.
- * Donc la suppression se DEMANDE : sans `NODALAI_E2E_WIPE_CREDENTIALS=1`, une
- * base qui contient déjà un identifiant de ce type fait échouer bruyamment le
- * `beforeAll` avec la marche à suivre, au lieu de l'effacer. Une base qui n'en
- * contient pas — le cas de la pile neuve du runner, donc de la mesure
- * nocturne — n'a rien à supprimer et ne voit aucune différence.
+ * `google-oauth`. La suppression se DEMANDAIT donc pour TOUT identifiant du
+ * type, et c'est ce qui a rendu les parcours dépendants de leur ordre : la
+ * mesure du 15/09 voyait `help-guides` et `oauth-flow` rouges parce que
+ * `credentials-reuse` avait laissé son propre identifiant Google derrière lui.
+ *
+ * Il y a maintenant un marqueur : tout identifiant créé par un parcours porte
+ * `[nodalai-e2e:<runId>]` À LA FIN de son nom (`e2eCredentialName`). Ceux de CE
+ * run sont effacés sans rien demander ; ceux d'un AUTRE run e2e sont laissés en
+ * place et signalés (deux machines peuvent partager `NODALAI_E2E_DB_URL`) ; ceux
+ * qui n'ont pas de marqueur — un compte connecté à la main — ne sont JAMAIS
+ * effacés sans `NODALAI_E2E_WIPE_CREDENTIALS=1`, et leur présence fait échouer
+ * bruyamment le `beforeAll` avec la marche à suivre.
+ *
+ * La décision ET la suppression vivent dans `credential-cleanup.ts`, qui est
+ * testé sous vitest contre un vrai Postgres. Ici il ne reste que le câblage :
+ * qui agit, sur quelle base.
  */
 export async function cleanCredentialsByType(type: CredentialType): Promise<void> {
-  const { credentials, eq, and } = await import('@nodal-agents/db');
   const { userId } = await resolveActingUser();
   const { db, close } = makeDbClient();
   try {
-    const owned = and(eq(credentials.ownerUserId, userId), eq(credentials.type, type));
-    const existing = await db
-      .select({ id: credentials.id, name: credentials.name })
-      .from(credentials)
-      .where(owned);
-    if (existing.length === 0) return;
-
-    if (process.env['NODALAI_E2E_WIPE_CREDENTIALS'] !== '1') {
-      throw new Error(
-        `Ce parcours part d'une base sans identifiant « ${type} », et cette pile en a ` +
-          `${existing.length} (${existing.map((r) => r.name).join(', ')}). Les supprimer ` +
-          "effacerait un compte que quelqu'un a connecté à la main. Relancer avec " +
-          'NODALAI_E2E_WIPE_CREDENTIALS=1 pour autoriser la suppression, ou viser une pile ' +
-          'isolée (NODALAI_E2E_DB_URL).',
-      );
-    }
-
-    await db.delete(credentials).where(owned);
+    await cleanCredentialsOfType(db, userId, type, {
+      runId: E2E_RUN_ID,
+      ...cleanupOptionsFromEnv(),
+    });
   } finally {
     await close();
+  }
+}
+
+/**
+ * Nettoyage de FIN de parcours : efface les identifiants que CE run a créés, et
+ * eux seuls (marqueur `[nodalai-e2e:<runId>]` en fin de nom).
+ *
+ * À appeler dans un `afterAll`, y compris quand le parcours a échoué en cours
+ * de route — c'est ce qui rend les parcours indépendants de leur ordre. Ne
+ * lève jamais : un nettoyage qui échoue ne doit pas transformer un parcours
+ * vert en rouge, et la garde du `beforeAll` suivant rattrape le reste.
+ */
+export async function dropE2ECredentials(type: CredentialType): Promise<void> {
+  try {
+    const { userId } = await resolveActingUser();
+    const { db, close } = makeDbClient();
+    try {
+      await dropRunCredentials(db, userId, type, E2E_RUN_ID);
+    } finally {
+      await close();
+    }
+  } catch (err) {
+    console.warn(`e2e: cleanup of « ${type} » credentials failed: ${(err as Error).message}`);
   }
 }
 
