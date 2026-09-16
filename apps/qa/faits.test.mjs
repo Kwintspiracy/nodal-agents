@@ -264,9 +264,62 @@ describe('ecritParUnAgent', () => {
 });
 
 describe('porteDesFaitsVerifies', () => {
-  it('une section « ## Verified » suffit, à n’importe quel niveau de titre', () => {
+  it('une section « ## Verified » compte, à n’importe quel niveau de titre', () => {
     expect(porteDesFaitsVerifies('## Verified\n\n`npm view` says 0.8.9')).toBe(true);
-    expect(porteDesFaitsVerifies('### Verified facts\n\nx')).toBe(true);
+    expect(porteDesFaitsVerifies('### Verified facts\n\n`pnpm test` → 291 passed')).toBe(true);
+  });
+
+  // La règle dit « au moins une commande et sa sortie ». Le titre seul ne la
+  // satisfait pas : la pastille s'achetait avec cinq caractères, ce qui vidait
+  // la règle de son objet.
+  it('un titre « Verified » VIDE ne prouve rien', () => {
+    expect(porteDesFaitsVerifies('## Verified')).toBe(false);
+    expect(porteDesFaitsVerifies('## Verified\n\n\n## Next steps\n\n`do this`')).toBe(false);
+  });
+
+  it('du texte sans code n’est pas une commande et sa sortie', () => {
+    expect(porteDesFaitsVerifies('## Verified\n\nI ran the tests and they passed.')).toBe(false);
+  });
+
+  it('un bloc clôturé sous le titre prouve, et un titre suivant n’efface rien', () => {
+    expect(
+      porteDesFaitsVerifies(
+        [
+          '## Verified',
+          '',
+          '```',
+          '$ pnpm test',
+          '291 passed',
+          '```',
+          '',
+          '## Next steps',
+          '',
+          'later',
+        ].join('\n'),
+      ),
+    ).toBe(true);
+  });
+
+  it('un bloc INDENTÉ de quatre espaces prouve lui aussi', () => {
+    expect(
+      porteDesFaitsVerifies(['## Verified', '', '    $ pnpm test', '    291 passed'].join('\n')),
+    ).toBe(true);
+  });
+
+  // Un sous-titre reste DANS la section ; seul un titre de niveau inférieur ou
+  // égal la ferme.
+  it('la preuve peut vivre sous un sous-titre de la section', () => {
+    expect(
+      porteDesFaitsVerifies(['## Verified', '', '### Unit', '', '`pnpm test` → green'].join('\n')),
+    ).toBe(true);
+  });
+
+  it('une preuve rangée APRÈS le titre suivant ne compte pas pour la section', () => {
+    expect(
+      porteDesFaitsVerifies(
+        ['## Verified', '', 'nothing here', '', '## Notes', '', '`pnpm test`'].join('\n'),
+      ),
+    ).toBe(false);
   });
 
   it('le mot « verified » au fil du texte n’est PAS une section', () => {
@@ -321,7 +374,9 @@ describe('porteDesFaitsVerifies', () => {
 
   it('la même section, une fois le bloc refermé, est bien lue', () => {
     expect(
-      porteDesFaitsVerifies(['```sh', 'pnpm test', '```', '', '## Verified', '', 'x'].join('\n')),
+      porteDesFaitsVerifies(
+        ['```sh', 'pnpm test', '```', '', '## Verified', '', '`pnpm test` → green'].join('\n'),
+      ),
     ).toBe(true);
   });
 
@@ -334,7 +389,9 @@ describe('porteDesFaitsVerifies', () => {
   it('une clôture décalée de quatre espaces n’ouvre pas de bloc', () => {
     // À quatre espaces la ligne appartient déjà à un bloc indenté : elle
     // n'ouvre rien, et la vraie section qui suit reste lue.
-    expect(porteDesFaitsVerifies(['    ```', '', '## Verified', '', 'x'].join('\n'))).toBe(true);
+    expect(
+      porteDesFaitsVerifies(['    ```', '', '## Verified', '', '`pnpm test` → green'].join('\n')),
+    ).toBe(true);
   });
 
   it('une vraie section reste lue, même suivie d’un bloc qui cite le mot', () => {

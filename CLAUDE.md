@@ -92,7 +92,9 @@ A tracker that repeats what an agent asserts is not a tracker.
 
 - **Any issue or pull request an agent opens carries a `## Verified` section**
   with at least one command and its output — the command and what it answered,
-  never a claim on its own.
+  never a claim on its own. In practice the portal requires CODE under that
+  heading: an inline span (the form the template uses), a fenced block, or an
+  indented one. An empty heading does not count, and neither does prose.
 - The portal checks this itself: an OPEN card whose body carries an agent
   footer ("Generated with Claude Code", or the `Claude-Session` line) and no
   `## Verified` section is shown with a "no verified facts" pill and counted in

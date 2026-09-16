@@ -574,7 +574,10 @@ export function publicationsDejaFaites(cartes, release) {
 // ─── La provenance d'une carte ────────────────────────────────────────────────
 //
 // Règle du 16/09/2026 : toute issue ou PR ouverte par un agent porte une
-// section `## Verified` avec au moins une commande et sa sortie. Le critère de
+// section `## Verified` avec au moins une commande et sa sortie — c'est-à-dire
+// DU CODE sous le titre : une portion en ligne (la forme du modèle), un bloc
+// clôturé, ou un bloc indenté. Un titre vide ne compte pas, et du texte seul
+// non plus : la pastille s'achetait sinon avec cinq caractères. Le critère de
 // « écrite par un agent » est VÉRIFIABLE — le pied que les agents posent
 // eux-mêmes — et non une intuition sur le style.
 //
@@ -592,10 +595,12 @@ export function ecritParUnAgent(corps) {
 }
 
 /**
- * Le texte débarrassé de ses blocs de code CLÔTURÉS (``` et ~~~).
+ * Les lignes du corps, chacune sachant si elle appartient à un bloc de code
+ * CLÔTURÉ (``` ou ~~~).
  *
  * Un agent qui CITE le modèle de `SKILL.md` dans un bloc de code écrit bien la
- * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié.
+ * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié. Une
+ * ligne dans un bloc n'est donc ni un titre, ni un texte.
  *
  * Le balayage suit CommonMark d'assez près pour ne pas surprendre :
  *   — une clôture s'ouvre avec AU PLUS 3 espaces d'indentation ; à 4, la ligne
@@ -609,8 +614,8 @@ export function ecritParUnAgent(corps) {
  *     à la fin du bloc suivant — validerait un `## Verified` qui n'est peut-être
  *     que du texte cité.
  */
-function horsDesBlocsDeCode(texte) {
-  const gardees = [];
+function lignesAnnotees(texte) {
+  const out = [];
   let cloture = null;
   for (const ligne of texte.split('\n')) {
     const marque = /^ {0,3}(`{3,}|~{3,})/.exec(ligne)?.[1];
@@ -620,29 +625,65 @@ function horsDesBlocsDeCode(texte) {
         marque[0] === cloture[0] &&
         marque.length >= cloture.length &&
         /^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(ligne);
+      out.push({ ligne, dansUnBloc: true });
       if (ferme) cloture = null;
       continue;
     }
     if (marque) {
       cloture = marque;
+      out.push({ ligne, dansUnBloc: true });
       continue;
     }
-    gardees.push(ligne);
+    out.push({ ligne, dansUnBloc: false });
   }
-  return gardees.join('\n');
+  return out;
 }
 
+/** `## Verified` : un titre markdown, hors bloc, indenté d'au plus 3 espaces. */
+const TITRE = /^ {0,3}(#{1,6})[ \t]*(.*)$/;
+
 /**
- * Une SECTION « Verified » : ni le mot au fil du texte, ni une ligne citée dans
- * un bloc de code.
+ * Une SECTION « Verified » qui porte VRAIMENT quelque chose.
  *
- * L'indentation est bornée à 3 espaces, comme en markdown : à 4 espaces ou
- * après une tabulation, la ligne est un BLOC DE CODE INDENTÉ, pas un titre.
- * Sans cette borne, coller le modèle de `SKILL.md` en le décalant suffisait à
- * passer pour vérifié — un bloc indenté n'a pas de clôture à retirer.
+ * La règle dit « au moins une commande et sa sortie ». Le titre seul ne la
+ * satisfait pas, et un `## Verified` vide passait pourtant — la pastille
+ * s'achetait avec cinq caractères, ce qui vidait la règle de son objet.
+ *
+ * La forme minimale d'« une commande et sa sortie » est DU CODE : un bloc
+ * clôturé (```…```), un bloc indenté de 4 espaces, ou une portion de code en
+ * ligne (`` `npm view …` → 0.8.9 ``). Cette troisième forme n'est pas une
+ * tolérance : c'est CELLE DU MODÈLE de `SKILL.md`, donc celle que portent les
+ * cartes correctement remplies. L'exiger en bloc les recalerait toutes.
+ *
+ * Du texte seul, lui, ne compte pas : c'est une affirmation, et la règle existe
+ * précisément contre les affirmations. La section court jusqu'au prochain titre
+ * de niveau INFÉRIEUR OU ÉGAL au sien, ou jusqu'à la fin du corps — un
+ * sous-titre reste dedans.
+ *
+ * L'indentation du titre est bornée à 3 espaces, comme en markdown : à 4
+ * espaces ou après une tabulation, la ligne est un bloc de code indenté et non
+ * un titre. Sans cette borne, coller le modèle de `SKILL.md` en le décalant
+ * suffisait à passer pour vérifié.
  */
 export function porteDesFaitsVerifies(corps) {
-  return /^ {0,3}#{1,6}[ \t]*verified\b/im.test(horsDesBlocsDeCode(String(corps ?? '')));
+  const lignes = lignesAnnotees(String(corps ?? ''));
+  for (let i = 0; i < lignes.length; i += 1) {
+    if (lignes[i].dansUnBloc) continue;
+    const titre = TITRE.exec(lignes[i].ligne);
+    if (!titre || !/^verified\b/i.test(titre[2].trim())) continue;
+    const niveau = titre[1].length;
+    for (let j = i + 1; j < lignes.length; j += 1) {
+      const { ligne, dansUnBloc } = lignes[j];
+      if (dansUnBloc) return true;
+      const suivant = TITRE.exec(ligne);
+      if (suivant && suivant[1].length <= niveau) break;
+      // Un bloc de code INDENTÉ : quatre espaces ou une tabulation, du contenu.
+      if (/^(?: {4}|\t)[ \t]*\S/.test(ligne)) return true;
+      // Du code EN LIGNE, la forme du modèle : `commande` → sortie.
+      if (/`[^`\n]*\S[^`\n]*`/.test(ligne)) return true;
+    }
+  }
+  return false;
 }
 
 /** Les cartes ouvertes par un agent qui n'apportent aucun fait vérifié. */

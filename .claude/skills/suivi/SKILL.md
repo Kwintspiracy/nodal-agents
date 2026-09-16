@@ -79,6 +79,11 @@ Attention à ce qui compte comme section : un `## Verified` **cité dans un bloc
 de code** (le modèle ci-dessus, recopié) n'en est pas une. Le portail retire les
 blocs clôturés avant de chercher le titre.
 
+Un titre **VIDE** n'en est pas une non plus. Sous le titre, et avant le prochain
+titre de même niveau, il faut DU CODE : une portion en ligne comme dans le
+modèle, un bloc clôturé, ou un bloc indenté de quatre espaces. Du texte seul est
+une affirmation, et c'est exactement ce contre quoi la règle existe.
+
 Le portail vérifie aussi l'état de publication lui-même (`npm view` + `git`,
 bloc « Release » en tête du tableau) et nomme toute carte ouverte qui demande de
 publier une version déjà sur npm. C'est exactement #68, désormais dit à voix
