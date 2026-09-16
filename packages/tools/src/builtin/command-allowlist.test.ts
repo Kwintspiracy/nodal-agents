@@ -205,6 +205,56 @@ describe('assertCommandAllowed @cap:assigner-outils/moteur', () => {
     });
   });
 
+  describe('how the PROGRAM is spelled — Windows only', () => {
+    // On Windows the same program has several spellings: PATH resolves `npx`
+    // to `npx.cmd`, the shell is case-insensitive, and an agent that writes
+    // `node.exe` means `node`. Refusing those is a false red nobody can debug.
+    const onWindows = process.platform === 'win32';
+
+    it.runIf(onWindows)('accepts the .exe suffix on Windows', () => {
+      expect(() => assertCommandAllowed('node.exe -v', REVIEWER)).not.toThrow();
+    });
+
+    it.runIf(onWindows)('accepts a different case on Windows', () => {
+      expect(() => assertCommandAllowed('NODE -v', REVIEWER)).not.toThrow();
+    });
+
+    it.runIf(onWindows)('accepts the .cmd suffix on a multi-word entry', () => {
+      expect(() => assertCommandAllowed('npx.cmd vitest run', REVIEWER)).not.toThrow();
+    });
+
+    it.runIf(!onWindows)(
+      'keeps the comparison exact off Windows, where case and suffix mean something',
+      () => {
+        expect(() => assertCommandAllowed('NODE -v', REVIEWER)).toThrow(CommandNotAllowedError);
+        expect(() => assertCommandAllowed('node.exe -v', REVIEWER)).toThrow(CommandNotAllowedError);
+      },
+    );
+
+    it('still compares ARGUMENTS exactly, on every platform', () => {
+      // `vitest` and `VITEST` are different package names to npx.
+      expect(() => assertCommandAllowed('npx VITEST run', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('still refuses a PATH that merely ends in a listed program', () => {
+      // An entry names a program to be found on PATH, not a file. Accepting
+      // any path ending in `node` would let the agent point the entry at a
+      // binary it wrote itself.
+      expect(() => assertCommandAllowed('./node -v', REVIEWER)).toThrow(CommandNotAllowedError);
+      expect(() => assertCommandAllowed('C:\tools\node.exe -v', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+
+    it('still refuses a program that merely starts like a listed one', () => {
+      expect(() => assertCommandAllowed('node.exe.evil -v', REVIEWER)).toThrow(
+        CommandNotAllowedError,
+      );
+    });
+  });
+
   describe('matching is on whole tokens', () => {
     it('does not let a longer executable pass on a prefix match', () => {
       // `nodemon` starts with `node` — a substring check would allow it.

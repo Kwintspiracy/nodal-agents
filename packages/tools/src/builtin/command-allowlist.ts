@@ -129,15 +129,47 @@ export function assertCommandAllowed(
 
   for (const segment of split) {
     if (segment.tokens.length === 0) continue; // empty side of a separator — nothing runs
-    const allowed = entries.some(
-      (entry) =>
-        segment.tokens.length >= entry.length &&
-        entry.every((token, i) => segment.tokens[i] === token),
-    );
+    const allowed = entries.some((entry) => matches(entry, segment.tokens));
     if (!allowed) {
       throw new CommandNotAllowedError(segment.raw.trim(), allowlist);
     }
   }
+}
+
+/**
+ * An entry matches when its tokens equal the segment's leading tokens.
+ *
+ * The FIRST token is the PROGRAM, and on Windows one program has several
+ * spellings: PATH resolves `npx` to `npx.cmd`, the shell is case-insensitive,
+ * and an agent writing `node.exe` means `node`. Comparing the program
+ * case-insensitively and without a `.exe` / `.cmd` / `.bat` suffix THERE is
+ * what the OS itself does; refusing those spellings is a false red nobody can
+ * debug. Off Windows, where case and suffix are meaningful, the comparison
+ * stays exact.
+ *
+ * A PATH is deliberately NOT reduced to its basename: `./node` and
+ * `C:\tools\node.exe` stay refused against an entry `node`. An entry names a
+ * program to be found on PATH, not a file — accepting any path that ends in
+ * `node` would let the agent point the entry at a binary it wrote itself. The
+ * comparison below gives that for free: `c:\tools\node` is not `node`.
+ *
+ * ARGUMENTS after the program are compared exactly on every platform: to npx,
+ * `vitest` and `VITEST` are different package names.
+ */
+function matches(entry: readonly string[], tokens: readonly string[]): boolean {
+  if (tokens.length < entry.length) return false;
+  if (normalizeProgram(entry[0]!) !== normalizeProgram(tokens[0]!)) return false;
+  for (let i = 1; i < entry.length; i++) {
+    if (entry[i] !== tokens[i]) return false;
+  }
+  return true;
+}
+
+const WINDOWS = process.platform === 'win32';
+
+function normalizeProgram(token: string): string {
+  if (!WINDOWS) return token;
+  return token.toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
 }
 
 /**
