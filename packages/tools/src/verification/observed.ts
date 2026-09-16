@@ -39,7 +39,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import type { MutationTarget, ProjectRoot } from '@nodal-agents/shared';
 import { resolveProjectRoots } from '@nodal-agents/shared';
-import { hasMarker, rebaseOntoLexicalRoots } from '../projects/markers';
+import { rebaseOntoLexicalRoots } from '../projects/markers';
 import { officeFileDeliverables } from './office-file-key';
 
 /**
@@ -160,14 +160,20 @@ export function observedDeliverableKeys(input: {
    * le disque OU projet déclaré. Sans lui, les clés des deux côtés divergent
    * dès qu'un projet déclaré n'a pas de manifeste, et une écriture bel et bien
    * constatée sur le disque laisse `produced` faux — mesuré, revue Codex
-   * post-merge de la PR #66, constat C4. Omis = `hasMarker` seul.
+   * post-merge de la PR #66, constat C4.
+   *
+   * OBLIGATOIRE (revue de la PR #103, Reviewer C, passe 2). Il portait un repli
+   * sur `hasMarker` seul : un appelant qui l'oubliait retrouvait EN SILENCE la
+   * règle d'avant ce correctif, et le désaccord ne se voyait nulle part — un
+   * repli intelligent, exactement ce que l'invariant #4 refuse. L'oubli est
+   * désormais une erreur du compilateur, pas un `produced` faux en production.
    */
-  readonly isProjectRoot?: (dir: string) => boolean;
+  readonly isProjectRoot: (dir: string) => boolean;
 }): ReadonlySet<string> {
   const keys = new Set<string>();
   const rebasedFiles = rebaseOntoLexicalRoots(input.changedFiles, input.workspaceRoots);
   const rebasedDirs = rebaseOntoLexicalRoots(input.dirTargets, input.workspaceRoots);
-  const isProjectRoot = input.isProjectRoot ?? hasMarker;
+  const isProjectRoot = input.isProjectRoot;
   const projects = (targets: readonly MutationTarget[]): readonly ProjectRoot[] =>
     resolveProjectRoots({
       targets,
