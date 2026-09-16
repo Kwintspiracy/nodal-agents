@@ -1,42 +1,17 @@
-import { listDelegationRunsAction, listAgentsAction } from '@/lib/actions.ts';
-import { groupJobsForJobsPage } from '@/lib/jobs-grouping.ts';
-import PageShell from '@/components/ui/PageShell';
-import JobsRuns from './JobsRuns.tsx';
+import { redirect } from 'next/navigation';
 
-// Force dynamic — this page reads per-request DB state.
-export const dynamic = 'force-dynamic';
-
-export default async function JobsPage({
-  searchParams,
-}: {
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const params = searchParams ? await searchParams : {};
-  const agentId = typeof params['agentId'] === 'string' ? params['agentId'] : null;
-
-  const [jobsResult, agentsResult] = await Promise.all([
-    listDelegationRunsAction({ limit: 50, agentId }),
-    listAgentsAction(),
-  ]);
-  const jobs = jobsResult.ok ? jobsResult.data : [];
-  const agents = agentsResult.ok ? agentsResult.data : [];
-  // Conversation grouping (migration 0059): collapse chat exchanges sharing a
-  // conversation_id into one row server-side, before anything reaches the
-  // client — see apps/web/src/lib/jobs-grouping.ts.
-  const rows = groupJobsForJobsPage(jobs);
-
-  return (
-    <PageShell
-      title="Runs"
-      subtitle={`${jobs.length} recent run${jobs.length !== 1 ? 's' : ''}${
-        agentId ? ' · filtered by agent' : ''
-      }`}
-    >
-      <JobsRuns
-        rows={rows}
-        agents={agents}
-        error={!jobsResult.ok ? jobsResult.message : undefined}
-      />
-    </PageShell>
-  );
+/**
+ * La liste des runs a quitté cette adresse (#134).
+ *
+ * Activity (`/logs`) EST la liste des runs : une ligne repliée par run,
+ * dépliable sur ses appels. Trois écrans racontaient « ce qu'un run a fait »,
+ * chacun à sa façon ; il n'en reste qu'un. Un run garde son adresse
+ * (`/jobs/<id>`, la page voisine) : on y arrive depuis une réponse du chat,
+ * une alerte ou la ligne d'un tableau, jamais depuis un menu.
+ *
+ * Cette route reste pour les liens déjà écrits : conversations, signets,
+ * notifications.
+ */
+export default function JobsPage(): never {
+  redirect('/logs');
 }

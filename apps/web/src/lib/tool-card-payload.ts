@@ -11,8 +11,19 @@
 // qui est arrivé à P7, dont le classement ignorait l'issue que le fil, lui,
 // lisait déjà (revue Codex, passe 29).
 
-import { ToolCardPayloadSchema } from '@nodal-agents/shared';
-import type { ToolCardPayload } from '@nodal-agents/shared';
+import { ToolCardPayloadSchema, TOOL_CARDS } from '@nodal-agents/shared';
+import type { ToolCard, ToolCardPayload } from '@nodal-agents/shared';
+
+/**
+ * La carte DÉCLARÉE par la ligne, quand c'en est une. Elle vit ici, avec les
+ * deux autres lectures de `tool_calls`, parce que le fil (`conversation-feed`)
+ * et la liste des runs (`listRunCallsAction`) construisent la MÊME étape
+ * d'outil : deux lectures de la colonne `card` auraient divergé au premier
+ * type de carte ajouté.
+ */
+export function isToolCard(value: string | null): value is ToolCard {
+  return value !== null && (TOOL_CARDS as readonly string[]).includes(value);
+}
 
 /**
  * La charge utile d'une ligne, VALIDÉE contre le schéma partagé. `null` quand

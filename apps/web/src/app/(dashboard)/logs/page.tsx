@@ -1,14 +1,17 @@
 import Link from 'next/link';
 import {
+  listActivityRunsAction,
   listAgentsAction,
   listServiceLogsAction,
-  listToolCallsAction,
   listToolNamesAction,
 } from '@/lib/actions.ts';
+import { runIsLive } from '@/lib/activity-runs.ts';
 import PageShell from '@/components/ui/PageShell';
 import EmptyState from '@/components/ui/EmptyState';
+import SendTaskForm from '@/components/SendTaskForm.tsx';
+import LiveRefresh from '../spaces/LiveRefresh.tsx';
 import LogFilters from './LogFilters.tsx';
-import LogsTable from './LogsTable.tsx';
+import RunsList from './RunsList.tsx';
 import ServiceLogsPanel from './ServiceLogsPanel.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -25,8 +28,8 @@ interface PageProps {
   }>;
 }
 
-/** Les deux onglets de la page : l'audit d'activité (tool calls) et les logs
- *  de SERVICE (runner/web) — deux choses que la page confondait par son nom. */
+/** Les deux onglets de la page : l'activité (les runs) et les logs de SERVICE
+ *  (runner/web) — deux choses que la page confondait par son nom. */
 function ViewTabs({ active }: { active: 'activity' | 'service' }) {
   const base = 'rounded-full border px-3.5 py-1.5 text-medium-13 transition-colors';
   return (
@@ -81,7 +84,9 @@ export default async function LogsPage({ searchParams }: PageProps) {
   const [agentsResult, toolNamesResult, result] = await Promise.all([
     listAgentsAction(),
     listToolNamesAction(),
-    listToolCallsAction({
+    // Des RUNS, et leur compte d'appels. Aucun appel n'est lu ici : une ligne
+    // dépliée va chercher les siens (voir RunRow).
+    listActivityRunsAction({
       agentId: sp.agent || undefined,
       toolName: sp.tool || undefined,
       jobId: sp.job || undefined,
@@ -103,31 +108,48 @@ export default async function LogsPage({ searchParams }: PageProps) {
     );
   }
 
+  const runs = result.data.items;
+  // Un run en cours dans la liste : la page se relit, comme le fil, pour que
+  // les compteurs des lignes repliées avancent avec le travail.
+  const live = runs.some((r) => runIsLive(r.status));
+
   return (
     <PageShell
       title="Logs"
-      subtitle="Recent tool calls across the fleet."
+      subtitle="Recent runs across the fleet. Open a row to see its calls."
       toolbar={
         <div className="flex flex-wrap items-center gap-3">
           <ViewTabs active="activity" />
           <LogFilters agents={agents} toolNames={toolNames} />
+          <SendTaskForm agents={agents} />
         </div>
       }
     >
+      <LiveRefresh live={live} />
       <div className="space-y-6">
-        {result.data.items.length === 0 ? (
-          <EmptyState title="No tool calls yet. Send a task on the Tasks page to generate some." />
+        {runs.length === 0 ? (
+          <EmptyState title="No run yet. Send a task to an agent to start one." />
         ) : (
-          <LogsTable items={result.data.items} />
+          <RunsList runs={runs} expandedRunId={sp.job ?? null} />
         )}
 
-        {result.data.items.length === PAGE_SIZE && <Pagination page={page} sp={sp} />}
+        {(result.data.hasMore || page > 1) && (
+          <Pagination page={page} hasMore={result.data.hasMore} sp={sp} />
+        )}
       </div>
     </PageShell>
   );
 }
 
-function Pagination({ page, sp }: { page: number; sp: Awaited<PageProps['searchParams']> }) {
+function Pagination({
+  page,
+  hasMore,
+  sp,
+}: {
+  page: number;
+  hasMore: boolean;
+  sp: Awaited<PageProps['searchParams']>;
+}) {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) {
     if (v && k !== 'page') params.set(k, v);
@@ -151,12 +173,16 @@ function Pagination({ page, sp }: { page: number; sp: Awaited<PageProps['searchP
         ) : (
           <span className="rounded-md border border-rule px-3 py-1.5 text-ink-4">Previous</span>
         )}
-        <Link
-          href={`/logs?${next.toString()}`}
-          className="rounded-md border border-rule-2 px-3 py-1.5 transition-colors hover:border-rule hover:text-ink"
-        >
-          Next
-        </Link>
+        {hasMore ? (
+          <Link
+            href={`/logs?${next.toString()}`}
+            className="rounded-md border border-rule-2 px-3 py-1.5 transition-colors hover:border-rule hover:text-ink"
+          >
+            Next
+          </Link>
+        ) : (
+          <span className="rounded-md border border-rule px-3 py-1.5 text-ink-4">Next</span>
+        )}
       </div>
     </div>
   );
