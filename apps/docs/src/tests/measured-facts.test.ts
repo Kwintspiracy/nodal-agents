@@ -54,6 +54,32 @@ describe('measured facts are read from the nightly snapshot', () => {
     expect(deriveMeasuredFacts(snapshot).measuredOn).toBe(spellDate(snapshot.genereLe as string));
   });
 
+  // The case above proves nothing about UTC on a runner that already runs in
+  // UTC — which CI does, so `getUTCDate() → getDate()` passed there. The date is
+  // spelled from an instant whose LOCAL day differs from its UTC day, under a
+  // timezone this test imposes, in both directions. Each case asserts that
+  // premise first: if the runtime ever stopped honouring a change of `TZ`, the
+  // case would go vacuous rather than red, and vacuous is how this got missed.
+  it('spells the UTC day even when the runner sits on the other side of midnight', () => {
+    const original = process.env.TZ;
+    const under = (tz: string, iso: string) => {
+      process.env.TZ = tz;
+      const local = new Date(iso);
+      expect(local.getDate()).not.toBe(local.getUTCDate());
+      return spellDate(iso);
+    };
+    try {
+      // UTC+14: 23:30Z is already the next day locally.
+      expect(under('Pacific/Kiritimati', '2026-01-02T23:30:00.000Z')).toBe('2 January 2026');
+      // UTC-11: 00:30Z is still the previous day locally, and the previous
+      // month and year with it.
+      expect(under('Pacific/Niue', '2026-01-01T00:30:00.000Z')).toBe('1 January 2026');
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+
   // Rounding DOWN is what resolves the contradiction a1d0afd3 found in the old
   // assertion: `Math.round` and "never above the measurement" cannot both hold
   // for a value ending in .x5 (81.75 rounds to 81.8, which is above). Truncation
