@@ -930,6 +930,75 @@ describe('attachProductionToProject — ce qui ne DÉCLARE pas (passe 32)', () =
     expect(await declaree(`${app}/src`), 'aucune ligne pour le sous-dossier').toBeNull();
   });
 
+  it('(l) trois niveaux enregistrés : le job suit la racine que l’INTENTION nomme', async () => {
+    // Revue de la PR #103, Reviewer C. Le registre choisissait le projet
+    // enregistré le plus PROFOND qui contient la cible, l'intention raisonne
+    // sur les racines du terrain : avec `app` déclarée ET ses sous-dossiers
+    // `app/src` et `app/src/lib` déjà au registre, l'intention salissait `app`
+    // pendant que le job partait sur `app/src/lib`. Le job portait un enfant du
+    // projet dont l'état de vérification est tenu, et `declare_verification`
+    // sur `app` refusait un travail réellement fait.
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src/lib`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    const projetApp = await projetEnregistre(app);
+    await projetEnregistre(`${app}/src`);
+    await projetEnregistre(`${app}/src/lib`);
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [
+      fichier(`${app}/src/lib/mod.ts`),
+    ]);
+
+    expect(issue).toMatchObject({
+      kind: 'attached',
+      projectId: projetApp,
+      projectPath: app,
+      job: 'attached',
+      jobProjectId: projetApp,
+    });
+    expect(await projetDuJob(jobId)).toBe(projetApp);
+  });
+
+  it('(m) un sous-dossier qui est une RACINE à part entière reste choisi', async () => {
+    // L'autre bord de la même règle : `app/src/lib` porte un manifeste ET est
+    // un dossier attaché, donc c'est LUI que l'intention nomme. Le rattachement
+    // ne remonte pas à `app` sous prétexte qu'elle est enregistrée aussi.
+    const app = `${terrain}/app`;
+    const lib = `${app}/src/lib`;
+    await mkdir(lib, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    await writeFile(`${lib}/package.json`, '{}');
+    await projetEnregistre(app);
+    const projetLib = await projetEnregistre(lib);
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(
+      { ...ctxTerrain(jobId), workspaces: [{ path: terrain }, { path: lib }] },
+      [fichier(`${lib}/mod.ts`)],
+    );
+
+    expect(issue).toMatchObject({ kind: 'attached', projectId: projetLib, projectPath: lib });
+    expect(await projetDuJob(jobId)).toBe(projetLib);
+  });
+
+  it('(n) sans imbrication, le rattachement ne change pas', async () => {
+    const app = `${terrain}/app`;
+    await mkdir(`${app}/src`, { recursive: true });
+    await writeFile(`${app}/package.json`, '{}');
+    await mkdir(`${terrain}/autre`, { recursive: true });
+    await writeFile(`${terrain}/autre/package.json`, '{}');
+    const projetApp = await projetEnregistre(app);
+    const projetAutre = await projetEnregistre(`${terrain}/autre`);
+    const jobId = await jobNeuf();
+
+    const issue = await attachProductionToProject(ctxTerrain(jobId), [fichier(`${app}/src/a.ts`)]);
+
+    expect(issue).toMatchObject({ kind: 'attached', projectId: projetApp, projectPath: app });
+    expect(await projetDuJob(jobId)).toBe(projetApp);
+    expect(projetApp).not.toBe(projetAutre);
+  });
+
   it('(j) un job INEXISTANT annule la déclaration', async () => {
     const app = `${terrain}/app`;
     await mkdir(`${app}/src`, { recursive: true });
