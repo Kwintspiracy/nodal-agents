@@ -356,6 +356,14 @@ export function cartesDuTableau({ issues, pr } = {}) {
     }
   }
 
+  // La provenance, lue UNE fois ici. Le corps d'une issue pèse plusieurs
+  // kilo-octets et n'a rien à faire dans le snapshot : seuls les deux verdicts
+  // qu'on en tire voyagent.
+  const provenance = (corps) => ({
+    parUnAgent: ecritParUnAgent(corps),
+    faitsVerifies: porteDesFaitsVerifies(corps),
+  });
+
   const cartes = [
     ...issues.map((i) => ({
       type: 'issue',
@@ -367,6 +375,7 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
       parPr: couvertes.get(i.number) ?? null,
+      ...provenance(i.body),
     })),
     ...pr.map((p) => ({
       type: 'pr',
@@ -379,10 +388,321 @@ export function cartesDuTableau({ issues, pr } = {}) {
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
       ci: etatCi(p.statusCheckRollup),
+      ...provenance(p.body),
     })),
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── Ce que le dépôt sait de sa propre release ────────────────────────────────
+//
+// Le 12/09/2026, un agent a ouvert « Publish 0.8.9 » de mémoire : 0.8.9 était
+// sur npm depuis trois jours. Le portail a porté ce travail fantôme quatre
+// jours, parce qu'il n'avait aucun moyen de le contredire. Il en a un
+// maintenant, et il ne dépend de la bonne volonté de personne : il DEMANDE à
+// npm et à git.
+
+/**
+ * Compare deux identifiants de préversion, segment par segment, selon
+ * semver 2.0 §11 : on découpe sur `.`, deux segments numériques se comparent
+ * en NOMBRES, un numérique passe avant un alphanumérique, et un identifiant
+ * plus court qui préfixe l'autre vient avant (`rc` < `rc.1`).
+ *
+ * Comparer les identifiants comme des chaînes rendait `rc.10 < rc.2` : une
+ * carte « Publish 1.0.0-rc.10 » face à un npm en `rc.2` était accusée en
+ * gravité haute de demander une version déjà publiée, alors qu'elle était la
+ * plus récente. C'est la même faute que `0.8.10 < 0.8.9`, un cran plus loin.
+ */
+function comparerPrerelease(a, b) {
+  const xs = a.split('.');
+  const ys = b.split('.');
+  for (let i = 0; i < Math.max(xs.length, ys.length); i += 1) {
+    const u = xs[i];
+    const v = ys[i];
+    if (u === undefined) return -1;
+    if (v === undefined) return 1;
+    const uNum = /^\d+$/.test(u);
+    const vNum = /^\d+$/.test(v);
+    if (uNum && vNum) {
+      const d = Number(u) - Number(v);
+      if (d !== 0) return d < 0 ? -1 : 1;
+    } else if (uNum !== vNum) {
+      return uNum ? -1 : 1;
+    } else if (u !== v) {
+      return u < v ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Compare deux numéros de version. `-1`, `0`, `1`, et `null` sur ce qui n'est
+ * pas un semver — plutôt qu'un ordre inventé qui accuserait au hasard.
+ *
+ * Une comparaison de chaînes rendrait `0.8.10 < 0.8.9`, c'est-à-dire
+ * exactement l'erreur que ce lot existe pour empêcher.
+ */
+export function comparerSemver(a, b) {
+  const lire = (v) => /^v?(\d+)\.(\d+)\.(\d+)(?:-([\w.]+))?$/.exec(String(v ?? '').trim());
+  const x = lire(a);
+  const y = lire(b);
+  if (!x || !y) return null;
+  for (let i = 1; i <= 3; i += 1) {
+    const d = Number(x[i]) - Number(y[i]);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  // `0.9.0-rc.1` vient AVANT `0.9.0` : une préversion n'est pas la version.
+  if ((x[4] ?? '') === (y[4] ?? '')) return 0;
+  if (!x[4]) return 1;
+  if (!y[4]) return -1;
+  return comparerPrerelease(x[4], y[4]);
+}
+
+/**
+ * Ce que `npm view <paquet> version time --json` a VRAIMENT répondu.
+ *
+ * Trois faits, pas deux. Un paquet JAMAIS PUBLIÉ fait répondre npm par une
+ * erreur `E404` — le registre a parlé, et il a dit « ce nom n'existe pas ».
+ * L'afficher en « npm unreachable » accusait le réseau d'un fait que npm venait
+ * d'établir, et laissait croire qu'on ne savait pas.
+ *
+ * `sortie` est le stdout, `erreur` le stderr (ou le message de l'échec).
+ * Avec `--json`, npm range son erreur dans le stdout lui-même, d'où les deux
+ * endroits regardés.
+ *
+ * Seul le CODE de npm compte, pas un « 404 » croisé n'importe où : un proxy
+ * d'entreprise qui répond 404 pour une tout autre raison écrit lui aussi ce
+ * nombre dans stderr, et le prendre pour un verdict du registre transformerait
+ * une panne d'accès en « ce paquet n'existe pas ». C'est le même défaut à
+ * l'envers. Sortie réelle de `npm view paquet-inexistant --json` (npm 11) :
+ *
+ *     npm error code E404
+ *     npm error 404 Not Found - GET https://registry.npmjs.org/… - Not found
+ *
+ * et sur les npm plus anciens, `npm ERR! code E404`. La ligne reconnue est donc
+ * celle du CODE, et elle seule.
+ */
+export function lectureDeNpm({ sortie, erreur } = {}) {
+  let lu = null;
+  try {
+    lu = JSON.parse(String(sortie ?? ''));
+  } catch {
+    lu = null;
+  }
+  const dansLeJson = lu?.error?.code === 'E404';
+  const dansStderr = /npm\s+(?:error|ERR!)\s+code\s+E404\b/i.test(String(erreur ?? ''));
+  if (dansLeJson || dansStderr) return { etat: 'jamais-publiee', npm: null };
+  // `version` est la chaîne attendue ; tout le reste est une réponse qu'on ne
+  // sait pas lire, donc une absence, jamais une valeur approchée.
+  if (typeof lu?.version === 'string') {
+    return { etat: 'lue', npm: { version: lu.version, time: lu.time ?? null } };
+  }
+  return { etat: 'injoignable', npm: null };
+}
+
+/**
+ * Le nombre de commits depuis le dernier tag, à partir des sorties de git.
+ *
+ * `origin/main` d'abord : le nombre qui intéresse est celui de la branche
+ * PUBLIÉE, pas de la branche de travail d'où la collecte est lancée. Une
+ * référence absente (checkout superficiel de la CI) retombe sur `HEAD`, parce
+ * que git sait répondre là — ce n'est pas un repli inventé, c'est une seconde
+ * question posée.
+ *
+ * Une sortie qui n'est pas un entier rend `null` et non `0` : `Number('')` vaut
+ * zéro, et « aucun commit depuis le tag » est une affirmation, pas une absence.
+ */
+export function commitsDepuisLeTag({ surLaBranchePubliee, surHead } = {}) {
+  for (const sortie of [surLaBranchePubliee, surHead]) {
+    const t = String(sortie ?? '').trim();
+    if (/^\d+$/.test(t)) return Number(t);
+  }
+  return null;
+}
+
+/**
+ * L'état de la release : ce que npm sert, ce que le dépôt porte, et l'écart.
+ *
+ * `npm` est la réponse de `npm view … --json`, ou `null` quand le registre n'a
+ * pas répondu. Dans ce cas RIEN n'est rendu : pas de valeur inventée, pas
+ * l'ancienne sans date. Le portail dira « npm unreachable at <heure> », ce qui
+ * est un fait, là où un chiffre périmé serait un mensonge (invariant #4).
+ *
+ * `etatNpm` vient de `lectureDeNpm` et distingue le troisième cas : un paquet
+ * jamais publié n'est ni une version, ni un silence du registre.
+ */
+export function etatDeLaRelease({ npm, etatNpm, depot, le } = {}) {
+  const surNpm = npm?.version ?? null;
+  const versionDuDepot = depot?.version ?? null;
+  const jamaisPubliee = etatNpm === 'jamais-publiee';
+  return {
+    // Jamais publié n'est PAS injoignable : npm a répondu, et sa réponse est
+    // « ce nom n'existe pas ». Les confondre accuse le réseau d'un fait établi.
+    npmInjoignable: !npm && !jamaisPubliee,
+    jamaisPubliee,
+    verifieLe: le ?? null,
+    surNpm,
+    publieeLe: surNpm ? (npm?.time?.[surNpm] ?? null) : null,
+    versionDuDepot,
+    dernierTag: depot?.dernierTag ?? null,
+    commitsDepuisLeTag: depot?.commitsDepuisLeTag ?? null,
+    // `null` et non `false` quand npm est muet : « pas en avance » et « je ne
+    // sais pas » ne se ressemblent qu'à l'écran. Un paquet jamais publié, lui,
+    // est un fait connu : tout ce que le dépôt porte est en avance.
+    depotEnAvance: jamaisPubliee
+      ? versionDuDepot
+        ? true
+        : null
+      : surNpm && versionDuDepot
+        ? surNpm !== versionDuDepot
+        : null,
+  };
+}
+
+/** « publish 0.8.9 », « release v0.8.9 » — le vocabulaire des titres de release. */
+const DEMANDE_DE_PUBLICATION = /\b(?:publish|release)\s+v?(\d+\.\d+\.\d+(?:-[\w.]+)?)\b/i;
+
+/**
+ * Les cartes OUVERTES qui demandent de publier une version déjà servie par npm.
+ *
+ * C'est l'issue #68, nommée par le portail au lieu d'être crue sur parole.
+ * Aucune accusation quand npm n'a pas répondu : on ne sait pas ce qui est
+ * publié, et deviner ici serait le même défaut à l'envers.
+ */
+export function publicationsDejaFaites(cartes, release) {
+  if (!Array.isArray(cartes) || !release?.surNpm || release.npmInjoignable) return [];
+  const out = [];
+  for (const c of cartes) {
+    if (c.etat !== 'OPEN') continue;
+    const version = DEMANDE_DE_PUBLICATION.exec(String(c.titre ?? ''))?.[1];
+    if (!version) continue;
+    const ordre = comparerSemver(version, release.surNpm);
+    if (ordre === null || ordre > 0) continue;
+    out.push({ numero: c.numero, type: c.type, titre: c.titre, version, url: c.url ?? null });
+  }
+  return out;
+}
+
+// ─── La provenance d'une carte ────────────────────────────────────────────────
+//
+// Règle du 16/09/2026 : toute issue ou PR ouverte par un agent porte une
+// section `## Verified` avec au moins une commande et sa sortie — c'est-à-dire
+// DU CODE sous le titre : une portion en ligne (la forme du modèle), un bloc
+// clôturé, ou un bloc indenté. Un titre vide ne compte pas, et du texte seul
+// non plus : la pastille s'achetait sinon avec cinq caractères. Le critère de
+// « écrite par un agent » est VÉRIFIABLE — le pied que les agents posent
+// eux-mêmes — et non une intuition sur le style.
+//
+// Ce que ce critère dit exactement, et rien de plus : TOUTE CARTE QUI PORTE LE
+// PIED D'AGENT est concernée. Un humain qui colle ce pied dans son propre corps
+// d'issue reçoit donc la pastille. C'est un compromis assumé : le pied est le
+// seul signal vérifiable, et une heuristique de style se tromperait bien plus
+// souvent, dans les deux sens. Une issue écrite à la main SANS ce pied n'a
+// rien à prouver, et c'est le cas courant.
+
+/** Le pied que tout agent de ce dépôt pose au bas de ce qu'il ouvre. */
+export function ecritParUnAgent(corps) {
+  const t = String(corps ?? '');
+  return /generated with[^\n]{0,20}claude code/i.test(t) || /claude-session\s*:/i.test(t);
+}
+
+/**
+ * Les lignes du corps, chacune sachant si elle appartient à un bloc de code
+ * CLÔTURÉ (``` ou ~~~).
+ *
+ * Un agent qui CITE le modèle de `SKILL.md` dans un bloc de code écrit bien la
+ * ligne `## Verified`, sans rien avoir vérifié — et passait pour vérifié. Une
+ * ligne dans un bloc n'est donc ni un titre, ni un texte.
+ *
+ * Le balayage suit CommonMark d'assez près pour ne pas surprendre :
+ *   — une clôture s'ouvre avec AU PLUS 3 espaces d'indentation ; à 4, la ligne
+ *     appartient déjà à un bloc de code indenté et n'ouvre rien ;
+ *   — elle se ferme par le même caractère, au moins autant de marques, et rien
+ *     d'autre que des espaces après ;
+ *   — un bloc laissé OUVERT court jusqu'à la fin du corps. C'est la règle
+ *     CommonMark, et c'est aussi la prudente : une clôture jamais refermée est
+ *     un corps qu'on ne sait pas lire, et l'agent le voit tout de suite sous la
+ *     forme d'une pastille « no verified facts ». L'inverse — refermer d'office
+ *     à la fin du bloc suivant — validerait un `## Verified` qui n'est peut-être
+ *     que du texte cité.
+ */
+function lignesAnnotees(texte) {
+  const out = [];
+  let cloture = null;
+  for (const ligne of texte.split('\n')) {
+    const marque = /^ {0,3}(`{3,}|~{3,})/.exec(ligne)?.[1];
+    if (cloture) {
+      const ferme =
+        marque &&
+        marque[0] === cloture[0] &&
+        marque.length >= cloture.length &&
+        /^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(ligne);
+      out.push({ ligne, dansUnBloc: true });
+      if (ferme) cloture = null;
+      continue;
+    }
+    if (marque) {
+      cloture = marque;
+      out.push({ ligne, dansUnBloc: true });
+      continue;
+    }
+    out.push({ ligne, dansUnBloc: false });
+  }
+  return out;
+}
+
+/** `## Verified` : un titre markdown, hors bloc, indenté d'au plus 3 espaces. */
+const TITRE = /^ {0,3}(#{1,6})[ \t]*(.*)$/;
+
+/**
+ * Une SECTION « Verified » qui porte VRAIMENT quelque chose.
+ *
+ * La règle dit « au moins une commande et sa sortie ». Le titre seul ne la
+ * satisfait pas, et un `## Verified` vide passait pourtant — la pastille
+ * s'achetait avec cinq caractères, ce qui vidait la règle de son objet.
+ *
+ * La forme minimale d'« une commande et sa sortie » est DU CODE : un bloc
+ * clôturé (```…```), un bloc indenté de 4 espaces, ou une portion de code en
+ * ligne (`` `npm view …` → 0.8.9 ``). Cette troisième forme n'est pas une
+ * tolérance : c'est CELLE DU MODÈLE de `SKILL.md`, donc celle que portent les
+ * cartes correctement remplies. L'exiger en bloc les recalerait toutes.
+ *
+ * Du texte seul, lui, ne compte pas : c'est une affirmation, et la règle existe
+ * précisément contre les affirmations. La section court jusqu'au prochain titre
+ * de niveau INFÉRIEUR OU ÉGAL au sien, ou jusqu'à la fin du corps — un
+ * sous-titre reste dedans.
+ *
+ * L'indentation du titre est bornée à 3 espaces, comme en markdown : à 4
+ * espaces ou après une tabulation, la ligne est un bloc de code indenté et non
+ * un titre. Sans cette borne, coller le modèle de `SKILL.md` en le décalant
+ * suffisait à passer pour vérifié.
+ */
+export function porteDesFaitsVerifies(corps) {
+  const lignes = lignesAnnotees(String(corps ?? ''));
+  for (let i = 0; i < lignes.length; i += 1) {
+    if (lignes[i].dansUnBloc) continue;
+    const titre = TITRE.exec(lignes[i].ligne);
+    if (!titre || !/^verified\b/i.test(titre[2].trim())) continue;
+    const niveau = titre[1].length;
+    for (let j = i + 1; j < lignes.length; j += 1) {
+      const { ligne, dansUnBloc } = lignes[j];
+      if (dansUnBloc) return true;
+      const suivant = TITRE.exec(ligne);
+      if (suivant && suivant[1].length <= niveau) break;
+      // Un bloc de code INDENTÉ : quatre espaces ou une tabulation, du contenu.
+      if (/^(?: {4}|\t)[ \t]*\S/.test(ligne)) return true;
+      // Du code EN LIGNE, la forme du modèle : `commande` → sortie.
+      if (/`[^`\n]*\S[^`\n]*`/.test(ligne)) return true;
+    }
+  }
+  return false;
+}
+
+/** Les cartes ouvertes par un agent qui n'apportent aucun fait vérifié. */
+export function sansFaitsVerifies(cartes) {
+  if (!Array.isArray(cartes)) return [];
+  return cartes.filter((c) => c.etat === 'OPEN' && c.parUnAgent && !c.faitsVerifies);
 }
 
 // ─── La gravité ───────────────────────────────────────────────────────────────
@@ -416,7 +736,44 @@ export function ecartsDe(s, historique = [], maintenant = Date.now()) {
   const registre = s.capacites?.registre ?? [];
   const mem = s.memoire ?? null;
 
-  // ── Le produit d'abord. Un paquet mal couvert est une question d'ingénieur ;
+  // ── Ce qui passe avant le produit lui-même : un portail qui MENT. Tant que
+  // le tableau raconte un travail fantôme, aucun des écarts suivants n'est
+  // croyable. Quatre jours d'issue #68 l'ont montré.
+  const release = s.release ?? null;
+  const cartes = s.chantiers?.cartes ?? null;
+
+  const dejaPubliees = publicationsDejaFaites(cartes, release);
+  if (dejaPubliees.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${dejaPubliees.length} open card(s) ask to publish a version already on npm`,
+      detail: `npm serves ${release.surNpm}. These cards describe work that is already done, and the board has been carrying them as work to do. Close them, or correct the version they name.`,
+      quoi: dejaPubliees.map((c) => `#${c.numero} ${c.titre}`),
+    });
+  }
+
+  const sansFaits = sansFaitsVerifies(cartes);
+  if (sansFaits.length > 0) {
+    out.push({
+      gravite: 'haute',
+      titre: `${sansFaits.length} open card(s) written by an agent carry no verified facts`,
+      detail: `An agent opened them and wrote no "Verified" section, so nothing in them was checked against npm, git or a test run. That is exactly how a version that shipped a week earlier became a task on this board.`,
+      quoi: sansFaits.map((c) => `#${c.numero} ${c.titre}`),
+    });
+  }
+
+  // Une absence de mesure n'est pas un feu vert. Moyenne, jamais haute : le
+  // registre injoignable est une panne de réseau, pas une panne du produit.
+  if (release?.npmInjoignable) {
+    out.push({
+      gravite: 'moyenne',
+      titre: `npm was unreachable at the last collection`,
+      detail: `Nothing is known about what is published, so nothing is claimed. The release block shows the hole rather than the previous answer without its date.`,
+      quoi: release.verifieLe ? [release.verifieLe] : [],
+    });
+  }
+
+  // ── Le produit. Un paquet mal couvert est une question d'ingénieur ;
   // une preuve de capacité tombée est une promesse rompue.
   //
   // Trois familles, et la hiérarchie entre elles est tout le lot : un ÉCHEC
@@ -1413,7 +1770,14 @@ export function fusionnerTableauGitHub(mesure, frais) {
   if (!mesure || typeof mesure !== 'object') {
     throw new Error('no committed measurement to refresh: run the full collection first');
   }
-  const socle = { ...mesure, tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null };
+  const socle = {
+    ...mesure,
+    tableauLe: mesure.tableauLe ?? mesure.genereLe ?? null,
+    // La release vient de npm, pas de GitHub : un GitHub muet n'a aucune raison
+    // de figer l'état de publication, et c'est le rafraîchissement horaire qui
+    // fait qu'une publication est vue dans l'heure et non la nuit suivante.
+    release: frais?.release ?? mesure.release ?? null,
+  };
   if (!frais?.chantiers) return socle;
   return {
     ...socle,

@@ -22,14 +22,55 @@
 
 import { execSync, spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { configHoteDepuis, portsDeLaStack, verdictStackVivante } from './lib/live-stack.mjs';
+import { sonderUnPort } from './lib/sonde.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const skipSlow = process.argv.includes('--fast');
 
 let failed = 0;
 const started = Date.now();
+
+// ─── 0. Personne ne sert sur les ports de la stack ───────────────────────────
+//
+// AVANT tout le reste, et notamment avant que `build-pack` vide `pack/` : cette
+// commande construit dans `apps/web/.next`, donc elle écrase en plein vol la
+// stack de dev qui tourne. Le message qu'on lit à ce moment-là parle de build,
+// jamais de la stack qu'on vient de tuer, et on cherche la mauvaise panne.
+//
+// Le verdict est PUR et testé (`scripts/lib/live-stack.mjs`), la sonde réseau
+// vit dans `scripts/lib/sonde.mjs` et se teste contre un vrai serveur. Il ne
+// reste ici que la lecture du fichier de configuration et la décision.
+
+/** La lecture BRUTE du fichier ; le verdict, lui, est pur et vit dans la lib. */
+const lectureDeLaConfig = (() => {
+  try {
+    return { texte: readFileSync(join(homedir(), '.nodalai', 'config.json'), 'utf8') };
+  } catch (err) {
+    return { err };
+  }
+})();
+
+let portsASonder;
+try {
+  // Une configuration illisible, ou un port configuré invalide : on ne devine
+  // pas, on le dit et on sort — AVANT toute écriture, donc avant que
+  // `build-pack` ne vide `pack/`. Un fichier simplement ABSENT garde les ports
+  // par défaut : c'est le cas courant, et il est légitime.
+  portsASonder = portsDeLaStack(configHoteDepuis(lectureDeLaConfig));
+} catch (err) {
+  console.log(`\n✗ ${err.message}`);
+  process.exit(1);
+}
+
+const stack = verdictStackVivante(await Promise.all(portsASonder.map((p) => sonderUnPort(p))));
+if (stack.vivante) {
+  console.log(`\n✗ ${stack.message}`);
+  process.exit(1);
+}
 
 function step(label, fn) {
   process.stdout.write(`\n▶ ${label}\n`);

@@ -40,6 +40,9 @@ import {
   dureesDeReparation,
   intentionDunParcours,
   fusionnerTableauGitHub,
+  etatDeLaRelease,
+  lectureDeNpm,
+  commitsDepuisLeTag,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
 import { revendicationsDuDepot } from './porte.mjs';
@@ -327,7 +330,10 @@ function chantiers() {
   // auraient évincé une PR ouverte plus ancienne — disparue de « En review »
   // sans un mot (revue Codex, 3e passe). L'ouvert est demandé en entier, le
   // fermé seulement pour ce qui vient d'être fait.
-  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url';
+  // `body` sur les issues aussi : c'est là que se lit la PROVENANCE — le pied
+  // que les agents posent, et la section `## Verified` qu'ils doivent porter.
+  // Le corps ne va pas dans le snapshot, seuls les deux verdicts qu'on en tire.
+  const CHAMPS_ISSUE = 'number,title,state,labels,createdAt,updatedAt,url,body';
   // `body` : c'est là que « Closes #n » vit — sans lui le tableau ne peut pas
   // savoir qu'une issue a sa PR.
   const CHAMPS_PR =
@@ -351,6 +357,62 @@ function chantiers() {
   }
 
   return { issues, pr, cartes };
+}
+
+// ─── 7 ter. L'état de la release, DEMANDÉ, jamais raconté ─────────────────────
+//
+// Le 12/09/2026 une issue « Publish 0.8.9 » a vécu quatre jours sur ce tableau
+// alors que 0.8.9 était sur npm depuis le 09/09. Personne n'avait de quoi la
+// contredire. Le portail interroge donc npm et git lui-même, à chaque collecte,
+// et l'écrit dans le snapshot.
+
+/** Comme `sh`, mais stderr CAPTURÉ au lieu d'être jeté. */
+const DIT_TOUT = {
+  cwd: RACINE,
+  encoding: 'utf8',
+  maxBuffer: 1e8,
+  stdio: ['ignore', 'pipe', 'pipe'],
+};
+
+/**
+ * `npm view`, stderr COMPRIS : c'est là que le registre dit `E404`, et ce code
+ * est toute la différence entre « jamais publié » et « npm n'a pas répondu ».
+ */
+function interrogerNpm() {
+  try {
+    return { sortie: execSync('npm view nodal-agents version time --json', DIT_TOUT) };
+  } catch (err) {
+    return { sortie: err?.stdout ?? '', erreur: `${err?.stderr ?? ''} ${err?.message ?? ''}` };
+  }
+}
+
+function release() {
+  const { etat, npm } = lectureDeNpm(interrogerNpm());
+  if (etat === 'injoignable') {
+    console.warn('[qa] npm did not answer, the release state is MISSING, not green.');
+  }
+  if (etat === 'jamais-publiee') {
+    console.warn('[qa] npm answered: nodal-agents is NOT published yet.');
+  }
+
+  const dernierTag = sh('git describe --tags --abbrev=0 --match "v*"') || null;
+  const versionDuDepot = lireJson(join(RACINE, 'apps', 'cli', 'package.json'))?.version ?? null;
+
+  return etatDeLaRelease({
+    npm,
+    etatNpm: etat,
+    depot: {
+      version: versionDuDepot,
+      dernierTag,
+      commitsDepuisLeTag: dernierTag
+        ? commitsDepuisLeTag({
+            surLaBranchePubliee: sh(`git rev-list --count ${dernierTag}..origin/main`),
+            surHead: sh(`git rev-list --count ${dernierTag}..HEAD`),
+          })
+        : null,
+    },
+    le: new Date().toISOString(),
+  });
 }
 
 // ─── 7 bis. Ce qu'une PR coûte en contrôles ───────────────────────────────────
@@ -543,7 +605,12 @@ function memoire(essais, le, execution) {
 /** Le mode `--github-only` : la part lue sur GitHub, reposée sur la mesure. */
 function rafraichirGitHub() {
   const chemin = join(DATA, 'snapshot.json');
-  const frais = { chantiers: chantiers(), prixCi: prixCi(), le: new Date().toISOString() };
+  const frais = {
+    chantiers: chantiers(),
+    prixCi: prixCi(),
+    release: release(),
+    le: new Date().toISOString(),
+  };
   const snapshot = fusionnerTableauGitHub(lireJson(chemin), frais);
   writeFileSync(chemin, JSON.stringify(snapshot, null, 2));
   const n = snapshot.chantiers?.cartes?.length ?? 0;
@@ -641,6 +708,9 @@ function main() {
     prixCi: prixCi(),
     parcours: e2e,
     chantiers: chantiers(),
+    // Ce que npm sert VRAIMENT, face à ce que le dépôt porte. Le seul fait qui
+    // pouvait contredire l'issue #68, et qui manquait.
+    release: release(),
   };
 
   writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(snapshot, null, 2));
@@ -668,6 +738,12 @@ function main() {
   );
   console.log(
     `capabilities: ${r.capacites} named · ${r.capacitesVerifiees} verified at both levels · ${r.capacitesSansMoteur} without an engine · ${r.capacitesSansPreuve} with no proof at all`,
+  );
+  const rel = snapshot.release;
+  console.log(
+    rel.npmInjoignable
+      ? `release: npm unreachable at ${rel.verifieLe} · repo at ${rel.versionDuDepot ?? '·'}`
+      : `release: npm serves ${rel.surNpm} (${rel.publieeLe ?? 'date unknown'}) · repo at ${rel.versionDuDepot} · ${rel.commitsDepuisLeTag ?? '·'} commits since ${rel.dernierTag ?? 'no tag'}`,
   );
   console.log(
     `memory: ${r.testsEnMemoire} tests tracked (${mem.joues} played this time) · ${r.testsInstables} flaky · ${r.testsCasses} broken`,
