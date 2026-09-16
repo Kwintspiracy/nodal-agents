@@ -37,12 +37,31 @@ import {
   SECTIONS,
   VERSION,
 } from '../../app/home-content';
+import { parseYaml } from './yaml-lite';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const docsRoot = resolve(here, '..', '..');
 const repoRoot = resolve(docsRoot, '..', '..');
 
 const markup = renderToStaticMarkup(<Home />);
+
+/** The parts of `.github/workflows/docs.yml` the cases below actually read. */
+interface DocsWorkflow {
+  on: { workflow_run?: { workflows?: string[]; types?: string[] } };
+  jobs: Record<
+    string,
+    { if?: string; steps: Array<{ uses?: string; run?: string; with?: { ref?: string } }> }
+  >;
+}
+
+const DOCS_WORKFLOW = parseYaml(
+  readFileSync(join(repoRoot, '.github', 'workflows', 'docs.yml'), 'utf8'),
+) as unknown as DocsWorkflow;
+const BUILD_JOB = DOCS_WORKFLOW.jobs.build;
+
+/** True when some step of the build job runs a command containing `fragment`. */
+const runsInBuildJob = (fragment: string): boolean =>
+  BUILD_JOB.steps.some((step) => (step.run ?? '').includes(fragment));
 
 function figure(label: string): string {
   const found = FIGURES.find((f) => f.label === label);
@@ -202,30 +221,48 @@ describe('homepage assets and configuration', () => {
   // deploy stopped copying it, so the link above would rot into a 404 in
   // silence. This reads the workflow that has to put it there.
   it('is deployed alongside a portal the docs workflow actually copies', () => {
-    const wf = readFileSync(join(repoRoot, '.github', 'workflows', 'docs.yml'), 'utf8');
-    expect(wf).toContain('node apps/qa/build.mjs');
-    expect(wf).toContain('apps/docs/out/qa/index.html');
+    expect(runsInBuildJob('node apps/qa/build.mjs')).toBe(true);
+    expect(runsInBuildJob('apps/docs/out/qa/index.html')).toBe(true);
     // It also has to fire after the nightly measurement: that push is made with
     // GITHUB_TOKEN and triggers no workflow on its own, so without this the
     // portal would freeze on the day it was first published.
-    expect(wf).toContain("workflows: ['Quality — full measurement']");
+    expect(DOCS_WORKFLOW.on.workflow_run?.workflows).toEqual(['Quality — full measurement']);
+    expect(DOCS_WORKFLOW.on.workflow_run?.types).toEqual(['completed']);
     expect(existsSync(join(repoRoot, '.github', 'workflows', 'qa-pages.yml'))).toBe(false);
   });
 
   // The figures are generated at build time, so the deploy has to run the
   // generator on every publish, and has to publish again after the nightly
   // measurement. Neither is visible from the page itself.
+  //
+  // Read from the parsed workflow, not by looking for substrings in the file:
+  // `expect(wf).toContain('ref: main')` passes on a `ref: main` that has moved
+  // to another job, been commented out, or sits under a step that no longer
+  // runs. It is the structure that has to hold.
   it('regenerates its figures on every build, and rebuilds after each measurement', () => {
     const pkg = JSON.parse(readFileSync(join(docsRoot, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
     expect(pkg.scripts.build).toContain('gen-reference.ts');
-    const wf = readFileSync(join(repoRoot, '.github', 'workflows', 'docs.yml'), 'utf8');
-    expect(wf).toContain('pnpm --filter @nodal-agents/docs build');
-    expect(wf).toContain("workflows: ['Quality — full measurement']");
+    expect(runsInBuildJob('pnpm --filter @nodal-agents/docs build')).toBe(true);
+    expect(DOCS_WORKFLOW.on.workflow_run?.workflows).toEqual(['Quality — full measurement']);
     // The measurement pushes its data commit after the run that triggered it,
-    // so the rebuild has to check out main rather than the triggering SHA.
-    expect(wf).toContain('ref: main');
+    // so the rebuild has to check out main rather than the triggering SHA —
+    // and it is the BUILD job's own checkout that has to carry it.
+    const checkout = BUILD_JOB.steps.filter((s) => (s.uses ?? '').startsWith('actions/checkout@'));
+    expect(checkout).toHaveLength(1);
+    expect(checkout[0].with?.ref).toBe('main');
+  });
+
+  // A measurement that FAILED leaves `apps/qa/data` half written. Publishing it
+  // would present those leftovers as the state of the day, so the build job is
+  // gated on the conclusion of the run that triggered it — while staying open
+  // to every other event, which carries no `workflow_run` at all.
+  it('refuses to publish what a failed measurement left behind', () => {
+    const gate = BUILD_JOB.if ?? '';
+    expect(gate).toContain("github.event_name != 'workflow_run'");
+    expect(gate).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(gate).toMatch(/\|\|/);
   });
 
   it('announces the version that is actually published', () => {
