@@ -71,6 +71,8 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import FolderPickerModal from './FolderPickerModal.tsx';
+import { SectionCard, SectionHead } from './SectionCard.tsx';
+import CommandAllowlistSection from './CommandAllowlistSection.tsx';
 import {
   MODEL_CATALOG,
   findModelCatalogEntry,
@@ -654,6 +656,7 @@ export default function AgentComposer({
               autoRunPaused={autoRunPaused}
               isOwner={isOwner}
               cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+              commandAllowlist={agent.commandAllowlist ?? null}
             />
           </>
         )}
@@ -1025,37 +1028,13 @@ function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }
   );
 }
 
-// ─── Section card wrapper ────────────────────────────────────────────────────
-
-function SectionCard({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-rule-2 bg-paper p-6">{children}</div>;
-}
+// SectionCard / SectionHead live in ./SectionCard.tsx (imported above).
 
 // The v1 informational banner that used to sit on top of Skills / Tools /
 // Autonomy is gone (retour Quentin 20/08): it announced that the settings
 // below had no effect while still letting the user change them, which is the
 // trap it was supposed to prevent. Those tabs are now DISABLED for a CLI
 // runtime (RUNTIME_INERT_TABS), and RuntimeInertTabPanel explains why.
-
-function SectionHead({
-  label,
-  hint,
-  right,
-}: {
-  label: string;
-  hint?: string;
-  right?: React.ReactNode;
-}) {
-  return (
-    <div className="mb-4 flex items-start justify-between gap-4">
-      <div>
-        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">{label}</div>
-        {hint && <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">{hint}</p>}
-      </div>
-      {right}
-    </div>
-  );
-}
 
 // ─── Overview tab — real data, no empty placeholder boxes ─────────────────────
 
@@ -1648,6 +1627,7 @@ function AutonomyTab({
   autoRunPaused,
   isOwner,
   cliDailyBudgetUsd,
+  commandAllowlist,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
@@ -1657,6 +1637,8 @@ function AutonomyTab({
   autoRunPaused: boolean;
   isOwner: boolean;
   cliDailyBudgetUsd: number;
+  /** agents.command_allowlist — NULL = no list (see CommandAllowlistSection). */
+  commandAllowlist: string[] | null;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1866,6 +1848,20 @@ function AutonomyTab({
         rules={rules}
         onRulesChange={setRules}
         autoRunPaused={autoRunPaused}
+        isOwner={isOwner}
+      />
+
+      {/*
+        Next to the Yolo toggle above, and deliberately NOT gated on the
+        command-execution skill: it is the control an owner sets BEFORE handing
+        an agent a shell, and a safety list that only appears once the danger is
+        on is a list nobody sets in time. The section says so itself when the
+        tool group is off.
+      */}
+      <CommandAllowlistSection
+        agentId={agentId}
+        allowlist={commandAllowlist}
+        hasCommandSkill={attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG)}
         isOwner={isOwner}
       />
 

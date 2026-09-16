@@ -599,6 +599,12 @@ export type AgentRow = {
   runtime: string;
   /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
   cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
+  /**
+   * agents.command_allowlist (migration 0108). NULL = no list, unrestricted;
+   * [] = every command refused; entries of one or more words. Optional so list
+   * queries that don't select it stay valid; the edit loader (full row) has it.
+   */
+  commandAllowlist?: string[] | null;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
