@@ -87,6 +87,45 @@ describe('measured facts are read from the nightly snapshot', () => {
     expect(() => deriveMeasuredFacts(null)).toThrow(/snapshot/);
   });
 
+  // A present-but-absurd figure used to pass the guard, which only asked "is it
+  // a finite number?". The page then printed `-3 / 24`, `0 of the 0
+  // capabilities` and `150.0%` — each one a broken measurement wearing the
+  // clothes of a result. An absurd figure now stops the build by name, exactly
+  // as an absent one does.
+  it('refuses a negative count, naming the field', () => {
+    const withValue = (field: string, value: unknown) => {
+      const copy = structuredClone(snapshot) as { resume: Record<string, unknown> };
+      copy.resume[field] = value;
+      return () => deriveMeasuredFacts(copy);
+    };
+    expect(withValue('paquets', -1)).toThrow(/resume\.paquets is negative \(-1\)/);
+    expect(withValue('casDeTest', -42)).toThrow(/resume\.casDeTest is negative/);
+    expect(withValue('capacitesVerifiees', -3)).toThrow(/resume\.capacitesVerifiees is negative/);
+    expect(withValue('couvertureLignes', -0.5)).toThrow(/resume\.couvertureLignes is negative/);
+    // Zero is a real measurement for a count of things; it is not one for the
+    // total the page divides by, which the next case covers.
+    expect(withValue('casE2e', 0)).not.toThrow();
+  });
+
+  it('refuses a measurement with no capabilities at all', () => {
+    const copy = structuredClone(snapshot) as { resume: Record<string, unknown> };
+    copy.resume.capacites = 0;
+    copy.resume.capacitesVerifiees = 0;
+    expect(() => deriveMeasuredFacts(copy)).toThrow(/resume\.capacites is zero/);
+  });
+
+  it('refuses a coverage that is not a share of a hundred', () => {
+    const withCoverage = (value: number) => {
+      const copy = structuredClone(snapshot) as { resume: Record<string, unknown> };
+      copy.resume.couvertureLignes = value;
+      return () => deriveMeasuredFacts(copy);
+    };
+    expect(withCoverage(150)).toThrow(/resume\.couvertureLignes is above 100 \(150\)/);
+    expect(withCoverage(100.01)).toThrow(/resume\.couvertureLignes is above 100/);
+    expect(withCoverage(100)).not.toThrow();
+    expect(withCoverage(0)).not.toThrow();
+  });
+
   it('refuses a measurement claiming more proven capabilities than it has', () => {
     const copy = structuredClone(snapshot) as { resume: Record<string, unknown> };
     copy.resume.capacitesVerifiees = (copy.resume.capacites as number) + 1;
