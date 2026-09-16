@@ -27,7 +27,11 @@ import {
   SHARED_WORKSPACE_LABEL,
 } from './file-ops/workspace';
 import { buildChildEnv } from './child-env';
-import { assertCommandAllowed } from './command-allowlist';
+import {
+  assertCommandAllowed,
+  assertNoProgramShadowedByCwd,
+  shellLookupHardening,
+} from './command-allowlist';
 import { runShellCommand, type CommandRunResult } from './shell-engine';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
@@ -111,7 +115,8 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     'Use it to install dependencies, run scripts, build steps, CLIs, etc. Compound commands ' +
     '(joined with && or newlines) run as a single call. By DEFAULT every command requires human ' +
     'approval before it runs; the user can enable an auto-run ("Yolo") mode per agent. A non-zero ' +
-    'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval).',
+    'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval). ' +
+    'Your owner may restrict WHICH PROGRAMS this tool may start (a per-agent command allowlist); a command outside it is refused with the list in the error, and the refusal applies to THIS tool only — other tools that start processes are not covered by it.',
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
   card: 'terminal',
@@ -176,6 +181,12 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     // No `cwd` → the workspace root ('.' resolves under the sole/labelled root).
     const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
 
+    // The list names a PROGRAM; cmd.exe resolves one from the working
+    // directory BEFORE the PATH, and that directory is the agent's own
+    // workspace. Checked here and not inside assertCommandAllowed because it
+    // needs the RESOLVED cwd, which only exists on the line above.
+    await assertNoProgramShadowedByCwd(input.command, ctx.commandAllowlist, cwd);
+
     const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
     // Same contract as run_skill_script: scripts/commands get the shared
     // workspace path via NODAL_SHARED_WORKSPACE so artifacts have one right home.
@@ -189,10 +200,13 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
       target: { command: input.command },
       cwd,
       timeoutMs,
-      env: buildChildEnv(
-        process.env,
-        sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
-      ),
+      env: buildChildEnv(process.env, {
+        ...(sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : {}),
+        // Only when a list is set: tell the shell not to resolve a program
+        // from the working directory. An unrestricted agent keeps the
+        // behaviour it has always had.
+        ...(ctx.commandAllowlist ? shellLookupHardening(process.env) : {}),
+      }),
       keep: 'head',
     });
     return toRunCommandOutput(run);

@@ -22,8 +22,20 @@
 // is refused outright rather than guessed at: command substitution AND
 // variable expansion (HIDES_A_COMMAND / EXPANDS_LATER below).
 //
+// WHAT IT GOVERNS, AND WHAT IT DOES NOT. `run_command`, and nothing else.
+// `run_skill_script`, `code_task` (the Claude Code / Codex CLIs) and the
+// `verify_commands` of `declare_verification` all start processes WITHOUT
+// consulting this list — verified by grepping `commandAllowlist` across the
+// repo. An owner who sets `['node']` has narrowed one door, not confined the
+// agent. Saying so here because a control that reads as broader than it is is
+// worse than no control: it buys a decision (turning auto-approve on) with a
+// guarantee it does not provide.
+//
 // The list is DATA on the agent row (`agents.command_allowlist`), never a
-// hardcoded per-agent branch — invariant #1.
+// hardcoded per-agent branch — invariant #1. It is read ONCE per job, when the
+// runner loads the agent row (`apps/runner/src/job/execute.ts`), and the same
+// value is reused when the job resumes after an approval: tightening a list
+// mid-job does not apply to the job already running.
 
 /** Thrown when a command is refused. Fails loud — invariant #4. */
 export class CommandNotAllowedError extends Error {
@@ -272,4 +284,125 @@ function splitIntoSegments(command: string): Segment[] | typeof UNTERMINATED_QUO
  */
 function tokenizeEntry(value: string): string[] {
   return value.trim().split(/\s+/).filter(Boolean);
+}
+
+// ─── The program the SHELL resolves, not the word the agent typed ────────────
+//
+// `assertCommandAllowed` compares a TOKEN. `cmd.exe` resolves an unqualified
+// executable from the CURRENT DIRECTORY before the PATH, and the current
+// directory is the agent's own workspace — which the agent can write to with
+// `file_write`. Drop a `node.cmd` there and `node x.js`, a command the list
+// accepts, starts that script instead of the real node. Reproduced on Windows
+// 11 with the env `buildChildEnv` actually produces: stdout was the planted
+// script, not `v26.x`.
+//
+// Two answers, because one can be ignored by a host and the other cannot see
+// everything:
+//   - `shellLookupHardening` tells the shell not to look in the working
+//     directory at all;
+//   - `assertNoProgramShadowedByCwd` refuses the command when a file with the
+//     program's name is sitting there. A `node.cmd` in a workspace is not an
+//     accident, and refusing says so instead of quietly running the right
+//     binary and leaving the planted one for the next call.
+
+/**
+ * Extensions `cmd.exe` appends to an unqualified name — the default PATHEXT.
+ * Listed here rather than read from the environment on purpose: the child's
+ * PATHEXT is whatever the host happens to hold, and a guard that shrinks when
+ * the environment shrinks is not a guard.
+ */
+const WINDOWS_EXECUTABLE_EXTENSIONS = ['.com', '.exe', '.bat', '.cmd', '.ps1'];
+
+/** A token carrying a path is not resolved from the cwd, and the list refuses it anyway. */
+function isQualifiedPath(token: string): boolean {
+  return token.includes('/') || token.includes('\\') || token.includes(':');
+}
+
+/**
+ * Environment additions that stop the shell resolving a program from the
+ * working directory. Applied ONLY when an allowlist is set — an unrestricted
+ * agent keeps the behaviour it has always had.
+ *
+ * Windows: `NoDefaultCurrentDirectoryInExePath` is Microsoft's documented
+ * switch for exactly this, and `cmd.exe` then skips the current directory for
+ * unqualified executables. It is NOT in `child-env.ts`'s allowlist, so it must
+ * be added as an explicit extra — which is also why the hole was live.
+ *
+ * Unix: `/bin/sh` looks in the working directory only when PATH says so, as an
+ * empty entry or a literal `.`. Both are dropped.
+ */
+export function shellLookupHardening(
+  sourceEnv: Record<string, string | undefined>,
+): Record<string, string> {
+  if (process.platform === 'win32') {
+    return { NoDefaultCurrentDirectoryInExePath: '1' };
+  }
+  const path = sourceEnv['PATH'];
+  if (path === undefined) return {};
+  const cleaned = path
+    .split(':')
+    .filter((entry) => entry !== '' && entry !== '.')
+    .join(':');
+  return cleaned === path ? {} : { PATH: cleaned };
+}
+
+/**
+ * Refuse `command` when a file named like one of its programs sits in `cwd`.
+ *
+ * Belt to `shellLookupHardening`'s braces: the environment switch can be
+ * ignored (another shell, a host that filters the variable), this cannot. It
+ * reads the directory ONCE and compares names — no `stat` per candidate.
+ *
+ * A `null` / `undefined` allowlist returns without reading anything: there is
+ * no promise to keep, and refusing would change what an unrestricted agent can
+ * do.
+ *
+ * An unreadable `cwd` is NOT a refusal. The command is about to fail to start
+ * anyway, and turning an I/O error into a security verdict would fail loud for
+ * the wrong reason.
+ */
+export async function assertNoProgramShadowedByCwd(
+  command: string,
+  allowlist: readonly string[] | null | undefined,
+  cwd: string,
+): Promise<void> {
+  if (allowlist === null || allowlist === undefined) return;
+
+  const split = splitIntoSegments(command);
+  if (split === UNTERMINATED_QUOTE) return; // already refused by assertCommandAllowed
+
+  const programs = split
+    .map((segment) => ({ program: segment.tokens[0], raw: segment.raw }))
+    .filter(
+      (s): s is { program: string; raw: string } =>
+        s.program !== undefined && !isQualifiedPath(s.program),
+    );
+  if (programs.length === 0) return;
+
+  const { readdir } = await import('node:fs/promises');
+  let names: string[];
+  try {
+    names = await readdir(cwd);
+  } catch {
+    return;
+  }
+  const present = new Set(WINDOWS ? names.map((n) => n.toLowerCase()) : names);
+
+  for (const { program, raw } of programs) {
+    const candidates = WINDOWS
+      ? [program, ...WINDOWS_EXECUTABLE_EXTENSIONS.map((ext) => `${program}${ext}`)].map((c) =>
+          c.toLowerCase(),
+        )
+      : [program];
+    const planted = candidates.find((candidate) => present.has(candidate));
+    if (planted !== undefined) {
+      throw new CommandNotAllowedError(
+        raw.trim(),
+        allowlist,
+        `A file named "${planted}" sits in the working directory, and the shell resolves a ` +
+          `program from there before the PATH — so this command would not start the "${program}" ` +
+          `the list names. Remove that file, or run the program by an explicit path.`,
+      );
+    }
+  }
 }
