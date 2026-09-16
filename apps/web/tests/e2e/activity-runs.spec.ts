@@ -133,8 +133,10 @@ test('a run is one row, unfolded into its calls @cap:suivre-execution/ecran', as
   // Two calls: one model call, one tool call, counted together.
   await expect(row.getByTestId('run-calls')).toContainText('2 calls');
 
-  // Folded, the row says nothing of the calls themselves.
-  await expect(page.getByText(TOOL_NAME)).toHaveCount(0);
+  // Folded, the row shows no call at all: the block that carries them is not
+  // in the page. (The tool name itself IS on the page, as an option of the
+  // tool filter, which lists every tool this entity has ever called.)
+  await expect(page.getByTestId(`run-calls-${jobId}`)).toHaveCount(0);
 
   await row.click();
 
