@@ -17,6 +17,7 @@ const turn = (name: string, slug: string | null): FeedItem => ({
   turnSource: 'audit',
   agent: { name, slug },
   model: null,
+  at: null,
   blocks: [],
   usage: null,
 });

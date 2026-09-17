@@ -110,13 +110,42 @@ describe('Markdown', () => {
     expect(html).toContain('<hr class="my-4 border-rule-2"');
   });
 
-  it('les deux voix sont à la MÊME encre : le design ne les distingue pas par la couleur', () => {
-    // P2bis — la prose de l'agent était en `ink-2`, c'est-à-dire en note de
-    // bas de page, alors qu'elle est le fond du fil. Ce qui distingue les deux
-    // voix, c'est l'avatar et la carte autour de la demande, pas la teinte.
-    expect(render('salut', 'user')).toContain('text-ink"');
-    expect(render('salut', 'agent')).toContain('text-ink"');
+  it('chaque voix a son paragraphe : l’agent en 13 px et feed/prose, la demande en 15 px et encre pleine', () => {
+    // P2bis avait mis les deux voix à la MÊME encre, parce que la prose de
+    // l'agent était en `ink-2` — une note de bas de page, alors qu'elle est le
+    // fond du fil. #135 les redistingue, mais PAS en retombant sur `ink-2` :
+    // l'agent prend `feed/prose`, une entrée du nuancier du fil, au même titre
+    // que `feed/tool` ou `feed/model`, et une taille à lui.
+    expect(render('salut', 'user')).toContain('text-body-15 text-ink"');
+    expect(render('salut', 'agent')).toContain('text-body-13 text-feed-prose"');
     expect(render('salut', 'agent')).not.toContain('text-ink-2');
+  });
+
+  it('la LISTE suit la voix, comme la phrase qui l’introduit', () => {
+    // Une liste à puces écrite dans une autre taille et une autre couleur que
+    // le paragraphe au-dessus se lit comme un autre document.
+    const agent = render('une phrase\n\n- a\n', 'agent');
+    expect(agent).toContain('list-disc space-y-1 pl-5 max-w-[68ch] text-body-13 text-feed-prose');
+    const user = render('une phrase\n\n- a\n', 'user');
+    expect(user).toContain('list-disc space-y-1 pl-5 max-w-[68ch] text-body-15 text-ink');
+  });
+
+  it('le texte d’une CITATION suit la voix, comme le reste de la prose', () => {
+    // Une citation n'a pas de taille à elle : elle porte son filet et son
+    // retrait, et le paragraphe dedans passe par `prose`. Le test le fige —
+    // sinon l'habillage du bloc (`text-ink-3`) passerait pour la règle.
+    const agent = render('> cité\n', 'agent');
+    expect(agent).toContain('text-body-13 text-feed-prose">cité');
+    const user = render('> cité\n', 'user');
+    expect(user).toContain('text-body-15 text-ink">cité');
+  });
+
+  it('le TITRE ne suit pas la voix : il garde sa taille et son encre', () => {
+    // La voix ne déborde pas sur toute la structure — un titre reste un titre,
+    // et le code garde le sien (prouvé par le test des tokens plus haut).
+    const html = render('# T\n\ntexte\n', 'agent');
+    expect(html).toContain('text-title-15 text-ink');
+    expect(html).not.toContain('text-title-15 text-feed-prose');
   });
 
   it('aucune taille en pixels ne sort du composant', () => {

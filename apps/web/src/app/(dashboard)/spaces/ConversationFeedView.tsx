@@ -4,6 +4,7 @@
 // qu'il ne sait pas dessiner, il le montre brut et le dit.
 
 import Link from 'next/link';
+import { PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import ClampedText from './ClampedText.tsx';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
@@ -20,9 +21,11 @@ import type {
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
 import Markdown, { plainText } from '@/components/Markdown.tsx';
-import { truncate } from '@/lib/format-time';
+import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
-import ToolBlock from './ToolBlock.tsx';
+import ToolBlock, { DOT } from './ToolBlock.tsx';
+import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
+import ModelCallBlock from './ModelCallBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
 import FileDiff, { FILE_DOT, FileName, LineDelta } from './FileDiff.tsx';
@@ -118,40 +121,22 @@ function FeedItemView({
         </p>
       );
     case 'turn': {
-      // Ce que le tour a coûté descend dans le bloc de RÉFLEXION quand il y en
-      // a un : le design y met « 3 étapes · 7,2 s · 9 120 jetons », et la ligne
-      // du nom ne porte alors que le modèle. Sans réflexion, elle garde tout —
-      // sinon ces nombres n'auraient nulle part où aller.
-      // La durée est celle des appels LLM du tour (le temps de penser) : celle
-      // des outils est sur chaque `ToolBlock`, ligne par ligne, donc les deux
-      // ne se confondent plus comme du temps du groupe.
-      const cost = [
-        item.usage && item.usage.durationMs > 0 ? formatMs(item.usage.durationMs) : null,
-        item.usage
-          ? `${formatTokens(item.usage.inputTokens + item.usage.outputTokens)} tokens`
-          : null,
-        item.usage && item.usage.costUsd !== null ? formatCost(item.usage.costUsd) : null,
-      ].filter((x): x is string => x !== null);
-      // Le PREMIER bloc qui porte du raisonnement reçoit le coût ; les suivants
-      // (rares) n'en portent pas, sinon le même nombre paraîtrait deux fois.
-      const firstThinking = item.blocks.findIndex(
-        (b) => b.kind === 'steps' && b.steps.some((st) => st.kind === 'reasoning'),
-      );
-      const meta =
-        firstThinking >= 0
-          ? (item.model ?? '')
-          : [item.model, ...cost].filter((x): x is string => typeof x === 'string').join(' · ');
+      // #135 — ce que le tour a demandé au modèle a désormais son BLOC, dans la
+      // colonne de temps des appels d'outil (`ModelCallBlock`). L'en-tête ne
+      // porte plus que le nom de l'agent et le modèle, et le bloc de
+      // raisonnement ne porte plus que son compte d'étapes : ces nombres ne
+      // vivaient nulle part en propre, ils vivaient à droite de ce qui passait
+      // par là.
+      //
+      // Le tour ne DATE pas son appel de modèle : le bloc va donc en dernier,
+      // après les blocs du tour, plutôt qu'à une place inventée.
       return (
         <Turn>
-          <Who name={item.agent.name ?? 'Agent'} meta={meta} />
+          <Who name={item.agent.name ?? 'Agent'} model={item.model} at={item.at} />
           {item.blocks.map((b, i) => (
-            <Block
-              key={i}
-              block={b}
-              deliverables={deliverables}
-              {...(i === firstThinking && cost.length > 0 ? { meta: cost.join(' · ') } : {})}
-            />
+            <Block key={i} block={b} deliverables={deliverables} />
           ))}
+          <ModelCallBlock model={item.model} usage={item.usage} className="mb-3" />
         </Turn>
       );
     }
@@ -164,7 +149,7 @@ function FeedItemView({
       // tour de l'agent, pas une plaque à part : c'est lui qui parle.
       return (
         <Turn>
-          <Who name={agentName} meta="" />
+          <Who name={agentName} />
           <Markdown text={item.text} />
         </Turn>
       );
@@ -202,25 +187,33 @@ function Turn({ children }: { children: React.ReactNode }) {
   return <div className="min-w-0 pt-6">{children}</div>;
 }
 
-function Who({ name, meta }: { name: string; meta: string }) {
+/**
+ * Qui parle, avec quel modèle, et à quelle heure — le composant `TurnHeader` du
+ * tableau #135 : avatar carré, nom, modèle, puis l'heure de début poussée à
+ * droite. Les nombres du tour ne sont plus là (#135) : ils ont leur bloc
+ * (`ModelCallBlock`). Le modèle prend la couleur `feed/model` — sur une ligne,
+ * la différence entre les choses est la COULEUR.
+ *
+ * L'heure ne se dessine QUE si le tour en porte une (invariant #4) : un tour
+ * sans ligne d'audit n'a pas de date, et une heure devinée serait un mensonge
+ * de plus à l'écran.
+ */
+function Who({ name, model, at }: { name: string; model?: string | null; at?: Date | null }) {
   return (
-    <div className="mb-1.5 flex items-baseline gap-2">
+    <div className="mb-1.5 flex items-center gap-2.5">
+      <AgentAvatar name={name} size="sm" shape="square" />
       <span className="text-title-15 text-ink">{name}</span>
-      {meta !== '' && <span className="text-mono-11 text-ink-3">{meta}</span>}
+      {model !== null && model !== undefined && model !== '' && (
+        <span className="text-mono-11 text-feed-model">{model}</span>
+      )}
+      {at !== null && at !== undefined && (
+        <span className="ml-auto text-mono-11 text-ink-4">{formatClock(at)}</span>
+      )}
     </div>
   );
 }
 
-function Block({
-  block,
-  deliverables,
-  meta,
-}: {
-  block: TurnBlock;
-  deliverables: Deliverables;
-  /** Ce que le TOUR ajoute à l'en-tête du groupe : jetons, durée, coût. */
-  meta?: string;
-}) {
+function Block({ block, deliverables }: { block: TurnBlock; deliverables: Deliverables }) {
   switch (block.kind) {
     case 'prose':
       return <Markdown text={block.text} className="mb-3" />;
@@ -233,9 +226,7 @@ function Block({
       const tools = block.steps.filter((s): s is ToolStep => s.kind === 'tool');
       return (
         <div className="mb-3 space-y-2">
-          {reasoning.length > 0 && (
-            <ThinkingBlock steps={reasoning} {...(meta !== undefined ? { meta } : {})} />
-          )}
+          {reasoning.length > 0 && <ThinkingBlock steps={reasoning} />}
           {tools.map((s, i) => (
             <ToolBlock key={i} step={s} />
           ))}
@@ -307,9 +298,9 @@ function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deli
     }
     // Une question dont ni la charge ni l'entrée ne se lisent : le brut, dit
     // tel quel, plutôt qu'une carte vide qui prétendrait poser une question.
-    return <RawCard step={step} />;
+    return <ToolBlock step={step} />;
   }
-  if (p === null) return <RawCard step={step} />;
+  if (p === null) return <ToolBlock step={step} />;
   switch (p.card) {
     case 'table':
       return <TableCard payload={p} aside={duration} />;
@@ -318,7 +309,7 @@ function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deli
     case 'terminal':
       return <TerminalCard payload={p} />;
     case 'sent':
-      return <SentCard payload={p} input={step.input} aside={duration} />;
+      return <SentCard payload={p} input={step.input} aside={duration} outcome={step.outcome} />;
     case 'checks':
       return <ChecksCard payload={p} />;
     case 'delegation':
@@ -326,28 +317,14 @@ function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deli
     default:
       // Une carte que l'écran ne dessine pas encore, ou un texte : le brut, dit
       // tel quel — jamais une devinette.
-      return <RawCard step={step} />;
+      //
+      // #135 — ce brut n'est plus un GRAND cadre ouvert sur son JSON. Un appel
+      // dont la carte manque (`assign_lead`, par exemple) prenait un demi-écran
+      // pour ne rien dire de plus qu'une ligne ; il prend maintenant la même
+      // ligne repliée que tous les autres appels, et l'aveu « brut » vit dans
+      // son corps, sous `Result`.
+      return <ToolBlock step={step} />;
   }
-}
-
-/** Rien de présentable : l'entrée et la sortie brutes, en le disant. */
-function RawCard({ step }: { step: ToolStep }) {
-  return (
-    <CardFrame
-      title={step.toolName}
-      meta={step.card === null ? 'no card recorded' : `${step.card} · raw`}
-      aside={step.durationMs !== null ? formatMs(step.durationMs) : undefined}
-    >
-      <pre className="max-h-64 overflow-auto px-4 py-3 text-mono-11 text-ink-3 whitespace-pre-wrap break-words">
-        {JSON.stringify(step.input, null, 2)}
-      </pre>
-      {step.outputText !== null && (
-        <pre className="max-h-64 overflow-auto border-t border-rule-2 px-4 py-3 text-mono-11 text-ink-2 whitespace-pre-wrap break-words">
-          {step.outputText}
-        </pre>
-      )}
-    </CardFrame>
-  );
 }
 
 function TableCard({ payload, aside }: { payload: CardPayloadFor<'table'>; aside?: string }) {
@@ -625,38 +602,63 @@ function TerminalCard({ payload }: { payload: CardPayloadFor<'terminal'> }) {
   );
 }
 
+/**
+ * Ce qui est SORTI du chat, replié comme tout bloc de run (#135). C'était le
+ * dernier grand cadre du fil : un envoi de deux lignes prenait un demi-écran,
+ * bandeau vert compris, là où l'appel d'outil juste au-dessus tenait sur 33 px
+ * (constat de Quentin sur sa pile, 17/09).
+ *
+ * Le verdict ne passe plus par un bandeau coloré, il passe par la PASTILLE —
+ * la même que celle du bloc d'outil, lue sur l'issue de l'appel. Le message
+ * envoyé, lui, descend dans le corps : c'est ce qu'on va CHERCHER, pas ce
+ * qu'on lit en parcourant.
+ */
 function SentCard({
   payload,
   input,
   aside,
+  outcome,
 }: {
   payload: CardPayloadFor<'sent'>;
   input: unknown;
   aside?: string;
+  outcome: ToolStep['outcome'];
 }) {
   const text =
     input && typeof input === 'object' && typeof (input as { text?: unknown }).text === 'string'
       ? (input as { text: string }).text
       : null;
-  return (
-    <CardFrame
-      title={`Sent to ${payload.channel}`}
-      meta={[payload.kind, payload.filename, payload.target ? `to ${payload.target}` : null]
-        .filter((x): x is string => typeof x === 'string' && x !== '')
-        .join(' · ')}
-      aside={aside}
-      tone="ok"
-    >
-      {text !== null && (
-        <div className="px-4 py-3">
-          <Markdown text={text} />
-        </div>
+  const meta = [payload.kind, payload.filename, payload.target ? `to ${payload.target}` : null]
+    .filter((x): x is string => typeof x === 'string' && x !== '')
+    .join(' · ');
+  const head = (
+    <>
+      <PaperPlaneTilt size={14} className="shrink-0 text-ink-4" aria-hidden />
+      <span className="shrink-0 text-mono-12 text-ink">Sent to {payload.channel}</span>
+      {meta !== '' && (
+        <span className="min-w-0 flex-1 truncate text-mono-12 text-ink-3">{meta}</span>
       )}
-      {payload.bytes !== undefined && (
-        <p className="px-4 pb-3 text-mono-11 text-ink-4">{formatTokens(payload.bytes)} B</p>
+      <span
+        className={`ml-auto h-2 w-2 shrink-0 rounded-full ${DOT[outcome] ?? 'bg-ink-4'}`}
+        aria-hidden
+      />
+      {aside !== undefined && (
+        <span className="shrink-0 text-mono-12 text-feed-metric">{aside}</span>
       )}
-    </CardFrame>
+    </>
   );
+  // Un envoi sans message ET sans taille n'a rien à ouvrir : il garde sa ligne,
+  // sans chevron — la même règle que pour un appel muet (`hasBody`).
+  const body =
+    text !== null || payload.bytes !== undefined ? (
+      <FoldableBody>
+        {text !== null && <Markdown text={text} />}
+        {payload.bytes !== undefined && (
+          <p className="text-mono-11 text-ink-4">{formatTokens(payload.bytes)} B</p>
+        )}
+      </FoldableBody>
+    ) : undefined;
+  return <FoldableBlock head={head} {...(body !== undefined ? { body } : {})} />;
 }
 
 function ChecksCard({ payload }: { payload: CardPayloadFor<'checks'> }) {
@@ -767,8 +769,11 @@ function DelegationGroup({ job, deliverables }: { job: FeedChildJob; deliverable
   ]
     .filter((x): x is string => x !== null)
     .join(' · ');
+  // Pleine largeur, comme tout bloc du fil (#135, remarque de Quentin sur
+  // #140) : la gouttière de 46 px rentrait la délégation par rapport aux blocs
+  // d'outil juste au-dessus, et le fil se lisait en escalier.
   return (
-    <div className="mt-4 pl-[46px]">
+    <div className="mt-4">
       <DelegationDisclosure
         label={`Delegated to ${job.agentName ?? 'an agent'}`}
         avatar={<AgentAvatar name={job.agentName ?? 'Agent'} size="sm" shape="square" />}

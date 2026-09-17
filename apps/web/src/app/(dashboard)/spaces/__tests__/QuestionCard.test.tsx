@@ -191,6 +191,7 @@ describe('ConversationFeedView — le dispatch sur la carte `question`', () => {
           turnSource: 'audit',
           agent: { name: 'Alfred', slug: 'alfred' },
           model: 'mock',
+          at: null,
           blocks: [
             {
               kind: 'card',

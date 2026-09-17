@@ -7,6 +7,8 @@
 // de bibliothèque de test de composants dans ce dépôt — on lit le HTML.
 
 import { describe, it, expect } from 'vitest';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ConversationFeedView from '../ConversationFeedView.tsx';
 import { compactTurns } from '@/lib/conversation-feed.ts';
@@ -51,6 +53,10 @@ const feed: ConversationFeed = {
       turnSource: 'audit',
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'claude-opus-5',
+      // Construite à partir de composants LOCAUX : l'en-tête affiche l'heure
+      // dans le fuseau du lecteur, et une date UTC rendrait le test dépendant
+      // du fuseau de la machine de CI.
+      at: new Date(2026, 8, 17, 14, 2),
       usage: {
         inputTokens: 12000,
         outputTokens: 480,
@@ -170,21 +176,122 @@ const feed: ConversationFeed = {
   },
 };
 
+/** Le fil réduit à la SEULE carte d'envoi, de quoi la cliquer sans bruit. */
+const envoi: ConversationFeed = {
+  items: [
+    {
+      kind: 'turn',
+      index: 1,
+      turn: 1,
+      turnSource: 'audit',
+      agent: { name: 'Alfred', slug: 'alfred' },
+      model: null,
+      at: null,
+      usage: null,
+      blocks: [
+        {
+          kind: 'card',
+          step: tool({
+            toolName: 'telegram_send_message',
+            card: 'sent',
+            input: { text: 'La revue est prête.' },
+            presented: { card: 'sent', channel: 'telegram', kind: 'message', target: '42' },
+          }),
+        },
+      ],
+    },
+  ],
+  totals: feed.totals,
+};
+
 describe('ConversationFeedView', () => {
   const html = renderToStaticMarkup(<ConversationFeedView feed={feed} />);
 
-  it('la demande dit d’où elle vient ; les jetons descendent dans le groupe d’étapes', () => {
+  it('la demande dit d’où elle vient ; les jetons sont dans la ligne d’appel du modèle', () => {
     expect(html).toContain('Prépare la revue');
     expect(html).toContain('via automation “Revue mensuelle”');
     expect(html).toContain('Alfred');
-    // P2bis — la ligne du nom ne porte plus que le modèle quand le tour a du
-    // raisonnement ; le coût vit à droite du bloc de réflexion.
-    expect(html).not.toContain('claude-opus-5 · 12,480 tokens');
+    // #135 — la ligne du nom ne porte QUE le modèle, dans sa couleur.
     expect(html).toContain('>claude-opus-5<');
-    // Le bloc compte SES étapes (un seul raisonnement), puis dit le temps de
-    // penser du tour, ses jetons et son coût. Le temps des outils est sur
-    // chaque appel, ligne par ligne : les deux ne se confondent plus.
-    expect(html).toContain('1 step · 9.4 s · 12,480 tokens · $0.05');
+    expect(html).toMatch(/text-feed-model[^"]*"[^>]*>claude-opus-5</);
+    // Les nombres du tour ne sont ni dans l'en-tête ni dans la ligne de
+    // raisonnement : ils ont leur bloc, avec le modèle qui les a produits.
+    expect(html).not.toContain('claude-opus-5 · 12,480 tokens');
+    expect(html).not.toContain('1 step · 9.4 s');
+    expect(html).toContain('1 step<');
+    expect(html).toContain('12,000 in · 480 out · 9,000 cached');
+    expect(html).toContain('9.4 s · $0.05');
+  });
+
+  it('la ligne d’appel du modèle est le DERNIER bloc du tour', () => {
+    // Le tour ne date pas son appel de modèle : il va donc après tout ce que
+    // le tour a fait, jamais au-dessus. Le nom du modèle paraît deux fois —
+    // dans l'en-tête en Mono/11, dans la ligne d'appel en Mono/12 — et c'est
+    // la SECONDE qu'on situe ici.
+    const ligneModele = html.indexOf('text-mono-12 text-feed-model');
+    const raisonnement = html.indexOf('text-feed-reasoning');
+    const outil = html.lastIndexOf('text-feed-tool');
+    expect(ligneModele).toBeGreaterThan(-1);
+    expect(raisonnement).toBeGreaterThan(-1);
+    expect(outil).toBeGreaterThan(-1);
+    expect(ligneModele).toBeGreaterThan(raisonnement);
+    expect(ligneModele).toBeGreaterThan(outil);
+    // Et l'en-tête du tour, lui, précède tout le reste.
+    expect(html.indexOf('text-mono-11 text-feed-model')).toBeLessThan(raisonnement);
+  });
+
+  it('l’en-tête du tour porte l’avatar, le nom, le modèle, puis l’heure à droite', () => {
+    // #135, composant `TurnHeader` : l'avatar carré de l'agent ouvre la ligne
+    // (ses initiales, comme partout ailleurs dans l'application)…
+    expect(html).toContain('>AL<');
+    expect(html).toMatch(/rounded-\[8px\][^"]*"[^>]*>AL</);
+    // …et l'heure de DÉBUT du tour la ferme, poussée à droite.
+    const heure = new Date(2026, 8, 17, 14, 2).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    expect(heure).toBe('14:02');
+    expect(html).toMatch(/ml-auto text-mono-11 text-ink-4">14:02</);
+    // Elle précède la prose : c'est bien l'en-tête, pas un pied de tour.
+    expect(html.indexOf('>14:02<')).toBeLessThan(html.indexOf('Je reprends le '));
+  });
+
+  it('un tour SANS heure n’en dessine aucune — rien d’inventé', () => {
+    const sansHeure = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'turn',
+              index: 1,
+              turn: 1,
+              turnSource: 'audit',
+              agent: { name: 'Alfred', slug: 'alfred' },
+              model: 'claude-opus-5',
+              at: null,
+              usage: null,
+              blocks: [{ kind: 'prose', text: 'Rien à dater ici.' }],
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    // L'en-tête est bien là — avatar et nom — mais sans sa case de droite.
+    expect(sansHeure).toContain('>AL<');
+    expect(sansHeure).toContain('>Alfred<');
+    expect(sansHeure).not.toContain('ml-auto text-mono-11 text-ink-4');
+    expect(sansHeure).not.toMatch(/>\d{2}:\d{2}</);
+  });
+
+  it('l’agent parle en 13 px dans SA couleur ; la bulle de la demande ne bouge pas', () => {
+    // #135 — la voix de l'agent est le FOND du fil : en 15 px elle écrasait
+    // les blocs qui l'entourent, tous en 13 ou moins. Elle a aussi sa couleur,
+    // `feed/prose`, la dixième du nuancier du fil.
+    expect(html).toMatch(/max-w-\[68ch\] text-body-13 text-feed-prose">Je reprends le /);
+    // La demande de l'utilisateur, elle, garde sa taille ET l'encre pleine.
+    expect(html).toMatch(/max-w-\[68ch\] text-body-15 text-ink">Prépare la revue</);
   });
 
   it('le markdown de la prose est RENDU : plus d’astérisques à l’écran', () => {
@@ -213,6 +320,7 @@ describe('ConversationFeedView', () => {
       turnSource: 'audit' as const,
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'claude-opus-5',
+      at: new Date(2026, 8, 17, 14, 9),
       usage: null,
       blocks: [{ kind: 'steps' as const, steps: [tool({ toolName: 'file_read' })] }],
     };
@@ -237,8 +345,11 @@ describe('ConversationFeedView', () => {
     expect(html).not.toContain('tool calls');
     expect(html).toContain('query_memory');
     expect(html).toContain('>fetch<'); // mcp_x__fetch, sans son préfixe de serveur
-    expect(html).toContain('1 table · 0 rows');
-    expect(html).toContain('brut');
+    // #135 — REPLIÉ veut dire replié : le nom reste, le résumé du résultat
+    // attend le clic. Un fil de vingt appels tient donc sur vingt lignes.
+    expect(html).not.toContain('1 table · 0 rows');
+    expect(html).not.toContain('brut');
+    expect(html.split('aria-expanded="false"').length - 1).toBeGreaterThanOrEqual(3);
   });
 
   it('la carte table dessine les cellules et dit que l’en-tête est inconnu', () => {
@@ -248,10 +359,35 @@ describe('ConversationFeedView', () => {
     expect(html).toContain('first row may or may not be a header');
   });
 
-  it('la carte d’envoi dit le canal, le destinataire et le message parti', () => {
+  it('la carte d’envoi tient sur UNE ligne : le message n’est pas dans le DOM replié', () => {
+    // #135 — le dernier grand cadre du fil devient un bloc comme les autres.
+    // Replié n'est pas caché : la ligne dit déjà le canal, la sorte et le
+    // destinataire. Le message, lui, attend le clic.
     expect(html).toContain('Sent to telegram');
     expect(html).toContain('to 42');
-    expect(html).toContain('La revue est prête.');
+    expect(html).not.toContain('La revue est prête.');
+    // Et la ligne est bien dépliable, pas un cadre muet.
+    expect(html).toMatch(/aria-expanded="false"[^>]*>(?:(?!<\/button>)[\s\S])*Sent to telegram/);
+  });
+
+  it('un clic sur la carte d’envoi OUVRE le message', async () => {
+    // Le dépliage est un état du navigateur : jsdom, pas du HTML statique.
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={envoi} />);
+    });
+    expect(container.textContent).not.toContain('La revue est prête.');
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la carte d’envoi n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('La revue est prête.');
+    expect(tete.getAttribute('aria-expanded')).toBe('true');
+    root.unmount();
+    container.remove();
   });
 
   it('la carte terminal montre la commande, le code de sortie et la coupe', () => {
@@ -260,10 +396,14 @@ describe('ConversationFeedView', () => {
     expect(html).toContain('earlier output not kept');
   });
 
-  it('une carte de résultat sans charge utile se montre brute et le dit', () => {
+  it('une carte de résultat sans charge utile prend la MÊME ligne repliée', () => {
+    // #135 — plus de grand cadre ouvert sur son JSON : un appel dont la carte
+    // ne se lit pas est un appel comme les autres, une ligne, dépliable.
     expect(html).toContain('legacy_tool');
-    expect(html).toContain('files · raw');
-    expect(html).toContain('&quot;path&quot;: &quot;a.md&quot;');
+    expect(html).toContain('(a.md)');
+    // L'aveu « brut » et le JSON vivent dans le corps, pas à l'écran.
+    expect(html).not.toContain('files · raw');
+    expect(html).not.toContain('&quot;path&quot;: &quot;a.md&quot;');
   });
 
   it("l'historique de la conversation est là, replié, et dit combien de messages il porte", () => {
@@ -287,6 +427,7 @@ describe('ConversationFeedView', () => {
           turnSource: 'audit',
           agent: { name: 'Alfred', slug: 'alfred' },
           model: null,
+          at: null,
           usage: null,
           blocks: [
             {
@@ -346,6 +487,7 @@ describe('ConversationFeedView', () => {
               turnSource: 'audit',
               agent: { name: 'Alfred', slug: 'alfred' },
               model: null,
+              at: null,
               usage: null,
               blocks: [
                 {
@@ -424,6 +566,10 @@ describe('ConversationFeedView', () => {
     expect(html2).not.toContain('>Done<');
     // Replié : la consigne du délégué n'est pas dans le HTML initial.
     expect(html2).not.toContain('Audite le correctif de session');
+    // Pleine largeur : plus de gouttière qui rentrerait la délégation par
+    // rapport aux blocs d'outil du tour juste au-dessus (#135).
+    expect(html2).not.toContain('pl-[46px]');
+    expect(html2).not.toContain('ml-[46px]');
   });
 
   it('la réponse ferme le fil, après l’envoi', () => {

@@ -69,7 +69,26 @@ function kids(node: { children?: RootContent[] }, tone: MarkdownTone): React.Rea
   return (node.children ?? []).map((child, i) => <MdNode key={i} node={child} tone={tone} />);
 }
 
-const PROSE = 'max-w-[68ch] text-body-15';
+/**
+ * La PROSE, par voix (#135) — la largeur, la taille et l'encre de tout ce qui
+ * est du texte courant : un paragraphe et une liste, jamais un titre ni du
+ * code.
+ *
+ * L'agent parle en 13 px, dans sa couleur à lui (`feed/prose`, la dixième du
+ * nuancier du fil). En 15 px il écrasait tout ce qui l'entoure — blocs
+ * d'outil, cartes et lignes d'appel sont tous en 13 ou moins. La DEMANDE, elle,
+ * ne bouge pas : sa bulle est courte, c'est la phrase que l'utilisateur relit,
+ * et c'est elle qui donne l'échelle au fil.
+ *
+ * UNE fonction pour les deux sortes de blocs : une liste à puces écrite dans
+ * une taille et une couleur autres que la phrase qui l'introduit se lit comme
+ * un autre document.
+ */
+function prose(tone: MarkdownTone): string {
+  return tone === 'agent'
+    ? 'max-w-[68ch] text-body-13 text-feed-prose'
+    : 'max-w-[68ch] text-body-15 text-ink';
+}
 
 /**
  * L'adresse d'un lien telle qu'on accepte de la poser dans un `href`, ou
@@ -98,11 +117,14 @@ function MdNode({ node, tone }: { node: RootContent; tone: MarkdownTone }): Reac
   // la couleur : ce qui les distingue, c'est l'avatar et la carte autour de la
   // demande. En `ink-2`, la parole de l'agent — le fond du fil — se lisait
   // comme une note de bas de page.
-  void tone;
-  const ink = 'text-ink';
+  //
+  // #135 revient là-dessus pour la PROSE — paragraphes et listes : la voix de
+  // l'agent a désormais sa taille (13 px) et sa couleur (`feed/prose`),
+  // données par Quentin. Ce n'est pas `ink-2` qui revient — c'est une entrée
+  // du nuancier du fil, au même titre que `feed/tool` ou `feed/model`.
   switch (node.type) {
     case 'paragraph':
-      return <p className={`mb-3 last:mb-0 ${PROSE} ${ink}`}>{kids(node, tone)}</p>;
+      return <p className={`mb-3 last:mb-0 ${prose(tone)}`}>{kids(node, tone)}</p>;
     case 'heading':
       return node.depth <= 2 ? (
         <h2 className="mt-4 mb-2 text-title-15 text-ink first:mt-0">{kids(node, tone)}</h2>
@@ -143,9 +165,9 @@ function MdNode({ node, tone }: { node: RootContent; tone: MarkdownTone }): Reac
       );
     case 'list':
       return node.ordered === true ? (
-        <ol className={`mb-3 list-decimal space-y-1 pl-5 ${PROSE} ${ink}`}>{kids(node, tone)}</ol>
+        <ol className={`mb-3 list-decimal space-y-1 pl-5 ${prose(tone)}`}>{kids(node, tone)}</ol>
       ) : (
-        <ul className={`mb-3 list-disc space-y-1 pl-5 ${PROSE} ${ink}`}>{kids(node, tone)}</ul>
+        <ul className={`mb-3 list-disc space-y-1 pl-5 ${prose(tone)}`}>{kids(node, tone)}</ul>
       );
     case 'listItem':
       // Une case à cocher est un ÉTAT, pas un contrôle : le fil est un compte

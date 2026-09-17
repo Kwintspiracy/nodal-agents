@@ -1,24 +1,36 @@
-// ToolBlock — UN appel d'outil, visible (P2bis, plan « De la maquette au
-// produit »).
-//
-// C'est le changement le plus visible du design de Quentin : il n'y a plus de
-// groupe « 4 tool calls » qu'il faut déplier pour savoir ce que l'agent a
-// fait. Chaque appel qui n'est pas une carte de résultat pleine prend deux
-// lignes de 31 px — ce qu'on a demandé, puis ce qu'on a obtenu — et un tour
-// avec vingt lectures montre vingt blocs. Le fil se lit du regard.
-//
-// Composant SERVEUR : rien n'est dépliable ici, donc rien ne bascule dans le
-// navigateur. Le raisonnement, lui, reste replié (`ThinkingBlock`).
+'use client';
 
-import { ArrowElbowDownRight, Terminal } from '@phosphor-icons/react/dist/ssr';
+// ToolBlock — UN appel d'outil, sur UNE ligne, dépliable (#135).
+//
+// Le tableau de Quentin pose un principe pour tous les blocs d'un run : replié,
+// chaque bloc tient sur une seule ligne ; chacun se déplie pour son compte.
+// Replié n'est pas caché — la ligne dit déjà le nom de l'outil, son argument,
+// comment l'appel s'est terminé et combien de temps il a pris. Ce qui demandait
+// jusqu'ici une deuxième ligne de 31 px (le résumé du résultat) descend dans le
+// corps, avec l'entrée complète.
+//
+// Une ligne, une police, une taille : ce qui distingue les choses est la
+// COULEUR — le nom de l'outil en `feed/tool`, son argument en `feed/argument`,
+// les durées en `feed/metric`.
+//
+// Composant CLIENT depuis #135 : le dépliage est un état du navigateur. Le coût
+// est assumé (issue #132) ; ce fichier n'importe rien de serveur-seulement, et
+// `RunRow` — l'autre appelant — est déjà client.
+
+import { List } from '@phosphor-icons/react/dist/ssr';
+import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { Step } from '@/lib/conversation-feed.ts';
 import { formatMs, shortToolName } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
 
-/** La pastille de 6 px qui dit comment l'appel s'est terminé. */
-const DOT: Readonly<Record<string, string>> = {
+/**
+ * La pastille de 8 px qui dit comment l'appel s'est terminé. Exportée : la
+ * carte d'envoi la reprend telle quelle — deux blocs d'un même run ne disent
+ * pas leur issue de deux couleurs différentes.
+ */
+export const DOT: Readonly<Record<string, string>> = {
   success: 'bg-ok',
   error: 'bg-err',
   blocked: 'bg-err',
@@ -28,8 +40,7 @@ const DOT: Readonly<Record<string, string>> = {
 /**
  * L'entrée d'un appel, en une ligne : la valeur si elle n'a qu'un champ texte,
  * sinon les champs `clé=valeur`. Coupée à 60 caractères — c'est un repère, pas
- * une transcription ; le détail vit dans la carte de résultat quand il y en a
- * une.
+ * une transcription ; l'entrée entière vit dans le corps déplié.
  */
 export function excerptOfInput(input: unknown): string | null {
   if (input === null || input === undefined) return null;
@@ -53,50 +64,90 @@ export function excerptOfInput(input: unknown): string | null {
 }
 
 /**
- * La deuxième ligne a-t-elle quelque chose à dire ? Sans ça, un appel muet
- * (pas de charge utile, pas de sortie, pas d'entrée) laissait une barre de
- * 31 px vide sous la première ligne — ce qui se lit comme un bug, pas comme
- * « rien à dire ».
+ * Le corps a-t-il quelque chose à dire ? Sans ça, un appel muet (pas de charge
+ * utile, pas de sortie, pas d'entrée) offrirait un chevron qui n'ouvre rien —
+ * ce qui se lit comme un bug, pas comme « rien à dire ». Un tel appel garde sa
+ * ligne, sans bouton.
  */
-export function hasResultLine(step: ToolStep): boolean {
+export function hasBody(step: ToolStep): boolean {
   if (step.outcome !== 'success') return true;
   if (step.presented !== null) return true;
   if (step.outputText !== null && step.outputText.trim() !== '') return true;
   return excerptOfInput(step.input) !== null;
 }
 
+/** Ce que l'entrée donne à lire, en clair ; `null` quand il n'y a pas d'entrée. */
+function inputJson(input: unknown): string | null {
+  if (input === null || input === undefined) return null;
+  if (typeof input === 'object' && Object.keys(input as object).length === 0) return null;
+  return JSON.stringify(input, null, 2);
+}
+
+/**
+ * L'aveu d'un bloc BRUT : aucune charge utile n'a été persistée pour cet appel,
+ * soit qu'aucune carte n'ait été enregistrée, soit que celle qui l'a été ne se
+ * lise pas. Le fait compte pour le propriétaire — un bloc brut dit qu'il est
+ * brut — mais il n'a pas à occuper la ligne repliée : il vit sous `Result`.
+ */
+function rawNote(step: ToolStep): string | null {
+  if (step.presented !== null) return null;
+  return step.card === null ? 'no card recorded' : `${step.card} · raw`;
+}
+
 export default function ToolBlock({ step }: { step: ToolStep }) {
   const arg = excerptOfInput(step.input);
+  const head = (
+    <>
+      <List size={14} className="shrink-0 text-ink-4" aria-hidden />
+      <span className="shrink-0 text-mono-12 text-feed-tool" title={step.toolName}>
+        {shortToolName(step.toolName)}
+      </span>
+      {arg !== null && (
+        <span className="min-w-0 flex-1 truncate text-mono-12 text-feed-argument">({arg})</span>
+      )}
+      <span
+        className={`ml-auto h-2 w-2 shrink-0 rounded-full ${DOT[step.outcome] ?? 'bg-ink-4'}`}
+        aria-hidden
+      />
+      {step.durationMs !== null && (
+        <span className="shrink-0 text-mono-12 text-feed-metric">{formatMs(step.durationMs)}</span>
+      )}
+    </>
+  );
+  return <FoldableBlock head={head} {...(hasBody(step) ? { body: <Body step={step} /> } : {})} />;
+}
+
+/** Ce que l'appel a demandé, puis ce qu'il a rendu. */
+function Body({ step }: { step: ToolStep }) {
+  const json = inputJson(step.input);
+  const note = rawNote(step);
+  // Une carte lue se résume (`StepLine`) ; sans charge utile, le plus vrai
+  // qu'on ait est la sortie telle qu'elle a été écrite — bornée en hauteur,
+  // jamais coupée en silence.
+  const raw = step.presented === null && step.outcome === 'success';
   const failed = step.outcome === 'error' || step.outcome === 'blocked';
   return (
-    <div className="overflow-hidden rounded-md border border-rule-2 bg-canvas">
-      <div className="flex h-[31px] items-center gap-2 px-3">
-        <Terminal size={14} className="shrink-0 text-ink-3" aria-hidden />
-        <span className="shrink-0 text-mono-12 text-ink" title={step.toolName}>
-          {shortToolName(step.toolName)}
-        </span>
-        {arg !== null && (
-          <span className="min-w-0 flex-1 truncate text-mono-12 text-ink-3">({arg})</span>
-        )}
-        <span
-          className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${DOT[step.outcome] ?? 'bg-ink-4'}`}
-          aria-hidden
-        />
-        {step.durationMs !== null && (
-          <span className="shrink-0 text-mono-12 text-ink-4">{formatMs(step.durationMs)}</span>
-        )}
-      </div>
-      {hasResultLine(step) && (
-        <div className="flex h-[31px] items-center gap-2 border-t border-rule-2 px-3">
-          <ArrowElbowDownRight size={12} className="shrink-0 text-ink-4" aria-hidden />
-          <span
-            className={`min-w-0 flex-1 truncate text-mono-12 ${failed ? 'text-err' : 'text-ink-3'}`}
-          >
-            <StepLine step={step} />
-          </span>
+    <FoldableBody>
+      {json !== null && (
+        <>
+          <p className="text-mono-11 text-ink-4">Input</p>
+          <pre className="max-h-64 overflow-auto text-mono-12 text-ink-3 whitespace-pre-wrap break-words">
+            {json}
+          </pre>
+        </>
+      )}
+      <p className="text-mono-11 text-ink-4">Result</p>
+      {raw ? (
+        <pre className="max-h-64 overflow-auto text-mono-12 text-ink-3 whitespace-pre-wrap break-words">
+          {step.outputText ?? excerptOfInput(step.input) ?? ''}
+        </pre>
+      ) : (
+        <div className={`text-mono-12 break-words ${failed ? 'text-err' : 'text-ink-3'}`}>
+          <StepLine step={step} />
         </div>
       )}
-    </div>
+      {note !== null && <p className="text-mono-11 text-ink-4">{note}</p>}
+    </FoldableBody>
   );
 }
 

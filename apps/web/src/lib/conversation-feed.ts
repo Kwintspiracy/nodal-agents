@@ -223,6 +223,16 @@ export type FeedItem =
       model: string | null;
       blocks: TurnBlock[];
       usage: TurnUsage | null;
+      /**
+       * #135 — quand le tour a COMMENCÉ, tel que l'en-tête l'affiche à droite.
+       * La seule date que ce fil lit vraiment est celle des lignes d'audit
+       * d'outil (`tool_calls.created_at`) : c'est donc la PLUS ANCIENNE des
+       * lignes du tour. `llm_calls` n'expose pas sa date ici, et l'inventer
+       * depuis la date du job daterait tous les tours de la même heure. Un
+       * tour qui n'a appelé aucun outil n'a donc pas d'heure — `null`, et
+       * l'écran ne dessine rien (invariant #4 : rien d'inventé).
+       */
+      at: Date | null;
     }
   /**
    * Ce qui précède la demande : l'historique d'une conversation (Telegram,
@@ -541,6 +551,9 @@ export function compactTurns(items: readonly FeedItem[]): FeedItem[] {
       ...identity,
       blocks,
       model: prev.model ?? item.model,
+      // L'heure du tour fusionné est celle où il a COMMENCÉ : celle du premier
+      // des deux, et celle du second quand le premier n'en avait pas.
+      at: prev.at ?? item.at,
       usage: addUsage(prev.usage, item.usage),
     };
   }
@@ -676,6 +689,9 @@ export function buildConversationFeed(
         pending = [];
       };
       const rowTurns: number[] = [];
+      // Les dates des lignes d'audit de ce tour : l'en-tête montrera la plus
+      // ancienne (#135).
+      const rowTimes: number[] = [];
       for (const text of reasoningParts(msg.content)) {
         pending.push({ kind: 'reasoning', text });
       }
@@ -685,6 +701,7 @@ export function buildConversationFeed(
         const toolName = b.toolName ?? 'unknown';
         const row = rowFor(b.toolCallId ?? '', toolName);
         if (row && row.turn !== null) rowTurns.push(row.turn);
+        if (row?.createdAt) rowTimes.push(row.createdAt.getTime());
         const card = row && isToolCard(row.card) ? row.card : null;
         const q = b.toolCallId ? questionByCallId.get(b.toolCallId) : undefined;
         const outcome = outcomeOfToolOutput(row?.toolOutput);
@@ -738,6 +755,7 @@ export function buildConversationFeed(
       const u = turnSource === 'audit' ? usageByTurn.get(turn) : undefined;
       items.push({
         kind: 'turn',
+        at: rowTimes.length > 0 ? new Date(Math.min(...rowTimes)) : null,
         index: turnIndex,
         turn,
         turnSource,

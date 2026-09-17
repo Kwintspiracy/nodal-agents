@@ -95,6 +95,7 @@ const turnWith = (...cards: Array<Extract<Step, { kind: 'tool' }>>): FeedItem =>
   turnSource: 'audit',
   agent: { name: 'Alfred', slug: 'alfred' },
   model: null,
+  at: null,
   usage: null,
   blocks: cards.map((step) => ({ kind: 'card' as const, step })),
 });
@@ -271,6 +272,10 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     // toute façon aucune source.
     expect(html).not.toContain('Lines');
     expect(html).not.toContain('Coverage');
+    // Pleine largeur : le récapitulatif conclut le travail, il n'est pas plus
+    // étroit que les blocs qu'il conclut (#135).
+    expect(html).not.toContain('ml-[46px]');
+    expect(html).not.toContain('pl-[46px]');
   });
 
   it('les cellules PRÉSENTES sont celles qui ont une source', () => {
