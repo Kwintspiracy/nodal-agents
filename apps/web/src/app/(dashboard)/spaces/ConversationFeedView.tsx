@@ -34,6 +34,8 @@ import HistoryGroup from './HistoryGroup.tsx';
 import DelegationDisclosure from './DelegationDisclosure.tsx';
 import DelegationBlock from './DelegationBlock.tsx';
 import Handoff from './Handoff.tsx';
+import RunSummaryRow from './RunSummaryRow.tsx';
+import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
@@ -50,9 +52,16 @@ type Deliverables = ReadonlyMap<string, string>;
 export default function ConversationFeedView({
   feed,
   deliverables = [],
+  density = DEFAULT_FEED_DENSITY,
 }: {
   feed: ConversationFeed;
   deliverables?: ReadonlyArray<DeliverableStatusView>;
+  /**
+   * #132 — l'état de DÉPART des groupes de run de la page, choisi par la
+   * personne. Il n'enlève rien et n'ajoute rien : chaque groupe se déplie
+   * ensuite pour son compte, et chaque bloc dedans aussi.
+   */
+  density?: FeedDensity;
 }) {
   if (feed.items.length === 0) {
     return <p className="text-body-13 text-ink-4">Nothing recorded yet.</p>;
@@ -62,7 +71,7 @@ export default function ConversationFeedView({
   );
   return (
     <div className="mx-auto max-w-[760px]">
-      <FeedItems items={feed.items} deliverables={byKey} />
+      <FeedItems items={feed.items} deliverables={byKey} density={density} />
     </div>
   );
 }
@@ -71,11 +80,23 @@ export default function ConversationFeedView({
  * Les items d'un fil, sans cadre : le fil de la page en haut, et le fil d'un
  * DÉLÉGUÉ sous sa carte de délégation (P2bis) passent par le même code.
  */
-function FeedItems({ items, deliverables }: { items: FeedItem[]; deliverables: Deliverables }) {
+function FeedItems({
+  items,
+  deliverables,
+  density = DEFAULT_FEED_DENSITY,
+}: {
+  items: FeedItem[];
+  deliverables: Deliverables;
+  density?: FeedDensity;
+}) {
   // La réponse finale se rend comme un TOUR : il lui faut donc un nom et un
   // avatar. Le fil ne les porte pas sur l'item ; ils viennent du dernier tour
-  // de l'agent, qui est celui qui l'a écrite.
-  const lastTurn = [...items].reverse().find((i) => i.kind === 'turn');
+  // de l'agent, qui est celui qui l'a écrite — et depuis #132 ce tour peut
+  // vivre DANS le groupe du run, d'où la descente.
+  const lastTurn = [...items]
+    .reverse()
+    .flatMap((i) => (i.kind === 'run' ? [...i.items].reverse() : [i]))
+    .find((i) => i.kind === 'turn');
   const agentName = lastTurn?.agent.name ?? 'Agent';
   const agentAvatarUrl = lastTurn?.agent.avatarUrl ?? null;
   return (
@@ -87,6 +108,7 @@ function FeedItems({ items, deliverables }: { items: FeedItem[]; deliverables: D
           deliverables={deliverables}
           agentName={agentName}
           agentAvatarUrl={agentAvatarUrl}
+          density={density}
         />
       ))}
     </>
@@ -98,11 +120,13 @@ function FeedItemView({
   deliverables,
   agentName,
   agentAvatarUrl,
+  density = DEFAULT_FEED_DENSITY,
 }: {
   item: FeedItem;
   deliverables: Deliverables;
   agentName: string;
   agentAvatarUrl: string | null;
+  density?: FeedDensity;
 }) {
   switch (item.kind) {
     case 'request':
@@ -156,6 +180,20 @@ function FeedItemView({
         </Turn>
       );
     }
+    case 'run':
+      // #135 / #132 — le travail du run, sous UNE ligne qui le résume. Replié
+      // par défaut : la réponse est juste au-dessus, et c'est elle qu'on vient
+      // lire. Déplié, ce sont EXACTEMENT les blocs de la page du run, rendus
+      // par le même code — la densité ne change que l'état de départ.
+      return (
+        <RunSummaryRow
+          jobId={item.jobId}
+          summary={item.summary}
+          defaultOpen={density === 'unfolded'}
+        >
+          <FeedItems items={item.items} deliverables={deliverables} density={density} />
+        </RunSummaryRow>
+      );
     case 'history':
       return <HistoryGroup exchanges={item.exchanges} />;
     case 'child':

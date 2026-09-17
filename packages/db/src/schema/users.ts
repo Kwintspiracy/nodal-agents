@@ -19,6 +19,11 @@ export const users = pgTable('users', {
   name: text('name').notNull().default(''),
   emailVerified: boolean('email_verified').notNull().default(false),
   image: text('image'),
+  // #132 — how dense this person reads a thread: 'folded' (the answer first,
+  // the run's work under one summary row) or 'unfolded' (the work open, as the
+  // run page shows it). A per-person preference, not a code constant; the CHECK
+  // constraint lives in migration 0109.
+  feedDensity: text('feed_density').notNull().default('folded'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

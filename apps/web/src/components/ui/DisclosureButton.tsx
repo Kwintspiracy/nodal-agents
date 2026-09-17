@@ -21,6 +21,9 @@ type Props = {
    */
   chevron?: 'start' | 'end';
   className?: string;
+  /** Passed through as `data-testid` — tests and e2e journeys target the row
+   *  that unfolds, which is otherwise indistinguishable from any other row. */
+  testId?: string;
 };
 
 /**
@@ -37,6 +40,7 @@ export default function DisclosureButton({
   children,
   chevron = 'start',
   className = '',
+  testId,
 }: Props) {
   const caret = (
     <span className="flex w-3.5 shrink-0 items-center text-ink-4" aria-hidden>
@@ -48,6 +52,7 @@ export default function DisclosureButton({
       type="button"
       onClick={onClick}
       aria-expanded={open}
+      data-testid={testId}
       className={`flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-hover ${className}`}
     >
       {chevron === 'start' && caret}

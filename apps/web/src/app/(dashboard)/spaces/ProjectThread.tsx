@@ -21,6 +21,7 @@ import ProjectComposer from './ProjectComposer.tsx';
 import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 import type { ComposerPresentation } from '@/lib/project-landing.ts';
 import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
+import { DEFAULT_FEED_DENSITY, type FeedDensity } from '@/lib/feed-density.ts';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
 import PendingTurn, { PendingTurnProvider } from '@/app/(dashboard)/chat/PendingTurn.tsx';
 import { feedAwaitsReply, feedRequests } from '@/app/(dashboard)/chat/feed-requests.ts';
@@ -30,6 +31,7 @@ export type ProjectThreadResult =
   | { ok: false; code: string; message: string };
 
 export default function ProjectThread({
+  density = DEFAULT_FEED_DENSITY,
   projectId,
   conversationId,
   thread,
@@ -42,6 +44,8 @@ export default function ProjectThread({
   llmKeys,
   requireTools,
 }: {
+  /** #132 — l'état de départ des groupes de run, choisi par la personne. */
+  density?: FeedDensity;
   projectId: string;
   /**
    * La conversation que la saisie PROLONGE : `null` quand le premier envoi
@@ -99,6 +103,7 @@ export default function ProjectThread({
               <ConversationFeedView
                 feed={thread.data.feed}
                 deliverables={thread.data.verification.deliverables}
+                density={density}
               />
             </>
           ) : (

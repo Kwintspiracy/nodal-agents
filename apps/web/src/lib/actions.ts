@@ -41,6 +41,7 @@ import {
   fallbackProjectFromAgentWorkspaces,
   isUnderPath,
 } from './code-projects.ts';
+import { feedDensitySchema, parseFeedDensity, type FeedDensity } from './feed-density.ts';
 import {
   canonicalChangePath,
   extractChange,
@@ -338,6 +339,54 @@ export async function listWorkspacesAction(): Promise<ActionResult<WorkspaceRow[
   } catch (err) {
     console.error('[listWorkspacesAction]', err);
     return fail('db_error', 'Failed to list workspaces');
+  }
+}
+
+// ─── Densité du fil (#132) ────────────────────────────────────────────────────
+//
+// À quelle densité CETTE personne lit un fil : la réponse seule, ou la réponse
+// et le travail ouvert. Une préférence par personne, sur sa propre ligne
+// `users` — jamais un réglage d'espace : deux membres du même espace ne lisent
+// pas le même fil de la même façon.
+
+/** La densité de la personne connectée. Le défaut quand rien n'a été choisi. */
+export async function getFeedDensityAction(): Promise<ActionResult<FeedDensity>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [row] = await db
+      .select({ feedDensity: users.feedDensity })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    return ok(parseFeedDensity(row?.feedDensity));
+  } catch (err) {
+    console.error('[getFeedDensityAction]', err);
+    return fail('db_error', 'Failed to read the reading density');
+  }
+}
+
+/**
+ * Choisir sa densité. Écrit sur la ligne de la personne CONNECTÉE et sur aucune
+ * autre : `session.userId` est la seule clé, elle ne vient pas de l'appel.
+ */
+export async function setFeedDensityAction(raw: unknown): Promise<ActionResult<FeedDensity>> {
+  try {
+    const session = await getSession();
+    const parsed = feedDensitySchema.safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Unknown reading density');
+    const db = getDb();
+    await db
+      .update(users)
+      .set({ feedDensity: parsed.data, updatedAt: new Date() })
+      .where(eq(users.id, session.userId));
+    // Les trois écrans de fil lisent la densité au rendu : ils doivent tous
+    // être redessinés, pas seulement celui d'où le clic est parti.
+    revalidatePath('/', 'layout');
+    return ok(parsed.data);
+  } catch (err) {
+    console.error('[setFeedDensityAction]', err);
+    return fail('db_error', 'Failed to save the reading density');
   }
 }
 
