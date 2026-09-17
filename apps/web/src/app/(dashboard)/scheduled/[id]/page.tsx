@@ -22,6 +22,7 @@ import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection
 import { threadAgents, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { truncate } from '@/lib/format-time';
+import { runBackLink } from '@/lib/back-links.ts';
 
 // Force dynamic — the feed is read per request, and re-read while the job runs.
 export const dynamic = 'force-dynamic';
@@ -86,7 +87,10 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
       }
       toolbar={
         <WorkBar
-          back={{ label: 'Back to scheduled', href: '/scheduled' }}
+          // Le retour ramène là d'où le run s'ouvre : les routines pour une
+          // automation, la conversation pour son run, Activity pour le reste
+          // (Quentin, 17/09 : « ce problème est à plusieurs endroits »).
+          back={runBackLink(job)}
           agents={threadAgents(feed.items)}
           status={<StatusPill variant={statusVariant(job.status)} />}
           proofVerdict={lastProof?.verdict ?? null}

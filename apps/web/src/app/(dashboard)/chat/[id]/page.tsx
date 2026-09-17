@@ -22,6 +22,7 @@ import { truncate } from '@/lib/format-time';
 import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
+import { threadBackLink } from '@/lib/back-links.ts';
 
 // Force dynamic — le fil est relu à chaque requête, et pendant qu'un travail court.
 export const dynamic = 'force-dynamic';
@@ -34,7 +35,7 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
     return (
       <PageShell title="Conversation">
         <Link href="/chat" className="text-xs text-ink-3 hover:text-ink-2">
-          ← Chat
+          ← Channels
         </Link>
         <p className="mt-4 text-sm text-err">{result.message}</p>
       </PageShell>
@@ -91,7 +92,9 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
       }
       toolbar={
         <WorkBar
-          back={{ label: 'Back to channels', href: '/chat' }}
+          // Le retour ramène dans le DOSSIER du fil (Discord, Telegram, Nodal
+          // chats), pas sur la liste entière (Quentin, 17/09).
+          back={threadBackLink(conversation.channel)}
           agents={threadAgents(feed.items)}
           status={<StatusPill variant={live ? 'run' : 'idle'} />}
           proofVerdict={lastProof?.verdict ?? null}
