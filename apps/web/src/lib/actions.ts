@@ -5739,6 +5739,15 @@ export type ApprovalRow = {
   notes: string | null;
   jobTask: string | null;
   /**
+   * Le CANAL du job dont vient la demande — donc l'endroit d'où elle arrive, et
+   * le dossier du menu Chat qui la compte (#135). Lu sur la colonne du job déjà
+   * joint pour `jobTask` : pas une requête de plus.
+   *
+   * `null` quand la jointure ne rend pas de job. Un `null` ne se range alors
+   * dans AUCUN dossier, plutôt que dans le premier venu (invariant #4).
+   */
+  jobChannel: string | null;
+  /**
    * Structured, readable explanation of what is being approved. Computed
    * server-side so the client renders it without another round trip, and so the
    * dashboard and the channel cards say the SAME thing.
@@ -5803,6 +5812,7 @@ export async function listApprovalsAction(
         expiresAt: approvalRequests.expiresAt,
         notes: approvalRequests.notes,
         jobTask: agentJobs.task,
+        jobChannel: agentJobs.channel,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))

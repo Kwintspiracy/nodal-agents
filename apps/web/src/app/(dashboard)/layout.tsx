@@ -6,6 +6,8 @@ import UserMenu from '@/components/UserMenu.tsx';
 import ThemedToaster from '@/components/ui/ThemedToaster';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
 import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/SkillUpdatesProvider';
+import { ChatFoldersProvider } from '@/components/ChatFoldersProvider';
+import { getChatFoldersAction, type ChatFoldersSnapshot } from '@/lib/conversation-actions.ts';
 import { requireUserWithEntity } from '@/lib/server.ts';
 import {
   listWorkspacesAction,
@@ -64,8 +66,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
       agentName: r.agentName,
       toolInput: r.toolInput,
       requestedAt: r.requestedAt,
+      jobChannel: r.jobChannel,
     }));
   }
+
+  // Les dossiers du menu Chat (#135) — quels canaux parlent, où un run tourne.
+  // Semé ici pour que le menu soit juste au premier rendu ; le provider
+  // rafraîchit ensuite. Une lecture en échec laisse le menu à ses deux
+  // destinations permanentes, sans faux dossier de canal.
+  let initialFolders: ChatFoldersSnapshot = { channels: [], running: {} };
+  const foldersResult = await getChatFoldersAction();
+  if (foldersResult.ok) initialFolders = foldersResult.data;
 
   // Seed the skill-updates context the same way — instant first-paint,
   // provider polls and fills in on next tick.
@@ -75,8 +86,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <ApprovalsProvider initial={initialPending}>
-      <SkillUpdatesProvider initial={initialUpdates}>
-        {/*
+      <ChatFoldersProvider initial={initialFolders}>
+        <SkillUpdatesProvider initial={initialUpdates}>
+          {/*
           `h-screen` + `overflow-hidden` : la FENÊTRE ne défile jamais, seule
           la zone de contenu défile (`main > div`). C'est ce que fait toute
           application où la saisie reste en bas — Claude Code, une messagerie.
@@ -85,21 +97,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
           s'arrêtait (Quentin, 07/09 : « le champ de texte est en plein
           milieu, il descend au fur et à mesure que j'écris »).
         */}
-        {/* `dvh`, pas `vh` : sur Safari iOS, `100vh` compte la barre d'adresse
+          {/* `dvh`, pas `vh` : sur Safari iOS, `100vh` compte la barre d'adresse
             comme si elle n'était pas là — l'écran déborde et la saisie passe
             dessous (revue Codex, passe 65). `dvh` suit la hauteur réellement
             visible. Repli `h-screen` pour un navigateur qui l'ignore. */}
-        <div className="flex h-screen h-[100dvh] overflow-hidden bg-canvas text-ink">
-          <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
+          <div className="flex h-screen h-[100dvh] overflow-hidden bg-canvas text-ink">
+            <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
 
-          {/*
+            {/*
             Main pane sits next to the 220px sidebar on desktop and accounts for
             the mobile top bar (h-[58px]) when narrower. There is no dashboard-wide
             top bar: every page's first child is a <PageHeader/> that carries the
             title AND the global controls. Canonical max-width is on the inner wrapper.
           */}
-          <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[244px] lg:pt-0">
-            {/*
+            <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[244px] lg:pt-0">
+              {/*
               `overflow-x-clip`, PAS `overflow-x-hidden` : `hidden` sur un axe
               force l'autre axe à `auto`, ce qui fait de ce bloc le conteneur
               de défilement de référence pour tout `position: sticky` en
@@ -109,19 +121,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
               devait descendre en bas de page pour écrire (Quentin, 07/09).
               `clip` coupe le débordement horizontal sans créer de conteneur.
             */}
-            {/*
+              {/*
               La zone qui DÉFILE. `overflow-x-clip` et non `-hidden` : masquer
               un axe force l'autre à `auto`, ce qui ferait de ce bloc un
               conteneur de défilement pour tout `position: sticky` en dessous —
               ici c'en est un exprès, et le collant s'y réfère, ce qui est
               justement voulu.
             */}
-            <div className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">{children}</div>
-          </main>
+              <div className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">{children}</div>
+            </main>
 
-          <ThemedToaster />
-        </div>
-      </SkillUpdatesProvider>
+            <ThemedToaster />
+          </div>
+        </SkillUpdatesProvider>
+      </ChatFoldersProvider>
     </ApprovalsProvider>
   );
 }

@@ -32,7 +32,13 @@ export type RunOrigin = {
   detail: string | null;
 };
 
-const CHANNEL_LABELS: Readonly<Record<string, string>> = {
+/**
+ * Le mot que l'utilisateur lit pour un canal. EXPORTÉ depuis #135 : le menu
+ * Chat de la barre latérale nomme ses dossiers ici même, et deux tables de
+ * libellés auraient fini par diverger — « WhatsApp » d'un côté, « Whatsapp » de
+ * l'autre, sur le même écran.
+ */
+export const CHANNEL_LABELS: Readonly<Record<string, string>> = {
   telegram: 'Telegram',
   slack: 'Slack',
   discord: 'Discord',

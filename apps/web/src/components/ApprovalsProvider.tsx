@@ -9,7 +9,7 @@ import { usePolling } from '@/lib/use-polling';
 // to client bundles that don't need the rest.
 export type PendingApproval = Pick<
   ApprovalRow,
-  'id' | 'jobId' | 'toolName' | 'agentName' | 'toolInput' | 'requestedAt'
+  'id' | 'jobId' | 'toolName' | 'agentName' | 'toolInput' | 'requestedAt' | 'jobChannel'
 >;
 
 type ApprovalsContextValue = {
@@ -42,6 +42,10 @@ export function ApprovalsProvider({
         agentName: r.agentName,
         toolInput: r.toolInput,
         requestedAt: r.requestedAt,
+        // D'OÙ vient la demande. Le menu Chat range chaque attente dans son
+        // dossier avec ce seul champ (#135) — la pastille d'un dossier est
+        // exactement le nombre de lignes qui le désignent.
+        jobChannel: r.jobChannel,
       })),
     );
   }, []);
