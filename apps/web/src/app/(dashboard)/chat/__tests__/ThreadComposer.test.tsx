@@ -201,7 +201,9 @@ type Segment = 'provider' | 'model' | 'effort';
 
 /** Le segment cliquable d'une part de la pastille. */
 function segment(name: Segment): HTMLButtonElement {
-  const el = container.querySelector<HTMLButtonElement>('[data-testid="composer-' + name + '"]');
+  const el = container.querySelector<HTMLButtonElement>(
+    '[data-testid="inline-select-' + name + '"]',
+  );
   if (!el) throw new Error('no ' + name + ' segment rendered');
   return el;
 }
@@ -223,7 +225,7 @@ async function click(el: Element): Promise<void> {
  * la fermer.
  */
 async function openList(name: Segment): Promise<HTMLElement> {
-  const selector = '[data-testid="composer-' + name + '-list"]';
+  const selector = '[data-testid="inline-select-' + name + '-list"]';
   if (container.querySelector(selector) === null) await click(segment(name));
   const el = container.querySelector<HTMLElement>(selector);
   if (!el) throw new Error('no ' + name + ' list opened');
@@ -304,10 +306,10 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     await settle();
     await openList('provider');
     expect(segment('provider').getAttribute('aria-expanded')).toBe('true');
-    expect(container.querySelector('[data-testid="composer-model-list"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inline-select-model-list"]')).toBeNull();
     await openList('model');
     // Ouvrir celle du modèle ferme celle du fournisseur.
-    expect(container.querySelector('[data-testid="composer-provider-list"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inline-select-provider-list"]')).toBeNull();
     expect(segment('model').getAttribute('aria-expanded')).toBe('true');
   });
 
@@ -318,7 +320,7 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     await act(async () => {
       list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
-    expect(container.querySelector('[data-testid="composer-model-list"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inline-select-model-list"]')).toBeNull();
     expect(setAgentModelAndEffortAction.mock.calls).toEqual([]);
   });
 
@@ -440,8 +442,8 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
   it('sans agent, aucune pastille : il n’y a rien à régler', async () => {
     await render(<ThreadComposer conversationId="conv-1" />);
     await settle();
-    expect(container.querySelector('[data-testid="composer-provider"]')).toBeNull();
-    expect(container.querySelector('[data-testid="composer-model"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inline-select-provider"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inline-select-model"]')).toBeNull();
     // Et l'envoi est toujours là.
     expect(container.querySelector('button')).not.toBeNull();
   });
@@ -458,7 +460,7 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
       />,
     );
     await settle();
-    expect(container.querySelector('[data-testid="composer-provider"]')).toBeNull();
+    expect(container.querySelector('[data-testid="inline-select-provider"]')).toBeNull();
     expect(listKeyModelsAction.mock.calls).toEqual([]);
   });
 });

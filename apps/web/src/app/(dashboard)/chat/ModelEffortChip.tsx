@@ -27,8 +27,8 @@
 // réglage que la base n'a pas).
 
 import { useEffect, useRef, useState, useTransition } from 'react';
-import { CaretDown } from '@phosphor-icons/react';
 import { toast } from 'sonner';
+import InlineSelect, { type InlineSelectRow } from '@/components/ui/InlineSelect';
 import { listKeyModelsAction, setAgentModelAndEffortAction } from '@/lib/actions.ts';
 import {
   buildModelOptionGroups,
@@ -55,8 +55,8 @@ const NO_EFFORT_HINT = 'This model offers no reasoning setting';
 
 type Segment = 'provider' | 'model' | 'effort';
 
-/** Une ligne de liste. Un intitulé de groupe ne se choisit pas. */
-type Row = { kind: 'heading'; label: string } | { kind: 'option'; value: string; label: string };
+/** Une ligne de liste — celle du primitif du DS, qui rend la liste. */
+type Row = InlineSelectRow;
 
 export default function ModelEffortChip({
   agentId,
@@ -217,8 +217,8 @@ export default function ModelEffortChip({
       // La pastille du board : 30 px de haut, un filet, pas de fond.
       className="flex h-[30px] items-center gap-1.5 rounded-md border border-rule-2 py-1.5 pr-2 pl-2.5"
     >
-      <SegmentButton
-        segment="provider"
+      <InlineSelect
+        name="provider"
         label={activeKey === null ? '—' : llmKeyShortLabel(activeKey)}
         tone="text-feed-metric"
         open={open === 'provider'}
@@ -230,8 +230,8 @@ export default function ModelEffortChip({
         onClose={() => setOpen(null)}
       />
       <Dot />
-      <SegmentButton
-        segment="model"
+      <InlineSelect
+        name="model"
         label={current.model === '' ? '—' : current.model}
         tone="text-feed-model"
         open={open === 'model'}
@@ -245,8 +245,8 @@ export default function ModelEffortChip({
         onClose={() => setOpen(null)}
       />
       <Dot />
-      <SegmentButton
-        segment="effort"
+      <InlineSelect
+        name="effort"
         label={`effort ${current.effort === AUTO ? 'auto' : (REASONING_LABELS[current.effort] ?? current.effort).toLowerCase()}`}
         tone="text-feed-metric"
         open={open === 'effort'}
@@ -271,147 +271,5 @@ function Dot() {
     <span aria-hidden="true" className="text-mono-12 text-ink-4">
       ·
     </span>
-  );
-}
-
-function SegmentButton({
-  segment,
-  label,
-  tone,
-  open,
-  title,
-  disabled,
-  rows,
-  value,
-  onToggle,
-  onPick,
-  onClose,
-}: {
-  segment: Segment;
-  label: string;
-  tone: string;
-  open: boolean;
-  title?: string | undefined;
-  disabled: boolean;
-  rows: Row[];
-  value: string;
-  onToggle: () => void;
-  onPick: (value: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <span className="relative flex min-w-0 items-center">
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={title}
-        data-testid={`composer-${segment}`}
-        disabled={disabled}
-        onClick={onToggle}
-        className={`flex min-w-0 cursor-pointer items-center gap-1 text-mono-12 ${tone} disabled:cursor-not-allowed disabled:opacity-50`}
-      >
-        <span className="truncate">{label}</span>
-        <CaretDown size={12} aria-hidden className="shrink-0 text-ink-4" />
-      </button>
-      {open && (
-        <OptionList
-          segment={segment}
-          rows={rows}
-          value={value}
-          onPick={onPick}
-          onClose={onClose}
-        />
-      )}
-    </span>
-  );
-}
-
-/**
- * La liste d'un segment, ancrée SOUS lui — au-dessus en réalité, la pastille
- * vivant en bas de l'écran. Au clavier : les flèches déplacent, Entrée choisit,
- * Échap ferme (Échap est aussi tenu par la pastille, pour le clic dehors).
- */
-function OptionList({
-  segment,
-  rows,
-  value,
-  onPick,
-  onClose,
-}: {
-  segment: Segment;
-  rows: Row[];
-  value: string;
-  onPick: (value: string) => void;
-  onClose: () => void;
-}) {
-  const options = rows.filter((r): r is Extract<Row, { kind: 'option' }> => r.kind === 'option');
-  const selected = options.findIndex((o) => o.value === value);
-  const [active, setActive] = useState(selected >= 0 ? selected : 0);
-  const panel = useRef<HTMLDivElement>(null);
-
-  // Le seul effet de ce composant : donner le focus au panneau à l'ouverture.
-  // Aucun setState — `active` est déjà calculé à l'initialisation, à partir de
-  // la valeur courante.
-  useEffect(() => {
-    panel.current?.focus();
-  }, []);
-
-  function move(delta: number): void {
-    if (options.length === 0) return;
-    setActive((i) => (i + delta + options.length) % options.length);
-  }
-
-  return (
-    <div
-      ref={panel}
-      role="listbox"
-      tabIndex={-1}
-      aria-label={segment}
-      data-testid={`composer-${segment}-list`}
-      onKeyDown={(e) => {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          move(1);
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          move(-1);
-        } else if (e.key === 'Enter') {
-          e.preventDefault();
-          const picked = options[active];
-          if (picked) onPick(picked.value);
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          onClose();
-        }
-      }}
-      className="absolute bottom-full left-0 z-20 mb-1.5 max-h-[300px] min-w-[180px] overflow-y-auto rounded-xl border border-rule-2 bg-paper p-1 shadow focus:outline-none"
-    >
-      {rows.map((row, i) =>
-        row.kind === 'heading' ? (
-          <p key={`h-${i}`} className="px-2 pt-2 pb-1 text-mono-12 text-ink-4">
-            {row.label}
-          </p>
-        ) : (
-          <button
-            key={`o-${row.value}`}
-            type="button"
-            role="option"
-            aria-selected={row.value === value}
-            data-value={row.value}
-            onClick={() => onPick(row.value)}
-            onMouseEnter={() => setActive(options.indexOf(row))}
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-mono-12 ${
-              options[active] === row ? 'bg-hover' : ''
-            } ${row.value === value ? 'text-ink' : 'text-ink-2'}`}
-          >
-            <span aria-hidden="true" className="w-2 shrink-0 text-ink-3">
-              {row.value === value ? '•' : ''}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{row.label}</span>
-          </button>
-        ),
-      )}
-    </div>
   );
 }
