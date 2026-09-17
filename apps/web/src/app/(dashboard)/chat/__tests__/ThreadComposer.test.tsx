@@ -1,7 +1,8 @@
 // ThreadComposer.test.tsx — la saisie en bas d'un fil (P7, redessinée en
 // P2bis). Ce qui se prouve : c'est une ZONE de texte (un collage multi-ligne
 // garde ses retours, Maj+Entrée en ajoute un), Entrée envoie le texte tel
-// quel à l'action, et le champ redevient vide après l'envoi.
+// quel à l'action, et le champ redevient vide après l'envoi — vide ET encore
+// haut de trois lignes, sur sa propre surface, depuis #135.
 //
 // Rendu dans jsdom et TAPÉ, pas seulement rendu : l'assertion porte sur
 // l'ARGUMENT reçu par l'action mockée (invariant #5).
@@ -9,7 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import ThreadComposer from '../ThreadComposer.tsx';
+import ThreadComposer, { COMPOSER_MIN_HEIGHT_PX, COMPOSER_ROWS } from '../ThreadComposer.tsx';
 
 const sendChatMessageAction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
 const refresh = vi.hoisted(() => vi.fn());
@@ -58,13 +59,39 @@ beforeEach(() => {
 });
 
 describe('ThreadComposer', () => {
-  it('est une zone de texte d’une ligne à vide, qui nomme l’agent', async () => {
+  it('est une zone de texte de trois lignes à vide, qui nomme l’agent', async () => {
     await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
     const el = textarea();
-    expect(el.rows).toBe(1);
+    expect(el.rows).toBe(3);
     expect(el.placeholder).toBe('Reply to Alfred…');
     // Pas de champ d'une ligne : il aplatirait un collage (revue Codex, passe 56).
     expect(container.querySelector('input')).toBeNull();
+  });
+
+  it('porte sa propre surface et son texte de 14 px (#135)', async () => {
+    await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
+    const el = textarea();
+    const frame = el.closest('div.rounded-xl');
+    if (!frame) throw new Error('no composer frame rendered');
+    expect(frame.className).toContain('bg-feed-composer');
+    // Le papier du fil n'est plus la surface de la saisie.
+    expect(frame.className).not.toContain('bg-paper');
+    expect(el.className).toContain('text-body-14');
+    expect(el.className).not.toContain('text-body-15');
+  });
+
+  it('après un envoi, la zone vidée garde ses trois lignes', async () => {
+    await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
+    await type('une ligne\ndeux\ntrois\nquatre\ncinq');
+    await press('Enter');
+    const el = textarea();
+    expect(el.value).toBe('');
+    expect(el.rows).toBe(COMPOSER_ROWS);
+    // jsdom ne met aucune hauteur au contenu : `scrollHeight` vaut 0, et c'est
+    // donc le PLANCHER qui décide. Sans lui, la zone vidée retombait à 0 px.
+    const measured = Number.parseInt(el.style.height, 10);
+    expect(Number.isNaN(measured)).toBe(false);
+    expect(measured).toBeGreaterThanOrEqual(COMPOSER_MIN_HEIGHT_PX);
   });
 
   it('Entrée envoie le texte TEL QUEL, retours à la ligne compris, puis vide le champ', async () => {

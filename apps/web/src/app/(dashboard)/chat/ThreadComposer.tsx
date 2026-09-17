@@ -2,6 +2,11 @@
 
 // ThreadComposer — la saisie en bas d'un fil du dashboard (P7).
 //
+// Sa forme depuis #135 : un cadre à DEUX rangées — la zone de texte en haut,
+// pleine largeur, trois lignes à vide et grandissant avec le texte ; sous elle
+// une rangée d'actions avec l'envoi à droite. Texte à 14 px, sur sa propre
+// surface (`bg-feed-composer`), pas sur le papier du fil.
+//
 // C'est ce qui reste du chat à deux volets : une zone de texte et un envoi.
 // L'envoi est SYNCHRONE côté runner (il génère la réponse et écrit les deux
 // tours), donc l'écran attend puis se rafraîchit — le fil relu montre la
@@ -21,10 +26,24 @@ import { sendChatMessageAction } from '@/lib/actions.ts';
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
 
-/** La zone épouse son texte : une ligne à vide, autant qu'il en faut ensuite. */
+/** Une ligne de `text-body-14` (14 px / 20 px d'interligne). */
+const COMPOSER_LINE_HEIGHT_PX = 20;
+
+/** Le nombre de lignes du cadre à vide (#135). */
+export const COMPOSER_ROWS = 3;
+
+/**
+ * Le plancher : la zone ne redescend JAMAIS sous ses trois lignes, même vide.
+ * `fitToContent` remesure la zone vidée après un envoi, et sans ce plancher
+ * elle retombait à une ligne.
+ */
+export const COMPOSER_MIN_HEIGHT_PX = COMPOSER_ROWS * COMPOSER_LINE_HEIGHT_PX;
+
+/** La zone épouse son texte : trois lignes à vide, autant qu'il en faut ensuite. */
 function fitToContent(el: HTMLTextAreaElement): void {
   el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+  const wanted = Math.max(el.scrollHeight, COMPOSER_MIN_HEIGHT_PX);
+  el.style.height = `${Math.min(wanted, COMPOSER_MAX_HEIGHT_PX)}px`;
 }
 
 export default function ThreadComposer({
@@ -92,20 +111,21 @@ export default function ThreadComposer({
   }
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose
-  // la saisie sur du papier, collée en bas de la zone de contenu, juste
-  // au-dessus de la barre d'état. Une ligne à vide, comme la maquette — mais
-  // une ZONE de texte, pas un champ : un collage multi-ligne garde ses
-  // retours, Maj+Entrée en ajoute un, et la zone grandit avec le texte (revue
-  // Codex, passe 56 : le champ d'une ligne aplatissait tout). Entrée envoie.
+  // la saisie sur sa propre surface, collée en bas de la zone de contenu,
+  // juste au-dessus de la barre d'état. Trois lignes à vide, comme la
+  // maquette — et une ZONE de texte, pas un champ : un collage multi-ligne
+  // garde ses retours, Maj+Entrée en ajoute un, et la zone grandit avec le
+  // texte (revue Codex, passe 56 : le champ d'une ligne aplatissait tout).
+  // Entrée envoie.
   return (
     // Ancrée, pas collante : la page de conversation est un écran de hauteur
     // fixe (PageShell `fill`) — la saisie est hors de la zone qui défile, donc
     // toujours en bas, avec deux lignes de fil comme avec deux cents.
-    <div className="mx-auto flex w-full max-w-[760px] items-end gap-3 rounded-xl border border-rule bg-paper px-4 py-1">
+    <div className="mx-auto flex w-full max-w-[760px] flex-col gap-2 rounded-xl border border-rule bg-feed-composer px-4 pt-3 pb-2.5">
       <TextArea
         ref={box}
         bare
-        rows={1}
+        rows={COMPOSER_ROWS}
         value={message}
         onChange={(e) => {
           setMessage(e.target.value);
@@ -125,17 +145,15 @@ export default function ThreadComposer({
               : 'Reply…'
         }
         disabled={isPending}
-        containerClassName="min-w-0 flex-1"
+        containerClassName="min-w-0"
         // `block` : en ligne, la zone laisse 5 px de descente sous elle dans
-        // son conteneur, et le bouton se calait sur CE bas-là, pas sur le sien.
-        className="block max-h-[200px] resize-none overflow-y-auto bg-transparent px-0 py-2 text-body-15 leading-[20px]"
+        // son conteneur, et la rangée d'actions se calait sur CE bas-là.
+        // `min-h-[60px]` = COMPOSER_MIN_HEIGHT_PX, le plancher de trois lignes
+        // tenu aussi en CSS, avant que `fitToContent` ait mesuré quoi que ce soit.
+        className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14"
       />
-      {/* Une ligne de la zone fait 36 px (`h-9`) : le bouton est centré dans
-          une boîte de cette hauteur, alignée en bas du cadre (`items-end`).
-          Il est donc au milieu de la ligne à vide, et au milieu de la DERNIÈRE
-          ligne quand la zone a grandi. Sans ça il pendait sous le texte
-          (Quentin, 07/09 : « même pas centré verticalement »). */}
-      <span className="flex h-9 shrink-0 items-center">
+      {/* La rangée d'actions : l'envoi à droite, sous la zone de texte. */}
+      <div className="flex justify-end">
         <PrimaryButton
           variant="neutral"
           size="sm"
@@ -144,7 +162,7 @@ export default function ThreadComposer({
         >
           {isPending ? 'Sending…' : 'Send'}
         </PrimaryButton>
-      </span>
+      </div>
     </div>
   );
 }
