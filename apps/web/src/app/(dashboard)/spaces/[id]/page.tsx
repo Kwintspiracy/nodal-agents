@@ -17,6 +17,7 @@ import PageShell from '@/components/ui/PageShell';
 import StatusPill from '@/components/ui/StatusPill';
 import { getProjectThreadPageAction } from '@/lib/project-actions.ts';
 import { getConversationThreadAction } from '@/lib/conversation-actions.ts';
+import { getAgentModelChoicesAction } from '@/lib/actions.ts';
 import { composerPresentation, projectLanding } from '@/lib/project-landing.ts';
 import { originLabel } from '../format.ts';
 import WorkBar from '../WorkBar.tsx';
@@ -76,6 +77,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     rootAgentName: rootAgent?.name ?? null,
   });
 
+  // #138 — la pastille règle le modèle de l'agent à qui la saisie ÉCRIT : celui
+  // du fil prolongé, ou le ROOT qui recevra la conversation créée. Sans agent
+  // (un projet sans ROOT), il n'y a rien à régler et la pastille ne s'affiche
+  // pas.
+  const composerAgentId =
+    landing !== null && landing.composerConversationId !== null
+      ? (view?.conversation.agentId ?? null)
+      : (rootAgent?.id ?? null);
+  const choices = composerAgentId ? await getAgentModelChoicesAction(composerAgentId) : null;
+  const modelChoices = choices?.ok ? choices.data : null;
+
   return (
     <PageShell
       fill
@@ -102,6 +114,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         conversationId={landing?.composerConversationId ?? null}
         thread={thread}
         composer={composer}
+        agentId={composerAgentId}
+        model={modelChoices?.model ?? null}
+        reasoningEffort={modelChoices?.reasoningEffort ?? null}
+        modelOptions={modelChoices?.modelOptions ?? []}
+        effortsByModel={modelChoices?.effortsByModel ?? {}}
         {...(view !== null
           ? {
               // P4 — la barre d'état, ancrée tout en bas de l'écran.

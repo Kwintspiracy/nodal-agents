@@ -22,6 +22,8 @@ import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
+import type { ModelChoice } from '@/lib/model-choices.ts';
+import ModelEffortChip from './ModelEffortChip.tsx';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -51,6 +53,11 @@ export default function ThreadComposer({
   agentName,
   placeholder,
   onBeforeSend,
+  agentId,
+  model,
+  reasoningEffort,
+  modelOptions,
+  effortsByModel,
 }: {
   conversationId: string;
   /** À qui on écrit — le placeholder le dit. Absent : « Reply… ». */
@@ -69,6 +76,17 @@ export default function ThreadComposer({
    * le dit (inv. #4).
    */
   onBeforeSend?: () => Promise<string>;
+  /**
+   * #138 — la pastille « modèle · effort ». Les cinq champs vont ensemble :
+   * sans agent (la page d'un projet qui n'en a pas encore), il n'y a rien à
+   * régler et la pastille ne s'affiche pas — plutôt qu'un réglage posé sur
+   * personne.
+   */
+  agentId?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  modelOptions?: ModelChoice[];
+  effortsByModel?: Record<string, string[]>;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
@@ -155,8 +173,25 @@ export default function ThreadComposer({
         // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
         className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
-      {/* La rangée d'actions : l'envoi à droite, sous la zone de texte. */}
-      <div className="flex justify-end">
+      {/* La rangée d'actions : le réglage du modèle à gauche, l'envoi à
+          droite, sous la zone de texte. */}
+      <div className="flex items-center justify-end gap-2">
+        {agentId !== undefined &&
+          agentId !== null &&
+          agentId !== '' &&
+          model !== undefined &&
+          model !== null &&
+          model !== '' && (
+            <div className="mr-auto min-w-0">
+              <ModelEffortChip
+                agentId={agentId}
+                model={model}
+                reasoningEffort={reasoningEffort ?? null}
+                modelOptions={modelOptions ?? []}
+                effortsByModel={effortsByModel ?? {}}
+              />
+            </div>
+          )}
         <PrimaryButton
           variant="neutral"
           size="sm"

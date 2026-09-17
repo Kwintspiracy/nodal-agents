@@ -17,9 +17,13 @@ import ThreadComposer from '../ThreadComposer.tsx';
 
 const sendChatMessageAction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
 const refresh = vi.hoisted(() => vi.fn());
+const setAgentModelAndEffortAction = vi.hoisted(() =>
+  vi.fn(async (): Promise<{ ok: true } | { ok: false; message: string }> => ({ ok: true })),
+);
+const toastError = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/actions.ts', () => ({ sendChatMessageAction }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/actions.ts', () => ({ sendChatMessageAction, setAgentModelAndEffortAction }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: toastError } }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 
 let container: HTMLDivElement;
@@ -59,6 +63,9 @@ async function press(key: string, shiftKey = false): Promise<void> {
 beforeEach(() => {
   sendChatMessageAction.mockClear();
   refresh.mockClear();
+  setAgentModelAndEffortAction.mockClear();
+  setAgentModelAndEffortAction.mockResolvedValue({ ok: true });
+  toastError.mockClear();
 });
 
 describe('ThreadComposer', () => {
@@ -134,5 +141,135 @@ describe('ThreadComposer', () => {
     await type('   ');
     await press('Enter');
     expect(sendChatMessageAction.mock.calls).toEqual([]);
+  });
+});
+
+// ─── La pastille « modèle · effort » (#138) ──────────────────────────────────
+//
+// Ce qui se prouve ici : le composeur RÈGLE l'agent, il ne se contente pas
+// d'afficher son modèle. L'assertion porte sur l'ARGUMENT reçu par l'action
+// mockée, et sur ce que la pastille montre APRÈS (invariant #5) — jamais sur
+// un nombre d'appels.
+//
+// Les modèles et les paliers sont ceux que le test DONNE, pas ceux du
+// catalogue : la pastille n'a pas à savoir ce qu'Anthropic propose, et un test
+// qui lirait le vrai catalogue changerait de couleur au prochain modèle ajouté.
+
+const PICKER = {
+  agentId: 'agent-1',
+  model: 'claude-opus-5',
+  modelOptions: [
+    { modelId: 'claude-opus-5', label: 'Claude Opus 5' },
+    { modelId: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+  ],
+  effortsByModel: {
+    'claude-opus-5': ['low', 'medium', 'high', 'max', 'off'],
+    'claude-sonnet-5': ['low', 'high'],
+  },
+};
+
+function chip(): HTMLButtonElement {
+  const el = container.querySelector<HTMLButtonElement>('[data-testid="model-effort-chip"]');
+  if (!el) throw new Error('no chip rendered');
+  return el;
+}
+
+async function click(el: Element): Promise<void> {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+/** Le bouton d'option portant ce libellé, dans le panneau ouvert. */
+function option(label: string): HTMLButtonElement {
+  const found = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((b) =>
+    b.textContent?.includes(label),
+  );
+  if (!found) throw new Error(`no option "${label}" in the popover`);
+  return found;
+}
+
+describe('ThreadComposer — modèle et effort @cap:choisir-modele/ecran', () => {
+  it('la pastille dit le modèle courant, son effort, et la portée du réglage', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    expect(chip().textContent).toContain('claude-opus-5');
+    expect(chip().textContent).toContain('Medium');
+    // Le réglage n'est PAS propre à cette conversation : la pastille le dit.
+    expect(chip().title).toBe("Sets the agent's model for every channel");
+  });
+
+  it('sans effort en base, la pastille dit « Auto »', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort={null} />);
+    expect(chip().textContent).toContain('Auto');
+  });
+
+  it('ouvrir la pastille liste les modèles donnés et les paliers du modèle courant', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    expect(container.querySelector('[data-testid="model-effort-popover"]')).toBeNull();
+    await click(chip());
+    const labels = [...container.querySelectorAll('[role="radio"]')].map((b) => b.textContent);
+    expect(labels.some((t) => t?.includes('Claude Sonnet 5'))).toBe(true);
+    expect(labels.some((t) => t?.includes('Auto'))).toBe(true);
+    expect(labels.some((t) => t?.includes('Max'))).toBe(true);
+    // Aucun `<select>` natif : le DS remplace les widgets natifs.
+    expect(container.querySelector('select')).toBeNull();
+  });
+
+  it('choisir un effort l’écrit sur l’AGENT, et la pastille prend la nouvelle valeur', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await click(chip());
+    await click(option('High'));
+    expect(setAgentModelAndEffortAction.mock.calls).toEqual([
+      [{ agentId: 'agent-1', model: 'claude-opus-5', reasoningEffort: 'high' }],
+    ]);
+    expect(chip().textContent).toContain('High');
+    // Le panneau se referme sur le choix.
+    expect(container.querySelector('[data-testid="model-effort-popover"]')).toBeNull();
+  });
+
+  it('choisir un modèle qui n’offre pas l’effort courant repasse à Auto', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await click(chip());
+    await click(option('Claude Sonnet 5'));
+    // 'medium' n'est pas dans les paliers de claude-sonnet-5 : il tombe, comme
+    // sur l'écran d'édition, plutôt que de partir vers un refus de l'action.
+    expect(setAgentModelAndEffortAction.mock.calls).toEqual([
+      [{ agentId: 'agent-1', model: 'claude-sonnet-5', reasoningEffort: null }],
+    ]);
+    expect(chip().textContent).toContain('claude-sonnet-5');
+    expect(chip().textContent).toContain('Auto');
+  });
+
+  it('un échec se dit et la pastille GARDE l’ancienne valeur', async () => {
+    setAgentModelAndEffortAction.mockResolvedValue({
+      ok: false,
+      message: 'Only the workspace owner can change an agent’s model.',
+    });
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await click(chip());
+    await click(option('High'));
+    expect(toastError.mock.calls).toEqual([
+      ['Only the workspace owner can change an agent’s model.'],
+    ]);
+    // Ce que l'écran montre est ce que la base contient (inv. #4).
+    expect(chip().textContent).toContain('Medium');
+    expect(chip().textContent).not.toContain('High');
+  });
+
+  it('sans agent, pas de pastille : il n’y a rien à régler', async () => {
+    await render(<ThreadComposer conversationId="conv-1" />);
+    expect(container.querySelector('[data-testid="model-effort-chip"]')).toBeNull();
+    // Et l'envoi est toujours là.
+    expect(container.querySelector('button')).not.toBeNull();
+  });
+
+  it('Échap referme le panneau sans rien écrire', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await click(chip());
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="model-effort-popover"]')).toBeNull();
+    expect(setAgentModelAndEffortAction.mock.calls).toEqual([]);
   });
 });

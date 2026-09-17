@@ -20,6 +20,7 @@ import LiveRefresh from './LiveRefresh.tsx';
 import ProjectComposer from './ProjectComposer.tsx';
 import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 import type { ComposerPresentation } from '@/lib/project-landing.ts';
+import type { ModelChoice } from '@/lib/model-choices.ts';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
 
 export type ProjectThreadResult =
@@ -32,6 +33,11 @@ export default function ProjectThread({
   thread,
   composer,
   statusBar,
+  agentId,
+  model,
+  reasoningEffort,
+  modelOptions,
+  effortsByModel,
 }: {
   projectId: string;
   /**
@@ -51,6 +57,16 @@ export default function ProjectThread({
   composer: ComposerPresentation;
   /** La barre d'état, ancrée tout en bas de l'écran. */
   statusBar?: React.ReactNode;
+  /**
+   * #138 — la pastille « modèle · effort » de la saisie. Rien qu'un passage :
+   * l'agent visé et ses choix sont calculés par la page, côté serveur. Sans
+   * agent, pas de pastille.
+   */
+  agentId?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  modelOptions?: ModelChoice[];
+  effortsByModel?: Record<string, string[]>;
 }) {
   if (thread !== null && !thread.ok) {
     return (
@@ -111,6 +127,11 @@ export default function ProjectThread({
           projectId={projectId}
           conversationId={conversationId}
           agentName={composer.agentName}
+          agentId={agentId ?? null}
+          model={model ?? null}
+          reasoningEffort={reasoningEffort ?? null}
+          modelOptions={modelOptions ?? []}
+          effortsByModel={effortsByModel ?? {}}
           {...(composer.kind === 'start' ? { placeholder: composer.placeholder } : {})}
         />
       </>

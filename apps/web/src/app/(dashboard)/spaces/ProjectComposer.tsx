@@ -14,12 +14,18 @@
 
 import ThreadComposer from '@/app/(dashboard)/chat/ThreadComposer.tsx';
 import { createProjectConversationAction } from '@/lib/project-actions.ts';
+import type { ModelChoice } from '@/lib/model-choices.ts';
 
 export default function ProjectComposer({
   projectId,
   conversationId,
   agentName,
   placeholder,
+  agentId,
+  model,
+  reasoningEffort,
+  modelOptions,
+  effortsByModel,
 }: {
   projectId: string;
   conversationId: string | null;
@@ -27,10 +33,21 @@ export default function ProjectComposer({
   agentName?: string | null;
   /** Le placeholder en toutes lettres quand la saisie va OUVRIR une conversation. */
   placeholder?: string;
+  /** #138 — la pastille « modèle · effort », passée telle quelle. */
+  agentId?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  modelOptions?: ModelChoice[];
+  effortsByModel?: Record<string, string[]>;
 }) {
   return (
     <ThreadComposer
       conversationId={conversationId ?? ''}
+      agentId={agentId ?? null}
+      model={model ?? null}
+      reasoningEffort={reasoningEffort ?? null}
+      modelOptions={modelOptions ?? []}
+      effortsByModel={effortsByModel ?? {}}
       {...(agentName !== undefined ? { agentName } : {})}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onBeforeSend={
