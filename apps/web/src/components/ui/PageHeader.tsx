@@ -9,7 +9,7 @@ type Props = {
   subtitle?: ReactNode;
   /**
    * Replaces the title/lede block with a node of the page's own making, in a
-   * compact 62px bar (P2bis). The thread screens use it for their work header
+   * compact 75px bar (P2bis, #135). The thread screens use it for their header
    * — a project name, its path, the agents that worked, the verification
    * verdict — which is a ROW of facts, not a display title. The global
    * controls on the right are untouched: every page keeps the same search,
@@ -35,8 +35,13 @@ type Props = {
  */
 export default function PageHeader({ title, subtitle, header }: Props) {
   if (header !== undefined) {
+    // #135 — la maquette du fil : 75 px de haut, 20 px au-dessus, 16 px en
+    // dessous, et les MÊMES gouttières que le corps de la page, pour que
+    // l'avatar de l'en-tête et la barre de travail dessous s'alignent. La
+    // hauteur est un minimum, pas un plafond : un titre qui passerait à deux
+    // lignes pousse la barre au lieu de déborder.
     return (
-      <header className="flex h-[62px] items-center gap-4 border-b border-rule-2 px-6">
+      <header className="flex min-h-[75px] items-center gap-4 border-b border-rule-2 px-5 pt-5 pb-4 sm:px-8 lg:px-9">
         <div className="min-w-0 flex-1">{header}</div>
         <div className="hidden shrink-0 items-center gap-2 lg:flex">
           <SearchBox className="hidden md:flex" />

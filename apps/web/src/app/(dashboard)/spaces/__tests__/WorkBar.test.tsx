@@ -111,6 +111,16 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
     expect(html).not.toMatch(/text-\[\d/);
   });
 
+  it('va d’un bord à l’autre : 54 px, un fond, deux filets, ses propres gouttières (#135)', () => {
+    const html = renderToStaticMarkup(<WorkBar back={back} agents={[]} />);
+    // La barre dessinée porte SA géométrie : l'enveloppe à gouttières de
+    // `PageShell` la coupait de chaque côté, et le filet s'arrêtait avec elle.
+    expect(html).toMatch(/class="[^"]*h-\[54px\][^"]*"/);
+    expect(html).toMatch(/class="[^"]*border-y border-rule-2[^"]*"/);
+    expect(html).toMatch(/class="[^"]*bg-canvas[^"]*"/);
+    expect(html).toMatch(/class="[^"]*px-5[^"]*lg:px-9[^"]*"/);
+  });
+
   it('dit « 1 agent » au singulier', () => {
     const html = renderToStaticMarkup(
       <WorkBar back={back} agents={[{ key: 'a', name: 'Alfred' }]} />,

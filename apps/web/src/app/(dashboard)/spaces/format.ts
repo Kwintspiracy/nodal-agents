@@ -4,6 +4,7 @@
 // comme le reste du tableau de bord.
 
 import type { FeedItem, Origin } from '@/lib/conversation-feed.ts';
+import { formatClock } from '@/lib/format-time';
 
 export function formatMs(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
@@ -33,6 +34,39 @@ export function originLabel(origin: Origin): string {
   if (origin.channel === 'internal') return 'from another agent';
   if (origin.channel === 'task-board') return 'from the task board';
   return `via ${origin.channel.charAt(0).toUpperCase()}${origin.channel.slice(1)}`;
+}
+
+/**
+ * Quand le fil a COMMENCÉ, dans la langue courte de l'en-tête (#135) :
+ * « started today 14:01 », « started yesterday 09:30 », sinon une date brève
+ * (« started Sep 12 14:01 »). Le jour se compare sur le calendrier local, pas
+ * sur un écart d'heures : un fil ouvert à 23 h 50 est encore « yesterday » à
+ * 00 h 10, jamais « today ».
+ *
+ * `null` quand la date manque — l'en-tête ne dessine alors PAS le morceau,
+ * plutôt qu'un « started — » (invariant #4).
+ */
+export function startedLabel(at: Date | null): string | null {
+  if (at === null) return null;
+  const day = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const elapsed = Math.round((day(new Date()) - day(at)) / 86_400_000);
+  const when =
+    elapsed === 0
+      ? 'today'
+      : elapsed === 1
+        ? 'yesterday'
+        : at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `started ${when} ${formatClock(at)}`;
+}
+
+/**
+ * Le sous-titre d'un en-tête de fil : d'où vient la demande, et quand le fil
+ * s'est ouvert. Le second morceau disparaît quand la date manque, et la
+ * provenance garde SES mots (« via Telegram », « from the dashboard »).
+ */
+export function threadSubtitle(origin: string, at: Date | null): string {
+  const started = startedLabel(at);
+  return started === null ? origin : `${origin} · ${started}`;
 }
 
 /**

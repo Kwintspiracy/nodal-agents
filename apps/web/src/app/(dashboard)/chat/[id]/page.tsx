@@ -14,12 +14,13 @@ import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
 import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.tsx';
 import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
-import { originLabel, threadAgents } from '@/app/(dashboard)/spaces/format.ts';
+import { originLabel, threadAgents, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { getConversationThreadAction } from '@/lib/conversation-actions.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { truncate } from '@/lib/format-time';
 import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
+import ThreadHeader from './ThreadHeader.tsx';
 
 // Force dynamic — le fil est relu à chaque requête, et pendant qu'un travail court.
 export const dynamic = 'force-dynamic';
@@ -61,21 +62,27 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
     scheduleName: null,
     chatId: conversation.chatId,
   });
-  // P2bis — l'en-tête d'un fil dit le LIEU du travail : le projet courant et
-  // son dossier quand il y en a un, sinon de quoi parle la conversation et
-  // d'où elle vient. Les compteurs (tours, jetons, coût) sont dans la barre
-  // d'état, en bas, où ils étaient déjà.
   const project = conversation.currentProject;
+  // #135 — l'en-tête dessiné : QUI parle et DE QUOI, puis d'où vient la
+  // demande et depuis quand. Le nom du projet n'est plus le titre de la page :
+  // la maquette met l'agent devant, et le dossier reste à un clic derrière le
+  // bouton « Files » de la barre. Sans agent connu, le titre est le sujet seul
+  // — jamais un point médian orphelin.
+  const agentName = conversation.agentName ?? '';
+  const headerTitle = agentName !== '' ? `${agentName} · ${title}` : title;
 
   return (
     <PageShell
       fill
-      // Le design system : le NOM est le titre de la page, le chemin son
-      // sous-titre. Ce qui reste (retour, agents, dossier, état) va dans la
-      // barre sous l'en-tête, comme « Back to agents » sur Edit agent
-      // (Quentin, 07/09).
-      title={project ? project.name : title}
-      subtitle={project ? project.path : origin}
+      toolbarBleed
+      header={
+        <ThreadHeader
+          avatarName={agentName}
+          avatarUrl={conversation.agentAvatarUrl}
+          title={headerTitle}
+          subtitle={threadSubtitle(origin, conversation.createdAt)}
+        />
+      }
       toolbar={
         <WorkBar
           back={{ label: 'Back to chat', href: '/chat' }}

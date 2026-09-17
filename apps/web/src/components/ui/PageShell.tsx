@@ -6,6 +6,18 @@ type Common = {
    *  rendered just below the header. Build it with `PageTopBar`. The create
    *  button lives HERE, never in the navbar. */
   toolbar?: ReactNode;
+  /**
+   * La barre du `toolbar` porte SES propres gouttières et va d'un bord à
+   * l'autre (#135). C'est ce qu'il faut pour la `WorkBar` d'un fil : la
+   * maquette lui donne un fond et deux filets pleine largeur, que l'enveloppe
+   * à gouttières du `toolbar` coupait de chaque côté. Un drapeau plutôt qu'un
+   * créneau de plus : les trois écrans de fil passent déjà par `toolbar`.
+   *
+   * N'a d'effet que sur un écran `fill` — ailleurs, le `toolbar` vit DANS le
+   * corps à largeur bornée, et le tirer d'un bord à l'autre demanderait de
+   * défaire cette enveloppe. Aucune page de liste ne le demande.
+   */
+  toolbarBleed?: boolean;
   /** Page body. */
   children: ReactNode;
   /** Drop the max-width body wrapper (full-bleed body — e.g. full-screen chat). */
@@ -33,7 +45,7 @@ type Props =
     })
   | (Common & {
       /**
-       * A header of the page's own making, in a compact 62px bar, INSTEAD of
+       * A header of the page's own making, in a compact 75px bar, INSTEAD of
        * the display title and its lede (P2bis). The thread screens use it: a
        * work header is a row of facts (name, path, who worked, verdict), not a
        * title. The global controls stay. Mutually exclusive with `title`.
@@ -63,7 +75,14 @@ type Props =
  *   └──────────────────────────────────────────────┘
  */
 export default function PageShell(props: Props) {
-  const { toolbar, children, fluid = false, fill = false, bodyClassName = '' } = props;
+  const {
+    toolbar,
+    toolbarBleed = false,
+    children,
+    fluid = false,
+    fill = false,
+    bodyClassName = '',
+  } = props;
   const head =
     props.header !== undefined ? (
       <PageHeader header={props.header} />
@@ -77,7 +96,8 @@ export default function PageShell(props: Props) {
       <div className="flex h-full min-h-0 flex-col">
         {head}
         <div className={`flex min-h-0 flex-1 flex-col ${bodyClassName}`}>
-          {toolbar && <div className="px-5 pt-4 sm:px-8 lg:px-9">{toolbar}</div>}
+          {toolbar &&
+            (toolbarBleed ? toolbar : <div className="px-5 pt-4 sm:px-8 lg:px-9">{toolbar}</div>)}
           {children}
         </div>
       </div>

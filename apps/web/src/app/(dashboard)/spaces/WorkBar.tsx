@@ -46,7 +46,13 @@ export default function WorkBar({
   filesHref?: string | null;
 }) {
   return (
-    <div className="flex w-full min-w-0 items-center gap-4">
+    // #135 — la barre dessinée : 54 px, un fond, deux filets, d'un bord à
+    // l'autre de l'écran. Ses gouttières sont les siennes et celles de la page
+    // (`toolbarBleed` retire l'enveloppe de `PageShell` qui les ajoutait), donc
+    // le « ‹ Back » tombe sous l'avatar de l'en-tête.
+    // `shrink-0` : dans la colonne pleine hauteur d'un écran de fil, une barre
+    // à hauteur fixe se laisse comprimer par le fil qui pousse sous elle.
+    <div className="flex h-[54px] w-full min-w-0 shrink-0 items-center gap-4 border-y border-rule-2 bg-canvas px-5 sm:px-8 lg:px-9">
       <Link
         href={back.href}
         className="inline-flex shrink-0 items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
@@ -54,7 +60,10 @@ export default function WorkBar({
         <span className="text-body-15 leading-none!">‹</span>
         {back.label}
       </Link>
-      <div className="ml-auto flex shrink-0 items-center gap-3">
+      {/* L'ordre de la maquette : qui a travaillé, le dossier, la preuve,
+          l'état. La pastille de preuve passe APRÈS « Files » — les deux
+          pastilles se suivent, au lieu d'encadrer un bouton. */}
+      <div className="ml-auto flex shrink-0 items-center gap-4">
         {agents.length > 0 && (
           <span className="flex items-center gap-2.5">
             <AvatarStack avatars={agents.map((a) => ({ id: a.key, name: a.name }))} max={4} />
@@ -63,13 +72,13 @@ export default function WorkBar({
             </span>
           </span>
         )}
-        {proofVerdict === 'green' && <StatusPill variant="done" label="Verified" />}
-        {proofVerdict === 'red' && <StatusPill variant="warn" label="Checks failed" />}
         {filesHref !== null && (
           <PrimaryButton variant="neutral" size="sm" href={filesHref}>
             Files
           </PrimaryButton>
         )}
+        {proofVerdict === 'green' && <StatusPill variant="done" label="Verified" />}
+        {proofVerdict === 'red' && <StatusPill variant="warn" label="Checks failed" />}
         {status}
       </div>
     </div>
