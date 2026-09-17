@@ -306,7 +306,13 @@ describe('buildConversationThread — une conversation du dashboard', () => {
         { id: 'm1', role: 'user', content: 'salut', jobId: null, createdAt: null },
         { id: 'm2', role: 'assistant', content: 'salut !', jobId: null, createdAt: null },
         { id: 'm3', role: 'user', content: 'fais le bilan', jobId: null, createdAt: null },
-        { id: 'm4', role: 'assistant', content: 'je m’en occupe', jobId: 'j1', createdAt: null },
+        {
+          id: 'm4',
+          role: 'assistant',
+          content: 'je m’en occupe',
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:04:00Z'),
+        },
       ],
       jobs: [
         job({
@@ -330,6 +336,9 @@ describe('buildConversationThread — une conversation du dashboard', () => {
     const consigne = items.find((i) => i.kind === 'handoff');
     expect(consigne).toEqual({ kind: 'handoff', text: 'Produire le bilan mensuel dans out/' });
     // L'accusé du chat est bien un tour PARLÉ : ni modèle ni jetons inventés.
+    // Son heure, en revanche, il l'a : un message de chat EST daté, et c'est
+    // celle-là que l'en-tête montre (#135) — pas une date déduite d'une ligne
+    // d'audit, que ce tour n'a pas.
     const accuse = items[3];
     expect(accuse).toMatchObject({
       kind: 'turn',
@@ -337,6 +346,7 @@ describe('buildConversationThread — une conversation du dashboard', () => {
       turnSource: 'inferred',
       model: null,
       usage: null,
+      at: new Date('2026-09-17T12:04:00Z'),
       blocks: [{ kind: 'prose', text: 'je m’en occupe' }],
     });
     expect(items.some((i) => i.kind === 'history')).toBe(false);
@@ -432,6 +442,9 @@ describe('buildConversationThread — ce que le fil ne peut pas dire', () => {
       turnSource: 'audit',
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'claude-opus-5',
+      // Un tour MUET n'a ni bloc ni ligne d'audit : il n'a donc pas d'heure,
+      // et celle du tour qui l'absorbe reste la seule affichée (#135).
+      at: null,
       blocks: [],
       usage: null,
     });
