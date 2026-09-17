@@ -183,7 +183,11 @@ beforeAll(async () => {
   if (!conv) throw new Error('conversation insert failed');
   conversationId = conv.id;
   // Deux messages déjà là : le fil n'est pas neuf, donc aucun appel de titre
-  // ne vient se glisser entre les deux tours et brouiller le compte.
+  // ne vient se glisser entre les deux tours et brouiller le compte. Datés à
+  // la main : semés d'un seul coup, ils auraient le même horodatage, et leur
+  // ordre ne tiendrait plus qu'à leurs identifiants tirés au sort.
+  const earlier = new Date(Date.now() - 120_000);
+  const later = new Date(Date.now() - 60_000);
   await db.insert(chatMessages).values([
     {
       entityId: seed.entityId,
@@ -191,6 +195,7 @@ beforeAll(async () => {
       conversationId,
       role: 'user',
       content: 'hello',
+      createdAt: earlier,
     },
     {
       entityId: seed.entityId,
@@ -198,6 +203,7 @@ beforeAll(async () => {
       conversationId,
       role: 'assistant',
       content: 'hi',
+      createdAt: later,
     },
   ]);
 
