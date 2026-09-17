@@ -201,6 +201,7 @@ import {
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
+import { isRefusedEffort } from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
   parsePresented,
@@ -7072,6 +7073,202 @@ export async function setAgentCommandAllowlistAction(raw: unknown): Promise<Acti
   } catch (err) {
     console.error('[setAgentCommandAllowlistAction]', err);
     return fail('db_error', 'Failed to save the command allowlist');
+  }
+}
+
+// ─── Clé, modèle et effort d'un agent, réglés depuis le composeur (#138) ─────
+//
+// Les MÊMES champs que l'écran d'édition (`agents.llm_key_id`, `agents.model`,
+// `agents.reasoning_effort`), écrits depuis les trois listes du composeur de
+// chat. Ce n'est donc pas un réglage « de cette conversation » : il vaut pour
+// tous les canaux, et les listes le disent en toutes lettres.
+//
+// Ce que l'action refuse, et pourquoi elle ne refuse rien de plus :
+//   • une clé qui n'est pas de cet espace, ou qui est désactivée. `updateAgentAction`
+//     ne vérifie PAS ce point aujourd'hui (trou constaté le 17/09) ; il est
+//     tenu ici plutôt que recopié tel quel.
+//   • un effort que le contrôle du modèle n'offre pas — MAIS seulement quand le
+//     modèle est catalogué (`isRefusedEffort`). Hors catalogue, on ne sait rien
+//     de ses paliers, et refuser sur une absence serait un faux « non » qui
+//     interdirait ici ce que l'écran d'édition accepte.
+//   • un modèle vide.
+// Le modèle lui-même n'est PAS contraint au catalogue : l'écran d'édition
+// accepte n'importe quel identifiant (liste en direct du fournisseur, ou saisie
+// libre), et une règle plus stricte ici rendrait le composeur incapable de
+// choisir un modèle que les réglages affichent. Pour un routeur ou un
+// planificateur, la règle des outils reste celle de `updateAgentAction`.
+
+const SetAgentModelAndEffortSchema = z.object({
+  agentId: z.string().guid(),
+  /** La clé primaire. Absente = on ne touche pas à celle de l'agent. */
+  llmKeyId: z.string().guid().optional(),
+  model: z.string().trim().min(1, 'Pick a model').max(200),
+  reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable(),
+});
+
+export async function setAgentModelAndEffortAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentModelAndEffortSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, llmKeyId, model, reasoningEffort } = parsed.data;
+
+    // Même garde de propriété que setAgentCommandAllowlistAction /
+    // setCliRuntimeModeAction : changer le modèle d'un agent change ce que
+    // l'espace dépense et ce qu'il sait faire.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', "Only the workspace owner can change an agent's model.");
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({
+        id: agents.id,
+        role: agents.role,
+        llmKeyId: agents.llmKeyId,
+        fallbackChain: agents.fallbackChain,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // La clé EFFECTIVE : celle qu'on pose, sinon celle que l'agent porte déjà.
+    const effectiveKeyId = llmKeyId ?? agent.llmKeyId;
+    let provider = '';
+    if (effectiveKeyId) {
+      const [key] = await db
+        .select({ provider: entityLlmKeys.provider, isActive: entityLlmKeys.isActive })
+        .from(entityLlmKeys)
+        .where(
+          and(eq(entityLlmKeys.id, effectiveKeyId), eq(entityLlmKeys.entityId, session.entityId)),
+        );
+      if (!key) return fail('not_found', 'LLM key not found');
+      // Une clé désactivée ne se pose pas ; celle que l'agent portait déjà se
+      // garde, sinon le composeur bloquerait sur un état qu'il n'a pas créé.
+      if (llmKeyId !== undefined && !key.isActive) {
+        return fail('validation_failed', 'That LLM key is disabled.');
+      }
+      provider = key.provider;
+    }
+
+    if (reasoningEffort !== null && isRefusedEffort(provider, model, reasoningEffort)) {
+      return fail(
+        'validation_failed',
+        `"${model}" does not offer a "${reasoningEffort}" reasoning effort.`,
+      );
+    }
+
+    // Un routeur ou un planificateur délègue par appel d'outil : la même règle
+    // que `updateAgentAction`, à la même place dans l'ordre des refus.
+    if (agent.role === 'orchestrator') {
+      const toolsError = await orchestratorModelToolsError(
+        db,
+        session.entityId,
+        effectiveKeyId,
+        model,
+      );
+      if (toolsError) return fail('validation_failed', toolsError);
+    }
+
+    const patch: Record<string, unknown> = { model, reasoningEffort, updatedAt: new Date() };
+    if (llmKeyId !== undefined) {
+      patch['llmKeyId'] = llmKeyId;
+      // La clé primaire ne peut pas être aussi un repli : même nettoyage que
+      // `updateAgentAction`, sinon l'agent se relancerait sur lui-même.
+      patch['fallbackChain'] = (agent.fallbackChain ?? []).filter(
+        (link) => link.keyId !== llmKeyId,
+      );
+    }
+
+    await db
+      .update(agents)
+      .set(patch)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    // Les listes vivent dans le chat ; les mêmes réglages se lisent sur l'écran
+    // de l'agent et sur la page d'un projet.
+    revalidatePath(`/agents/${agentId}/edit`);
+    revalidatePath('/chat', 'layout');
+    revalidatePath('/spaces', 'layout');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentModelAndEffortAction]', err);
+    return fail('db_error', "Failed to save the agent's model");
+  }
+}
+
+/** Ce que les trois listes du composeur affichent, pour un agent. */
+export interface AgentModelChoices {
+  /** La clé primaire de l'agent — `null` quand il n'en a aucune. */
+  llmKeyId: string | null;
+  model: string;
+  reasoningEffort: string | null;
+  /**
+   * Les clés ACTIVES de l'espace, dans le même ordre que l'écran d'édition les
+   * offre (il filtre `isActive` sur la même liste).
+   */
+  llmKeys: Array<{ id: string; provider: string; nickname: string | null }>;
+  /**
+   * Un routeur ou un planificateur délègue par appel d'outil : un modèle sans
+   * outils lui est interdit. L'écran d'édition grise ces modèles ; la pastille
+   * du composeur doit faire pareil (revue Reviewer C, PR #142), et non laisser
+   * choisir puis refuser par un toast.
+   */
+  requireTools: boolean;
+}
+
+/**
+ * Lu par les PAGES (composants serveur) qui montent le composeur : il n'y a là
+ * que ce qui vient de la base. La liste des modèles, elle, se construit côté
+ * client avec `buildModelOptionGroups` et la liste EN DIRECT du fournisseur —
+ * la même que l'écran d'édition, par la même action `listKeyModelsAction`.
+ */
+export async function getAgentModelChoicesAction(
+  agentId: string,
+): Promise<ActionResult<AgentModelChoices>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [agent] = await db
+      .select({
+        model: agents.model,
+        reasoningEffort: agents.reasoningEffort,
+        llmKeyId: agents.llmKeyId,
+        role: agents.role,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const keys = await db
+      .select({
+        id: entityLlmKeys.id,
+        provider: entityLlmKeys.provider,
+        nickname: entityLlmKeys.nickname,
+      })
+      .from(entityLlmKeys)
+      .where(and(eq(entityLlmKeys.entityId, session.entityId), eq(entityLlmKeys.isActive, true)));
+
+    return ok({
+      llmKeyId: agent.llmKeyId,
+      model: agent.model ?? '',
+      reasoningEffort: agent.reasoningEffort,
+      llmKeys: keys,
+      requireTools: agent.role === 'orchestrator',
+    });
+  } catch (err) {
+    console.error('[getAgentModelChoicesAction]', err);
+    return fail('db_error', "Failed to read the agent's model options");
   }
 }
 

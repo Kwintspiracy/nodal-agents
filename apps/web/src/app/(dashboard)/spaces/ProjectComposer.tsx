@@ -14,12 +14,19 @@
 
 import ThreadComposer from '@/app/(dashboard)/chat/ThreadComposer.tsx';
 import { createProjectConversationAction } from '@/lib/project-actions.ts';
+import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 
 export default function ProjectComposer({
   projectId,
   conversationId,
   agentName,
   placeholder,
+  agentId,
+  llmKeyId,
+  model,
+  reasoningEffort,
+  llmKeys,
+  requireTools,
 }: {
   projectId: string;
   conversationId: string | null;
@@ -27,10 +34,23 @@ export default function ProjectComposer({
   agentName?: string | null;
   /** Le placeholder en toutes lettres quand la saisie va OUVRIR une conversation. */
   placeholder?: string;
+  /** #138 — les trois listes de réglage, passées telles quelles. */
+  agentId?: string | null;
+  llmKeyId?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  llmKeys?: ComposerLlmKey[];
+  requireTools?: boolean;
 }) {
   return (
     <ThreadComposer
       conversationId={conversationId ?? ''}
+      agentId={agentId ?? null}
+      llmKeyId={llmKeyId ?? null}
+      model={model ?? null}
+      reasoningEffort={reasoningEffort ?? null}
+      llmKeys={llmKeys ?? []}
+      requireTools={requireTools ?? false}
       {...(agentName !== undefined ? { agentName } : {})}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onBeforeSend={

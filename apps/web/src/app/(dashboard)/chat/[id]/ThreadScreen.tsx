@@ -27,14 +27,34 @@ export default function ThreadScreen({
 }) {
   return (
     <>
-      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-2 sm:px-8 lg:px-9">
+      {/* `scrollbar-gutter: stable` : la gouttière de la barre est réservée
+          même quand le fil tient dans l'écran, sinon le fil se recentre d'une
+          demi-barre au premier message qui le fait déborder. */}
+      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-2 [scrollbar-gutter:stable] sm:px-8 lg:px-9">
         {/* Un seul enfant : c'est LUI dont la hauteur est observée. Sans ce
             conteneur, l'observateur suivrait la zone de défilement, dont la
             hauteur ne bouge jamais — et rien ne descendrait. */}
         <div>{children}</div>
       </ThreadScroller>
       {composer !== undefined && (
-        <div className="shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9">{composer}</div>
+        // La saisie se réserve la MÊME gouttière que le fil (`--thread-gutter`,
+        // posée par ThreadScroller) : les deux boîtes de 760 px sont alors
+        // centrées dans la même largeur, et leurs bords tombent l'un sur
+        // l'autre. Sans ça, la saisie était décalée d'une demi-barre vers la
+        // droite (Quentin, 17/09).
+        <div className="relative shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9 mr-[var(--thread-gutter,0px)]">
+          {/* Le FONDU : le fil ne se coupe plus net au ras de la saisie, il
+              s'éteint sur quarante pixels dans la couleur du fond, comme sous
+              n'importe quelle messagerie (Quentin, 17/09 : « la séparation
+              est très abrupte »). Posé au-dessus de la saisie, dans sa largeur
+              — donc sans la gouttière de la barre, qui reste nette — et
+              transparent aux clics : on peut toujours défiler à travers. */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-full h-10 bg-linear-to-t from-canvas to-transparent"
+          />
+          {composer}
+        </div>
       )}
       {statusBar}
     </>

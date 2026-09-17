@@ -8,7 +8,7 @@
 //     remonter devient impossible.
 
 import { describe, it, expect } from 'vitest';
-import { staysAtBottom, AT_BOTTOM_SLACK_PX } from '../ThreadScroller.tsx';
+import { staysAtBottom, scrollbarGutterOf, AT_BOTTOM_SLACK_PX } from '../ThreadScroller.tsx';
 
 /** Un fil de 3000 px dans une fenêtre de 800 px : 2200 px de course. */
 const FIL = { scrollHeight: 3000, clientHeight: 800 };
@@ -39,5 +39,21 @@ describe('staysAtBottom', () => {
 
   it('un fil plus court que la fenêtre : on suit (il n’y a pas de « haut » où remonter)', () => {
     expect(staysAtBottom({ scrollHeight: 400, clientHeight: 800, scrollTop: 0 })).toBe(true);
+  });
+});
+
+// La gouttière que la saisie doit se réserver pour tomber sur le fil (Quentin,
+// 17/09 : la saisie était décalée d'une demi-barre vers la droite).
+describe('scrollbarGutterOf', () => {
+  it('une barre classique de 17 px prend 17 px', () => {
+    expect(scrollbarGutterOf({ offsetWidth: 1200, clientWidth: 1183 })).toBe(17);
+  });
+
+  it('une barre qui se superpose au contenu ne prend rien', () => {
+    expect(scrollbarGutterOf({ offsetWidth: 1200, clientWidth: 1200 })).toBe(0);
+  });
+
+  it('jamais négatif, quoi que le navigateur mesure', () => {
+    expect(scrollbarGutterOf({ offsetWidth: 0, clientWidth: 12 })).toBe(0);
   });
 });
