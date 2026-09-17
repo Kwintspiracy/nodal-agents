@@ -26,7 +26,7 @@
 // chaque copie s'efface D'ELLE-MÊME dès que le fil rendu par le serveur porte
 // son texte (`requests`) : c'est le fil qui fait foi, jamais cette copie.
 
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import { originLabel } from '@/app/(dashboard)/spaces/format.ts';
 
@@ -54,6 +54,15 @@ type Store = {
   settle: (id: number) => void;
   /** L'envoi a échoué : la copie quitte le fil. */
   end: (id: number) => void;
+  /**
+   * Tenue quand le fil rendu porte le texte de cet envoi — quand la copie a
+   * disparu à l'ÉCRAN, pas quand le serveur a répondu. Un appel d'action
+   * serveur depuis le client passe par une transition, et React lie entre
+   * elles les transitions en cours : lancer l'envoi suivant avant que la
+   * relecture soit affichée la liait à lui, et l'écran ne bougeait qu'à la
+   * fin de la série (Quentin, 18/09, trois réponses d'un coup).
+   */
+  rendered: (id: number) => Promise<void>;
 };
 
 const NOOP: Store = {
@@ -63,6 +72,7 @@ const NOOP: Store = {
   begin: () => 0,
   settle: () => {},
   end: () => {},
+  rendered: () => Promise.resolve(),
 };
 const PendingTurnContext = createContext<Store>(NOOP);
 
@@ -93,6 +103,21 @@ export function PendingTurnProvider({
   const nextId = useRef(0);
   // Une dérivation, pas un effet : rien à synchroniser, rien à oublier.
   const pending = stillPending(all, requests);
+  const isRendered = (id: number): boolean => {
+    const p = all.find((x) => x.id === id);
+    return p === undefined || (p.settled && !pending.includes(p));
+  };
+  // Ceux qui attendent que leur copie ait quitté l'écran. Un effet, pas un
+  // état : il ne rend rien, il tient une promesse une fois le rendu commis.
+  const waiters = useRef(new Map<number, () => void>());
+  useEffect(() => {
+    for (const [id, wake] of waiters.current) {
+      if (isRendered(id)) {
+        waiters.current.delete(id);
+        wake();
+      }
+    }
+  });
   const store: Store = {
     pending,
     inFlight: all.some((p) => !p.settled),
@@ -114,6 +139,13 @@ export function PendingTurnProvider({
     },
     settle: (id) => setAll((prev) => prev.map((p) => (p.id === id ? { ...p, settled: true } : p))),
     end: (id) => setAll((prev) => prev.filter((p) => p.id !== id)),
+    // Toujours tenue par l'effet, jamais ici : la fermeture d'où l'on appelle
+    // date du rendu d'AVANT l'envoi, elle ne connaît pas encore la copie.
+    // `settle` vient d'être appelé, un rendu suit, l'effet regarde.
+    rendered: (id) =>
+      new Promise<void>((resolve) => {
+        waiters.current.set(id, resolve);
+      }),
   };
   return <PendingTurnContext.Provider value={store}>{children}</PendingTurnContext.Provider>;
 }

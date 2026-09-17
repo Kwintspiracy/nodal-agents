@@ -42,6 +42,14 @@ export const COMPOSER_ROWS = 3;
 export const COMPOSER_MIN_HEIGHT_PX = COMPOSER_ROWS * COMPOSER_LINE_HEIGHT_PX;
 
 /** La zone épouse son texte : trois lignes à vide, autant qu'il en faut ensuite. */
+/** Combien de temps, au plus, un envoi attend que sa réponse soit à l'écran
+ *  avant de laisser partir le suivant. */
+const RENDER_WAIT_MS = 15_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function fitToContent(el: HTMLTextAreaElement): void {
   el.style.height = 'auto';
   const wanted = Math.max(el.scrollHeight, COMPOSER_MIN_HEIGHT_PX);
@@ -186,6 +194,13 @@ export default function ThreadComposer({
       // demandée MAINTENANT, avant que le message suivant parte.
       pendingTurn.settle(id);
       router.refresh();
+      // Et on attend que la réponse soit À L'ÉCRAN avant de faire partir le
+      // message suivant : l'appel d'une action serveur est une transition
+      // React, et React lie les transitions en cours — lancé plus tôt, le
+      // suivant retenait l'affichage de celle-ci jusqu'à sa propre fin. Une
+      // borne, pour qu'un texte que le fil ne rendrait jamais tel quel ne
+      // bloque pas la file.
+      await Promise.race([pendingTurn.rendered(id), sleep(RENDER_WAIT_MS)]);
     });
   }
 

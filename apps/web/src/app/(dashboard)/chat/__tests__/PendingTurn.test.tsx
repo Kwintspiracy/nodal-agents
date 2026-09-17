@@ -162,11 +162,14 @@ describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un
     await send('Et la suite ?');
     expect(shown()).toEqual(['Première question', 'thinking', 'Et la suite ?']);
     expect(textarea().disabled).toBe(false);
-    // Le second attend son tour : le routeur traite les actions dans l'ordre,
-    // et la relecture du premier tour doit passer AVANT lui.
+    // Le second attend son tour : il ne part que lorsque la réponse au
+    // premier est À L'ÉCRAN — pas quand le serveur a répondu (une action
+    // lancée avant retiendrait l'affichage de la relecture).
     expect(sendChatMessageAction).toHaveBeenCalledTimes(1);
     await settle(0, { ok: true });
     expect(refresh).toHaveBeenCalledTimes(1);
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(1);
+    await rerender(<Screen items={[ask('Première question'), say('Réponse 1')]} />);
     expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
     expect(sendChatMessageAction.mock.calls[1]).toEqual([
       { conversationId: 'conv-1', message: 'Et la suite ?' },
@@ -180,13 +183,14 @@ describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un
     await settle(0, { ok: true });
     expect(refresh).toHaveBeenCalledTimes(1);
     // Tant que le fil rendu est le MÊME, rien ne bouge : effacer avant la
-    // relecture ferait clignoter le fil. Le second est parti entre-temps.
+    // relecture ferait clignoter le fil. Le second n'est pas encore parti.
     expect(shown()).toEqual(['Première question', 'thinking', 'Et la suite ?']);
-    expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(1);
     // Le serveur rend le premier tour : sa copie a fait son temps, l'agent
-    // réfléchit maintenant sous le second message.
+    // réfléchit maintenant sous le second message — qui part à ce moment-là.
     await rerender(<Screen items={[ask('Première question'), say('Réponse 1')]} />);
     expect(shown()).toEqual(['Et la suite ?', 'thinking']);
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
     await settle(1, { ok: true });
     await rerender(
       <Screen
@@ -221,9 +225,9 @@ describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un
     await send('ok');
     expect(shown()).toEqual(['ok', 'thinking', 'ok']);
     await settle(0, { ok: true });
-    await settle(1, { ok: true });
     await rerender(<Screen items={[ask('ok'), say('Bien.'), ask('ok'), say('Bien.')]} />);
     expect(shown()).toEqual(['ok', 'thinking']);
+    await settle(1, { ok: true });
     await rerender(
       <Screen
         items={[ask('ok'), say('Bien.'), ask('ok'), say('Bien.'), ask('ok'), say('Bien.')]}
