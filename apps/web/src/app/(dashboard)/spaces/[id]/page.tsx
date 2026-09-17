@@ -118,6 +118,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         model={modelChoices?.model ?? null}
         reasoningEffort={modelChoices?.reasoningEffort ?? null}
         llmKeys={modelChoices?.llmKeys ?? []}
+        requireTools={modelChoices?.requireTools ?? false}
         {...(view !== null
           ? {
               // P4 — la barre d'état, ancrée tout en bas de l'écran.

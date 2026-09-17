@@ -14,8 +14,12 @@ import {
   isModelInOptions,
   defaultModelForProvider,
   llmKeyLabel,
+  llmKeyShortLabel,
   isRefusedEffort,
   reasoningOptionValues,
+  disabledHintFor,
+  NO_TOOLS_HINT,
+  type ModelChoice,
 } from '../model-choices.ts';
 
 describe('buildModelOptionGroups @cap:choisir-modele/moteur', () => {
@@ -67,6 +71,36 @@ describe('les règles qui suivent un changement de clé @cap:choisir-modele/mote
     // Sans surnom, le fournisseur tient les deux rôles — comme sur l'écran
     // d'édition, dont c'est la formule exacte.
     expect(llmKeyLabel({ nickname: null, provider: 'anthropic' })).toBe('Anthropic (Anthropic)');
+  });
+
+  it('la pastille écrit le nom d’une clé UNE fois : le surnom, sinon le fournisseur', () => {
+    expect(llmKeyShortLabel({ nickname: 'Work', provider: 'openai' })).toBe('Work');
+    expect(llmKeyShortLabel({ nickname: null, provider: 'anthropic' })).toBe('Anthropic');
+    // Un surnom vide ne compte pas comme un surnom.
+    expect(llmKeyShortLabel({ nickname: '   ', provider: 'openrouter' })).toBe('OpenRouter');
+    expect(llmKeyShortLabel({ nickname: null, provider: 'anthropic' })).not.toContain('(');
+  });
+
+  it('un routeur ne peut pas choisir un modèle catalogué SANS outils — grisé, avec la raison des réglages', () => {
+    const catalogued = buildModelOptionGroups('openai', [])[0]?.models[0];
+    if (!catalogued?.entry) throw new Error('the OpenAI catalog has no entry');
+    // Le vrai catalogue ne porte aujourd'hui aucun modèle sans outils : la
+    // règle se prouve sur une entrée forgée à partir d'une vraie, où seul le
+    // drapeau change. Le jour où un tel modèle entre au catalogue, il sera
+    // grisé sans qu'on y touche.
+    const sansOutils: ModelChoice = {
+      ...catalogued,
+      entry: {
+        ...catalogued.entry,
+        capabilities: { ...catalogued.entry.capabilities, tools: false },
+      },
+    };
+    expect(disabledHintFor(sansOutils, true)).toBe(NO_TOOLS_HINT);
+    expect(disabledHintFor(sansOutils, false)).toBeNull();
+    // Un modèle AVEC outils se choisit, routeur ou pas.
+    expect(disabledHintFor(catalogued, true)).toBeNull();
+    // Hors catalogue, on ne sait rien de ses outils : jamais grisé (inv. #4).
+    expect(disabledHintFor({ modelId: 'x', label: 'x' }, true)).toBeNull();
   });
 
   it('un effort ne se refuse que sur un modèle CATALOGUÉ qui ne l’offre pas', () => {

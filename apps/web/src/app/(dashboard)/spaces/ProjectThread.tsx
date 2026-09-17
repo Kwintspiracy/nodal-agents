@@ -38,6 +38,7 @@ export default function ProjectThread({
   model,
   reasoningEffort,
   llmKeys,
+  requireTools,
 }: {
   projectId: string;
   /**
@@ -67,6 +68,7 @@ export default function ProjectThread({
   model?: string | null;
   reasoningEffort?: string | null;
   llmKeys?: ComposerLlmKey[];
+  requireTools?: boolean;
 }) {
   if (thread !== null && !thread.ok) {
     return (
@@ -132,6 +134,7 @@ export default function ProjectThread({
           model={model ?? null}
           reasoningEffort={reasoningEffort ?? null}
           llmKeys={llmKeys ?? []}
+          requireTools={requireTools ?? false}
           {...(composer.kind === 'start' ? { placeholder: composer.placeholder } : {})}
         />
       </>

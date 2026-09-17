@@ -18,14 +18,26 @@
 // Ce qu'il fait, et rien de plus : ouvrir, fermer, choisir, au clavier comme à
 // la souris. Il ne sait NI ce qu'il choisit, ni quoi en faire : l'appelant tient
 // l'état ouvert/fermé (pour n'en ouvrir qu'un à la fois) et écrit la valeur.
+//
+// Le focus : à l'ouverture il va au panneau (sinon les flèches défileraient la
+// page) ; quand la liste se ferme PAR LE CLAVIER ou par un choix, il REVIENT
+// sur l'intitulé, d'où l'on était parti — sinon il retombe en haut du document
+// (revue Reviewer C, PR #142). Un clic dehors, lui, emporte le focus là où l'on
+// a cliqué, et c'est ce qu'on veut : ce n'est pas au primitif de le reprendre.
 
 import { useEffect, useRef, useState } from 'react';
 import { CaretDown } from '@phosphor-icons/react';
 
-/** Une ligne de liste. Un intitulé de groupe ne se choisit pas. */
+/**
+ * Une ligne de liste. Un intitulé de groupe ne se choisit pas. Une option
+ * GRISÉE reste écrite, avec sa raison en infobulle, mais ne se choisit pas et
+ * les flèches la sautent — comme une `<option disabled>`.
+ */
 export type InlineSelectRow =
   | { kind: 'heading'; label: string }
-  | { kind: 'option'; value: string; label: string };
+  | { kind: 'option'; value: string; label: string; disabled?: boolean; hint?: string };
+
+type Option = Extract<InlineSelectRow, { kind: 'option' }>;
 
 export default function InlineSelect({
   name,
@@ -55,9 +67,14 @@ export default function InlineSelect({
   onPick: (value: string) => void;
   onClose: () => void;
 }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  /** Rendre le focus à l'intitulé — après un choix ou une fermeture au clavier. */
+  const refocus = () => trigger.current?.focus();
+
   return (
     <span className="relative flex min-w-0 items-center">
       <button
+        ref={trigger}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -71,7 +88,19 @@ export default function InlineSelect({
         <CaretDown size={12} aria-hidden className="shrink-0 text-ink-4" />
       </button>
       {open && (
-        <OptionList name={name} rows={rows} value={value} onPick={onPick} onClose={onClose} />
+        <OptionList
+          name={name}
+          rows={rows}
+          value={value}
+          onPick={(v) => {
+            onPick(v);
+            refocus();
+          }}
+          onClose={() => {
+            onClose();
+            refocus();
+          }}
+        />
       )}
     </span>
   );
@@ -80,7 +109,8 @@ export default function InlineSelect({
 /**
  * La liste, ancrée AU-DESSUS de l'intitulé : ce choix vit en bas d'un écran,
  * une liste ouverte vers le bas sortirait de la fenêtre. Au clavier : les
- * flèches déplacent, Entrée choisit, Échap ferme.
+ * flèches déplacent (en sautant les options grisées), Entrée choisit, Échap
+ * ferme.
  */
 function OptionList({
   name,
@@ -95,9 +125,7 @@ function OptionList({
   onPick: (value: string) => void;
   onClose: () => void;
 }) {
-  const options = rows.filter(
-    (r): r is Extract<InlineSelectRow, { kind: 'option' }> => r.kind === 'option',
-  );
+  const options = rows.filter((r): r is Option => r.kind === 'option');
   const selected = options.findIndex((o) => o.value === value);
   const [active, setActive] = useState(selected >= 0 ? selected : 0);
   const panel = useRef<HTMLDivElement>(null);
@@ -110,9 +138,21 @@ function OptionList({
     panel.current?.focus();
   }, []);
 
+  /** Avancer de `delta`, en sautant les grisées ; sans option choisissable, rester. */
   function move(delta: number): void {
-    if (options.length === 0) return;
-    setActive((i) => (i + delta + options.length) % options.length);
+    if (options.length === 0 || options.every((o) => o.disabled)) return;
+    setActive((i) => {
+      let next = i;
+      do {
+        next = (next + delta + options.length) % options.length;
+      } while (options[next]?.disabled);
+      return next;
+    });
+  }
+
+  function pick(option: Option): void {
+    if (option.disabled) return;
+    onPick(option.value);
   }
 
   return (
@@ -132,7 +172,7 @@ function OptionList({
         } else if (e.key === 'Enter') {
           e.preventDefault();
           const picked = options[active];
-          if (picked) onPick(picked.value);
+          if (picked) pick(picked);
         } else if (e.key === 'Escape') {
           e.preventDefault();
           onClose();
@@ -151,10 +191,15 @@ function OptionList({
             type="button"
             role="option"
             aria-selected={row.value === value}
+            aria-disabled={row.disabled === true ? true : undefined}
+            disabled={row.disabled === true}
+            title={row.hint}
             data-value={row.value}
-            onClick={() => onPick(row.value)}
-            onMouseEnter={() => setActive(options.indexOf(row))}
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-mono-12 ${
+            onClick={() => pick(row)}
+            onMouseEnter={() => {
+              if (!row.disabled) setActive(options.indexOf(row));
+            }}
+            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-mono-12 disabled:cursor-not-allowed disabled:opacity-40 ${
               options[active] === row ? 'bg-hover' : ''
             } ${row.value === value ? 'text-ink' : 'text-ink-2'}`}
           >

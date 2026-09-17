@@ -7218,6 +7218,13 @@ export interface AgentModelChoices {
    * offre (il filtre `isActive` sur la même liste).
    */
   llmKeys: Array<{ id: string; provider: string; nickname: string | null }>;
+  /**
+   * Un routeur ou un planificateur délègue par appel d'outil : un modèle sans
+   * outils lui est interdit. L'écran d'édition grise ces modèles ; la pastille
+   * du composeur doit faire pareil (revue Reviewer C, PR #142), et non laisser
+   * choisir puis refuser par un toast.
+   */
+  requireTools: boolean;
 }
 
 /**
@@ -7237,6 +7244,7 @@ export async function getAgentModelChoicesAction(
         model: agents.model,
         reasoningEffort: agents.reasoningEffort,
         llmKeyId: agents.llmKeyId,
+        role: agents.role,
       })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
@@ -7256,6 +7264,7 @@ export async function getAgentModelChoicesAction(
       model: agent.model ?? '',
       reasoningEffort: agent.reasoningEffort,
       llmKeys: keys,
+      requireTools: agent.role === 'orchestrator',
     });
   } catch (err) {
     console.error('[getAgentModelChoicesAction]', err);

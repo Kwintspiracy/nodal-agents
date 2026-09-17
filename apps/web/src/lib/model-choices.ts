@@ -155,6 +155,26 @@ export function llmKeyShortLabel(key: { nickname?: string | null; provider: stri
   return nickname !== undefined && nickname !== '' ? nickname : prettyProviderName(key.provider);
 }
 
+/** Ce que l'écran d'édition dit d'un modèle sans outils proposé à un routeur. */
+export const NO_TOOLS_HINT = "Can't use tools (required for a router/planner)";
+
+/**
+ * Pourquoi un modèle est GRISÉ pour cet agent, ou `null` s'il se choisit.
+ *
+ * La seule raison aujourd'hui : un routeur ou un planificateur délègue par
+ * appel d'outil, et un modèle catalogué SANS outils ne peut pas le faire.
+ * L'écran d'édition grise ces modèles (`ModelOptionTag`) ; la pastille du
+ * composeur applique la même règle, par cette même fonction — laisser choisir
+ * puis refuser par un toast serait une seconde définition de la règle (revue
+ * Reviewer C, PR #142). Un modèle hors catalogue ne dit rien de ses outils :
+ * il n'est jamais grisé (inv. #4, on ne prétend rien).
+ */
+export function disabledHintFor(choice: ModelChoice, requireTools: boolean): string | null {
+  if (!requireTools) return null;
+  if (choice.entry === undefined || choice.entry.capabilities.tools) return null;
+  return NO_TOOLS_HINT;
+}
+
 /**
  * L'effort demandé est-il refusable ? Vrai SEULEMENT quand le modèle est
  * catalogué et que son contrôle ne l'offre pas.

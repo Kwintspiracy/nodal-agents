@@ -33,6 +33,7 @@ import { listKeyModelsAction, setAgentModelAndEffortAction } from '@/lib/actions
 import {
   buildModelOptionGroups,
   defaultModelForProvider,
+  disabledHintFor,
   isModelInOptions,
   llmKeyShortLabel,
   reasoningOptionValues,
@@ -64,6 +65,7 @@ export default function ModelEffortChip({
   model,
   reasoningEffort,
   llmKeys,
+  requireTools,
 }: {
   agentId: string;
   /** La clé primaire de l'agent. `null` = aucune : rien à régler. */
@@ -73,6 +75,11 @@ export default function ModelEffortChip({
   reasoningEffort: string | null;
   /** Les clés ACTIVES de l'espace, dans l'ordre où l'écran d'édition les offre. */
   llmKeys: ComposerLlmKey[];
+  /**
+   * Un routeur ou un planificateur : les modèles sans outils sont grisés, avec
+   * la raison — la même règle, la même phrase que l'écran d'édition.
+   */
+  requireTools: boolean;
 }) {
   // L'état AFFICHÉ : il part des props et ne bouge ensuite qu'après un écrit
   // réussi. Le réglage peut aussi changer AILLEURS (l'écran de l'agent) ; la
@@ -197,7 +204,14 @@ export default function ModelEffortChip({
   for (const group of modelGroups) {
     if (group.group !== null) modelRows.push({ kind: 'heading', label: group.group });
     for (const m of group.models) {
-      modelRows.push({ kind: 'option', value: m.modelId, label: m.label });
+      // Grisé pour la raison que l'écran d'édition donnerait, jamais laissé
+      // choisir pour être refusé ensuite par l'action.
+      const hint = disabledHintFor(m, requireTools);
+      modelRows.push(
+        hint === null
+          ? { kind: 'option', value: m.modelId, label: m.label }
+          : { kind: 'option', value: m.modelId, label: m.label, disabled: true, hint },
+      );
     }
   }
 

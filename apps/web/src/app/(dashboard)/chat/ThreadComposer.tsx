@@ -57,6 +57,7 @@ export default function ThreadComposer({
   model,
   reasoningEffort,
   llmKeys,
+  requireTools = false,
 }: {
   conversationId: string;
   /** À qui on écrit — le placeholder le dit. Absent : « Reply… ». */
@@ -86,6 +87,8 @@ export default function ThreadComposer({
   model?: string | null;
   reasoningEffort?: string | null;
   llmKeys?: ComposerLlmKey[];
+  /** Routeur ou planificateur : la pastille grise les modèles sans outils. */
+  requireTools?: boolean;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
@@ -192,6 +195,7 @@ export default function ThreadComposer({
             model={model ?? ''}
             reasoningEffort={reasoningEffort ?? null}
             llmKeys={llmKeys ?? []}
+            requireTools={requireTools}
           />
         )}
         {/* L'envoi CHANGE DE COULEUR quand il y a quelque chose à envoyer :

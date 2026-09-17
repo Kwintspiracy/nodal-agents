@@ -103,6 +103,7 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
               model={modelChoices?.model ?? null}
               reasoningEffort={modelChoices?.reasoningEffort ?? null}
               llmKeys={modelChoices?.llmKeys ?? []}
+              requireTools={modelChoices?.requireTools ?? false}
             />
           ) : (
             <p className="mx-auto max-w-[760px] text-body-13 text-ink-4">

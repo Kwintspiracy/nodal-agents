@@ -28,6 +28,8 @@ let openaiKeyId = '';
 let anthropicKeyId = '';
 /** Une clé de l'espace, mais ÉTEINTE : l'écran d'édition ne l'offre pas. */
 let cleEteinteId = '';
+/** Un routeur : il délègue par appel d'outil, son modèle doit en avoir. */
+let routeurId = '';
 let voisinAgentId = '';
 let voisinKeyId = '';
 
@@ -98,6 +100,21 @@ beforeAll(async () => {
     })
     .returning();
   openaiAgentId = agent!.id;
+
+  const [routeur] = await testDb
+    .insert(agents)
+    .values({
+      entityId: seed.entityId,
+      name: 'Composer Router',
+      slug: `composer-router-${Date.now()}`,
+      personality: 'Test.',
+      role: 'orchestrator',
+      orchestratorMode: 'router',
+      llmKeyId: openaiKey!.id,
+      model: 'gpt-5',
+    })
+    .returning();
+  routeurId = routeur!.id;
 
   // Un agent d'un AUTRE espace : la garde de portée se prouve sur une vraie
   // ligne, pas sur un identifiant inventé (qui serait « introuvable » pour la
@@ -313,6 +330,29 @@ describe('setAgentModelAndEffortAction @cap:choisir-modele/moteur', () => {
 });
 
 describe('getAgentModelChoicesAction @cap:choisir-modele/moteur', () => {
+  it('dit si l’agent EXIGE des outils : un routeur oui, un agent non', async () => {
+    const { getAgentModelChoicesAction } = await import('../actions.ts');
+    const agent = await getAgentModelChoicesAction(openaiAgentId);
+    const routeur = await getAgentModelChoicesAction(routeurId);
+    expect(agent.ok && agent.data.requireTools).toBe(false);
+    expect(routeur.ok && routeur.data.requireTools).toBe(true);
+  });
+
+  it('un routeur garde un modèle catalogué AVEC outils : la garde ne refuse pas à tort', async () => {
+    // La branche qui REFUSE (modèle catalogué sans outils) n'est atteignable
+    // par aucune ligne du vrai catalogue aujourd'hui : elle se prouve sur la
+    // règle pure (`disabledHintFor`), pas ici. Ce cas prouve l'autre moitié :
+    // la garde passe pour un routeur quand le modèle a des outils.
+    const { setAgentModelAndEffortAction } = await import('../actions.ts');
+    const r = await setAgentModelAndEffortAction({
+      agentId: routeurId,
+      model: 'gpt-5-mini',
+      reasoningEffort: null,
+    });
+    expect(r.ok).toBe(true);
+    expect((await ligne(routeurId)).model).toBe('gpt-5-mini');
+  });
+
   it('rend la clé de l’agent, son modèle, son effort et les clés ACTIVES', async () => {
     const { getAgentModelChoicesAction } = await import('../actions.ts');
     const r = await getAgentModelChoicesAction(openaiAgentId);

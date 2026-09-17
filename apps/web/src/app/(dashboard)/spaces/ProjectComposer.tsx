@@ -26,6 +26,7 @@ export default function ProjectComposer({
   model,
   reasoningEffort,
   llmKeys,
+  requireTools,
 }: {
   projectId: string;
   conversationId: string | null;
@@ -39,6 +40,7 @@ export default function ProjectComposer({
   model?: string | null;
   reasoningEffort?: string | null;
   llmKeys?: ComposerLlmKey[];
+  requireTools?: boolean;
 }) {
   return (
     <ThreadComposer
@@ -48,6 +50,7 @@ export default function ProjectComposer({
       model={model ?? null}
       reasoningEffort={reasoningEffort ?? null}
       llmKeys={llmKeys ?? []}
+      requireTools={requireTools ?? false}
       {...(agentName !== undefined ? { agentName } : {})}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onBeforeSend={
