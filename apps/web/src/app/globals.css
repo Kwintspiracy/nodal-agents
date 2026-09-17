@@ -56,6 +56,7 @@
   --c-feed-reasoning: #6b7280;
   --c-feed-metric: #8a8f98;
   --c-feed-composer: #dde3ee;
+  --c-feed-prose: #5c5c5c;
 
   color-scheme: light;
 
@@ -120,6 +121,7 @@
   --c-feed-reasoning: #8b949e;
   --c-feed-metric: #6e7681;
   --c-feed-composer: #1f2430;
+  --c-feed-prose: #a3a3a3;
 
   color-scheme: dark;
 }
@@ -167,6 +169,7 @@
   --color-feed-reasoning: var(--c-feed-reasoning);
   --color-feed-metric: var(--c-feed-metric);
   --color-feed-composer: var(--c-feed-composer);
+  --color-feed-prose: var(--c-feed-prose);
 
   /* Type scale — bumped one step up from the original handoff for legibility,
      and snapped to whole pixels (the handoff used fractional sizes like 12.5px).

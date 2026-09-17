@@ -255,11 +255,12 @@ describe('ConversationFeedView', () => {
     expect(sansHeure).not.toMatch(/>\d{2}:\d{2}</);
   });
 
-  it('l’agent parle en 13 px ; la bulle de la demande garde sa taille', () => {
+  it('l’agent parle en 13 px dans SA couleur ; la bulle de la demande ne bouge pas', () => {
     // #135 — la voix de l'agent est le FOND du fil : en 15 px elle écrasait
-    // les blocs qui l'entourent, tous en 13 ou moins.
-    expect(html).toMatch(/max-w-\[68ch\] text-body-13 text-ink">Je reprends le /);
-    // La demande de l'utilisateur, elle, ne bouge pas.
+    // les blocs qui l'entourent, tous en 13 ou moins. Elle a aussi sa couleur,
+    // `feed/prose`, la dixième du nuancier du fil.
+    expect(html).toMatch(/max-w-\[68ch\] text-body-13 text-feed-prose">Je reprends le /);
+    // La demande de l'utilisateur, elle, garde sa taille ET l'encre pleine.
     expect(html).toMatch(/max-w-\[68ch\] text-body-15 text-ink">Prépare la revue</);
   });
 

@@ -85,6 +85,16 @@ function paragraphSize(tone: MarkdownTone): string {
 }
 
 /**
+ * L'encre d'un PARAGRAPHE, par voix (#135). La parole de l'agent a sa couleur
+ * à elle (`feed/prose`, la dixième du nuancier du fil) ; la demande de
+ * l'utilisateur reste à l'encre pleine. Comme pour la taille, seuls les
+ * paragraphes changent — titres, listes et code gardent `text-ink`.
+ */
+function paragraphInk(tone: MarkdownTone): string {
+  return tone === 'agent' ? 'text-feed-prose' : 'text-ink';
+}
+
+/**
  * L'adresse d'un lien telle qu'on accepte de la poser dans un `href`, ou
  * `null`. Le texte vient d'un LLM ou d'un outil : `[ici](javascript:…)` serait
  * un clic qui exécute du code, `data:` une page forgée. Seuls `http`, `https`,
@@ -110,13 +120,17 @@ function MdNode({ node, tone }: { node: RootContent; tone: MarkdownTone }): Reac
   // l'utilisateur (`text-ink`). Le design ne distingue pas les deux voix par
   // la couleur : ce qui les distingue, c'est l'avatar et la carte autour de la
   // demande. En `ink-2`, la parole de l'agent — le fond du fil — se lisait
-  // comme une note de bas de page. La voix se dit par la TAILLE (#135), pas
-  // par la couleur.
+  // comme une note de bas de page.
+  //
+  // #135 revient là-dessus pour les PARAGRAPHES, et pour eux seuls : la voix
+  // de l'agent a désormais sa taille (13 px) et sa couleur (`feed/prose`),
+  // données par Quentin. Ce n'est pas `ink-2` qui revient — c'est une entrée
+  // du nuancier du fil, au même titre que `feed/tool` ou `feed/model`.
   const ink = 'text-ink';
   switch (node.type) {
     case 'paragraph':
       return (
-        <p className={`mb-3 last:mb-0 max-w-[68ch] ${paragraphSize(tone)} ${ink}`}>
+        <p className={`mb-3 last:mb-0 max-w-[68ch] ${paragraphSize(tone)} ${paragraphInk(tone)}`}>
           {kids(node, tone)}
         </p>
       );

@@ -110,13 +110,24 @@ describe('Markdown', () => {
     expect(html).toContain('<hr class="my-4 border-rule-2"');
   });
 
-  it('les deux voix sont à la MÊME encre : le design ne les distingue pas par la couleur', () => {
-    // P2bis — la prose de l'agent était en `ink-2`, c'est-à-dire en note de
-    // bas de page, alors qu'elle est le fond du fil. Ce qui distingue les deux
-    // voix, c'est l'avatar et la carte autour de la demande, pas la teinte.
-    expect(render('salut', 'user')).toContain('text-ink"');
-    expect(render('salut', 'agent')).toContain('text-ink"');
+  it('chaque voix a son paragraphe : l’agent en 13 px et feed/prose, la demande en 15 px et encre pleine', () => {
+    // P2bis avait mis les deux voix à la MÊME encre, parce que la prose de
+    // l'agent était en `ink-2` — une note de bas de page, alors qu'elle est le
+    // fond du fil. #135 les redistingue, mais PAS en retombant sur `ink-2` :
+    // l'agent prend `feed/prose`, une entrée du nuancier du fil, au même titre
+    // que `feed/tool` ou `feed/model`, et une taille à lui.
+    expect(render('salut', 'user')).toContain('text-body-15 text-ink"');
+    expect(render('salut', 'agent')).toContain('text-body-13 text-feed-prose"');
     expect(render('salut', 'agent')).not.toContain('text-ink-2');
+  });
+
+  it('seul le PARAGRAPHE change de voix : titres, listes et code gardent les leurs', () => {
+    // La couleur et la taille de la voix ne débordent pas sur le reste du
+    // markdown — un titre reste un titre, une liste reste lisible à sa taille.
+    const html = render('# T\n\n- a\n', 'agent');
+    expect(html).toContain('text-title-15 text-ink');
+    expect(html).toContain('text-body-15 text-ink');
+    expect(html).not.toContain('text-title-15 text-feed-prose');
   });
 
   it('aucune taille en pixels ne sort du composant', () => {
