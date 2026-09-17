@@ -23,6 +23,7 @@ import Markdown, { plainText } from '@/components/Markdown.tsx';
 import { truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
 import ToolBlock from './ToolBlock.tsx';
+import ModelCallBlock from './ModelCallBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
 import FileDiff, { FILE_DOT, FileName, LineDelta } from './FileDiff.tsx';
@@ -118,40 +119,22 @@ function FeedItemView({
         </p>
       );
     case 'turn': {
-      // Ce que le tour a coûté descend dans le bloc de RÉFLEXION quand il y en
-      // a un : le design y met « 3 étapes · 7,2 s · 9 120 jetons », et la ligne
-      // du nom ne porte alors que le modèle. Sans réflexion, elle garde tout —
-      // sinon ces nombres n'auraient nulle part où aller.
-      // La durée est celle des appels LLM du tour (le temps de penser) : celle
-      // des outils est sur chaque `ToolBlock`, ligne par ligne, donc les deux
-      // ne se confondent plus comme du temps du groupe.
-      const cost = [
-        item.usage && item.usage.durationMs > 0 ? formatMs(item.usage.durationMs) : null,
-        item.usage
-          ? `${formatTokens(item.usage.inputTokens + item.usage.outputTokens)} tokens`
-          : null,
-        item.usage && item.usage.costUsd !== null ? formatCost(item.usage.costUsd) : null,
-      ].filter((x): x is string => x !== null);
-      // Le PREMIER bloc qui porte du raisonnement reçoit le coût ; les suivants
-      // (rares) n'en portent pas, sinon le même nombre paraîtrait deux fois.
-      const firstThinking = item.blocks.findIndex(
-        (b) => b.kind === 'steps' && b.steps.some((st) => st.kind === 'reasoning'),
-      );
-      const meta =
-        firstThinking >= 0
-          ? (item.model ?? '')
-          : [item.model, ...cost].filter((x): x is string => typeof x === 'string').join(' · ');
+      // #135 — ce que le tour a demandé au modèle a désormais son BLOC, dans la
+      // colonne de temps des appels d'outil (`ModelCallBlock`). L'en-tête ne
+      // porte plus que le nom de l'agent et le modèle, et le bloc de
+      // raisonnement ne porte plus que son compte d'étapes : ces nombres ne
+      // vivaient nulle part en propre, ils vivaient à droite de ce qui passait
+      // par là.
+      //
+      // Le tour ne DATE pas son appel de modèle : le bloc va donc en dernier,
+      // après les blocs du tour, plutôt qu'à une place inventée.
       return (
         <Turn>
-          <Who name={item.agent.name ?? 'Agent'} meta={meta} />
+          <Who name={item.agent.name ?? 'Agent'} model={item.model} />
           {item.blocks.map((b, i) => (
-            <Block
-              key={i}
-              block={b}
-              deliverables={deliverables}
-              {...(i === firstThinking && cost.length > 0 ? { meta: cost.join(' · ') } : {})}
-            />
+            <Block key={i} block={b} deliverables={deliverables} />
           ))}
+          <ModelCallBlock model={item.model} usage={item.usage} className="mb-3" />
         </Turn>
       );
     }
@@ -164,7 +147,7 @@ function FeedItemView({
       // tour de l'agent, pas une plaque à part : c'est lui qui parle.
       return (
         <Turn>
-          <Who name={agentName} meta="" />
+          <Who name={agentName} />
           <Markdown text={item.text} />
         </Turn>
       );
@@ -202,25 +185,23 @@ function Turn({ children }: { children: React.ReactNode }) {
   return <div className="min-w-0 pt-6">{children}</div>;
 }
 
-function Who({ name, meta }: { name: string; meta: string }) {
+/**
+ * Qui parle, et avec quel modèle. Les nombres du tour ne sont plus là (#135) :
+ * ils ont leur bloc (`ModelCallBlock`). Le modèle prend la couleur `feed/model`
+ * — sur une ligne, la différence entre les choses est la COULEUR.
+ */
+function Who({ name, model }: { name: string; model?: string | null }) {
   return (
     <div className="mb-1.5 flex items-baseline gap-2">
       <span className="text-title-15 text-ink">{name}</span>
-      {meta !== '' && <span className="text-mono-11 text-ink-3">{meta}</span>}
+      {model !== null && model !== undefined && model !== '' && (
+        <span className="text-mono-11 text-feed-model">{model}</span>
+      )}
     </div>
   );
 }
 
-function Block({
-  block,
-  deliverables,
-  meta,
-}: {
-  block: TurnBlock;
-  deliverables: Deliverables;
-  /** Ce que le TOUR ajoute à l'en-tête du groupe : jetons, durée, coût. */
-  meta?: string;
-}) {
+function Block({ block, deliverables }: { block: TurnBlock; deliverables: Deliverables }) {
   switch (block.kind) {
     case 'prose':
       return <Markdown text={block.text} className="mb-3" />;
@@ -233,9 +214,7 @@ function Block({
       const tools = block.steps.filter((s): s is ToolStep => s.kind === 'tool');
       return (
         <div className="mb-3 space-y-2">
-          {reasoning.length > 0 && (
-            <ThinkingBlock steps={reasoning} {...(meta !== undefined ? { meta } : {})} />
-          )}
+          {reasoning.length > 0 && <ThinkingBlock steps={reasoning} />}
           {tools.map((s, i) => (
             <ToolBlock key={i} step={s} />
           ))}
@@ -307,9 +286,9 @@ function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deli
     }
     // Une question dont ni la charge ni l'entrée ne se lisent : le brut, dit
     // tel quel, plutôt qu'une carte vide qui prétendrait poser une question.
-    return <RawCard step={step} />;
+    return <ToolBlock step={step} />;
   }
-  if (p === null) return <RawCard step={step} />;
+  if (p === null) return <ToolBlock step={step} />;
   switch (p.card) {
     case 'table':
       return <TableCard payload={p} aside={duration} />;
@@ -326,28 +305,14 @@ function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deli
     default:
       // Une carte que l'écran ne dessine pas encore, ou un texte : le brut, dit
       // tel quel — jamais une devinette.
-      return <RawCard step={step} />;
+      //
+      // #135 — ce brut n'est plus un GRAND cadre ouvert sur son JSON. Un appel
+      // dont la carte manque (`assign_lead`, par exemple) prenait un demi-écran
+      // pour ne rien dire de plus qu'une ligne ; il prend maintenant la même
+      // ligne repliée que tous les autres appels, et l'aveu « brut » vit dans
+      // son corps, sous `Result`.
+      return <ToolBlock step={step} />;
   }
-}
-
-/** Rien de présentable : l'entrée et la sortie brutes, en le disant. */
-function RawCard({ step }: { step: ToolStep }) {
-  return (
-    <CardFrame
-      title={step.toolName}
-      meta={step.card === null ? 'no card recorded' : `${step.card} · raw`}
-      aside={step.durationMs !== null ? formatMs(step.durationMs) : undefined}
-    >
-      <pre className="max-h-64 overflow-auto px-4 py-3 text-mono-11 text-ink-3 whitespace-pre-wrap break-words">
-        {JSON.stringify(step.input, null, 2)}
-      </pre>
-      {step.outputText !== null && (
-        <pre className="max-h-64 overflow-auto border-t border-rule-2 px-4 py-3 text-mono-11 text-ink-2 whitespace-pre-wrap break-words">
-          {step.outputText}
-        </pre>
-      )}
-    </CardFrame>
-  );
 }
 
 function TableCard({ payload, aside }: { payload: CardPayloadFor<'table'>; aside?: string }) {

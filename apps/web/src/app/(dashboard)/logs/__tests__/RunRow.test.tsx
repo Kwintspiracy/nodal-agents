@@ -192,9 +192,12 @@ describe('RunRow — la ligne dépliée @cap:suivre-execution/ecran', () => {
     // Entrelacés, dans l'ordre que l'action a rendu : modèle, outil, outil.
     expect(rangs).toEqual([...rangs].sort((a, b) => a - b));
 
-    // L'appel de modèle dit ce qu'il a coûté, l'appel d'outil ce qu'il a fait.
+    // L'appel de modèle dit ce qu'il a coûté ; l'appel d'outil dit son nom et
+    // son argument. Depuis #135, sa SORTIE attend le clic — le bloc d'outil du
+    // fil est replié par défaut, ici comme dans une conversation.
     expect(texte).toContain('1,200 in / 300 out');
-    expect(texte).toContain('trois articles');
+    expect(texte).toContain('(veille)');
+    expect(texte).not.toContain('trois articles');
     // Et la ligne d'un run garde son adresse.
     expect(deplie!.querySelector('a')?.getAttribute('href')).toBe(`/jobs/${RUN_ID}`);
   });

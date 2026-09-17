@@ -173,18 +173,20 @@ const feed: ConversationFeed = {
 describe('ConversationFeedView', () => {
   const html = renderToStaticMarkup(<ConversationFeedView feed={feed} />);
 
-  it('la demande dit d’où elle vient ; les jetons descendent dans le groupe d’étapes', () => {
+  it('la demande dit d’où elle vient ; les jetons sont dans la ligne d’appel du modèle', () => {
     expect(html).toContain('Prépare la revue');
     expect(html).toContain('via automation “Revue mensuelle”');
     expect(html).toContain('Alfred');
-    // P2bis — la ligne du nom ne porte plus que le modèle quand le tour a du
-    // raisonnement ; le coût vit à droite du bloc de réflexion.
-    expect(html).not.toContain('claude-opus-5 · 12,480 tokens');
+    // #135 — la ligne du nom ne porte QUE le modèle, dans sa couleur.
     expect(html).toContain('>claude-opus-5<');
-    // Le bloc compte SES étapes (un seul raisonnement), puis dit le temps de
-    // penser du tour, ses jetons et son coût. Le temps des outils est sur
-    // chaque appel, ligne par ligne : les deux ne se confondent plus.
-    expect(html).toContain('1 step · 9.4 s · 12,480 tokens · $0.05');
+    expect(html).toMatch(/text-feed-model[^"]*"[^>]*>claude-opus-5</);
+    // Les nombres du tour ne sont ni dans l'en-tête ni dans la ligne de
+    // raisonnement : ils ont leur bloc, avec le modèle qui les a produits.
+    expect(html).not.toContain('claude-opus-5 · 12,480 tokens');
+    expect(html).not.toContain('1 step · 9.4 s');
+    expect(html).toContain('1 step<');
+    expect(html).toContain('12,000 in · 480 out · 9,000 cached');
+    expect(html).toContain('9.4 s · $0.05');
   });
 
   it('le markdown de la prose est RENDU : plus d’astérisques à l’écran', () => {
@@ -237,8 +239,11 @@ describe('ConversationFeedView', () => {
     expect(html).not.toContain('tool calls');
     expect(html).toContain('query_memory');
     expect(html).toContain('>fetch<'); // mcp_x__fetch, sans son préfixe de serveur
-    expect(html).toContain('1 table · 0 rows');
-    expect(html).toContain('brut');
+    // #135 — REPLIÉ veut dire replié : le nom reste, le résumé du résultat
+    // attend le clic. Un fil de vingt appels tient donc sur vingt lignes.
+    expect(html).not.toContain('1 table · 0 rows');
+    expect(html).not.toContain('brut');
+    expect(html.split('aria-expanded="false"').length - 1).toBeGreaterThanOrEqual(3);
   });
 
   it('la carte table dessine les cellules et dit que l’en-tête est inconnu', () => {
@@ -260,10 +265,14 @@ describe('ConversationFeedView', () => {
     expect(html).toContain('earlier output not kept');
   });
 
-  it('une carte de résultat sans charge utile se montre brute et le dit', () => {
+  it('une carte de résultat sans charge utile prend la MÊME ligne repliée', () => {
+    // #135 — plus de grand cadre ouvert sur son JSON : un appel dont la carte
+    // ne se lit pas est un appel comme les autres, une ligne, dépliable.
     expect(html).toContain('legacy_tool');
-    expect(html).toContain('files · raw');
-    expect(html).toContain('&quot;path&quot;: &quot;a.md&quot;');
+    expect(html).toContain('(a.md)');
+    // L'aveu « brut » et le JSON vivent dans le corps, pas à l'écran.
+    expect(html).not.toContain('files · raw');
+    expect(html).not.toContain('&quot;path&quot;: &quot;a.md&quot;');
   });
 
   it("l'historique de la conversation est là, replié, et dit combien de messages il porte", () => {
