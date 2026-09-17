@@ -4,8 +4,9 @@
 // qu'il ne sait pas dessiner, il le montre brut et le dit.
 
 import Link from 'next/link';
-import { PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
+import { ArrowSquareOut, PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import StatusPill from '@/components/ui/StatusPill';
 import ClampedText from './ClampedText.tsx';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -31,6 +32,7 @@ import QuestionCard from './QuestionCard.tsx';
 import FileDiff, { FILE_DOT, FileName, LineDelta } from './FileDiff.tsx';
 import HistoryGroup from './HistoryGroup.tsx';
 import DelegationDisclosure from './DelegationDisclosure.tsx';
+import DelegationBlock from './DelegationBlock.tsx';
 import Handoff from './Handoff.tsx';
 import { formatCost, formatMs, formatTokens, originLabel } from './format.ts';
 
@@ -75,10 +77,17 @@ function FeedItems({ items, deliverables }: { items: FeedItem[]; deliverables: D
   // de l'agent, qui est celui qui l'a écrite.
   const lastTurn = [...items].reverse().find((i) => i.kind === 'turn');
   const agentName = lastTurn?.agent.name ?? 'Agent';
+  const agentAvatarUrl = lastTurn?.agent.avatarUrl ?? null;
   return (
     <>
       {items.map((item, i) => (
-        <FeedItemView key={i} item={item} deliverables={deliverables} agentName={agentName} />
+        <FeedItemView
+          key={i}
+          item={item}
+          deliverables={deliverables}
+          agentName={agentName}
+          agentAvatarUrl={agentAvatarUrl}
+        />
       ))}
     </>
   );
@@ -88,10 +97,12 @@ function FeedItemView({
   item,
   deliverables,
   agentName,
+  agentAvatarUrl,
 }: {
   item: FeedItem;
   deliverables: Deliverables;
   agentName: string;
+  agentAvatarUrl: string | null;
 }) {
   switch (item.kind) {
     case 'request':
@@ -132,7 +143,12 @@ function FeedItemView({
       // après les blocs du tour, plutôt qu'à une place inventée.
       return (
         <Turn>
-          <Who name={item.agent.name ?? 'Agent'} model={item.model} at={item.at} />
+          <Who
+            name={item.agent.name ?? 'Agent'}
+            avatarUrl={item.agent.avatarUrl}
+            model={item.model}
+            at={item.at}
+          />
           {item.blocks.map((b, i) => (
             <Block key={i} block={b} deliverables={deliverables} />
           ))}
@@ -143,13 +159,13 @@ function FeedItemView({
     case 'history':
       return <HistoryGroup exchanges={item.exchanges} />;
     case 'child':
-      return <DelegationGroup job={item.job} deliverables={deliverables} />;
+      return <DelegationGroup job={item.job} from={item.from} deliverables={deliverables} />;
     case 'answer':
       // La réponse gardée (elle DIT autre chose que la dernière prose) est un
       // tour de l'agent, pas une plaque à part : c'est lui qui parle.
       return (
         <Turn>
-          <Who name={agentName} />
+          <Who name={agentName} avatarUrl={agentAvatarUrl} />
           <Markdown text={item.text} />
         </Turn>
       );
@@ -198,10 +214,21 @@ function Turn({ children }: { children: React.ReactNode }) {
  * sans ligne d'audit n'a pas de date, et une heure devinée serait un mensonge
  * de plus à l'écran.
  */
-function Who({ name, model, at }: { name: string; model?: string | null; at?: Date | null }) {
+function Who({
+  name,
+  avatarUrl,
+  model,
+  at,
+}: {
+  name: string;
+  /** L'image de l'agent, quand il en a une. Sinon ses initiales (AgentAvatar). */
+  avatarUrl?: string | null;
+  model?: string | null;
+  at?: Date | null;
+}) {
   return (
     <div className="mb-1.5 flex items-center gap-2.5">
-      <AgentAvatar name={name} size="sm" shape="square" />
+      <AgentAvatar name={name} imageUrl={avatarUrl ?? undefined} size="sm" shape="square" />
       <span className="text-title-15 text-ink">{name}</span>
       {model !== null && model !== undefined && model !== '' && (
         <span className="text-mono-11 text-feed-model">{model}</span>
@@ -743,15 +770,65 @@ function DelegationCard({ payload }: { payload: CardPayloadFor<'delegation'> }) 
   );
 }
 
+/** Le label d'un bloc déplié, dans la graisse du tableau : « Task », « What the child did ». */
+function BlockLabel({ children }: { children: React.ReactNode }) {
+  return <p className="text-mono-11 text-ink-4">{children}</p>;
+}
+
 /**
- * Un travail confié à un autre agent, dépliable (P2bis).
+ * Le verdict rendu par un délégué, quand il en a écrit un — jamais déduit.
+ *
+ * La seule forme que ce fil sait reconnaître sans deviner est celle que les
+ * agents de revue écrivent VRAIMENT, telle qu'elle est dans `agent_jobs.result`
+ * (relevé du 17/09) : une première ligne « Verdict », « Verdict global »,
+ * « Verdict final », suivie de deux points ou d'un tiret cadratin — ou le mot
+ * seul sur sa ligne, le verdict étant alors la ligne suivante. Le séparateur
+ * n'accepte PAS le trait d'union : « Verdict - » n'apparaît nulle part, et un
+ * tiret est trop banal pour découper une phrase sans risque.
+ *
+ * Tout le reste rend `null` et la ligne n'est pas dessinée : inventer un
+ * verdict à partir de la première phrase d'un résultat quelconque ferait dire
+ * au délégué ce qu'il n'a pas dit (invariant #4). « Verdict émis. Je clos la
+ * tâche. » — une vraie ligne de la base — est bien écarté.
+ *
+ * La ligne rendue est la PREMIÈRE, parce que le pied du bloc tient sur une
+ * ligne. Le reste n'est pas perdu : le corps montre le résultat en entier,
+ * juste au-dessus (« Result », ou le fil du délégué qui porte sa réponse).
+ */
+export function delegationVerdict(result: string | null): string | null {
+  if (result === null) return null;
+  const lines = plainText(result)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '');
+  const [head, next] = lines;
+  if (head === undefined) return null;
+  const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head);
+  if (inline?.[1] !== undefined) return inline[1];
+  if (/^verdict$/i.test(head)) return next ?? null;
+  return null;
+}
+
+/**
+ * Un travail confié à un autre agent, dépliable (#135).
+ *
+ * La tête se lit comme une phrase : qui a délégué, à qui, pour quoi. C'est ce
+ * qui permet de garder TOUT replié et de suivre quand même la chaîne — une
+ * délégation n'est jamais imbriquée dans une autre, le fil la remonte au même
+ * niveau (`buildConversationFeed`).
  *
  * La consigne reçue et la réponse rendue sont ce qu'un lecteur vient chercher
- * quand il ouvre une délégation : c'est là qu'un malentendu se voit. Elles
- * étaient tronquées à une ligne. Le fil de l'enfant, quand l'appelant l'a
- * construit, se rend dessous par le même composant — un fil est un fil.
+ * quand il ouvre : c'est là qu'un malentendu se voit.
  */
-function DelegationGroup({ job, deliverables }: { job: FeedChildJob; deliverables: Deliverables }) {
+function DelegationGroup({
+  job,
+  from,
+  deliverables,
+}: {
+  job: FeedChildJob;
+  from: { name: string | null; slug: string | null; avatarUrl: string | null };
+  deliverables: Deliverables;
+}) {
   const durationMs =
     job.completedAt !== null && job.createdAt !== null
       ? job.completedAt.getTime() - job.createdAt.getTime()
@@ -759,61 +836,121 @@ function DelegationGroup({ job, deliverables }: { job: FeedChildJob; deliverable
   // Le fil du délégué, quand l'appelant l'a assemblé (un niveau, job-feed.ts) :
   // ses tours, ses cartes, sa réponse — SANS sa demande, qui est la consigne
   // du parent, déjà écrite sous « Task » ; un « You » y serait faux, c'est
-  // l'agent parent qui a demandé.
-  const nested = job.feed?.items.filter((i) => i.kind !== 'request' && i.kind !== 'history');
+  // l'agent parent qui a demandé. Et SANS ses propres délégations : elles sont
+  // remontées au niveau du dessus, c'est la règle du tableau. Le filtre les
+  // redit ici pour que la règle tienne même sur un fil assemblé à la main.
+  const nested = job.feed?.items.filter(
+    (i) => i.kind !== 'request' && i.kind !== 'history' && i.kind !== 'child',
+  );
   const totals = job.feed?.totals;
-  const aside = [
+  // Chaque part disparaît quand on ne la connaît pas : jamais « $0 », jamais
+  // « 0 tokens » (principe du tableau). Le fil d'un délégué porte TOUJOURS des
+  // totaux dès qu'il est assemblé, à zéro tant qu'aucun appel de modèle n'a été
+  // enregistré : c'est la SOMME qui dit si on sait quelque chose, pas la
+  // présence de l'objet (revue de la PR #141).
+  const tokens = totals === undefined ? 0 : totals.inputTokens + totals.outputTokens;
+  const metrics = [
     durationMs !== null && durationMs > 0 ? formatMs(durationMs) : null,
-    totals ? `${formatTokens(totals.inputTokens + totals.outputTokens)} tokens` : null,
+    tokens > 0 ? `${formatTokens(tokens)} tokens` : null,
     totals && totals.costUsd !== null ? formatCost(totals.costUsd) : null,
   ]
     .filter((x): x is string => x !== null)
     .join(' · ');
+  const fromName = from.name ?? 'An agent';
+  const toName = job.agentName ?? 'an agent';
+  const failed = job.status === 'failed' || job.status === 'cancelled';
+  const done = job.status === 'completed';
+  const summary = job.task !== null ? truncate(plainText(job.task), 80) : '';
+  const verdict = delegationVerdict(job.result);
   // Pleine largeur, comme tout bloc du fil (#135, remarque de Quentin sur
   // #140) : la gouttière de 46 px rentrait la délégation par rapport aux blocs
   // d'outil juste au-dessus, et le fil se lisait en escalier.
   return (
     <div className="mt-4">
-      <DelegationDisclosure
-        label={`Delegated to ${job.agentName ?? 'an agent'}`}
-        avatar={<AgentAvatar name={job.agentName ?? 'Agent'} size="sm" shape="square" />}
-        title={delegationTitle(job.result, job.task)}
-        ok={job.status === 'completed'}
-        aside={aside}
-      >
-        {job.task !== null && (
-          <div className="px-4 py-3">
-            <SectionLabel>Task</SectionLabel>
-            <Markdown text={job.task} />
-          </div>
-        )}
-        {nested !== undefined && nested.length > 0 ? (
-          // Le fil du délégué porte déjà sa réponse (`answer`) ou son échec
-          // (`failure`) : le résultat et l'erreur ne se répètent pas dessous.
-          <div className="border-t border-rule-2 px-4 pb-3">
-            <FeedItems items={nested} deliverables={deliverables} />
-          </div>
-        ) : (
+      <DelegationBlock
+        head={
           <>
-            {job.result !== null && (
-              <div className="border-t border-rule-2 px-4 py-3">
-                <SectionLabel>Result</SectionLabel>
-                <Markdown text={job.result} />
-              </div>
+            <AgentAvatar
+              name={fromName}
+              imageUrl={from.avatarUrl ?? undefined}
+              size="sm"
+              shape="square"
+            />
+            <span className="shrink-0 text-medium-13 text-ink">{fromName}</span>
+            {/* Sans capitales : le tableau écrit « delegated to », pas un label. */}
+            <span className="shrink-0 text-body-13 text-feed-delegation">delegated to</span>
+            <AgentAvatar
+              name={toName}
+              imageUrl={job.agentAvatarUrl ?? undefined}
+              size="sm"
+              shape="square"
+            />
+            <span className="shrink-0 text-medium-13 text-ink">{toName}</span>
+            <span className="min-w-0 flex-1 truncate text-body-13 text-ink-3">{summary}</span>
+            {/* La pastille dit d'un coup d'œil si la passe a atterri ; elle ne
+                se dessine pas tant que le délégué court (rien à dire encore). */}
+            {(done || failed) && (
+              <span className={`h-2 w-2 shrink-0 rounded-full ${done ? 'bg-ok' : 'bg-err'}`} />
             )}
-            {job.error !== null && (
-              <p className="border-t border-rule-2 px-4 py-3 text-body-13 text-err">{job.error}</p>
+            <StatusPill
+              variant={done ? 'done' : failed ? 'warn' : 'run'}
+              label={done ? 'Done' : failed ? 'Failed' : 'Running'}
+              className="shrink-0"
+            />
+            {metrics !== '' && (
+              <span className="shrink-0 text-mono-11 text-feed-metric">{metrics}</span>
             )}
           </>
-        )}
-        {/* P8 : le fil d'un JOB vit sur /scheduled/[id] — /spaces/<id> est
-            devenu la page d'un PROJET. */}
-        <div className="border-t border-rule-2 px-4 py-2">
-          <Link href={`/scheduled/${job.id}`} className="text-mono-11 text-ink-3 hover:text-ink">
-            Open the run
-          </Link>
-        </div>
-      </DelegationDisclosure>
+        }
+        body={
+          <div className="flex flex-col gap-2 pt-2.5 pr-3.5 pb-3 pl-10">
+            {job.task !== null && (
+              <div>
+                <BlockLabel>Task</BlockLabel>
+                <div className="text-body-13 text-ink-2">
+                  <Markdown text={job.task} />
+                </div>
+              </div>
+            )}
+            {nested !== undefined && nested.length > 0 ? (
+              // Le fil du délégué porte déjà sa réponse (`answer`) ou son échec
+              // (`failure`) : le résultat et l'erreur ne se répètent pas dessous.
+              <div>
+                <BlockLabel>What the child did</BlockLabel>
+                <FeedItems items={nested} deliverables={deliverables} />
+              </div>
+            ) : (
+              <>
+                {job.result !== null && (
+                  <div>
+                    <BlockLabel>Result</BlockLabel>
+                    <div className="text-body-13 text-ink-2">
+                      <Markdown text={job.result} />
+                    </div>
+                  </div>
+                )}
+                {job.error !== null && <p className="text-body-13 text-err">{job.error}</p>}
+              </>
+            )}
+            {/* P8 : le fil d'un JOB vit sur /scheduled/[id] — /spaces/<id> est
+                devenu la page d'un PROJET. */}
+            <div className="flex items-center gap-2">
+              {verdict !== null && (
+                <span className="min-w-0 truncate text-body-13 text-feed-delegation">
+                  {verdict}
+                </span>
+              )}
+              <Link
+                href={`/scheduled/${job.id}`}
+                className="ml-auto flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 hover:text-ink"
+              >
+                Open run
+                <ArrowSquareOut size={14} aria-hidden />
+              </Link>
+            </div>
+          </div>
+        }
+      />
     </div>
   );
 }

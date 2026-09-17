@@ -51,6 +51,8 @@ export type ThreadConversation = {
   title: string;
   agentName: string | null;
   agentSlug: string | null;
+  /** L'image de l'agent de la conversation, quand il en a une. */
+  agentAvatarUrl: string | null;
   currentProject: ThreadProject | null;
 };
 
@@ -387,7 +389,11 @@ export function buildConversationThread(input: {
         index: turnIndex,
         turn: 0,
         turnSource: 'inferred',
-        agent: { name: conversation.agentName, slug: conversation.agentSlug },
+        agent: {
+          name: conversation.agentName,
+          slug: conversation.agentSlug,
+          avatarUrl: conversation.agentAvatarUrl,
+        },
         model: null,
         blocks: [{ kind: 'prose', text: message.content }],
         usage: null,

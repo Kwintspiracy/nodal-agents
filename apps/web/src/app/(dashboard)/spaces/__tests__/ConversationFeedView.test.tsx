@@ -51,7 +51,7 @@ const feed: ConversationFeed = {
       index: 1,
       turn: 1,
       turnSource: 'audit',
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: 'claude-opus-5',
       // Construite à partir de composants LOCAUX : l'en-tête affiche l'heure
       // dans le fuseau du lecteur, et une date UTC rendrait le test dépendant
@@ -184,7 +184,7 @@ const envoi: ConversationFeed = {
       index: 1,
       turn: 1,
       turnSource: 'audit',
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: null,
       at: null,
       usage: null,
@@ -267,7 +267,7 @@ describe('ConversationFeedView', () => {
               index: 1,
               turn: 1,
               turnSource: 'audit',
-              agent: { name: 'Alfred', slug: 'alfred' },
+              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
               model: 'claude-opus-5',
               at: null,
               usage: null,
@@ -318,7 +318,7 @@ describe('ConversationFeedView', () => {
       index: 2,
       turn: 2,
       turnSource: 'audit' as const,
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: 'claude-opus-5',
       at: new Date(2026, 8, 17, 14, 9),
       usage: null,
@@ -425,7 +425,7 @@ describe('ConversationFeedView', () => {
           index: 1,
           turn: 1,
           turnSource: 'audit',
-          agent: { name: 'Alfred', slug: 'alfred' },
+          agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
           model: null,
           at: null,
           usage: null,
@@ -485,7 +485,7 @@ describe('ConversationFeedView', () => {
               index: 1,
               turn: 1,
               turnSource: 'audit',
-              agent: { name: 'Alfred', slug: 'alfred' },
+              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
               model: null,
               at: null,
               usage: null,
@@ -527,17 +527,21 @@ describe('ConversationFeedView', () => {
     expect(html2).not.toContain('−0');
   });
 
-  it('une délégation porte le nom du délégué, ce qu’il a rendu, et son coût', () => {
+  // #135 — la tête d'une délégation se lit comme une phrase : QUI a délégué, à
+  // QUI, pour QUOI. Tout replié, la chaîne entière reste lisible.
+  it('la tête d’une délégation dit « Intendant delegated to Le Relecteur », la consigne, l’état et les chiffres', () => {
     const html2 = renderToStaticMarkup(
       <ConversationFeedView
         feed={{
           items: [
             {
               kind: 'child',
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
                 agentSlug: 'relecteur',
+                agentAvatarUrl: null,
                 status: 'completed',
                 task: 'Audite le correctif de session',
                 result: ['## Verdict', '', 'Le correctif tient, une note mineure.'].join('\n'),
@@ -555,21 +559,384 @@ describe('ConversationFeedView', () => {
         }}
       />,
     );
-    expect(html2).toContain('Delegated to Le Relecteur');
-    // Le TITRE est la première ligne plate du résultat, pas la consigne, et le
-    // markdown n'y laisse pas ses dièses.
-    expect(html2).toContain('Verdict');
-    expect(html2).not.toContain('## Verdict');
+    // Les deux noms, et entre eux les mots du tableau — en minuscules, dans la
+    // couleur de la délégation. Remettre `text-ok` (l'ancienne étiquette verte)
+    // fait rougir la ligne suivante.
+    expect(html2).toContain('Intendant');
+    expect(html2).toContain('Le Relecteur');
+    expect(html2).toMatch(/text-feed-delegation[^>]*>delegated to</);
+    expect(html2).not.toContain('DELEGATED TO');
+    expect(html2).not.toContain('Delegated to Le Relecteur');
+    // La tête porte la CONSIGNE (le résultat, lui, est dans le corps).
+    expect(html2).toContain('Audite le correctif de session');
+    // L'état : la pastille à mots du tableau, et le point de couleur qui dit
+    // d'un coup d'œil que ça a atterri.
+    expect(html2).toContain('>Done<');
+    // Le POINT lui-même (8 px), pas la teinte de la pastille (`bg-ok-bg`) :
+    // c'est lui que le parcours Playwright lit en `span.bg-ok`.
+    expect(html2).toMatch(/h-2 w-2 shrink-0 rounded-full bg-ok"/);
     expect(html2).toContain('1 min 12 · 40,200 tokens · $0.14');
-    // Terminé : pastille verte, et plus de pastille d'état à mots.
-    expect(html2).toContain('bg-ok');
-    expect(html2).not.toContain('>Done<');
-    // Replié : la consigne du délégué n'est pas dans le HTML initial.
-    expect(html2).not.toContain('Audite le correctif de session');
+    // Replié : le corps n'est pas dans le HTML initial — ni le résultat du
+    // délégué, ni le lien vers son run.
+    expect(html2).not.toContain('Le correctif tient');
+    expect(html2).not.toContain('Open run');
     // Pleine largeur : plus de gouttière qui rentrerait la délégation par
     // rapport aux blocs d'outil du tour juste au-dessus (#135).
     expect(html2).not.toContain('pl-[46px]');
     expect(html2).not.toContain('ml-[46px]');
+  });
+
+  // #135 — « Les délégations ne sont jamais imbriquées ». Le fil les remonte
+  // (`buildConversationFeed`) ; l'écran refuse en plus d'en dessiner une dans
+  // une autre, pour qu'un fil assemblé à la main ne rouvre pas la porte.
+  it('une délégation n’en contient jamais une autre, même DÉPLIÉE', async () => {
+    const grandChild = {
+      id: 'job-3',
+      agentName: 'Relecteur Bis',
+      agentSlug: 'relecteur-bis',
+      agentAvatarUrl: null,
+      status: 'completed',
+      task: 'relis',
+      result: 'ça tient',
+      error: null,
+      createdAt: null,
+      completedAt: null,
+    };
+    const avecPetitEnfant: ConversationFeed = {
+      items: [
+        {
+          kind: 'child',
+          from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+          job: {
+            id: 'job-2',
+            agentName: 'Le Relecteur',
+            agentSlug: 'relecteur',
+            agentAvatarUrl: null,
+            status: 'completed',
+            task: 'fais relire',
+            result: 'revue faite',
+            error: null,
+            createdAt: null,
+            completedAt: null,
+            feed: {
+              items: [
+                {
+                  kind: 'child',
+                  from: { name: 'Le Relecteur', slug: 'relecteur', avatarUrl: null },
+                  job: grandChild,
+                },
+              ],
+              totals: feed.totals,
+            },
+          },
+        },
+      ],
+      totals: feed.totals,
+    };
+    // DÉPLIÉE : replié, le corps n'est pas dans le DOM, et le test ne prouverait
+    // rien. C'est ouvert qu'une imbrication se verrait.
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={avecPetitEnfant} />);
+    });
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la délégation n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(tete.getAttribute('aria-expanded')).toBe('true');
+    // Le corps est bien ouvert…
+    expect(container.textContent).toContain('fais relire');
+    // …et il ne porte aucune autre délégation : un seul bloc, pas de bloc dans
+    // un bloc.
+    expect(container.querySelectorAll('[data-delegation]')).toHaveLength(1);
+    expect(container.textContent).not.toContain('Relecteur Bis');
+    root.unmount();
+    container.remove();
+  });
+
+  // Un chiffre qu'on ne connaît pas ne se dessine pas : ni « $0 », ni
+  // « 0 tokens » (principe du tableau).
+  it('une délégation qui court n’invente ni durée, ni jetons, ni coût', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'child',
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+              job: {
+                id: 'job-2',
+                agentName: 'Le Relecteur',
+                agentSlug: 'relecteur',
+                agentAvatarUrl: null,
+                status: 'running',
+                task: 'Audite le correctif',
+                result: null,
+                error: null,
+                createdAt: new Date('2026-09-07T10:00:00Z'),
+                completedAt: null,
+              },
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(html2).toContain('>Running<');
+    expect(html2).not.toContain('$0');
+    expect(html2).not.toContain('0 tokens');
+    // Rien n'est encore arrivé : pas de point vert ni rouge.
+    expect(html2).not.toMatch(/rounded-full bg-ok"/);
+    expect(html2).not.toMatch(/rounded-full bg-err"/);
+  });
+
+  // #135 — un agent qui a téléversé une image se reconnaît à SON image, pas à
+  // ses initiales. Le fil porte l'URL depuis `agents.avatar_url`, de bout en
+  // bout : l'en-tête du tour, et les deux côtés d'une délégation.
+  it('un agent qui a un avatar montre son image ; sans avatar, ses initiales', () => {
+    const avecImage = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'turn',
+              index: 1,
+              turn: 1,
+              turnSource: 'audit',
+              agent: { name: 'Intendant', slug: 'intendant', avatarUrl: '/uploads/intendant.png' },
+              model: null,
+              at: null,
+              usage: null,
+              blocks: [{ kind: 'prose', text: 'Voilà.' }],
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    // next/image réécrit la source ; l'URL d'origine y reste, encodée.
+    expect(avecImage).toContain('<img');
+    expect(avecImage).toContain(encodeURIComponent('/uploads/intendant.png'));
+    // L'image REMPLACE les initiales, elle ne s'ajoute pas à côté.
+    expect(avecImage).not.toContain('>IN<');
+
+    const sansImage = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'turn',
+              index: 1,
+              turn: 1,
+              turnSource: 'audit',
+              agent: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+              model: null,
+              at: null,
+              usage: null,
+              blocks: [{ kind: 'prose', text: 'Voilà.' }],
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(sansImage).not.toContain('<img');
+    expect(sansImage).toContain('IN');
+  });
+
+  it('la tête d’une délégation montre les DEUX images : le délégant et le délégué', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'child',
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: '/uploads/intendant.png' },
+              job: {
+                id: 'job-2',
+                agentName: 'Le Relecteur',
+                agentSlug: 'relecteur',
+                agentAvatarUrl: '/uploads/relecteur.png',
+                status: 'completed',
+                task: 'relis',
+                result: 'fait',
+                error: null,
+                createdAt: null,
+                completedAt: null,
+              },
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(html2).toContain(encodeURIComponent('/uploads/intendant.png'));
+    expect(html2).toContain(encodeURIComponent('/uploads/relecteur.png'));
+  });
+
+  // #135 — la remontée des délégations ne doit RIEN emporter d'autre. Un tour
+  // qui a livré garde sa carte d'envoi, à sa place, même quand le travail a
+  // délégué : c'est ce que le propriétaire a cru perdre le 17/09.
+  it('un tour qui a envoyé garde sa carte d’envoi, même avec des délégations remontées', () => {
+    const enfant = (id: string, name: string) => ({
+      id,
+      agentName: name,
+      agentSlug: name.toLowerCase(),
+      agentAvatarUrl: null,
+      status: 'completed',
+      task: `tâche de ${name}`,
+      result: 'fait',
+      error: null,
+      createdAt: null,
+      completedAt: null,
+    });
+    const feedAvecEnvoiEtEnfants: ConversationFeed = {
+      items: [
+        {
+          kind: 'turn',
+          index: 1,
+          turn: 2,
+          turnSource: 'audit',
+          agent: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+          model: null,
+          at: null,
+          usage: null,
+          blocks: [
+            {
+              kind: 'card',
+              step: tool({
+                toolName: 'dashboard_publish',
+                card: 'sent',
+                input: { text: 'La revue est prête.' },
+                presented: { card: 'sent', channel: 'dashboard', kind: 'message', target: 'x' },
+              }),
+            },
+          ],
+        },
+        {
+          kind: 'child',
+          from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+          job: {
+            ...enfant('job-2', 'Chef d’atelier'),
+            feed: { items: [], totals: feed.totals },
+          },
+        },
+        {
+          kind: 'child',
+          from: { name: 'Chef d’atelier', slug: 'chef-d-atelier', avatarUrl: null },
+          job: enfant('job-3', 'Codeur Bis'),
+        },
+      ],
+      totals: feed.totals,
+    };
+    const html2 = renderToStaticMarkup(<ConversationFeedView feed={feedAvecEnvoiEtEnfants} />);
+    expect(html2).toContain('Sent to dashboard');
+    // Et à sa place : AVANT les délégations, dans le tour qui a livré.
+    expect(html2.indexOf('Sent to dashboard')).toBeLessThan(html2.indexOf('data-delegation'));
+    expect(html2.match(/data-delegation/g)?.length ?? 0).toBe(2);
+  });
+
+  // Revue PR #141 — un délégué qui vient de démarrer a DÉJÀ des totaux, à zéro.
+  // « 0 tokens » n'est pas une mesure, c'est l'absence de mesure.
+  it('une délégation dont le délégué n’a encore rien consommé n’écrit pas « 0 tokens »', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'child',
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+              job: {
+                id: 'job-2',
+                agentName: 'Le Relecteur',
+                agentSlug: 'relecteur',
+                agentAvatarUrl: null,
+                status: 'running',
+                task: 'relis le correctif',
+                result: null,
+                error: null,
+                createdAt: new Date('2026-09-07T10:00:00Z'),
+                completedAt: null,
+                // Le fil est ASSEMBLÉ : les totaux existent, tous à zéro.
+                feed: {
+                  items: [],
+                  totals: {
+                    ...feed.totals,
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cachedTokens: 0,
+                    cacheCreationTokens: 0,
+                    costUsd: null,
+                  },
+                },
+              },
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(html2).not.toContain('tokens');
+    expect(html2).not.toContain('$0');
+  });
+
+  // Revue PR #141 — le pied tient sur une ligne, donc le verdict y tient sur
+  // une ligne. Le reste du verdict n'est pas perdu pour autant : le corps
+  // montre le résultat en ENTIER, juste au-dessus.
+  it('un verdict de plusieurs lignes garde tout son texte dans le corps', async () => {
+    const verdict = [
+      '**Verdict global : APPROVE** — aucun constat bloquant ; 5 mineurs.',
+      '',
+      'Le détail qui suit la première ligne compte autant : GARDE-MOI.',
+    ].join('\n');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ConversationFeedView
+          feed={{
+            items: [
+              {
+                kind: 'child',
+                from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+                job: {
+                  id: 'job-2',
+                  agentName: 'Le Relecteur',
+                  agentSlug: 'relecteur',
+                  agentAvatarUrl: null,
+                  status: 'completed',
+                  task: 'relis',
+                  result: verdict,
+                  error: null,
+                  createdAt: null,
+                  completedAt: null,
+                },
+              },
+            ],
+            totals: feed.totals,
+          }}
+        />,
+      );
+    });
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la délégation n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // Le pied dit le verdict, en une ligne, dans sa couleur. « Verdict global »
+    // est une forme RÉELLE des résultats de revue, pas une invention du test.
+    const pied = [...container.querySelectorAll('.text-feed-delegation')]
+      .map((n) => n.textContent ?? '')
+      .find((t) => t.includes('APPROVE'));
+    expect(pied).toBe('APPROVE — aucun constat bloquant ; 5 mineurs.');
+    // Et la suite du verdict est là, entière, dans le corps.
+    expect(container.textContent).toContain('GARDE-MOI');
+    root.unmount();
+    container.remove();
   });
 
   it('la réponse ferme le fil, après l’envoi', () => {

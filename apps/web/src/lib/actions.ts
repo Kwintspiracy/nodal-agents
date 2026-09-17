@@ -2403,7 +2403,12 @@ export async function getSpaceConversationAction(
     const db = getDb();
 
     const [row] = await db
-      .select({ job: agentJobs, agentName: agents.name, agentSlug: agents.slug })
+      .select({
+        job: agentJobs,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
+      })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
@@ -2416,6 +2421,7 @@ export async function getSpaceConversationAction(
       job,
       agentName: row.agentName,
       agentSlug: row.agentSlug,
+      agentAvatarUrl: row.agentAvatarUrl,
     });
 
     // P3 — les preuves du travail ET de ses délégués (T24 : la preuve d'un

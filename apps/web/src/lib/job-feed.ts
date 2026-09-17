@@ -35,6 +35,7 @@ export type JobFeedInput = {
   job: typeof agentJobs.$inferSelect;
   agentName: string | null;
   agentSlug: string | null;
+  agentAvatarUrl: string | null;
 };
 
 export type JobFeedResult = {
@@ -148,6 +149,7 @@ export async function assembleJobFeeds(
         id: agentJobs.id,
         agentName: agents.name,
         agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
         status: agentJobs.status,
         task: agentJobs.task,
         result: agentJobs.result,
@@ -240,7 +242,12 @@ export async function assembleJobFeeds(
   const openable = childRows.slice(-CHILD_FEEDS_MAX).map((r) => r.id);
   if (depth < CHILD_FEED_DEPTH && openable.length > 0) {
     const childJobs = await db
-      .select({ job: agentJobs, agentName: agents.name, agentSlug: agents.slug })
+      .select({
+        job: agentJobs,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
+      })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
       .where(and(inArray(agentJobs.id, openable), eq(agentJobs.entityId, entityId)))
@@ -285,6 +292,7 @@ export async function assembleJobFeeds(
         error: job.error,
         agentName: input.agentName,
         agentSlug: input.agentSlug,
+        agentAvatarUrl: input.agentAvatarUrl,
         createdAt: job.createdAt,
         completedAt: job.completedAt,
         messages,
