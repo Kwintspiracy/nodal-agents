@@ -201,6 +201,12 @@ import {
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG, AgentSlugSchema } from '@nodal-agents/shared';
+import {
+  reasoningOptionValues,
+  isSelectableModel,
+  catalogModelChoices,
+  type ModelChoice,
+} from './model-choices.ts';
 import type { ConversationFeed, Step } from './conversation-feed.ts';
 import {
   parsePresented,
@@ -7072,6 +7078,160 @@ export async function setAgentCommandAllowlistAction(raw: unknown): Promise<Acti
   } catch (err) {
     console.error('[setAgentCommandAllowlistAction]', err);
     return fail('db_error', 'Failed to save the command allowlist');
+  }
+}
+
+// ─── Modèle et effort d'un agent, réglés depuis le composeur (#138) ──────────
+//
+// Le MÊME champ que l'écran d'édition (`agents.model` / `agents.reasoning_effort`),
+// écrit depuis la pastille du composeur de chat. Ce n'est donc pas un réglage
+// « de cette conversation » : il vaut pour tous les canaux, et la pastille le
+// dit en toutes lettres.
+//
+// Les deux refus sont ici, pas seulement dans l'écran (inv. #4 — échouer fort,
+// jamais rabattre en silence) :
+//   • un effort que le contrôle du modèle n'offre PAS est refusé plutôt que
+//     ramené à « Auto » ; un agent réglé sur « max » sur un modèle sans palier
+//     partirait avec un réglage que rien n'honore.
+//   • un modèle hors du catalogue du fournisseur est refusé, SAUF s'il est
+//     déjà celui de l'agent : la pastille n'offre que des modèles catalogués,
+//     mais un agent posé sur un identifiant libre depuis l'écran d'édition doit
+//     encore pouvoir changer d'effort sans perdre son modèle.
+
+const SetAgentModelAndEffortSchema = z.object({
+  agentId: z.string().guid(),
+  model: z.string().trim().min(1, 'Pick a model').max(200),
+  reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable(),
+});
+
+export async function setAgentModelAndEffortAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentModelAndEffortSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, model, reasoningEffort } = parsed.data;
+
+    // Même garde de propriété que setAgentCommandAllowlistAction /
+    // setCliRuntimeModeAction : changer le modèle d'un agent change ce que
+    // l'espace dépense et ce qu'il sait faire.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', "Only the workspace owner can change an agent's model.");
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, model: agents.model, llmKeyId: agents.llmKeyId })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Le fournisseur de la clé primaire de l'agent : c'est lui qui décide du
+    // catalogue et donc des paliers d'effort. Sans clé, aucun catalogue à
+    // opposer — le modèle passe tel quel, et l'effort ne peut être qu'Auto.
+    let provider = '';
+    if (agent.llmKeyId) {
+      const [key] = await db
+        .select({ provider: entityLlmKeys.provider })
+        .from(entityLlmKeys)
+        .where(
+          and(eq(entityLlmKeys.id, agent.llmKeyId), eq(entityLlmKeys.entityId, session.entityId)),
+        );
+      provider = key?.provider ?? '';
+    }
+
+    const current = agent.model ?? '';
+    if (!isSelectableModel(provider, model, current)) {
+      return fail('validation_failed', `"${model}" is not a model this agent's key offers.`);
+    }
+    if (
+      reasoningEffort !== null &&
+      !reasoningOptionValues(provider, model).includes(reasoningEffort)
+    ) {
+      return fail(
+        'validation_failed',
+        `"${model}" does not offer a "${reasoningEffort}" reasoning effort.`,
+      );
+    }
+
+    await db
+      .update(agents)
+      .set({ model, reasoningEffort, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    // La pastille vit dans le chat ; le même réglage se lit sur l'écran de
+    // l'agent et sur la page d'un projet.
+    revalidatePath(`/agents/${agentId}/edit`);
+    revalidatePath('/chat', 'layout');
+    revalidatePath('/spaces', 'layout');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentModelAndEffortAction]', err);
+    return fail('db_error', "Failed to save the agent's model");
+  }
+}
+
+/** Ce que la pastille du composeur affiche et propose, pour un agent. */
+export interface AgentModelChoices {
+  model: string;
+  reasoningEffort: string | null;
+  modelOptions: ModelChoice[];
+  /** Les paliers d'effort de chaque modèle proposé — voir `ModelEffortChip`. */
+  effortsByModel: Record<string, string[]>;
+}
+
+/**
+ * Lu par les PAGES (composants serveur) qui montent le composeur, pour que la
+ * pastille reste un composant client sans requête à elle. Le catalogue est
+ * statique : ce calcul ne coûte qu'une lecture de la ligne de l'agent et de
+ * celle de sa clé.
+ */
+export async function getAgentModelChoicesAction(
+  agentId: string,
+): Promise<ActionResult<AgentModelChoices>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [agent] = await db
+      .select({
+        model: agents.model,
+        reasoningEffort: agents.reasoningEffort,
+        llmKeyId: agents.llmKeyId,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    let provider = '';
+    if (agent.llmKeyId) {
+      const [key] = await db
+        .select({ provider: entityLlmKeys.provider })
+        .from(entityLlmKeys)
+        .where(
+          and(eq(entityLlmKeys.id, agent.llmKeyId), eq(entityLlmKeys.entityId, session.entityId)),
+        );
+      provider = key?.provider ?? '';
+    }
+
+    const model = agent.model ?? '';
+    const modelOptions = catalogModelChoices(provider, model);
+    const effortsByModel: Record<string, string[]> = {};
+    for (const option of modelOptions) {
+      effortsByModel[option.modelId] = reasoningOptionValues(provider, option.modelId);
+    }
+    return ok({ model, reasoningEffort: agent.reasoningEffort, modelOptions, effortsByModel });
+  } catch (err) {
+    console.error('[getAgentModelChoicesAction]', err);
+    return fail('db_error', "Failed to read the agent's model options");
   }
 }
 

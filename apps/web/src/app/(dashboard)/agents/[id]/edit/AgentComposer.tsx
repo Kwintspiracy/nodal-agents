@@ -80,6 +80,7 @@ import {
   modelOptionLabel,
   modelToolsSupport,
 } from '@nodal-agents/shared';
+import { reasoningOptionValues, REASONING_LABELS } from '@/lib/model-choices.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
@@ -196,28 +197,11 @@ function dbRoleToUiRole(
 }
 
 // ── Reasoning effort options (per-agent effort brick) ─────────────────────────
-// The selectable values for a given provider+model, straight from the catalog's
-// reasoningControl: the model's declared levels, plus 'off' unless reasoning is
-// mandatory. Empty array = nothing controllable → the field is hidden.
-const REASONING_BUDGET_ORDER = ['low', 'medium', 'high', 'max'] as const;
-function reasoningOptionValues(provider: string, modelId: string): string[] {
-  const control = findModelCatalogEntry(provider, modelId)?.capabilities.reasoningControl;
-  if (!control) return [];
-  const levels =
-    control.kind === 'onoff'
-      ? []
-      : control.kind === 'budget'
-        ? REASONING_BUDGET_ORDER.filter((l) => control.budgets?.[l])
-        : (control.levels ?? []);
-  return control.mandatory ? [...levels] : [...levels, 'off'];
-}
-const REASONING_LABELS: Record<string, string> = {
-  off: 'Off',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  max: 'Max',
-};
+// `reasoningOptionValues` et `REASONING_LABELS` vivaient ICI ; ils sont partis
+// dans `@/lib/model-choices.ts`, sans une ligne de changement, parce que la
+// pastille du composeur de chat (#138) règle le MÊME champ et doit obéir à la
+// même règle — et parce que l'action serveur qui écrit la ligne la vérifie avec
+// la même fonction.
 
 interface Props {
   agent: AgentEditRow;
