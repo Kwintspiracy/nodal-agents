@@ -529,14 +529,14 @@ describe('ConversationFeedView', () => {
 
   // #135 — la tête d'une délégation se lit comme une phrase : QUI a délégué, à
   // QUI, pour QUOI. Tout replié, la chaîne entière reste lisible.
-  it('la tête d’une délégation dit « Alfred delegated to Le Relecteur », la consigne, l’état et les chiffres', () => {
+  it('la tête d’une délégation dit « Intendant delegated to Le Relecteur », la consigne, l’état et les chiffres', () => {
     const html2 = renderToStaticMarkup(
       <ConversationFeedView
         feed={{
           items: [
             {
               kind: 'child',
-              from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
@@ -562,7 +562,7 @@ describe('ConversationFeedView', () => {
     // Les deux noms, et entre eux les mots du tableau — en minuscules, dans la
     // couleur de la délégation. Remettre `text-ok` (l'ancienne étiquette verte)
     // fait rougir la ligne suivante.
-    expect(html2).toContain('Alfred');
+    expect(html2).toContain('Intendant');
     expect(html2).toContain('Le Relecteur');
     expect(html2).toMatch(/text-feed-delegation[^>]*>delegated to</);
     expect(html2).not.toContain('DELEGATED TO');
@@ -592,8 +592,8 @@ describe('ConversationFeedView', () => {
   it('une délégation n’en contient jamais une autre, même DÉPLIÉE', async () => {
     const grandChild = {
       id: 'job-3',
-      agentName: 'Reviewer C',
-      agentSlug: 'reviewer-c',
+      agentName: 'Relecteur Bis',
+      agentSlug: 'relecteur-bis',
       agentAvatarUrl: null,
       status: 'completed',
       task: 'relis',
@@ -606,7 +606,7 @@ describe('ConversationFeedView', () => {
       items: [
         {
           kind: 'child',
-          from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+          from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
           job: {
             id: 'job-2',
             agentName: 'Le Relecteur',
@@ -652,7 +652,7 @@ describe('ConversationFeedView', () => {
     // …et il ne porte aucune autre délégation : un seul bloc, pas de bloc dans
     // un bloc.
     expect(container.querySelectorAll('[data-delegation]')).toHaveLength(1);
-    expect(container.textContent).not.toContain('Reviewer C');
+    expect(container.textContent).not.toContain('Relecteur Bis');
     root.unmount();
     container.remove();
   });
@@ -666,7 +666,7 @@ describe('ConversationFeedView', () => {
           items: [
             {
               kind: 'child',
-              from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
@@ -706,7 +706,7 @@ describe('ConversationFeedView', () => {
               index: 1,
               turn: 1,
               turnSource: 'audit',
-              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: '/uploads/alfred.png' },
+              agent: { name: 'Intendant', slug: 'intendant', avatarUrl: '/uploads/intendant.png' },
               model: null,
               at: null,
               usage: null,
@@ -719,9 +719,9 @@ describe('ConversationFeedView', () => {
     );
     // next/image réécrit la source ; l'URL d'origine y reste, encodée.
     expect(avecImage).toContain('<img');
-    expect(avecImage).toContain(encodeURIComponent('/uploads/alfred.png'));
+    expect(avecImage).toContain(encodeURIComponent('/uploads/intendant.png'));
     // L'image REMPLACE les initiales, elle ne s'ajoute pas à côté.
-    expect(avecImage).not.toContain('>AL<');
+    expect(avecImage).not.toContain('>IN<');
 
     const sansImage = renderToStaticMarkup(
       <ConversationFeedView
@@ -732,7 +732,7 @@ describe('ConversationFeedView', () => {
               index: 1,
               turn: 1,
               turnSource: 'audit',
-              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+              agent: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
               model: null,
               at: null,
               usage: null,
@@ -744,7 +744,7 @@ describe('ConversationFeedView', () => {
       />,
     );
     expect(sansImage).not.toContain('<img');
-    expect(sansImage).toContain('AL');
+    expect(sansImage).toContain('IN');
   });
 
   it('la tête d’une délégation montre les DEUX images : le délégant et le délégué', () => {
@@ -754,7 +754,7 @@ describe('ConversationFeedView', () => {
           items: [
             {
               kind: 'child',
-              from: { name: 'Alfred', slug: 'alfred', avatarUrl: '/uploads/alfred.png' },
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: '/uploads/intendant.png' },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
@@ -773,7 +773,7 @@ describe('ConversationFeedView', () => {
         }}
       />,
     );
-    expect(html2).toContain(encodeURIComponent('/uploads/alfred.png'));
+    expect(html2).toContain(encodeURIComponent('/uploads/intendant.png'));
     expect(html2).toContain(encodeURIComponent('/uploads/relecteur.png'));
   });
 
@@ -800,7 +800,7 @@ describe('ConversationFeedView', () => {
           index: 1,
           turn: 2,
           turnSource: 'audit',
-          agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+          agent: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
           model: null,
           at: null,
           usage: null,
@@ -818,16 +818,16 @@ describe('ConversationFeedView', () => {
         },
         {
           kind: 'child',
-          from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+          from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
           job: {
-            ...enfant('job-2', 'Lead-Dev'),
+            ...enfant('job-2', 'Chef d’atelier'),
             feed: { items: [], totals: feed.totals },
           },
         },
         {
           kind: 'child',
-          from: { name: 'Lead-Dev', slug: 'lead-dev', avatarUrl: null },
-          job: enfant('job-3', 'Dev C'),
+          from: { name: 'Chef d’atelier', slug: 'chef-d-atelier', avatarUrl: null },
+          job: enfant('job-3', 'Codeur Bis'),
         },
       ],
       totals: feed.totals,

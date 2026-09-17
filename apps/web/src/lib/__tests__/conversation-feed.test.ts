@@ -964,8 +964,8 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
   it('une délégation qui délègue à son tour devient un bloc FRÈRE, jamais imbriqué', () => {
     const grandChild = {
       id: 'grandchild-1',
-      agentName: 'Reviewer C',
-      agentSlug: 'reviewer-c',
+      agentName: 'Relecteur Bis',
+      agentSlug: 'relecteur-bis',
       agentAvatarUrl: null,
       status: 'completed',
       task: 'relis le correctif',
