@@ -13,7 +13,6 @@
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   ChatCircle,
-  Clock,
   DiscordLogo,
   PaperPlaneTilt,
   SlackLogo,
@@ -24,7 +23,7 @@ import {
 import InboxFolder from './ui/InboxFolder';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
-import { chatFolders, DASHBOARD_FOLDER, ROUTINES_FOLDER } from '@/lib/chat-folders.ts';
+import { chatFolders, DASHBOARD_FOLDER } from '@/lib/chat-folders.ts';
 
 /**
  * L'icône d'un dossier. Les logos de marque quand le paquet d'icônes en a un —
@@ -38,7 +37,6 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
   discord: DiscordLogo,
   whatsapp: WhatsappLogo,
   [DASHBOARD_FOLDER]: ChatCircle,
-  [ROUTINES_FOLDER]: Clock,
 };
 
 export default function ChatFolderGroup() {

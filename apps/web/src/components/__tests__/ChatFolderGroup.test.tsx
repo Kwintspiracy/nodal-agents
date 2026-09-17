@@ -101,7 +101,8 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
     expect(folderRow('telegram').getAttribute('href')).toBe('/chat?folder=telegram');
     expect(folderRow('slack').getAttribute('href')).toBe('/chat?folder=slack');
     expect(folderRow('dashboard').textContent).toContain('Nodal chats');
-    expect(folderRow('routines').getAttribute('href')).toBe('/scheduled');
+    // Pas de dossier Routines : une automation n'est pas un dialogue.
+    expect(container.querySelector('[data-testid="inbox-folder-routines"]')).toBeNull();
   });
 
   it('ne rend AUCUNE ligne pour un canal sans conversation', async () => {
@@ -146,11 +147,11 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
     expect(folderRow('slack').getAttribute('aria-current')).toBeNull();
   });
 
-  it('marque « Routines » sur la page des runs programmés', async () => {
+  it('sur la page des runs programmés, aucun dossier n’est marqué — Scheduled a son propre lien', async () => {
     pathname = '/scheduled';
     await renderGroup({ channels: ['telegram'] });
-    expect(folderRow('routines').getAttribute('aria-current')).toBe('page');
     expect(folderRow('telegram').getAttribute('aria-current')).toBeNull();
+    expect(folderRow('dashboard').getAttribute('aria-current')).toBeNull();
   });
 });
 

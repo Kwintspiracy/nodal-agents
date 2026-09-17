@@ -17,7 +17,6 @@ import {
   chatWaitingTotal,
   folderOfJobChannel,
   DASHBOARD_FOLDER,
-  ROUTINES_FOLDER,
   RUNNING_JOB_STATUSES,
 } from '../chat-folders.ts';
 
@@ -52,7 +51,6 @@ describe("l'attribution d'une attente à son dossier @cap:reprendre-conversation
     expect(byKey(rows, 'telegram').waiting).toBe(2);
     expect(byKey(rows, 'slack').waiting).toBe(1);
     expect(byKey(rows, DASHBOARD_FOLDER).waiting).toBe(0);
-    expect(byKey(rows, ROUTINES_FOLDER).waiting).toBe(0);
   });
 
   it('range une demande du dashboard dans « Nodal chats », jamais dans un canal', () => {
@@ -61,10 +59,14 @@ describe("l'attribution d'une attente à son dossier @cap:reprendre-conversation
     expect(byKey(rows, 'telegram').waiting).toBe(0);
   });
 
-  it('range une demande d’un run programmé dans « Routines »', () => {
+  it('ne range PAS une demande d’un run programmé : une automation n’est pas un dialogue', () => {
+    // Quentin, 17/09 : « il n'y a aucun échange entre l'utilisateur et
+    // l'agent » — pas de dossier Routines sous Channels. La demande reste
+    // entière sur /approvals.
+    expect(folderOfJobChannel('cron')).toBeNull();
     const rows = folders({ waiting: waiting('cron') });
-    expect(byKey(rows, ROUTINES_FOLDER).waiting).toBe(1);
-    expect(byKey(rows, DASHBOARD_FOLDER).waiting).toBe(0);
+    expect(rows.map((r) => r.key)).toEqual([DASHBOARD_FOLDER]);
+    expect(rows.every((r) => r.waiting === 0)).toBe(true);
   });
 
   it('ne range dans AUCUN dossier ce qui ne vient d’aucun d’eux', () => {
@@ -82,13 +84,7 @@ describe("l'attribution d'une attente à son dossier @cap:reprendre-conversation
 describe('les dossiers qui existent @cap:reprendre-conversation/moteur', () => {
   it('donne un dossier à chaque canal qui porte des conversations, dans l’ordre de la maquette', () => {
     const rows = folders({ channels: ['whatsapp', 'telegram', 'discord'] });
-    expect(rows.map((r) => r.key)).toEqual([
-      'telegram',
-      'discord',
-      'whatsapp',
-      DASHBOARD_FOLDER,
-      ROUTINES_FOLDER,
-    ]);
+    expect(rows.map((r) => r.key)).toEqual(['telegram', 'discord', 'whatsapp', DASHBOARD_FOLDER]);
   });
 
   it('n’invente pas de dossier pour un canal sans conversation', () => {
@@ -103,9 +99,9 @@ describe('les dossiers qui existent @cap:reprendre-conversation/moteur', () => {
     expect(byKey(rows, 'slack').waiting).toBe(1);
   });
 
-  it('garde « Nodal chats » et « Routines » même vides — ce sont deux destinations, pas deux contenus', () => {
+  it('garde « Nodal chats » même vide — c’est une destination, pas un contenu', () => {
     const rows = folders();
-    expect(rows.map((r) => r.key)).toEqual([DASHBOARD_FOLDER, ROUTINES_FOLDER]);
+    expect(rows.map((r) => r.key)).toEqual([DASHBOARD_FOLDER]);
   });
 
   it('nomme et lie chaque dossier', () => {
@@ -116,9 +112,8 @@ describe('les dossiers qui existent @cap:reprendre-conversation/moteur', () => {
     expect(byKey(rows, 'whatsapp').label).toBe('WhatsApp');
     expect(byKey(rows, DASHBOARD_FOLDER).label).toBe('Nodal chats');
     expect(byKey(rows, DASHBOARD_FOLDER).href).toBe('/chat?folder=dashboard');
-    // Les routines ont leur PAGE, pas un filtre de /chat.
-    expect(byKey(rows, ROUTINES_FOLDER).label).toBe('Routines');
-    expect(byKey(rows, ROUTINES_FOLDER).href).toBe('/scheduled');
+    // Aucun dossier ne mène ailleurs que sur /chat : les routines ne sont pas là.
+    expect(rows.every((r) => r.href.startsWith('/chat?folder='))).toBe(true);
   });
 });
 
@@ -167,10 +162,12 @@ describe('le dossier ouvert @cap:reprendre-conversation/moteur', () => {
     expect(rows.every((r) => !r.active)).toBe(true);
   });
 
-  it('allume « Routines » sur la page des runs programmés, et sur un run', () => {
-    expect(byKey(folders({ pathname: '/scheduled' }), ROUTINES_FOLDER).active).toBe(true);
-    expect(byKey(folders({ pathname: '/scheduled/abc' }), ROUTINES_FOLDER).active).toBe(true);
-    expect(byKey(folders({ pathname: '/chat' }), ROUTINES_FOLDER).active).toBe(false);
+  it('n’allume AUCUN dossier sur la page des runs programmés : Scheduled a son propre lien', () => {
+    // Quentin, 17/09 : « si je sélectionne Scheduled, ça sélectionne aussi
+    // Routines, on ne sait plus où on est ».
+    const rows = folders({ channels: ['telegram'], pathname: '/scheduled' });
+    expect(rows.every((r) => !r.active)).toBe(true);
+    expect(rows.map((r) => r.key)).not.toContain('routines');
   });
 });
 
@@ -184,7 +181,9 @@ describe('le compte du lien « Chat » @cap:reprendre-conversation/moteur', () =
     const rows = chatFolders({ ...input, pathname: '/chat', folderParam: null });
     const somme = rows.reduce((n, r) => n + r.waiting, 0);
     expect(chatWaitingTotal(input)).toBe(somme);
-    expect(chatWaitingTotal(input)).toBe(5);
+    // Quatre : telegram ×2, slack, dashboard. La demande `cron` n'a pas de
+    // dossier ici, elle reste sur /approvals.
+    expect(chatWaitingTotal(input)).toBe(4);
   });
 
   it('ne compte pas ce qui n’est dans aucun dossier', () => {

@@ -9,7 +9,7 @@
 // page complète. Montrer « 0 conversation » sous un nom de dossier inventé
 // ferait croire à un dossier vide là où il n'y a pas de dossier du tout.
 
-import { DASHBOARD_FOLDER, folderLabel, ROUTINES_FOLDER } from '@/lib/chat-folders.ts';
+import { DASHBOARD_FOLDER, folderLabel } from '@/lib/chat-folders.ts';
 
 export type ChatFolderView = {
   /** Le dossier retenu, ou `null` quand l'URL n'en désigne aucun de valide. */
@@ -54,9 +54,8 @@ export function chatFolderView(
       showDashboard: true,
     };
   }
-  // « Routines » a sa propre page (`/scheduled`) ; elle n'est jamais une vue de
-  // `/chat`, et un lien fabriqué à la main ne doit pas en inventer une.
-  if (folderParam === ROUTINES_FOLDER) return FULL_VIEW;
+  // Un `folder=` que le menu ne propose pas (une valeur tapée à la main, un
+  // canal sans conversation) rend la page entière, jamais une vue vide.
   if (!channels.includes(folderParam)) return FULL_VIEW;
   return {
     key: folderParam,

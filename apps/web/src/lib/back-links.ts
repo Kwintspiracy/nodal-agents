@@ -29,7 +29,7 @@ export function threadBackLink(channel: string): BackLink {
  * la liste des runs.
  */
 export function runBackLink(job: { channel: string; conversationId: string | null }): BackLink {
-  if (job.channel === 'cron') return { label: 'Back to Routines', href: '/scheduled' };
+  if (job.channel === 'cron') return { label: 'Back to Scheduled', href: '/scheduled' };
   if (job.conversationId !== null && job.conversationId !== '') {
     return { label: 'Back to the conversation', href: `/chat/${job.conversationId}` };
   }

@@ -47,7 +47,7 @@ describe('la vue d’un dossier @cap:reprendre-conversation/moteur', () => {
     expect(v.showDashboard).toBe(true);
   });
 
-  it('sur « Routines », redevient la page entière — les routines ont leur page', () => {
+  it('sur un dossier que le menu ne propose pas, redevient la page entière', () => {
     const v = chatFolderView('routines', CHANNELS);
     expect(v.key).toBeNull();
     expect(v.title).toBe('Channels');

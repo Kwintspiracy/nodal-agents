@@ -30,9 +30,9 @@ describe('threadBackLink — un fil revient dans SON dossier', () => {
 });
 
 describe('runBackLink — un run revient là d’où on l’ouvre', () => {
-  it('une automation revient aux routines, même si elle a une conversation', () => {
+  it('une automation revient à Scheduled, même si elle a une conversation', () => {
     expect(runBackLink({ channel: 'cron', conversationId: 'c1' })).toEqual({
-      label: 'Back to Routines',
+      label: 'Back to Scheduled',
       href: '/scheduled',
     });
   });
