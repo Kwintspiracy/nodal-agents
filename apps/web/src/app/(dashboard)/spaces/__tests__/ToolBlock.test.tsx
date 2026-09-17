@@ -122,6 +122,23 @@ describe('ToolBlock', () => {
     expect(html).toMatch(/class="[^"]*text-feed-metric[^"]*"[^>]*>300 ms</);
   });
 
+  it('replié, le corps est ABSENT du DOM — pas seulement masqué', async () => {
+    // La différence compte : un corps rendu puis caché en CSS reste dans le
+    // document (il pèse, il se lit au clavier, il sort dans un copier-coller).
+    // Le bloc promet de ne pas le rendre du tout tant qu'on ne l'a pas ouvert.
+    const container = await mount(searchStep);
+    expect(container.innerHTML).not.toContain('Input');
+    expect(container.innerHTML).not.toContain('Result');
+    expect(container.innerHTML).not.toContain('12 matches');
+    expect(container.querySelectorAll('pre')).toHaveLength(0);
+
+    await clickHead(container);
+
+    expect(container.innerHTML).toContain('Input');
+    expect(container.innerHTML).toContain('Result');
+    expect(container.innerHTML).toContain('12 matches');
+  });
+
   it('le clic ouvre le corps : l’entrée complète, puis le résultat', async () => {
     const container = await mount(searchStep);
     expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('false');

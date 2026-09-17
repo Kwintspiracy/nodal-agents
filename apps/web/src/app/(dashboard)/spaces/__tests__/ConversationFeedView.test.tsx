@@ -189,6 +189,23 @@ describe('ConversationFeedView', () => {
     expect(html).toContain('9.4 s · $0.05');
   });
 
+  it('la ligne d’appel du modèle est le DERNIER bloc du tour', () => {
+    // Le tour ne date pas son appel de modèle : il va donc après tout ce que
+    // le tour a fait, jamais au-dessus. Le nom du modèle paraît deux fois —
+    // dans l'en-tête en Mono/11, dans la ligne d'appel en Mono/12 — et c'est
+    // la SECONDE qu'on situe ici.
+    const ligneModele = html.indexOf('text-mono-12 text-feed-model');
+    const raisonnement = html.indexOf('text-feed-reasoning');
+    const outil = html.lastIndexOf('text-feed-tool');
+    expect(ligneModele).toBeGreaterThan(-1);
+    expect(raisonnement).toBeGreaterThan(-1);
+    expect(outil).toBeGreaterThan(-1);
+    expect(ligneModele).toBeGreaterThan(raisonnement);
+    expect(ligneModele).toBeGreaterThan(outil);
+    // Et l'en-tête du tour, lui, précède tout le reste.
+    expect(html.indexOf('text-mono-11 text-feed-model')).toBeLessThan(raisonnement);
+  });
+
   it('le markdown de la prose est RENDU : plus d’astérisques à l’écran', () => {
     expect(html).toContain('<strong class="font-semibold text-ink">format</strong>');
     expect(html).not.toContain('**format**');
