@@ -369,3 +369,55 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     expect(listKeyModelsAction.mock.calls).toEqual([]);
   });
 });
+
+// ─── La rangée d'actions : une seule ligne, et l'envoi qui se voit ───────────
+//
+// Deux demandes de Quentin sur la rangée, et deux faits mesurables : les
+// listes ne dépassent pas le bouton, et le bouton CHANGE DE COULEUR quand il
+// y a quelque chose à envoyer. Les classes sont écrites EN DUR ici, jamais
+// lues depuis les composants : un test qui lit la valeur qu'il prouve reste
+// vert quand on la change.
+
+function sendButton(): HTMLButtonElement {
+  const buttons = [...container.querySelectorAll('button')];
+  const el = buttons.find((b) => b.textContent === 'Send' || b.textContent === 'Sending…');
+  if (!el) throw new Error('no Send button rendered');
+  return el;
+}
+
+describe('ThreadComposer — la rangée d’actions @cap:parler-a-un-agent/ecran', () => {
+  it('les trois listes font la hauteur du bouton, pas plus', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await settle();
+    // 30 px : la taille `sm`, celle de PrimaryButton.
+    expect(sendButton().className).toContain('h-[30px]');
+    for (const name of ['provider', 'model', 'effort'] as const) {
+      expect(select(name).className).toContain('h-[30px]');
+      // Et pas la hauteur des champs de formulaire, qui ferait deux lignes.
+      expect(select(name).className).not.toContain('h-8.5');
+      expect(select(name).className).toContain('text-body-13');
+      expect(select(name).className).not.toContain('text-body-14');
+    }
+  });
+
+  it('l’envoi est VIF dès qu’il y a du texte, neutre quand il n’y a rien', async () => {
+    await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
+    // Rien à envoyer : cliquer ne ferait rien, et le bouton ne le promet pas.
+    expect(sendButton().className).toContain('bg-paper');
+    expect(sendButton().className).not.toContain('bg-agent-vivid');
+    expect(sendButton().disabled).toBe(true);
+
+    await type('bonjour');
+    // Le changement de couleur EST le signal « on peut envoyer ».
+    expect(sendButton().className).toContain('bg-agent-vivid');
+    expect(sendButton().className).not.toContain('bg-paper');
+    expect(sendButton().disabled).toBe(false);
+  });
+
+  it('un texte fait d’espaces ne rend pas l’envoi vif', async () => {
+    await render(<ThreadComposer conversationId="conv-1" />);
+    await type('    ');
+    expect(sendButton().className).not.toContain('bg-agent-vivid');
+    expect(sendButton().disabled).toBe(true);
+  });
+});

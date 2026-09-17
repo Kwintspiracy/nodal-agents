@@ -62,7 +62,13 @@ export default function ModelEffortControls({
   /** Les clés ACTIVES de l'espace, dans l'ordre où l'écran d'édition les offre. */
   llmKeys: ComposerLlmKey[];
 }) {
-  // L'état AFFICHÉ : il ne bouge qu'après un écrit réussi.
+  // L'état AFFICHÉ : il part des props et ne bouge ensuite qu'après un écrit
+  // réussi. Le réglage peut aussi changer AILLEURS (l'écran de l'agent) ; la
+  // page relue repasse alors d'autres props, et c'est la `key` posée par
+  // `ThreadComposer` qui remonte ce composant sur elles. PAS un effet qui
+  // recopierait les props dans l'état : recopier dans un effet déclenche un
+  // second rendu en cascade, et la règle React du dépôt le refuse (lint CI,
+  // rouge sur 9cdb718b).
   const [current, setCurrent] = useState({
     llmKeyId,
     model,
@@ -73,12 +79,6 @@ export default function ModelEffortControls({
   // d'édition. `undefined` = pas encore demandé ; `[]` = demandé et rien reçu,
   // le repli exact de l'écran d'édition (il ne reste que le catalogue).
   const [liveModels, setLiveModels] = useState<Record<string, string[]>>({});
-
-  // Le réglage peut changer ailleurs (l'écran de l'agent) : la page relue
-  // repasse les props, et les listes suivent plutôt que de figer leur copie.
-  useEffect(() => {
-    setCurrent({ llmKeyId, model, effort: reasoningEffort ?? AUTO });
-  }, [llmKeyId, model, reasoningEffort]);
 
   useEffect(() => {
     const id = current.llmKeyId;
@@ -155,12 +155,13 @@ export default function ModelEffortControls({
       <Select
         aria-label="Provider"
         title={SCOPE_HINT}
+        size="sm"
         data-testid="composer-provider"
         value={keyId}
         disabled={isSaving}
         onChange={(e) => onProvider(e.target.value)}
         containerClassName="min-w-0"
-        className="!max-w-[170px] !truncate !text-body-13"
+        className="!max-w-[170px] !truncate"
       >
         {llmKeys.map((k) => (
           <option key={k.id} value={k.id}>
@@ -172,12 +173,13 @@ export default function ModelEffortControls({
       <Select
         aria-label="Model"
         title={SCOPE_HINT}
+        size="sm"
         data-testid="composer-model"
         value={current.model}
         disabled={isSaving}
         onChange={(e) => onModel(e.target.value)}
         containerClassName="min-w-0"
-        className="!max-w-[220px] !truncate !text-body-13"
+        className="!max-w-[220px] !truncate"
       >
         {/* Le modèle écrit en base n'est pas toujours dans la liste : un
             identifiant libre posé depuis l'écran d'édition, ou un modèle vu en
@@ -210,12 +212,13 @@ export default function ModelEffortControls({
         // Un modèle sans palier ne se règle pas : la liste reste là, pour que
         // la rangée garde sa forme, mais inerte et sans choix inventé.
         title={efforts.length === 0 ? 'This model offers no reasoning setting' : SCOPE_HINT}
+        size="sm"
         data-testid="composer-effort"
         value={efforts.includes(current.effort) ? current.effort : AUTO}
         disabled={isSaving || efforts.length === 0}
         onChange={(e) => onEffort(e.target.value)}
         containerClassName="min-w-0"
-        className="!max-w-[130px] !truncate !text-body-13"
+        className="!max-w-[130px] !truncate"
       >
         <option value={AUTO}>Auto</option>
         {efforts.map((v) => (

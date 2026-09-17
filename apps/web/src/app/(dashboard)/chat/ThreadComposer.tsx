@@ -92,6 +92,9 @@ export default function ThreadComposer({
   const [isPending, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
 
+  /** Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le dit. */
+  const canSend = !isPending && message.trim() !== '';
+
   function send(): void {
     const text = message.trim();
     if (text === '') return;
@@ -173,10 +176,16 @@ export default function ThreadComposer({
         className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
       {/* La rangée d'actions : provider, modèle et effort à gauche, l'envoi à
-          droite, sous la zone de texte. */}
+          droite, sous la zone de texte. UNE ligne — les trois listes sont à la
+          taille `sm`, celle du bouton, donc tout s'aligne sur la même base. */}
       <div className="flex items-center justify-end gap-2">
         {agentId !== undefined && agentId !== null && agentId !== '' && (
+          // La `key` porte les valeurs venues du serveur : quand le réglage
+          // change AILLEURS (l'écran de l'agent), la page relue remonte le
+          // composant sur elles. Pas d'effet qui recopierait les props dans
+          // l'état — c'est le rendu en cascade que la règle React refuse.
           <ModelEffortControls
+            key={`${llmKeyId ?? ''}:${model ?? ''}:${reasoningEffort ?? ''}`}
             agentId={agentId}
             llmKeyId={llmKeyId ?? null}
             model={model ?? ''}
@@ -184,11 +193,15 @@ export default function ThreadComposer({
             llmKeys={llmKeys ?? []}
           />
         )}
+        {/* L'envoi CHANGE DE COULEUR quand il y a quelque chose à envoyer :
+            c'est le signal, pas un libellé de plus. Vif (le lime du produit)
+            dès que le texte n'est pas vide ; neutre le reste du temps, où
+            cliquer ne ferait rien. */}
         <PrimaryButton
-          variant="neutral"
+          variant={canSend ? 'agent' : 'neutral'}
           size="sm"
           onClick={send}
-          disabled={isPending || message.trim() === ''}
+          disabled={!canSend}
         >
           {isPending ? 'Sending…' : 'Send'}
         </PrimaryButton>
