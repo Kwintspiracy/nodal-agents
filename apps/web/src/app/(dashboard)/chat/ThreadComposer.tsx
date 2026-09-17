@@ -100,6 +100,16 @@ export default function ThreadComposer({
    * premier envoi ouvre, les suivants attendent la même ouverture.
    */
   const opening = useRef<Promise<string> | null>(null);
+  /**
+   * La file des envois : un message ne part que lorsque la réponse au
+   * précédent est RENDUE. Le routeur de Next traite ses actions une par une,
+   * dans l'ordre où on les lui donne : trois envois d'un coup, et la
+   * relecture du fil demandée à la fin du premier se rangeait derrière les
+   * deux autres — l'écran ne bougeait qu'après le troisième (Quentin,
+   * 18/09). Ici, la relecture est demandée AVANT l'envoi suivant, donc
+   * traitée avant lui.
+   */
+  const queue = useRef<Promise<void>>(Promise.resolve());
 
   /**
    * Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le
@@ -131,10 +141,9 @@ export default function ThreadComposer({
     const id = pendingTurn.begin(text);
     clearBox();
     // PAS une transition React : React regroupe les transitions en cours et
-    // ne rend l'écran qu'une fois TOUTES finies — trois messages envoyés à la
-    // suite voyaient leurs trois réponses arriver d'un coup (Quentin, 18/09).
-    // Chaque envoi vit sa vie, et relit le fil quand SA réponse est là.
-    void (async () => {
+    // ne rend l'écran qu'une fois TOUTES finies. Chaque envoi prend son tour
+    // dans la file, et relit le fil quand SA réponse est là.
+    queue.current = queue.current.then(async () => {
       // Le texte revient dans la zone — DEVANT ce qu'on a tapé depuis, s'il y a.
       const giveBack = (): void => {
         pendingTurn.end(id);
@@ -157,7 +166,15 @@ export default function ThreadComposer({
         giveBack();
         return;
       }
-      const r = await sendChatMessageAction({ conversationId: target, message: text });
+      let r: Awaited<ReturnType<typeof sendChatMessageAction>>;
+      try {
+        r = await sendChatMessageAction({ conversationId: target, message: text });
+      } catch (err) {
+        // Une action qui ne revient pas (réseau coupé) ne bloque pas la file.
+        toast.error(err instanceof Error ? err.message : 'Could not send the message');
+        giveBack();
+        return;
+      }
       if (!r.ok) {
         toast.error(r.message);
         giveBack();
@@ -165,10 +182,11 @@ export default function ThreadComposer({
       }
       // Le fil relu porte les deux tours ; la copie de `PendingTurn` s'efface
       // d'elle-même quand le fil rendu porte son texte (pas ici : effacer
-      // avant la relecture ferait clignoter le fil).
+      // avant la relecture ferait clignoter le fil). La relecture est
+      // demandée MAINTENANT, avant que le message suivant parte.
       pendingTurn.settle(id);
       router.refresh();
-    })();
+    });
   }
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose

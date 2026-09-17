@@ -156,13 +156,21 @@ describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un
     expect(textarea().disabled).toBe(false);
   });
 
-  it('un second message part sans attendre le premier : il s’ajoute au fil, le loader reste sous le premier', async () => {
+  it('un second message s’ajoute au fil sans attendre, le loader reste sous le premier — et il ne PART qu’une fois le premier répondu', async () => {
     await render(<Screen items={[]} />);
     await send('Première question');
     await send('Et la suite ?');
-    expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
     expect(shown()).toEqual(['Première question', 'thinking', 'Et la suite ?']);
     expect(textarea().disabled).toBe(false);
+    // Le second attend son tour : le routeur traite les actions dans l'ordre,
+    // et la relecture du premier tour doit passer AVANT lui.
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(1);
+    await settle(0, { ok: true });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
+    expect(sendChatMessageAction.mock.calls[1]).toEqual([
+      { conversationId: 'conv-1', message: 'Et la suite ?' },
+    ]);
   });
 
   it('quand la première réponse est rendue, sa copie s’efface et le loader passe sous le message suivant', async () => {
@@ -172,8 +180,9 @@ describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un
     await settle(0, { ok: true });
     expect(refresh).toHaveBeenCalledTimes(1);
     // Tant que le fil rendu est le MÊME, rien ne bouge : effacer avant la
-    // relecture ferait clignoter le fil.
+    // relecture ferait clignoter le fil. Le second est parti entre-temps.
     expect(shown()).toEqual(['Première question', 'thinking', 'Et la suite ?']);
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
     // Le serveur rend le premier tour : sa copie a fait son temps, l'agent
     // réfléchit maintenant sous le second message.
     await rerender(<Screen items={[ask('Première question'), say('Réponse 1')]} />);
@@ -228,11 +237,25 @@ describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un
     await send('Un message qui partira');
     await send('Un message qui ne partira pas');
     expect(textarea().value).toBe('');
+    await settle(0, { ok: true });
+    await rerender(<Screen items={[ask('Un message qui partira'), say('Bien reçu.')]} />);
+    expect(shown()).toEqual(['Un message qui ne partira pas', 'thinking']);
     await settle(1, { ok: false, message: 'Runner unreachable' });
     expect(toastError.mock.calls).toEqual([['Runner unreachable']]);
-    expect(shown()).toEqual(['Un message qui partira', 'thinking']);
+    expect(pendingTurn()).toBeNull();
     expect(textarea().value).toBe('Un message qui ne partira pas');
-    expect(refresh).not.toHaveBeenCalled();
+    // Une seule relecture : celle du message qui est parti.
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('un envoi qui échoue ne bloque pas celui qui attend derrière lui', async () => {
+    await render(<Screen items={[]} />);
+    await send('Celui qui échoue');
+    await send('Celui qui suit');
+    await settle(0, { ok: false, message: 'Runner unreachable' });
+    expect(shown()).toEqual(['Celui qui suit', 'thinking']);
+    expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
+    expect(textarea().value).toBe('Celui qui échoue');
   });
 
   it('le texte rendu revient DEVANT ce qu’on a tapé depuis', async () => {
