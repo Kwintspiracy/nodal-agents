@@ -27,14 +27,24 @@ export default function ThreadScreen({
 }) {
   return (
     <>
-      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-2 sm:px-8 lg:px-9">
+      {/* `scrollbar-gutter: stable` : la gouttière de la barre est réservée
+          même quand le fil tient dans l'écran, sinon le fil se recentre d'une
+          demi-barre au premier message qui le fait déborder. */}
+      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-2 [scrollbar-gutter:stable] sm:px-8 lg:px-9">
         {/* Un seul enfant : c'est LUI dont la hauteur est observée. Sans ce
             conteneur, l'observateur suivrait la zone de défilement, dont la
             hauteur ne bouge jamais — et rien ne descendrait. */}
         <div>{children}</div>
       </ThreadScroller>
       {composer !== undefined && (
-        <div className="shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9">{composer}</div>
+        // La saisie se réserve la MÊME gouttière que le fil (`--thread-gutter`,
+        // posée par ThreadScroller) : les deux boîtes de 760 px sont alors
+        // centrées dans la même largeur, et leurs bords tombent l'un sur
+        // l'autre. Sans ça, la saisie était décalée d'une demi-barre vers la
+        // droite (Quentin, 17/09).
+        <div className="shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9 mr-[var(--thread-gutter,0px)]">
+          {composer}
+        </div>
       )}
       {statusBar}
     </>

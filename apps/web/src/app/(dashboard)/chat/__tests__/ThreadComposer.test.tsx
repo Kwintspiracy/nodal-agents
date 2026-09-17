@@ -163,7 +163,6 @@ describe('ThreadComposer', () => {
   });
 });
 
-
 // ─── La pastille : provider · modèle · effort (#138) ─────────────────────────
 //
 // Ce qui se prouve ici : le composeur RÈGLE l'agent, il ne se contente pas
@@ -235,7 +234,9 @@ async function openList(name: Segment): Promise<HTMLElement> {
 /** Les valeurs de la liste d'un segment, dans l'ordre où elle les offre. */
 async function optionValues(name: Segment): Promise<string[]> {
   const list = await openList(name);
-  return [...list.querySelectorAll('[role="option"]')].map((o) => o.getAttribute('data-value') ?? '');
+  return [...list.querySelectorAll('[role="option"]')].map(
+    (o) => o.getAttribute('data-value') ?? '',
+  );
 }
 
 /** Choisit une valeur comme un utilisateur : ouvrir, puis cliquer la ligne. */
@@ -338,9 +339,9 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     );
     expect(await optionValues('model')).toEqual(attendu);
     // Et concrètement : le modèle vu en direct y est, une seule fois.
-    expect((await optionValues('model')).filter((v) => v === 'gpt-6-preview-not-catalogued')).toEqual(
-      ['gpt-6-preview-not-catalogued'],
-    );
+    expect(
+      (await optionValues('model')).filter((v) => v === 'gpt-6-preview-not-catalogued'),
+    ).toEqual(['gpt-6-preview-not-catalogued']);
     // La clé est lue par l'action que l'écran d'édition utilise, pas une autre.
     expect(listKeyModelsAction.mock.calls).toEqual([['key-openai']]);
   });

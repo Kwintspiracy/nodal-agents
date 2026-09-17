@@ -57,6 +57,28 @@ import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 export const AT_BOTTOM_SLACK_PX = 64;
 
 /**
+ * La variable CSS que ce composant pose sur SON PARENT : la largeur, en pixels,
+ * de la gouttière de sa barre de défilement.
+ *
+ * Pourquoi elle existe (Quentin, 17/09/2026 : « une légère indentation à
+ * gauche par rapport au feed, et du coup il dépasse à droite ») : le fil et la
+ * saisie centrent chacun une boîte de 760 px, mais la barre de défilement ne
+ * vit que dans le fil. Elle lui prend sa largeur, donc son centre n'est plus
+ * celui de la saisie, d'une demi-barre — huit pixels de travers sur Windows.
+ * La saisie lit cette variable pour se réserver la même gouttière.
+ */
+export const THREAD_GUTTER_VAR = '--thread-gutter';
+
+/**
+ * La gouttière d'une zone de défilement : ce que sa barre lui prend. Zéro
+ * quand la barre se superpose au contenu (macOS, mobiles) ou qu'il n'y en a
+ * pas. Une fonction pure, pour être éprouvée sans navigateur.
+ */
+export function scrollbarGutterOf(m: { offsetWidth: number; clientWidth: number }): number {
+  return Math.max(0, m.offsetWidth - m.clientWidth);
+}
+
+/**
  * Le lecteur est-il « en bas » ? La seule décision de ce composant, sortie ici
  * pour être éprouvée sans navigateur.
  *
@@ -138,6 +160,26 @@ export default function ThreadScroller({
   useLayoutEffect(() => {
     const el = ref.current;
     if (el) scrollToBottom(el);
+  }, []);
+
+  // La gouttière, mesurée et posée sur le parent AVANT la peinture, puis
+  // remesurée quand la zone change de taille (la barre apparaît ou disparaît
+  // avec le contenu ; `scrollbar-gutter: stable` la rend constante, mais rien
+  // n'oblige tous les navigateurs à l'honorer). Aucun setState : c'est une
+  // écriture DOM, hors de React, et la saisie la lit en CSS.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const host = el?.parentElement;
+    if (!el || !host) return;
+    const publish = () => host.style.setProperty(THREAD_GUTTER_VAR, `${scrollbarGutterOf(el)}px`);
+    publish();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      host.style.removeProperty(THREAD_GUTTER_VAR);
+    };
   }, []);
 
   useEffect(() => {
