@@ -303,9 +303,11 @@ describe('getSpaceConversationAction', () => {
     const kinds = r.data.feed.items.map((i) => i.kind);
     // Pas d'item `answer` : le résultat du job (« Tu aimes les tableaux. ») EST
     // la prose du dernier tour, et le fil ne la répète plus (P2bis).
-    expect(kinds).toEqual(['request', 'turn', 'turn', 'child']);
+    // #135 — le PETIT-ENFANT n'est plus dans le bloc de l'enfant : il est le
+    // bloc SUIVANT, au même niveau. Une délégation n'est jamais imbriquée.
+    expect(kinds).toEqual(['request', 'turn', 'turn', 'child', 'child']);
 
-    const [request, t1, t2, child] = r.data.feed.items;
+    const [request, t1, t2, child, grandchildItem] = r.data.feed.items;
     expect(request).toMatchObject({
       kind: 'request',
       text: 'Rappelle-moi ce que j’aime',
@@ -340,6 +342,17 @@ describe('getSpaceConversationAction', () => {
 
     expect(child?.kind === 'child' && child.job.id).toBe(childId);
     expect(child?.kind === 'child' && child.job.status).toBe('completed');
+    // Le petit-enfant dit qui l'a délégué : l'ENFANT, pas la tête du fil.
+    expect(grandchildItem?.kind === 'child' && grandchildItem.job.task).toBe('sous-sous-tâche');
+    expect(grandchildItem?.kind === 'child' && grandchildItem.from.slug).toBe(
+      child?.kind === 'child' ? child.job.agentSlug : null,
+    );
+    // Et le fil de l'enfant ne le porte plus : remonté, pas recopié.
+    const nestedChildren =
+      child?.kind === 'child'
+        ? (child.job.feed?.items.filter((i) => i.kind === 'child') ?? [])
+        : [];
+    expect(nestedChildren).toEqual([]);
     expect(r.data.feed.items.some((i) => i.kind === 'answer')).toBe(false);
 
     expect(r.data.feed.totals).toMatchObject({

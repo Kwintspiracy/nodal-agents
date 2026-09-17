@@ -944,8 +944,73 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       children: [child],
     };
     const feed = buildConversationFeed(j, [], []);
-    expect(feed.items.at(-2)).toEqual({ kind: 'child', job: child });
+    expect(feed.items.at(-2)).toEqual({
+      kind: 'child',
+      job: child,
+      from: { name: 'Veilleur', slug: 'veilleur' },
+    });
     expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: 'delivery_spam_guard' });
+  });
+
+  // #135 — « Les délégations ne sont jamais imbriquées » (tableau de Quentin).
+  // Une délégation cachée DANS une autre disparaît dès que le parent est
+  // replié : on ne voit plus qui a fait travailler qui.
+  it('une délégation qui délègue à son tour devient un bloc FRÈRE, jamais imbriqué', () => {
+    const grandChild = {
+      id: 'grandchild-1',
+      agentName: 'Reviewer C',
+      agentSlug: 'reviewer-c',
+      status: 'completed',
+      task: 'relis le correctif',
+      result: 'ça tient',
+      error: null,
+      createdAt: null,
+      completedAt: null,
+    };
+    // Le fil de l'enfant est assemblé par la MÊME fonction (job-feed.ts appelle
+    // `buildConversationFeed` un niveau plus bas) : on le construit ici de la
+    // même façon, jamais à la main, sinon le test prouverait une forme que le
+    // code de production ne produit pas.
+    const childFeed = buildConversationFeed(
+      {
+        ...job,
+        id: 'child-1',
+        agentName: 'Le Relecteur',
+        agentSlug: 'relecteur',
+        messages: [],
+        result: 'revue faite',
+        children: [grandChild],
+      },
+      [],
+      [],
+    );
+    const child = {
+      id: 'child-1',
+      agentName: 'Le Relecteur',
+      agentSlug: 'relecteur',
+      status: 'completed',
+      task: 'fais relire',
+      result: 'revue faite',
+      error: null,
+      createdAt: null,
+      completedAt: null,
+      feed: childFeed,
+    };
+    const feed = buildConversationFeed({ ...job, messages: [], children: [child] }, [], []);
+
+    const children = feed.items.filter((i) => i.kind === 'child');
+    expect(children.map((c) => c.job.id)).toEqual(['child-1', 'grandchild-1']);
+    // Chacun dit QUI a délégué : le job pour l'enfant, l'enfant pour le
+    // petit-enfant.
+    expect(children[0]?.from).toEqual({ name: 'Veilleur', slug: 'veilleur' });
+    expect(children[1]?.from).toEqual({ name: 'Le Relecteur', slug: 'relecteur' });
+    // Le frère suit IMMÉDIATEMENT son parent, dans l'ordre où ça s'est passé.
+    const at = feed.items.findIndex((i) => i.kind === 'child' && i.job.id === 'child-1');
+    expect(feed.items[at + 1]).toBe(children[1]);
+    // Et le fil de l'enfant ne porte PLUS sa délégation : elle a été remontée,
+    // pas recopiée.
+    const lifted = children[0]?.job.feed?.items.filter((i) => i.kind === 'child') ?? [];
+    expect(lifted).toEqual([]);
   });
 });
 
