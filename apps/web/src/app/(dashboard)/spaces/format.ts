@@ -81,7 +81,7 @@ export function shortToolName(name: string): string {
 }
 
 /** Un agent du fil, tel que l'en-tête de travail l'affiche. */
-export type ThreadAgent = { key: string; name: string };
+export type ThreadAgent = { key: string; name: string; avatarUrl?: string | null };
 
 /**
  * Les agents qui ont travaillé dans ce fil, dans l'ordre où ils y paraissent :
@@ -97,18 +97,20 @@ export type ThreadAgent = { key: string; name: string };
 export function threadAgents(items: readonly FeedItem[]): ThreadAgent[] {
   const out: ThreadAgent[] = [];
   const seen = new Set<string>();
-  const push = (name: string | null, slug: string | null): void => {
+  const push = (name: string | null, slug: string | null, avatarUrl: string | null): void => {
     const key = slug ?? name;
     if (key === null || key === '') return;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ key, name: name ?? key });
+    // L'image de l'agent voyage avec lui : la barre montre le vrai avatar
+    // quand il y en a un, les initiales sinon (Quentin, 17/09).
+    out.push({ key, name: name ?? key, avatarUrl });
   };
   const walk = (list: readonly FeedItem[]): void => {
     for (const item of list) {
-      if (item.kind === 'turn') push(item.agent.name, item.agent.slug);
+      if (item.kind === 'turn') push(item.agent.name, item.agent.slug, item.agent.avatarUrl);
       else if (item.kind === 'child') {
-        push(item.job.agentName, item.job.agentSlug);
+        push(item.job.agentName, item.job.agentSlug, item.job.agentAvatarUrl);
         if (item.job.feed) walk(item.job.feed.items);
       }
     }

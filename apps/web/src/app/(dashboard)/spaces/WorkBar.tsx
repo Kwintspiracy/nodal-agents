@@ -65,12 +65,18 @@ export default function WorkBar({
           pastilles se suivent, au lieu d'encadrer un bouton. */}
       <div className="ml-auto flex shrink-0 items-center gap-4">
         {agents.length > 0 && (
-          <span className="flex items-center gap-2.5">
-            <AvatarStack avatars={agents.map((a) => ({ id: a.key, name: a.name }))} max={4} />
-            <span className="text-mono-11 text-ink-3">
-              {agents.length} {agents.length === 1 ? 'agent' : 'agents'}
-            </span>
-          </span>
+          // Le composant Figma `AvatarStack` (53:10) porte lui-même son
+          // libellé « N agents » ; et chaque tuile montre le VRAI avatar quand
+          // l'agent en a un (Quentin, 17/09).
+          <AvatarStack
+            avatars={agents.map((a) => ({
+              id: a.key,
+              name: a.name,
+              avatarUrl: a.avatarUrl ?? null,
+            }))}
+            max={4}
+            label={`${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`}
+          />
         )}
         {filesHref !== null && (
           <PrimaryButton variant="neutral" size="sm" href={filesHref}>

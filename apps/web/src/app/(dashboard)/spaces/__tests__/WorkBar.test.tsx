@@ -81,6 +81,36 @@ describe('threadAgents', () => {
     ]);
     expect(agents.map((a) => a.key)).toEqual(['alfred', 'codeur', 'testeur']);
   });
+
+  it('porte l’avatar de chaque agent, pour que la barre le montre', () => {
+    const avecImage = {
+      ...turn('Alfred', 'alfred'),
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: '/avatars/avatar-07.png' },
+    };
+    const agents = threadAgents([avecImage, child('Le Codeur', 'codeur')]);
+    expect(agents.map((a) => a.avatarUrl)).toEqual(['/avatars/avatar-07.png', null]);
+  });
+});
+
+describe('AvatarStack dans la barre — les tuiles du Figma', () => {
+  it('montre le VRAI avatar quand l’agent en a un, les initiales sinon', () => {
+    const html = renderToStaticMarkup(
+      <WorkBar
+        back={{ label: 'Back to chat', href: '/chat' }}
+        agents={[
+          { key: 'alfred', name: 'Alfred', avatarUrl: '/avatars/avatar-07.png' },
+          { key: 'codeur', name: 'Le Codeur', avatarUrl: null },
+        ]}
+      />,
+    );
+    expect(html).toContain('src="/avatars/avatar-07.png"');
+    expect(html).toContain('>LC<');
+    // Des tuiles carrées côte à côte, pas des disques qui se chevauchent
+    // (Figma `AvatarStack` 53:10) ; le libellé est celui du composant.
+    expect(html).not.toContain('rounded-full');
+    expect(html).not.toContain('-ml-[7px]');
+    expect(html).toContain('2 agents');
+  });
 });
 
 describe('WorkBar — la barre SOUS l’en-tête de page', () => {
