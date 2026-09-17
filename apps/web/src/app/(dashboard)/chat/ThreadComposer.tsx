@@ -22,7 +22,7 @@ import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
-import ModelEffortControls, { type ComposerLlmKey } from './ModelEffortControls.tsx';
+import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -175,16 +175,17 @@ export default function ThreadComposer({
         // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
         className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
-      {/* La rangée d'actions : provider, modèle et effort à gauche, l'envoi à
-          droite, sous la zone de texte. UNE ligne — les trois listes sont à la
-          taille `sm`, celle du bouton, donc tout s'aligne sur la même base. */}
+      {/* La rangée d'actions, telle que Quentin l'a dessinée (Figma
+          `ThreadComposer` 355:2928) : la pastille « provider · modèle ·
+          effort » à gauche, l'envoi à droite, sur UNE ligne — la pastille fait
+          30 px, la hauteur du bouton. */}
       <div className="flex items-center justify-end gap-2">
         {agentId !== undefined && agentId !== null && agentId !== '' && (
           // La `key` porte les valeurs venues du serveur : quand le réglage
           // change AILLEURS (l'écran de l'agent), la page relue remonte le
           // composant sur elles. Pas d'effet qui recopierait les props dans
           // l'état — c'est le rendu en cascade que la règle React refuse.
-          <ModelEffortControls
+          <ModelEffortChip
             key={`${llmKeyId ?? ''}:${model ?? ''}:${reasoningEffort ?? ''}`}
             agentId={agentId}
             llmKeyId={llmKeyId ?? null}
@@ -194,11 +195,12 @@ export default function ThreadComposer({
           />
         )}
         {/* L'envoi CHANGE DE COULEUR quand il y a quelque chose à envoyer :
-            c'est le signal, pas un libellé de plus. Vif (le lime du produit)
-            dès que le texte n'est pas vide ; neutre le reste du temps, où
+            c'est le signal, pas un libellé de plus. Le bouton d'encre de la
+            planche dès que le texte n'est pas vide — c'est le contraste le
+            plus tranché sur cette surface ; neutre le reste du temps, où
             cliquer ne ferait rien. */}
         <PrimaryButton
-          variant={canSend ? 'agent' : 'neutral'}
+          variant={canSend ? 'ink' : 'neutral'}
           size="sm"
           onClick={send}
           disabled={!canSend}

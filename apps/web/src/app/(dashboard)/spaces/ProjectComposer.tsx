@@ -14,7 +14,7 @@
 
 import ThreadComposer from '@/app/(dashboard)/chat/ThreadComposer.tsx';
 import { createProjectConversationAction } from '@/lib/project-actions.ts';
-import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortControls.tsx';
+import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 
 export default function ProjectComposer({
   projectId,

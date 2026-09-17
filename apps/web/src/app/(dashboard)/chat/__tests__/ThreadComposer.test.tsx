@@ -163,15 +163,20 @@ describe('ThreadComposer', () => {
   });
 });
 
-// ─── Les trois listes : provider, modèle, effort (#138) ──────────────────────
+
+// ─── La pastille : provider · modèle · effort (#138) ─────────────────────────
 //
 // Ce qui se prouve ici : le composeur RÈGLE l'agent, il ne se contente pas
 // d'afficher son modèle, et sa liste de modèles est CELLE DES RÉGLAGES. Le
 // reproche de Quentin portait exactement là-dessus : « la liste des modèles est
 // foireuse et ne correspond pas à ce qu'on a dans les settings ».
 //
+// La forme suit le composant que Quentin a dessiné (Figma `ThreadComposer`
+// 355:2928) : UNE pastille, trois segments séparés par un point, et TROIS
+// listes distinctes — chaque segment ouvre la sienne.
+//
 // Les assertions portent sur l'ARGUMENT reçu par l'action mockée et sur ce que
-// les listes montrent APRÈS (invariant #5) — jamais sur un nombre d'appels.
+// la pastille montre APRÈS (invariant #5) — jamais sur un nombre d'appels.
 //
 // Les fournisseurs sont de VRAIS fournisseurs du catalogue (openai, anthropic) :
 // reposer le modèle quand on change de clé n'a de sens qu'avec un vrai
@@ -192,23 +197,51 @@ const PICKER = {
   llmKeys: KEYS,
 };
 
-function select(name: 'provider' | 'model' | 'effort'): HTMLSelectElement {
-  const el = container.querySelector<HTMLSelectElement>('[data-testid="composer-' + name + '"]');
-  if (!el) throw new Error('no ' + name + ' select rendered');
+type Segment = 'provider' | 'model' | 'effort';
+
+/** Le segment cliquable d'une part de la pastille. */
+function segment(name: Segment): HTMLButtonElement {
+  const el = container.querySelector<HTMLButtonElement>('[data-testid="composer-' + name + '"]');
+  if (!el) throw new Error('no ' + name + ' segment rendered');
   return el;
 }
 
-function optionValues(el: HTMLSelectElement): string[] {
-  return [...el.querySelectorAll('option')].map((o) => o.value);
+/** Ce que le segment AFFICHE — le texte, sans le caret. */
+function shown(name: Segment): string {
+  return segment(name).textContent ?? '';
 }
 
-/** Choisit une valeur comme un utilisateur : la valeur, puis l'événement. */
-async function choose(el: HTMLSelectElement, value: string): Promise<void> {
-  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+async function click(el: Element): Promise<void> {
   await act(async () => {
-    setter?.call(el, value);
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
+}
+
+/**
+ * Ouvre la liste d'un segment et la rend. Déjà ouverte, elle est rendue telle
+ * quelle : un second clic la REFERMERAIT, et un test qui la relit ne veut pas
+ * la fermer.
+ */
+async function openList(name: Segment): Promise<HTMLElement> {
+  const selector = '[data-testid="composer-' + name + '-list"]';
+  if (container.querySelector(selector) === null) await click(segment(name));
+  const el = container.querySelector<HTMLElement>(selector);
+  if (!el) throw new Error('no ' + name + ' list opened');
+  return el;
+}
+
+/** Les valeurs de la liste d'un segment, dans l'ordre où elle les offre. */
+async function optionValues(name: Segment): Promise<string[]> {
+  const list = await openList(name);
+  return [...list.querySelectorAll('[role="option"]')].map((o) => o.getAttribute('data-value') ?? '');
+}
+
+/** Choisit une valeur comme un utilisateur : ouvrir, puis cliquer la ligne. */
+async function choose(name: Segment, value: string): Promise<void> {
+  const list = await openList(name);
+  const option = list.querySelector('[role="option"][data-value="' + value + '"]');
+  if (!option) throw new Error('no option ' + value + ' in the ' + name + ' list');
+  await click(option);
 }
 
 /** Laisse la liste EN DIRECT arriver : le composant la demande au montage. */
@@ -220,14 +253,73 @@ async function settle(): Promise<void> {
 }
 
 describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran', () => {
-  it('rend TROIS listes, portant les valeurs de l’agent', async () => {
+  it('rend UNE pastille de trois segments, portant les valeurs de l’agent', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
     await settle();
-    expect(select('provider').value).toBe('key-openai');
-    expect(select('model').value).toBe('gpt-5');
-    expect(select('effort').value).toBe('medium');
-    // Le réglage n'est PAS propre à cette conversation, et chaque liste le dit.
-    expect(select('model').title).toBe("Sets the agent's setting for every channel");
+    // Le surnom de la clé, écrit UNE FOIS — jamais « Work OpenAI (OpenAI) »,
+    // la forme du formulaire (Quentin, 17/09 : « c'est totalement débile »).
+    expect(shown('provider')).toBe('Work OpenAI');
+    expect(shown('model')).toBe('gpt-5');
+    expect(shown('effort')).toBe('effort medium');
+    // Trois segments, et chacun ouvre SA liste.
+    for (const name of ['provider', 'model', 'effort'] as const) {
+      expect(segment(name).getAttribute('aria-haspopup')).toBe('listbox');
+      expect(segment(name).getAttribute('aria-expanded')).toBe('false');
+    }
+    // Le réglage n'est PAS propre à cette conversation, et la pastille le dit.
+    const chip = segment('model').closest('[title]');
+    expect(chip?.getAttribute('title')).toBe("Sets the agent's setting for every channel");
+  });
+
+  it('le nom du fournisseur n’est JAMAIS écrit deux fois', async () => {
+    // Une clé sans surnom : le nom du fournisseur, seul. La forme des réglages
+    // (« OpenAI (OpenAI) ») n'apparaît nulle part.
+    await render(
+      <ThreadComposer
+        conversationId="conv-1"
+        agentId="agent-1"
+        llmKeyId="key-anthropic"
+        model="claude-opus-5"
+        reasoningEffort={null}
+        llmKeys={KEYS}
+      />,
+    );
+    await settle();
+    expect(shown('provider')).toBe('Anthropic');
+    expect(container.innerHTML).not.toContain('(Anthropic)');
+    expect(container.innerHTML).not.toContain('(anthropic)');
+    // Dans la liste non plus. (La pastille marque la ligne courante d'une
+    // puce : l'intitulé se lit dans son propre `span`, pas dans le texte du
+    // bouton entier.)
+    const list = await openList('provider');
+    expect(
+      [...list.querySelectorAll('[role="option"]')].map(
+        (o) => o.querySelector('span:last-of-type')?.textContent,
+      ),
+    ).toEqual(['Work OpenAI', 'Anthropic', 'DS']);
+  });
+
+  it('chaque segment ouvre SA liste, et une seule à la fois', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await settle();
+    await openList('provider');
+    expect(segment('provider').getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('[data-testid="composer-model-list"]')).toBeNull();
+    await openList('model');
+    // Ouvrir celle du modèle ferme celle du fournisseur.
+    expect(container.querySelector('[data-testid="composer-provider-list"]')).toBeNull();
+    expect(segment('model').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('Échap ferme la liste sans rien régler', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await settle();
+    const list = await openList('model');
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="composer-model-list"]')).toBeNull();
+    expect(setAgentModelAndEffortAction.mock.calls).toEqual([]);
   });
 
   it('la liste des modèles est CELLE DES RÉGLAGES : catalogue + modèles vus en direct', async () => {
@@ -242,11 +334,11 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     const attendu = modelIdsOf(
       buildModelOptionGroups('openai', ['gpt-5', 'gpt-6-preview-not-catalogued']),
     );
-    expect(optionValues(select('model'))).toEqual(attendu);
+    expect(await optionValues('model')).toEqual(attendu);
     // Et concrètement : le modèle vu en direct y est, une seule fois.
-    expect(
-      optionValues(select('model')).filter((v) => v === 'gpt-6-preview-not-catalogued'),
-    ).toEqual(['gpt-6-preview-not-catalogued']);
+    expect((await optionValues('model')).filter((v) => v === 'gpt-6-preview-not-catalogued')).toEqual(
+      ['gpt-6-preview-not-catalogued'],
+    );
     // La clé est lue par l'action que l'écran d'édition utilise, pas une autre.
     expect(listKeyModelsAction.mock.calls).toEqual([['key-openai']]);
   });
@@ -255,13 +347,13 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     listKeyModelsAction.mockResolvedValue({ ok: false, message: 'provider unreachable' });
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort={null} />);
     await settle();
-    expect(optionValues(select('model'))).toEqual(modelIdsOf(buildModelOptionGroups('openai', [])));
+    expect(await optionValues('model')).toEqual(modelIdsOf(buildModelOptionGroups('openai', [])));
   });
 
   it('changer de fournisseur REPOSE le modèle sur celui du nouveau', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
     await settle();
-    await choose(select('provider'), 'key-anthropic');
+    await choose('provider', 'key-anthropic');
     // Le modèle gpt-5 ne veut rien dire chez Anthropic : il est reposé sur le
     // premier du catalogue de la nouvelle clé, comme sur l'écran d'édition.
     // 'medium' existe pour claude-opus-5, donc il reste.
@@ -275,15 +367,15 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
         },
       ],
     ]);
-    expect(select('provider').value).toBe('key-anthropic');
-    expect(select('model').value).toBe('claude-opus-5');
-    expect(select('effort').value).toBe('medium');
+    expect(shown('provider')).toBe('Anthropic');
+    expect(shown('model')).toBe('claude-opus-5');
+    expect(shown('effort')).toBe('effort medium');
   });
 
   it('changer de fournisseur LÂCHE un effort que le nouveau modèle n’offre pas', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
     await settle();
-    await choose(select('provider'), 'key-deepseek');
+    await choose('provider', 'key-deepseek');
     expect(setAgentModelAndEffortAction.mock.calls).toEqual([
       [
         {
@@ -294,17 +386,18 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
         },
       ],
     ]);
-    expect(select('model').value).toBe('deepseek-chat');
-    expect(select('effort').value).toBe('');
-    // Rien à régler pour ce modèle : la liste reste, inerte, et le dit.
-    expect(select('effort').disabled).toBe(true);
-    expect(select('effort').title).toBe('This model offers no reasoning setting');
+    expect(shown('model')).toBe('deepseek-chat');
+    expect(shown('effort')).toBe('effort auto');
+    // Rien à régler pour ce modèle : le segment reste écrit, inerte, et il dit
+    // pourquoi. La pastille garde sa forme, elle ne perd pas un tiers.
+    expect(segment('effort').disabled).toBe(true);
+    expect(segment('effort').title).toBe('This model offers no reasoning setting');
   });
 
   it('changer de modèle écrit le nouveau et garde un effort qu’il offre', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="high" />);
     await settle();
-    await choose(select('model'), 'gpt-5-mini');
+    await choose('model', 'gpt-5-mini');
     expect(setAgentModelAndEffortAction.mock.calls).toEqual([
       [
         {
@@ -315,36 +408,36 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
         },
       ],
     ]);
-    expect(select('model').value).toBe('gpt-5-mini');
-    expect(select('effort').value).toBe('high');
+    expect(shown('model')).toBe('gpt-5-mini');
+    expect(shown('effort')).toBe('effort high');
   });
 
-  it('choisir un effort l’écrit sur l’AGENT, et la liste prend la nouvelle valeur', async () => {
+  it('choisir un effort l’écrit sur l’AGENT, et le segment prend la nouvelle valeur', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
     await settle();
-    await choose(select('effort'), 'low');
+    await choose('effort', 'low');
     expect(setAgentModelAndEffortAction.mock.calls).toEqual([
       [{ agentId: 'agent-1', llmKeyId: 'key-openai', model: 'gpt-5', reasoningEffort: 'low' }],
     ]);
-    expect(select('effort').value).toBe('low');
+    expect(shown('effort')).toBe('effort low');
   });
 
-  it('un échec se dit et les listes GARDENT les anciennes valeurs', async () => {
+  it('un échec se dit et la pastille GARDE les anciennes valeurs', async () => {
     setAgentModelAndEffortAction.mockResolvedValue({
       ok: false,
       message: 'That LLM key is disabled.',
     });
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
     await settle();
-    await choose(select('provider'), 'key-anthropic');
+    await choose('provider', 'key-anthropic');
     expect(toastError.mock.calls).toEqual([['That LLM key is disabled.']]);
     // Ce que l'écran montre est ce que la base contient (inv. #4).
-    expect(select('provider').value).toBe('key-openai');
-    expect(select('model').value).toBe('gpt-5');
-    expect(select('effort').value).toBe('medium');
+    expect(shown('provider')).toBe('Work OpenAI');
+    expect(shown('model')).toBe('gpt-5');
+    expect(shown('effort')).toBe('effort medium');
   });
 
-  it('sans agent, aucune liste : il n’y a rien à régler', async () => {
+  it('sans agent, aucune pastille : il n’y a rien à régler', async () => {
     await render(<ThreadComposer conversationId="conv-1" />);
     await settle();
     expect(container.querySelector('[data-testid="composer-provider"]')).toBeNull();
@@ -353,7 +446,7 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
     expect(container.querySelector('button')).not.toBeNull();
   });
 
-  it('sans aucune clé LLM, aucune liste — et rien n’est demandé au fournisseur', async () => {
+  it('sans aucune clé LLM, aucune pastille — et rien n’est demandé au fournisseur', async () => {
     await render(
       <ThreadComposer
         conversationId="conv-1"
@@ -372,8 +465,8 @@ describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran
 
 // ─── La rangée d'actions : une seule ligne, et l'envoi qui se voit ───────────
 //
-// Deux demandes de Quentin sur la rangée, et deux faits mesurables : les
-// listes ne dépassent pas le bouton, et le bouton CHANGE DE COULEUR quand il
+// Deux demandes de Quentin sur la rangée, et deux faits mesurables : la
+// pastille ne dépasse pas le bouton, et le bouton CHANGE DE COULEUR quand il
 // y a quelque chose à envoyer. Les classes sont écrites EN DUR ici, jamais
 // lues depuis les composants : un test qui lit la valeur qu'il prouve reste
 // vert quand on la change.
@@ -386,38 +479,43 @@ function sendButton(): HTMLButtonElement {
 }
 
 describe('ThreadComposer — la rangée d’actions @cap:parler-a-un-agent/ecran', () => {
-  it('les trois listes font la hauteur du bouton, pas plus', async () => {
+  it('la pastille fait la hauteur du bouton, pas plus', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
     await settle();
-    // 30 px : la taille `sm`, celle de PrimaryButton.
+    // 30 px : la taille `sm`, celle de PrimaryButton, et celle du board.
     expect(sendButton().className).toContain('h-[30px]');
+    const chip = segment('model').closest('[title]');
+    expect(chip?.className).toContain('h-[30px]');
+    // Et pas la hauteur d'un champ de formulaire, qui ferait deux lignes.
+    expect(chip?.className).not.toContain('h-8.5');
+    // UNE pastille, un seul filet : les trois segments n'ont pas chacun le
+    // leur — c'est ce qui distingue la forme dessinée de trois listes côte à
+    // côte.
+    expect(chip?.className).toContain('border-rule-2');
     for (const name of ['provider', 'model', 'effort'] as const) {
-      expect(select(name).className).toContain('h-[30px]');
-      // Et pas la hauteur des champs de formulaire, qui ferait deux lignes.
-      expect(select(name).className).not.toContain('h-8.5');
-      expect(select(name).className).toContain('text-body-13');
-      expect(select(name).className).not.toContain('text-body-14');
+      expect(segment(name).className).not.toContain('border');
     }
   });
 
-  it('l’envoi est VIF dès qu’il y a du texte, neutre quand il n’y a rien', async () => {
+  it('l’envoi est TRANCHÉ dès qu’il y a du texte, neutre quand il n’y a rien', async () => {
     await render(<ThreadComposer conversationId="conv-1" agentName="Alfred" />);
     // Rien à envoyer : cliquer ne ferait rien, et le bouton ne le promet pas.
     expect(sendButton().className).toContain('bg-paper');
-    expect(sendButton().className).not.toContain('bg-agent-vivid');
+    expect(sendButton().className).not.toContain('bg-ink');
     expect(sendButton().disabled).toBe(true);
 
     await type('bonjour');
-    // Le changement de couleur EST le signal « on peut envoyer ».
-    expect(sendButton().className).toContain('bg-agent-vivid');
+    // Le changement de couleur EST le signal « on peut envoyer » — le bouton
+    // d'encre de la planche.
+    expect(sendButton().className).toContain('bg-ink');
     expect(sendButton().className).not.toContain('bg-paper');
     expect(sendButton().disabled).toBe(false);
   });
 
-  it('un texte fait d’espaces ne rend pas l’envoi vif', async () => {
+  it('un texte fait d’espaces ne rend pas l’envoi tranché', async () => {
     await render(<ThreadComposer conversationId="conv-1" />);
     await type('    ');
-    expect(sendButton().className).not.toContain('bg-agent-vivid');
+    expect(sendButton().className).not.toContain('bg-ink');
     expect(sendButton().disabled).toBe(true);
   });
 });

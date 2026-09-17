@@ -140,6 +140,22 @@ export function llmKeyLabel(key: { nickname?: string | null; provider: string })
 }
 
 /**
+ * Le même nom, écrit UNE FOIS — la forme des rangées serrées (la pastille du
+ * composeur, #138).
+ *
+ * `llmKeyLabel` répète le fournisseur entre parenthèses parce qu'un formulaire
+ * a la place de lever l'ambiguïté entre deux clés du même fournisseur. Sur une
+ * ligne au-dessus d'un fil, « Open Router (Open Router) » n'apprend rien à
+ * personne — Quentin, 17/09 : « c'est quoi ce délire d'écrire deux fois le nom
+ * du provider ». Le surnom quand il y en a un, sinon le nom du fournisseur,
+ * jamais les deux.
+ */
+export function llmKeyShortLabel(key: { nickname?: string | null; provider: string }): string {
+  const nickname = key.nickname?.trim();
+  return nickname !== undefined && nickname !== '' ? nickname : prettyProviderName(key.provider);
+}
+
+/**
  * L'effort demandé est-il refusable ? Vrai SEULEMENT quand le modèle est
  * catalogué et que son contrôle ne l'offre pas.
  *

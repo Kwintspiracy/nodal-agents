@@ -20,7 +20,7 @@ import LiveRefresh from './LiveRefresh.tsx';
 import ProjectComposer from './ProjectComposer.tsx';
 import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 import type { ComposerPresentation } from '@/lib/project-landing.ts';
-import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortControls.tsx';
+import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
 
 export type ProjectThreadResult =

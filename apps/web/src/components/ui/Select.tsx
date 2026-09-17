@@ -20,11 +20,7 @@ import FieldLabel from './FieldLabel';
  * dynamic option lists.
  */
 function syncSectionLegends(select: HTMLSelectElement): void {
-  // `CSS` n'existe pas partout où ce composant se rend : jsdom, qui fait
-  // tourner les tests de composants, n'en fournit pas. Sans cette garde, un
-  // écran devenait introuvable en test pour une raison qui n'a rien à voir
-  // avec lui (#138).
-  if (typeof CSS === 'undefined' || !CSS.supports('appearance', 'base-select')) return;
+  if (!CSS.supports('appearance', 'base-select')) return;
   for (const group of select.querySelectorAll('optgroup')) {
     const label = group.getAttribute('label') ?? '';
     const legend = group.querySelector(':scope > legend');
@@ -43,24 +39,11 @@ function syncSectionLegends(select: HTMLSelectElement): void {
   }
 }
 
-type Props = Omit<SelectHTMLAttributes<HTMLSelectElement>, 'className' | 'size'> & {
+type Props = Omit<SelectHTMLAttributes<HTMLSelectElement>, 'className'> & {
   label?: string;
   error?: string;
-  /** `md` (default) = 34 px, la hauteur des champs d'un formulaire. */
-  size?: 'sm' | 'md';
   className?: string;
   containerClassName?: string;
-};
-
-/**
- * Les deux tailles, exactement celles de `PrimaryButton` : une liste posée
- * dans une rangée d'actions doit faire la hauteur du bouton d'à côté, sinon
- * la rangée a deux lignes de base et se voit (#138). Le caret suit la même
- * mesure, sinon il flotte au-dessus du centre.
- */
-const DIM: Record<'sm' | 'md', { field: string; caret: string }> = {
-  md: { field: 'h-8.5 py-1.5 pr-8 pl-3 text-body-14', caret: 'top-4.25 right-2' },
-  sm: { field: 'h-[30px] py-1 pr-7 pl-2.5 text-body-13', caret: 'top-[15px] right-1.5' },
 };
 
 /**
@@ -71,9 +54,8 @@ const DIM: Record<'sm' | 'md', { field: string; caret: string }> = {
  * styled to the DS "Open" state via `appearance: base-select` in
  * `globals.css` (customizable select, Chrome/Edge 135+; other browsers keep
  * the OS picker) — the `appearance` cascade lives there, so don't add
- * `appearance-none` here or it would override `base-select`. Two heights,
- * `md`/34px and `sm`/30px, the same two as `PrimaryButton`, so a select lines
- * up with the button or input beside it. The
+ * `appearance-none` here or it would override `base-select`. Same
+ * `md`/34px height so it lines up with a button or input beside it. The
  * height is explicit (`h-8.5`) because Chrome's UA stylesheet forces
  * `line-height: normal !important` on selects, so unlike `TextInput` the
  * `leading-5!` can't produce the 34px box on its own. Options
@@ -84,10 +66,9 @@ const DIM: Record<'sm' | 'md', { field: string; caret: string }> = {
  * `value=""` options ("All agents", "Auto", …) since those are real values.
  */
 const Select = forwardRef<HTMLSelectElement, Props>(function Select(
-  { label, error, id, size = 'md', className = '', containerClassName = '', children, ...rest },
+  { label, error, id, className = '', containerClassName = '', children, ...rest },
   ref,
 ) {
-  const dim = DIM[size];
   const autoId = useId();
   const selectId = id ?? autoId;
   const innerRef = useRef<HTMLSelectElement>(null);
@@ -103,20 +84,20 @@ const Select = forwardRef<HTMLSelectElement, Props>(function Select(
           id={selectId}
           ref={innerRef}
           aria-invalid={error ? true : undefined}
-          className={`peer w-full rounded-md border bg-hover leading-5! text-ink transition-colors required:invalid:text-ink-4 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${dim.field} ${
+          className={`peer h-8.5 w-full rounded-md border bg-hover py-1.5 pr-8 pl-3 text-body-14 leading-5! text-ink transition-colors required:invalid:text-ink-4 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
             error ? 'border-err focus:border-err' : 'border-rule focus:border-ink-3'
           } ${className}`}
           {...rest}
         >
           {children}
         </select>
-        {/* top-4.25 = 17px, le centre du champ h-8.5 (15px pour `sm`) — PAS
-            top-1/2 : un margin passé via className (ex. mb-2) grandit le
-            wrapper et décentrerait le caret. */}
+        {/* top-4.25 = 17px, le centre du champ h-8.5 — PAS top-1/2 : un
+            margin passé via className (ex. mb-2) grandit le wrapper et
+            décentrerait le caret. */}
         <CaretDown
-          size={size === 'sm' ? 14 : 16}
+          size={16}
           aria-hidden
-          className={`pointer-events-none absolute -translate-y-1/2 text-ink-3 peer-disabled:opacity-50 ${dim.caret}`}
+          className="pointer-events-none absolute top-4.25 right-2 -translate-y-1/2 text-ink-3 peer-disabled:opacity-50"
         />
       </div>
       {error && <p className="mt-1 text-xs text-err">{error}</p>}
