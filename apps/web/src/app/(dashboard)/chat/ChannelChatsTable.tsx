@@ -16,35 +16,9 @@ import Link from 'next/link';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
-import { LIST_MAX } from '@/lib/chat-key.ts';
 import { relativeTime, truncate } from '@/lib/format-time';
-import type { ChannelChatRow } from '@/lib/chat-list.ts';
-
-/**
- * Ce qu'on écrit sur la ligne quand l'allowlist ne nomme pas le chat.
- *
- * C'est le cas du PROPRIÉTAIRE : il a branché le bot lui-même, personne n'a
- * « demandé » son accès, donc aucun `requester_name` n'a été enregistré. Son
- * identifiant seul ne lui dirait rien ; « Direct » dit ce que c'est.
- */
-/** Les canaux où « #salon » est la convention que l'utilisateur lit ailleurs. */
-const HASH_CHANNELS = new Set(['discord', 'slack']);
-
-function chatLabel(row: ChannelChatRow): string {
-  const salon = row.kind === 'channel' || row.kind === 'group';
-  if (row.name !== null && row.name !== '') {
-    // Le `#` distingue un salon d'un privé : sur Discord et Slack, l'allowlist
-    // enregistre le même nom pour les deux, et deux lignes se ressemblaient
-    // trait pour trait. Ailleurs il ne se dit pas — un groupe Telegram ne
-    // s'écrit pas « #groupe » (revue Codex, PR #48).
-    return salon && HASH_CHANNELS.has(row.channel) ? `#${row.name}` : row.name;
-  }
-  // Sans nom, on dit ce qu'on SAIT. « Direct » n'est vrai que pour un chat dont
-  // on connaît la nature privée ; l'écrire par défaut rendait indistinguables
-  // tous les chats anonymes, quels qu'ils soient (revue Codex, PR #48).
-  if (row.kind === 'private') return 'Direct';
-  return salon ? `Group ${row.chatId}` : row.chatId;
-}
+import { chatLabel, type ChannelChatRow } from '@/lib/chat-list.ts';
+import ChatListNotices from './ChatListNotices.tsx';
 
 /** « telegram » → « Telegram ». Le canal, nommé comme l'utilisateur le nomme. */
 function channelLabel(channel: string): string {
@@ -90,36 +64,12 @@ export default function ChannelChatsTable({
           {rows.length} {rows.length === 1 ? 'chat' : 'chats'}
         </span>
       </div>
-      {threadsUnreadable && (
-        <p className="text-body-12 text-err mb-2">
-          Channel chats couldn’t be read just now. This list may be incomplete — reload to try
-          again.
-        </p>
-      )}
-      {namesUnreadable && (
-        <p className="text-body-12 text-err mb-2">
-          Chat names couldn’t be read just now — chats show their id instead. Reload to try again.
-        </p>
-      )}
-      {missingCurrent && (
-        <p className="text-body-12 text-ink-3 mb-2">
-          Chats marked “unavailable” below can’t be opened right now — their current thread couldn’t
-          be read. Reload in a moment.
-        </p>
-      )}
-      {hiddenByWindow > 0 && (
-        // La CAUSE n'est pas affirmée, parce qu'on ne la connaît pas : le
-        // plafond en est une, un chat créé entre les deux lectures en est une
-        // autre, et l'écran ne peut pas les distinguer (revue Codex, PR #48,
-        // passe 10). Il dit ce qu'il SAIT — ces chats existent et n'ont pas de
-        // ligne — et nomme le plafond comme la raison HABITUELLE, pas comme le
-        // verdict.
-        <p className="text-body-12 text-ink-3 mb-2">
-          {hiddenByWindow} more {hiddenByWindow === 1 ? 'chat is' : 'chats are'} not shown here.
-          Usually that means the list is full — it holds the {LIST_MAX} most recently active
-          conversations. Reload to see the latest.
-        </p>
-      )}
+      <ChatListNotices
+        threadsUnreadable={threadsUnreadable}
+        namesUnreadable={namesUnreadable}
+        missingCurrent={missingCurrent}
+        hiddenByWindow={hiddenByWindow}
+      />
       <Table>
         <THead>
           <Th>Agent</Th>

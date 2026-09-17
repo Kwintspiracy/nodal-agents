@@ -7,10 +7,18 @@
 // n'est qu'un moyen d'y accéder.
 //
 // Depuis #135, la page s'ouvre aussi sur UN dossier (`?folder=telegram`,
-// `?folder=dashboard`) : le menu de la barre latérale y mène. C'est la même
-// liste, restreinte ; la refonte des LIGNES elles-mêmes est un autre lot.
+// `?folder=dashboard`) : le menu de la barre latérale y mène, et c'est LÀ que
+// la maquette dessine sa boîte de réception — une ligne par conversation,
+// l'agent, le chat, le dernier mot, l'heure, et ce qui s'y passe.
+//
+// La page SANS dossier garde ses deux tableaux. Ce n'est pas un oubli : la
+// vue entière mélange des chats de canal et des conversations de Nodal, que
+// la planche ne montre jamais ensemble, et décider de leur forme commune est
+// une décision produit à part entière.
 
 import PageShell from '@/components/ui/PageShell';
+import ConversationRow from '@/components/ui/ConversationRow';
+import EmptyState from '@/components/ui/EmptyState';
 import {
   getChatFoldersAction,
   listAllConversationsAction,
@@ -21,7 +29,9 @@ import { listApprovalsAction } from '@/lib/actions.ts';
 import { groupChatLists } from '@/lib/chat-list.ts';
 import { folderOfJobChannel } from '@/lib/chat-folders.ts';
 import { chatFolderView, folderSubtitle } from './folder-view.ts';
+import { conversationRows } from './conversation-rows.ts';
 import ChannelChatsTable from './ChannelChatsTable.tsx';
+import ChatListNotices from './ChatListNotices.tsx';
 import ConversationsList from './ConversationsList.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -95,21 +105,66 @@ export default async function ChatPage({
           running: folders.ok ? (folders.data.running[view.key] ?? 0) : 0,
         }) ?? undefined);
 
+  // Les lignes du dossier : ce que la maquette dessine. Construites ici pour
+  // TOUS les dossiers — un canal montre ses chats, « Nodal chats » ses
+  // conversations — par la même règle et la même lecture.
+  const rows =
+    view.key === null
+      ? []
+      : conversationRows({
+          ...(view.showDashboard ? { conversations: dashboard } : { chats: shownChannels }),
+          // Les MÊMES approbations que le sous-titre et que le menu : une
+          // seule lecture, une seule vérité. Rangées par conversation cette
+          // fois, pas par dossier.
+          waiting: approvals.ok ? approvals.data : [],
+          runningConversationIds: folders.ok ? folders.data.runningConversationIds : [],
+        });
+
   return (
     <PageShell title={view.title} subtitle={subtitle}>
       {result.ok ? (
-        <>
-          {view.showChannels && (
-            <ChannelChatsTable
-              rows={shownChannels}
-              threadsUnreadable={threadsUnreadable}
-              namesUnreadable={namesUnreadable}
-              missingCurrent={missingCurrent}
-              hiddenByWindow={hiddenByWindow}
+        view.key !== null ? (
+          <>
+            {/* Aucun bandeau ne se perd dans la refonte : ce que la page ne
+                sait pas se dit AU-DESSUS de la liste, exactement comme le
+                tableau le disait. Les deux derniers sont propres à la liste —
+                sans eux, l'absence de point vert ou de pastille se lirait
+                comme « rien ne se passe » alors que la lecture a échoué. */}
+            <ChatListNotices
+              threadsUnreadable={view.showChannels && threadsUnreadable}
+              namesUnreadable={view.showChannels && namesUnreadable}
+              missingCurrent={view.showChannels && missingCurrent}
+              hiddenByWindow={view.showChannels ? hiddenByWindow : 0}
+              waitingUnreadable={!approvals.ok}
+              runningUnreadable={!folders.ok}
             />
-          )}
-          {view.showDashboard && <ConversationsList rows={dashboard} />}
-        </>
+            {rows.length === 0 ? (
+              <EmptyState title="No conversation in this folder yet." />
+            ) : (
+              // Pas d'écart entre les lignes : la planche les sépare d'un
+              // trait, dans une seule boîte. `overflow-hidden` fait suivre les
+              // coins arrondis à la première et à la dernière.
+              <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+                {rows.map(({ key, ...ligne }) => (
+                  <ConversationRow key={key} rowKey={key} {...ligne} />
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {view.showChannels && (
+              <ChannelChatsTable
+                rows={shownChannels}
+                threadsUnreadable={threadsUnreadable}
+                namesUnreadable={namesUnreadable}
+                missingCurrent={missingCurrent}
+                hiddenByWindow={hiddenByWindow}
+              />
+            )}
+            {view.showDashboard && <ConversationsList rows={dashboard} />}
+          </>
+        )
       ) : (
         <p className="text-sm text-err">{result.message}</p>
       )}

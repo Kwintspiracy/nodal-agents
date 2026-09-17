@@ -74,7 +74,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Semé ici pour que le menu soit juste au premier rendu ; le provider
   // rafraîchit ensuite. Une lecture en échec laisse le menu à ses deux
   // destinations permanentes, sans faux dossier de canal.
-  let initialFolders: ChatFoldersSnapshot = { channels: [], running: {} };
+  let initialFolders: ChatFoldersSnapshot = {
+    channels: [],
+    running: {},
+    runningConversationIds: [],
+  };
   const foldersResult = await getChatFoldersAction();
   if (foldersResult.ok) initialFolders = foldersResult.data;
 
