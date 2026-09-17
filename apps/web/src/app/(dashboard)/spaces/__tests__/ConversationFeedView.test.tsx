@@ -7,6 +7,8 @@
 // de bibliothèque de test de composants dans ce dépôt — on lit le HTML.
 
 import { describe, it, expect } from 'vitest';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ConversationFeedView from '../ConversationFeedView.tsx';
 import { compactTurns } from '@/lib/conversation-feed.ts';
@@ -174,6 +176,34 @@ const feed: ConversationFeed = {
   },
 };
 
+/** Le fil réduit à la SEULE carte d'envoi, de quoi la cliquer sans bruit. */
+const envoi: ConversationFeed = {
+  items: [
+    {
+      kind: 'turn',
+      index: 1,
+      turn: 1,
+      turnSource: 'audit',
+      agent: { name: 'Alfred', slug: 'alfred' },
+      model: null,
+      at: null,
+      usage: null,
+      blocks: [
+        {
+          kind: 'card',
+          step: tool({
+            toolName: 'telegram_send_message',
+            card: 'sent',
+            input: { text: 'La revue est prête.' },
+            presented: { card: 'sent', channel: 'telegram', kind: 'message', target: '42' },
+          }),
+        },
+      ],
+    },
+  ],
+  totals: feed.totals,
+};
+
 describe('ConversationFeedView', () => {
   const html = renderToStaticMarkup(<ConversationFeedView feed={feed} />);
 
@@ -329,10 +359,35 @@ describe('ConversationFeedView', () => {
     expect(html).toContain('first row may or may not be a header');
   });
 
-  it('la carte d’envoi dit le canal, le destinataire et le message parti', () => {
+  it('la carte d’envoi tient sur UNE ligne : le message n’est pas dans le DOM replié', () => {
+    // #135 — le dernier grand cadre du fil devient un bloc comme les autres.
+    // Replié n'est pas caché : la ligne dit déjà le canal, la sorte et le
+    // destinataire. Le message, lui, attend le clic.
     expect(html).toContain('Sent to telegram');
     expect(html).toContain('to 42');
-    expect(html).toContain('La revue est prête.');
+    expect(html).not.toContain('La revue est prête.');
+    // Et la ligne est bien dépliable, pas un cadre muet.
+    expect(html).toMatch(/aria-expanded="false"[^>]*>(?:(?!<\/button>)[\s\S])*Sent to telegram/);
+  });
+
+  it('un clic sur la carte d’envoi OUVRE le message', async () => {
+    // Le dépliage est un état du navigateur : jsdom, pas du HTML statique.
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={envoi} />);
+    });
+    expect(container.textContent).not.toContain('La revue est prête.');
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la carte d’envoi n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('La revue est prête.');
+    expect(tete.getAttribute('aria-expanded')).toBe('true');
+    root.unmount();
+    container.remove();
   });
 
   it('la carte terminal montre la commande, le code de sortie et la coupe', () => {

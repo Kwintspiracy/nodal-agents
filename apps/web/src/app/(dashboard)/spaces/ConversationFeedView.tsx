@@ -4,6 +4,7 @@
 // qu'il ne sait pas dessiner, il le montre brut et le dit.
 
 import Link from 'next/link';
+import { PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import ClampedText from './ClampedText.tsx';
 import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
@@ -22,7 +23,8 @@ import type {
 import Markdown, { plainText } from '@/components/Markdown.tsx';
 import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
-import ToolBlock from './ToolBlock.tsx';
+import ToolBlock, { DOT } from './ToolBlock.tsx';
+import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import ModelCallBlock from './ModelCallBlock.tsx';
 import DeliveryBlock from './DeliveryBlock.tsx';
 import QuestionCard from './QuestionCard.tsx';
@@ -307,7 +309,7 @@ function ResultCard({ step, deliverables }: { step: ToolStep; deliverables: Deli
     case 'terminal':
       return <TerminalCard payload={p} />;
     case 'sent':
-      return <SentCard payload={p} input={step.input} aside={duration} />;
+      return <SentCard payload={p} input={step.input} aside={duration} outcome={step.outcome} />;
     case 'checks':
       return <ChecksCard payload={p} />;
     case 'delegation':
@@ -600,38 +602,63 @@ function TerminalCard({ payload }: { payload: CardPayloadFor<'terminal'> }) {
   );
 }
 
+/**
+ * Ce qui est SORTI du chat, replié comme tout bloc de run (#135). C'était le
+ * dernier grand cadre du fil : un envoi de deux lignes prenait un demi-écran,
+ * bandeau vert compris, là où l'appel d'outil juste au-dessus tenait sur 33 px
+ * (constat de Quentin sur sa pile, 17/09).
+ *
+ * Le verdict ne passe plus par un bandeau coloré, il passe par la PASTILLE —
+ * la même que celle du bloc d'outil, lue sur l'issue de l'appel. Le message
+ * envoyé, lui, descend dans le corps : c'est ce qu'on va CHERCHER, pas ce
+ * qu'on lit en parcourant.
+ */
 function SentCard({
   payload,
   input,
   aside,
+  outcome,
 }: {
   payload: CardPayloadFor<'sent'>;
   input: unknown;
   aside?: string;
+  outcome: ToolStep['outcome'];
 }) {
   const text =
     input && typeof input === 'object' && typeof (input as { text?: unknown }).text === 'string'
       ? (input as { text: string }).text
       : null;
-  return (
-    <CardFrame
-      title={`Sent to ${payload.channel}`}
-      meta={[payload.kind, payload.filename, payload.target ? `to ${payload.target}` : null]
-        .filter((x): x is string => typeof x === 'string' && x !== '')
-        .join(' · ')}
-      aside={aside}
-      tone="ok"
-    >
-      {text !== null && (
-        <div className="px-4 py-3">
-          <Markdown text={text} />
-        </div>
+  const meta = [payload.kind, payload.filename, payload.target ? `to ${payload.target}` : null]
+    .filter((x): x is string => typeof x === 'string' && x !== '')
+    .join(' · ');
+  const head = (
+    <>
+      <PaperPlaneTilt size={14} className="shrink-0 text-ink-4" aria-hidden />
+      <span className="shrink-0 text-mono-12 text-ink">Sent to {payload.channel}</span>
+      {meta !== '' && (
+        <span className="min-w-0 flex-1 truncate text-mono-12 text-ink-3">{meta}</span>
       )}
-      {payload.bytes !== undefined && (
-        <p className="px-4 pb-3 text-mono-11 text-ink-4">{formatTokens(payload.bytes)} B</p>
+      <span
+        className={`ml-auto h-2 w-2 shrink-0 rounded-full ${DOT[outcome] ?? 'bg-ink-4'}`}
+        aria-hidden
+      />
+      {aside !== undefined && (
+        <span className="shrink-0 text-mono-12 text-feed-metric">{aside}</span>
       )}
-    </CardFrame>
+    </>
   );
+  // Un envoi sans message ET sans taille n'a rien à ouvrir : il garde sa ligne,
+  // sans chevron — la même règle que pour un appel muet (`hasBody`).
+  const body =
+    text !== null || payload.bytes !== undefined ? (
+      <FoldableBody>
+        {text !== null && <Markdown text={text} />}
+        {payload.bytes !== undefined && (
+          <p className="text-mono-11 text-ink-4">{formatTokens(payload.bytes)} B</p>
+        )}
+      </FoldableBody>
+    ) : undefined;
+  return <FoldableBlock head={head} {...(body !== undefined ? { body } : {})} />;
 }
 
 function ChecksCard({ payload }: { payload: CardPayloadFor<'checks'> }) {

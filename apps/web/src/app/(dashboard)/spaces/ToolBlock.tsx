@@ -17,17 +17,20 @@
 // est assumé (issue #132) ; ce fichier n'importe rien de serveur-seulement, et
 // `RunRow` — l'autre appelant — est déjà client.
 
-import { useState } from 'react';
 import { List } from '@phosphor-icons/react/dist/ssr';
-import DisclosureButton from '@/components/ui/DisclosureButton';
+import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import type { Step } from '@/lib/conversation-feed.ts';
 import { formatMs, shortToolName } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
 
-/** La pastille de 8 px qui dit comment l'appel s'est terminé. */
-const DOT: Readonly<Record<string, string>> = {
+/**
+ * La pastille de 8 px qui dit comment l'appel s'est terminé. Exportée : la
+ * carte d'envoi la reprend telle quelle — deux blocs d'un même run ne disent
+ * pas leur issue de deux couleurs différentes.
+ */
+export const DOT: Readonly<Record<string, string>> = {
   success: 'bg-ok',
   error: 'bg-err',
   blocked: 'bg-err',
@@ -92,9 +95,7 @@ function rawNote(step: ToolStep): string | null {
 }
 
 export default function ToolBlock({ step }: { step: ToolStep }) {
-  const [open, setOpen] = useState(false);
   const arg = excerptOfInput(step.input);
-  const foldable = hasBody(step);
   const head = (
     <>
       <List size={14} className="shrink-0 text-ink-4" aria-hidden />
@@ -113,23 +114,7 @@ export default function ToolBlock({ step }: { step: ToolStep }) {
       )}
     </>
   );
-  return (
-    <div className="overflow-hidden rounded-md border border-rule-2 bg-canvas">
-      {foldable ? (
-        <DisclosureButton
-          open={open}
-          onClick={() => setOpen((v) => !v)}
-          chevron="end"
-          className="h-[33px] gap-2 py-0 px-3"
-        >
-          {head}
-        </DisclosureButton>
-      ) : (
-        <div className="flex h-[33px] items-center gap-2 px-3">{head}</div>
-      )}
-      {foldable && open && <Body step={step} />}
-    </div>
-  );
+  return <FoldableBlock head={head} {...(hasBody(step) ? { body: <Body step={step} /> } : {})} />;
 }
 
 /** Ce que l'appel a demandé, puis ce qu'il a rendu. */
@@ -142,7 +127,7 @@ function Body({ step }: { step: ToolStep }) {
   const raw = step.presented === null && step.outcome === 'success';
   const failed = step.outcome === 'error' || step.outcome === 'blocked';
   return (
-    <div className="flex flex-col gap-1.5 border-t border-rule-2 bg-paper px-3 pt-2 pb-2.5">
+    <FoldableBody>
       {json !== null && (
         <>
           <p className="text-mono-11 text-ink-4">Input</p>
@@ -162,7 +147,7 @@ function Body({ step }: { step: ToolStep }) {
         </div>
       )}
       {note !== null && <p className="text-mono-11 text-ink-4">{note}</p>}
-    </div>
+    </FoldableBody>
   );
 }
 
