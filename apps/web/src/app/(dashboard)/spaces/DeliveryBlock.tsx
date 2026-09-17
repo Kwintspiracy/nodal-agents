@@ -107,7 +107,10 @@ export default function DeliveryBlock({
           aria-hidden
         />
         <span className="text-title-15 text-ink">Delivered</span>
-        <span className="ml-auto">
+        {/* La pastille suit le mot, à trente pixels — pas poussée au bord
+            droit : c'est ainsi que la planche la dessine (Quentin, 17/09,
+            « design légèrement différent »). */}
+        <span className="ml-5">
           {verdict === 'green' ? (
             <StatusPill variant="done" label="Verified" />
           ) : verdict === 'red' ? (
@@ -170,25 +173,26 @@ export default function DeliveryBlock({
               {r.isAgent && (
                 <AgentAvatar name={r.name} imageUrl={r.avatarUrl} size="sm" shape="square" />
               )}
-              <span className="text-medium-13 text-ink">
+              {/* Le nom seul, comme la planche : un refus de relecture se lit
+                  dans le fil, sur le bloc de la délégation, pas ici. Le point
+                  de couleur que le code portait n'est pas dessiné. */}
+              <span
+                className={`text-medium-13 ${r.ok ? 'text-ink' : 'text-warn'}`}
+                title={r.ok ? undefined : 'This review said no'}
+              >
                 {r.isAgent ? r.name : shortToolName(r.name)}
               </span>
-              {/* Une relecture qui a dit NON ne doit pas se lire comme les
-                  autres. La maquette ne dessine pas ce point ; le retirer
-                  effacerait le seul endroit où un refus de relecture se voit. */}
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.ok ? 'bg-ok' : 'bg-warn'}`}
-                aria-hidden
-              />
             </span>
           ))}
           {jobId !== null && (
+            // Après le dernier nom, à trente pixels — pas au bord droit : la
+            // planche le pose dans la ligne, comme la pastille du haut.
             <Link
               href={`/scheduled/${jobId}`}
-              className="ml-auto flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 transition-colors hover:text-ink"
+              className="ml-5 flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 transition-colors hover:text-ink"
             >
               Open run
-              <ArrowSquareOut size={12} aria-hidden />
+              <ArrowSquareOut size={12} className="text-ink-3" aria-hidden />
             </Link>
           )}
         </div>
