@@ -62,8 +62,11 @@ export default function DeliveryBlock({ summary }: { summary: DeliverySummary })
     stats.push({ label: 'Cost', value: formatCost(summary.costUsd) });
   }
 
+  // Pleine largeur, comme tout bloc du fil (#135) : la marge de 46 px poussait
+  // le récapitulatif vers la droite, plus étroit que les blocs du travail
+  // qu'il conclut.
   return (
-    <div className="mt-4 ml-[46px] overflow-hidden rounded-xl border border-rule bg-paper">
+    <div className="mt-4 overflow-hidden rounded-xl border border-rule bg-paper">
       <div className="flex h-[48px] items-center gap-2.5 px-4">
         <CheckCircle
           size={16}

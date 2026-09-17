@@ -450,6 +450,10 @@ describe('ConversationFeedView', () => {
     expect(html2).not.toContain('>Done<');
     // Replié : la consigne du délégué n'est pas dans le HTML initial.
     expect(html2).not.toContain('Audite le correctif de session');
+    // Pleine largeur : plus de gouttière qui rentrerait la délégation par
+    // rapport aux blocs d'outil du tour juste au-dessus (#135).
+    expect(html2).not.toContain('pl-[46px]');
+    expect(html2).not.toContain('ml-[46px]');
   });
 
   it('la réponse ferme le fil, après l’envoi', () => {

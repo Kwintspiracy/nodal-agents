@@ -732,8 +732,11 @@ function DelegationGroup({ job, deliverables }: { job: FeedChildJob; deliverable
   ]
     .filter((x): x is string => x !== null)
     .join(' · ');
+  // Pleine largeur, comme tout bloc du fil (#135, remarque de Quentin sur
+  // #140) : la gouttière de 46 px rentrait la délégation par rapport aux blocs
+  // d'outil juste au-dessus, et le fil se lisait en escalier.
   return (
-    <div className="mt-4 pl-[46px]">
+    <div className="mt-4">
       <DelegationDisclosure
         label={`Delegated to ${job.agentName ?? 'an agent'}`}
         avatar={<AgentAvatar name={job.agentName ?? 'Agent'} size="sm" shape="square" />}
