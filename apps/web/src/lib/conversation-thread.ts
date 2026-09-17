@@ -37,6 +37,7 @@ import {
   type FeedItem,
   type FeedTotals,
   type Origin,
+  type RunSummary,
 } from './conversation-feed.ts';
 import { canonicalChangePath, lineCountsOfCall, sumLineCounts } from './coding-changes.ts';
 import { callHappened, outcomeOfToolOutput, parsePresented } from './tool-card-payload.ts';
@@ -140,6 +141,121 @@ function jobItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
   const items = withoutHistory(job.feed.items);
   if (!asHandoff) return items;
   return items.map((i) => (i.kind === 'request' ? { kind: 'handoff' as const, text: i.text } : i));
+}
+
+/**
+ * Ce que la ligne de résumé dit du run (#135, #132).
+ *
+ * Les outils et le coût se lisent sur les TOTAUX du job — c'est la même source
+ * que la barre d'état, et deux comptes du même travail ne peuvent pas diverger.
+ * Les délégations et les appels de modèle se comptent sur les items du GROUPE,
+ * après le retrait de la réponse : la ligne promet ce que le dépliage montre,
+ * et un tour dont la prose est sortie ne compte plus sa ligne de modèle deux
+ * fois. La durée est celle du travail entier, pas celle du modèle : `null` tant
+ * qu'il court (invariant #4 — on ne devine pas une fin).
+ */
+function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
+  return {
+    tools: job.feed.totals.toolCalls,
+    delegations: work.filter((i) => i.kind === 'child').length,
+    modelCalls: work.filter((i) => i.kind === 'turn' && i.usage !== null).length,
+    durationMs:
+      job.completedAt !== null && job.createdAt !== null
+        ? job.completedAt.getTime() - job.createdAt.getTime()
+        : null,
+    costUsd: job.feed.totals.costUsd,
+  };
+}
+
+/**
+ * La RÉPONSE d'un run qui n'a pas d'item `answer`.
+ *
+ * `buildConversationFeed` ne pose `answer` que lorsque l'agent a fini SANS un
+ * mot : quand il a parlé, sa réponse est sa dernière prose, et la répéter en
+ * plaque afficherait deux fois le même texte. Le tableau de #135 la veut
+ * pourtant DEHORS, au-dessus de la ligne de résumé. On la sort donc du groupe,
+ * et la règle est celle-là, dite une fois : **le dernier bloc `prose` du dernier
+ * tour**. Un bloc de prose plus haut est intermédiaire — l'agent qui annonce ce
+ * qu'il va faire —, et il reste dans le groupe.
+ *
+ * Seulement sur un travail TERMINÉ (`completedAt`). Tant qu'il court, sa
+ * dernière phrase n'est pas une réponse mais une étape ; la dessiner comme la
+ * réponse serait inventer une fin (invariant #4).
+ *
+ * Le tour sorti ne porte NI jetons NI durée : sa ligne de modèle reste dans le
+ * groupe, avec le travail qu'elle a payé.
+ */
+function liftAnswerTurn(job: ThreadJob, work: FeedItem[]): FeedItem | null {
+  if (job.completedAt === null) return null;
+  const turnAt = work.map((i) => i.kind).lastIndexOf('turn');
+  if (turnAt < 0) return null;
+  const turn = work[turnAt];
+  if (turn === undefined || turn.kind !== 'turn') return null;
+  const proseAt = turn.blocks.map((b) => b.kind).lastIndexOf('prose');
+  if (proseAt < 0) return null;
+  const prose = turn.blocks[proseAt];
+  if (prose === undefined || prose.kind !== 'prose') return null;
+  const rest = turn.blocks.filter((_, i) => i !== proseAt);
+  // Un tour vidé de sa prose et sans appel de modèle n'a plus rien à montrer :
+  // il disparaît du groupe plutôt que d'y laisser un en-tête d'agent seul.
+  if (rest.length === 0 && turn.usage === null) work.splice(turnAt, 1);
+  else work[turnAt] = { ...turn, blocks: rest };
+  return { ...turn, blocks: [prose], usage: null };
+}
+
+/**
+ * Les items d'un job tels que le FIL les pose (#135, #132) : la demande, la
+ * réponse, puis le travail replié sous sa ligne de résumé.
+ *
+ * Ce qui entre dans le groupe : les tours et les délégations. Ce qui reste
+ * dehors, et pourquoi :
+ *   - `request` / `handoff` — la demande précède le travail, elle n'en fait pas
+ *     partie ;
+ *   - `note` — le bruit système est dit UNE fois par fil (`dedupeNotes`), et
+ *     cette règle ne peut pas voir ce qui est enfoui dans un groupe ;
+ *   - `answer` / `failure` — ce que le run a rendu, la seule chose qu'on lit
+ *     sans déplier ;
+ *   - `produced` — le récapitulatif de livraison, posé par `afterJobItems`.
+ *
+ * Les tours sont compactés AVANT le groupe : `compactTurns` replie les tours
+ * muets dans le précédent, et il ne verrait plus rien s'il ne tournait qu'au
+ * niveau du fil, où le job n'est plus qu'un item.
+ */
+function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
+  const own = compactTurns(jobItems(job, asHandoff));
+  const lead: FeedItem[] = [];
+  const notes: FeedItem[] = [];
+  const work: FeedItem[] = [];
+  let answer: FeedItem | null = null;
+  let failure: FeedItem | null = null;
+  for (const item of own) {
+    if (item.kind === 'request' || item.kind === 'handoff') lead.push(item);
+    else if (item.kind === 'note') notes.push(item);
+    else if (item.kind === 'answer') answer = item;
+    else if (item.kind === 'failure') failure = item;
+    else work.push(item);
+  }
+  // Un travail qui a ÉCHOUÉ ne se relit pas par sa dernière phrase : ce qu'il a
+  // rendu est son échec, et la carte est juste sous le groupe. Sortir sa
+  // dernière prose la ferait passer pour une réponse.
+  if (answer === null && failure === null) answer = liftAnswerTurn(job, work);
+
+  const first = work.find((i) => i.kind === 'turn');
+  const out: FeedItem[] = [...lead, ...notes];
+  if (answer !== null) out.push(answer);
+  if (work.length > 0) {
+    out.push({
+      kind: 'run',
+      jobId: job.jobId,
+      agent: first?.kind === 'turn' ? first.agent : { name: null, slug: null, avatarUrl: null },
+      model: first?.kind === 'turn' ? first.model : null,
+      at: job.createdAt,
+      summary: runSummary(job, work),
+      items: work,
+    });
+  }
+  if (failure !== null) out.push(failure);
+  return out;
 }
 
 /**
@@ -371,7 +487,7 @@ export function buildConversationThread(input: {
   if (conversation.channel !== 'dashboard') {
     // Un fil de canal n'a pas de `chat_messages` : ses tours SONT ses jobs.
     for (const job of jobs) {
-      items.push(...jobItems(job, false));
+      items.push(...jobThreadItems(job, false));
       items.push(...afterJobItems(job));
     }
     return { items: settle(items), totals: sumTotals(jobs) };
@@ -422,7 +538,7 @@ export function buildConversationThread(input: {
       items.push({ kind: 'note', text: JOB_GONE_NOTE, origin: 'thread' });
       continue;
     }
-    items.push(...jobItems(job, true));
+    items.push(...jobThreadItems(job, true));
     items.push(...afterJobItems(job));
   }
 

@@ -261,6 +261,35 @@ export type FeedItem =
   | { kind: 'answer'; text: string }
   | { kind: 'failure'; text: string }
   /**
+   * #135 / #132 — LE TRAVAIL d'un job, en un seul item.
+   *
+   * Le principe de Quentin (#132) : un seul rendu de ce qu'un run a fait, à
+   * deux densités. Le chat l'ouvre REPLIÉ — la réponse de l'agent d'abord, et
+   * dessous une ligne qui résume le run ; un clic déplie, bloc par bloc, ce que
+   * la page du run montre. Pour que ce soit le MÊME rendu, le groupe vit dans
+   * le MODÈLE et pas seulement dans l'écran : sinon chaque écran le referait à
+   * sa façon, et les deux divergeraient au premier bloc ajouté.
+   *
+   * `items` porte les blocs du run dans l'ordre du temps — tours (raisonnement,
+   * outils, ligne de modèle, prose intermédiaire, cartes de résultat) et
+   * délégations, à plat (#141). Ce qui n'est PAS du travail reste dehors : la
+   * demande, la consigne, les notes, la réponse, l'échec, le récapitulatif.
+   *
+   * Posé par `conversation-thread.ts`, jamais par `buildConversationFeed` : le
+   * fil d'un job EST la vue dépliée, celle de la page du run.
+   */
+  | {
+      kind: 'run';
+      jobId: string;
+      /** Qui a porté le run — l'agent de son premier tour. */
+      agent: { name: string | null; slug: string | null; avatarUrl: string | null };
+      model: string | null;
+      /** Quand le run a commencé (`agent_jobs.created_at`). */
+      at: Date | null;
+      summary: RunSummary;
+      items: FeedItem[];
+    }
+  /**
    * P7 — ce qui est SORTI du chat à ce tour, et où ça vit. Posé par
    * `conversation-thread.ts`, jamais par `buildConversationFeed` : un job seul
    * ne sait rien du projet courant ni des lignes de ses descendants.
@@ -279,6 +308,26 @@ export type FeedItem =
    * sa reformulation par l'agent, repliée.
    */
   | { kind: 'handoff'; text: string };
+
+/**
+ * Ce que la LIGNE DE RÉSUMÉ d'un run dit de lui (#135, #132) : « 3 tools ·
+ * 1 delegation · 2 model calls · 12 s · $0.04 ».
+ *
+ * Chaque champ peut manquer, et un champ absent ne se dessine pas — pas de
+ * « 0 tools », pas de « $0 » (invariant #4). Un compte est donc un nombre
+ * VÉRIFIÉ : les outils et le coût viennent des totaux du job, les délégations
+ * et les appels de modèle se comptent sur les items du groupe, pour que la
+ * ligne dise exactement ce que le dépliage montre.
+ */
+export type RunSummary = {
+  tools: number;
+  delegations: number;
+  /** Les tours du groupe qui portent un `usage` — donc les lignes de modèle. */
+  modelCalls: number;
+  /** Du début à la fin du travail. null tant qu'il n'est pas terminé. */
+  durationMs: number | null;
+  costUsd: number | null;
+};
 
 /**
  * Une relecture du travail, telle que le récapitulatif de livraison la montre
