@@ -5,21 +5,37 @@
 // messagerie. Les fils de canaux (Telegram, Slack, Discord, WhatsApp) sont
 // ici au même titre que ceux du dashboard — c'est le même agent, et le canal
 // n'est qu'un moyen d'y accéder.
+//
+// Depuis #135, la page s'ouvre aussi sur UN dossier (`?folder=telegram`,
+// `?folder=dashboard`) : le menu de la barre latérale y mène. C'est la même
+// liste, restreinte ; la refonte des LIGNES elles-mêmes est un autre lot.
 
 import PageShell from '@/components/ui/PageShell';
 import {
+  getChatFoldersAction,
   listAllConversationsAction,
   listChatNamesAction,
   listCurrentThreadByChatAction,
 } from '@/lib/conversation-actions.ts';
+import { listApprovalsAction } from '@/lib/actions.ts';
 import { groupChatLists } from '@/lib/chat-list.ts';
+import { folderOfJobChannel } from '@/lib/chat-folders.ts';
+import { chatFolderView, folderSubtitle } from './folder-view.ts';
 import ChannelChatsTable from './ChannelChatsTable.tsx';
 import ConversationsList from './ConversationsList.tsx';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ChatPage() {
-  const [result, names, currents] = await Promise.all([
+export default async function ChatPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const rawFolder = params.folder;
+  const folderParam = typeof rawFolder === 'string' ? rawFolder : null;
+
+  const [result, names, currents, folders, approvals] = await Promise.all([
     listAllConversationsAction(),
     // Le nom des chats de canal. Une lecture qui échoue ne doit pas emporter la
     // page : les chats s'affichent alors par leur identifiant — mais elle se
@@ -29,6 +45,14 @@ export default async function ChatPage() {
     // runner. Une lecture qui échoue n'emporte pas la page — mais elle se DIT :
     // voir `threadsUnreadable` ci-dessous.
     listCurrentThreadByChatAction(),
+    // Les canaux qui EXISTENT, et les runs qui tournent — la même lecture que
+    // le menu de la barre latérale, pour que les deux disent le même chiffre.
+    getChatFoldersAction(),
+    // Ce qui attend la personne. La barre latérale l'a déjà en main, mais elle
+    // est cliente et cet en-tête est rendu par le serveur : c'est ce que coûte
+    // la phrase. C'est la MÊME action et la MÊME attribution que le menu, pas
+    // une seconde vérité.
+    listApprovalsAction({ status: 'pending' }),
   ]);
   const { channels, dashboard, missingCurrent, hiddenByWindow } = groupChatLists(
     result.ok ? result.data : [],
@@ -49,18 +73,42 @@ export default async function ChatPage() {
   // (revue Codex, PR #48, passe 12).
   const namesUnreadable = !names.ok;
 
+  // Le dossier demandé, VALIDÉ contre les canaux que la base connaît. Une
+  // lecture des dossiers en échec laisse la page ENTIÈRE plutôt que de refuser
+  // un dossier qui existe : c'est la vue la plus large, jamais la plus fausse.
+  const view = chatFolderView(folderParam, folders.ok ? folders.data.channels : []);
+  const shownChannels =
+    view.channel === null ? channels : channels.filter((c) => c.channel === view.channel);
+
+  // La phrase sous le titre d'un dossier. Trois chiffres, et QUE des chiffres
+  // que la page tient : les conversations sont celles qu'elle affiche, les
+  // attentes viennent des approbations rangées par la règle du menu, les runs
+  // du même instantané.
+  const subtitle =
+    view.key === null
+      ? 'Your channels, and the conversations you started here.'
+      : (folderSubtitle({
+          conversations: view.showDashboard ? dashboard.length : shownChannels.length,
+          waiting: approvals.ok
+            ? approvals.data.filter((a) => folderOfJobChannel(a.jobChannel) === view.key).length
+            : 0,
+          running: folders.ok ? (folders.data.running[view.key] ?? 0) : 0,
+        }) ?? undefined);
+
   return (
-    <PageShell title="Chat" subtitle="Your channels, and the conversations you started here.">
+    <PageShell title={view.title} subtitle={subtitle}>
       {result.ok ? (
         <>
-          <ChannelChatsTable
-            rows={channels}
-            threadsUnreadable={threadsUnreadable}
-            namesUnreadable={namesUnreadable}
-            missingCurrent={missingCurrent}
-            hiddenByWindow={hiddenByWindow}
-          />
-          <ConversationsList rows={dashboard} />
+          {view.showChannels && (
+            <ChannelChatsTable
+              rows={shownChannels}
+              threadsUnreadable={threadsUnreadable}
+              namesUnreadable={namesUnreadable}
+              missingCurrent={missingCurrent}
+              hiddenByWindow={hiddenByWindow}
+            />
+          )}
+          {view.showDashboard && <ConversationsList rows={dashboard} />}
         </>
       ) : (
         <p className="text-sm text-err">{result.message}</p>
