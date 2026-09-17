@@ -1,9 +1,10 @@
-// DeliveryBlock.test.tsx — le récapitulatif de livraison (P2bis).
+// DeliveryBlock.test.tsx — la conclusion du travail (P2bis, redessinée #135).
 //
 // L'enjeu du test n'est pas ce qu'il montre : c'est ce qu'il TAIT. La maquette
 // porte six cellules ; deux n'ont pas de source. Un travail sans preuve n'a ni
-// « Tests » ni « Checks », et surtout pas un « 0 / 0 » qui laisserait croire
-// que les tests ont tourné.
+// « Tests » ni « Proof », et surtout pas un « 0 / 0 » qui laisserait croire
+// que les tests ont tourné. Elle écrit aussi « 3 passed » après une commande :
+// le modèle n'a qu'un verdict par commande, et le compte n'est pas inventé.
 //
 // Et le calcul lui-même, dans le modèle : `deliverySummary` ne compte que les
 // fichiers ÉCRITS, ramasse les délégués en relectures, et ne rend un verdict
@@ -22,6 +23,7 @@ import type { ProductionVerdict } from '@/lib/chat-or-work.ts';
 
 const EMPTY: DeliverySummary = {
   files: 0,
+  filePaths: [],
   lines: null,
   tests: null,
   durationMs: null,
@@ -168,9 +170,46 @@ describe('deliverySummary — ce que le modèle compte', () => {
       },
     });
     expect(summary.files).toBe(2);
+    // #135 — les chemins EUX-MÊMES, dans l'ordre d'écriture, dédoublonnés
+    // comme le compte : la liste et le nombre ne peuvent plus diverger.
+    expect(summary.filePaths).toEqual(['src/a.ts', 'src/c.ts']);
+    expect(summary.files).toBe(summary.filePaths.length);
     expect(summary.reviews).toEqual([
-      { name: 'Le Codeur', text: 'TokenService extrait', ok: true, isAgent: true },
+      {
+        name: 'Le Codeur',
+        text: 'TokenService extrait',
+        ok: true,
+        isAgent: true,
+        avatarUrl: null,
+      },
     ]);
+  });
+
+  it('la relecture d’un délégué porte SON image quand il en a une (#135)', () => {
+    const summary = summaryOf({
+      feed: {
+        items: [
+          {
+            kind: 'child',
+            from: { name: 'Marlowe', slug: 'marlowe', avatarUrl: null },
+            job: {
+              id: 'j2',
+              agentName: 'Vega Orin',
+              agentSlug: 'vega-orin',
+              agentAvatarUrl: '/avatars/vega.png',
+              status: 'completed',
+              task: 'relis la livraison',
+              result: 'Approved, one minor note',
+              error: null,
+              createdAt: null,
+              completedAt: null,
+            },
+          },
+        ],
+        totals: totals(),
+      },
+    });
+    expect(summary.reviews[0]?.avatarUrl).toBe('/avatars/vega.png');
   });
 
   it('les lignes se somment sur le job ET ses délégués, à toute profondeur ; une écriture qui n’a pas eu lieu ne compte pas', () => {
@@ -259,35 +298,47 @@ describe('deliverySummary — ce que le modèle compte', () => {
       },
     });
     expect(summary.reviews).toEqual([
-      { name: 'cli:codex_review', text: 'Two blockers', ok: false, isAgent: false },
+      {
+        name: 'cli:codex_review',
+        text: 'Two blockers',
+        ok: false,
+        isAgent: false,
+        avatarUrl: null,
+      },
     ]);
   });
 });
 
 describe('DeliveryBlock — ce que l’écran dessine', () => {
   it('un travail sans rien de prouvé dit qu’il n’est pas vérifié, et n’a aucune section', () => {
-    const html = renderToStaticMarkup(<DeliveryBlock summary={EMPTY} />);
-    expect(html).toContain('Delivery summary');
+    const html = renderToStaticMarkup(<DeliveryBlock summary={EMPTY} jobId={null} />);
+    // #135 — le mot du résultat, pas le nom d'un encart.
+    expect(html).toContain('Delivered');
+    expect(html).not.toContain('Delivery summary');
     expect(html).toContain('Not verified');
     expect(html).not.toContain('Tests');
-    expect(html).not.toContain('Checks<');
-    expect(html).not.toContain('Reviews');
+    expect(html).not.toContain('Proof');
+    expect(html).not.toContain('Reviewed by');
     // Sans écriture textuelle, pas de cellule « Lines » ; « Coverage » n'a de
     // toute façon aucune source.
     expect(html).not.toContain('Lines');
     expect(html).not.toContain('Coverage');
+    // Sans run à ouvrir ET sans relecture, pas de pied du tout.
+    expect(html).not.toContain('Open run');
     // Pleine largeur : le récapitulatif conclut le travail, il n'est pas plus
     // étroit que les blocs qu'il conclut (#135).
     expect(html).not.toContain('ml-[46px]');
     expect(html).not.toContain('pl-[46px]');
   });
 
-  it('les cellules PRÉSENTES sont celles qui ont une source', () => {
+  it('les cellules PRÉSENTES sont celles qui ont une source, aux styles de la maquette', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
+        jobId="job-7"
         summary={{
           ...EMPTY,
           files: 3,
+          filePaths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
           lines: { added: 27, removed: 2 },
           tests: { passed: 6, total: 6 },
           durationMs: 252_000,
@@ -298,7 +349,13 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
             { command: 'pnpm lint', ok: true },
           ],
           reviews: [
-            { name: 'Le Relecteur', text: 'Approved, one minor note', ok: true, isAgent: true },
+            {
+              name: 'Vega Orin',
+              text: 'Approved, one minor note',
+              ok: true,
+              isAgent: true,
+              avatarUrl: null,
+            },
           ],
         }}
       />,
@@ -311,15 +368,44 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).toContain('4 min 12');
     expect(html).toContain('$0.52');
     expect(html).toContain('Verified');
-    expect(html).toContain('Le Relecteur');
-    expect(html).toContain('Approved, one minor note');
+    expect(html).toContain('Vega Orin');
     expect(html).toContain('pnpm lint');
+    // L'étiquette est Mono/11 en ink-4, la valeur Medium/14 — plus de micro
+    // capitales, plus de Mono/13.
+    expect(html).toMatch(/class="[^"]*text-mono-11[^"]*text-ink-4[^"]*"[^>]*>Files</);
+    expect(html).toMatch(/class="[^"]*text-medium-14[^"]*"[^>]*>3</);
+    expect(html).not.toContain('text-micro-10');
+    // La durée est une mesure : elle prend la couleur des mesures.
+    expect(html).toMatch(/class="[^"]*text-medium-14 text-feed-metric[^"]*"[^>]*>4 min 12</);
     expect(html).not.toMatch(/text-\[\d/);
   });
 
-  it('une preuve rouge dit que les contrôles ont échoué, et marque la commande fautive', () => {
+  it('les fichiers livrés sont NOMMÉS, un par ligne, en couleur de chemin (#135)', () => {
     const html = renderToStaticMarkup(
       <DeliveryBlock
+        jobId="job-7"
+        summary={{ ...EMPTY, files: 2, filePaths: ['src/a.ts', 'apps/web/src/b.tsx'] }}
+      />,
+    );
+    expect(html).toMatch(/class="[^"]*text-mono-12 text-feed-path[^"]*"[^>]*>src\/a\.ts</);
+    expect(html).toContain('apps/web/src/b.tsx');
+    expect(html).not.toContain('and 0 more');
+  });
+
+  it('au-delà de douze fichiers, la liste s’arrête et COMPTE le reste', () => {
+    const paths = Array.from({ length: 15 }, (_, i) => `src/f${i}.ts`);
+    const html = renderToStaticMarkup(
+      <DeliveryBlock jobId="job-7" summary={{ ...EMPTY, files: 15, filePaths: paths }} />,
+    );
+    expect(html).toContain('src/f11.ts');
+    expect(html).not.toContain('src/f12.ts');
+    expect(html).toContain('… and 3 more');
+  });
+
+  it('la preuve s’appelle « Proof », et chaque commande porte son sort', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-7"
         summary={{
           ...EMPTY,
           tests: { passed: 1, total: 2 },
@@ -333,6 +419,67 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     );
     expect(html).toContain('Checks failed');
     expect(html).not.toContain('Verified');
-    expect(html).toContain('text-err');
+    expect(html).toContain('Proof');
+    expect(html).not.toContain('>Checks<');
+    expect(html).toMatch(/class="[^"]*text-mono-12 text-ink-2[^"]*"[^>]*>pnpm lint</);
+    // Une coche verte et une croix d'alerte : deux icônes, deux couleurs.
+    expect(html).toContain('text-ok');
+    expect(html).toContain('text-warn');
+    // La maquette écrit « 3 passed » après la commande ; `ThreadProofRun` ne
+    // porte pas de compte de cas. Rien n'est inventé.
+    expect(html).not.toContain('passed<');
+  });
+
+  it('le pied dit QUI a relu, avec son image, et ouvre le run', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId="job-7"
+        summary={{
+          ...EMPTY,
+          reviews: [
+            {
+              name: 'Vega Orin',
+              text: 'Approved',
+              ok: true,
+              isAgent: true,
+              avatarUrl: '/avatars/vega.png',
+            },
+            {
+              name: 'cli:codex_review',
+              text: 'Two blockers',
+              ok: false,
+              isAgent: false,
+              avatarUrl: null,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain('Reviewed by');
+    expect(html).toContain('vega.png');
+    expect(html).toMatch(/class="[^"]*text-medium-13[^"]*"[^>]*>Vega Orin</);
+    // Un verdict d'outil n'a pas d'avatar, et son nom perd le préfixe du harnais.
+    expect(html).toContain('codex_review');
+    expect(html).not.toContain('cli:codex_review');
+    expect(html).toContain('Open run');
+    expect(html).toContain('href="/scheduled/job-7"');
+  });
+
+  it('sans run, le pied garde les relectures et PERD le lien', () => {
+    const html = renderToStaticMarkup(
+      <DeliveryBlock
+        jobId={null}
+        summary={{
+          ...EMPTY,
+          reviews: [
+            { name: 'Vega Orin', text: 'Approved', ok: true, isAgent: true, avatarUrl: null },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain('Reviewed by');
+    expect(html).toContain('Vega Orin');
+    expect(html).not.toContain('Open run');
+    expect(html).not.toContain('/scheduled/');
   });
 });

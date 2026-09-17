@@ -170,6 +170,7 @@ describe('buildConversationThread — une conversation de canal', () => {
       // rendent pas un « 0 / 0 » ou un « $0.00 » qui n'existent pas.
       summary: {
         files: 0,
+        filePaths: [],
         lines: null,
         tests: null,
         durationMs: null,
@@ -211,6 +212,11 @@ describe('buildConversationThread — une conversation de canal', () => {
     });
     const produit = items.find((i) => i.kind === 'produced');
     expect(produit?.kind === 'produced' && produit.summary.files).toBe(1);
+    // #135 — la LISTE suit la même règle que le compte : le chemin canonique,
+    // une seule fois, jamais la forme absolue à côté de la relative.
+    expect(produit?.kind === 'produced' && produit.summary.filePaths).toEqual([
+      'notes/bonjour.html',
+    ]);
     expect(produit?.kind === 'produced' && produit.summary.lines).toEqual({
       added: 14,
       removed: 1,
