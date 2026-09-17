@@ -5752,6 +5752,19 @@ export type ApprovalRow = {
    */
   jobChannel: string | null;
   /**
+   * La CONVERSATION dont vient la demande — donc la LIGNE de la liste d'un
+   * dossier qui doit porter « Question asked » ou « Approval pending » (#135).
+   * Lue sur la colonne du job déjà joint pour `jobTask` et `jobChannel` : pas
+   * une requête de plus, et surtout aucune par ligne.
+   *
+   * `null` quand le job ne se rattache à aucune conversation — une tâche lancée
+   * par l'API, une automation. Une attente sans conversation ne se pose alors
+   * sur AUCUNE ligne plutôt que sur la première venue (invariant #4) : elle
+   * reste entière sur /approvals, et le sous-titre du dossier la compte déjà
+   * par son canal.
+   */
+  conversationId: string | null;
+  /**
    * Structured, readable explanation of what is being approved. Computed
    * server-side so the client renders it without another round trip, and so the
    * dashboard and the channel cards say the SAME thing.
@@ -5817,6 +5830,7 @@ export async function listApprovalsAction(
         notes: approvalRequests.notes,
         jobTask: agentJobs.task,
         jobChannel: agentJobs.channel,
+        conversationId: agentJobs.conversationId,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))

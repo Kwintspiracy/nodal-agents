@@ -472,12 +472,15 @@ export type ChatIdentities = Readonly<Record<string, { name: string | null; kind
  * Ce que le menu « Chat folders » a besoin de savoir, et que les approbations
  * ne portent pas (#135).
  *
- * Deux faits, deux requêtes, aucune par dossier :
+ * Trois faits, trois requêtes, aucune par dossier NI par ligne :
  *   - `channels` — les canaux qui portent au moins une conversation LISTABLE.
  *     Les mêmes prédicats que la désignation du fil courant, pour que l'index
  *     partiel `idx_conversations_listable_chats` les serve ;
  *   - `running` — combien de runs TOURNENT, par dossier. Groupé en SQL : une
- *     requête par dossier redeviendrait un N+1 au premier canal ajouté.
+ *     requête par dossier redeviendrait un N+1 au premier canal ajouté ;
+ *   - `runningConversationIds` — SUR QUELLES conversations ils tournent, pour
+ *     le point vert d'une LIGNE de la liste (#135). Un `distinct` en SQL, pas
+ *     une lecture par ligne affichée.
  *
  * Ce qui ATTEND la personne ne se lit PAS ici : il vient des approbations que
  * la barre latérale a déjà en main (`ApprovalsProvider`), et le relire ferait
@@ -488,6 +491,15 @@ export type ChatFoldersSnapshot = {
   channels: string[];
   /** Le nombre de runs en cours, par dossier. Une clé absente vaut zéro. */
   running: Record<string, number>;
+  /**
+   * Les conversations sur lesquelles un run TOURNE en ce moment — les mêmes
+   * statuts que `running`, donc sans celui qui attend une approbation.
+   *
+   * Sans rapport avec le dossier : une conversation n'appartient qu'à un seul,
+   * et la ligne qui la dessine sait déjà lequel. Un job sans `conversation_id`
+   * n'y figure pas — il tourne, mais aucune ligne ne peut le montrer.
+   */
+  runningConversationIds: string[];
 };
 
 export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSnapshot>> {
@@ -496,7 +508,7 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    const [channelRows, runningRows] = await Promise.all([
+    const [channelRows, runningRows, runningConvRows] = await Promise.all([
       db
         .selectDistinct({ channel: conversations.channel })
         .from(conversations)
@@ -519,6 +531,19 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
           ),
         )
         .groupBy(agentJobs.channel),
+      // Les CONVERSATIONS où ça tourne. Une seule lecture, dédupliquée en
+      // base : trois jobs d'un même fil n'allument qu'un point, et cinquante
+      // lignes à l'écran ne font pas cinquante requêtes.
+      db
+        .selectDistinct({ conversationId: agentJobs.conversationId })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, session.entityId),
+            inArray(agentJobs.status, [...RUNNING_JOB_STATUSES]),
+            isNotNull(agentJobs.conversationId),
+          ),
+        ),
     ]);
 
     const running: Record<string, number> = {};
@@ -532,7 +557,16 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
       running[key] = (running[key] ?? 0) + r.n;
     }
 
-    return ok({ channels: channelRows.map((r) => r.channel), running });
+    return ok({
+      channels: channelRows.map((r) => r.channel),
+      running,
+      // `isNotNull` filtre déjà en SQL ; le `filter` est ce qui le DIT au
+      // typage, sans jamais rendre un `null` que l'écran prendrait pour un
+      // identifiant.
+      runningConversationIds: runningConvRows
+        .map((r) => r.conversationId)
+        .filter((id): id is string => id !== null),
+    });
   } catch (err) {
     console.error('[getChatFoldersAction]', err);
     return fail('db_error', 'Failed to load the chat folders');

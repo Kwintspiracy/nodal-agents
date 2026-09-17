@@ -43,7 +43,11 @@ export function ChatFoldersProvider({
   return <ChatFoldersContext.Provider value={snapshot}>{children}</ChatFoldersContext.Provider>;
 }
 
-const FALLBACK: ChatFoldersContextValue = { channels: [], running: {} };
+const FALLBACK: ChatFoldersContextValue = {
+  channels: [],
+  running: {},
+  runningConversationIds: [],
+};
 
 export function useChatFolders(): ChatFoldersContextValue {
   const ctx = useContext(ChatFoldersContext);

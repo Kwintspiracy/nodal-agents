@@ -67,7 +67,15 @@ async function renderGroup(opts: {
 }): Promise<void> {
   await render(
     <ApprovalsProvider initial={opts.approvals ?? []}>
-      <ChatFoldersProvider initial={{ channels: opts.channels ?? [], running: opts.running ?? {} }}>
+      <ChatFoldersProvider
+        initial={{
+          channels: opts.channels ?? [],
+          running: opts.running ?? {},
+          // Le menu ne s'en sert pas : il compte par DOSSIER. Les lignes d'un
+          // dossier, elles, s'en servent (#135).
+          runningConversationIds: [],
+        }}
+      >
         <ChatFolderGroup />
       </ChatFoldersProvider>
     </ApprovalsProvider>,
