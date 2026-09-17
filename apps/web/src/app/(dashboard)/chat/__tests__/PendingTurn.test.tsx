@@ -3,10 +3,11 @@
 // Ce qui se prouve : dès Entrée, le message envoyé est DANS le fil et l'agent
 // « réfléchit » — avant que l'action serveur ait répondu ; la zone est vidée et
 // RESTE ouverte : un second message part sans attendre le premier, et s'ajoute
-// au fil ; quand le serveur a rendu une demande (son texte est dans le fil), sa
-// copie s'efface, et seulement la sienne — deux « ok » s'effacent l'un après
-// l'autre ; si un envoi échoue, son texte revient dans la zone et sa copie
-// quitte le fil.
+// au fil ; le loader est SOUS le message que le runner traite, et passe sous le
+// suivant quand la réponse arrive ; quand le serveur a rendu une demande (son
+// texte est dans le fil), sa copie s'efface, et seulement la sienne — deux
+// « ok » s'effacent l'un après l'autre ; si un envoi échoue, son texte revient
+// dans la zone et sa copie quitte le fil.
 //
 // Rendu dans jsdom et TAPÉ ; l'action est mockée avec une promesse PAR APPEL
 // qu'on résout NOUS-MÊMES, pour regarder le fil pendant l'attente (invariant
@@ -17,7 +18,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ThreadComposer from '../ThreadComposer.tsx';
 import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
-import { feedRequests } from '../feed-requests.ts';
+import { feedAwaitsReply, feedRequests } from '../feed-requests.ts';
 
 type Result = { ok: true } | { ok: false; message: string };
 const resolvers: Array<(r: Result) => void> = [];
@@ -42,15 +43,15 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 let container: HTMLDivElement;
 let root: Root;
 
-/** Le fil tel que le serveur le rend : des demandes, dans l'ordre. */
-function feed(...texts: string[]): string[] {
-  return feedRequests(texts.map((text) => ({ kind: 'request', text })));
-}
+type Item = { kind: 'request' | 'answer'; text: string };
+const ask = (text: string): Item => ({ kind: 'request', text });
+const say = (text: string): Item => ({ kind: 'answer', text });
 
-/** L'écran, réduit à ce qui compte : le porteur, le fil (vide), la copie, la saisie. */
-function Screen({ requests }: { requests: string[] }) {
+/** L'écran, réduit à ce qui compte : le porteur, le fil (tel que le serveur
+ *  l'a rendu, réduit à ses demandes et réponses), la copie, la saisie. */
+function Screen({ items }: { items: Item[] }) {
   return (
-    <PendingTurnProvider requests={requests}>
+    <PendingTurnProvider requests={feedRequests(items)} awaitingReply={feedAwaitsReply(items)}>
       <PendingTurn agentName="Intendant" />
       <ThreadComposer conversationId="conv-1" agentName="Intendant" />
     </PendingTurnProvider>
@@ -110,11 +111,17 @@ function pendingTurn(): HTMLElement | null {
   return container.querySelector<HTMLElement>('[data-testid="pending-turn"]');
 }
 
-/** Les messages en attente, dans l'ordre où le fil les montre. */
-function pendingTexts(): string[] {
+/** Ce que le fil montre sous le fil rendu, dans l'ordre : chaque copie par
+ *  son texte, et « thinking » là où l'agent réfléchit. */
+function shown(): string[] {
   return Array.from(
-    container.querySelectorAll<HTMLElement>('[data-testid="pending-message"]'),
-    (el) => el.querySelector('p:last-child')?.textContent ?? '',
+    container.querySelectorAll<HTMLElement>(
+      '[data-testid="pending-message"], [data-testid="pending-thinking"]',
+    ),
+    (el) =>
+      el.dataset.testid === 'pending-thinking'
+        ? 'thinking'
+        : (el.querySelector('p:last-child')?.textContent ?? ''),
   );
 }
 
@@ -134,75 +141,102 @@ afterEach(async () => {
 
 describe('PendingTurn — le fil entre l’envoi et la réponse @cap:parler-a-un-agent/ecran', () => {
   it('dès Entrée, le message est dans le fil et l’agent réfléchit — la réponse n’est pas encore là', async () => {
-    await render(<Screen requests={feed('Bonjour', 'Où en est la carte ?')} />);
+    await render(<Screen items={[ask('Bonjour'), say('Bonjour.')]} />);
     expect(pendingTurn()).toBeNull();
     await send('Où en est la carte ?');
     // L'action n'a PAS répondu : la promesse est toujours en l'air.
     expect(sendChatMessageAction).toHaveBeenCalledTimes(1);
     const turn = pendingTurn();
     if (!turn) throw new Error('the sent message is not in the feed');
-    expect(pendingTexts()).toEqual(['Où en est la carte ?']);
+    expect(shown()).toEqual(['Où en est la carte ?', 'thinking']);
     expect(turn.textContent).toContain('from the dashboard');
     expect(turn.textContent).toContain('Intendant');
-    expect(turn.textContent).toContain('thinking');
     // La zone est vidée tout de suite, et reste ouverte : on peut continuer.
     expect(textarea().value).toBe('');
     expect(textarea().disabled).toBe(false);
   });
 
-  it('un second message part sans attendre le premier, et s’ajoute au fil', async () => {
-    await render(<Screen requests={feed()} />);
+  it('un second message part sans attendre le premier : il s’ajoute au fil, le loader reste sous le premier', async () => {
+    await render(<Screen items={[]} />);
     await send('Première question');
     await send('Et la suite ?');
     expect(sendChatMessageAction).toHaveBeenCalledTimes(2);
-    expect(pendingTexts()).toEqual(['Première question', 'Et la suite ?']);
-    // L'agent ne réfléchit qu'une fois : il prend les messages dans l'ordre.
-    expect(pendingTurn()?.textContent?.match(/thinking/g)).toHaveLength(1);
+    expect(shown()).toEqual(['Première question', 'thinking', 'Et la suite ?']);
     expect(textarea().disabled).toBe(false);
   });
 
-  it('quand le serveur a rendu une demande, sa copie s’efface — et seulement la sienne', async () => {
-    await render(<Screen requests={feed()} />);
+  it('quand la première réponse est rendue, sa copie s’efface et le loader passe sous le message suivant', async () => {
+    await render(<Screen items={[]} />);
     await send('Première question');
     await send('Et la suite ?');
     await settle(0, { ok: true });
     expect(refresh).toHaveBeenCalledTimes(1);
-    // Tant que le fil rendu est le MÊME, les copies restent : effacer avant la
+    // Tant que le fil rendu est le MÊME, rien ne bouge : effacer avant la
     // relecture ferait clignoter le fil.
-    expect(pendingTexts()).toEqual(['Première question', 'Et la suite ?']);
-    // Le serveur rend la première demande : sa copie a fait son temps, l'autre attend.
-    await rerender(<Screen requests={feed('Première question')} />);
-    expect(pendingTexts()).toEqual(['Et la suite ?']);
+    expect(shown()).toEqual(['Première question', 'thinking', 'Et la suite ?']);
+    // Le serveur rend le premier tour : sa copie a fait son temps, l'agent
+    // réfléchit maintenant sous le second message.
+    await rerender(<Screen items={[ask('Première question'), say('Réponse 1')]} />);
+    expect(shown()).toEqual(['Et la suite ?', 'thinking']);
     await settle(1, { ok: true });
-    await rerender(<Screen requests={feed('Première question', 'Et la suite ?')} />);
+    await rerender(
+      <Screen
+        items={[ask('Première question'), say('Réponse 1'), ask('Et la suite ?'), say('Réponse 2')]}
+      />,
+    );
+    expect(pendingTurn()).toBeNull();
+  });
+
+  it('quand le runner a déjà écrit le message suivant sans y répondre, le loader est sous LUI, avant les copies', async () => {
+    await render(<Screen items={[]} />);
+    await send('Première question');
+    await send('Et la suite ?');
+    await send('Une troisième');
+    await settle(0, { ok: true });
+    // Le fil relu porte la première réponse ET la deuxième demande, que le
+    // runner a écrite en ouvrant son tour : c'est sous elle qu'il réfléchit.
+    await rerender(
+      <Screen items={[ask('Première question'), say('Réponse 1'), ask('Et la suite ?')]} />,
+    );
+    expect(shown()).toEqual(['thinking', 'Une troisième']);
+  });
+
+  it('un fil qui se termine sur une demande sans réponse ne fait pas réfléchir l’agent pour de faux', async () => {
+    await render(<Screen items={[ask('Une question d’hier restée sans réponse')]} />);
     expect(pendingTurn()).toBeNull();
   });
 
   it('deux fois le même texte : les copies s’effacent l’une après l’autre', async () => {
-    await render(<Screen requests={feed('ok')} />);
+    await render(<Screen items={[ask('ok'), say('Bien.')]} />);
     await send('ok');
     await send('ok');
-    expect(pendingTexts()).toEqual(['ok', 'ok']);
-    await rerender(<Screen requests={feed('ok', 'ok')} />);
-    expect(pendingTexts()).toEqual(['ok']);
-    await rerender(<Screen requests={feed('ok', 'ok', 'ok')} />);
+    expect(shown()).toEqual(['ok', 'thinking', 'ok']);
+    await settle(0, { ok: true });
+    await settle(1, { ok: true });
+    await rerender(<Screen items={[ask('ok'), say('Bien.'), ask('ok'), say('Bien.')]} />);
+    expect(shown()).toEqual(['ok', 'thinking']);
+    await rerender(
+      <Screen
+        items={[ask('ok'), say('Bien.'), ask('ok'), say('Bien.'), ask('ok'), say('Bien.')]}
+      />,
+    );
     expect(pendingTurn()).toBeNull();
   });
 
   it('si un envoi échoue, son texte revient dans la zone et sa copie quitte le fil', async () => {
-    await render(<Screen requests={feed()} />);
+    await render(<Screen items={[]} />);
     await send('Un message qui partira');
     await send('Un message qui ne partira pas');
     expect(textarea().value).toBe('');
     await settle(1, { ok: false, message: 'Runner unreachable' });
     expect(toastError.mock.calls).toEqual([['Runner unreachable']]);
-    expect(pendingTexts()).toEqual(['Un message qui partira']);
+    expect(shown()).toEqual(['Un message qui partira', 'thinking']);
     expect(textarea().value).toBe('Un message qui ne partira pas');
     expect(refresh).not.toHaveBeenCalled();
   });
 
   it('le texte rendu revient DEVANT ce qu’on a tapé depuis', async () => {
-    await render(<Screen requests={feed()} />);
+    await render(<Screen items={[]} />);
     await send('Perdu');
     await type('Déjà la suite');
     await settle(0, { ok: false, message: 'Runner unreachable' });

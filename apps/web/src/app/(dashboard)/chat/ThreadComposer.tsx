@@ -16,7 +16,7 @@
 // Telegram ou Slack se vérifie canal par canal, et P7 ne le fait pas. La page
 // le dit en toutes lettres plutôt que d'offrir un champ qui ne partirait pas.
 
-import { useRef, useState, useTransition } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -93,7 +93,6 @@ export default function ThreadComposer({
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
-  const [, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
   /**
    * P8 — la conversation qu'on est en train d'OUVRIR. Deux messages envoyés
@@ -131,7 +130,11 @@ export default function ThreadComposer({
     // — l'état contrôlé la remet à '' au rendu suivant, sans conflit.
     const id = pendingTurn.begin(text);
     clearBox();
-    startTransition(async () => {
+    // PAS une transition React : React regroupe les transitions en cours et
+    // ne rend l'écran qu'une fois TOUTES finies — trois messages envoyés à la
+    // suite voyaient leurs trois réponses arriver d'un coup (Quentin, 18/09).
+    // Chaque envoi vit sa vie, et relit le fil quand SA réponse est là.
+    void (async () => {
       // Le texte revient dans la zone — DEVANT ce qu'on a tapé depuis, s'il y a.
       const giveBack = (): void => {
         pendingTurn.end(id);
@@ -163,8 +166,9 @@ export default function ThreadComposer({
       // Le fil relu porte les deux tours ; la copie de `PendingTurn` s'efface
       // d'elle-même quand le fil rendu porte son texte (pas ici : effacer
       // avant la relecture ferait clignoter le fil).
+      pendingTurn.settle(id);
       router.refresh();
-    });
+    })();
   }
 
   // P2bis — un CADRE, pas un champ posé à côté d'un bouton : le design pose

@@ -12,7 +12,9 @@
 //
 // Et on ne reste pas les bras croisés pendant qu'il réfléchit (Quentin, même
 // jour) : la saisie reste ouverte, chaque message envoyé s'ajoute au fil, et le
-// runner les traite dans l'ordre, un tour à la fois par conversation.
+// runner les traite dans l'ordre, un tour à la fois par conversation. Le
+// loader est SOUS le message en cours de traitement : quand sa réponse
+// arrive, il passe sous le suivant.
 //
 // Le runner écrit le tour de l'utilisateur AVANT d'appeler le modèle
 // (`run-chat-turn.ts`, 1b), mais l'action serveur n'en revient qu'avec la
@@ -36,16 +38,32 @@ type Pending = {
    *  au moment de l'envoi : la copie s'efface quand le fil en porte un de
    *  plus. Deux « ok » de suite s'effacent donc l'un après l'autre. */
   baseline: number;
+  /** L'action serveur a répondu : le tour est joué, le fil va le montrer. */
+  settled: boolean;
 };
 
 type Store = {
-  /** Les messages partis que le serveur n'a pas encore rendus, dans l'ordre. */
+  /** Les copies que le serveur n'a pas encore rendues, dans l'ordre. */
   pending: readonly Pending[];
+  /** Un envoi au moins n'a pas encore reçu sa réponse. */
+  inFlight: boolean;
+  /** Le fil rendu se termine sur une demande dont la réponse n'est pas là. */
+  awaitingReply: boolean;
   begin: (text: string) => number;
+  /** L'envoi a réussi : la copie reste jusqu'à ce que le fil la porte. */
+  settle: (id: number) => void;
+  /** L'envoi a échoué : la copie quitte le fil. */
   end: (id: number) => void;
 };
 
-const NOOP: Store = { pending: [], begin: () => 0, end: () => {} };
+const NOOP: Store = {
+  pending: [],
+  inFlight: false,
+  awaitingReply: false,
+  begin: () => 0,
+  settle: () => {},
+  end: () => {},
+};
 const PendingTurnContext = createContext<Store>(NOOP);
 
 function countOf(texts: readonly string[], text: string): number {
@@ -62,10 +80,13 @@ export function stillPending(pending: readonly Pending[], requests: readonly str
 /** Le porteur de l'état « des messages sont partis » — un par écran de fil. */
 export function PendingTurnProvider({
   requests,
+  awaitingReply,
   children,
 }: {
   /** Les demandes que le serveur a rendues, dans l'ordre du fil. */
   requests: readonly string[];
+  /** Le fil rendu se termine sur une demande sans réponse. */
+  awaitingReply: boolean;
   children: ReactNode;
 }) {
   const [all, setAll] = useState<readonly Pending[]>([]);
@@ -74,6 +95,8 @@ export function PendingTurnProvider({
   const pending = stillPending(all, requests);
   const store: Store = {
     pending,
+    inFlight: all.some((p) => !p.settled),
+    awaitingReply,
     begin: (text) => {
       const id = ++nextId.current;
       const baseline =
@@ -82,10 +105,14 @@ export function PendingTurnProvider({
           pending.map((p) => p.text),
           text,
         );
-      // On range en passant ce que le fil a déjà rendu.
-      setAll((prev) => [...stillPending(prev, requests), { id, text, baseline }]);
+      // On range en passant ce que le fil a déjà rendu ET dont le tour est joué.
+      setAll((prev) => [
+        ...prev.filter((p) => !p.settled || countOf(requests, p.text) <= p.baseline),
+        { id, text, baseline, settled: false },
+      ]);
       return id;
     },
+    settle: (id) => setAll((prev) => prev.map((p) => (p.id === id ? { ...p, settled: true } : p))),
     end: (id) => setAll((prev) => prev.filter((p) => p.id !== id)),
   };
   return <PendingTurnContext.Provider value={store}>{children}</PendingTurnContext.Provider>;
@@ -96,6 +123,33 @@ export function usePendingTurn(): Store {
   return useContext(PendingTurnContext);
 }
 
+/** L'agent, à gauche, qui réfléchit — l'en-tête de tour, et à la place de sa
+ *  réponse trois points qui battent. */
+function Thinking({
+  agentName,
+  agentAvatarUrl,
+}: {
+  agentName: string;
+  agentAvatarUrl: string | null;
+}) {
+  return (
+    <div className="min-w-0 pt-6" data-testid="pending-thinking">
+      <div className="mb-1.5 flex items-center gap-2.5">
+        <AgentAvatar name={agentName} imageUrl={agentAvatarUrl} size="sm" shape="square" />
+        <span className="text-title-15 text-ink">{agentName}</span>
+      </div>
+      <div className="flex items-center gap-2 text-mono-11 text-feed-reasoning">
+        <span className="flex items-center gap-1" aria-hidden="true">
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:150ms]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:300ms]" />
+        </span>
+        <span>thinking</span>
+      </div>
+    </div>
+  );
+}
+
 export default function PendingTurn({
   agentName,
   agentAvatarUrl = null,
@@ -103,41 +157,35 @@ export default function PendingTurn({
   agentName: string;
   agentAvatarUrl?: string | null;
 }) {
-  const { pending } = usePendingTurn();
-  if (pending.length === 0) return null;
+  const { pending, inFlight, awaitingReply } = usePendingTurn();
+  // Le loader est sous le message que le runner traite : celui que le fil
+  // rendu porte déjà sans réponse — si un envoi est en vol : un fil qui se
+  // termine sur une demande sans réponse (un tour qui a échoué hier) ne fait
+  // pas réfléchir l'agent pour de faux — sinon la première copie en attente.
+  const thinkingAfterFeed = awaitingReply && inFlight;
+  if (pending.length === 0 && !thinkingAfterFeed) return null;
 
   return (
     <div className="mx-auto max-w-[760px]" data-testid="pending-turn" aria-live="polite">
-      {/* Les messages qui viennent de partir, à droite, comme ils seront rendus. */}
-      {pending.map((p) => (
-        <div key={p.id} className="flex justify-end pt-6" data-testid="pending-message">
-          <div className="max-w-[80%] min-w-0">
-            <p className="mb-1.5 text-right text-mono-11 text-ink-4">
-              {originLabel({ channel: 'dashboard', scheduleName: null, chatId: null })}
-            </p>
-            <div className="rounded-xl bg-hover px-4 py-3">
-              <p className="max-w-[68ch] text-body-15 whitespace-pre-wrap text-ink">{p.text}</p>
+      {thinkingAfterFeed && <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} />}
+      {pending.map((p, i) => (
+        <div key={p.id}>
+          {/* Le message qui vient de partir, à droite, comme il sera rendu. */}
+          <div className="flex justify-end pt-6" data-testid="pending-message">
+            <div className="max-w-[80%] min-w-0">
+              <p className="mb-1.5 text-right text-mono-11 text-ink-4">
+                {originLabel({ channel: 'dashboard', scheduleName: null, chatId: null })}
+              </p>
+              <div className="rounded-xl bg-hover px-4 py-3">
+                <p className="max-w-[68ch] text-body-15 whitespace-pre-wrap text-ink">{p.text}</p>
+              </div>
             </div>
           </div>
+          {!thinkingAfterFeed && i === 0 && (
+            <Thinking agentName={agentName} agentAvatarUrl={agentAvatarUrl} />
+          )}
         </div>
       ))}
-      {/* L'agent, à gauche, qui réfléchit — l'en-tête de tour, et à la place
-          de sa réponse trois points qui battent. Une seule fois, même quand
-          plusieurs messages attendent : il les prend dans l'ordre. */}
-      <div className="min-w-0 pt-6">
-        <div className="mb-1.5 flex items-center gap-2.5">
-          <AgentAvatar name={agentName} imageUrl={agentAvatarUrl} size="sm" shape="square" />
-          <span className="text-title-15 text-ink">{agentName}</span>
-        </div>
-        <div className="flex items-center gap-2 text-mono-11 text-feed-reasoning">
-          <span className="flex items-center gap-1" aria-hidden="true">
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning" />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:150ms]" />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-feed-reasoning [animation-delay:300ms]" />
-          </span>
-          <span>thinking</span>
-        </div>
-      </div>
     </div>
   );
 }

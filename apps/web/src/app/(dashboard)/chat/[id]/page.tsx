@@ -24,7 +24,7 @@ import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
 import { threadBackLink } from '@/lib/back-links.ts';
 import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
-import { feedRequests } from '../feed-requests.ts';
+import { feedAwaitsReply, feedRequests } from '../feed-requests.ts';
 
 // Force dynamic — le fil est relu à chaque requête, et pendant qu'un travail court.
 export const dynamic = 'force-dynamic';
@@ -108,7 +108,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
           réfléchit, avant que la réponse arrive (Quentin, 18/09). Le porteur
           connaît les demandes que le serveur a rendues : dès que la sienne y
           est, la copie s'efface au profit du vrai tour. */}
-      <PendingTurnProvider requests={feedRequests(feed.items)}>
+      <PendingTurnProvider
+        requests={feedRequests(feed.items)}
+        awaitingReply={feedAwaitsReply(feed.items)}
+      >
         <ThreadScreen
           composer={
             canReply ? (
