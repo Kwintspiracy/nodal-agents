@@ -159,9 +159,9 @@ describe('le compte porté par le lien « Chat » @cap:reprendre-conversation/ec
     const waiting = [...pending('telegram', 2), ...pending('dashboard', 1), ...pending('api', 5)];
     const total = chatWaitingTotal({ channels: ['telegram'], waiting, running: {} });
     expect(total).toBe(3);
-    await render(<SidebarLink href="/chat" label="Chat" count={total} isActive={false} />);
+    await render(<SidebarLink href="/chat" label="Channels" count={total} isActive={false} />);
     const link = container.querySelector('a');
-    expect(link?.textContent).toBe('Chat3');
+    expect(link?.textContent).toBe('Channels3');
   });
 });
 

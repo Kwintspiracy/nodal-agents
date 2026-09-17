@@ -14,7 +14,7 @@ describe('la vue d’un dossier @cap:reprendre-conversation/moteur', () => {
   it('sans `folder=`, montre TOUT, sous le titre de la page', () => {
     const v = chatFolderView(null, CHANNELS);
     expect(v.key).toBeNull();
-    expect(v.title).toBe('Chat');
+    expect(v.title).toBe('Channels');
     expect(v.showChannels).toBe(true);
     expect(v.showDashboard).toBe(true);
     expect(v.channel).toBeNull();
@@ -42,7 +42,7 @@ describe('la vue d’un dossier @cap:reprendre-conversation/moteur', () => {
     // « Nimportequoi » — un dossier vide là où il n'y a pas de dossier.
     const v = chatFolderView('nimportequoi', CHANNELS);
     expect(v.key).toBeNull();
-    expect(v.title).toBe('Chat');
+    expect(v.title).toBe('Channels');
     expect(v.showChannels).toBe(true);
     expect(v.showDashboard).toBe(true);
   });
@@ -50,7 +50,7 @@ describe('la vue d’un dossier @cap:reprendre-conversation/moteur', () => {
   it('sur « Routines », redevient la page entière — les routines ont leur page', () => {
     const v = chatFolderView('routines', CHANNELS);
     expect(v.key).toBeNull();
-    expect(v.title).toBe('Chat');
+    expect(v.title).toBe('Channels');
   });
 });
 

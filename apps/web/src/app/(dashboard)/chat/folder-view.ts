@@ -26,7 +26,7 @@ export type ChatFolderView = {
 
 const FULL_VIEW: ChatFolderView = {
   key: null,
-  title: 'Chat',
+  title: 'Channels',
   channel: null,
   showChannels: true,
   showDashboard: true,

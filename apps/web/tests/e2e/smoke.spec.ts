@@ -42,7 +42,7 @@ test.describe('dashboard navigation @cap:installer-et-demarrer/ecran', () => {
     // Labels as rendered by Sidebar.tsx NAV_ITEMS (source of truth).
     for (const label of [
       'Home',
-      'Chat',
+      'Channels',
       // « Runs » n'est plus une entree du menu depuis #134 : la liste des runs
       // EST Activity, le premier onglet de Logs, deja verifie plus bas.
       'LLM Providers',

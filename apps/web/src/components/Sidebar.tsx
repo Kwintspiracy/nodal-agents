@@ -71,7 +71,7 @@ const NAV: Group[] = [
     section: 'Overview',
     items: [
       { href: '/', label: 'Home', icon: House },
-      { href: '/chat', label: 'Chat', icon: ChatCircle },
+      { href: '/chat', label: 'Channels', icon: ChatCircle },
       { href: '/code', label: 'Code', icon: Code },
       { href: '/spaces', label: 'Spaces', icon: CardsThree },
       { href: '/scheduled', label: 'Scheduled', icon: CalendarCheck },

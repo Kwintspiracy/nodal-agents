@@ -91,7 +91,7 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
       }
       toolbar={
         <WorkBar
-          back={{ label: 'Back to chat', href: '/chat' }}
+          back={{ label: 'Back to channels', href: '/chat' }}
           agents={threadAgents(feed.items)}
           status={<StatusPill variant={live ? 'run' : 'idle'} />}
           proofVerdict={lastProof?.verdict ?? null}
