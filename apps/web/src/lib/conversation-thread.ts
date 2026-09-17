@@ -200,6 +200,7 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
               text: p.summary,
               ok: p.verdict === 'pass',
               isAgent: false,
+              avatarUrl: null,
             });
           }
         }
@@ -209,6 +210,10 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
           text: item.job.result ?? item.job.task ?? '',
           ok: item.job.status === 'completed',
           isAgent: true,
+          // L'image du délégué voyage déjà dans la ligne du fil : le pied du
+          // récapitulatif montre le VISAGE de qui a relu, pas deux initiales
+          // quand l'agent a une image (#135).
+          avatarUrl: item.job.agentAvatarUrl ?? null,
         });
         if (item.job.feed) walk(item.job.feed.items, depth + 1);
       }
@@ -218,8 +223,13 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
 
   const passed = job.proof.filter((r) => r.verdict === 'green').length;
   const lines = sumLineCounts(counted);
+  // Les chemins, dans l'ORDRE OÙ ILS ONT ÉTÉ ÉCRITS : un `Set` garde l'ordre
+  // d'insertion, et les lignes d'audit arrivent déjà triées par date. Le compte
+  // en est dérivé — il ne peut plus diverger de la liste (#135).
+  const filePaths = [...files];
   return {
-    files: files.size,
+    files: filePaths.length,
+    filePaths,
     lines: lines.added === 0 && lines.removed === 0 ? null : lines,
     tests: job.proof.length > 0 ? { passed, total: job.proof.length } : null,
     durationMs:
