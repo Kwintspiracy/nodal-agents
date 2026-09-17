@@ -96,7 +96,7 @@ describe('AvatarStack dans la barre — les tuiles du Figma', () => {
   it('montre le VRAI avatar quand l’agent en a un, les initiales sinon', () => {
     const html = renderToStaticMarkup(
       <WorkBar
-        back={{ label: 'Back to chat', href: '/chat' }}
+        back={{ label: 'Back to channels', href: '/chat' }}
         agents={[
           { key: 'alfred', name: 'Alfred', avatarUrl: '/avatars/avatar-07.png' },
           { key: 'codeur', name: 'Le Codeur', avatarUrl: null },
@@ -116,7 +116,7 @@ describe('AvatarStack dans la barre — les tuiles du Figma', () => {
   it('au-delà de quatre, une tuile « +N » compte le reste — et le libellé compte tout', () => {
     const html = renderToStaticMarkup(
       <WorkBar
-        back={{ label: 'Back to chat', href: '/chat' }}
+        back={{ label: 'Back to channels', href: '/chat' }}
         agents={['Ada', 'Bo', 'Cy', 'Di', 'Ed', 'Fa'].map((name) => ({
           key: name.toLowerCase(),
           name,

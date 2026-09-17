@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
+import AttentionCount from './AttentionCount';
 
 type DotVariant = 'agent' | 'skill' | 'conn';
 
@@ -80,9 +81,10 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
           hérité du Link (13px) tronquerait les descendantes (g, y). */}
       <span className="flex-1 truncate leading-5">{label}</span>
       {pill !== undefined ? (
-        <span className="rounded-full bg-err/12 px-2 py-0.5 text-medium-13 text-err lg:px-1.5 lg:py-0 lg:text-micro-11">
-          {pill > 99 ? '99+' : pill}
-        </span>
+        // La MÊME pastille que les dossiers du menu Chat, depuis #135 — son
+        // apparence « Approvals » (corail translucide, plafond 99) est le
+        // défaut du primitif, justement pour que rien ne bouge ici.
+        <AttentionCount count={pill} />
       ) : (
         count !== undefined && (
           <span className="text-mono-13 tracking-[0.02em] text-ink-4 lg:text-mono-11">{count}</span>

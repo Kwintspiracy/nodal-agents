@@ -56,6 +56,7 @@ import { buildConversationThread } from './conversation-thread.ts';
 import { chatKey, LIST_MAX } from './chat-key.ts';
 import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
 import { classifyProduction } from './chat-or-work.ts';
+import { folderOfJobChannel, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
@@ -466,6 +467,77 @@ export async function listCurrentThreadByChatAction(): Promise<ActionResult<Curr
 
 /** Ce que l'allowlist sait d'un chat : son nom, et sa nature. */
 export type ChatIdentities = Readonly<Record<string, { name: string | null; kind: string | null }>>;
+
+/**
+ * Ce que le menu « Chat folders » a besoin de savoir, et que les approbations
+ * ne portent pas (#135).
+ *
+ * Deux faits, deux requêtes, aucune par dossier :
+ *   - `channels` — les canaux qui portent au moins une conversation LISTABLE.
+ *     Les mêmes prédicats que la désignation du fil courant, pour que l'index
+ *     partiel `idx_conversations_listable_chats` les serve ;
+ *   - `running` — combien de runs TOURNENT, par dossier. Groupé en SQL : une
+ *     requête par dossier redeviendrait un N+1 au premier canal ajouté.
+ *
+ * Ce qui ATTEND la personne ne se lit PAS ici : il vient des approbations que
+ * la barre latérale a déjà en main (`ApprovalsProvider`), et le relire ferait
+ * deux vérités pour le même chiffre.
+ */
+export type ChatFoldersSnapshot = {
+  /** Les canaux qui portent au moins une conversation listable. */
+  channels: string[];
+  /** Le nombre de runs en cours, par dossier. Une clé absente vaut zéro. */
+  running: Record<string, number>;
+};
+
+export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSnapshot>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const db = getDb();
+
+    const [channelRows, runningRows] = await Promise.all([
+      db
+        .selectDistinct({ channel: conversations.channel })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.entityId, session.entityId),
+            isNotNull(conversations.chatId),
+            ne(conversations.chatId, ''),
+            ne(conversations.channel, 'dashboard'),
+            inArray(conversations.origin, ['user', 'project']),
+          ),
+        ),
+      db
+        .select({ channel: agentJobs.channel, n: sql<number>`count(*)::int` })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, session.entityId),
+            inArray(agentJobs.status, [...RUNNING_JOB_STATUSES]),
+          ),
+        )
+        .groupBy(agentJobs.channel),
+    ]);
+
+    const running: Record<string, number> = {};
+    for (const r of runningRows) {
+      // Le canal d'un job devient un DOSSIER par la même règle que partout
+      // ailleurs. Un canal qui n'en désigne aucun (`api`, `internal`, `mcp`…)
+      // n'allume aucun point : son run existe, il n'est dans aucun dossier de
+      // chat, et il reste lisible sur la page des runs.
+      const key = folderOfJobChannel(r.channel);
+      if (key === null) continue;
+      running[key] = (running[key] ?? 0) + r.n;
+    }
+
+    return ok({ channels: channelRows.map((r) => r.channel), running });
+  } catch (err) {
+    console.error('[getChatFoldersAction]', err);
+    return fail('db_error', 'Failed to load the chat folders');
+  }
+}
 
 /**
  * Le NOM de chaque chat de canal — la personne ou le salon à l'autre bout.

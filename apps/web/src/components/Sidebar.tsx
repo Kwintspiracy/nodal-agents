@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { Fragment, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   House,
@@ -36,6 +36,9 @@ import WorkspaceSwitcher from './WorkspaceSwitcher';
 import ThemeToggle from './ui/ThemeToggle';
 import NotificationsBell from './NotificationsBell';
 import { useApprovals } from './ApprovalsProvider';
+import { useChatFolders } from './ChatFoldersProvider';
+import ChatFolderGroup from './ChatFolderGroup';
+import { chatWaitingTotal } from '@/lib/chat-folders.ts';
 import type { WorkspaceRow } from '@/lib/actions';
 
 type Item = {
@@ -68,7 +71,7 @@ const NAV: Group[] = [
     section: 'Overview',
     items: [
       { href: '/', label: 'Home', icon: House },
-      { href: '/chat', label: 'Chat', icon: ChatCircle },
+      { href: '/chat', label: 'Channels', icon: ChatCircle },
       { href: '/code', label: 'Code', icon: Code },
       { href: '/spaces', label: 'Spaces', icon: CardsThree },
       { href: '/scheduled', label: 'Scheduled', icon: CalendarCheck },
@@ -132,6 +135,12 @@ export default function Sidebar({
   const [open, setOpen] = useState(false);
   const { pending } = useApprovals();
   const pendingCount = pending.length;
+  // Le compte du lien « Chat » : la somme, à la lettre, des pastilles des
+  // dossiers rendus juste en dessous (#135). Il se calcule ici et non dans le
+  // groupe parce que la ligne « Chat » appartient à la boucle de NAV — mais
+  // avec la MÊME fonction, sur les mêmes entrées.
+  const { channels, running } = useChatFolders();
+  const chatWaiting = chatWaitingTotal({ channels, waiting: pending, running });
 
   // Close mobile menu on route change.
   useEffect(() => {
@@ -229,64 +238,82 @@ export default function Sidebar({
           {NAV.map((group, gi) => (
             <div key={gi}>
               {group.section && <SidebarSection>{group.section}</SidebarSection>}
-              {group.items.map((it) =>
-                it.external && it.brand === 'discord' ? (
-                  // Discord — always Discord-blurple, external-link icon, new tab.
-                  // Sizing mirrors SidebarLink: roomy on mobile, compact on desktop.
-                  <a
-                    key={it.href}
-                    href={it.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-medium-15 text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-medium-13 lg:leading-none!"
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
+              {group.items.map((it) => (
+                <Fragment key={it.href}>
+                  {it.external && it.brand === 'discord' ? (
+                    // Discord — always Discord-blurple, external-link icon, new tab.
+                    // Sizing mirrors SidebarLink: roomy on mobile, compact on desktop.
+                    <a
+                      href={it.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-medium-15 text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-medium-13 lg:leading-none!"
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
+                        <ArrowSquareOut
+                          size={20}
+                          weight="bold"
+                          className="h-5 w-5 lg:h-3.5 lg:w-3.5"
+                        />
+                      </span>
+                      <span className="flex-1 truncate leading-5">{it.label}</span>
+                    </a>
+                  ) : it.external ? (
+                    // Plain external link (e.g. Documentation) — mirrors SidebarLink's
+                    // inactive row styling, opens in a new tab, with a small external
+                    // arrow at the end so it reads as "leaves the app".
+                    <a
+                      href={it.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-legacy-16 text-ink-2 transition-colors hover:bg-hover lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-body-13 lg:leading-none!"
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-ink-3 group-hover:text-ink-2 lg:h-3.5 lg:w-3.5">
+                        {it.icon ? (
+                          <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
+                        ) : null}
+                      </span>
+                      <span className="flex-1 truncate leading-5">{it.label}</span>
                       <ArrowSquareOut
-                        size={20}
+                        size={14}
                         weight="bold"
-                        className="h-5 w-5 lg:h-3.5 lg:w-3.5"
+                        className="h-3.5 w-3.5 shrink-0 text-ink-4 lg:h-3 lg:w-3"
                       />
-                    </span>
-                    <span className="flex-1 truncate leading-5">{it.label}</span>
-                  </a>
-                ) : it.external ? (
-                  // Plain external link (e.g. Documentation) — mirrors SidebarLink's
-                  // inactive row styling, opens in a new tab, with a small external
-                  // arrow at the end so it reads as "leaves the app".
-                  <a
-                    key={it.href}
-                    href={it.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-legacy-16 text-ink-2 transition-colors hover:bg-hover lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-body-13 lg:leading-none!"
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center text-ink-3 group-hover:text-ink-2 lg:h-3.5 lg:w-3.5">
-                      {it.icon ? <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" /> : null}
-                    </span>
-                    <span className="flex-1 truncate leading-5">{it.label}</span>
-                    <ArrowSquareOut
-                      size={14}
-                      weight="bold"
-                      className="h-3.5 w-3.5 shrink-0 text-ink-4 lg:h-3 lg:w-3"
+                    </a>
+                  ) : (
+                    <SidebarLink
+                      href={it.href}
+                      label={it.label}
+                      icon={
+                        it.icon ? (
+                          <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
+                        ) : undefined
+                      }
+                      dot={it.dot}
+                      count={
+                        it.href === '/approvals'
+                          ? undefined
+                          : it.href === '/chat'
+                            ? chatWaiting > 0
+                              ? chatWaiting
+                              : undefined
+                            : it.count
+                      }
+                      pill={it.href === '/approvals' && pendingCount > 0 ? pendingCount : undefined}
+                      isActive={isItemActive(it.href, pathname)}
                     />
-                  </a>
-                ) : (
-                  <SidebarLink
-                    key={it.href}
-                    href={it.href}
-                    label={it.label}
-                    icon={
-                      it.icon ? (
-                        <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
-                      ) : undefined
-                    }
-                    dot={it.dot}
-                    count={it.href === '/approvals' ? undefined : it.count}
-                    pill={it.href === '/approvals' && pendingCount > 0 ? pendingCount : undefined}
-                    isActive={isItemActive(it.href, pathname)}
-                  />
-                ),
-              )}
+                  )}
+                  {/* Les dossiers de Chat, JUSTE sous leur lien — dans le même
+                      arbre, donc desktop et mobile à la fois. Sous <Suspense> :
+                      le groupe lit `useSearchParams`, et sans frontière Next
+                      fait attendre toute la barre. */}
+                  {it.href === '/chat' && (
+                    <Suspense fallback={null}>
+                      <ChatFolderGroup />
+                    </Suspense>
+                  )}
+                </Fragment>
+              ))}
             </div>
           ))}
         </nav>
