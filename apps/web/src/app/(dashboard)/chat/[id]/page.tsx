@@ -23,6 +23,7 @@ import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
 import { threadBackLink } from '@/lib/back-links.ts';
+import PendingTurn, { PendingTurnProvider, feedSignature } from '../PendingTurn.tsx';
 
 // Force dynamic — le fil est relu à chaque requête, et pendant qu'un travail court.
 export const dynamic = 'force-dynamic';
@@ -102,44 +103,56 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
         />
       }
     >
-      <ThreadScreen
-        composer={
-          canReply ? (
-            <ThreadComposer
-              conversationId={conversation.id}
-              agentName={conversation.agentName}
-              agentId={conversation.agentId}
-              llmKeyId={modelChoices?.llmKeyId ?? null}
-              model={modelChoices?.model ?? null}
-              reasoningEffort={modelChoices?.reasoningEffort ?? null}
-              llmKeys={modelChoices?.llmKeys ?? []}
-              requireTools={modelChoices?.requireTools ?? false}
-            />
-          ) : (
-            <p className="mx-auto max-w-[760px] text-body-13 text-ink-4">
-              This conversation lives in {origin.replace(/^via /, '')}. Reply from there.
-            </p>
-          )
-        }
-        statusBar={
-          // P4 — la barre d'état, ancrée tout en bas de l'écran.
-          <StatusBar
-            cost={cost}
-            proofVerdict={lastProof?.verdict ?? null}
-            proofSequences={verification.sequences.length}
-            pendingDeliveries={pendingDeliveries}
-            live={live}
-          />
-        }
+      {/* Le message envoyé paraît TOUT DE SUITE dans le fil, avec l'agent qui
+          réfléchit, avant que la réponse arrive (Quentin, 18/09). Le porteur
+          connaît la signature du fil rendu : dès qu'elle change, la copie
+          s'efface au profit du vrai tour. */}
+      <PendingTurnProvider
+        signature={feedSignature(feed.items.length, feed.items.at(-1)?.kind ?? '')}
       >
-        <LiveRefresh live={live} />
-        <ConversationFeedView feed={feed} deliverables={verification.deliverables} />
-        {/* P2bis — la preuve et la file d'envoi ne sont plus EN BAS de la page.
+        <ThreadScreen
+          composer={
+            canReply ? (
+              <ThreadComposer
+                conversationId={conversation.id}
+                agentName={conversation.agentName}
+                agentId={conversation.agentId}
+                llmKeyId={modelChoices?.llmKeyId ?? null}
+                model={modelChoices?.model ?? null}
+                reasoningEffort={modelChoices?.reasoningEffort ?? null}
+                llmKeys={modelChoices?.llmKeys ?? []}
+                requireTools={modelChoices?.requireTools ?? false}
+              />
+            ) : (
+              <p className="mx-auto max-w-[760px] text-body-13 text-ink-4">
+                This conversation lives in {origin.replace(/^via /, '')}. Reply from there.
+              </p>
+            )
+          }
+          statusBar={
+            // P4 — la barre d'état, ancrée tout en bas de l'écran.
+            <StatusBar
+              cost={cost}
+              proofVerdict={lastProof?.verdict ?? null}
+              proofSequences={verification.sequences.length}
+              pendingDeliveries={pendingDeliveries}
+              live={live}
+            />
+          }
+        >
+          <LiveRefresh live={live} />
+          <ConversationFeedView feed={feed} deliverables={verification.deliverables} />
+          <PendingTurn
+            agentName={conversation.agentName ?? 'Agent'}
+            agentAvatarUrl={conversation.agentAvatarUrl}
+          />
+          {/* P2bis — la preuve et la file d'envoi ne sont plus EN BAS de la page.
             La preuve vit dans le récapitulatif de livraison du travail qui l'a
             fait tourner (« Checks »), et la file d'envoi dans la barre d'état,
             qui compte déjà les messages en attente. Une section de plus, trois
             écrans sous le tour qu'elle décrivait, ne se lisait jamais. */}
-      </ThreadScreen>
+        </ThreadScreen>
+      </PendingTurnProvider>
     </PageShell>
   );
 }

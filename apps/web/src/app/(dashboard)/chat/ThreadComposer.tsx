@@ -23,6 +23,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
 import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
+import { usePendingTurn } from './PendingTurn.tsx';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -97,38 +98,58 @@ export default function ThreadComposer({
 
   /** Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le dit. */
   const canSend = !isPending && message.trim() !== '';
+  const pendingTurn = usePendingTurn();
+
+  /** Vider la zone, et la remesurer VIDE — voir le commentaire dans `send`. */
+  function clearBox(): void {
+    setMessage('');
+    if (box.current) {
+      box.current.value = '';
+      fitToContent(box.current);
+    }
+  }
 
   function send(): void {
     const text = message.trim();
     if (text === '') return;
+    // Le message part : il quitte la zone et paraît dans le fil TOUT DE SUITE
+    // (`PendingTurn`), avant que le modèle ait répondu — comme dans n'importe
+    // quel chat (Quentin, 18/09). S'il ne part pas, il revient dans la zone.
+    // La zone se remesure VIDE : React ne vide le DOM qu'à la réconciliation,
+    // et mesurer avant laissait une zone haute après l'envoi (revue Codex,
+    // passes 57-58). On vide donc la valeur du DOM soi-même avant de mesurer
+    // — l'état contrôlé la remet à '' au rendu suivant, sans conflit.
+    pendingTurn.begin(text);
+    clearBox();
     startTransition(async () => {
+      const giveBack = (): void => {
+        pendingTurn.end();
+        setMessage(text);
+      };
       let target = conversationId;
       if (onBeforeSend) {
         try {
           target = await onBeforeSend();
         } catch (err) {
           toast.error(err instanceof Error ? err.message : 'Could not open the conversation');
+          giveBack();
           return;
         }
       }
       if (target === '') {
         toast.error('No conversation to write to');
+        giveBack();
         return;
       }
       const r = await sendChatMessageAction({ conversationId: target, message: text });
       if (!r.ok) {
         toast.error(r.message);
+        giveBack();
         return;
       }
-      setMessage('');
-      // La zone se remesure VIDE : React ne vide le DOM qu'à la réconciliation,
-      // et mesurer avant laissait une zone haute après l'envoi (revue Codex,
-      // passes 57-58). On vide donc la valeur du DOM soi-même avant de mesurer
-      // — l'état contrôlé la remet à '' au rendu suivant, sans conflit.
-      if (box.current) {
-        box.current.value = '';
-        fitToContent(box.current);
-      }
+      // Le fil relu porte les deux tours ; `PendingTurn` s'efface de lui-même
+      // quand la signature du fil change (pas ici : effacer avant la relecture
+      // ferait clignoter le fil).
       router.refresh();
     });
   }

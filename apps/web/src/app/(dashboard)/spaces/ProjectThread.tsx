@@ -22,6 +22,10 @@ import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 import type { ComposerPresentation } from '@/lib/project-landing.ts';
 import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
+import PendingTurn, {
+  PendingTurnProvider,
+  feedSignature,
+} from '@/app/(dashboard)/chat/PendingTurn.tsx';
 
 export type ProjectThreadResult =
   | { ok: true; data: ConversationThreadView }
@@ -78,30 +82,38 @@ export default function ProjectThread({
     );
   }
 
+  const items = thread !== null ? thread.data.feed.items : [];
   return (
-    <ThreadScreen composer={composerSlot()} {...(statusBar !== undefined ? { statusBar } : {})}>
-      <div>
-        {thread !== null ? (
-          <>
-            {/* P10a — la page d'un projet ne se rafraîchissait pas toute seule,
-                alors que celles de /chat et /scheduled le font depuis P2. Une
-                question posée pendant qu'on la regarde n'y serait jamais
-                apparue : le fil serait resté au dernier rendu, et la carte à
-                boutons avec lui. `live` est déjà calculé par le même chargeur
-                que les deux autres pages — il n'était simplement pas branché. */}
-            <LiveRefresh live={thread.data.live} />
-            <ConversationFeedView
-              feed={thread.data.feed}
-              deliverables={thread.data.verification.deliverables}
-            />
-          </>
-        ) : (
-          <div className="mx-auto max-w-[760px]">
-            <EmptyState title="Nothing said here yet" compact />
-          </div>
-        )}
-      </div>
-    </ThreadScreen>
+    // Le message envoyé paraît TOUT DE SUITE dans le fil, avec l'agent qui
+    // réfléchit (Quentin, 18/09) — même porteur que /chat/[id].
+    <PendingTurnProvider signature={feedSignature(items.length, items.at(-1)?.kind ?? '')}>
+      <ThreadScreen composer={composerSlot()} {...(statusBar !== undefined ? { statusBar } : {})}>
+        <div>
+          {thread !== null ? (
+            <>
+              {/* P10a — la page d'un projet ne se rafraîchissait pas toute seule,
+                  alors que celles de /chat et /scheduled le font depuis P2. Une
+                  question posée pendant qu'on la regarde n'y serait jamais
+                  apparue : le fil serait resté au dernier rendu, et la carte à
+                  boutons avec lui. `live` est déjà calculé par le même chargeur
+                  que les deux autres pages — il n'était simplement pas branché. */}
+              <LiveRefresh live={thread.data.live} />
+              <ConversationFeedView
+                feed={thread.data.feed}
+                deliverables={thread.data.verification.deliverables}
+              />
+            </>
+          ) : (
+            <div className="mx-auto max-w-[760px]">
+              <EmptyState title="Nothing said here yet" compact />
+            </div>
+          )}
+          <PendingTurn
+            agentName={composer.kind === 'blocked' ? 'Agent' : (composer.agentName ?? 'Agent')}
+          />
+        </div>
+      </ThreadScreen>
+    </PendingTurnProvider>
   );
 
   function composerSlot() {
