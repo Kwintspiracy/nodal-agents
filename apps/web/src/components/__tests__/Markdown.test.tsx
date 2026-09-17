@@ -121,12 +121,20 @@ describe('Markdown', () => {
     expect(render('salut', 'agent')).not.toContain('text-ink-2');
   });
 
-  it('seul le PARAGRAPHE change de voix : titres, listes et code gardent les leurs', () => {
-    // La couleur et la taille de la voix ne débordent pas sur le reste du
-    // markdown — un titre reste un titre, une liste reste lisible à sa taille.
-    const html = render('# T\n\n- a\n', 'agent');
+  it('la LISTE suit la voix, comme la phrase qui l’introduit', () => {
+    // Une liste à puces écrite dans une autre taille et une autre couleur que
+    // le paragraphe au-dessus se lit comme un autre document.
+    const agent = render('une phrase\n\n- a\n', 'agent');
+    expect(agent).toContain('list-disc space-y-1 pl-5 max-w-[68ch] text-body-13 text-feed-prose');
+    const user = render('une phrase\n\n- a\n', 'user');
+    expect(user).toContain('list-disc space-y-1 pl-5 max-w-[68ch] text-body-15 text-ink');
+  });
+
+  it('le TITRE ne suit pas la voix : il garde sa taille et son encre', () => {
+    // La voix ne déborde pas sur toute la structure — un titre reste un titre,
+    // et le code garde le sien (prouvé par le test des tokens plus haut).
+    const html = render('# T\n\ntexte\n', 'agent');
     expect(html).toContain('text-title-15 text-ink');
-    expect(html).toContain('text-body-15 text-ink');
     expect(html).not.toContain('text-title-15 text-feed-prose');
   });
 
