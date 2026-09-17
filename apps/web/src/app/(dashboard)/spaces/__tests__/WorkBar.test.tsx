@@ -105,10 +105,11 @@ describe('AvatarStack dans la barre — les tuiles du Figma', () => {
     );
     expect(html).toContain('src="/avatars/avatar-07.png"');
     expect(html).toContain('>LC<');
-    // Des tuiles carrées côte à côte, pas des disques qui se chevauchent
-    // (Figma `AvatarStack` 53:10) ; le libellé est celui du composant.
-    expect(html).not.toContain('rounded-full');
+    // Des portraits RONDS côte à côte, sans chevauchement ni anneau (Figma
+    // `AvatarStack` 53:10) ; le libellé est celui du composant.
+    expect(html).toContain('rounded-full');
     expect(html).not.toContain('-ml-[7px]');
+    expect(html).not.toContain('border-paper');
     expect(html).toContain('2 agents');
   });
 });

@@ -25,17 +25,17 @@ function initials(name: string): string {
   return t.slice(0, 2).toUpperCase();
 }
 
-/** Une tuile de 24 px, carrée à coins de 4 : la forme du composant Figma `AvatarStack` (53:10). */
-const TILE = 'flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded';
+/** Un portrait de 24 px, ROND : la forme du composant Figma `AvatarStack` (53:10). */
+const TILE = 'flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full';
 
 /**
- * AvatarStack — a row of small agent tiles with an optional trailing label
- * ("5 agents"). Maps to the Figma component `AvatarStack` (53:10): 24 px
- * rounded SQUARES side by side with a 2 px gap — not overlapping discs — the
- * initials in `Mono/11 Caps` on the agent's lime, a `+N` tile on the hover
+ * AvatarStack — a row of small agent portraits with an optional trailing
+ * label ("5 agents"). Maps to the Figma component `AvatarStack` (53:10): 24 px
+ * DISCS side by side with a 2 px gap — not overlapping, not ringed — the
+ * initials in `Mono/11 Caps` on the agent's lime, a `+N` disc on the hover
  * surface, and the label in `Medium/13`. The real avatar image replaces the
  * initials whenever the agent has one (Quentin, 17/09/2026: « à remplacer par
- * les avatars quand disponibles »).
+ * les avatars quand disponibles » ; « les portraits d'agents sont ronds »).
  *
  * Tail collapses to "+N" when more avatars than `max` are provided.
  */
