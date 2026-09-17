@@ -130,6 +130,16 @@ describe('Markdown', () => {
     expect(user).toContain('list-disc space-y-1 pl-5 max-w-[68ch] text-body-15 text-ink');
   });
 
+  it('le texte d’une CITATION suit la voix, comme le reste de la prose', () => {
+    // Une citation n'a pas de taille à elle : elle porte son filet et son
+    // retrait, et le paragraphe dedans passe par `prose`. Le test le fige —
+    // sinon l'habillage du bloc (`text-ink-3`) passerait pour la règle.
+    const agent = render('> cité\n', 'agent');
+    expect(agent).toContain('text-body-13 text-feed-prose">cité');
+    const user = render('> cité\n', 'user');
+    expect(user).toContain('text-body-15 text-ink">cité');
+  });
+
   it('le TITRE ne suit pas la voix : il garde sa taille et son encre', () => {
     // La voix ne déborde pas sur toute la structure — un titre reste un titre,
     // et le code garde le sien (prouvé par le test des tokens plus haut).
