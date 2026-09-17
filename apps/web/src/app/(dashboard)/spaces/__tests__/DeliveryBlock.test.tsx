@@ -463,6 +463,14 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).not.toContain('cli:codex_review');
     expect(html).toContain('Open run');
     expect(html).toContain('href="/scheduled/job-7"');
+    // Une relecture qui a dit NON ne se lit pas comme les autres : son nom
+    // prend la couleur d'alerte et le dit au survol — la planche ne dessine
+    // pas de point, c'est le nom qui porte le verdict.
+    expect(html).toMatch(
+      /class="[^"]*text-warn[^"]*" title="This review said no"[^>]*>codex_review</,
+    );
+    expect(html).not.toMatch(/text-warn[^>]*>Vega Orin</);
+    expect(html).not.toContain('rounded-full');
   });
 
   it('sans run, le pied garde les relectures et PERD le lien', () => {

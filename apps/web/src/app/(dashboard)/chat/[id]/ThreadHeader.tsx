@@ -31,7 +31,12 @@ export default function ThreadHeader({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <AgentAvatar name={avatarName} imageUrl={avatarUrl} size="md" shape="square" />
+      {/* Sans nom (agent supprimé), pas de portrait : `AgentAvatar` rendrait
+          un « ? », un glyphe que rien ne justifie à côté d'un titre qui, lui,
+          se tait sur l'agent (revue Reviewer C, PR #144). */}
+      {avatarName.trim() !== '' && (
+        <AgentAvatar name={avatarName} imageUrl={avatarUrl} size="md" shape="square" />
+      )}
       <div className="flex min-w-0 flex-col gap-0.5">
         {/* Un `h1`, et pas un paragraphe : c'est le TITRE de la page. Le mode
             `header` de `PageHeader` remplace le titre d'affichage, donc l'écran

@@ -46,6 +46,16 @@ describe('startedLabel — depuis quand le fil est ouvert', () => {
       'from the dashboard · started today 14:01',
     );
   });
+
+  it('un fil d’une autre année dit son année ; celui de cette année ne la répète pas', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 17, 18, 0));
+    const vieux = startedLabel(new Date(2025, 8, 12, 9, 30));
+    expect(vieux).toContain('2025');
+    expect(vieux).toMatch(/09:30$/);
+    // Cette année : « Sep 12 », sans l'année, comme la planche.
+    expect(startedLabel(new Date(2026, 8, 12, 9, 30))).not.toContain('2026');
+  });
 });
 
 describe('ThreadHeader — ce que l’en-tête dessine', () => {
@@ -68,6 +78,14 @@ describe('ThreadHeader — ce que l’en-tête dessine', () => {
     expect(html).toMatch(/<h1 class="[^"]*text-title-16[^"]*"[^>]*>Marlowe ·/);
     expect(html).toMatch(/class="[^"]*text-mono-11[^"]*"[^>]*>via Telegram/);
     expect(html).not.toMatch(/text-\[\d/);
+  });
+
+  it('sans nom d’agent, pas de portrait — jamais un « ? »', () => {
+    const html = renderToStaticMarkup(
+      <ThreadHeader avatarName="" title="HTML map of the shops" subtitle="via Telegram" />,
+    );
+    expect(html).toContain('HTML map of the shops');
+    expect(html).not.toContain('>?<');
   });
 
   it('l’image de l’agent REMPLACE les initiales quand il en a une', () => {

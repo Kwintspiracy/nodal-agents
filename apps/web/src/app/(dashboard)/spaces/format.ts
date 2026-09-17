@@ -50,12 +50,20 @@ export function startedLabel(at: Date | null): string | null {
   if (at === null) return null;
   const day = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const elapsed = Math.round((day(new Date()) - day(at)) / 86_400_000);
+  // L'année ne s'écrit que si ce n'est pas celle d'aujourd'hui : « Sep 12 »
+  // suffit pour un fil de la semaine dernière, mais « Sep 12 » pour un fil de
+  // l'an passé mentirait par omission (revue Reviewer C, PR #144).
+  const sameYear = at.getFullYear() === new Date().getFullYear();
   const when =
     elapsed === 0
       ? 'today'
       : elapsed === 1
         ? 'yesterday'
-        : at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        : at.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            ...(sameYear ? {} : { year: 'numeric' }),
+          });
   return `started ${when} ${formatClock(at)}`;
 }
 

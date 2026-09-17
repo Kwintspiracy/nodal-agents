@@ -112,6 +112,24 @@ describe('AvatarStack dans la barre — les tuiles du Figma', () => {
     expect(html).not.toContain('border-paper');
     expect(html).toContain('2 agents');
   });
+
+  it('au-delà de quatre, une tuile « +N » compte le reste — et le libellé compte tout', () => {
+    const html = renderToStaticMarkup(
+      <WorkBar
+        back={{ label: 'Back to chat', href: '/chat' }}
+        agents={['Ada', 'Bo', 'Cy', 'Di', 'Ed', 'Fa'].map((name) => ({
+          key: name.toLowerCase(),
+          name,
+          avatarUrl: null,
+        }))}
+      />,
+    );
+    expect(html).toContain('>+2<');
+    expect(html).toContain('6 agents');
+    // Les deux derniers ne sont pas dessinés en tuile.
+    expect(html).not.toContain('title="Ed"');
+    expect(html).not.toContain('title="Fa"');
+  });
 });
 
 describe('WorkBar — la barre SOUS l’en-tête de page', () => {
