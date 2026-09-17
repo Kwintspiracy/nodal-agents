@@ -86,6 +86,34 @@ export type ChatNames = Readonly<Record<string, { name: string | null; kind: str
 import { chatKey } from './chat-key.ts';
 export { chatKey };
 
+/** Les canaux où « #salon » est la convention que l'utilisateur lit ailleurs. */
+const HASH_CHANNELS = new Set(['discord', 'slack']);
+
+/**
+ * Le nom d'un chat sur une ligne : la personne ou le salon à l'autre bout.
+ *
+ * Vit ici, et non dans un écran, depuis #135 : le tableau de la page entière
+ * et la LIGNE d'un dossier nomment le même chat, et deux copies de cette règle
+ * auraient fini par le nommer différemment.
+ *
+ * Sans nom connu, on dit ce qu'on SAIT. « Direct » n'est vrai que pour un chat
+ * dont on connaît la nature privée — c'est le cas du PROPRIÉTAIRE, qui a
+ * branché le bot lui-même et que personne n'a « demandé » ; l'écrire par défaut
+ * rendait indistinguables tous les chats anonymes (revue Codex, PR #48).
+ */
+export function chatLabel(row: ChannelChatRow): string {
+  const salon = row.kind === 'channel' || row.kind === 'group';
+  if (row.name !== null && row.name !== '') {
+    // Le `#` distingue un salon d'un privé : sur Discord et Slack, l'allowlist
+    // enregistre le même nom pour les deux, et deux lignes se ressemblaient
+    // trait pour trait. Ailleurs il ne se dit pas — un groupe Telegram ne
+    // s'écrit pas « #groupe » (revue Codex, PR #48).
+    return salon && HASH_CHANNELS.has(row.channel) ? `#${row.name}` : row.name;
+  }
+  if (row.kind === 'private') return 'Direct';
+  return salon ? `Group ${row.chatId}` : row.chatId;
+}
+
 /**
  * Sépare les fils de canal des conversations du dashboard, et replie les
  * premiers par chat.
