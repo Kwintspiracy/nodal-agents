@@ -3,9 +3,9 @@
 // DelegationBlock — la COQUILLE d'une délégation (#135).
 //
 // Le tableau de Quentin lui donne une tête de 46 px qui se lit comme une
-// phrase : « Alfred delegated to Reviewer C — review the memory search
-// journey », puis l'état et les chiffres. Le chevron OUVRE la tête, il ne la
-// suit pas : une délégation se lit de gauche à droite, du délégant au délégué.
+// phrase : « <le délégant> delegated to <le délégué> — <la consigne> », puis
+// l'état et les chiffres. Le chevron OUVRE la tête, il ne la suit pas : une
+// délégation se lit de gauche à droite, du délégant au délégué.
 //
 // La géométrie diffère de `FoldableBlock` (33 px, `bg-canvas`, chevron à
 // droite) : un bloc d'outil est une ligne technique, une délégation est un
