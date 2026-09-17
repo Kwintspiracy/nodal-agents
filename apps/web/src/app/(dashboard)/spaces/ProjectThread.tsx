@@ -22,10 +22,8 @@ import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 import type { ComposerPresentation } from '@/lib/project-landing.ts';
 import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
-import PendingTurn, {
-  PendingTurnProvider,
-  feedSignature,
-} from '@/app/(dashboard)/chat/PendingTurn.tsx';
+import PendingTurn, { PendingTurnProvider } from '@/app/(dashboard)/chat/PendingTurn.tsx';
+import { feedSignature } from '@/app/(dashboard)/chat/feed-signature.ts';
 
 export type ProjectThreadResult =
   | { ok: true; data: ConversationThreadView }

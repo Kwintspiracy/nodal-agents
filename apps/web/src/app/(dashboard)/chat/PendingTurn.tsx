@@ -68,14 +68,6 @@ export function usePendingTurn(): Store {
   return useContext(PendingTurnContext);
 }
 
-/**
- * La signature d'un fil rendu : elle change dès que le serveur y ajoute une
- * ligne. Le nombre d'items suffit — un tour de plus, une réponse de plus.
- */
-export function feedSignature(itemCount: number, lastKind: string): string {
-  return `${itemCount}:${lastKind}`;
-}
-
 export default function PendingTurn({
   agentName,
   agentAvatarUrl = null,

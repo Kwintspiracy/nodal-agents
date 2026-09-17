@@ -23,7 +23,8 @@ import ThreadComposer from '../ThreadComposer.tsx';
 import ThreadScreen from './ThreadScreen.tsx';
 import ThreadHeader from './ThreadHeader.tsx';
 import { threadBackLink } from '@/lib/back-links.ts';
-import PendingTurn, { PendingTurnProvider, feedSignature } from '../PendingTurn.tsx';
+import PendingTurn, { PendingTurnProvider } from '../PendingTurn.tsx';
+import { feedSignature } from '../feed-signature.ts';
 
 // Force dynamic — le fil est relu à chaque requête, et pendant qu'un travail court.
 export const dynamic = 'force-dynamic';
