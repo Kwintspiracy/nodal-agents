@@ -30,7 +30,10 @@ export default function ThreadScreen({
       {/* `scrollbar-gutter: stable` : la gouttière de la barre est réservée
           même quand le fil tient dans l'écran, sinon le fil se recentre d'une
           demi-barre au premier message qui le fait déborder. */}
-      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-2 [scrollbar-gutter:stable] sm:px-8 lg:px-9">
+      {/* `pb-8` : au bout du fil, le dernier bloc s'arrête à 32 px de la saisie,
+          pas collé dessous (Quentin, 17/09 : « augmente l'espace maximal entre
+          la fin du feed et le haut du chat »). */}
+      <ThreadScroller className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-8 [scrollbar-gutter:stable] sm:px-8 lg:px-9">
         {/* Un seul enfant : c'est LUI dont la hauteur est observée. Sans ce
             conteneur, l'observateur suivrait la zone de défilement, dont la
             hauteur ne bouge jamais — et rien ne descendrait. */}
@@ -44,14 +47,15 @@ export default function ThreadScreen({
         // droite (Quentin, 17/09).
         <div className="relative shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9 mr-[var(--thread-gutter,0px)]">
           {/* Le FONDU : le fil ne se coupe plus net au ras de la saisie, il
-              s'éteint sur quarante pixels dans la couleur du fond, comme sous
-              n'importe quelle messagerie (Quentin, 17/09 : « la séparation
-              est très abrupte »). Posé au-dessus de la saisie, dans sa largeur
-              — donc sans la gouttière de la barre, qui reste nette — et
-              transparent aux clics : on peut toujours défiler à travers. */}
+              s'éteint sur vingt-huit pixels dans la couleur du fond, comme
+              sous n'importe quelle messagerie (Quentin, 17/09 : « la
+              séparation est très abrupte » ; puis « réduis un peu la hauteur
+              du fondu »). Posé au-dessus de la saisie, dans sa largeur — donc
+              sans la gouttière de la barre, qui reste nette — et transparent
+              aux clics : on peut toujours défiler à travers. */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-full h-10 bg-linear-to-t from-canvas to-transparent"
+            className="pointer-events-none absolute inset-x-0 bottom-full h-7 bg-linear-to-t from-canvas to-transparent"
           />
           {composer}
         </div>

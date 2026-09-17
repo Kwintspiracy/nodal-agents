@@ -175,7 +175,9 @@ function FeedItemView({
       // P2bis — c'est devenu le RÉCAPITULATIF DE LIVRAISON : la liste des
       // items produits a laissé place aux chiffres du travail, aux relectures
       // et à la preuve, qui vivaient trois écrans plus bas.
-      return <DeliveryBlock summary={item.summary} />;
+      // #135 — le pied du récapitulatif ouvre le run qui l'a produit :
+      // l'identifiant est DÉJÀ sur l'item, il n'avait jamais servi à l'écran.
+      return <DeliveryBlock summary={item.summary} jobId={item.jobId} />;
     case 'handoff':
       // P7 — la consigne passée au travail. Repliée dans le style des notes :
       // la demande de l'utilisateur est juste au-dessus, écrite de sa main.

@@ -81,6 +81,55 @@ describe('threadAgents', () => {
     ]);
     expect(agents.map((a) => a.key)).toEqual(['alfred', 'codeur', 'testeur']);
   });
+
+  it('porte l’avatar de chaque agent, pour que la barre le montre', () => {
+    const avecImage = {
+      ...turn('Alfred', 'alfred'),
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: '/avatars/avatar-07.png' },
+    };
+    const agents = threadAgents([avecImage, child('Le Codeur', 'codeur')]);
+    expect(agents.map((a) => a.avatarUrl)).toEqual(['/avatars/avatar-07.png', null]);
+  });
+});
+
+describe('AvatarStack dans la barre — les tuiles du Figma', () => {
+  it('montre le VRAI avatar quand l’agent en a un, les initiales sinon', () => {
+    const html = renderToStaticMarkup(
+      <WorkBar
+        back={{ label: 'Back to chat', href: '/chat' }}
+        agents={[
+          { key: 'alfred', name: 'Alfred', avatarUrl: '/avatars/avatar-07.png' },
+          { key: 'codeur', name: 'Le Codeur', avatarUrl: null },
+        ]}
+      />,
+    );
+    expect(html).toContain('src="/avatars/avatar-07.png"');
+    expect(html).toContain('>LC<');
+    // Des portraits RONDS côte à côte, sans chevauchement ni anneau (Figma
+    // `AvatarStack` 53:10) ; le libellé est celui du composant.
+    expect(html).toContain('rounded-full');
+    expect(html).not.toContain('-ml-[7px]');
+    expect(html).not.toContain('border-paper');
+    expect(html).toContain('2 agents');
+  });
+
+  it('au-delà de quatre, une tuile « +N » compte le reste — et le libellé compte tout', () => {
+    const html = renderToStaticMarkup(
+      <WorkBar
+        back={{ label: 'Back to chat', href: '/chat' }}
+        agents={['Ada', 'Bo', 'Cy', 'Di', 'Ed', 'Fa'].map((name) => ({
+          key: name.toLowerCase(),
+          name,
+          avatarUrl: null,
+        }))}
+      />,
+    );
+    expect(html).toContain('>+2<');
+    expect(html).toContain('6 agents');
+    // Les deux derniers ne sont pas dessinés en tuile.
+    expect(html).not.toContain('title="Ed"');
+    expect(html).not.toContain('title="Fa"');
+  });
 });
 
 describe('WorkBar — la barre SOUS l’en-tête de page', () => {
@@ -109,6 +158,16 @@ describe('WorkBar — la barre SOUS l’en-tête de page', () => {
     // de la page (Quentin, 07/09 — un en-tête maison n'existe pas dans le DS).
     // Aucune taille de police en pixels : que des tokens de l'échelle typo.
     expect(html).not.toMatch(/text-\[\d/);
+  });
+
+  it('va d’un bord à l’autre : 54 px, un fond, deux filets, ses propres gouttières (#135)', () => {
+    const html = renderToStaticMarkup(<WorkBar back={back} agents={[]} />);
+    // La barre dessinée porte SA géométrie : l'enveloppe à gouttières de
+    // `PageShell` la coupait de chaque côté, et le filet s'arrêtait avec elle.
+    expect(html).toMatch(/class="[^"]*h-\[54px\][^"]*"/);
+    expect(html).toMatch(/class="[^"]*border-y border-rule-2[^"]*"/);
+    expect(html).toMatch(/class="[^"]*bg-canvas[^"]*"/);
+    expect(html).toMatch(/class="[^"]*px-5[^"]*lg:px-9[^"]*"/);
   });
 
   it('dit « 1 agent » au singulier', () => {

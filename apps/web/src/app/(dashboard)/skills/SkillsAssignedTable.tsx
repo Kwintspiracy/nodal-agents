@@ -122,7 +122,13 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
 
       <Td>
         {skill.assignmentCount > 0 ? (
-          <AvatarStack avatars={skill.assignedAgents} max={4} label={`+${skill.assignmentCount}`} />
+          // Le libellé du composant Figma : « N agents », pas « +N » — la tuile
+          // de débordement dit déjà « +N » (revue Reviewer C, PR #144).
+          <AvatarStack
+            avatars={skill.assignedAgents}
+            max={4}
+            label={`${skill.assignmentCount} ${skill.assignmentCount === 1 ? 'agent' : 'agents'}`}
+          />
         ) : (
           <span className="text-mono-11 text-ink-4">Unassigned</span>
         )}

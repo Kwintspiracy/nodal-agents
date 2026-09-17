@@ -17,8 +17,9 @@ import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
 import DeliveriesCard from '@/app/(dashboard)/spaces/DeliveriesCard.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
+import ThreadHeader from '@/app/(dashboard)/chat/[id]/ThreadHeader.tsx';
 import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
-import { threadAgents } from '@/app/(dashboard)/spaces/format.ts';
+import { threadAgents, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { truncate } from '@/lib/format-time';
 
@@ -65,11 +66,24 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
   // P2bis — le fil d'un run n'a pas de projet : son « lieu » est le run
   // lui-même, dit par l'agent qui l'a porté. Pas de bouton « Files » : sans
   // projet il n'y a pas de dossier à ouvrir.
+  //
+  // #135 — le même en-tête que les deux autres écrans de fil : l'agent devant,
+  // sa première ligne derrière, et dessous ce que c'est et depuis quand. Le nom
+  // de l'agent quitte le sous-titre, où il doublait l'avatar.
+  const agentName = job.agentName ?? '';
+  const task = truncate(firstLine, 60);
   return (
     <PageShell
       fill
-      title={truncate(firstLine, 60)}
-      subtitle={job.agentName !== null && job.agentName !== '' ? `run · ${job.agentName}` : 'run'}
+      toolbarBleed
+      header={
+        <ThreadHeader
+          avatarName={agentName}
+          avatarUrl={job.agentAvatarUrl}
+          title={agentName !== '' ? `${agentName} · ${task}` : task}
+          subtitle={threadSubtitle('run', job.createdAt)}
+        />
+      }
       toolbar={
         <WorkBar
           back={{ label: 'Back to scheduled', href: '/scheduled' }}

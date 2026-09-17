@@ -4,6 +4,7 @@
 // comme le reste du tableau de bord.
 
 import type { FeedItem, Origin } from '@/lib/conversation-feed.ts';
+import { formatClock } from '@/lib/format-time';
 
 export function formatMs(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
@@ -36,6 +37,47 @@ export function originLabel(origin: Origin): string {
 }
 
 /**
+ * Quand le fil a COMMENCÉ, dans la langue courte de l'en-tête (#135) :
+ * « started today 14:01 », « started yesterday 09:30 », sinon une date brève
+ * (« started Sep 12 14:01 »). Le jour se compare sur le calendrier local, pas
+ * sur un écart d'heures : un fil ouvert à 23 h 50 est encore « yesterday » à
+ * 00 h 10, jamais « today ».
+ *
+ * `null` quand la date manque — l'en-tête ne dessine alors PAS le morceau,
+ * plutôt qu'un « started — » (invariant #4).
+ */
+export function startedLabel(at: Date | null): string | null {
+  if (at === null) return null;
+  const day = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const elapsed = Math.round((day(new Date()) - day(at)) / 86_400_000);
+  // L'année ne s'écrit que si ce n'est pas celle d'aujourd'hui : « Sep 12 »
+  // suffit pour un fil de la semaine dernière, mais « Sep 12 » pour un fil de
+  // l'an passé mentirait par omission (revue Reviewer C, PR #144).
+  const sameYear = at.getFullYear() === new Date().getFullYear();
+  const when =
+    elapsed === 0
+      ? 'today'
+      : elapsed === 1
+        ? 'yesterday'
+        : at.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            ...(sameYear ? {} : { year: 'numeric' }),
+          });
+  return `started ${when} ${formatClock(at)}`;
+}
+
+/**
+ * Le sous-titre d'un en-tête de fil : d'où vient la demande, et quand le fil
+ * s'est ouvert. Le second morceau disparaît quand la date manque, et la
+ * provenance garde SES mots (« via Telegram », « from the dashboard »).
+ */
+export function threadSubtitle(origin: string, at: Date | null): string {
+  const started = startedLabel(at);
+  return started === null ? origin : `${origin} · ${started}`;
+}
+
+/**
  * Le nom d'un outil tel qu'un humain le lit : sans le préfixe de serveur MCP
  * (`mcp_fetch__fetch_markdown` → `fetch_markdown`), sans le `cli:` du harnais.
  */
@@ -47,7 +89,7 @@ export function shortToolName(name: string): string {
 }
 
 /** Un agent du fil, tel que l'en-tête de travail l'affiche. */
-export type ThreadAgent = { key: string; name: string };
+export type ThreadAgent = { key: string; name: string; avatarUrl?: string | null };
 
 /**
  * Les agents qui ont travaillé dans ce fil, dans l'ordre où ils y paraissent :
@@ -63,18 +105,20 @@ export type ThreadAgent = { key: string; name: string };
 export function threadAgents(items: readonly FeedItem[]): ThreadAgent[] {
   const out: ThreadAgent[] = [];
   const seen = new Set<string>();
-  const push = (name: string | null, slug: string | null): void => {
+  const push = (name: string | null, slug: string | null, avatarUrl: string | null): void => {
     const key = slug ?? name;
     if (key === null || key === '') return;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ key, name: name ?? key });
+    // L'image de l'agent voyage avec lui : la barre montre le vrai avatar
+    // quand il y en a un, les initiales sinon (Quentin, 17/09).
+    out.push({ key, name: name ?? key, avatarUrl });
   };
   const walk = (list: readonly FeedItem[]): void => {
     for (const item of list) {
-      if (item.kind === 'turn') push(item.agent.name, item.agent.slug);
+      if (item.kind === 'turn') push(item.agent.name, item.agent.slug, item.agent.avatarUrl);
       else if (item.kind === 'child') {
-        push(item.job.agentName, item.job.agentSlug);
+        push(item.job.agentName, item.job.agentSlug, item.job.agentAvatarUrl);
         if (item.job.feed) walk(item.job.feed.items);
       }
     }

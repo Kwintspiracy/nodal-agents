@@ -2356,6 +2356,9 @@ export type SpaceConversationView = {
     status: string | null;
     agentName: string | null;
     agentSlug: string | null;
+    /** L'image de l'agent qui a porté le run, quand il en a une (#135). Déjà
+     *  lue par la requête ci-dessous : l'en-tête ne coûte aucun aller de plus. */
+    agentAvatarUrl: string | null;
     createdAt: Date | null;
     completedAt: Date | null;
     conversationId: string | null;
@@ -2567,6 +2570,7 @@ export async function getSpaceConversationAction(
         status: job.status,
         agentName: row.agentName,
         agentSlug: row.agentSlug,
+        agentAvatarUrl: row.agentAvatarUrl ?? null,
         createdAt: job.createdAt,
         completedAt: job.completedAt,
         conversationId: job.conversationId,

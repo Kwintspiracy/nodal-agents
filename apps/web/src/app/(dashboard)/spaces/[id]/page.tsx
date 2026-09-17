@@ -23,6 +23,7 @@ import { originLabel } from '../format.ts';
 import WorkBar from '../WorkBar.tsx';
 import { threadAgents } from '../format.ts';
 import ProjectThread from '../ProjectThread.tsx';
+import ThreadHeader from '@/app/(dashboard)/chat/[id]/ThreadHeader.tsx';
 import StatusBar from '../StatusBar.tsx';
 
 // Force dynamic — le projet et son fil sont relus à chaque requête.
@@ -90,8 +91,21 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   return (
     <PageShell
       fill
-      title={project.name}
-      subtitle={project.path}
+      toolbarBleed
+      // #135 — le MÊME en-tête que /chat/[id] et /scheduled/[id] : les trois
+      // écrans lisent le même fil, ils ne peuvent pas diverger de géométrie.
+      // Ce que le projet y met est à lui : son nom, son dossier, et l'avatar
+      // de l'agent qui tient sa conversation — celui du fil DÉJÀ chargé, pas
+      // une requête de plus ; à défaut le ROOT, dont le chargeur léger ne
+      // ramène que le nom.
+      header={
+        <ThreadHeader
+          avatarName={view?.conversation.agentName ?? rootAgent?.name ?? ''}
+          avatarUrl={view?.conversation.agentAvatarUrl ?? null}
+          title={project.name}
+          subtitle={project.path}
+        />
+      }
       toolbar={
         <WorkBar
           back={{ label: 'Back to spaces', href: '/spaces' }}

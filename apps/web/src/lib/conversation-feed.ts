@@ -292,6 +292,12 @@ export type DeliveryReview = {
   ok: boolean;
   /** Un délégué porte un avatar ; un verdict d'outil n'en a pas. */
   isAgent: boolean;
+  /**
+   * L'image du délégué, quand il en a une (#135) — elle vient de la ligne du
+   * fil, DÉJÀ lue : l'ajouter ne coûte aucune requête. `null` pour un verdict
+   * d'outil, et pour un agent sans image, où les initiales prennent le relais.
+   */
+  avatarUrl: string | null;
 };
 
 /** Une commande de preuve et son sort. */
@@ -306,6 +312,13 @@ export type DeliveryCheck = { command: string; ok: boolean };
 export type DeliverySummary = {
   /** Fichiers DISTINCTS écrits par le job et ses délégués ; 0 ⇒ pas de cellule. */
   files: number;
+  /**
+   * CES fichiers, dans l'ordre où ils ont été écrits (#135) — le récapitulatif
+   * ne dit plus « 3 files » sans dire lesquels. Chemins canoniques, dédoublonnés
+   * comme le compte : `filePaths.length === files`, toujours. L'écran en montre
+   * douze au plus et compte le reste ; le modèle les porte tous.
+   */
+  filePaths: string[];
   /**
    * Les lignes écrites et remplacées, sommées sur le job et ses délégués — le
    * même churn que la page Code. null quand AUCUN appel n'a écrit de texte
