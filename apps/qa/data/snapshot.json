@@ -1,11 +1,11 @@
 {
-  "genereLe": "2026-09-16T17:31:32.960Z",
-  "tableauLe": "2026-09-16T17:31:32.960Z",
+  "genereLe": "2026-09-17T09:00:50.992Z",
+  "tableauLe": "2026-09-17T09:00:50.992Z",
   "execution": {
-    "id": "35126017534",
-    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35126017534"
+    "id": "35200802359",
+    "url": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35200802359"
   },
-  "commit": "d85800a4",
+  "commit": "e01dcb37",
   "branche": "main",
   "paquets": [
     {
@@ -599,11 +599,11 @@
         "casE2e": 0
       },
       "couverture": {
-        "instructions": 84.45,
-        "branches": 71.77,
+        "instructions": 84.41,
+        "branches": 71.74,
         "fonctions": 83.75,
-        "lignes": 87.11,
-        "lignesCouvertes": 3388,
+        "lignes": 87.06,
+        "lignesCouvertes": 3386,
         "lignesTotal": 3889,
         "fichiersMesures": 91
       }
@@ -612,19 +612,19 @@
       "nom": "@nodal-agents/web",
       "chemin": "apps/web",
       "tests": {
-        "fichiers": 105,
-        "cas": 1380,
-        "e2e": 32,
-        "casE2e": 225
+        "fichiers": 107,
+        "cas": 1410,
+        "e2e": 33,
+        "casE2e": 229
       },
       "couverture": {
-        "instructions": 74.97,
-        "branches": 66.42,
-        "fonctions": 75.65,
-        "lignes": 77.24,
-        "lignesCouvertes": 5511,
-        "lignesTotal": 7134,
-        "fichiersMesures": 128
+        "instructions": 75.2,
+        "branches": 66.97,
+        "fonctions": 75.82,
+        "lignes": 77.49,
+        "lignesCouvertes": 5598,
+        "lignesTotal": 7224,
+        "fichiersMesures": 133
       }
     },
     {
@@ -649,20 +649,20 @@
   ],
   "resume": {
     "paquets": 34,
-    "fichiersDeTest": 593,
-    "casDeTest": 7348,
-    "specsE2e": 32,
-    "casE2e": 225,
-    "specsE2eJoueesParLaCi": 32,
+    "fichiersDeTest": 595,
+    "casDeTest": 7378,
+    "specsE2e": 33,
+    "casE2e": 229,
+    "specsE2eJoueesParLaCi": 33,
     "paquetsMesures": 33,
-    "lignesCouvertes": 22086,
-    "lignesTotal": 27010,
-    "couvertureLignes": 81.77,
+    "lignesCouvertes": 22171,
+    "lignesTotal": 27100,
+    "couvertureLignes": 81.81,
     "capacites": 24,
-    "capacitesVerifiees": 16,
+    "capacitesVerifiees": 17,
     "capacitesSansMoteur": 1,
     "capacitesSansPreuve": 0,
-    "testsEnMemoire": 8240,
+    "testsEnMemoire": 8301,
     "testsInstables": 21,
     "testsCasses": 22
   },
@@ -3217,14 +3217,77 @@
         "exigee": true,
         "nonDit": [],
         "ecran": {
-          "etat": "ignoree",
+          "etat": "passee",
           "preuves": [
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/tests/e2e/activity-runs.spec.ts",
+              "titre": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/tests/e2e/activity-runs.spec.ts",
+              "titre": "Runs has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
+              "sort": "vert"
+            },
             {
               "capacite": "suivre-execution",
               "niveau": "ecran",
               "origine": "apps/web/tests/e2e/thread-autoscroll.spec.ts",
               "titre": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
               "sort": "ignoré"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — la ligne repliée @cap:suivre-execution/ecran porte les sept éléments du run, et rien de ses appels",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — la ligne dépliée @cap:suivre-execution/ecran demande les appels de CE run au dépliage, et les montre dans l’ordre rendu",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — la ligne dépliée @cap:suivre-execution/ecran propose d’en montrer 50 de plus quand le run en a davantage, et les ajoute",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — la ligne dépliée @cap:suivre-execution/ecran un run en cours fait avancer le compteur de sa ligne repliée",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran s’espace : après cinq minutes, trois secondes ne demandent plus rien, trente secondes si",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran s’arrête au bout d’une demi-heure, et le DIT",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "ecran",
+              "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+              "titre": "RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran ne demande rien quand l’onglet est caché",
+              "sort": "vert"
             }
           ]
         },
@@ -3307,11 +3370,95 @@
               "origine": "apps/runner/src/tests/job/task-ledger.test.ts",
               "titre": "loadTaskLedger @cap:suivre-execution/moteur formatTaskLedgerLines maps a full entry list to formatted lines",
               "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listActivityRunsAction @cap:suivre-execution/moteur rend UNE ligne par run, avec le nombre de ses appels (outils ET modèles)",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listActivityRunsAction @cap:suivre-execution/moteur dit d’où vient la demande, lu sur le canal et la provenance",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listActivityRunsAction @cap:suivre-execution/moteur ne charge AUCUN appel avec la liste",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listActivityRunsAction @cap:suivre-execution/moteur pagine des RUNS : une page de 2 ne rend que deux runs, la suivante le troisième",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listActivityRunsAction @cap:suivre-execution/moteur le filtre par outil garde les RUNS qui ont appelé cet outil, une fois chacun",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listRunCallsAction @cap:suivre-execution/moteur rend les appels d’UN run, outils et modèles ENTRELACÉS dans l’ordre du temps",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listRunCallsAction @cap:suivre-execution/moteur à date ÉGALE, l’id tranche : l’ordre ne change pas d’un chargement à l’autre",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listRunCallsAction @cap:suivre-execution/moteur ne rend que les appels de CE run",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listRunCallsAction @cap:suivre-execution/moteur pagine DANS un run : 50 appels, puis les dix suivants",
+              "sort": "vert"
+            },
+            {
+              "capacite": "suivre-execution",
+              "niveau": "moteur",
+              "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+              "titre": "listRunCallsAction @cap:suivre-execution/moteur refuse un run qui n’est pas de cette entité",
+              "sort": "vert"
             }
           ]
         },
-        "phrase": "screen skipped · engine passed",
+        "phrase": "screen passed · engine passed",
         "preuves": [
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/tests/e2e/activity-runs.spec.ts",
+            "titre": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/tests/e2e/activity-runs.spec.ts",
+            "titre": "Runs has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
+            "sort": "vert"
+          },
           {
             "capacite": "suivre-execution",
             "niveau": "ecran",
@@ -3394,6 +3541,125 @@
             "niveau": "moteur",
             "origine": "apps/runner/src/tests/job/task-ledger.test.ts",
             "titre": "loadTaskLedger @cap:suivre-execution/moteur formatTaskLedgerLines maps a full entry list to formatted lines",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listActivityRunsAction @cap:suivre-execution/moteur rend UNE ligne par run, avec le nombre de ses appels (outils ET modèles)",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listActivityRunsAction @cap:suivre-execution/moteur dit d’où vient la demande, lu sur le canal et la provenance",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listActivityRunsAction @cap:suivre-execution/moteur ne charge AUCUN appel avec la liste",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listActivityRunsAction @cap:suivre-execution/moteur pagine des RUNS : une page de 2 ne rend que deux runs, la suivante le troisième",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listActivityRunsAction @cap:suivre-execution/moteur le filtre par outil garde les RUNS qui ont appelé cet outil, une fois chacun",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listRunCallsAction @cap:suivre-execution/moteur rend les appels d’UN run, outils et modèles ENTRELACÉS dans l’ordre du temps",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listRunCallsAction @cap:suivre-execution/moteur à date ÉGALE, l’id tranche : l’ordre ne change pas d’un chargement à l’autre",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listRunCallsAction @cap:suivre-execution/moteur ne rend que les appels de CE run",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listRunCallsAction @cap:suivre-execution/moteur pagine DANS un run : 50 appels, puis les dix suivants",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "moteur",
+            "origine": "apps/web/src/lib/__tests__/activity-runs-action.test.ts",
+            "titre": "listRunCallsAction @cap:suivre-execution/moteur refuse un run qui n’est pas de cette entité",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — la ligne repliée @cap:suivre-execution/ecran porte les sept éléments du run, et rien de ses appels",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — la ligne dépliée @cap:suivre-execution/ecran demande les appels de CE run au dépliage, et les montre dans l’ordre rendu",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — la ligne dépliée @cap:suivre-execution/ecran propose d’en montrer 50 de plus quand le run en a davantage, et les ajoute",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — la ligne dépliée @cap:suivre-execution/ecran un run en cours fait avancer le compteur de sa ligne repliée",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran s’espace : après cinq minutes, trois secondes ne demandent plus rien, trente secondes si",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran s’arrête au bout d’une demi-heure, et le DIT",
+            "sort": "vert"
+          },
+          {
+            "capacite": "suivre-execution",
+            "niveau": "ecran",
+            "origine": "apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx",
+            "titre": "RunRow — suivre un run coûte, et ça s’arrête @cap:suivre-execution/ecran ne demande rien quand l’onglet est caché",
             "sort": "vert"
           }
         ]
@@ -7238,7 +7504,7 @@
     "fautes": []
   },
   "memoire": {
-    "total": 8240,
+    "total": 8301,
     "reparations": {
       "durees": [
         1.96,
@@ -7248,7 +7514,7 @@
       ],
       "mediane": 2.32
     },
-    "joues": 7928,
+    "joues": 7960,
     "instables": 21,
     "casses": 22,
     "pires": [
@@ -7256,319 +7522,201 @@
         "cle": "apps/web/tests/e2e/mcp-connectors.spec.ts::MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
         "fichier": "apps/web/tests/e2e/mcp-connectors.spec.ts",
         "titre": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
-        "tours": 14,
+        "tours": 15,
         "echecs": 6,
-        "recents": "rrrrrrvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrrvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
-        "dureeMs": 3138,
+        "dureeMs": 2931,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
         "verdict": "instable",
-        "tauxEchec": 42.9,
-        "fenetre": 14,
+        "tauxEchec": 40,
+        "fenetre": 15,
         "rouges": 6,
-        "verts": 8
+        "verts": 9
       },
       {
         "cle": "apps/web/tests/e2e/airtable-oauth.spec.ts::Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
         "fichier": "apps/web/tests/e2e/airtable-oauth.spec.ts",
         "titre": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "rrrrrvvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrvvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 9194,
+        "dureeMs": 9522,
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/apify-apikey.spec.ts::Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
         "fichier": "apps/web/tests/e2e/apify-apikey.spec.ts",
         "titre": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "rrrrrvvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrvvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 4239,
+        "dureeMs": 4017,
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
         "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
         "titre": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "rrrrrvvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrvvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 3120,
+        "dureeMs": 2203,
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/connector-multi-instance.spec.ts::Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
         "fichier": "apps/web/tests/e2e/connector-multi-instance.spec.ts",
         "titre": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "rrrrrvvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrvvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 9392,
+        "dureeMs": 9235,
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "vrrrrrvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "vrrrrrvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
-        "dureeMs": 1475,
+        "dureeMs": 1410,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
         "dernierRougeDepuis": "2026-09-11T16:44:25.687Z",
         "repareLe": "2026-09-14T09:10:31.227Z",
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts::Connector scope disclosure Google Sheets and Docs disclose their reach too",
         "fichier": "apps/web/tests/e2e/connector-scope-disclosure.spec.ts",
         "titre": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "vrrrrrvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "vrrrrrvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
-        "dureeMs": 2961,
+        "dureeMs": 2876,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
         "dernierRougeDepuis": "2026-09-11T16:44:25.687Z",
         "repareLe": "2026-09-14T09:10:31.227Z",
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/credentials-reuse.spec.ts::Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
         "fichier": "apps/web/tests/e2e/credentials-reuse.spec.ts",
         "titre": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "rrrrrvvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrvvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 8737,
+        "dureeMs": 8597,
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/notion-internal.spec.ts::Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
         "fichier": "apps/web/tests/e2e/notion-internal.spec.ts",
         "titre": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
-        "tours": 14,
+        "tours": 15,
         "echecs": 5,
-        "recents": "rrrrrvvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rrrrrvvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T08:45:37.417Z",
         "rougeDepuis": null,
-        "dureeMs": 5535,
+        "dureeMs": 4709,
         "verdict": "instable",
-        "tauxEchec": 35.7,
-        "fenetre": 14,
+        "tauxEchec": 33.3,
+        "fenetre": 15,
         "rouges": 5,
-        "verts": 9
+        "verts": 10
       },
       {
         "cle": "apps/web/tests/e2e/help-guides.spec.ts::Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
         "fichier": "apps/web/tests/e2e/help-guides.spec.ts",
         "titre": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
-        "tours": 9,
+        "tours": 10,
         "echecs": 3,
-        "recents": "vrrrvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "vrrrvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-15T16:50:11.180Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-14T09:10:31.227Z",
         "repareLe": "2026-09-16T08:14:49.335Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564",
-        "dureeMs": 2145,
+        "dureeMs": 2169,
         "verdict": "instable",
-        "tauxEchec": 33.3,
-        "fenetre": 9,
+        "tauxEchec": 30,
+        "fenetre": 10,
         "rouges": 3,
-        "verts": 6
+        "verts": 7
       },
       {
         "cle": "apps/web/tests/e2e/oauth-flow.spec.ts::Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
         "fichier": "apps/web/tests/e2e/oauth-flow.spec.ts",
         "titre": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
-        "tours": 9,
+        "tours": 10,
         "echecs": 3,
-        "recents": "vrrrvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "vrrrvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-15T16:50:11.180Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": "2026-09-14T09:10:31.227Z",
         "repareLe": "2026-09-16T08:14:49.335Z",
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34995269564",
-        "dureeMs": 4655,
+        "dureeMs": 4189,
         "verdict": "instable",
-        "tauxEchec": 33.3,
-        "fenetre": 9,
+        "tauxEchec": 30,
+        "fenetre": 10,
         "rouges": 3,
-        "verts": 6
-      },
-      {
-        "cle": "apps/web/tests/e2e/agent-recipes.spec.ts::agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
-        "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
-        "titre": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
-        "tours": 9,
-        "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 1994,
-        "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
-        "rouges": 1,
-        "verts": 8
-      },
-      {
-        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
-        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
-        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
-        "tours": 9,
-        "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 10340,
-        "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
-        "rouges": 1,
-        "verts": 8
-      },
-      {
-        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
-        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
-        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
-        "tours": 9,
-        "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 2689,
-        "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
-        "rouges": 1,
-        "verts": 8
-      },
-      {
-        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
-        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
-        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
-        "tours": 9,
-        "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 2395,
-        "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
-        "rouges": 1,
-        "verts": 8
-      },
-      {
-        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
-        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
-        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
-        "tours": 9,
-        "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dernierRougeDepuis": null,
-        "repareLe": null,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 3923,
-        "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
-        "rouges": 1,
-        "verts": 8
-      },
-      {
-        "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
-        "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
-        "titre": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
-        "tours": 14,
-        "echecs": 1,
-        "recents": "iiiiirvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
-        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
-        "rougeDepuis": null,
-        "dureeMs": 2165,
-        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
-        "rouges": 1,
-        "verts": 8
+        "verts": 7
       },
       {
         "cle": "apps/web/tests/e2e/telegram-allowlist.spec.ts::A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke",
@@ -7588,44 +7736,162 @@
         "verts": 8
       },
       {
-        "cle": "apps/web/tests/e2e/tools-tab.spec.ts::tool groups are absent from the agent's Skills tab, command-execution is NOT",
-        "fichier": "apps/web/tests/e2e/tools-tab.spec.ts",
-        "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
-        "tours": 9,
+        "cle": "apps/web/tests/e2e/agent-recipes.spec.ts::agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
+        "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
+        "titre": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
+        "tours": 10,
         "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 3471,
+        "dureeMs": 2159,
         "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
+        "tauxEchec": 10,
+        "fenetre": 10,
         "rouges": 1,
-        "verts": 8
+        "verts": 9
+      },
+      {
+        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
+        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
+        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
+        "tours": 10,
+        "echecs": 1,
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dernierRougeDepuis": null,
+        "repareLe": null,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "dureeMs": 10797,
+        "verdict": "instable",
+        "tauxEchec": 10,
+        "fenetre": 10,
+        "rouges": 1,
+        "verts": 9
+      },
+      {
+        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
+        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
+        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
+        "tours": 10,
+        "echecs": 1,
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dernierRougeDepuis": null,
+        "repareLe": null,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "dureeMs": 2606,
+        "verdict": "instable",
+        "tauxEchec": 10,
+        "fenetre": 10,
+        "rouges": 1,
+        "verts": 9
+      },
+      {
+        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
+        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
+        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
+        "tours": 10,
+        "echecs": 1,
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dernierRougeDepuis": null,
+        "repareLe": null,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "dureeMs": 2374,
+        "verdict": "instable",
+        "tauxEchec": 10,
+        "fenetre": 10,
+        "rouges": 1,
+        "verts": 9
+      },
+      {
+        "cle": "apps/web/tests/e2e/agent-tool-assignment.spec.ts::Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
+        "fichier": "apps/web/tests/e2e/agent-tool-assignment.spec.ts",
+        "titre": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
+        "tours": 10,
+        "echecs": 1,
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dernierRougeDepuis": null,
+        "repareLe": null,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "dureeMs": 3693,
+        "verdict": "instable",
+        "tauxEchec": 10,
+        "fenetre": 10,
+        "rouges": 1,
+        "verts": 9
+      },
+      {
+        "cle": "apps/web/tests/e2e/brique31-flows.spec.ts::Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
+        "fichier": "apps/web/tests/e2e/brique31-flows.spec.ts",
+        "titre": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
+        "tours": 15,
+        "echecs": 1,
+        "recents": "iiiiirvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dureeMs": 2337,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "verdict": "instable",
+        "tauxEchec": 10,
+        "fenetre": 10,
+        "rouges": 1,
+        "verts": 9
+      },
+      {
+        "cle": "apps/web/tests/e2e/tools-tab.spec.ts::tool groups are absent from the agent's Skills tab, command-execution is NOT",
+        "fichier": "apps/web/tests/e2e/tools-tab.spec.ts",
+        "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
+        "tours": 10,
+        "echecs": 1,
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
+        "dernierEchecLe": "2026-09-13T17:21:39.491Z",
+        "rougeDepuis": null,
+        "dernierRougeDepuis": null,
+        "repareLe": null,
+        "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
+        "dureeMs": 3388,
+        "verdict": "instable",
+        "tauxEchec": 10,
+        "fenetre": 10,
+        "rouges": 1,
+        "verts": 9
       },
       {
         "cle": "apps/web/tests/e2e/webhooks-flows.spec.ts::Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
         "fichier": "apps/web/tests/e2e/webhooks-flows.spec.ts",
         "titre": "Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
-        "tours": 9,
+        "tours": 10,
         "echecs": 1,
-        "recents": "rvvvvvvvv",
-        "dernierTourLe": "2026-09-16T17:31:32.960Z",
+        "recents": "rvvvvvvvvv",
+        "dernierTourLe": "2026-09-17T09:00:50.992Z",
         "dernierEchecLe": "2026-09-13T17:21:39.491Z",
         "rougeDepuis": null,
         "dernierRougeDepuis": null,
         "repareLe": null,
         "dernierRougeExecution": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/34770031407",
-        "dureeMs": 4523,
+        "dureeMs": 5771,
         "verdict": "instable",
-        "tauxEchec": 11.1,
-        "fenetre": 9,
+        "tauxEchec": 10,
+        "fenetre": 10,
         "rouges": 1,
-        "verts": 8
+        "verts": 9
       }
     ],
     "regressions": [],
@@ -8256,8 +8522,8 @@
     ],
     "dernierRun": {
       "run": {
-        "startedAt": "2026-09-16T17:25:33.446Z",
-        "gitSha": "d85800a4",
+        "startedAt": "2026-09-17T08:54:53.296Z",
+        "gitSha": "e01dcb37",
         "sections": [
           {
             "sectionId": "architecture",
@@ -8334,7 +8600,7 @@
                 "detail": []
               }
             ],
-            "durationMs": 868
+            "durationMs": 836
           },
           {
             "sectionId": "gate",
@@ -8435,7 +8701,7 @@
                 "direction": "lower-is-better"
               }
             ],
-            "durationMs": 1
+            "durationMs": 0
           },
           {
             "sectionId": "catalog",
@@ -8830,7 +9096,8 @@
         "smoke.spec.ts",
         "autonomy-approvals.spec.ts",
         "delegation-outcome.spec.ts",
-        "memory-kept.spec.ts"
+        "memory-kept.spec.ts",
+        "activity-runs.spec.ts"
       ],
       "balayeLesParcours": false,
       "parcoursExclus": [],
@@ -8878,6 +9145,7 @@
         "mesure"
       ],
       "specsNommees": [
+        "activity-runs.spec.ts",
         "agent-recipes.spec.ts",
         "agent-tool-assignment.spec.ts",
         "agents-redesign.spec.ts",
@@ -8977,6 +9245,37 @@
   },
   "parcours": [
     {
+      "fichier": "apps/web/tests/e2e/activity-runs.spec.ts",
+      "nom": "activity-runs.spec.ts",
+      "cas": 4,
+      "jouParLaCi": true,
+      "cadence": "every pull request",
+      "ciIllisible": false,
+      "resultat": {
+        "total": 2,
+        "vert": 2,
+        "rouge": 0,
+        "ignoré": 0,
+        "instable": 0,
+        "dureeMs": 11451,
+        "cas": [
+          {
+            "titre": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
+            "titreComplet": "a run is one row, unfolded into its calls @cap:suivre-execution/ecran",
+            "sort": "vert",
+            "dureeMs": 3819
+          },
+          {
+            "titre": "Runs has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
+            "titreComplet": "Runs has left the menu and /jobs lands on Activity @cap:suivre-execution/ecran",
+            "sort": "vert",
+            "dureeMs": 7632
+          }
+        ]
+      },
+      "intention": "Activity is the list of runs: one row per run, unfolded into its calls."
+    },
+    {
       "fichier": "apps/web/tests/e2e/agent-recipes.spec.ts",
       "nom": "agent-recipes.spec.ts",
       "cas": 4,
@@ -8989,19 +9288,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 3428,
+        "dureeMs": 3550,
         "cas": [
           {
             "titre": "a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran a profile shows what it sets, then creates ONE ordinary agent with skills and read-only rules",
             "sort": "vert",
-            "dureeMs": 1994
+            "dureeMs": 2159
           },
           {
             "titre": "\"Customize a new agent\" is selected by default and Next opens the empty form",
             "titreComplet": "agent recipes @cap:configurer-agent/ecran \"Customize a new agent\" is selected by default and Next opens the empty form",
             "sort": "vert",
-            "dureeMs": 1434
+            "dureeMs": 1391
           }
         ]
       },
@@ -9020,31 +9319,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 19347,
+        "dureeMs": 19470,
         "cas": [
           {
             "titre": "Scenario A — Tools & Connectors section renders with the test connector",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario A — Tools & Connectors section renders with the test connector",
             "sort": "vert",
-            "dureeMs": 10340
+            "dureeMs": 10797
           },
           {
             "titre": "Scenario B — checking connector checkbox creates assignment row in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario B — checking connector checkbox creates assignment row in DB",
             "sort": "vert",
-            "dureeMs": 2689
+            "dureeMs": 2606
           },
           {
             "titre": "Scenario C — unchecking connector removes assignment from DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario C — unchecking connector removes assignment from DB",
             "sort": "vert",
-            "dureeMs": 2395
+            "dureeMs": 2374
           },
           {
             "titre": "Scenario D — Enable all button keeps enabledOperations=null in DB",
             "titreComplet": "Agent edit page — Tools & Connectors section @cap:assigner-outils/ecran Scenario D — Enable all button keeps enabledOperations=null in DB",
             "sort": "vert",
-            "dureeMs": 3923
+            "dureeMs": 3693
           }
         ]
       },
@@ -9063,13 +9362,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 929,
+        "dureeMs": 915,
         "cas": [
           {
             "titre": "render, dark mode, add-worker modal, keyboard drag round-trip",
             "titreComplet": "Agents page redesign @cap:organiser-equipe/ecran render, dark mode, add-worker modal, keyboard drag round-trip",
             "sort": "ignoré",
-            "dureeMs": 929
+            "dureeMs": 915
           }
         ]
       },
@@ -9088,13 +9387,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9194,
+        "dureeMs": 9522,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status",
             "titreComplet": "Airtable OAuth flow (wizard-driven) connect via wizard → callback → connected status",
             "sort": "vert",
-            "dureeMs": 9194
+            "dureeMs": 9522
           }
         ]
       },
@@ -9113,13 +9412,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4239,
+        "dureeMs": 4017,
         "cas": [
           {
             "titre": "marketplace card opens modal; connect with name + apiKey creates active instance",
             "titreComplet": "Apify api_key connector smoke test marketplace card opens modal; connect with name + apiKey creates active instance",
             "sort": "vert",
-            "dureeMs": 4239
+            "dureeMs": 4017
           }
         ]
       },
@@ -9138,25 +9437,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 11022,
+        "dureeMs": 10551,
         "cas": [
           {
             "titre": "shows warning when notify checked + bot-less agent; hides on uncheck",
             "titreComplet": "Scenario A — Garde-fou: Telegram notify warning for bot-less agent shows warning when notify checked + bot-less agent; hides on uncheck",
             "sort": "vert",
-            "dureeMs": 2885
+            "dureeMs": 2837
           },
           {
             "titre": "creates a schedule then clicks Run now and sees success toast",
             "titreComplet": "Scenario B — Run now button shows success toast creates a schedule then clicks Run now and sees success toast",
             "sort": "vert",
-            "dureeMs": 3757
+            "dureeMs": 3588
           },
           {
             "titre": "creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "titreComplet": "Scenario C — Notify persistence: checkbox survives edit + save creates schedule, edits to check notify, re-opens edit form, notify is still checked",
             "sort": "vert",
-            "dureeMs": 4380
+            "dureeMs": 4126
           }
         ]
       },
@@ -9175,31 +9474,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 7519,
+        "dureeMs": 7293,
         "cas": [
           {
             "titre": "find an existing agent to navigate to",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran find an existing agent to navigate to",
             "sort": "vert",
-            "dureeMs": 1380
+            "dureeMs": 1350
           },
           {
             "titre": "Autonomy tab is visible in the agent editor",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran Autonomy tab is visible in the agent editor",
             "sort": "vert",
-            "dureeMs": 1962
+            "dureeMs": 1922
           },
           {
             "titre": "Autonomy tab renders without errors (empty state or tool list)",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran Autonomy tab renders without errors (empty state or tool list)",
             "sort": "vert",
-            "dureeMs": 2038
+            "dureeMs": 1957
           },
           {
             "titre": "3-way control is present and interactive when write tools exist",
             "titreComplet": "Autonomy / Approvals tab @cap:regler-autonomie/ecran 3-way control is present and interactive when write tools exist",
             "sort": "ignoré",
-            "dureeMs": 2139
+            "dureeMs": 2064
           }
         ]
       },
@@ -9218,37 +9517,37 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 21744,
+        "dureeMs": 21739,
         "cas": [
           {
             "titre": "navigate to /llm-providers, add a provider, test connection, save, row appears",
             "titreComplet": "Test A — LLM key add + test connection + save navigate to /llm-providers, add a provider, test connection, save, row appears",
             "sort": "vert",
-            "dureeMs": 3120
+            "dureeMs": 2203
           },
           {
             "titre": "change LLM provider dropdown on agent edit → model field updates → save → toast",
             "titreComplet": "Test B — Agent edit picks LLM provider @cap:choisir-modele/ecran change LLM provider dropdown on agent edit → model field updates → save → toast",
             "sort": "vert",
-            "dureeMs": 2823
+            "dureeMs": 2646
           },
           {
             "titre": "job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "titreComplet": "Test C — Send-task with Telegram checkbox (Brique 31 acceptance) job row has chatId set + task is pristine when Telegram checkbox is ticked",
             "sort": "ignoré",
-            "dureeMs": 248
+            "dureeMs": 259
           },
           {
             "titre": "navigate to skill edit page, modify content, save, toast Skill updated",
             "titreComplet": "Test D — Skill edit flow navigate to skill edit page, modify content, save, toast Skill updated",
             "sort": "vert",
-            "dureeMs": 13388
+            "dureeMs": 14294
           },
           {
             "titre": "Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "titreComplet": "Test E — Skill delete with ConfirmDialog (invariant #10) Delete button opens ConfirmDialog (not native browser dialog), Cancel keeps skill, Confirm deletes it",
             "sort": "vert",
-            "dureeMs": 2165
+            "dureeMs": 2337
           }
         ]
       },
@@ -9267,43 +9566,43 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 9070,
+        "dureeMs": 8989,
         "cas": [
           {
             "titre": "A — configurer puis approuver, hash écrit EN BASE",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran A — configurer puis approuver, hash écrit EN BASE",
             "sort": "vert",
-            "dureeMs": 2917
+            "dureeMs": 3351
           },
           {
             "titre": "B — éditer une commande approuvée retire l’approbation",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran B — éditer une commande approuvée retire l’approbation",
             "sort": "vert",
-            "dureeMs": 1987
+            "dureeMs": 1706
           },
           {
             "titre": "C — le cap de cinq est visible : l’ajout disparaît",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran C — le cap de cinq est visible : l’ajout disparaît",
             "sort": "vert",
-            "dureeMs": 1203
+            "dureeMs": 1117
           },
           {
             "titre": "D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran D — non-owner : champs désactivés, pilule owner only, pas d’approbation",
             "sort": "ignoré",
-            "dureeMs": 829
+            "dureeMs": 732
           },
           {
             "titre": "E — un échec serveur ne ment pas",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran E — un échec serveur ne ment pas",
             "sort": "vert",
-            "dureeMs": 1363
+            "dureeMs": 1362
           },
           {
             "titre": "F — le tiroir Other sessions n’a aucun panneau",
             "titreComplet": "Proof commands — onglet Code @cap:verifier-un-livrable/ecran F — le tiroir Other sessions n’a aucun panneau",
             "sort": "vert",
-            "dureeMs": 771
+            "dureeMs": 721
           }
         ]
       },
@@ -9322,25 +9621,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 15224,
+        "dureeMs": 13747,
         "cas": [
           {
             "titre": "an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran",
             "titreComplet": "an owner names two commands, reads them back, then removes the list @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 8618
+            "dureeMs": 7109
           },
           {
             "titre": "\"Refuse every command\" saves an empty list, which is not the same as no list",
             "titreComplet": "\"Refuse every command\" saves an empty list, which is not the same as no list",
             "sort": "vert",
-            "dureeMs": 4644
+            "dureeMs": 4519
           },
           {
             "titre": "a shell on the list is refused, and the reason is shown next to the field",
             "titreComplet": "a shell on the list is refused, and the reason is shown next to the field",
             "sort": "vert",
-            "dureeMs": 1962
+            "dureeMs": 2119
           }
         ]
       },
@@ -9359,13 +9658,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9392,
+        "dureeMs": 9235,
         "cas": [
           {
             "titre": "can create two instances of the same api_key connector and both appear in Active Connectors",
             "titreComplet": "Connector multi-instance can create two instances of the same api_key connector and both appear in Active Connectors",
             "sort": "vert",
-            "dureeMs": 9392
+            "dureeMs": 9235
           }
         ]
       },
@@ -9384,25 +9683,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5905,
+        "dureeMs": 5685,
         "cas": [
           {
             "titre": "Google Drive states it reaches the ENTIRE Drive",
             "titreComplet": "Connector scope disclosure Google Drive states it reaches the ENTIRE Drive",
             "sort": "vert",
-            "dureeMs": 1475
+            "dureeMs": 1410
           },
           {
             "titre": "Google Sheets and Docs disclose their reach too",
             "titreComplet": "Connector scope disclosure Google Sheets and Docs disclose their reach too",
             "sort": "vert",
-            "dureeMs": 2961
+            "dureeMs": 2876
           },
           {
             "titre": "a connector whose reach matches its name shows NO disclosure",
             "titreComplet": "Connector scope disclosure a connector whose reach matches its name shows NO disclosure",
             "sort": "vert",
-            "dureeMs": 1469
+            "dureeMs": 1399
           }
         ]
       },
@@ -9421,13 +9720,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 8737,
+        "dureeMs": 8597,
         "cas": [
           {
             "titre": "connect Drive via wizard → reuse credential for Gmail via dropdown",
             "titreComplet": "Credential reuse — Drive + Gmail share one Google credential connect Drive via wizard → reuse credential for Gmail via dropdown",
             "sort": "vert",
-            "dureeMs": 8737
+            "dureeMs": 8597
           }
         ]
       },
@@ -9446,19 +9745,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 9127,
+        "dureeMs": 9153,
         "cas": [
           {
             "titre": "a delegation that produced nothing shows its reason, never a promise",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that produced nothing shows its reason, never a promise",
             "sort": "vert",
-            "dureeMs": 7913
+            "dureeMs": 7602
           },
           {
             "titre": "a delegation that delivered puts the specialist’s own work in the thread",
             "titreComplet": "what the thread says when a delegation ends @cap:organiser-equipe/ecran a delegation that delivered puts the specialist’s own work in the thread",
             "sort": "vert",
-            "dureeMs": 1214
+            "dureeMs": 1551
           }
         ]
       },
@@ -9477,19 +9776,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4006,
+        "dureeMs": 4007,
         "cas": [
           {
             "titre": "wizard shows 4 Google API links and format hint",
             "titreComplet": "Help guides — OAuth wizard (Google Drive) @cap:consulter-l-aide/ecran wizard shows 4 Google API links and format hint",
             "sort": "vert",
-            "dureeMs": 2145
+            "dureeMs": 2169
           },
           {
             "titre": "\"Where do I get this?\" expander reveals console.apify.com link",
             "titreComplet": "Help guides — api_key connector (Apify) @cap:consulter-l-aide/ecran \"Where do I get this?\" expander reveals console.apify.com link",
             "sort": "vert",
-            "dureeMs": 1861
+            "dureeMs": 1838
           }
         ]
       },
@@ -9508,31 +9807,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 17442,
+        "dureeMs": 16737,
         "cas": [
           {
             "titre": "the section lists the built-in tools, always — no fixtures needed",
             "titreComplet": "Built-in tools — per-tool controls the section lists the built-in tools, always — no fixtures needed",
             "sort": "vert",
-            "dureeMs": 3392
+            "dureeMs": 3285
           },
           {
             "titre": "return_result is shown but locked, with the reason",
             "titreComplet": "Built-in tools — per-tool controls return_result is shown but locked, with the reason",
             "sort": "vert",
-            "dureeMs": 3525
+            "dureeMs": 3291
           },
           {
             "titre": "blocking a built-in tool persists across a reload",
             "titreComplet": "Built-in tools — per-tool controls blocking a built-in tool persists across a reload",
             "sort": "vert",
-            "dureeMs": 5202
+            "dureeMs": 5106
           },
           {
             "titre": "and can be handed back — the restriction is reversible",
             "titreComplet": "Built-in tools — per-tool controls and can be handed back — the restriction is reversible",
             "sort": "vert",
-            "dureeMs": 5323
+            "dureeMs": 5055
           }
         ]
       },
@@ -9551,31 +9850,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5251,
+        "dureeMs": 5764,
         "cas": [
           {
             "titre": "renders the Learned Skills page at /learned-skills",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran renders the Learned Skills page at /learned-skills",
             "sort": "vert",
-            "dureeMs": 3034
+            "dureeMs": 3101
           },
           {
             "titre": "toggle switches the reflection_enabled flag (UI responds)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran toggle switches the reflection_enabled flag (UI responds)",
             "sort": "vert",
-            "dureeMs": 992
+            "dureeMs": 939
           },
           {
             "titre": "no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran no window.confirm / window.alert / window.prompt is called (dialog uses ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 508
+            "dureeMs": 999
           },
           {
             "titre": "assignment-mode control renders both options and is interactive",
             "titreComplet": "learned-skills page @cap:apprendre-une-skill/ecran assignment-mode control renders both options and is interactive",
             "sort": "vert",
-            "dureeMs": 717
+            "dureeMs": 725
           }
         ]
       },
@@ -9594,19 +9893,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4355,
+        "dureeMs": 4136,
         "cas": [
           {
             "titre": "Scenario A — /mcp renders the connected Cogni Cortex server",
             "titreComplet": "MCP Connectors page Scenario A — /mcp renders the connected Cogni Cortex server",
             "sort": "vert",
-            "dureeMs": 3138
+            "dureeMs": 2931
           },
           {
             "titre": "Scenario B — sidebar shows API Connectors and MCP Connectors",
             "titreComplet": "MCP Connectors page Scenario B — sidebar shows API Connectors and MCP Connectors",
             "sort": "vert",
-            "dureeMs": 1217
+            "dureeMs": 1205
           }
         ]
       },
@@ -9625,19 +9924,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5549,
+        "dureeMs": 5348,
         "cas": [
           {
             "titre": "it is written, it survives a reload, and the search finds it again",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran it is written, it survives a reload, and the search finds it again",
             "sort": "vert",
-            "dureeMs": 4159
+            "dureeMs": 4004
           },
           {
             "titre": "archiving a fact takes it out of what the agent is given",
             "titreComplet": "a fact taught on the screen is kept @cap:se-souvenir/ecran archiving a fact takes it out of what the agent is given",
             "sort": "vert",
-            "dureeMs": 1390
+            "dureeMs": 1344
           }
         ]
       },
@@ -9656,31 +9955,31 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 10933,
+        "dureeMs": 10479,
         "cas": [
           {
             "titre": "create with explicit Telegram channel, persists across reload + edit",
             "titreComplet": "Scenario 1 — Schedule form: Notify via lists only the agent's real active channels create with explicit Telegram channel, persists across reload + edit",
             "sort": "ignoré",
-            "dureeMs": 2618
+            "dureeMs": 2529
           },
           {
             "titre": "create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "titreComplet": "Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row create with notify ON, channel Auto, badge appears, then delete (never POST)",
             "sort": "vert",
-            "dureeMs": 4364
+            "dureeMs": 4219
           },
           {
             "titre": "warns for a channel-less agent, clears when switching to a connected one",
             "titreComplet": "Scenario 3 — Agent switch: \"no channel connected\" warning for a channel-less agent warns for a channel-less agent, clears when switching to a connected one",
             "sort": "vert",
-            "dureeMs": 1723
+            "dureeMs": 1673
           },
           {
             "titre": "schedule form notify controls render correctly in both themes",
             "titreComplet": "Scenario 4 — Dark mode: notify controls stay theme-aware schedule form notify controls render correctly in both themes",
             "sort": "vert",
-            "dureeMs": 2228
+            "dureeMs": 2058
           }
         ]
       },
@@ -9699,13 +9998,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5535,
+        "dureeMs": 4709,
         "cas": [
           {
             "titre": "connect with api_key shows connected status and persists",
             "titreComplet": "Notion Internal Integration (api_key) — regression connect with api_key shows connected status and persists",
             "sort": "vert",
-            "dureeMs": 5535
+            "dureeMs": 4709
           }
         ]
       },
@@ -9724,13 +10023,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4429,
+        "dureeMs": 4704,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status (no Refresh button)",
             "titreComplet": "Notion OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status (no Refresh button)",
             "sort": "vert",
-            "dureeMs": 4429
+            "dureeMs": 4704
           }
         ]
       },
@@ -9749,13 +10048,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4655,
+        "dureeMs": 4189,
         "cas": [
           {
             "titre": "connect via wizard → callback → connected status and toast",
             "titreComplet": "Google Drive OAuth flow (wizard-driven) @cap:connecter-un-service/ecran connect via wizard → callback → connected status and toast",
             "sort": "vert",
-            "dureeMs": 4655
+            "dureeMs": 4189
           }
         ]
       },
@@ -9774,19 +10073,19 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 5608,
+        "dureeMs": 5940,
         "cas": [
           {
             "titre": "is present with a default of 5 on the New schedule form",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran is present with a default of 5 on the New schedule form",
             "sort": "vert",
-            "dureeMs": 1577
+            "dureeMs": 2017
           },
           {
             "titre": "persists a custom value on create, and an edit updates it",
             "titreComplet": "Daily budget field on ScheduleForm @cap:planifier-une-tache/ecran persists a custom value on create, and an edit updates it",
             "sort": "vert",
-            "dureeMs": 4031
+            "dureeMs": 3923
           }
         ]
       },
@@ -9805,31 +10104,31 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 7165,
+        "dureeMs": 7562,
         "cas": [
           {
             "titre": "Network section renders with radio buttons and read-only URL fields",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran Network section renders with radio buttons and read-only URL fields",
             "sort": "vert",
-            "dureeMs": 2052
+            "dureeMs": 2051
           },
           {
             "titre": "clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran clicking LAN radio shows LAN addresses or \"No LAN interface detected\"",
             "sort": "vert",
-            "dureeMs": 967
+            "dureeMs": 908
           },
           {
             "titre": "re-saving the mode already in force reports no restart needed",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran re-saving the mode already in force reports no restart needed",
             "sort": "vert",
-            "dureeMs": 1568
+            "dureeMs": 1548
           },
           {
             "titre": "saving the other mode persists it, demands a restart, and is put back",
             "titreComplet": "NetworkForm — /settings @cap:se-connecter/ecran saving the other mode persists it, demands a restart, and is put back",
             "sort": "vert",
-            "dureeMs": 2578
+            "dureeMs": 3055
           }
         ]
       },
@@ -9848,25 +10147,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 2969,
+        "dureeMs": 2833,
         "cas": [
           {
             "titre": "la section rend ses quatre cases et la pilule owner only",
             "titreComplet": "Verification surfaces — /settings la section rend ses quatre cases et la pilule owner only",
             "sort": "vert",
-            "dureeMs": 755
+            "dureeMs": 728
           },
           {
             "titre": "décocher demande confirmation, annuler laisse la case cochée",
             "titreComplet": "Verification surfaces — /settings décocher demande confirmation, annuler laisse la case cochée",
             "sort": "vert",
-            "dureeMs": 1016
+            "dureeMs": 962
           },
           {
             "titre": "décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "titreComplet": "Verification surfaces — /settings décocher puis recocher : le second geste n’ouvre aucun dialogue",
             "sort": "vert",
-            "dureeMs": 1198
+            "dureeMs": 1143
           }
         ]
       },
@@ -9885,37 +10184,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 29860,
+        "dureeMs": 16396,
         "cas": [
           {
             "titre": "the root page IS the dashboard — no login form, no redirect away",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran the root page IS the dashboard — no login form, no redirect away",
             "sort": "vert",
-            "dureeMs": 745
+            "dureeMs": 674
           },
           {
             "titre": "sidebar links every dashboard section",
             "titreComplet": "dashboard navigation @cap:installer-et-demarrer/ecran sidebar links every dashboard section",
             "sort": "vert",
-            "dureeMs": 819
+            "dureeMs": 779
           },
           {
             "titre": "creates an agent, sends a task, and shows the job in the list",
             "titreComplet": "agent → task → job flow @cap:creer-agent/ecran @cap:parler-a-un-agent/ecran creates an agent, sends a task, and shows the job in the list",
             "sort": "vert",
-            "dureeMs": 10115
+            "dureeMs": 2503
           },
           {
             "titre": "every (dashboard) route returns 200 and renders an h1",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran every (dashboard) route returns 200 and renders an h1",
             "sort": "vert",
-            "dureeMs": 16464
+            "dureeMs": 9805
           },
           {
             "titre": "les routes à paramètre rendent, atteintes par les liens de l’app",
             "titreComplet": "settings pages render without runtime errors @cap:installer-et-demarrer/ecran les routes à paramètre rendent, atteintes par les liens de l’app",
             "sort": "vert",
-            "dureeMs": 1717
+            "dureeMs": 2635
           }
         ]
       },
@@ -9934,25 +10233,25 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 16547,
+        "dureeMs": 19470,
         "cas": [
           {
             "titre": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "titreComplet": "A — allowlist renders: owner badged, pending has Approve/Deny, member has Revoke @cap:parler-par-canal-externe/ecran",
             "sort": "vert",
-            "dureeMs": 8157
+            "dureeMs": 9660
           },
           {
             "titre": "B — Approve a pending chat activates it",
             "titreComplet": "B — Approve a pending chat activates it",
             "sort": "vert",
-            "dureeMs": 4437
+            "dureeMs": 4876
           },
           {
             "titre": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "titreComplet": "C — Revoke a member deletes the row (via ConfirmDialog)",
             "sort": "vert",
-            "dureeMs": 3953
+            "dureeMs": 4934
           }
         ]
       },
@@ -9971,31 +10270,31 @@
         "rouge": 0,
         "ignoré": 4,
         "instable": 0,
-        "dureeMs": 2468,
+        "dureeMs": 2382,
         "cas": [
           {
             "titre": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "titreComplet": "A — un fil long s’ouvre sur son dernier message @cap:suivre-execution/ecran",
             "sort": "ignoré",
-            "dureeMs": 708
+            "dureeMs": 806
           },
           {
             "titre": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "titreComplet": "C — remonter APRÈS un fil déjà en bas : le geste du lecteur n’est pas avalé",
             "sort": "ignoré",
-            "dureeMs": 673
+            "dureeMs": 531
           },
           {
             "titre": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "titreComplet": "D — remonter PENDANT qu’un défilement automatique est en vol",
             "sort": "ignoré",
-            "dureeMs": 558
+            "dureeMs": 544
           },
           {
             "titre": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "titreComplet": "B — remonter dans l’historique tient : on n’est pas ramené en bas @cap:reprendre-conversation/ecran",
             "sort": "ignoré",
-            "dureeMs": 529
+            "dureeMs": 501
           }
         ]
       },
@@ -10014,37 +10313,37 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 18140,
+        "dureeMs": 17872,
         "cas": [
           {
             "titre": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "titreComplet": "Tools tab lists every tool group the catalogue declares @cap:assigner-outils/ecran",
             "sort": "vert",
-            "dureeMs": 3167
+            "dureeMs": 3265
           },
           {
             "titre": "disclosure expands to show the gated tool names as chips",
             "titreComplet": "disclosure expands to show the gated tool names as chips",
             "sort": "vert",
-            "dureeMs": 3343
+            "dureeMs": 3233
           },
           {
             "titre": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "titreComplet": "\"Includes guidance\" badge opens a read-only modal with the skill content",
             "sort": "vert",
-            "dureeMs": 3383
+            "dureeMs": 3284
           },
           {
             "titre": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "titreComplet": "tool groups are absent from the agent's Skills tab, command-execution is NOT",
             "sort": "vert",
-            "dureeMs": 3471
+            "dureeMs": 3388
           },
           {
             "titre": "a tool group assigned to this agent is still absent from /skills Assigned",
             "titreComplet": "a tool group assigned to this agent is still absent from /skills Assigned",
             "sort": "vert",
-            "dureeMs": 4776
+            "dureeMs": 4702
           }
         ]
       },
@@ -10063,13 +10362,13 @@
         "rouge": 0,
         "ignoré": 1,
         "instable": 0,
-        "dureeMs": 4070,
+        "dureeMs": 8008,
         "cas": [
           {
             "titre": "shows email in sidebar, signs out, redirects to /login, re-logs in",
             "titreComplet": "UserMenu — sign-out + re-login round-trip @cap:se-connecter/ecran shows email in sidebar, signs out, redirects to /login, re-logs in",
             "sort": "ignoré",
-            "dureeMs": 4070
+            "dureeMs": 8008
           }
         ]
       },
@@ -10088,13 +10387,13 @@
         "rouge": 0,
         "ignoré": 0,
         "instable": 0,
-        "dureeMs": 4523,
+        "dureeMs": 5771,
         "cas": [
           {
             "titre": "create, copy URL, toggle, rotate, delete, empty state",
             "titreComplet": "Webhooks section — full click flow @cap:declencher-sur-evenement/ecran create, copy URL, toggle, rotate, delete, empty state",
             "sort": "vert",
-            "dureeMs": 4523
+            "dureeMs": 5771
           }
         ]
       },
@@ -10103,6 +10402,57 @@
   ],
   "chantiers": {
     "issues": [
+      {
+        "body": "Owner's feeling (2026-09-17): \"/code and /spaces feel like a duplicate, the way Runs and Logs did.\" Decision: agreed as a product issue, NOT to be taken immediately (after the #135 PRs).\n\n## What each page is today\n\n- **Code** (2026-08-25): the folders where agents wrote, derived from coding sessions (Claude Code, Codex): one card per project with its sessions, agents, cost, and a verification panel; rename and hide. Session detail at `/code/[id]`.\n- **Spaces** (2026-09-06): the registry of declared projects: a folder, a responsible agent, conversations, a proof. Opening a project lands in its conversation; files and proof behind \"Files\".\n\nBoth list projects with a folder and a proof; the difference is the origin (derived vs declared). Code also lists sessions, which are runs: that is what Activity became (#134).\n\n## Proposal\n\n1. **Spaces becomes the only projects page.** A folder where an agent wrote is a project, created in the registry by itself, with Code's two gestures Spaces lacks: rename and hide.\n2. **Code sessions are runs.** They go to Activity like the other runs, with a filter by project; their detail joins the run page. `/code/[id]` goes away.\n3. **Verification lives on the project.** Code's proof panel joins the project's Files page, next to the proof already there.\n4. **Code leaves the menu**, like Runs did.\n\nNot to lose: the automatic discovery of folders (Code's best feature), and the context injected to agents which reads Code's project list today (`apps/runner/src/job/code-projects.ts`) to know where they may write. Both move to the registry, explicitly.\n\n## Verified\n\n`grep -n \"href: '/code'\\|href: '/spaces'\" apps/web/src/components/Sidebar.tsx` → lines 72-73, both entries in the menu\n`ls \"apps/web/src/app/(dashboard)/code\"` → `CodeProcessesTable.tsx ProjectVerificationPanel.tsx [id] __tests__ page.tsx`\n`sed -n 1,8p \"apps/web/src/app/(dashboard)/spaces/page.tsx\"` → \"/spaces — LE REGISTRE DES PROJETS (P8). Spaces listait des jobs ; il liste maintenant des PROJETS.\"\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+        "createdAt": "2026-09-17T08:49:48Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "product",
+            "description": "visible behaviour",
+            "color": "EC4899"
+          }
+        ],
+        "number": 143,
+        "state": "OPEN",
+        "title": "Code and Spaces are one page: the projects registry, with code sessions in Activity",
+        "updatedAt": "2026-09-17T08:49:48Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/143"
+      },
+      {
+        "body": "Quentin, on the #135 board (2026-09-17): the chat composer should let the person change Alfred's model and reasoning effort without opening the agent settings. Decision taken: the selector changes the AGENT's setting (every channel), it is not a per-conversation override.\n\nThe board carries the proposed control: `ThreadComposer` (Figma `355:2928`), a compact `model · effort` selector in the action row. Nothing exists in the code yet.\n\nScope: one PR, after the #135 feed work. The control calls the same server action as the agent screen (`reasoningEffort`, `off|low|medium|high|max`, and the model link) and reflects the current value.\n\n## Verified\n\n`grep -n \"reasoningEffort\" apps/web/src/lib/actions.ts` → `z.enum(['off', 'low', 'medium', 'high', 'max'])` at lines 1067 and 1074 (per-agent setting exists)\n`grep -c \"model\\|effort\" \"apps/web/src/app/(dashboard)/chat/ThreadComposer.tsx\"` → 0 (no selector in the composer today)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n",
+        "createdAt": "2026-09-17T02:51:03Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "product",
+            "description": "visible behaviour",
+            "color": "EC4899"
+          }
+        ],
+        "number": 138,
+        "state": "OPEN",
+        "title": "Chat composer: pick the agent's model and effort without opening settings",
+        "updatedAt": "2026-09-17T08:47:28Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/138"
+      },
+      {
+        "body": "## What happened (night of 2026-09-15)\n\nA request sent through the MCP asked Alfred to run a review « with Reviewer C, without going through Lead-Dev ». Reviewer C was not in Alfred's team. Alfred solved it on its own: it called `attach_agent` on `reviewer-c` (02:13 local), which made Reviewer C a member of two teams, then delegated. Quentin discovered the new team layout the next morning.\n\nTwo things were wrong, and Quentin's reading of them (2026-09-17):\n\n1. **The request should not have existed.** Bypassing Lead-Dev was a strategic mistake of the caller. Not the product's fault.\n2. **The answer was clever, and still the wrong one.** Alfred did what it was asked, but instead of saying « I cannot: I have no reviewer in my team, go through Lead-Dev », it changed its own team. **An agent that cannot do something says so and names who can; it does not rewire the organisation to make the request possible.**\n\n## What the product does today\n\n- `packages/tools/src/builtin/meta-ops/attach-agent.ts`, `detach-agent.ts`, `create-agent.ts`: any orchestrator that has these tools can attach an existing agent to itself, detach one, or create one and assign it to itself, during a job, with no owner involvement. `attach_agent` is documented as idempotent (« safe to call even if the agent is already assigned »).\n- The owner composes teams from the orchestrator's settings (sub-agent checkboxes). The board does not expose multi-team, and that is fine (#123, withdrawn).\n\n## Decision\n\n- **A per-agent setting: « May change its own team » (attach, detach, create agents), off by default.** With it off, the three tools are not in the agent's tool list at all (invariant #9: the list is computed from the database per job), so the model never sees them.\n- **When the tools are absent and the model is asked something it cannot do**, the expected behaviour is the plain answer: « I cannot: I have no reviewer in my team; Lead-Dev has one. » No workaround. This is a matter of the agent's prompt and of the delegation contract, not of a new tool.\n- Existing agents keep today's behaviour only if the owner turns the setting on; the migration sets it off for everyone, and the release note says so.\n- Owner-only setting, same gate shape as the CLI runtime mode and the command allowlist (#133).\n\n## Where to look\n\n- `packages/tools/src/builtin/meta-ops/*` and the tool whitelist computation (`resolve-agent-tools`, `whitelist`).\n- `apps/web/src/app/(dashboard)/agents/[id]/edit/` (Autonomy tab, next to the command allowlist of #133).\n- `packages/db`: a column on `agents`, migration + journal + inline test SQL (three places).\n\n## Verified\n\n```\ntool_calls (Nodal DB, 2026-09-15T18:13:05Z, job bff54c8f):\n  attach_agent {\"agentSlug\":\"reviewer-c\"} → {\"ok\":true,\"message\":\"Assigned agent \\\"Reviewer C\\\" (id aaf3cf99-…) as your sub-agent — you can delegate to it now.\"}\nagent_assignments: row (orchestrator=Alfred, sub_agent=Reviewer C) created 2026-09-15T18:13:05.973Z, in addition to the pre-existing (Lead-Dev, Reviewer C) row of 2026-08-19.\n$ grep -n \"Idempotent\" packages/tools/src/builtin/meta-ops/attach-agent.ts\n23:    'Idempotent: safe to call even if the agent is already assigned. ' +\n```",
+        "createdAt": "2026-09-17T01:24:17Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "product",
+            "description": "visible behaviour",
+            "color": "EC4899"
+          }
+        ],
+        "number": 137,
+        "state": "OPEN",
+        "title": "An agent does not recompose its own team: a per-agent setting, off by default, gates attach_agent / detach_agent / create_agent",
+        "updatedAt": "2026-09-17T01:24:17Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/137"
+      },
       {
         "body": "## What Quentin wants (2026-09-17)\n\nWhat the product sells is not the answer, it is **seeing the agent work while it works**: its reasoning, its delegations, its tool calls, its conclusion, live, in the conversation, the way an IDE shows an agent at work. Until now that phase lived on the Run page; the user had to leave the thread to see it. The thread is the right place (decision of 2026-09: « le fil est un écran »).\n\n## Decision\n\n**1. Chat becomes an inbox with folders.** In the sidebar, « Chat » unfolds into: Telegram, Nodal chats, Routines. A Telegram thread and a dashboard thread are distinct conversations, so nothing appears in two folders. Routines show, per routine, the feed of what it produced, run after run.\n\n**2. A count of what needs you, per folder.** The badge counts what *waits for the person*: an answer not yet read, a question the agent asked, an approval pending, a deliverable to check. It does NOT count runs in progress — a running task somewhere would keep every badge lit until nobody reads it. « In progress » shows as a pulsing dot on the conversation, without a number. Inbox, not monitor.\n\n**3. The work of a run is shown in the thread**, with the block grammar and the density setting of #132: reasoning, delegation with its child, tool call with its result, and a **conclusion block** at the end of each run (« here is what I delivered, here is how it is verified », with the verification's green or red). A newcomer sees the answer with the rest folded to one line; a builder unfolds everything. The density is a preference, not a constant in the code.\n\n## Method\n\nThis is the most visible surface of the product: **it is designed before it is coded.** One Figma board first (the blocks, their folded and unfolded states, the inbox and its badge), Quentin settles it, then one PR per block. The Figma design system is the mirror of the code and a handoff is a spec.\n\n## Verified\n\n```\n$ grep -n \"^import\" \"apps/web/src/app/(dashboard)/spaces/ConversationFeedView.tsx\" | grep -iE \"ToolBlock|ThinkingBlock\"\nimport ThinkingBlock from './ThinkingBlock.tsx';\nimport ToolBlock from './ToolBlock.tsx';                   (the thread already renders reasoning and tool calls)\n$ grep -n \"getConversationThreadAction\" \"apps/web/src/app/(dashboard)/chat/[id]/page.tsx\"\n29:  const result = await getConversationThreadAction(id);   (one thread = one conversation, whatever the channel)\n```\n\nRelated: #132 (one renderer at two densities), the Activity issue opened the same day.",
         "createdAt": "2026-09-16T16:45:41Z",
@@ -10117,25 +10467,8 @@
         "number": 135,
         "state": "OPEN",
         "title": "The thread is the workspace: an inbox by channel with an attention count, and the run's work shown live in the conversation",
-        "updatedAt": "2026-09-16T16:45:54Z",
+        "updatedAt": "2026-09-17T07:03:30Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/135"
-      },
-      {
-        "body": "## What Quentin observed (2026-09-17)\n\nThe Activity view of the Logs page is already a list of runs, presented from the wrong end: one row per tool call (Time, Level, Tool, Agent, Duration, Job), so thirteen rows belong to the same run and the list becomes unreadable as soon as two jobs run at once. The Runs page shows the same runs as a list plus a detail page. Three screens render « what a run did », each in its own way.\n\n## Decision\n\n- **Activity becomes the list of runs.** One folded row per run; the row unfolds into the run's calls in time order, tool calls AND model calls interleaved, rendered with the same blocks the chat uses (#132).\n- **The Runs page leaves the menu.** A run keeps its URL, reached from a chat answer, a routine, an alert, never from a menu.\n- **The service log stays exactly as it is**, machine language, under its own tab: it has another unit (the process, between runs) and must keep it.\n- Cleaning up how the unfolded calls look is a second step, shared with #132.\n\n## The folded row (to be settled by Quentin)\n\nProposed: agent, origin of the request (chat, Telegram, routine, MCP), a short title taken from the task, status, duration, cost, call count. This is the line read a hundred times a day: one element too many or missing is the real design question.\n\n## Two things the design must hold\n\n1. **Pagination changes unit**: it counts runs, not calls; a run with two hundred calls unfolds with its own inner pagination.\n2. **A running run grows**: its unfolded row receives calls as they land and its folded counter updates, without the page jumping (same need as the thread following new messages).\n\n## Verified\n\n```\n$ sed -n 58,63p \"apps/web/src/app/(dashboard)/logs/LogsTable.tsx\"\n<Th>Time</Th> <Th>Lvl</Th> <Th>Tool</Th> <Th>Agent</Th> <Th>Duration</Th> <Th>Job</Th>\n$ grep -n \"listToolCallsAction\\|listServiceLogsAction\" \"apps/web/src/app/(dashboard)/logs/page.tsx\"\n63:    const logsResult = await listServiceLogsAction();      (view=service)\n84:    listToolCallsAction({ agentId, toolName, jobId, page })  (default view: one row per tool call)\n$ grep -n \"^import JobMessages\" \"apps/web/src/app/(dashboard)/jobs/[id]/page.tsx\"\n3:import JobMessages from '@/components/JobMessages.tsx'      (the run page's own renderer)\n```",
-        "createdAt": "2026-09-16T16:45:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
-            "name": "product",
-            "description": "visible behaviour",
-            "color": "EC4899"
-          }
-        ],
-        "number": 134,
-        "state": "OPEN",
-        "title": "Activity is the list of runs: one row per run, unfolded into its calls; the Runs page leaves the menu",
-        "updatedAt": "2026-09-16T16:45:39Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/134"
       },
       {
         "body": "## What Quentin observed (2026-09-17)\n\nThe chat page (`/chat/<id>`) and the run page (`/jobs/<id>`) show the same events: the user prompt, the delegation message, its activation, the tool and skill calls. They are just rendered differently, by two code paths:\n\n- the thread goes through the conversation renderer (`ConversationFeedView`, `ToolBlock`, `ThinkingBlock`, result cards, Markdown);\n- the run page goes through `JobMessages`, a raw transcript renderer (role labels, `tool_use` / `tool_result` blocks as they were sent).\n\nTwo renderers for one event stream always diverge: one gains a block the other never gets.\n\n## The principle Quentin set: « qui peut le plus peut le moins »\n\n**One component renders what a run did, at two densities.** The chat opens it folded by default; the run page opens it unfolded by default. Same block for a tool call, a delegation, a thinking step, a question to the user, in both screens; each block has a one-line folded head and an unfolded body.\n\n- **Chat, by default**: the agent's message, and under each answer one folded line summarising the run (tools, delegations, model calls, duration, cost). One click unfolds, block by block, exactly what the run page shows.\n- **Run page, by default**: everything unfolded, plus the technical panels the chat does not need: system prompt, model calls one by one, delegation children, status, cost.\n- **Links both ways**: from an answer in the thread to the run that produced it; from a chat run back to the conversation at that exact spot.\n\n## Two things the design must hold\n\n1. **Redaction.** The run page passes the transcript through `redactTranscriptForDisplay` before rendering. The unfolded chat must go through the same function, or unfolding in the chat shows what the run page hides.\n2. **Weight.** A long thread with twenty runs must not load twenty transcripts on open. Details load on click, not with the thread.\n\n## Verified\n\n```\n$ grep -n \"^import\" \"apps/web/src/app/(dashboard)/jobs/[id]/page.tsx\" | grep -i message\nimport JobMessages from '@/components/JobMessages.tsx'\n$ grep -n \"^import\" \"apps/web/src/app/(dashboard)/spaces/ConversationFeedView.tsx\" | grep -iE \"ToolBlock|ThinkingBlock\"\nimport ThinkingBlock from './ThinkingBlock.tsx';\nimport ToolBlock from './ToolBlock.tsx';\n$ grep -rln \"JobMessages\" apps/web/src --include=*.tsx | wc -l   → used by the run page only\n```",
@@ -10204,23 +10537,6 @@
         "title": "A review_verdict recorded by a sub-agent never reaches its parent: the child answers with a sentence, and the parent delegates again",
         "updatedAt": "2026-09-16T03:07:57Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/124"
-      },
-      {
-        "body": "## What happened\n\nOn the night of 2026-09-15 (02:13 local), Alfred called its `attach_agent` tool on `reviewer-c` while running a review job. Reviewer C was already a worker of Lead-Dev. The result is one agent shown under two orchestrators on the Agents page. A one-shot script then created a new `reviewer` agent and inserted it under both Alfred and Lead-Dev at once.\n\nQuentin's decision (2026-09-16): **one agent, one place.** An agent never appears in two teams.\n\n## Where the product currently allows it\n\n- `agent_assignments` is many-to-many with a UNIQUE on (orchestrator_id, sub_agent_id) only — nothing forbids a second orchestrator for the same sub-agent.\n- `apps/web/src/app/(dashboard)/agents/AddWorkerModal.tsx` is documented as *purely additive*: it calls `moveWorkerAssignmentAction` with `fromOrchestratorId: null`, so a worker keeps its previous team.\n- `packages/tools/src/builtin/meta-ops/attach-agent.ts` (`attachAgentToOrchestrator` in `packages/db/src/repos/agents.ts`) inserts a new row without checking whether the agent already has a parent.\n- `createAgentRepo` accepts `subAgentIds` / `assignToOrchestratorId` without the same check.\n\n## What must change\n\n1. **Database**: a UNIQUE constraint on `agent_assignments.sub_agent_id` (migration + journal + inline test SQL, per CLAUDE.md), after a one-time cleanup of existing duplicates.\n2. **Web**: adding a worker to a team MOVES it (the modal passes the current parent as `fromOrchestratorId`), and the UI says so.\n3. **Tools**: `attach_agent` on an agent that already has a parent fails loud, naming the current parent (invariant #4). It never re-parents silently.\n4. Tests that fail first for each path, verified by mutation.\n\n## Not in scope\n\nWhether an orchestrator may use a worker from another team through delegation without owning it — separate decision.",
-        "createdAt": "2026-09-16T02:22:11Z",
-        "labels": [
-          {
-            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
-            "name": "product",
-            "description": "visible behaviour",
-            "color": "EC4899"
-          }
-        ],
-        "number": 123,
-        "state": "OPEN",
-        "title": "An agent belongs to exactly one team: the UI, the attach_agent tool and the database must all refuse a second parent",
-        "updatedAt": "2026-09-16T10:18:14Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/123"
       },
       {
         "body": "Reviewer A (qwen/qwen3.8-max, OpenRouter) worked 12 turns over 16 minutes on a read-only code review (20 file reads), then turn 13 hit `LLMTimeoutError: LLM call timed out after 300000ms`. The job went `failed`, `result` = \"⚠️ The task could not be completed (LLM call timed out after 300000ms: openrouter/qwen/qwen3.8-max) and no explanation was provided.\" Twelve turns of reading were thrown away; nothing partial reached the parent (Alfred reported the reviewer as blocked, which is correct behaviour on his side).\n\nTwo defects:\n1. **A single timed-out turn kills a job that had been progressing.** Stale-retry exists for timeouts (`packages/llm` withStaleRetry), so either it did not apply on this path, or its budget was exhausted by one 5-minute call. After a late timeout the runner should retry the turn once with the same messages (the transcript is intact), and only then fail; failing must keep the transcript as the deliverable-so-far for the parent (typed record, `exit_reason: timeout`).\n2. **The user-facing text is the raw error string.** Same as #119: the runner has the facts (provider, model, turn, elapsed) and should say them, not paste the exception.\n\n## Verified\n```\n$ node q.mjs \"select a.name, c.status, length(c.result), left(c.error,80) from agent_jobs c join agents a on a.id=c.agent_id where c.parent_job_id='31d9e0cb-4626-453b-97b0-458bfc9621bb'\"\nReviewer A · failed · 132 · LLM call timed out after 300000ms: openrouter/qwen/qwen3.8-max\nReviewer C · completed · 12509\n$ node q.mjs \"select turn, model_effective, error from llm_calls where job_id=<Reviewer A child> order by created_at\"\nturns 1-12: qwen/qwen3.8-max-0902, no error · turn 13: LLMTimeoutError after 300000ms\n$ node q.mjs \"select tool_name, count(*) from tool_calls where job_id=<Reviewer A child>\"  → file_read etc. (12 turns of real work)\n```\nParent job 31d9e0cb-4626-453b-97b0-458bfc9621bb, 2026-09-16 01:22 → 01:38 local. Reviewer A's model was switched from gemini-3.7-flash to qwen3.8-max at 01:15 (agents.updated_at), after #119.",
@@ -10342,7 +10658,7 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/72"
       },
       {
-        "body": "**1 thing(s) in the red.** This issue is kept up to date by the nightly measurement; it closes itself when it has nothing left to say.\n\n\n\nCollected on 2026-09-16T17:09:16.444Z · commit `c139d033` · branch `main`\n\n\n\n### 1 packages carry tests whose coverage has never been measured\n\nThe coverage configuration had always existed; the package that runs it was not installed. None of these packages can say how much of its code its tests go through.\n\n- `@nodal-agents/docs`",
+        "body": "**1 thing(s) in the red.** This issue is kept up to date by the nightly measurement; it closes itself when it has nothing left to say.\n\n\n\nCollected on 2026-09-16T17:31:32.960Z · commit `d85800a4` · branch `main`\n\n\n\n### 1 packages carry tests whose coverage has never been measured\n\nThe coverage configuration had always existed; the package that runs it was not installed. None of these packages can say how much of its code its tests go through.\n\n- `@nodal-agents/docs`",
         "createdAt": "2026-09-11T16:44:32Z",
         "labels": [
           {
@@ -10355,7 +10671,7 @@
         "number": 71,
         "state": "OPEN",
         "title": "Portal: what is red",
-        "updatedAt": "2026-09-16T17:09:33Z",
+        "updatedAt": "2026-09-16T17:31:49Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/71"
       },
       {
@@ -10514,6 +10830,23 @@
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/52"
       },
       {
+        "body": "## What Quentin observed (2026-09-17)\n\nThe Activity view of the Logs page is already a list of runs, presented from the wrong end: one row per tool call (Time, Level, Tool, Agent, Duration, Job), so thirteen rows belong to the same run and the list becomes unreadable as soon as two jobs run at once. The Runs page shows the same runs as a list plus a detail page. Three screens render « what a run did », each in its own way.\n\n## Decision\n\n- **Activity becomes the list of runs.** One folded row per run; the row unfolds into the run's calls in time order, tool calls AND model calls interleaved, rendered with the same blocks the chat uses (#132).\n- **The Runs page leaves the menu.** A run keeps its URL, reached from a chat answer, a routine, an alert, never from a menu.\n- **The service log stays exactly as it is**, machine language, under its own tab: it has another unit (the process, between runs) and must keep it.\n- Cleaning up how the unfolded calls look is a second step, shared with #132.\n\n## The folded row (to be settled by Quentin)\n\nProposed: agent, origin of the request (chat, Telegram, routine, MCP), a short title taken from the task, status, duration, cost, call count. This is the line read a hundred times a day: one element too many or missing is the real design question.\n\n## Two things the design must hold\n\n1. **Pagination changes unit**: it counts runs, not calls; a run with two hundred calls unfolds with its own inner pagination.\n2. **A running run grows**: its unfolded row receives calls as they land and its folded counter updates, without the page jumping (same need as the thread following new messages).\n\n## Verified\n\n```\n$ sed -n 58,63p \"apps/web/src/app/(dashboard)/logs/LogsTable.tsx\"\n<Th>Time</Th> <Th>Lvl</Th> <Th>Tool</Th> <Th>Agent</Th> <Th>Duration</Th> <Th>Job</Th>\n$ grep -n \"listToolCallsAction\\|listServiceLogsAction\" \"apps/web/src/app/(dashboard)/logs/page.tsx\"\n63:    const logsResult = await listServiceLogsAction();      (view=service)\n84:    listToolCallsAction({ agentId, toolName, jobId, page })  (default view: one row per tool call)\n$ grep -n \"^import JobMessages\" \"apps/web/src/app/(dashboard)/jobs/[id]/page.tsx\"\n3:import JobMessages from '@/components/JobMessages.tsx'      (the run page's own renderer)\n```",
+        "createdAt": "2026-09-16T16:45:39Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "product",
+            "description": "visible behaviour",
+            "color": "EC4899"
+          }
+        ],
+        "number": 134,
+        "state": "CLOSED",
+        "title": "Activity is the list of runs: one row per run, unfolded into its calls; the Runs page leaves the menu",
+        "updatedAt": "2026-09-16T19:21:07Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/134"
+      },
+      {
         "body": "## What\n\n`setAgentCommandAllowlistAction` (`apps/web/src/lib/actions.ts`) is the official write path for `agents.command_allowlist`, shipped by #122. Nothing in the dashboard calls it. The only way to give an agent a command allowlist today is a SQL `UPDATE` by hand.\n\nThat makes the third `run_command` control — the one that makes an auto-approved shell defensible for a narrow job — invisible to the person who decides whether to turn auto-approve on. The two controls they CAN see (the `command-execution` skill and the approval gate) are exactly the two that cannot express \"this agent runs `node` and `npx vitest`, and nothing else\".\n\n#122 is backend-first on purpose: the engine and its proofs land first, the screen comes in its own PR. This issue is that screen.\n\n## What it should do\n\n- A control in the agent editor, next to the `command-execution` skill and the auto-approve toggle, since the three are read together.\n- Three states, said in words, because they are not obvious: no list (unrestricted, what every existing agent has), an empty list (refuses everything), and a list of entries.\n- An entry is one or more words (`node`, `npx vitest`), matched against the leading tokens of every segment of the command.\n- Owner-only, same gate shape as the CLI runtime mode control.\n\n## Verified\n\n- `apps/web/src/lib/actions.ts` exports `setAgentCommandAllowlistAction`; grepping `apps/web/src` for that name returns only its own definition and the `console.error` inside it. Nothing calls it, and no test covers it either.\n- `agents.command_allowlist` exists on the schema, in migration `0108_agent_command_allowlist.sql`, and the migration is now applied by a real-Postgres test (`packages/db/src/tests/agent-command-allowlist.pg.test.ts`).\n- The engine is proved by `packages/tools/src/builtin/command-allowlist.test.ts` (`@cap:assigner-outils/moteur`). No `@cap:assigner-outils/ecran` test claims this control, because there is no screen to claim.\n\n## Done when\n\nBoth levels of the capability hold: a Playwright journey sets an allowlist on an agent from the editor and reads it back, and the existing engine tests still pass.\n\n\n",
         "createdAt": "2026-09-16T10:42:11Z",
         "labels": [
@@ -10573,6 +10906,23 @@
         "title": "The docs homepage cites a measurement main no longer carries, and CI has been red since",
         "updatedAt": "2026-09-16T06:34:39Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/issues/125"
+      },
+      {
+        "body": "## What happened\n\nOn the night of 2026-09-15 (02:13 local), Alfred called its `attach_agent` tool on `reviewer-c` while running a review job. Reviewer C was already a worker of Lead-Dev. The result is one agent shown under two orchestrators on the Agents page. A one-shot script then created a new `reviewer` agent and inserted it under both Alfred and Lead-Dev at once.\n\nQuentin's decision (2026-09-16): **one agent, one place.** An agent never appears in two teams.\n\n## Where the product currently allows it\n\n- `agent_assignments` is many-to-many with a UNIQUE on (orchestrator_id, sub_agent_id) only — nothing forbids a second orchestrator for the same sub-agent.\n- `apps/web/src/app/(dashboard)/agents/AddWorkerModal.tsx` is documented as *purely additive*: it calls `moveWorkerAssignmentAction` with `fromOrchestratorId: null`, so a worker keeps its previous team.\n- `packages/tools/src/builtin/meta-ops/attach-agent.ts` (`attachAgentToOrchestrator` in `packages/db/src/repos/agents.ts`) inserts a new row without checking whether the agent already has a parent.\n- `createAgentRepo` accepts `subAgentIds` / `assignToOrchestratorId` without the same check.\n\n## What must change\n\n1. **Database**: a UNIQUE constraint on `agent_assignments.sub_agent_id` (migration + journal + inline test SQL, per CLAUDE.md), after a one-time cleanup of existing duplicates.\n2. **Web**: adding a worker to a team MOVES it (the modal passes the current parent as `fromOrchestratorId`), and the UI says so.\n3. **Tools**: `attach_agent` on an agent that already has a parent fails loud, naming the current parent (invariant #4). It never re-parents silently.\n4. Tests that fail first for each path, verified by mutation.\n\n## Not in scope\n\nWhether an orchestrator may use a worker from another team through delegation without owning it — separate decision.",
+        "createdAt": "2026-09-16T02:22:11Z",
+        "labels": [
+          {
+            "id": "LA_kwDOSNvjv88AAAAC0v7f-g",
+            "name": "product",
+            "description": "visible behaviour",
+            "color": "EC4899"
+          }
+        ],
+        "number": 123,
+        "state": "CLOSED",
+        "title": "An agent belongs to exactly one team: the UI, the attach_agent tool and the database must all refuse a second parent",
+        "updatedAt": "2026-09-17T01:20:53Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/123"
       },
       {
         "body": "## Observed, 2026-09-15 21:05 local\n\n`~/.nodalai/logs/pnpm-dev.log`: someone ran `pnpm dev` (turbo) in `D:\\APPS\\NodalAI` while Quentin's stack was healthy on :3000 / :3001 / :25444 (runner 200, web 307 at 21:00). The `nodal-agents:dev` task is `tsx src/index.ts` = `up`. Its pre-flight found the three live processes on the configured ports, printed `Cleaning up before starting…`, and killed them (`apps/cli/src/commands/up.ts:344-360`: every process found on our ports or owning our data dir goes into `orphans[]`, and `orphans.length > 0` means kill). The turbo run then failed on `@nodal-agents/web#dev` (exit 1), so nothing replaced what it had killed. The stack stayed down until 23:29, when it was noticed and relaunched by hand.\n\nThis is the third time today the stack went down under an agent's feet (#111 records the two `57P02` crashes), and the first with a log that names the mechanism.\n\n## The defect\n\n`up` has no notion of \"a healthy stack is ALREADY running here\". An orphan is a process that survived a dead launcher; a process answering `/api/health` with `{\"ok\":true,\"db\":\"ok\"}` on the configured port, with a valid `postmaster.pid` for our data dir, is not an orphan, it is the product, running. Killing it is the same class as #97 and #100: a pid is treated as a nuisance because of where it was found, not because of what it is.\n\n## Expected\n\nBefore any cleanup, `up` probes the configured runner and web ports and the data dir's lockfile. If the runner answers healthy AND the lockfile names a live postmaster for our data dir, `up` refuses with `Nodal-Agents is already running (runner pid N, web pid M, postgres pid P) — use \\`nodal-agents down\\` first`, exit 1, nothing killed. Only when the health probe fails does the orphan pre-flight run. Mutation to prove it: remove the refusal, the test that starts a fake healthy runner on the port must go red.\n\nThis belongs with PR #114 (Postgres logs, no unproven kill): same file, same rule, same agent.",
@@ -10979,6 +11329,386 @@
       }
     ],
     "pr": [
+      {
+        "body": "Closes #138. Fourth PR from the #135 board, after #139, #140 and #141.\n\n## What changes\n\n- **A chip in the chat composer** (`model · effort ⌄`, left of Send) opens a panel with two lists: the models of the agent's provider catalog, and the reasoning efforts that model offers (Auto + its levels). Picking one applies immediately; the chip shows the new value, or a toast and the old value on failure. No native `<select>`, closed on outside click and Escape.\n- **It sets the agent's model and effort for every channel** (owner's decision), the same setting as the agent screen, through a new server action `setAgentModelAndEffortAction` with the owner guard of the other setters. The action refuses a model outside the provider's catalog (unless it is the agent's current one) and an effort the model does not offer; switching to a model that lacks the current effort falls back to Auto, as the edit screen does.\n- The catalog rules used by the agent edit screen move to `apps/web/src/lib/model-choices.ts` and the edit screen imports them back unchanged.\n- The project conversation (`ProjectComposer`) gets the same chip when the project has an agent; without an agent id there is no chip.\n\nNew capability label `@cap:choisir-modele` (screen + engine), registered in `apps/qa/capacites.mjs`.\n\n## Verified\n\n`vitest run` (apps/web, composer + action) → 22 passed\n`vitest run` (apps/web full) → 108 files, 1540 passed, 1 skipped\n`node apps/qa/porte.mjs` → the capability gate holds\nMutation: effort check neutralised in the action → 3 failed\nMutation: chip rendered without `agentId` → 1 failed\n\nTypecheck and lint could not run in the isolated worktree; the CI runs them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n",
+        "createdAt": "2026-09-17T07:22:45Z",
+        "isDraft": false,
+        "mergedAt": null,
+        "number": 142,
+        "state": "OPEN",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35202728802/job/105141102651",
+            "name": "ci",
+            "startedAt": "2026-09-17T09:00:16Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35202728802/job/105141102570",
+            "name": "ci-windows",
+            "startedAt": "2026-09-17T09:00:17Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35202728802/job/105141102262",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-17T09:00:17Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "conclusion": "",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35202728802/job/105141102523",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-17T09:00:17Z",
+            "status": "IN_PROGRESS",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-17T09:00:18Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/60672f24-35d7-452f-8cd9-00e752a80380"
+          }
+        ],
+        "title": "The composer picks the agent's model and effort without opening its settings (#138)",
+        "updatedAt": "2026-09-17T09:00:15Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/142"
+      },
+      {
+        "body": "Third PR of #135 (the thread is the workspace), from the owner-approved Figma board. After #139 (palette, composer) and #140 (run blocks on one line).\n\n## What changes\n\n- **Delegations are never nested.** When a delegate delegates in turn, its delegation is no longer drawn inside its parent's frame: the feed builder lifts a child's `child` items out of the child's feed and emits them as sibling blocks right after it, in time order. Each block knows who delegated (`from`). With every block closed, every delegation, from whom to whom, is visible.\n- **The head reads as drawn**: `[avatar] Alfred  delegated to  [avatar] Reviewer C  <task summary>  [status pill]  37 s · 4.1k tokens · $0.03`. The words \"delegated to\" carry `feed/delegation`, lowercase; metrics are omitted when unknown. New client shell `DelegationBlock` (46 px head, caret, `aria-expanded`, `data-delegation`), body only when open.\n- **The body**: `Task`, `What the child did` (the child's own blocks, one line each), its answer or failure, a verdict line only when the result starts with \"Verdict\", and `Open run`.\n\nKept: the 8 px outcome dot (`span.bg-ok` / `span.bg-err`) the Playwright journey reads; `delegation-outcome.spec.ts` updated to the new head wording, same `@cap:organiser-equipe/ecran`. One level of child feed is built today (`CHILD_FEED_DEPTH = 1`); the lifting is recursive, so a deeper build follows without change.\n\n## Verified\n\n`vitest run` (apps/web spaces + lib, worktree config) → 76 files green, 906 passed, 4 skipped (one unrelated file, `password-change.test.ts`, fails only under the worktree's resolve fallback; the CI runs it normally)\nMutation: keep the grandchild nested → 1 failed (the \"sibling block\" test)\nMutation: `text-feed-delegation` → `text-ok` on \"delegated to\" → 1 failed (head test)\nMutation: let a `child` item through in the body → 1 failed (the \"never nested\" test, rendered open)\n`space-conversation-read.test.ts` on real rows → items `['request','turn','turn','child','child']`\n\nTypecheck and lint could not run in the isolated worktree; the CI runs them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n",
+        "createdAt": "2026-09-17T06:05:58Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-17T07:02:58Z",
+        "number": 141,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T07:02:35Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35191972780/job/105106348277",
+            "name": "ci",
+            "startedAt": "2026-09-17T06:54:47Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T07:04:15Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35192626079/job/105108408953",
+            "name": "build",
+            "startedAt": "2026-09-17T07:03:04Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T07:02:27Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35191972780/job/105106348208",
+            "name": "ci-windows",
+            "startedAt": "2026-09-17T06:54:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T07:04:32Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35192626079/job/105108727290",
+            "name": "deploy",
+            "startedAt": "2026-09-17T07:04:21Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T06:59:43Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35191972780/job/105106347937",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-17T06:54:47Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T06:57:09Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35191972780/job/105106348168",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-17T06:54:48Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-17T06:54:51Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6656666a-9bab-44bb-8940-c846a58636f7"
+          }
+        ],
+        "title": "Delegations flat, never nested; the head reads \"X delegated to Y\" (#135)",
+        "updatedAt": "2026-09-17T07:02:58Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/141"
+      },
+      {
+        "body": "Second PR of #135 (the thread is the workspace), from the Figma board the owner approved on 2026-09-17. First one was #139 (palette + composer).\n\n## What changes\n\n- **A tool call is one folded line, coloured by what it is.** Tool name in `feed/tool`, argument excerpt in `feed/argument`, outcome dot, duration in `feed/metric`, a caret. Click unfolds `Input` (the JSON) and `Result` (the card summary, or the raw output for a call without a card). `ToolBlock` becomes a client component for that, a cost the board accepts (#132).\n- **Raw calls fold the same way.** The big `RawCard` (e.g. `assign_lead · delegation · raw` with its JSON in the open) is gone: same one-line block, the JSON and the \"raw\" note live in the unfolded body.\n- **One model call row per turn** (`ModelCallBlock`, new): model in `feed/model`, `in · out · cached` tokens, duration and cost in `feed/metric`; each part omitted when absent; no row for an inferred turn (`usage: null`).\n- **Turn header and reasoning row take the feed colours.** The model name in the header is `feed/model`; the metrics leave the header and the reasoning row for the model row. `Reasoning` is `feed/reasoning`, not italic; the row shows the step count only (the feed model has no per-reasoning duration).\n\nKept as they were: the outcome dot on failure stays `bg-err` (the Playwright journey `delegation-outcome` reads it). The Activity page reuses `ToolBlock`, so an expanded run row now folds its tool outputs too.\n\nOut of scope, next PRs: the run summary row and density toggle, the flat \"X delegated to Y\" head, the delivery block.\n\n## Verified\n\n`vitest run` (apps/web, spaces + lib + logs) → 78 files, 906 passed, 1 skipped\n`vitest run` (full web suite) → 107 files, 1506 passed, 1 skipped\nMutation `text-feed-tool` → `text-ink` → 1 failed: `expected … to match /class=\"[^\"]*text-feed-tool…/`\nMutation: model row rendered for `usage: null` → 1 failed: `expected '<div class=\"flex items-center gap-2 o…' to be ''`\n`node scripts/check-no-arbitrary-text.mjs` → no arbitrary `text-[Npx]` size\n\nTypecheck and lint could not run in the isolated worktree (no per-package `node_modules`); the CI runs them on this PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n",
+        "createdAt": "2026-09-17T04:04:36Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-17T05:46:02Z",
+        "number": 140,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T05:45:38Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35186482744/job/105089540006",
+            "name": "ci",
+            "startedAt": "2026-09-17T05:37:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T05:47:24Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35187033963/job/105091195710",
+            "name": "build",
+            "startedAt": "2026-09-17T05:46:07Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T05:45:29Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35186482744/job/105089540027",
+            "name": "ci-windows",
+            "startedAt": "2026-09-17T05:37:47Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T05:47:39Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35187033963/job/105091463655",
+            "name": "deploy",
+            "startedAt": "2026-09-17T05:47:29Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T05:42:48Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35186482744/job/105089539763",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-17T05:37:47Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T05:40:18Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35186482744/job/105089539943",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-17T05:37:46Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-17T05:37:48Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/ab9fa6b4-3f4c-439c-87f2-d907b5af406a"
+          }
+        ],
+        "title": "The blocks of a run on one line, coloured by what they are (#135)",
+        "updatedAt": "2026-09-17T05:46:02Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/140"
+      },
+      {
+        "body": "First PR of #135 (the thread is the workspace), as drawn on the Figma board the owner approved on 2026-09-17.\n\n## What changes\n\n- **The feed palette lands in CSS.** Nine `--c-feed-*` tokens (tool, argument, model, path, delegation, question, reasoning, metric, composer), light and dark, bridged to Tailwind as `bg-feed-*` / `text-feed-*`. Only `feed-composer` is used here; the other eight are the palette the next #135 PRs (one per feed block) will use, so the token file is touched once.\n- **The chat composer as drawn.** Three lines when empty (was one), still growing with the text up to 200 px and never shrinking below three lines after a send; 14 px text (was 15); its own surface `bg-feed-composer` instead of the paper of the feed; Send in an action row under the text area. No image button and no model selector in this PR (the selector is #138).\n\n`ProjectComposer` renders `ThreadComposer`, so the project page inherits the change.\n\n## Verified\n\n`pnpm vitest run apps/web/src/app/(dashboard)/chat/__tests__/ThreadComposer.test.tsx` (worktree, web vitest config) → 6 passed\nMutation `rows={1}` → 2 failed, `AssertionError: expected 1 to be 3`\nMutation `bg-paper` instead of `bg-feed-composer` → 1 failed, `expected '…' to contain 'bg-feed-composer'`\n`node scripts/check-no-arbitrary-text.mjs` → no arbitrary `text-[Npx]` size\n\nTypecheck and lint could not run in the isolated worktree (no per-package `node_modules`); the CI runs them on this PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n",
+        "createdAt": "2026-09-17T03:05:57Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-17T03:24:20Z",
+        "number": 139,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T03:23:44Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35177518813/job/105062376083",
+            "name": "ci",
+            "startedAt": "2026-09-17T03:16:04Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T03:25:49Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35178038331/job/105063990843",
+            "name": "build",
+            "startedAt": "2026-09-17T03:24:25Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T03:23:57Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35177518813/job/105062376159",
+            "name": "ci-windows",
+            "startedAt": "2026-09-17T03:16:04Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T03:26:01Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35178038331/job/105064276417",
+            "name": "deploy",
+            "startedAt": "2026-09-17T03:25:53Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T03:21:04Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35177518813/job/105062376084",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-17T03:16:04Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-17T03:19:04Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35177518813/job/105062375980",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-17T03:16:06Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-17T03:16:05Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/414df133-fbf3-4c8a-84de-c7850d8ec43d"
+          }
+        ],
+        "title": "The chat composer as drawn: feed palette in CSS, three lines, its own surface (#135)",
+        "updatedAt": "2026-09-17T03:24:20Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/139"
+      },
+      {
+        "body": "## What you see\n\nActivity is now the list of **runs**. One folded row per run, not one per tool call: thirteen rows no longer belong to the same piece of work.\n\nThe folded row says this, and nothing more:\n\n| Agent | From | Task | Status | Duration | Cost | Calls |\n|---|---|---|---|---|---|---|\n| Alfred | Automation · *Veille AcmeCorp* | Poster le résumé de la veille | Done | 4.2 s | $0.01 | 4 calls |\n\n**From** is read from the job's channel and its trigger context: Telegram, Automation with its name, Webhook, MCP, Agent, Task board, Chat, Dashboard. Nothing is typed by hand, and a channel added tomorrow shows up as itself instead of disappearing.\n\nOpen a row and you get that run's calls, in time order, tool calls and model calls together: the tool calls in the very block the chat uses, the model calls in its counterpart (model that actually answered, tokens, cost, duration, and the error when there was one). A run with more than 50 calls unfolds 50 at a time, with its own **Show 50 more**. Nothing of a run's calls is read until you open it.\n\nA run still working **grows**: its unfolded row takes the new calls and its folded counter follows, every three seconds, without the page jumping. That is the mechanism the conversation thread already uses, an interval and a re-read, not a second data path.\n\n**What left the menu:** the Runs entry. `/jobs` now lands on Activity, and a single run keeps its own address, reached from a chat answer, an alert, or the **Open run** link of an unfolded row. The **New task** button moved with the list it belongs to, onto Activity.\n\n**What did not move:** the Service logs tab, exactly as it was. It has another unit, the process between runs, and it keeps it. The run page itself is untouched (that is #132).\n\n**Also removed**, because nothing could reach them any more: the second runs list (`JobsRuns`, `DelegationTable`, `jobs-grouping`, `listDelegationRunsAction`) and the old per-call table (`LogsTable`, `listToolCallsAction`). One consequence worth naming: the old page collapsed the jobs of one chat conversation into a single row, and the new list does not. A run is a row.\n\nCloses #134\n\n## How it is proved\n\n`@cap:suivre-execution`, both levels, plus a journey CI now plays on every PR.\n\n**Engine** (`apps/web/src/lib/__tests__/activity-runs-action.test.ts`, real PGlite database, 9 tests): one row per run with its calls counted across both tables, the origin read from the columns, the interleaved time order, per-run pagination (50 then 10 of 60), the tool filter keeping a run once rather than sixty times, a run of another entity refused, and the one that carries the decision: **no call is loaded with the list** (a tool output seeded with a marker appears nowhere in what the list returns).\n\n**Screen** (`apps/web/src/app/(dashboard)/logs/__tests__/RunRow.test.tsx`, jsdom, 4 tests): the seven elements of the folded row, no request made while folded, the calls requested for *that* run on unfold and rendered in the order the action returned, **Show 50 more** appending rather than replacing, and the counter of a running run moving from 7 to 9.\n\n**Journey** (`apps/web/tests/e2e/activity-runs.spec.ts`): seeds a run with one model call and one tool call, reads the single row and its \"2 calls\", unfolds it, checks the model call precedes the tool call, then checks the menu has no Runs entry, `/jobs` lands on Activity, and the run still has its own page. It joins the e2e-smoke list rather than waiting for the nightly, for the reason memory-kept joined it: a journey nobody plays proves nothing.\n\nEach finding is closed by a test that fails first, and each was **verified by mutation**: order reversed, calls embedded in the list, count read from `tool_calls` alone, calls loaded on mount, calls rendered reversed, counter ignoring the returned total. Every one of those turns its test red.\n\n## Review pass (Reviewer C, 2026-09-17) — approved\n\nApproved on `49ba047e`, with two minor findings, both closed in `f8a45fab`.\n\n**1. Following a live run had no ceiling.** An unfolded row polled every three\nseconds for as long as the run stayed alive. A run stuck in `processing` is\nexactly what this page is for, so a forgotten tab would have asked for its calls\nall night: close to thirty thousand requests. Three guards now hold it, and the\nrow says when it gives up rather than going quiet (a follow that stops in\nsilence reads like a run that stopped working, invariant #4):\n\n| Guard | Behaviour |\n|---|---|\n| Hidden tab | asks for nothing while `document.visibilityState` is `hidden` |\n| Rhythm | 3 s for the first five minutes, then 30 s |\n| Ceiling | stops after 30 minutes, with \"Stopped following, reload to resume\" |\n\nThree component tests with fake timers, each verified by mutation: ceiling\nremoved → the half-hour test red; delay made constant → the spacing test red;\n`visibilityState` ignored → the hidden-tab test red.\n\n**2. The tie-break on equal timestamps was never exercised.** Every seeded call\nhad a distinct date, so reversing the `id` tie-break stayed green. A third run\nnow carries one tool call and one model call written in the SAME millisecond,\nwith chosen ids, read twice to pin the order. Mutation: tie-break reversed →\nthat test red.\n\nWhile there, the engine test's reference instant is an hour ahead of the clock\ninstead of a hardcoded date, so the order the pagination test expects cannot\nflip the morning the clock passes it.\n\nGates after the fix, on `f8a45fab`: CI green on all four jobs (ci, ci-windows,\ne2e-smoke, pack-smoke); locally `vitest apps/web` 104 files, 1491 passed,\n1 skipped; depcruise 0 violation; `node apps/qa/porte.mjs` holds; prettier\nclean.\n\n## Verified\n\nCI on `f8a45fab` (the same four jobs were green on `49ba047e` before the review fix):\n\n```\n$ gh api .../runs/35138975952/jobs\nci:         completed success   # lint, typecheck, capacites:check, unit (apps/web: 106 files, 1493 tests)\nci-windows: completed success\ne2e-smoke:  completed success\npack-smoke: completed success\n\n$ e2e-smoke, \"Five journeys\" step\nRunning 15 tests using 1 worker\n  14 passed (1.4m)\n```\n\nLocally, with dependencies borrowed from the dev checkout (this worktree has no `node_modules` of its own):\n\n```\n$ vitest run  # whole apps/web unit suite\n Test Files  103 passed | 1 failed (104)\n      Tests  1486 passed | 1 skipped | 1 failed (1488)\n  # the single failure is e2e-oauth-mock-wrapper.test.ts, which builds a path\n  # from process.cwd(); re-run with apps/web as cwd it passes:\n      Tests  1 passed (1)\n\n$ vitest run src/lib/__tests__/activity-runs-action.test.ts\n      Tests  9 passed (9)\n$ vitest run \"src/app/(dashboard)/logs/__tests__/RunRow.test.tsx\"\n      Tests  4 passed (4)\n$ vitest run tests/actions.test.ts\n      Tests  341 passed (341)\n\n$ depcruise --config .dependency-cruiser.cjs apps packages\n✔ no dependency violations found (1860 modules, 7861 dependencies cruised)\n\n$ node apps/qa/porte.mjs\nProduct capabilities : 24\n  required           : 24\n  claims             : 74 in the repository\n  no screen proof    : 5\n  no engine proof    : 1\n  no proof at all    : 0\nThe product ↔ proofs link holds.\n\n$ prettier --check <touched files>\nAll matched files use Prettier code style!\n```\n\n**Mutations, one run each**, the count naming the test that caught it:\n\n```\ninTimeOrder descending              -> 2 failed | 7 passed  (interleaving, inner pagination)\nlist embedding each run's calls     -> 1 failed | 8 passed  (no call loaded with the list)\ncount from tool_calls alone         -> 1 failed | 8 passed  (one row per run, calls counted)\nRunRow loading on mount             -> 1 failed | 3 passed  (folded row asks nothing)\ncalls rendered reversed             -> 1 failed | 3 passed  (order of the unfolded blocks)\ncounter ignoring the returned total -> 1 failed | 3 passed  (a running run grows)\n```\n\n**Caught by CI, not locally**, because this worktree cannot run the repo's own lint or a browser: the raw `<button>` of the inner pagination (now `RowActionButton`), the smoke journey still expecting a \"Runs\" sidebar link, and the journey's own first assertion, which read the tool name from the tool filter's options and took it for a call being shown.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n",
+        "createdAt": "2026-09-16T18:02:29Z",
+        "isDraft": false,
+        "mergedAt": "2026-09-16T19:21:05Z",
+        "number": 136,
+        "state": "MERGED",
+        "statusCheckRollup": [
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T19:19:42Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35138975952/job/104938409280",
+            "name": "ci",
+            "startedAt": "2026-09-16T19:10:51Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T19:22:24Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35140033021/job/104941960745",
+            "name": "build",
+            "startedAt": "2026-09-16T19:21:11Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T19:18:29Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35138975952/job/104938409161",
+            "name": "ci-windows",
+            "startedAt": "2026-09-16T19:10:51Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T19:22:40Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35140033021/job/104942383726",
+            "name": "deploy",
+            "startedAt": "2026-09-16T19:22:29Z",
+            "status": "COMPLETED",
+            "workflowName": "Deploy Docs to GitHub Pages"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T19:15:12Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35138975952/job/104938409174",
+            "name": "pack-smoke",
+            "startedAt": "2026-09-16T19:10:51Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "CheckRun",
+            "completedAt": "2026-09-16T19:13:32Z",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/35138975952/job/104938408752",
+            "name": "e2e-smoke",
+            "startedAt": "2026-09-16T19:10:51Z",
+            "status": "COMPLETED",
+            "workflowName": "CI"
+          },
+          {
+            "__typename": "StatusContext",
+            "context": "security/snyk (kwintspiracy)",
+            "startedAt": "2026-09-16T19:10:53Z",
+            "state": "SUCCESS",
+            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/fe673ca7-4928-4b27-ac4b-21aa26df1a15"
+          }
+        ],
+        "title": "Activity is the list of runs: one row per run, unfolded into its calls",
+        "updatedAt": "2026-09-16T19:21:06Z",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/136"
+      },
       {
         "body": "## What the screen does\n\nAn owner opens an agent, goes to **Autonomy**, and names the programs that agent may start:\n\n```\nnode\nnpx vitest\n```\n\nSave. Come back tomorrow, the two lines are still there. Clear them and save, and the agent goes back to being unrestricted.\n\nUntil now that list existed only in the database. `setAgentCommandAllowlistAction` shipped with #122 as the official write path and **nothing called it**: the only way to give an agent a command allowlist was a SQL `UPDATE` by hand. The two controls an owner CAN see, the `command-execution` tool group and the auto-approve toggle, are exactly the two that cannot express *this agent runs `node` and `npx vitest`, and nothing else*. That is why the control sits next to them: the three are read together.\n\n## The three states, said in words\n\nThey are not obvious, and two of them look identical in a text field, so the screen names the one that is in force:\n\n| State | What the screen says |\n|---|---|\n| no list | No list: this agent may start any command (what every agent has today) |\n| empty list | Empty list: every command is refused |\n| N entries | N entries: only these programs start, one per command, no shell |\n\nAn **emptied field saves no list**, never an empty one: clearing a list is how an owner takes a restriction off, and reading that gesture as \"refuse everything\" would be a silent kill switch on the agent's work. Refusing everything is a deliberate choice, made with the **Refuse every command** checkbox.\n\nA refused save (a shell on the list, a stray metacharacter) shows the action's own message under the field. Those rules live in `setAgentCommandAllowlistAction` and are not copied into the browser, where they would become a second thing to keep true.\n\nOwner-only outside local-trust, same gate shape as the CLI runtime mode control: the field and the checkbox are disabled and the reason is on screen.\n\nDeliberately NOT gated on the `command-execution` tool group. A safety list that only appears once the danger is on is a list nobody sets in time; when the tool group is off, the section says so in one line.\n\n## What the list does not govern\n\n`run_command` only. Skill scripts, Code tasks and verification commands are unaffected, and the screen says that too.\n\n## Verified\n\n`node apps/qa/porte.mjs`\n\n```\nProduct capabilities : 24\n  required           : 24\n  claims             : 74 in the repository\n  no screen proof    : 5\n  no engine proof    : 1\n  no proof at all    : 0\n\nThe product ↔ proofs link holds.\n```\n\n`vitest run` on the new component test (8 tests, asserting the ARGUMENT the action receives, never a call count):\n\n```\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n```\n\n**Mutation.** With `null` and `[]` swapped inside `draftToAllowlist`:\n\n```\n     × an emptied field saves null, never an empty list\n     × \"Refuse every command\" saves an empty list, never null\n     × the three states are said in words\n Test Files  1 failed (1)\n      Tests  3 failed | 5 passed (8)\n```\n\nRestored: 8/8 pass again.\n\n`npx tsc --noEmit` on the e2e project (`tsconfig.e2e.json`): 0 errors, every journey including the new one.\n\n`npx eslint` on every touched file: clean, no `window.confirm` / `alert` / `prompt` anywhere near this screen. `node apps/web/scripts/check-no-arbitrary-text.mjs`: no arbitrary `text-[Npx]` size. `npx prettier --check` on every touched file: clean.\n\n### What was NOT verified here, and why\n\n- **The Playwright journey has not been played.** Playwright against Quentin's dev stack is forbidden for this worktree, and the journey needs a live stack. It is typechecked and lint-clean; `e2e-smoke` on this PR plays four named journeys and `command-allowlist.spec.ts` is not among them, so **the nightly measurement (`qa.yml`, which plays them all) is what will run it first**.\n- **The full `apps/web` vitest suite was not run locally.** This worktree shares one `node_modules` junction with the main checkout and has no per-package `node_modules`, so DB-backed suites (pglite) and every file importing `@phosphor-icons/react` cannot resolve. The new test file runs standalone. CI runs the real suite.\n- The same limitation applies to the app-level `tsc --noEmit`: it was run through a local `paths` shim, leaving 25 unresolved-module errors, all in files this PR does not touch, none in `actions.ts` or the new files.\n\n## Commits\n\n1. `refactor(web)` — `SectionCard` / `SectionHead` move out of `AgentComposer.tsx` so a section in its own file draws the same card instead of copying its classes.\n2. `feat(web)` — the section, its wiring on the Autonomy tab, and its component test.\n3. `test(web)` — the browser journey, tagged `@cap:assigner-outils/ecran`. The capability now holds at both levels: the engine one landed with #122.\n\nCloses #131\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01RcTXfBzsxnTFDjhug9AQRT\n\n\n---\n\n## Review pass (Reviewer C, 2026-09-17) — approved\n\nNine questions asked, no blocking and no important finding. Five minors, all closed here in two commits; each fix is closed by a test that fails first and is verified BY MUTATION.\n\n### Minor 1 — an entry typed twice was saved twice\n\n`node` on two lines went to the action as `['node','node']`, and came back on screen as \"2 entries\": the list read as granting more than it does.\n\n**Fix.** `parseAllowlistDraft` keeps each entry once. Dropped **exactly**, never case-insensitively: the engine compares an entry's arguments byte-exact on every platform (to npx, `vitest` and `VITEST` are different packages) and folds only the leading program, only on Windows. Folding here would tell the owner two entries are the same when the engine will not agree, and a second test pins that: `npx vitest` and `npx VITEST` are both kept.\n\n**Mutation.** Dedupe removed: 1 failed | 10 passed. Restored: 11/11.\n\n### Minor 2 — the screen never said how a command must be written\n\nWith a list, `run_command` no longer goes through a shell, which changes how the agent must phrase what it runs. The screen said nothing about it.\n\n**Fix.** One sentence under the states: *With a list, a command is one program and its arguments, double quotes to group; no chaining, no redirection, no shell.*\n\n**Mutation.** Sentence replaced by another: 1 failed | 10 passed. Restored: 11/11.\n\n### Minor 3 — the third journey depended on the second\n\nThe second journey left \"Refuse every command\" on, which disables the field; the third then typed into a disabled field and only passed because of the order. Run alone, under `--grep`, or reordered, it would have gone red.\n\n**Fix.** Each journey creates its OWN agent in a `beforeEach` and states its starting point on screen instead of inheriting one.\n\n### Minor 4 — an agent could survive a half-finished setup\n\nThe cleanup hung off a `beforeAll` that inserted the agent; a failure after the insert left the row in the database.\n\n**Fix.** The id is recorded the instant the row exists, `afterEach` deletes it, and an `afterAll` sweeps anything still recorded. The `beforeAll` no longer inserts anything.\n\n### Minor 5 — a draft is lost when the tab changes\n\nConfirmed and left as is, deliberately. Every neighbouring control on this tab behaves the same way (the Yolo toggle, the daily budget, the runtime defaults), and a guard on this one field alone would be the odd one out. Worth doing for the tab as a whole, not for one section inside it.\n\n### Gates after the two commits\n\n- `vitest run` on `CommandAllowlistSection.test.tsx` — 11 passed.\n- `npx tsc --noEmit` on the e2e project — 0 errors.\n- `npx eslint` and `npx prettier --check` on every touched file — clean.\n- `node apps/web/scripts/check-no-arbitrary-text.mjs` — no arbitrary text size.\n- `node apps/qa/porte.mjs` — the product ↔ proofs link holds, 24/24 required.\n",
         "createdAt": "2026-09-16T16:42:42Z",
@@ -13918,249 +14648,57 @@
         "title": "docs(suivi): le source du backlog vivant entre dans le dépôt",
         "updatedAt": "2026-08-28T13:44:54Z",
         "url": "https://github.com/Kwintspiracy/nodal-agents/pull/41"
-      },
-      {
-        "body": "## Ce que ça ferme\n\nTrois demandes, et pour la première une cause racine qui n'était pas celle attendue.\n\n### 1. Les jetons de canaux en clair — et pourquoi ils l'étaient\n\n`channel_bindings.credentials` (Discord/Slack/WhatsApp) et `agents.telegram_bot_token` étaient les **dernières** colonnes de secrets stockées en clair. L'en-tête du schéma le justifiait :\n\n> `@nodal-agents/db never imports @nodal-agents/secrets (architecture rule — only the writer layer does)` … *encryption-at-rest for it arrives when the writer layer migrates (S3+)*\n\n**Cette règle n'existe pas.** `queries/credentials.ts` importe `decrypt` depuis `@nodal-agents/secrets` depuis la brique OAuth, `packages/db/package.json` déclare la dépendance, et dependency-cruiser ne l'a jamais interdite. Un commentaire qui décrivait faussement l'architecture est la seule raison pour laquelle ces jetons sont restés en clair **à travers la fuite d'août 2026**. Le commentaire est corrigé et porte désormais l'histoire, pour que la règle inventée ne revienne pas.\n\n- **Lecture** — `getBindingCredentials` déchiffre, accepte encore une ligne legacy en clair (pas de flag day), et **lève** sur un blob indéchiffrable au lieu de renvoyer le même `null` que « aucun bot configuré » (invariant #4 : « la clé est mauvaise » et « il n'y a pas de bot » ne peuvent pas être le même signal).\n- **Écriture** — `encryptChannelCredentials` / `encryptChannelSecret`, un seul chemin. Il y avait cinq `JSON.stringify` en ligne, et les cinq stockaient du clair.\n- **Migration de boot** idempotente, sur le modèle de `migrate-llm-keys.ts` (la clé maître est sur le disque, hors de portée du SQL).\n- **`webhook_triggers.secret`** reçoit le même traitement : c'est un vrai porteur — qui le détient déclenche un job sur un agent. Comparé après déchiffrement, donc un accès en lecture à la base ne suffit plus à rejouer un webhook.\n\n**Un piège fermé au passage.** Les managers détectaient la rotation en hachant la valeur *stockée*. AES-GCM tire un IV neuf à chaque écriture : chaque refresh de 30 s aurait vu une « rotation », détruit un websocket sain et en ouvert un autre, en boucle. Pour WhatsApp cela signifie assommer l'appareil lié à répétition. `credentialsFingerprint` porte sur le clair, clés triées.\n\n### 2. L'audit de fuites\n\n| Axe | Constat |\n|---|---|\n| Colonnes de secrets | 3 étaient en clair → fermées ici. Les autres (`llm_keys`, `connectors`, `mcp`, `credentials`) sont déjà en AES-256-GCM |\n| Logs | Aucun secret interpolé |\n| Prompt système | Aucun secret |\n| Server actions | Aucune ne renvoie de jeton. Le secret de webhook l'est à la création et à la rotation — le moment où l'utilisateur doit le copier — et la liste le retire déjà (`rows.map(({ secret, ...r })`) |\n| Dépôt | Aucun fichier de secret versionné, `.env` ignoré |\n| Sortie d'outils / audit | `redact-secrets.ts` couvre déjà le nommage des champs |\n\n**Hors périmètre, explicitement** : `account.access_token` / `refresh_token` / `id_token` et `session.token` appartiennent à better-auth, qui les écrit et les lit lui-même — les chiffrer derrière son dos casserait la connexion, et ils sont vides en mode local-auth. `users.password_hash` est un hash, pas un secret récupérable.\n\n### 3. L'authentification de canal\n\nLe manager Slack **n'avait aucun try/catch par binding**, contrairement à Discord. Un credential illisible remontait en `unhandledRejection` au niveau processus — le test de régression le reproduit avant le correctif, en le faisant apparaître dans la sortie de vitest. Slack et WhatsApp sont alignés sur Discord : un binding illisible est nommé dans un log et despawné, les autres agents continuent de tourner.\n\nChoix assumé : `seen.add` n'a lieu qu'**après** lecture réussie du credential, donc un binding devenu illisible voit sa socket détruite. Tourner sur un credential que l'opérateur ne peut plus lire est pire qu'être hors ligne et bruyant.\n\n### 4. GLM 5.3 Flash\n\n`z-ai/glm-5.3-flash`, valeurs relevées sur OpenRouter `/api/v1/models` le 28/08 :\n\n| | Flash | 5.3 |\n|---|---|---|\n| Contexte | **1 310 720** | 1 048 576 |\n| Entrée / sortie | 0,075 $ / 0,25 $ par M | 1,40 $ / 4,40 $ par M |\n| Vision | **oui** (text, image, video) | non (text) |\n\nLe raisonnement est supporté, mais **rien en amont ne dit qu'il est obligatoire** comme pour 5.2/5.3 : pas de `mandatory` inventé, « off » reste offert sur l'échelle.\n\n## Vérification\n\nChaque correctif est vérifié **par mutation** :\n\n| Mutation | Effet |\n|---|---|\n| fingerprint calculé sur le blob chiffré | 2 rouges (anti-respawn Slack + Discord) |\n| déchiffrement neutralisé | 13 rouges sur 4 suites |\n| contexte GLM copié depuis 5.3 + vision retirée | 2 rouges |\n\nUn test que j'avais écrit ne prouvait rien — il passait par le routage d'URL (un blob base64 contient `/` et `:`), pas par l'authentification, et serait resté vert sans le correctif. Remplacé par une assertion sur la ligne en base.\n\nLes tests existants qui assertaient le stockage **en clair** ont été renforcés, pas affaiblis : ils vérifient maintenant que la colonne ne contient pas le clair **et** qu'elle déchiffre vers lui.\n\n**Gates** — db 179 · runner 1094 · tools 765 · shared 190 · delivery 379 · web 1007, tous verts. Typecheck sur 5 paquets, eslint (0 erreur), dependency-cruiser (1713 modules, 0 violation).\n\n## Ce qu'un relecteur doit regarder en premier\n\n1. Le contrat `null` contre `throw` de `getBindingCredentials` — et que chaque appelant le traite.\n2. Les lecteurs du token Telegram que j'ai classés « teste la présence » et laissés tels quels (`execute.ts`, `resolve-agent-tools.ts`, `tool-availability.ts`, `transport-channel.ts`). Si l'un d'eux *utilise* le token, il reçoit du chiffré.\n3. Le despawn d'un binding illisible : bon compromis, ou trop agressif ?\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
-        "createdAt": "2026-08-28T04:06:20Z",
-        "isDraft": false,
-        "mergedAt": "2026-08-28T04:47:15Z",
-        "number": 40,
-        "state": "MERGED",
-        "statusCheckRollup": [
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-28T04:28:00Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892210",
-            "name": "ci",
-            "startedAt": "2026-08-28T04:11:27Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-28T04:31:27Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892174",
-            "name": "ci-windows",
-            "startedAt": "2026-08-28T04:11:26Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-28T04:15:18Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892011",
-            "name": "pack-smoke",
-            "startedAt": "2026-08-28T04:11:27Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-28T04:13:26Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33141071699/job/98751892166",
-            "name": "e2e-smoke",
-            "startedAt": "2026-08-28T04:11:27Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "StatusContext",
-            "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-08-28T04:11:12Z",
-            "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/6403c264-e432-4e51-bfdc-866ac3a49a71"
-          }
-        ],
-        "title": "fix(security): les jetons de canaux quittent le clair, GLM 5.3 Flash, auth de canal traitée",
-        "updatedAt": "2026-08-28T04:47:18Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/40"
-      },
-      {
-        "body": "## Ce que ça change\n\nL'onglet Code cesse de deviner ce qui est « du vrai code ». Il montre les\ndossiers où les agents ont écrit, et donne au propriétaire les deux gestes que\nle produit ne peut pas poser à sa place :\n\n| Geste | Ce que ça fait |\n|---|---|\n| **Renommer** | Le nom du dossier n'est pas toujours le nom du projet. Le nom choisi voyage jusqu'au bloc `## Runtime` des agents : « modifie le portail client » désigne enfin quelque chose pour eux. |\n| **Masquer** | Ce qu'on ne veut plus voir. Le dossier n'est **jamais** touché, et le projet quitte aussi le contexte des agents. Réversible d'un clic. |\n\n## Pourquoi\n\nSept définitions du « vrai code » ont été essayées en deux jours. Toutes\nécartées, toutes pour la même raison : elles décidaient à la place du\npropriétaire, sur un indice indirect.\n\n| # | Approche | Pourquoi écartée |\n|---|---|---|\n| 1 | l'extension des fichiers | « une exclusion par langage ratera tôt ou tard du vrai code » |\n| 2 | le skill porté par l'agent | ne marche qu'avec NOS skills |\n| 3 | la structure du dossier | « on va 100 % avoir des faux positifs » |\n| 4 | une case sur l'agent | répond au « qui », pas au « où » |\n| 5 | une case sur le dossier | déplace la devinette d'un cran : le dossier coché EST-il le projet, ou en contient-il ? |\n| 6 | une nature devinée par dossier | liste sans fin : Obsidian, ComfyUI, Blender, Unity, Godot, un CMS… |\n\n**Conséquence assumée** : un coffre de notes apparaît tant qu'on ne l'a pas\nmasqué. C'est visible, et ça se règle en un clic — au lieu d'un vrai projet\nabsent sans que rien ne le signale.\n\n## Les trois demandes, une par une\n\n1. **Masquer retire du contexte des agents.** Jusqu'ici `code_project_archives`\n   n'était lu que par l'interface : un projet rangé disparaissait de l'onglet et\n   continuait d'être annoncé, détenteurs compris, dans le prompt système de tout\n   le monde.\n2. **La fonction de masquage.** C'est l'ancien archivage, élargi : même geste,\n   même réversibilité, portée étendue au contexte. Une seule fonction, parce\n   qu'il n'y avait aucune différence à défendre entre les deux.\n3. **Les dossiers supprimés qui restaient affichés.** Les `tool_calls` vivent\n   pour toujours, le dossier non. Le contexte injecté vérifiait déjà\n   l'existence, l'interface non : les deux vues se contredisaient, et c'est\n   l'interface qui avait tort.\n\n## Migration 0086\n\n- `agent_workspaces.is_dev_folder` disparaît (livrée la veille, jamais utilisée\n  en dehors du filtrage).\n- `code_project_archives` devient `code_projects` et porte les **deux** gestes.\n  Les projets déjà archivés restent masqués.\n\n## Revue\n\n`codex review --base main`, **onze passes**, jusqu'à « No discrete, actionable\nregressions were identified ». Ce qu'elles ont trouvé, et qui est corrigé :\n\n- la casse repliée hors Windows confondait `/srv/App` et `/srv/app` ;\n- un partage réseau UNC n'était pas reconnu comme un chemin Windows ;\n- masquer ne prenait effet qu'au bout d'une minute (le cache portait aussi les\n  préférences) ;\n- masquer pouvait devenir **irréversible** (deux lignes de casses différentes) ;\n- un doublon hérité de `0083` suffisait à rendre le masquage définitif ;\n- les labels de dossier ne sont uniques que par AGENT — une écriture déléguée\n  était attribuée au dossier de l'orchestrateur ;\n- le contexte des agents ne lisait pas les labels du tout, donc ratait toute\n  écriture relative d'un agent multi-dossiers ;\n- l'onglet cachait la panne qu'il existe pour montrer : une nouvelle app dont\n  toutes les écritures sont refusées disparaissait entièrement ;\n- le skill « dev » interdisait littéralement de créer un fichier ;\n- le message de collision de slug demandait un renommage impossible (les slugs\n  sont immuables).\n\n## Vérification\n\n- `pnpm test` 32/32 paquets · `pnpm typecheck` 33/33 · `pnpm lint` propre ·\n  `pnpm deps:check` 1696 modules sans violation · `pnpm build` passe.\n- **Par mutation** sur chaque garde du lot : débrancher, le test rougit. Une\n  seule fois un test s'est révélé décoratif, et il a été rendu discriminant.\n- Migration appliquée en live sur l'install de dev.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
-        "createdAt": "2026-08-25T08:24:13Z",
-        "isDraft": false,
-        "mergedAt": "2026-08-27T14:50:47Z",
-        "number": 39,
-        "state": "MERGED",
-        "statusCheckRollup": [
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-27T14:48:36Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588748",
-            "name": "ci",
-            "startedAt": "2026-08-27T14:30:28Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-27T14:45:55Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588688",
-            "name": "ci-windows",
-            "startedAt": "2026-08-27T14:30:28Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-27T14:34:02Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588876",
-            "name": "pack-smoke",
-            "startedAt": "2026-08-27T14:30:28Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-27T14:32:42Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/33082606383/job/98553588503",
-            "name": "e2e-smoke",
-            "startedAt": "2026-08-27T14:30:27Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "StatusContext",
-            "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-08-27T14:31:25Z",
-            "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/4b836279-6e3f-4b4c-8ad6-7a1b6745717b"
-          }
-        ],
-        "title": "feat(code): l'onglet Code cesse de deviner — on renomme, on masque, on range",
-        "updatedAt": "2026-08-27T14:50:47Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/39"
-      },
-      {
-        "body": "Passe de correction issue de la revue systematique des PR jamais relues (#16 a #37 : aucune review, aucun `review_verdict` depuis le 20/08).\n\n## Les trois P0\n\n| Constat | Ce qui se passait | Correction |\n|---|---|---|\n| **Autonomie totale = blanc-seing** | La relaxation `fully_autonomous` transformait TOUTE demande d approbation en auto-approbation. Un agent en Yolo executait `run_command` / `code_task` sans jamais franchir la barriere, meme quand la politique de l espace l exigeait. | `isCodeExecutionTool` exclut les 6 outils d execution de la relaxation. `destructive_gate` reste inchange : il juge chaque appel. |\n| **Entites en pause a tort** | La migration 0082 a mis `auto_run_paused = true` sur des entites qui n avaient rien demande — leurs agents ne demarraient plus. | Migration **0084** qui les relache. 0082 est deja appliquee, on ne la reecrit jamais. |\n| **Limitation de debit morte** | `getIp` de better-auth ne lit que `x-forwarded-for`. En local il est absent, et `if (!ip) return null` court-circuite TOUTE la limitation — avant meme que les regles custom soient consultees. Le formulaire de connexion etait sans plafond. | Cle stable posee dans la route, plus une politique explicite (`storage: memory`, plafonds par endpoint sensible). |\n\n## Majeurs\n\n- Le frein d approbation couvre desormais aussi les agents en **runtime CLI** (`run-job.ts`), qui passaient a cote.\n- La carte d approbation `code_task` dit ce qui n est **PAS** reversible : les fichiers gitignores (`.env`, donnees locales) et les commandes lancees ne sont pas dans le snapshot.\n- Les champs injectes dans le prompt systeme (nom de projet, chemin, proprietaires) sont **neutralises** : un nom d agent hostile ne peut plus forger une fausse section.\n- Le parcours de dossiers ne bloque plus indefiniment sur un lecteur reseau deconnecte (course a 1,5 s), refuse les chemins UNC, et s arrete a la limite d entrees au lieu de lire tout le dossier.\n- Un workspace pose sur une **racine de disque** ne fabrique plus de projets fantomes.\n- Restauration de la regle d approbation en cas d echec de resolution (carte Telegram), nom d agent affiche sur la carte, avertissement quand le frein est actif.\n\n## Deux defauts trouves par mes propres tests\n\nIls ne venaient pas de la revue mais de la correction elle-meme :\n\n1. **Remontee git non bornee** : quand un fichier ne relevait d aucun workspace, `findProjectRoot` etait appele avec une borne nulle et retenait un depot fortuit du dossier personnel — precisement le trou que la borne etait censee fermer.\n2. **Archivage non protege** : il s appuyait sur `isWorkspaceOwner`, qui repond toujours vrai en `local-trust`. Remplace par une comparaison directe du proprietaire.\n\n## Verification\n\n`pnpm test` **33/33 paquets verts**, `pnpm typecheck` vert, `pnpm lint` vert (0 erreur).\nTests ajoutes : suspension d un `run_command` en Yolo, prompt-injection sur le bloc runtime, racine de disque, archivage par un non-proprietaire, mode ecriture/lecture de la carte `code_task`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01UPNfxuMY6oMMXNKXoWRoeo",
-        "createdAt": "2026-08-25T06:29:23Z",
-        "isDraft": false,
-        "mergedAt": "2026-08-25T07:31:00Z",
-        "number": 38,
-        "state": "MERGED",
-        "statusCheckRollup": [
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T07:17:27Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276771",
-            "name": "ci",
-            "startedAt": "2026-08-25T07:03:54Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T07:19:17Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276740",
-            "name": "ci-windows",
-            "startedAt": "2026-08-25T07:03:54Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T07:07:39Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276769",
-            "name": "pack-smoke",
-            "startedAt": "2026-08-25T07:03:54Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T07:06:16Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32819753331/job/97715276582",
-            "name": "e2e-smoke",
-            "startedAt": "2026-08-25T07:03:54Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "StatusContext",
-            "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-08-25T07:03:42Z",
-            "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/95a8a702-beb8-480b-aa81-3987c43e6da8"
-          }
-        ],
-        "title": "fix(review): les 12 constats bloquants et majeurs des revues #16-#37",
-        "updatedAt": "2026-08-25T07:31:04Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/38"
-      },
-      {
-        "body": "## L incident fondateur (trois fois de suite, 25/08)\n\n« Modifie l app calorie-counter » arrive a l agent root : il ne sait ni ou elle vit ni a qui la confier. Il cherche a l aveugle, echoue — et une fois annonce un travail jamais fait. **Rien dans son contexte ne disait que cette app existait.**\n\n## Le fix\n\n- `DeploymentContext.codeProjects` : nom, chemin, **detenteurs** (les agents dont le workspace contient le projet), derniere activite.\n- `buildRuntimeBlock` rend « ### Code projects in this workspace » avec la consigne qui change le comportement : *you already know where it lives — do not hunt for it ; if you have no workspace containing it, **DELEGATE** to an agent listed as working on it*.\n- Derivation cote runner (`job/code-projects.ts`) depuis les editions REELLES, meme regle que l onglet Code : racine = plus haut dossier marque (.git/package.json/index.html/...) sous le workspace, sinon sous-dossier de 1er niveau ; ecritures refusees ignorees ; entity-scope ; best-effort (jamais fatal) ; plafond 12.\n\n## Verification\n\n- Orchestration : la section rend chaque projet avec ses detenteurs + la consigne ; aucun projet → aucune section.\n- Runner, sur un **vrai arbre disque** : un projet par APP (jamais le workspace-conteneur), bons detenteurs, une ecriture refusee ne cree rien, entite sans workspace → liste vide.\n- Suites completes : orchestration 220/220, runner 975/975 ; typecheck + lint + prettier verts.\n- Preuve live apres merge + restart : demander une modif d app depuis Telegram et verifier que le root delegue directement.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01UPNfxuMY6oMMXNKXoWRoeo",
-        "createdAt": "2026-08-25T05:02:02Z",
-        "isDraft": false,
-        "mergedAt": "2026-08-25T05:21:27Z",
-        "number": 37,
-        "state": "MERGED",
-        "statusCheckRollup": [
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T05:18:04Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843866",
-            "name": "ci",
-            "startedAt": "2026-08-25T05:02:09Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T05:20:58Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843889",
-            "name": "ci-windows",
-            "startedAt": "2026-08-25T05:02:09Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T05:05:59Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843900",
-            "name": "pack-smoke",
-            "startedAt": "2026-08-25T05:02:09Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "CheckRun",
-            "completedAt": "2026-08-25T05:04:13Z",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/Kwintspiracy/nodal-agents/actions/runs/32811239918/job/97690843691",
-            "name": "e2e-smoke",
-            "startedAt": "2026-08-25T05:02:09Z",
-            "status": "COMPLETED",
-            "workflowName": "CI"
-          },
-          {
-            "__typename": "StatusContext",
-            "context": "security/snyk (kwintspiracy)",
-            "startedAt": "2026-08-25T05:02:11Z",
-            "state": "SUCCESS",
-            "targetUrl": "https://app.snyk.io/org/kwintspiracy/pr-checks/90d750a2-7a2b-4537-b978-99a71dec0078"
-          }
-        ],
-        "title": "feat(context): les projets de code injectés dans le bloc Runtime de chaque agent",
-        "updatedAt": "2026-08-25T05:21:30Z",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/37"
       }
     ],
     "cartes": [
+      {
+        "type": "issue",
+        "numero": 143,
+        "titre": "Code and Spaces are one page: the projects registry, with code sessions in Activity",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/143",
+        "etiquettes": [
+          "product"
+        ],
+        "majLe": "2026-09-17T08:49:48Z",
+        "creeLe": "2026-09-17T08:49:48Z",
+        "parPr": null,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In progress"
+      },
+      {
+        "type": "issue",
+        "numero": 138,
+        "titre": "Chat composer: pick the agent's model and effort without opening settings",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/138",
+        "etiquettes": [
+          "product"
+        ],
+        "majLe": "2026-09-17T08:47:28Z",
+        "creeLe": "2026-09-17T02:51:03Z",
+        "parPr": 142,
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In review"
+      },
+      {
+        "type": "issue",
+        "numero": 137,
+        "titre": "An agent does not recompose its own team: a per-agent setting, off by default, gates attach_agent / detach_agent / create_agent",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/137",
+        "etiquettes": [
+          "product"
+        ],
+        "majLe": "2026-09-17T01:24:17Z",
+        "creeLe": "2026-09-17T01:24:17Z",
+        "parPr": null,
+        "parUnAgent": false,
+        "faitsVerifies": true,
+        "colonne": "In progress"
+      },
       {
         "type": "issue",
         "numero": 135,
@@ -14170,24 +14708,8 @@
         "etiquettes": [
           "product"
         ],
-        "majLe": "2026-09-16T16:45:54Z",
+        "majLe": "2026-09-17T07:03:30Z",
         "creeLe": "2026-09-16T16:45:41Z",
-        "parPr": null,
-        "parUnAgent": false,
-        "faitsVerifies": true,
-        "colonne": "In progress"
-      },
-      {
-        "type": "issue",
-        "numero": 134,
-        "titre": "Activity is the list of runs: one row per run, unfolded into its calls; the Runs page leaves the menu",
-        "etat": "OPEN",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/134",
-        "etiquettes": [
-          "product"
-        ],
-        "majLe": "2026-09-16T16:45:39Z",
-        "creeLe": "2026-09-16T16:45:39Z",
         "parPr": null,
         "parUnAgent": false,
         "faitsVerifies": true,
@@ -14252,22 +14774,6 @@
         ],
         "majLe": "2026-09-16T03:07:57Z",
         "creeLe": "2026-09-16T03:07:57Z",
-        "parPr": null,
-        "parUnAgent": false,
-        "faitsVerifies": false,
-        "colonne": "In progress"
-      },
-      {
-        "type": "issue",
-        "numero": 123,
-        "titre": "An agent belongs to exactly one team: the UI, the attach_agent tool and the database must all refuse a second parent",
-        "etat": "OPEN",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/123",
-        "etiquettes": [
-          "product"
-        ],
-        "majLe": "2026-09-16T10:18:14Z",
-        "creeLe": "2026-09-16T02:22:11Z",
         "parPr": null,
         "parUnAgent": false,
         "faitsVerifies": false,
@@ -14394,7 +14900,7 @@
         "etiquettes": [
           "test"
         ],
-        "majLe": "2026-09-16T17:09:33Z",
+        "majLe": "2026-09-16T17:31:49Z",
         "creeLe": "2026-09-11T16:44:32Z",
         "parPr": null,
         "parUnAgent": false,
@@ -14521,6 +15027,22 @@
       },
       {
         "type": "issue",
+        "numero": 134,
+        "titre": "Activity is the list of runs: one row per run, unfolded into its calls; the Runs page leaves the menu",
+        "etat": "CLOSED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/134",
+        "etiquettes": [
+          "product"
+        ],
+        "majLe": "2026-09-16T19:21:07Z",
+        "creeLe": "2026-09-16T16:45:39Z",
+        "parPr": null,
+        "parUnAgent": false,
+        "faitsVerifies": true,
+        "colonne": "Done"
+      },
+      {
+        "type": "issue",
         "numero": 131,
         "titre": "The command allowlist has no edit screen: setAgentCommandAllowlistAction is unreachable from the product",
         "etat": "CLOSED",
@@ -14576,6 +15098,22 @@
         "etiquettes": [],
         "majLe": "2026-09-16T06:34:39Z",
         "creeLe": "2026-09-16T03:14:29Z",
+        "parPr": null,
+        "parUnAgent": false,
+        "faitsVerifies": false,
+        "colonne": "Done"
+      },
+      {
+        "type": "issue",
+        "numero": 123,
+        "titre": "An agent belongs to exactly one team: the UI, the attach_agent tool and the database must all refuse a second parent",
+        "etat": "CLOSED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/issues/123",
+        "etiquettes": [
+          "product"
+        ],
+        "majLe": "2026-09-17T01:20:53Z",
+        "creeLe": "2026-09-16T02:22:11Z",
         "parPr": null,
         "parUnAgent": false,
         "faitsVerifies": false,
@@ -14935,6 +15473,81 @@
         "parPr": null,
         "parUnAgent": false,
         "faitsVerifies": false,
+        "colonne": "Done"
+      },
+      {
+        "type": "pr",
+        "numero": 142,
+        "titre": "The composer picks the agent's model and effort without opening its settings (#138)",
+        "etat": "OPEN",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/142",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-17T09:00:15Z",
+        "creeLe": "2026-09-17T07:22:45Z",
+        "ci": "en cours",
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "In review"
+      },
+      {
+        "type": "pr",
+        "numero": 141,
+        "titre": "Delegations flat, never nested; the head reads \"X delegated to Y\" (#135)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/141",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-17T07:02:58Z",
+        "creeLe": "2026-09-17T06:05:58Z",
+        "ci": "vert",
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
+      },
+      {
+        "type": "pr",
+        "numero": 140,
+        "titre": "The blocks of a run on one line, coloured by what they are (#135)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/140",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-17T05:46:02Z",
+        "creeLe": "2026-09-17T04:04:36Z",
+        "ci": "vert",
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
+      },
+      {
+        "type": "pr",
+        "numero": 139,
+        "titre": "The chat composer as drawn: feed palette in CSS, three lines, its own surface (#135)",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/139",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-17T03:24:20Z",
+        "creeLe": "2026-09-17T03:05:57Z",
+        "ci": "vert",
+        "parUnAgent": true,
+        "faitsVerifies": true,
+        "colonne": "Done"
+      },
+      {
+        "type": "pr",
+        "numero": 136,
+        "titre": "Activity is the list of runs: one row per run, unfolded into its calls",
+        "etat": "MERGED",
+        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/136",
+        "brouillon": false,
+        "etiquettes": [],
+        "majLe": "2026-09-16T19:21:06Z",
+        "creeLe": "2026-09-16T18:02:29Z",
+        "ci": "vert",
+        "parUnAgent": true,
+        "faitsVerifies": true,
         "colonne": "Done"
       },
       {
@@ -15626,78 +16239,18 @@
         "parUnAgent": true,
         "faitsVerifies": false,
         "colonne": "Done"
-      },
-      {
-        "type": "pr",
-        "numero": 40,
-        "titre": "fix(security): les jetons de canaux quittent le clair, GLM 5.3 Flash, auth de canal traitée",
-        "etat": "MERGED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/40",
-        "brouillon": false,
-        "etiquettes": [],
-        "majLe": "2026-08-28T04:47:18Z",
-        "creeLe": "2026-08-28T04:06:20Z",
-        "ci": "vert",
-        "parUnAgent": true,
-        "faitsVerifies": false,
-        "colonne": "Done"
-      },
-      {
-        "type": "pr",
-        "numero": 39,
-        "titre": "feat(code): l'onglet Code cesse de deviner — on renomme, on masque, on range",
-        "etat": "MERGED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/39",
-        "brouillon": false,
-        "etiquettes": [],
-        "majLe": "2026-08-27T14:50:47Z",
-        "creeLe": "2026-08-25T08:24:13Z",
-        "ci": "vert",
-        "parUnAgent": true,
-        "faitsVerifies": false,
-        "colonne": "Done"
-      },
-      {
-        "type": "pr",
-        "numero": 38,
-        "titre": "fix(review): les 12 constats bloquants et majeurs des revues #16-#37",
-        "etat": "MERGED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/38",
-        "brouillon": false,
-        "etiquettes": [],
-        "majLe": "2026-08-25T07:31:04Z",
-        "creeLe": "2026-08-25T06:29:23Z",
-        "ci": "vert",
-        "parUnAgent": true,
-        "faitsVerifies": false,
-        "colonne": "Done"
-      },
-      {
-        "type": "pr",
-        "numero": 37,
-        "titre": "feat(context): les projets de code injectés dans le bloc Runtime de chaque agent",
-        "etat": "MERGED",
-        "url": "https://github.com/Kwintspiracy/nodal-agents/pull/37",
-        "brouillon": false,
-        "etiquettes": [],
-        "majLe": "2026-08-25T05:21:30Z",
-        "creeLe": "2026-08-25T05:02:02Z",
-        "ci": "vert",
-        "parUnAgent": true,
-        "faitsVerifies": false,
-        "colonne": "Done"
       }
     ]
   },
   "release": {
     "npmInjoignable": false,
     "jamaisPubliee": false,
-    "verifieLe": "2026-09-16T17:31:40.761Z",
+    "verifieLe": "2026-09-17T09:00:56.834Z",
     "surNpm": "0.8.10",
     "publieeLe": "2026-09-16T10:17:14.101Z",
     "versionDuDepot": "0.8.10",
     "dernierTag": "v0.8.10",
-    "commitsDepuisLeTag": 25,
+    "commitsDepuisLeTag": 56,
     "depotEnAvance": false
   }
 }
