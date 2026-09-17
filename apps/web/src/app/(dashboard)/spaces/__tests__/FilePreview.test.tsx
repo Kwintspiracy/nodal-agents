@@ -53,7 +53,7 @@ function feedWith(payload: CardPayloadFor<'files'>): ConversationFeed {
         index: 1,
         turn: 1,
         turnSource: 'audit',
-        agent: { name: 'Alfred', slug: 'alfred' },
+        agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
         model: 'mock',
         at: null,
         usage: null,

@@ -93,7 +93,7 @@ const turnWith = (...cards: Array<Extract<Step, { kind: 'tool' }>>): FeedItem =>
   index: 1,
   turn: 1,
   turnSource: 'audit',
-  agent: { name: 'Alfred', slug: 'alfred' },
+  agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
   model: null,
   at: null,
   usage: null,
@@ -120,6 +120,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
       title: 't',
       agentName: 'Alfred',
       agentSlug: 'alfred',
+      agentAvatarUrl: null,
       currentProject: null,
     },
     messages: [],
@@ -148,11 +149,12 @@ describe('deliverySummary — ce que le modèle compte', () => {
           {
             kind: 'child',
             // #135 — l'item dit aussi qui a délégué : la tête du fil, Alfred.
-            from: { name: 'Alfred', slug: 'alfred' },
+            from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
             job: {
               id: 'j2',
               agentName: 'Le Codeur',
               agentSlug: 'codeur',
+              agentAvatarUrl: null,
               status: 'completed',
               task: 'écris le service',
               result: 'TokenService extrait',

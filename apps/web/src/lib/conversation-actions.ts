@@ -127,6 +127,7 @@ export type ConversationThreadView = {
     agentId: string;
     agentName: string | null;
     agentSlug: string | null;
+    agentAvatarUrl: string | null;
     createdAt: Date | null;
     currentProject: ThreadProject | null;
   };
@@ -560,6 +561,7 @@ export async function getConversationThreadAction(
         agentId: conversations.agentId,
         agentName: agents.name,
         agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
         createdAt: conversations.createdAt,
         projectId: codeProjects.id,
         projectDisplayName: codeProjects.displayName,
@@ -591,7 +593,12 @@ export async function getConversationThreadAction(
         // N + 1 : la ligne en trop ne sert qu'à SAVOIR s'il y en avait plus.
         .limit(MESSAGES_MAX + 1),
       db
-        .select({ job: agentJobs, agentName: agents.name, agentSlug: agents.slug })
+        .select({
+          job: agentJobs,
+          agentName: agents.name,
+          agentSlug: agents.slug,
+          agentAvatarUrl: agents.avatarUrl,
+        })
         .from(agentJobs)
         .leftJoin(agents, eq(agents.id, agentJobs.agentId))
         .where(
@@ -633,7 +640,12 @@ export async function getConversationThreadAction(
       assembleJobFeeds(
         db,
         session.entityId,
-        headRows.map((r) => ({ job: r.job, agentName: r.agentName, agentSlug: r.agentSlug })),
+        headRows.map((r) => ({
+          job: r.job,
+          agentName: r.agentName,
+          agentSlug: r.agentSlug,
+          agentAvatarUrl: r.agentAvatarUrl,
+        })),
       ),
       relevantIds.length > 0
         ? db
@@ -861,6 +873,7 @@ export async function getConversationThreadAction(
         title: conv.title,
         agentName: conv.agentName,
         agentSlug: conv.agentSlug,
+        agentAvatarUrl: conv.agentAvatarUrl,
         currentProject,
       },
       messages: messageRows.map((m) => ({
@@ -900,6 +913,7 @@ export async function getConversationThreadAction(
         agentId: conv.agentId,
         agentName: conv.agentName,
         agentSlug: conv.agentSlug,
+        agentAvatarUrl: conv.agentAvatarUrl,
         createdAt: conv.createdAt,
         currentProject,
       },

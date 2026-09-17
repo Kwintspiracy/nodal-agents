@@ -51,7 +51,7 @@ const feed: ConversationFeed = {
       index: 1,
       turn: 1,
       turnSource: 'audit',
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: 'claude-opus-5',
       // Construite à partir de composants LOCAUX : l'en-tête affiche l'heure
       // dans le fuseau du lecteur, et une date UTC rendrait le test dépendant
@@ -184,7 +184,7 @@ const envoi: ConversationFeed = {
       index: 1,
       turn: 1,
       turnSource: 'audit',
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: null,
       at: null,
       usage: null,
@@ -267,7 +267,7 @@ describe('ConversationFeedView', () => {
               index: 1,
               turn: 1,
               turnSource: 'audit',
-              agent: { name: 'Alfred', slug: 'alfred' },
+              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
               model: 'claude-opus-5',
               at: null,
               usage: null,
@@ -318,7 +318,7 @@ describe('ConversationFeedView', () => {
       index: 2,
       turn: 2,
       turnSource: 'audit' as const,
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: 'claude-opus-5',
       at: new Date(2026, 8, 17, 14, 9),
       usage: null,
@@ -425,7 +425,7 @@ describe('ConversationFeedView', () => {
           index: 1,
           turn: 1,
           turnSource: 'audit',
-          agent: { name: 'Alfred', slug: 'alfred' },
+          agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
           model: null,
           at: null,
           usage: null,
@@ -485,7 +485,7 @@ describe('ConversationFeedView', () => {
               index: 1,
               turn: 1,
               turnSource: 'audit',
-              agent: { name: 'Alfred', slug: 'alfred' },
+              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
               model: null,
               at: null,
               usage: null,
@@ -536,11 +536,12 @@ describe('ConversationFeedView', () => {
           items: [
             {
               kind: 'child',
-              from: { name: 'Alfred', slug: 'alfred' },
+              from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
                 agentSlug: 'relecteur',
+                agentAvatarUrl: null,
                 status: 'completed',
                 task: 'Audite le correctif de session',
                 result: ['## Verdict', '', 'Le correctif tient, une note mineure.'].join('\n'),
@@ -593,6 +594,7 @@ describe('ConversationFeedView', () => {
       id: 'job-3',
       agentName: 'Reviewer C',
       agentSlug: 'reviewer-c',
+      agentAvatarUrl: null,
       status: 'completed',
       task: 'relis',
       result: 'ça tient',
@@ -604,11 +606,12 @@ describe('ConversationFeedView', () => {
       items: [
         {
           kind: 'child',
-          from: { name: 'Alfred', slug: 'alfred' },
+          from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
           job: {
             id: 'job-2',
             agentName: 'Le Relecteur',
             agentSlug: 'relecteur',
+            agentAvatarUrl: null,
             status: 'completed',
             task: 'fais relire',
             result: 'revue faite',
@@ -619,7 +622,7 @@ describe('ConversationFeedView', () => {
               items: [
                 {
                   kind: 'child',
-                  from: { name: 'Le Relecteur', slug: 'relecteur' },
+                  from: { name: 'Le Relecteur', slug: 'relecteur', avatarUrl: null },
                   job: grandChild,
                 },
               ],
@@ -663,11 +666,12 @@ describe('ConversationFeedView', () => {
           items: [
             {
               kind: 'child',
-              from: { name: 'Alfred', slug: 'alfred' },
+              from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
                 agentSlug: 'relecteur',
+                agentAvatarUrl: null,
                 status: 'running',
                 task: 'Audite le correctif',
                 result: null,
@@ -687,6 +691,152 @@ describe('ConversationFeedView', () => {
     // Rien n'est encore arrivé : pas de point vert ni rouge.
     expect(html2).not.toMatch(/rounded-full bg-ok"/);
     expect(html2).not.toMatch(/rounded-full bg-err"/);
+  });
+
+  // #135 — un agent qui a téléversé une image se reconnaît à SON image, pas à
+  // ses initiales. Le fil porte l'URL depuis `agents.avatar_url`, de bout en
+  // bout : l'en-tête du tour, et les deux côtés d'une délégation.
+  it('un agent qui a un avatar montre son image ; sans avatar, ses initiales', () => {
+    const avecImage = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'turn',
+              index: 1,
+              turn: 1,
+              turnSource: 'audit',
+              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: '/uploads/alfred.png' },
+              model: null,
+              at: null,
+              usage: null,
+              blocks: [{ kind: 'prose', text: 'Voilà.' }],
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    // next/image réécrit la source ; l'URL d'origine y reste, encodée.
+    expect(avecImage).toContain('<img');
+    expect(avecImage).toContain(encodeURIComponent('/uploads/alfred.png'));
+    // L'image REMPLACE les initiales, elle ne s'ajoute pas à côté.
+    expect(avecImage).not.toContain('>AL<');
+
+    const sansImage = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'turn',
+              index: 1,
+              turn: 1,
+              turnSource: 'audit',
+              agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+              model: null,
+              at: null,
+              usage: null,
+              blocks: [{ kind: 'prose', text: 'Voilà.' }],
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(sansImage).not.toContain('<img');
+    expect(sansImage).toContain('AL');
+  });
+
+  it('la tête d’une délégation montre les DEUX images : le délégant et le délégué', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'child',
+              from: { name: 'Alfred', slug: 'alfred', avatarUrl: '/uploads/alfred.png' },
+              job: {
+                id: 'job-2',
+                agentName: 'Le Relecteur',
+                agentSlug: 'relecteur',
+                agentAvatarUrl: '/uploads/relecteur.png',
+                status: 'completed',
+                task: 'relis',
+                result: 'fait',
+                error: null,
+                createdAt: null,
+                completedAt: null,
+              },
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(html2).toContain(encodeURIComponent('/uploads/alfred.png'));
+    expect(html2).toContain(encodeURIComponent('/uploads/relecteur.png'));
+  });
+
+  // #135 — la remontée des délégations ne doit RIEN emporter d'autre. Un tour
+  // qui a livré garde sa carte d'envoi, à sa place, même quand le travail a
+  // délégué : c'est ce que le propriétaire a cru perdre le 17/09.
+  it('un tour qui a envoyé garde sa carte d’envoi, même avec des délégations remontées', () => {
+    const enfant = (id: string, name: string) => ({
+      id,
+      agentName: name,
+      agentSlug: name.toLowerCase(),
+      agentAvatarUrl: null,
+      status: 'completed',
+      task: `tâche de ${name}`,
+      result: 'fait',
+      error: null,
+      createdAt: null,
+      completedAt: null,
+    });
+    const feedAvecEnvoiEtEnfants: ConversationFeed = {
+      items: [
+        {
+          kind: 'turn',
+          index: 1,
+          turn: 2,
+          turnSource: 'audit',
+          agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+          model: null,
+          at: null,
+          usage: null,
+          blocks: [
+            {
+              kind: 'card',
+              step: tool({
+                toolName: 'dashboard_publish',
+                card: 'sent',
+                input: { text: 'La revue est prête.' },
+                presented: { card: 'sent', channel: 'dashboard', kind: 'message', target: 'x' },
+              }),
+            },
+          ],
+        },
+        {
+          kind: 'child',
+          from: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+          job: {
+            ...enfant('job-2', 'Lead-Dev'),
+            feed: { items: [], totals: feed.totals },
+          },
+        },
+        {
+          kind: 'child',
+          from: { name: 'Lead-Dev', slug: 'lead-dev', avatarUrl: null },
+          job: enfant('job-3', 'Dev C'),
+        },
+      ],
+      totals: feed.totals,
+    };
+    const html2 = renderToStaticMarkup(<ConversationFeedView feed={feedAvecEnvoiEtEnfants} />);
+    expect(html2).toContain('Sent to dashboard');
+    // Et à sa place : AVANT les délégations, dans le tour qui a livré.
+    expect(html2.indexOf('Sent to dashboard')).toBeLessThan(html2.indexOf('data-delegation'));
+    expect(html2.match(/data-delegation/g)?.length ?? 0).toBe(2);
   });
 
   it('la réponse ferme le fil, après l’envoi', () => {

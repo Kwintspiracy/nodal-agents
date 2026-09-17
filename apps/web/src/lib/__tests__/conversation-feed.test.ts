@@ -143,6 +143,7 @@ const job: FeedJob = {
   error: null,
   agentName: 'Veilleur',
   agentSlug: 'veilleur',
+  agentAvatarUrl: null,
   createdAt: at('2026-09-05T15:01:38.788Z'),
   completedAt: at('2026-09-05T15:02:18.000Z'),
   messages,
@@ -291,7 +292,11 @@ describe('buildConversationFeed — un job cron réel', () => {
       durationMs: 3782,
       calls: 1,
     });
-    expect(t1?.kind === 'turn' && t1.agent).toEqual({ name: 'Veilleur', slug: 'veilleur' });
+    expect(t1?.kind === 'turn' && t1.agent).toEqual({
+      name: 'Veilleur',
+      slug: 'veilleur',
+      avatarUrl: null,
+    });
   });
 
   it('chaque tour porte l’heure de sa PREMIÈRE ligne d’audit ; sans ligne, aucune heure', () => {
@@ -608,7 +613,7 @@ describe('compactTurns — les tours muets se replient (P2bis)', () => {
     index: 1,
     turn: 1,
     turnSource: 'audit',
-    agent: { name: 'Alfred', slug: 'alfred' },
+    agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
     model: 'm',
     at: null,
     blocks: [],
@@ -707,7 +712,7 @@ describe('compactTurns — les tours muets se replient (P2bis)', () => {
       turn({ index: 1, blocks: [{ kind: 'steps', steps: [step('a')] }] }),
       turn({
         index: 2,
-        agent: { name: 'Lead', slug: 'lead' },
+        agent: { name: 'Lead', slug: 'lead', avatarUrl: null },
         blocks: [{ kind: 'steps', steps: [step('b')] }],
       }),
     ]);
@@ -929,6 +934,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       id: 'child-1',
       agentName: 'Analyste',
       agentSlug: 'analyste',
+      agentAvatarUrl: null,
       status: 'completed',
       task: 'compare',
       result: 'ok',
@@ -947,7 +953,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
     expect(feed.items.at(-2)).toEqual({
       kind: 'child',
       job: child,
-      from: { name: 'Veilleur', slug: 'veilleur' },
+      from: { name: 'Veilleur', slug: 'veilleur', avatarUrl: null },
     });
     expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: 'delivery_spam_guard' });
   });
@@ -960,6 +966,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       id: 'grandchild-1',
       agentName: 'Reviewer C',
       agentSlug: 'reviewer-c',
+      agentAvatarUrl: null,
       status: 'completed',
       task: 'relis le correctif',
       result: 'ça tient',
@@ -977,6 +984,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
         id: 'child-1',
         agentName: 'Le Relecteur',
         agentSlug: 'relecteur',
+        agentAvatarUrl: null,
         messages: [],
         result: 'revue faite',
         children: [grandChild],
@@ -988,6 +996,7 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       id: 'child-1',
       agentName: 'Le Relecteur',
       agentSlug: 'relecteur',
+      agentAvatarUrl: null,
       status: 'completed',
       task: 'fais relire',
       result: 'revue faite',
@@ -1002,8 +1011,12 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
     expect(children.map((c) => c.job.id)).toEqual(['child-1', 'grandchild-1']);
     // Chacun dit QUI a délégué : le job pour l'enfant, l'enfant pour le
     // petit-enfant.
-    expect(children[0]?.from).toEqual({ name: 'Veilleur', slug: 'veilleur' });
-    expect(children[1]?.from).toEqual({ name: 'Le Relecteur', slug: 'relecteur' });
+    expect(children[0]?.from).toEqual({ name: 'Veilleur', slug: 'veilleur', avatarUrl: null });
+    expect(children[1]?.from).toEqual({
+      name: 'Le Relecteur',
+      slug: 'relecteur',
+      avatarUrl: null,
+    });
     // Le frère suit IMMÉDIATEMENT son parent, dans l'ordre où ça s'est passé.
     const at = feed.items.findIndex((i) => i.kind === 'child' && i.job.id === 'child-1');
     expect(feed.items[at + 1]).toBe(children[1]);

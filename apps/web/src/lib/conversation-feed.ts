@@ -84,6 +84,12 @@ export type FeedChildJob = {
   id: string;
   agentName: string | null;
   agentSlug: string | null;
+  /**
+   * L'image de l'agent, quand il en a une (`agents.avatar_url`). null : il
+   * n'en a pas, et l'écran retombe sur ses initiales — jamais une image
+   * inventée.
+   */
+  agentAvatarUrl: string | null;
   status: string | null;
   task: string | null;
   result: string | null;
@@ -104,6 +110,7 @@ export type FeedJob = {
   error: string | null;
   agentName: string | null;
   agentSlug: string | null;
+  agentAvatarUrl: string | null;
   createdAt: Date | null;
   completedAt: Date | null;
   messages: unknown[];
@@ -219,7 +226,7 @@ export type FeedItem =
        */
       turn: number;
       turnSource: 'audit' | 'inferred';
-      agent: { name: string | null; slug: string | null };
+      agent: { name: string | null; slug: string | null; avatarUrl: string | null };
       model: string | null;
       blocks: TurnBlock[];
       usage: TurnUsage | null;
@@ -246,7 +253,11 @@ export type FeedItem =
    * remonté. Sans lui, deux délégations de suite se liraient pareil alors que
    * la seconde part d'un autre agent.
    */
-  | { kind: 'child'; job: FeedChildJob; from: { name: string | null; slug: string | null } }
+  | {
+      kind: 'child';
+      job: FeedChildJob;
+      from: { name: string | null; slug: string | null; avatarUrl: string | null };
+    }
   | { kind: 'answer'; text: string }
   | { kind: 'failure'; text: string }
   /**
@@ -765,7 +776,7 @@ export function buildConversationFeed(
         index: turnIndex,
         turn,
         turnSource,
-        agent: { name: job.agentName, slug: job.agentSlug },
+        agent: { name: job.agentName, slug: job.agentSlug, avatarUrl: job.agentAvatarUrl },
         model: u?.model ?? null,
         blocks,
         usage: u
@@ -799,7 +810,7 @@ export function buildConversationFeed(
   // un niveau), donc ses propres items `child` sont DÉJÀ à plat et portent déjà
   // leur `from` : il suffit de les sortir de son fil et de les poser derrière
   // lui, dans l'ordre où ils sont arrivés.
-  const from = { name: job.agentName, slug: job.agentSlug };
+  const from = { name: job.agentName, slug: job.agentSlug, avatarUrl: job.agentAvatarUrl };
   for (const child of job.children) {
     const own = child.feed;
     const lifted = own === undefined ? [] : own.items.filter((i) => i.kind === 'child');

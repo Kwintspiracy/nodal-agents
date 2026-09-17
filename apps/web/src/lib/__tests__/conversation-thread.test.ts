@@ -58,7 +58,7 @@ const tour = (text: string): FeedItem => ({
   index: 1,
   turn: 1,
   turnSource: 'audit',
-  agent: { name: 'Alfred', slug: 'alfred' },
+  agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
   model: 'claude-opus-5',
   at: null,
   blocks: [{ kind: 'prose', text }],
@@ -116,6 +116,7 @@ const conversation = {
   title: 'Un fil',
   agentName: 'Alfred',
   agentSlug: 'alfred',
+  agentAvatarUrl: null,
   currentProject: null,
 };
 
@@ -440,7 +441,7 @@ describe('buildConversationThread — ce que le fil ne peut pas dire', () => {
       index: 2,
       turn: 2,
       turnSource: 'audit',
-      agent: { name: 'Alfred', slug: 'alfred' },
+      agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
       model: 'claude-opus-5',
       // Un tour MUET n'a ni bloc ni ligne d'audit : il n'a donc pas d'heure,
       // et celle du tour qui l'absorbe reste la seule affichée (#135).

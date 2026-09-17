@@ -35,6 +35,7 @@ const job = (): FeedJob => ({
   error: null,
   agentName: 'Alfred',
   agentSlug: 'alfred',
+  agentAvatarUrl: null,
   createdAt: new Date('2026-09-06T10:00:00Z'),
   completedAt: null,
   messages: [

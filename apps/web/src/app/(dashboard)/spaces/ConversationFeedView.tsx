@@ -77,10 +77,17 @@ function FeedItems({ items, deliverables }: { items: FeedItem[]; deliverables: D
   // de l'agent, qui est celui qui l'a écrite.
   const lastTurn = [...items].reverse().find((i) => i.kind === 'turn');
   const agentName = lastTurn?.agent.name ?? 'Agent';
+  const agentAvatarUrl = lastTurn?.agent.avatarUrl ?? null;
   return (
     <>
       {items.map((item, i) => (
-        <FeedItemView key={i} item={item} deliverables={deliverables} agentName={agentName} />
+        <FeedItemView
+          key={i}
+          item={item}
+          deliverables={deliverables}
+          agentName={agentName}
+          agentAvatarUrl={agentAvatarUrl}
+        />
       ))}
     </>
   );
@@ -90,10 +97,12 @@ function FeedItemView({
   item,
   deliverables,
   agentName,
+  agentAvatarUrl,
 }: {
   item: FeedItem;
   deliverables: Deliverables;
   agentName: string;
+  agentAvatarUrl: string | null;
 }) {
   switch (item.kind) {
     case 'request':
@@ -134,7 +143,12 @@ function FeedItemView({
       // après les blocs du tour, plutôt qu'à une place inventée.
       return (
         <Turn>
-          <Who name={item.agent.name ?? 'Agent'} model={item.model} at={item.at} />
+          <Who
+            name={item.agent.name ?? 'Agent'}
+            avatarUrl={item.agent.avatarUrl}
+            model={item.model}
+            at={item.at}
+          />
           {item.blocks.map((b, i) => (
             <Block key={i} block={b} deliverables={deliverables} />
           ))}
@@ -151,7 +165,7 @@ function FeedItemView({
       // tour de l'agent, pas une plaque à part : c'est lui qui parle.
       return (
         <Turn>
-          <Who name={agentName} />
+          <Who name={agentName} avatarUrl={agentAvatarUrl} />
           <Markdown text={item.text} />
         </Turn>
       );
@@ -200,10 +214,21 @@ function Turn({ children }: { children: React.ReactNode }) {
  * sans ligne d'audit n'a pas de date, et une heure devinée serait un mensonge
  * de plus à l'écran.
  */
-function Who({ name, model, at }: { name: string; model?: string | null; at?: Date | null }) {
+function Who({
+  name,
+  avatarUrl,
+  model,
+  at,
+}: {
+  name: string;
+  /** L'image de l'agent, quand il en a une. Sinon ses initiales (AgentAvatar). */
+  avatarUrl?: string | null;
+  model?: string | null;
+  at?: Date | null;
+}) {
   return (
     <div className="mb-1.5 flex items-center gap-2.5">
-      <AgentAvatar name={name} size="sm" shape="square" />
+      <AgentAvatar name={name} imageUrl={avatarUrl ?? undefined} size="sm" shape="square" />
       <span className="text-title-15 text-ink">{name}</span>
       {model !== null && model !== undefined && model !== '' && (
         <span className="text-mono-11 text-feed-model">{model}</span>
@@ -791,7 +816,7 @@ function DelegationGroup({
   deliverables,
 }: {
   job: FeedChildJob;
-  from: { name: string | null; slug: string | null };
+  from: { name: string | null; slug: string | null; avatarUrl: string | null };
   deliverables: Deliverables;
 }) {
   const durationMs =
@@ -831,11 +856,21 @@ function DelegationGroup({
       <DelegationBlock
         head={
           <>
-            <AgentAvatar name={fromName} size="sm" shape="square" />
+            <AgentAvatar
+              name={fromName}
+              imageUrl={from.avatarUrl ?? undefined}
+              size="sm"
+              shape="square"
+            />
             <span className="shrink-0 text-medium-13 text-ink">{fromName}</span>
             {/* Sans capitales : le tableau écrit « delegated to », pas un label. */}
             <span className="shrink-0 text-body-13 text-feed-delegation">delegated to</span>
-            <AgentAvatar name={toName} size="sm" shape="square" />
+            <AgentAvatar
+              name={toName}
+              imageUrl={job.agentAvatarUrl ?? undefined}
+              size="sm"
+              shape="square"
+            />
             <span className="shrink-0 text-medium-13 text-ink">{toName}</span>
             <span className="min-w-0 flex-1 truncate text-body-13 text-ink-3">{summary}</span>
             {/* La pastille dit d'un coup d'œil si la passe a atterri ; elle ne
