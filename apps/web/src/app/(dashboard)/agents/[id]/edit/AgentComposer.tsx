@@ -75,11 +75,18 @@ import { SectionCard, SectionHead } from './SectionCard.tsx';
 import CommandAllowlistSection from './CommandAllowlistSection.tsx';
 import {
   MODEL_CATALOG,
-  findModelCatalogEntry,
   groupModelCatalog,
   modelOptionLabel,
   modelToolsSupport,
 } from '@nodal-agents/shared';
+import {
+  reasoningOptionValues,
+  REASONING_LABELS,
+  buildModelOptionGroups,
+  isModelInOptions,
+  llmKeyLabel,
+  type ModelChoice,
+} from '@/lib/model-choices.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
@@ -196,28 +203,30 @@ function dbRoleToUiRole(
 }
 
 // ── Reasoning effort options (per-agent effort brick) ─────────────────────────
-// The selectable values for a given provider+model, straight from the catalog's
-// reasoningControl: the model's declared levels, plus 'off' unless reasoning is
-// mandatory. Empty array = nothing controllable → the field is hidden.
-const REASONING_BUDGET_ORDER = ['low', 'medium', 'high', 'max'] as const;
-function reasoningOptionValues(provider: string, modelId: string): string[] {
-  const control = findModelCatalogEntry(provider, modelId)?.capabilities.reasoningControl;
-  if (!control) return [];
-  const levels =
-    control.kind === 'onoff'
-      ? []
-      : control.kind === 'budget'
-        ? REASONING_BUDGET_ORDER.filter((l) => control.budgets?.[l])
-        : (control.levels ?? []);
-  return control.mandatory ? [...levels] : [...levels, 'off'];
+// `reasoningOptionValues` et `REASONING_LABELS` vivaient ICI ; ils sont partis
+// dans `@/lib/model-choices.ts`, sans une ligne de changement, parce que les
+// listes déroulantes du composeur de chat (#138) règlent les MÊMES champs et
+// doivent obéir aux mêmes règles — et parce que l'action serveur qui écrit la
+// ligne les vérifie avec les mêmes fonctions.
+
+/**
+ * Une option de la liste des modèles. Un modèle catalogué qui ne sait pas
+ * appeler d'outils est désactivé pour un routeur ou un planificateur ; un
+ * modèle vu en direct n'a pas d'entrée au catalogue, donc rien ne se sait de
+ * ses capacités et rien ne se prétend (inv. #4).
+ */
+function ModelOptionTag({ model, requireTools }: { model: ModelChoice; requireTools: boolean }) {
+  const noTools = requireTools && model.entry !== undefined && !model.entry.capabilities.tools;
+  return (
+    <option
+      value={model.modelId}
+      disabled={noTools}
+      title={noTools ? "Can't use tools (required for a router/planner)" : undefined}
+    >
+      {model.label}
+    </option>
+  );
 }
-const REASONING_LABELS: Record<string, string> = {
-  off: 'Off',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  max: 'Max',
-};
 
 interface Props {
   agent: AgentEditRow;
@@ -2953,21 +2962,18 @@ function SettingsTab(props: {
   // Reasoning levels the selected primary model really offers ([] = hide field).
   const reasoningOptions = reasoningOptionValues(selectedKey?.provider ?? '', model);
 
-  // Curated models for the selected key's provider (T2). The agent's model is a
-  // free string; the dropdown just helps pick a known-good id (capability flags
-  // live on the KEY, not here). Derive "custom" from whether `model` is curated.
-  const modelCatalog = selectedKey ? (MODEL_CATALOG[selectedKey.provider] ?? []) : [];
-  const modelInCatalog = !!findModelCatalogEntry(selectedKey?.provider ?? '', model);
-
   // Live model ids from the provider's /models endpoint for this key.
   const liveModelIds: string[] = selectedKey ? (liveModelsCache[selectedKey.id] ?? []) : [];
 
-  // Union: catalog first, then extra live ids not already in catalog.
-  const catalogModelIds = new Set(modelCatalog.map((m) => m.modelId));
-  const extraLiveIds = liveModelIds.filter((id) => !catalogModelIds.has(id));
+  // LA liste : le catalogue curé du fournisseur, groupé, puis les identifiants
+  // vus en direct qui n'y sont pas. Construite par `buildModelOptionGroups`,
+  // partagée avec le composeur du chat (#138) — c'était le reproche : la liste
+  // du composeur ne ressemblait pas à celle d'ici. Une seule construction, donc
+  // aucune divergence possible.
+  const modelGroups = buildModelOptionGroups(selectedKey?.provider ?? '', liveModelIds);
 
   // The model is "in the dropdown" if it matches a catalog entry OR a live id.
-  const modelInDropdown = modelInCatalog || liveModelIds.includes(model);
+  const modelInDropdown = isModelInOptions(modelGroups, model);
 
   // Router/planner delegate via tool calls — a model that can't call tools
   // can't function as an orchestrator. Gates the primary model AND every
@@ -3259,10 +3265,7 @@ function SettingsTab(props: {
                   >
                     {activeKeys.map((k) => (
                       <option key={k.id} value={k.id}>
-                        {(k.nickname ?? prettyProviderName(k.provider)) +
-                          ' (' +
-                          prettyProviderName(k.provider) +
-                          ')'}
+                        {llmKeyLabel(k)}
                       </option>
                     ))}
                   </Select>
@@ -3277,7 +3280,7 @@ function SettingsTab(props: {
                     : 'Model'
                 }
               >
-                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                {modelGroups.length > 0 && (
                   <Select
                     value={modelInDropdown ? model : '__custom__'}
                     onChange={(e) =>
@@ -3285,49 +3288,18 @@ function SettingsTab(props: {
                     }
                     className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
                   >
-                    {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                    {modelGroups.map(({ group, models }) =>
                       group ? (
                         <optgroup key={group} label={group}>
                           {models.map((m) => (
-                            <option
-                              key={m.modelId}
-                              value={m.modelId}
-                              disabled={requireTools && !m.capabilities.tools}
-                              title={
-                                requireTools && !m.capabilities.tools
-                                  ? "Can't use tools (required for a router/planner)"
-                                  : undefined
-                              }
-                            >
-                              {modelOptionLabel(m)}
-                            </option>
+                            <ModelOptionTag key={m.modelId} model={m} requireTools={requireTools} />
                           ))}
                         </optgroup>
                       ) : (
                         models.map((m) => (
-                          <option
-                            key={m.modelId}
-                            value={m.modelId}
-                            disabled={requireTools && !m.capabilities.tools}
-                            title={
-                              requireTools && !m.capabilities.tools
-                                ? "Can't use tools (required for a router/planner)"
-                                : undefined
-                            }
-                          >
-                            {modelOptionLabel(m)}
-                          </option>
+                          <ModelOptionTag key={m.modelId} model={m} requireTools={requireTools} />
                         ))
                       ),
-                    )}
-                    {extraLiveIds.length > 0 && (
-                      <optgroup label="Live from provider">
-                        {extraLiveIds.map((id) => (
-                          <option key={id} value={id}>
-                            {id}
-                          </option>
-                        ))}
-                      </optgroup>
                     )}
                     <option value="__custom__">Custom…</option>
                   </Select>
@@ -3344,9 +3316,7 @@ function SettingsTab(props: {
                     className="!rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
                   />
                 )}
-                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-                  <ModelToolsLegend className="mt-1.5" />
-                )}
+                {modelGroups.length > 0 && <ModelToolsLegend className="mt-1.5" />}
               </Field>
               {reasoningOptions.length > 0 && (
                 <Field label="Reasoning">

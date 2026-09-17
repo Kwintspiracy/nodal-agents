@@ -20,6 +20,7 @@ import LiveRefresh from './LiveRefresh.tsx';
 import ProjectComposer from './ProjectComposer.tsx';
 import type { ConversationThreadView } from '@/lib/conversation-actions.ts';
 import type { ComposerPresentation } from '@/lib/project-landing.ts';
+import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
 
 export type ProjectThreadResult =
@@ -32,6 +33,12 @@ export default function ProjectThread({
   thread,
   composer,
   statusBar,
+  agentId,
+  llmKeyId,
+  model,
+  reasoningEffort,
+  llmKeys,
+  requireTools,
 }: {
   projectId: string;
   /**
@@ -51,6 +58,17 @@ export default function ProjectThread({
   composer: ComposerPresentation;
   /** La barre d'état, ancrée tout en bas de l'écran. */
   statusBar?: React.ReactNode;
+  /**
+   * #138 — les trois listes « provider / modèle / effort » de la saisie. Rien
+   * qu'un passage : l'agent visé et ses réglages sont lus par la page, côté
+   * serveur. Sans agent, pas de listes.
+   */
+  agentId?: string | null;
+  llmKeyId?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  llmKeys?: ComposerLlmKey[];
+  requireTools?: boolean;
 }) {
   if (thread !== null && !thread.ok) {
     return (
@@ -111,6 +129,12 @@ export default function ProjectThread({
           projectId={projectId}
           conversationId={conversationId}
           agentName={composer.agentName}
+          agentId={agentId ?? null}
+          llmKeyId={llmKeyId ?? null}
+          model={model ?? null}
+          reasoningEffort={reasoningEffort ?? null}
+          llmKeys={llmKeys ?? []}
+          requireTools={requireTools ?? false}
           {...(composer.kind === 'start' ? { placeholder: composer.placeholder } : {})}
         />
       </>

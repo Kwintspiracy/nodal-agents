@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
+import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -51,6 +52,12 @@ export default function ThreadComposer({
   agentName,
   placeholder,
   onBeforeSend,
+  agentId,
+  llmKeyId,
+  model,
+  reasoningEffort,
+  llmKeys,
+  requireTools = false,
 }: {
   conversationId: string;
   /** À qui on écrit — le placeholder le dit. Absent : « Reply… ». */
@@ -69,11 +76,27 @@ export default function ThreadComposer({
    * le dit (inv. #4).
    */
   onBeforeSend?: () => Promise<string>;
+  /**
+   * #138 — les trois listes « provider / modèle / effort ». Les champs vont
+   * ensemble : sans agent (la page d'un projet qui n'en a pas encore), il n'y
+   * a rien à régler et les listes ne s'affichent pas — plutôt qu'un réglage
+   * posé sur personne.
+   */
+  agentId?: string | null;
+  llmKeyId?: string | null;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  llmKeys?: ComposerLlmKey[];
+  /** Routeur ou planificateur : la pastille grise les modèles sans outils. */
+  requireTools?: boolean;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
   const [isPending, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
+
+  /** Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le dit. */
+  const canSend = !isPending && message.trim() !== '';
 
   function send(): void {
     const text = message.trim();
@@ -155,13 +178,36 @@ export default function ThreadComposer({
         // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
         className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
-      {/* La rangée d'actions : l'envoi à droite, sous la zone de texte. */}
-      <div className="flex justify-end">
+      {/* La rangée d'actions, telle que Quentin l'a dessinée (Figma
+          `ThreadComposer` 355:2928) : la pastille « provider · modèle ·
+          effort » à gauche, l'envoi à droite, sur UNE ligne — la pastille fait
+          30 px, la hauteur du bouton. */}
+      <div className="flex items-center justify-end gap-2">
+        {agentId !== undefined && agentId !== null && agentId !== '' && (
+          // La `key` porte les valeurs venues du serveur : quand le réglage
+          // change AILLEURS (l'écran de l'agent), la page relue remonte le
+          // composant sur elles. Pas d'effet qui recopierait les props dans
+          // l'état — c'est le rendu en cascade que la règle React refuse.
+          <ModelEffortChip
+            key={`${llmKeyId ?? ''}:${model ?? ''}:${reasoningEffort ?? ''}`}
+            agentId={agentId}
+            llmKeyId={llmKeyId ?? null}
+            model={model ?? ''}
+            reasoningEffort={reasoningEffort ?? null}
+            llmKeys={llmKeys ?? []}
+            requireTools={requireTools}
+          />
+        )}
+        {/* L'envoi CHANGE DE COULEUR quand il y a quelque chose à envoyer :
+            c'est le signal, pas un libellé de plus. Le bouton d'encre de la
+            planche dès que le texte n'est pas vide — c'est le contraste le
+            plus tranché sur cette surface ; neutre le reste du temps, où
+            cliquer ne ferait rien. */}
         <PrimaryButton
-          variant="neutral"
+          variant={canSend ? 'ink' : 'neutral'}
           size="sm"
           onClick={send}
-          disabled={isPending || message.trim() === ''}
+          disabled={!canSend}
         >
           {isPending ? 'Sending…' : 'Send'}
         </PrimaryButton>
