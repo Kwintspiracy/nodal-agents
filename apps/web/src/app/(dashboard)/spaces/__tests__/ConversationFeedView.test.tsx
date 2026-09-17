@@ -527,13 +527,16 @@ describe('ConversationFeedView', () => {
     expect(html2).not.toContain('−0');
   });
 
-  it('une délégation porte le nom du délégué, ce qu’il a rendu, et son coût', () => {
+  // #135 — la tête d'une délégation se lit comme une phrase : QUI a délégué, à
+  // QUI, pour QUOI. Tout replié, la chaîne entière reste lisible.
+  it('la tête d’une délégation dit « Alfred delegated to Le Relecteur », la consigne, l’état et les chiffres', () => {
     const html2 = renderToStaticMarkup(
       <ConversationFeedView
         feed={{
           items: [
             {
               kind: 'child',
+              from: { name: 'Alfred', slug: 'alfred' },
               job: {
                 id: 'job-2',
                 agentName: 'Le Relecteur',
@@ -555,21 +558,135 @@ describe('ConversationFeedView', () => {
         }}
       />,
     );
-    expect(html2).toContain('Delegated to Le Relecteur');
-    // Le TITRE est la première ligne plate du résultat, pas la consigne, et le
-    // markdown n'y laisse pas ses dièses.
-    expect(html2).toContain('Verdict');
-    expect(html2).not.toContain('## Verdict');
+    // Les deux noms, et entre eux les mots du tableau — en minuscules, dans la
+    // couleur de la délégation. Remettre `text-ok` (l'ancienne étiquette verte)
+    // fait rougir la ligne suivante.
+    expect(html2).toContain('Alfred');
+    expect(html2).toContain('Le Relecteur');
+    expect(html2).toMatch(/text-feed-delegation[^>]*>delegated to</);
+    expect(html2).not.toContain('DELEGATED TO');
+    expect(html2).not.toContain('Delegated to Le Relecteur');
+    // La tête porte la CONSIGNE (le résultat, lui, est dans le corps).
+    expect(html2).toContain('Audite le correctif de session');
+    // L'état : la pastille à mots du tableau, et le point de couleur qui dit
+    // d'un coup d'œil que ça a atterri.
+    expect(html2).toContain('>Done<');
+    // Le POINT lui-même (8 px), pas la teinte de la pastille (`bg-ok-bg`) :
+    // c'est lui que le parcours Playwright lit en `span.bg-ok`.
+    expect(html2).toMatch(/h-2 w-2 shrink-0 rounded-full bg-ok"/);
     expect(html2).toContain('1 min 12 · 40,200 tokens · $0.14');
-    // Terminé : pastille verte, et plus de pastille d'état à mots.
-    expect(html2).toContain('bg-ok');
-    expect(html2).not.toContain('>Done<');
-    // Replié : la consigne du délégué n'est pas dans le HTML initial.
-    expect(html2).not.toContain('Audite le correctif de session');
+    // Replié : le corps n'est pas dans le HTML initial — ni le résultat du
+    // délégué, ni le lien vers son run.
+    expect(html2).not.toContain('Le correctif tient');
+    expect(html2).not.toContain('Open run');
     // Pleine largeur : plus de gouttière qui rentrerait la délégation par
     // rapport aux blocs d'outil du tour juste au-dessus (#135).
     expect(html2).not.toContain('pl-[46px]');
     expect(html2).not.toContain('ml-[46px]');
+  });
+
+  // #135 — « Les délégations ne sont jamais imbriquées ». Le fil les remonte
+  // (`buildConversationFeed`) ; l'écran refuse en plus d'en dessiner une dans
+  // une autre, pour qu'un fil assemblé à la main ne rouvre pas la porte.
+  it('une délégation n’en contient jamais une autre, même DÉPLIÉE', async () => {
+    const grandChild = {
+      id: 'job-3',
+      agentName: 'Reviewer C',
+      agentSlug: 'reviewer-c',
+      status: 'completed',
+      task: 'relis',
+      result: 'ça tient',
+      error: null,
+      createdAt: null,
+      completedAt: null,
+    };
+    const avecPetitEnfant: ConversationFeed = {
+      items: [
+        {
+          kind: 'child',
+          from: { name: 'Alfred', slug: 'alfred' },
+          job: {
+            id: 'job-2',
+            agentName: 'Le Relecteur',
+            agentSlug: 'relecteur',
+            status: 'completed',
+            task: 'fais relire',
+            result: 'revue faite',
+            error: null,
+            createdAt: null,
+            completedAt: null,
+            feed: {
+              items: [
+                {
+                  kind: 'child',
+                  from: { name: 'Le Relecteur', slug: 'relecteur' },
+                  job: grandChild,
+                },
+              ],
+              totals: feed.totals,
+            },
+          },
+        },
+      ],
+      totals: feed.totals,
+    };
+    // DÉPLIÉE : replié, le corps n'est pas dans le DOM, et le test ne prouverait
+    // rien. C'est ouvert qu'une imbrication se verrait.
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={avecPetitEnfant} />);
+    });
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la délégation n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(tete.getAttribute('aria-expanded')).toBe('true');
+    // Le corps est bien ouvert…
+    expect(container.textContent).toContain('fais relire');
+    // …et il ne porte aucune autre délégation : un seul bloc, pas de bloc dans
+    // un bloc.
+    expect(container.querySelectorAll('[data-delegation]')).toHaveLength(1);
+    expect(container.textContent).not.toContain('Reviewer C');
+    root.unmount();
+    container.remove();
+  });
+
+  // Un chiffre qu'on ne connaît pas ne se dessine pas : ni « $0 », ni
+  // « 0 tokens » (principe du tableau).
+  it('une délégation qui court n’invente ni durée, ni jetons, ni coût', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'child',
+              from: { name: 'Alfred', slug: 'alfred' },
+              job: {
+                id: 'job-2',
+                agentName: 'Le Relecteur',
+                agentSlug: 'relecteur',
+                status: 'running',
+                task: 'Audite le correctif',
+                result: null,
+                error: null,
+                createdAt: new Date('2026-09-07T10:00:00Z'),
+                completedAt: null,
+              },
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(html2).toContain('>Running<');
+    expect(html2).not.toContain('$0');
+    expect(html2).not.toContain('0 tokens');
+    // Rien n'est encore arrivé : pas de point vert ni rouge.
+    expect(html2).not.toMatch(/rounded-full bg-ok"/);
+    expect(html2).not.toMatch(/rounded-full bg-err"/);
   });
 
   it('la réponse ferme le fil, après l’envoi', () => {

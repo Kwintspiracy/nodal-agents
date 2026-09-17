@@ -217,7 +217,7 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
       'I could not get the Planck length research back: the specialist returned nothing. ' +
       'Nothing is running now — ask again and I will do the search myself.';
 
-    const { conversationId, childName } = await seedDelegationThread({
+    const { conversationId, parentName, childName } = await seedDelegationThread({
       parentResult: honestAnswer,
       childTask: 'Recherche sur la longueur de Planck',
       childStatus: 'failed',
@@ -234,7 +234,10 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
     //    what tells a reader at a glance that this handoff did not land.
     const delegation = page.locator('[data-delegation]').first();
     await expect(delegation).toBeVisible();
-    await expect(delegation.getByText(`Delegated to ${childName}`)).toBeVisible();
+    // #135 — the head reads as a sentence: who delegated, and to whom.
+    await expect(delegation.getByText(parentName)).toBeVisible();
+    await expect(delegation.getByText('delegated to')).toBeVisible();
+    await expect(delegation.getByText(childName)).toBeVisible();
     await expect(delegation.locator('span.bg-err')).toBeVisible();
 
     // 3. The reason itself is one click away, and it is the reason — not the
@@ -257,7 +260,7 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
       'Source: NIST CODATA 2022.';
     const parentAnswer = 'Here is what the specialist found on the Planck length.';
 
-    const { conversationId, childName } = await seedDelegationThread({
+    const { conversationId, parentName, childName } = await seedDelegationThread({
       parentResult: parentAnswer,
       childTask: 'Recherche sur la longueur de Planck',
       childStatus: 'completed',
@@ -271,17 +274,20 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
 
     const delegation = page.locator('[data-delegation]').first();
     await expect(delegation).toBeVisible();
-    await expect(delegation.getByText(`Delegated to ${childName}`)).toBeVisible();
+    await expect(delegation.getByText(parentName)).toBeVisible();
+    await expect(delegation.getByText('delegated to')).toBeVisible();
+    await expect(delegation.getByText(childName)).toBeVisible();
     await expect(delegation.locator('span.bg-ok').first()).toBeVisible();
 
-    // Closed, the row already shows the head of what came back — proof there is
-    // something rather than the "No result yet" a missing deliverable earns.
-    await expect(delegation.getByText('Planck length: 1.616255e-35')).toBeVisible();
+    // Closed, the row says what the sub-agent was ASKED (#135): the head is the
+    // task, the deliverable is one click away.
+    await expect(delegation.getByText('Recherche sur la longueur de Planck')).toBeVisible();
+    await expect(delegation.getByText('NIST CODATA 2022')).toHaveCount(0);
 
     // Opened, the WHOLE deliverable is there. The assertion deliberately lands
-    // on the tail of the text: `delegationTitle` truncates the closed line at 80
-    // characters, so anything past it can only come from the sub-agent's own
-    // reply in the body — the thing that was empty in #107.
+    // on the tail of the text, which no truncated head could carry — it can only
+    // come from the sub-agent's own reply in the body, the thing that was empty
+    // in #107.
     await delegation.getByRole('button').first().click();
     await expect(delegation.getByText('NIST CODATA 2022')).toBeVisible();
 
