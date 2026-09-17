@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
+import { runInLane } from '../chat/turn-lane.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
@@ -41,7 +42,12 @@ export async function chatRoute(
     return c.json({ error: 'forbidden' }, 403);
   }
 
-  const result = await runChatTurn({ deps, entityId, agentId, conversationId, message });
+  // Un tour à la fois par conversation : le dashboard envoie plusieurs messages
+  // à la suite sans attendre la réponse, et chacun doit voir la réponse au
+  // précédent dans son historique (Quentin, 18/09).
+  const result = await runInLane(conversationId, () =>
+    runChatTurn({ deps, entityId, agentId, conversationId, message }),
+  );
   if (!result.ok) {
     const notFound =
       result.error === 'agent_not_found' || result.error === 'conversation_not_found';

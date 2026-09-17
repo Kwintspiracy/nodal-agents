@@ -23,7 +23,7 @@ import type { ComposerPresentation } from '@/lib/project-landing.ts';
 import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortChip.tsx';
 import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
 import PendingTurn, { PendingTurnProvider } from '@/app/(dashboard)/chat/PendingTurn.tsx';
-import { feedSignature } from '@/app/(dashboard)/chat/feed-signature.ts';
+import { feedRequests } from '@/app/(dashboard)/chat/feed-requests.ts';
 
 export type ProjectThreadResult =
   | { ok: true; data: ConversationThreadView }
@@ -84,7 +84,7 @@ export default function ProjectThread({
   return (
     // Le message envoyé paraît TOUT DE SUITE dans le fil, avec l'agent qui
     // réfléchit (Quentin, 18/09) — même porteur que /chat/[id].
-    <PendingTurnProvider signature={feedSignature(items.length, items.at(-1)?.kind ?? '')}>
+    <PendingTurnProvider requests={feedRequests(items)}>
       <ThreadScreen composer={composerSlot()} {...(statusBar !== undefined ? { statusBar } : {})}>
         <div>
           {thread !== null ? (

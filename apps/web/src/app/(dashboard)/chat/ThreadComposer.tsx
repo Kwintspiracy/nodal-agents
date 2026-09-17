@@ -93,11 +93,21 @@ export default function ThreadComposer({
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
+  /**
+   * P8 — la conversation qu'on est en train d'OUVRIR. Deux messages envoyés
+   * à la suite avant que la page ait relu son id en créeraient deux : le
+   * premier envoi ouvre, les suivants attendent la même ouverture.
+   */
+  const opening = useRef<Promise<string> | null>(null);
 
-  /** Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le dit. */
-  const canSend = !isPending && message.trim() !== '';
+  /**
+   * Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le
+   * dit. Un message déjà parti n'empêche pas le suivant (Quentin, 18/09) :
+   * le fil montre ce qui attend, et le runner prend les tours dans l'ordre.
+   */
+  const canSend = message.trim() !== '';
   const pendingTurn = usePendingTurn();
 
   /** Vider la zone, et la remesurer VIDE — voir le commentaire dans `send`. */
@@ -119,18 +129,21 @@ export default function ThreadComposer({
     // et mesurer avant laissait une zone haute après l'envoi (revue Codex,
     // passes 57-58). On vide donc la valeur du DOM soi-même avant de mesurer
     // — l'état contrôlé la remet à '' au rendu suivant, sans conflit.
-    pendingTurn.begin(text);
+    const id = pendingTurn.begin(text);
     clearBox();
     startTransition(async () => {
+      // Le texte revient dans la zone — DEVANT ce qu'on a tapé depuis, s'il y a.
       const giveBack = (): void => {
-        pendingTurn.end();
-        setMessage(text);
+        pendingTurn.end(id);
+        setMessage((typed) => (typed.trim() === '' ? text : `${text}\n\n${typed}`));
       };
       let target = conversationId;
       if (onBeforeSend) {
         try {
-          target = await onBeforeSend();
+          opening.current ??= onBeforeSend();
+          target = await opening.current;
         } catch (err) {
+          opening.current = null;
           toast.error(err instanceof Error ? err.message : 'Could not open the conversation');
           giveBack();
           return;
@@ -147,9 +160,9 @@ export default function ThreadComposer({
         giveBack();
         return;
       }
-      // Le fil relu porte les deux tours ; `PendingTurn` s'efface de lui-même
-      // quand la signature du fil change (pas ici : effacer avant la relecture
-      // ferait clignoter le fil).
+      // Le fil relu porte les deux tours ; la copie de `PendingTurn` s'efface
+      // d'elle-même quand le fil rendu porte son texte (pas ici : effacer
+      // avant la relecture ferait clignoter le fil).
       router.refresh();
     });
   }
@@ -188,7 +201,6 @@ export default function ThreadComposer({
               ? `Reply to ${agentName}…`
               : 'Reply…'
         }
-        disabled={isPending}
         containerClassName="min-w-0"
         // `block` : en ligne, la zone laisse 5 px de descente sous elle dans
         // son conteneur, et la rangée d'actions se calait sur CE bas-là.
@@ -230,7 +242,7 @@ export default function ThreadComposer({
           onClick={send}
           disabled={!canSend}
         >
-          {isPending ? 'Sending…' : 'Send'}
+          Send
         </PrimaryButton>
       </div>
     </div>

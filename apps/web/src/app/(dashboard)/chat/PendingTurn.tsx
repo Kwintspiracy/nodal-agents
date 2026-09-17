@@ -10,55 +10,83 @@
 // petite animation qui dit qu'il réfléchit ; la réponse la remplace dès qu'elle
 // arrive.
 //
+// Et on ne reste pas les bras croisés pendant qu'il réfléchit (Quentin, même
+// jour) : la saisie reste ouverte, chaque message envoyé s'ajoute au fil, et le
+// runner les traite dans l'ordre, un tour à la fois par conversation.
+//
 // Le runner écrit le tour de l'utilisateur AVANT d'appeler le modèle
 // (`run-chat-turn.ts`, 1b), mais l'action serveur n'en revient qu'avec la
 // réponse, et le fil — rendu côté serveur — ne se relit qu'après. Ce composant
-// comble ce temps-là, côté client, avec ce qu'on SAIT déjà : le texte envoyé,
-// et le fait qu'on attend.
+// comble ce temps-là, côté client, avec ce qu'on SAIT déjà : les textes
+// envoyés, et le fait qu'on attend.
 //
-// Il ne devine rien de plus : pas de réponse partielle, pas de durée. Et il
-// s'efface DE LUI-MÊME dès que le fil rendu par le serveur a changé
-// (`signature`) : c'est le fil qui fait foi, jamais cette copie.
+// Il ne devine rien de plus : pas de réponse partielle, pas de durée. Et
+// chaque copie s'efface D'ELLE-MÊME dès que le fil rendu par le serveur porte
+// son texte (`requests`) : c'est le fil qui fait foi, jamais cette copie.
 
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import { originLabel } from '@/app/(dashboard)/spaces/format.ts';
 
 type Pending = {
+  id: number;
   /** Le texte envoyé, tel quel. */
   text: string;
-  /** La signature du fil rendu AU MOMENT de l'envoi : tant qu'elle ne change
-   *  pas, le serveur n'a pas encore rendu le nouveau tour. */
-  signature: string;
+  /** Combien de fois ce texte était DÉJÀ dans le fil (rendu ou en attente)
+   *  au moment de l'envoi : la copie s'efface quand le fil en porte un de
+   *  plus. Deux « ok » de suite s'effacent donc l'un après l'autre. */
+  baseline: number;
 };
 
 type Store = {
-  pending: Pending | null;
-  /** La signature du fil TEL QUE le serveur vient de le rendre. */
-  signature: string;
-  begin: (text: string) => void;
-  end: () => void;
+  /** Les messages partis que le serveur n'a pas encore rendus, dans l'ordre. */
+  pending: readonly Pending[];
+  begin: (text: string) => number;
+  end: (id: number) => void;
 };
 
-const NOOP: Store = { pending: null, signature: '', begin: () => {}, end: () => {} };
+const NOOP: Store = { pending: [], begin: () => 0, end: () => {} };
 const PendingTurnContext = createContext<Store>(NOOP);
 
-/** Le porteur de l'état « un message est parti » — un par écran de fil. */
+function countOf(texts: readonly string[], text: string): number {
+  let n = 0;
+  for (const t of texts) if (t === text) n++;
+  return n;
+}
+
+/** Ce qui reste à montrer : les copies dont le fil ne porte pas encore le texte. */
+export function stillPending(pending: readonly Pending[], requests: readonly string[]): Pending[] {
+  return pending.filter((p) => countOf(requests, p.text) <= p.baseline);
+}
+
+/** Le porteur de l'état « des messages sont partis » — un par écran de fil. */
 export function PendingTurnProvider({
-  signature,
+  requests,
   children,
 }: {
-  /** La signature du fil rendu par le serveur — elle change à chaque relecture
-   *  qui apporte une ligne de plus. */
-  signature: string;
+  /** Les demandes que le serveur a rendues, dans l'ordre du fil. */
+  requests: readonly string[];
   children: ReactNode;
 }) {
-  const [pending, setPending] = useState<Pending | null>(null);
+  const [all, setAll] = useState<readonly Pending[]>([]);
+  const nextId = useRef(0);
+  // Une dérivation, pas un effet : rien à synchroniser, rien à oublier.
+  const pending = stillPending(all, requests);
   const store: Store = {
     pending,
-    signature,
-    begin: (text) => setPending({ text, signature }),
-    end: () => setPending(null),
+    begin: (text) => {
+      const id = ++nextId.current;
+      const baseline =
+        countOf(requests, text) +
+        countOf(
+          pending.map((p) => p.text),
+          text,
+        );
+      // On range en passant ce que le fil a déjà rendu.
+      setAll((prev) => [...stillPending(prev, requests), { id, text, baseline }]);
+      return id;
+    },
+    end: (id) => setAll((prev) => prev.filter((p) => p.id !== id)),
   };
   return <PendingTurnContext.Provider value={store}>{children}</PendingTurnContext.Provider>;
 }
@@ -75,26 +103,27 @@ export default function PendingTurn({
   agentName: string;
   agentAvatarUrl?: string | null;
 }) {
-  const { pending, signature } = usePendingTurn();
-  // Le serveur a rendu autre chose depuis l'envoi : la copie a fait son temps.
-  // Une dérivation, pas un effet : rien à synchroniser, rien à oublier.
-  if (pending === null || pending.signature !== signature) return null;
+  const { pending } = usePendingTurn();
+  if (pending.length === 0) return null;
 
   return (
     <div className="mx-auto max-w-[760px]" data-testid="pending-turn" aria-live="polite">
-      {/* Le message qui vient de partir, à droite, comme il sera rendu. */}
-      <div className="flex justify-end pt-6">
-        <div className="max-w-[80%] min-w-0">
-          <p className="mb-1.5 text-right text-mono-11 text-ink-4">
-            {originLabel({ channel: 'dashboard', scheduleName: null, chatId: null })}
-          </p>
-          <div className="rounded-xl bg-hover px-4 py-3">
-            <p className="max-w-[68ch] text-body-15 whitespace-pre-wrap text-ink">{pending.text}</p>
+      {/* Les messages qui viennent de partir, à droite, comme ils seront rendus. */}
+      {pending.map((p) => (
+        <div key={p.id} className="flex justify-end pt-6" data-testid="pending-message">
+          <div className="max-w-[80%] min-w-0">
+            <p className="mb-1.5 text-right text-mono-11 text-ink-4">
+              {originLabel({ channel: 'dashboard', scheduleName: null, chatId: null })}
+            </p>
+            <div className="rounded-xl bg-hover px-4 py-3">
+              <p className="max-w-[68ch] text-body-15 whitespace-pre-wrap text-ink">{p.text}</p>
+            </div>
           </div>
         </div>
-      </div>
+      ))}
       {/* L'agent, à gauche, qui réfléchit — l'en-tête de tour, et à la place
-          de sa réponse trois points qui battent. */}
+          de sa réponse trois points qui battent. Une seule fois, même quand
+          plusieurs messages attendent : il les prend dans l'ordre. */}
       <div className="min-w-0 pt-6">
         <div className="mb-1.5 flex items-center gap-2.5">
           <AgentAvatar name={agentName} imageUrl={agentAvatarUrl} size="sm" shape="square" />
