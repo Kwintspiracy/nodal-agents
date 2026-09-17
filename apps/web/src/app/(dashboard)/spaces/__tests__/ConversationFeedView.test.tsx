@@ -839,6 +839,106 @@ describe('ConversationFeedView', () => {
     expect(html2.match(/data-delegation/g)?.length ?? 0).toBe(2);
   });
 
+  // Revue PR #141 — un délégué qui vient de démarrer a DÉJÀ des totaux, à zéro.
+  // « 0 tokens » n'est pas une mesure, c'est l'absence de mesure.
+  it('une délégation dont le délégué n’a encore rien consommé n’écrit pas « 0 tokens »', () => {
+    const html2 = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'child',
+              from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+              job: {
+                id: 'job-2',
+                agentName: 'Le Relecteur',
+                agentSlug: 'relecteur',
+                agentAvatarUrl: null,
+                status: 'running',
+                task: 'relis le correctif',
+                result: null,
+                error: null,
+                createdAt: new Date('2026-09-07T10:00:00Z'),
+                completedAt: null,
+                // Le fil est ASSEMBLÉ : les totaux existent, tous à zéro.
+                feed: {
+                  items: [],
+                  totals: {
+                    ...feed.totals,
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cachedTokens: 0,
+                    cacheCreationTokens: 0,
+                    costUsd: null,
+                  },
+                },
+              },
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    expect(html2).not.toContain('tokens');
+    expect(html2).not.toContain('$0');
+  });
+
+  // Revue PR #141 — le pied tient sur une ligne, donc le verdict y tient sur
+  // une ligne. Le reste du verdict n'est pas perdu pour autant : le corps
+  // montre le résultat en ENTIER, juste au-dessus.
+  it('un verdict de plusieurs lignes garde tout son texte dans le corps', async () => {
+    const verdict = [
+      '**Verdict global : APPROVE** — aucun constat bloquant ; 5 mineurs.',
+      '',
+      'Le détail qui suit la première ligne compte autant : GARDE-MOI.',
+    ].join('\n');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ConversationFeedView
+          feed={{
+            items: [
+              {
+                kind: 'child',
+                from: { name: 'Intendant', slug: 'intendant', avatarUrl: null },
+                job: {
+                  id: 'job-2',
+                  agentName: 'Le Relecteur',
+                  agentSlug: 'relecteur',
+                  agentAvatarUrl: null,
+                  status: 'completed',
+                  task: 'relis',
+                  result: verdict,
+                  error: null,
+                  createdAt: null,
+                  completedAt: null,
+                },
+              },
+            ],
+            totals: feed.totals,
+          }}
+        />,
+      );
+    });
+    const tete = container.querySelector('button');
+    if (!tete) throw new Error('la délégation n’a pas de tête cliquable');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // Le pied dit le verdict, en une ligne, dans sa couleur. « Verdict global »
+    // est une forme RÉELLE des résultats de revue, pas une invention du test.
+    const pied = [...container.querySelectorAll('.text-feed-delegation')]
+      .map((n) => n.textContent ?? '')
+      .find((t) => t.includes('APPROVE'));
+    expect(pied).toBe('APPROVE — aucun constat bloquant ; 5 mineurs.');
+    // Et la suite du verdict est là, entière, dans le corps.
+    expect(container.textContent).toContain('GARDE-MOI');
+    root.unmount();
+    container.remove();
+  });
+
   it('la réponse ferme le fil, après l’envoi', () => {
     expect(html.lastIndexOf('La revue d’août est prête et envoyée.')).toBeGreaterThan(
       html.indexOf('Sent to telegram'),

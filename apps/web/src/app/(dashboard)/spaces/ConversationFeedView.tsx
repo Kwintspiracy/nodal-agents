@@ -779,11 +779,21 @@ function BlockLabel({ children }: { children: React.ReactNode }) {
  * Le verdict rendu par un délégué, quand il en a écrit un — jamais déduit.
  *
  * La seule forme que ce fil sait reconnaître sans deviner est celle que les
- * agents de revue écrivent : une première ligne « Verdict », seule (le
- * verdict est alors la ligne suivante) ou suivie de deux points. Tout le reste
- * rend `null` et la ligne n'est pas dessinée : inventer un verdict à partir de
- * la première phrase d'un résultat quelconque ferait dire au délégué ce qu'il
- * n'a pas dit (invariant #4).
+ * agents de revue écrivent VRAIMENT, telle qu'elle est dans `agent_jobs.result`
+ * (relevé du 17/09) : une première ligne « Verdict », « Verdict global »,
+ * « Verdict final », suivie de deux points ou d'un tiret cadratin — ou le mot
+ * seul sur sa ligne, le verdict étant alors la ligne suivante. Le séparateur
+ * n'accepte PAS le trait d'union : « Verdict - » n'apparaît nulle part, et un
+ * tiret est trop banal pour découper une phrase sans risque.
+ *
+ * Tout le reste rend `null` et la ligne n'est pas dessinée : inventer un
+ * verdict à partir de la première phrase d'un résultat quelconque ferait dire
+ * au délégué ce qu'il n'a pas dit (invariant #4). « Verdict émis. Je clos la
+ * tâche. » — une vraie ligne de la base — est bien écarté.
+ *
+ * La ligne rendue est la PREMIÈRE, parce que le pied du bloc tient sur une
+ * ligne. Le reste n'est pas perdu : le corps montre le résultat en entier,
+ * juste au-dessus (« Result », ou le fil du délégué qui porte sa réponse).
  */
 export function delegationVerdict(result: string | null): string | null {
   if (result === null) return null;
@@ -793,7 +803,7 @@ export function delegationVerdict(result: string | null): string | null {
     .filter((l) => l !== '');
   const [head, next] = lines;
   if (head === undefined) return null;
-  const inline = /^verdict\s*[:—-]\s*(.+)$/i.exec(head);
+  const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head);
   if (inline?.[1] !== undefined) return inline[1];
   if (/^verdict$/i.test(head)) return next ?? null;
   return null;
@@ -834,10 +844,14 @@ function DelegationGroup({
   );
   const totals = job.feed?.totals;
   // Chaque part disparaît quand on ne la connaît pas : jamais « $0 », jamais
-  // « 0 tokens » (principe du tableau).
+  // « 0 tokens » (principe du tableau). Le fil d'un délégué porte TOUJOURS des
+  // totaux dès qu'il est assemblé, à zéro tant qu'aucun appel de modèle n'a été
+  // enregistré : c'est la SOMME qui dit si on sait quelque chose, pas la
+  // présence de l'objet (revue de la PR #141).
+  const tokens = totals === undefined ? 0 : totals.inputTokens + totals.outputTokens;
   const metrics = [
     durationMs !== null && durationMs > 0 ? formatMs(durationMs) : null,
-    totals ? `${formatTokens(totals.inputTokens + totals.outputTokens)} tokens` : null,
+    tokens > 0 ? `${formatTokens(tokens)} tokens` : null,
     totals && totals.costUsd !== null ? formatCost(totals.costUsd) : null,
   ]
     .filter((x): x is string => x !== null)
