@@ -22,8 +22,11 @@ const turn = (name: string, slug: string | null): FeedItem => ({
   usage: null,
 });
 
+// #135 — un item de délégation dit aussi QUI a délégué. Dans ces fixtures la
+// tête du fil est Alfred : c'est donc lui qui confie le travail.
 const child = (name: string, slug: string | null, nested: FeedItem[] = []): FeedItem => ({
   kind: 'child',
+  from: { name: 'Alfred', slug: 'alfred' },
   job: {
     id: `job-${slug ?? name}`,
     agentName: name,

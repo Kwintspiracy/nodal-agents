@@ -147,6 +147,8 @@ describe('deliverySummary — ce que le modèle compte', () => {
         items: [
           {
             kind: 'child',
+            // #135 — l'item dit aussi qui a délégué : la tête du fil, Alfred.
+            from: { name: 'Alfred', slug: 'alfred' },
             job: {
               id: 'j2',
               agentName: 'Le Codeur',
