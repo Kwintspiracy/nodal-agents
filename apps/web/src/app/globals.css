@@ -43,6 +43,20 @@
   --c-run-bg: rgba(53, 101, 255, 0.12);
   --c-err: #b54141;
 
+  /* Feed palette — one colour per kind of thing in a run (Figma feed/*,
+     issue #135). Only `feed-composer` is used today; the others land now so
+     the next PRs of #135, one per feed block, can read `text-feed-tool` and
+     friends without touching this file again. */
+  --c-feed-tool: #0b7a75;
+  --c-feed-argument: #8a5a2b;
+  --c-feed-model: #8e2a9e;
+  --c-feed-path: #2f5fa6;
+  --c-feed-delegation: #b58900;
+  --c-feed-question: #b0306f;
+  --c-feed-reasoning: #6b7280;
+  --c-feed-metric: #8a8f98;
+  --c-feed-composer: #dde3ee;
+
   color-scheme: light;
 
   /* Legacy aliases — existing dashboard pages still read these.
@@ -93,6 +107,20 @@
   --c-run-bg: rgba(53, 101, 255, 0.18);
   --c-err: #ff5631;
 
+  /* Feed palette — one colour per kind of thing in a run (Figma feed/*,
+     issue #135). Only `feed-composer` is used today; the others land now so
+     the next PRs of #135, one per feed block, can read `text-feed-tool` and
+     friends without touching this file again. */
+  --c-feed-tool: #4ec9b0;
+  --c-feed-argument: #ce9178;
+  --c-feed-model: #c586c0;
+  --c-feed-path: #9cdcfe;
+  --c-feed-delegation: #e5c07b;
+  --c-feed-question: #f48fb1;
+  --c-feed-reasoning: #8b949e;
+  --c-feed-metric: #6e7681;
+  --c-feed-composer: #1f2430;
+
   color-scheme: dark;
 }
 
@@ -125,6 +153,20 @@
   --color-run: var(--c-run);
   --color-run-bg: var(--c-run-bg);
   --color-err: var(--c-err);
+
+  /* Feed palette — one colour per kind of thing in a run (Figma feed/*,
+     issue #135). Only `feed-composer` is used today; the others land now so
+     the next PRs of #135, one per feed block, can read `text-feed-tool` and
+     friends without touching this file again. */
+  --color-feed-tool: var(--c-feed-tool);
+  --color-feed-argument: var(--c-feed-argument);
+  --color-feed-model: var(--c-feed-model);
+  --color-feed-path: var(--c-feed-path);
+  --color-feed-delegation: var(--c-feed-delegation);
+  --color-feed-question: var(--c-feed-question);
+  --color-feed-reasoning: var(--c-feed-reasoning);
+  --color-feed-metric: var(--c-feed-metric);
+  --color-feed-composer: var(--c-feed-composer);
 
   /* Type scale — bumped one step up from the original handoff for legibility,
      and snapped to whole pixels (the handoff used fractional sizes like 12.5px).
