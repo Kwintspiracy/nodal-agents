@@ -20,7 +20,7 @@ import type {
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
 import Markdown, { plainText } from '@/components/Markdown.tsx';
-import { truncate } from '@/lib/format-time';
+import { formatClock, truncate } from '@/lib/format-time';
 import ThinkingBlock from './ThinkingBlock.tsx';
 import ToolBlock from './ToolBlock.tsx';
 import ModelCallBlock from './ModelCallBlock.tsx';
@@ -130,7 +130,7 @@ function FeedItemView({
       // après les blocs du tour, plutôt qu'à une place inventée.
       return (
         <Turn>
-          <Who name={item.agent.name ?? 'Agent'} model={item.model} />
+          <Who name={item.agent.name ?? 'Agent'} model={item.model} at={item.at} />
           {item.blocks.map((b, i) => (
             <Block key={i} block={b} deliverables={deliverables} />
           ))}
@@ -186,16 +186,26 @@ function Turn({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Qui parle, et avec quel modèle. Les nombres du tour ne sont plus là (#135) :
- * ils ont leur bloc (`ModelCallBlock`). Le modèle prend la couleur `feed/model`
- * — sur une ligne, la différence entre les choses est la COULEUR.
+ * Qui parle, avec quel modèle, et à quelle heure — le composant `TurnHeader` du
+ * tableau #135 : avatar carré, nom, modèle, puis l'heure de début poussée à
+ * droite. Les nombres du tour ne sont plus là (#135) : ils ont leur bloc
+ * (`ModelCallBlock`). Le modèle prend la couleur `feed/model` — sur une ligne,
+ * la différence entre les choses est la COULEUR.
+ *
+ * L'heure ne se dessine QUE si le tour en porte une (invariant #4) : un tour
+ * sans ligne d'audit n'a pas de date, et une heure devinée serait un mensonge
+ * de plus à l'écran.
  */
-function Who({ name, model }: { name: string; model?: string | null }) {
+function Who({ name, model, at }: { name: string; model?: string | null; at?: Date | null }) {
   return (
-    <div className="mb-1.5 flex items-baseline gap-2">
+    <div className="mb-1.5 flex items-center gap-2.5">
+      <AgentAvatar name={name} size="sm" shape="square" />
       <span className="text-title-15 text-ink">{name}</span>
       {model !== null && model !== undefined && model !== '' && (
         <span className="text-mono-11 text-feed-model">{model}</span>
+      )}
+      {at !== null && at !== undefined && (
+        <span className="ml-auto text-mono-11 text-ink-4">{formatClock(at)}</span>
       )}
     </div>
   );

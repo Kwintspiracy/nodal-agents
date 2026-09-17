@@ -53,6 +53,19 @@ export function formatDate(date: DateInput): string {
   });
 }
 
+/**
+ * Clock time only, HH:MM, in the viewer's locale ("14:02"). 24-hour, because
+ * that is the form the feed header is drawn with. Null/undefined → '—'.
+ */
+export function formatClock(date: DateInput): string {
+  if (!date) return '—';
+  return toDate(date).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 /** Truncates `s` to `n` characters, appending an ellipsis when it overflows. */
 export function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s;

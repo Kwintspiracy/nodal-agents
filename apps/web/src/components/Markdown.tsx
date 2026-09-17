@@ -72,6 +72,19 @@ function kids(node: { children?: RootContent[] }, tone: MarkdownTone): React.Rea
 const PROSE = 'max-w-[68ch] text-body-15';
 
 /**
+ * La taille d'un PARAGRAPHE, par voix (#135). L'agent parle en 13 px : c'est
+ * le fond du fil, et en 15 px il écrasait tout ce qui l'entoure — les blocs
+ * d'outil, les cartes, les lignes d'appel sont tous en 13 ou moins. La
+ * DEMANDE, elle, garde sa taille : sa bulle est courte, c'est la phrase que
+ * l'utilisateur relit, et c'est elle qui donne l'échelle au fil.
+ *
+ * Seuls les paragraphes changent : listes, titres et code gardent la leur.
+ */
+function paragraphSize(tone: MarkdownTone): string {
+  return tone === 'agent' ? 'text-body-13' : 'text-body-15';
+}
+
+/**
  * L'adresse d'un lien telle qu'on accepte de la poser dans un `href`, ou
  * `null`. Le texte vient d'un LLM ou d'un outil : `[ici](javascript:…)` serait
  * un clic qui exécute du code, `data:` une page forgée. Seuls `http`, `https`,
@@ -97,12 +110,16 @@ function MdNode({ node, tone }: { node: RootContent; tone: MarkdownTone }): Reac
   // l'utilisateur (`text-ink`). Le design ne distingue pas les deux voix par
   // la couleur : ce qui les distingue, c'est l'avatar et la carte autour de la
   // demande. En `ink-2`, la parole de l'agent — le fond du fil — se lisait
-  // comme une note de bas de page.
-  void tone;
+  // comme une note de bas de page. La voix se dit par la TAILLE (#135), pas
+  // par la couleur.
   const ink = 'text-ink';
   switch (node.type) {
     case 'paragraph':
-      return <p className={`mb-3 last:mb-0 ${PROSE} ${ink}`}>{kids(node, tone)}</p>;
+      return (
+        <p className={`mb-3 last:mb-0 max-w-[68ch] ${paragraphSize(tone)} ${ink}`}>
+          {kids(node, tone)}
+        </p>
+      );
     case 'heading':
       return node.depth <= 2 ? (
         <h2 className="mt-4 mb-2 text-title-15 text-ink first:mt-0">{kids(node, tone)}</h2>

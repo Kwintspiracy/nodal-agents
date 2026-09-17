@@ -391,6 +391,9 @@ export function buildConversationThread(input: {
         model: null,
         blocks: [{ kind: 'prose', text: message.content }],
         usage: null,
+        // Le message de chat, lui, EST daté : l'en-tête du tour montre l'heure
+        // où l'agent a parlé (#135).
+        at: message.createdAt,
       });
     }
 

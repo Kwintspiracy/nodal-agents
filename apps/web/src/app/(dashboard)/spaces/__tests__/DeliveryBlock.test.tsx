@@ -95,6 +95,7 @@ const turnWith = (...cards: Array<Extract<Step, { kind: 'tool' }>>): FeedItem =>
   turnSource: 'audit',
   agent: { name: 'Alfred', slug: 'alfred' },
   model: null,
+  at: null,
   usage: null,
   blocks: cards.map((step) => ({ kind: 'card' as const, step })),
 });

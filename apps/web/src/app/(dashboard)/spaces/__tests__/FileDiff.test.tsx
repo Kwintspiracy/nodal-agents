@@ -80,6 +80,7 @@ const feedWith = (files: Array<{ path: string; action: string }>): ConversationF
       turnSource: 'audit',
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'mock',
+      at: null,
       usage: null,
       blocks: [
         {

@@ -51,6 +51,10 @@ const feed: ConversationFeed = {
       turnSource: 'audit',
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'claude-opus-5',
+      // Construite à partir de composants LOCAUX : l'en-tête affiche l'heure
+      // dans le fuseau du lecteur, et une date UTC rendrait le test dépendant
+      // du fuseau de la machine de CI.
+      at: new Date(2026, 8, 17, 14, 2),
       usage: {
         inputTokens: 12000,
         outputTokens: 480,
@@ -206,6 +210,59 @@ describe('ConversationFeedView', () => {
     expect(html.indexOf('text-mono-11 text-feed-model')).toBeLessThan(raisonnement);
   });
 
+  it('l’en-tête du tour porte l’avatar, le nom, le modèle, puis l’heure à droite', () => {
+    // #135, composant `TurnHeader` : l'avatar carré de l'agent ouvre la ligne
+    // (ses initiales, comme partout ailleurs dans l'application)…
+    expect(html).toContain('>AL<');
+    expect(html).toMatch(/rounded-\[8px\][^"]*"[^>]*>AL</);
+    // …et l'heure de DÉBUT du tour la ferme, poussée à droite.
+    const heure = new Date(2026, 8, 17, 14, 2).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    expect(heure).toBe('14:02');
+    expect(html).toMatch(/ml-auto text-mono-11 text-ink-4">14:02</);
+    // Elle précède la prose : c'est bien l'en-tête, pas un pied de tour.
+    expect(html.indexOf('>14:02<')).toBeLessThan(html.indexOf('Je reprends le '));
+  });
+
+  it('un tour SANS heure n’en dessine aucune — rien d’inventé', () => {
+    const sansHeure = renderToStaticMarkup(
+      <ConversationFeedView
+        feed={{
+          items: [
+            {
+              kind: 'turn',
+              index: 1,
+              turn: 1,
+              turnSource: 'audit',
+              agent: { name: 'Alfred', slug: 'alfred' },
+              model: 'claude-opus-5',
+              at: null,
+              usage: null,
+              blocks: [{ kind: 'prose', text: 'Rien à dater ici.' }],
+            },
+          ],
+          totals: feed.totals,
+        }}
+      />,
+    );
+    // L'en-tête est bien là — avatar et nom — mais sans sa case de droite.
+    expect(sansHeure).toContain('>AL<');
+    expect(sansHeure).toContain('>Alfred<');
+    expect(sansHeure).not.toContain('ml-auto text-mono-11 text-ink-4');
+    expect(sansHeure).not.toMatch(/>\d{2}:\d{2}</);
+  });
+
+  it('l’agent parle en 13 px ; la bulle de la demande garde sa taille', () => {
+    // #135 — la voix de l'agent est le FOND du fil : en 15 px elle écrasait
+    // les blocs qui l'entourent, tous en 13 ou moins.
+    expect(html).toMatch(/max-w-\[68ch\] text-body-13 text-ink">Je reprends le /);
+    // La demande de l'utilisateur, elle, ne bouge pas.
+    expect(html).toMatch(/max-w-\[68ch\] text-body-15 text-ink">Prépare la revue</);
+  });
+
   it('le markdown de la prose est RENDU : plus d’astérisques à l’écran', () => {
     expect(html).toContain('<strong class="font-semibold text-ink">format</strong>');
     expect(html).not.toContain('**format**');
@@ -232,6 +289,7 @@ describe('ConversationFeedView', () => {
       turnSource: 'audit' as const,
       agent: { name: 'Alfred', slug: 'alfred' },
       model: 'claude-opus-5',
+      at: new Date(2026, 8, 17, 14, 9),
       usage: null,
       blocks: [{ kind: 'steps' as const, steps: [tool({ toolName: 'file_read' })] }],
     };
@@ -313,6 +371,7 @@ describe('ConversationFeedView', () => {
           turnSource: 'audit',
           agent: { name: 'Alfred', slug: 'alfred' },
           model: null,
+          at: null,
           usage: null,
           blocks: [
             {
@@ -372,6 +431,7 @@ describe('ConversationFeedView', () => {
               turnSource: 'audit',
               agent: { name: 'Alfred', slug: 'alfred' },
               model: null,
+              at: null,
               usage: null,
               blocks: [
                 {

@@ -60,6 +60,7 @@ const tour = (text: string): FeedItem => ({
   turnSource: 'audit',
   agent: { name: 'Alfred', slug: 'alfred' },
   model: 'claude-opus-5',
+  at: null,
   blocks: [{ kind: 'prose', text }],
   usage: null,
 });

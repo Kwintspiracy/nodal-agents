@@ -294,6 +294,31 @@ describe('buildConversationFeed — un job cron réel', () => {
     expect(t1?.kind === 'turn' && t1.agent).toEqual({ name: 'Veilleur', slug: 'veilleur' });
   });
 
+  it('chaque tour porte l’heure de sa PREMIÈRE ligne d’audit ; sans ligne, aucune heure', () => {
+    // #135 — l'en-tête montre quand le tour a commencé. La seule date lue est
+    // celle des lignes d'audit d'outil : le tour 1 en a deux (…48.248 puis
+    // …48.259) et prend la plus ancienne, pas la dernière.
+    const turns = feed.items.filter((i) => i.kind === 'turn');
+    expect(turns[0]?.kind === 'turn' && turns[0].at).toEqual(at('2026-09-05T15:01:48.248Z'));
+    expect(turns[1]?.kind === 'turn' && turns[1].at).toEqual(at('2026-09-05T15:02:15.943Z'));
+    // Un tour qui n'a appelé aucun outil n'a rien à dater : `null`, jamais la
+    // date du job — elle daterait tous les tours de la même heure.
+    const seul = buildConversationFeed(
+      {
+        ...job,
+        task: 'x',
+        messages: [
+          { role: 'user', content: 'x' },
+          { role: 'assistant', content: [{ type: 'text', text: 'Je regarde.' }] },
+        ],
+      },
+      [],
+      [],
+    );
+    const t = seul.items.find((i) => i.kind === 'turn');
+    expect(t?.kind === 'turn' && t.at).toBeNull();
+  });
+
   it('tour 1 : les actions mineures des tours 1 et 2 tiennent en UN groupe, dispatchées sur la CARTE persistée', () => {
     const t1 = feed.items.find((i) => i.kind === 'turn' && i.index === 1);
     expect(t1?.kind === 'turn' && t1.blocks).toHaveLength(1);
@@ -585,6 +610,7 @@ describe('compactTurns — les tours muets se replient (P2bis)', () => {
     turnSource: 'audit',
     agent: { name: 'Alfred', slug: 'alfred' },
     model: 'm',
+    at: null,
     blocks: [],
     usage: null,
     ...over,
