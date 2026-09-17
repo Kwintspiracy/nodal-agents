@@ -150,7 +150,10 @@ export default function ThreadComposer({
         // son conteneur, et la rangée d'actions se calait sur CE bas-là.
         // `min-h-[60px]` = COMPOSER_MIN_HEIGHT_PX, le plancher de trois lignes
         // tenu aussi en CSS, avant que `fitToContent` ait mesuré quoi que ce soit.
-        className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14"
+        // `placeholder:text-ink-2/70` : `ink-4`, l'indication par défaut de
+        // `TextArea bare`, ne fait que ~2,6:1 sur la surface feed/composer
+        // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
+        className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
       {/* La rangée d'actions : l'envoi à droite, sous la zone de texte. */}
       <div className="flex justify-end">

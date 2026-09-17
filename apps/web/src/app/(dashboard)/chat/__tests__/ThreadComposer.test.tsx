@@ -10,7 +10,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import ThreadComposer, { COMPOSER_MIN_HEIGHT_PX, COMPOSER_ROWS } from '../ThreadComposer.tsx';
+// Les hauteurs sont écrites en dur dans les assertions, jamais importées du
+// composant : un test qui lit la constante qu'il prouve reste vert quand on
+// l'abaisse (revue Reviewer C).
+import ThreadComposer from '../ThreadComposer.tsx';
 
 const sendChatMessageAction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
 const refresh = vi.hoisted(() => vi.fn());
@@ -78,6 +81,12 @@ describe('ThreadComposer', () => {
     expect(frame.className).not.toContain('bg-paper');
     expect(el.className).toContain('text-body-14');
     expect(el.className).not.toContain('text-body-15');
+    // Plancher et plafond du cadre, tenus en CSS avant toute mesure.
+    expect(el.className).toContain('min-h-[60px]');
+    expect(el.className).toContain('max-h-[200px]');
+    // L'indication se lit sur la surface : `ink-4` n'y fait que ~2,6:1
+    // (revue Reviewer C).
+    expect(el.className).toContain('placeholder:text-ink-2/70');
   });
 
   it('après un envoi, la zone vidée garde ses trois lignes', async () => {
@@ -86,12 +95,14 @@ describe('ThreadComposer', () => {
     await press('Enter');
     const el = textarea();
     expect(el.value).toBe('');
-    expect(el.rows).toBe(COMPOSER_ROWS);
+    expect(el.rows).toBe(3);
     // jsdom ne met aucune hauteur au contenu : `scrollHeight` vaut 0, et c'est
     // donc le PLANCHER qui décide. Sans lui, la zone vidée retombait à 0 px.
+    // Le chiffre est écrit ici EN DUR — trois lignes de 20 px : lu depuis les
+    // constantes du composant, le test suivrait un plancher qu'on abaisserait.
     const measured = Number.parseInt(el.style.height, 10);
     expect(Number.isNaN(measured)).toBe(false);
-    expect(measured).toBeGreaterThanOrEqual(COMPOSER_MIN_HEIGHT_PX);
+    expect(measured).toBeGreaterThanOrEqual(60);
   });
 
   it('Entrée envoie le texte TEL QUEL, retours à la ligne compris, puis vide le champ', async () => {
