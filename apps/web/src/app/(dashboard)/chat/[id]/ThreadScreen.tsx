@@ -42,7 +42,17 @@ export default function ThreadScreen({
         // centrées dans la même largeur, et leurs bords tombent l'un sur
         // l'autre. Sans ça, la saisie était décalée d'une demi-barre vers la
         // droite (Quentin, 17/09).
-        <div className="shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9 mr-[var(--thread-gutter,0px)]">
+        <div className="relative shrink-0 px-5 pt-2 pb-3 sm:px-8 lg:px-9 mr-[var(--thread-gutter,0px)]">
+          {/* Le FONDU : le fil ne se coupe plus net au ras de la saisie, il
+              s'éteint sur quarante pixels dans la couleur du fond, comme sous
+              n'importe quelle messagerie (Quentin, 17/09 : « la séparation
+              est très abrupte »). Posé au-dessus de la saisie, dans sa largeur
+              — donc sans la gouttière de la barre, qui reste nette — et
+              transparent aux clics : on peut toujours défiler à travers. */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-full h-10 bg-linear-to-t from-canvas to-transparent"
+          />
           {composer}
         </div>
       )}

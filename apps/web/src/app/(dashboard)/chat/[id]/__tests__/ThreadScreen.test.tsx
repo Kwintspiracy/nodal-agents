@@ -51,6 +51,26 @@ describe('ThreadScreen @cap:parler-a-un-agent/ecran', () => {
     expect(slot.className).toContain('mr-[var(--thread-gutter,0px)]');
   });
 
+  it('le fil s’éteint en fondu au-dessus de la saisie, sans bloquer le défilement', async () => {
+    await render(
+      <ThreadScreen composer={<div data-testid="composer">la saisie</div>}>
+        <p>le fil</p>
+      </ThreadScreen>,
+    );
+    const slot = container.querySelector('[data-testid="composer"]')?.parentElement;
+    if (!slot) throw new Error('no composer slot rendered');
+    // Le fondu vit DANS la fente de la saisie, juste au-dessus d'elle : il
+    // suit donc sa largeur et sa gouttière sans un calcul de plus.
+    const fade = slot.querySelector('[aria-hidden="true"]');
+    if (!fade) throw new Error('no fade rendered above the composer');
+    expect(fade.className).toContain('bottom-full');
+    expect(fade.className).toContain('from-canvas');
+    expect(fade.className).toContain('to-transparent');
+    // Transparent aux clics : la molette et le doigt traversent.
+    expect(fade.className).toContain('pointer-events-none');
+    expect(slot.className).toContain('relative');
+  });
+
   it('le fil publie sa gouttière sur le parent, en pixels', async () => {
     await render(
       <ThreadScreen composer={<div>la saisie</div>}>
