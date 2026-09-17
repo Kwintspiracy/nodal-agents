@@ -14,6 +14,10 @@ import { createRoot, type Root } from 'react-dom/client';
 // composant : un test qui lit la constante qu'il prouve reste vert quand on
 // l'abaisse (revue Reviewer C).
 import ThreadComposer from '../ThreadComposer.tsx';
+// La liste ATTENDUE se calcule avec la fonction que l'écran d'édition appelle :
+// c'est le sens de « la même liste que les réglages », et le seul moyen de le
+// prouver sans recopier un catalogue qui bougera.
+import { buildModelOptionGroups, modelIdsOf } from '@/lib/model-choices.ts';
 
 const sendChatMessageAction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
 const refresh = vi.hoisted(() => vi.fn());
@@ -21,8 +25,21 @@ const setAgentModelAndEffortAction = vi.hoisted(() =>
   vi.fn(async (): Promise<{ ok: true } | { ok: false; message: string }> => ({ ok: true })),
 );
 const toastError = vi.hoisted(() => vi.fn());
+/** La liste EN DIRECT du fournisseur — la même action que l'écran d'édition. */
+const listKeyModelsAction = vi.hoisted(() =>
+  vi.fn(
+    async (): Promise<{ ok: true; data: string[] } | { ok: false; message: string }> => ({
+      ok: true,
+      data: [],
+    }),
+  ),
+);
 
-vi.mock('@/lib/actions.ts', () => ({ sendChatMessageAction, setAgentModelAndEffortAction }));
+vi.mock('@/lib/actions.ts', () => ({
+  sendChatMessageAction,
+  setAgentModelAndEffortAction,
+  listKeyModelsAction,
+}));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: toastError } }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 
@@ -65,6 +82,8 @@ beforeEach(() => {
   refresh.mockClear();
   setAgentModelAndEffortAction.mockClear();
   setAgentModelAndEffortAction.mockResolvedValue({ ok: true });
+  listKeyModelsAction.mockClear();
+  listKeyModelsAction.mockResolvedValue({ ok: true, data: [] });
   toastError.mockClear();
 });
 
@@ -144,132 +163,209 @@ describe('ThreadComposer', () => {
   });
 });
 
-// ─── La pastille « modèle · effort » (#138) ──────────────────────────────────
+// ─── Les trois listes : provider, modèle, effort (#138) ──────────────────────
 //
 // Ce qui se prouve ici : le composeur RÈGLE l'agent, il ne se contente pas
-// d'afficher son modèle. L'assertion porte sur l'ARGUMENT reçu par l'action
-// mockée, et sur ce que la pastille montre APRÈS (invariant #5) — jamais sur
-// un nombre d'appels.
+// d'afficher son modèle, et sa liste de modèles est CELLE DES RÉGLAGES. Le
+// reproche de Quentin portait exactement là-dessus : « la liste des modèles est
+// foireuse et ne correspond pas à ce qu'on a dans les settings ».
 //
-// Les modèles et les paliers sont ceux que le test DONNE, pas ceux du
-// catalogue : la pastille n'a pas à savoir ce qu'Anthropic propose, et un test
-// qui lirait le vrai catalogue changerait de couleur au prochain modèle ajouté.
+// Les assertions portent sur l'ARGUMENT reçu par l'action mockée et sur ce que
+// les listes montrent APRÈS (invariant #5) — jamais sur un nombre d'appels.
+//
+// Les fournisseurs sont de VRAIS fournisseurs du catalogue (openai, anthropic) :
+// reposer le modèle quand on change de clé n'a de sens qu'avec un vrai
+// catalogue derrière, et un fournisseur inventé ne prouverait rien.
+
+const KEYS = [
+  { id: 'key-openai', provider: 'openai', nickname: 'Work OpenAI' },
+  { id: 'key-anthropic', provider: 'anthropic', nickname: null },
+  // deepseek-chat, premier du catalogue DeepSeek, n'a AUCUN contrôle de
+  // raisonnement : c'est le témoin de l'effort qui doit tomber.
+  { id: 'key-deepseek', provider: 'deepseek', nickname: 'DS' },
+];
 
 const PICKER = {
   agentId: 'agent-1',
-  model: 'claude-opus-5',
-  modelOptions: [
-    { modelId: 'claude-opus-5', label: 'Claude Opus 5' },
-    { modelId: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-  ],
-  effortsByModel: {
-    'claude-opus-5': ['low', 'medium', 'high', 'max', 'off'],
-    'claude-sonnet-5': ['low', 'high'],
-  },
+  llmKeyId: 'key-openai',
+  model: 'gpt-5',
+  llmKeys: KEYS,
 };
 
-function chip(): HTMLButtonElement {
-  const el = container.querySelector<HTMLButtonElement>('[data-testid="model-effort-chip"]');
-  if (!el) throw new Error('no chip rendered');
+function select(name: 'provider' | 'model' | 'effort'): HTMLSelectElement {
+  const el = container.querySelector<HTMLSelectElement>('[data-testid="composer-' + name + '"]');
+  if (!el) throw new Error('no ' + name + ' select rendered');
   return el;
 }
 
-async function click(el: Element): Promise<void> {
+function optionValues(el: HTMLSelectElement): string[] {
+  return [...el.querySelectorAll('option')].map((o) => o.value);
+}
+
+/** Choisit une valeur comme un utilisateur : la valeur, puis l'événement. */
+async function choose(el: HTMLSelectElement, value: string): Promise<void> {
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
   await act(async () => {
-    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    setter?.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
   });
 }
 
-/** Le bouton d'option portant ce libellé, dans le panneau ouvert. */
-function option(label: string): HTMLButtonElement {
-  const found = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((b) =>
-    b.textContent?.includes(label),
-  );
-  if (!found) throw new Error(`no option "${label}" in the popover`);
-  return found;
+/** Laisse la liste EN DIRECT arriver : le composant la demande au montage. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
-describe('ThreadComposer — modèle et effort @cap:choisir-modele/ecran', () => {
-  it('la pastille dit le modèle courant, son effort, et la portée du réglage', async () => {
+describe('ThreadComposer — provider, modèle, effort @cap:choisir-modele/ecran', () => {
+  it('rend TROIS listes, portant les valeurs de l’agent', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
-    expect(chip().textContent).toContain('claude-opus-5');
-    expect(chip().textContent).toContain('Medium');
-    // Le réglage n'est PAS propre à cette conversation : la pastille le dit.
-    expect(chip().title).toBe("Sets the agent's model for every channel");
+    await settle();
+    expect(select('provider').value).toBe('key-openai');
+    expect(select('model').value).toBe('gpt-5');
+    expect(select('effort').value).toBe('medium');
+    // Le réglage n'est PAS propre à cette conversation, et chaque liste le dit.
+    expect(select('model').title).toBe("Sets the agent's setting for every channel");
   });
 
-  it('sans effort en base, la pastille dit « Auto »', async () => {
+  it('la liste des modèles est CELLE DES RÉGLAGES : catalogue + modèles vus en direct', async () => {
+    listKeyModelsAction.mockResolvedValue({
+      ok: true,
+      data: ['gpt-5', 'gpt-6-preview-not-catalogued'],
+    });
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort={null} />);
-    expect(chip().textContent).toContain('Auto');
+    await settle();
+    // La liste de l'écran d'édition pour la MÊME clé et la MÊME réponse du
+    // fournisseur — construite par la fonction que les deux écrans appellent.
+    const attendu = modelIdsOf(
+      buildModelOptionGroups('openai', ['gpt-5', 'gpt-6-preview-not-catalogued']),
+    );
+    expect(optionValues(select('model'))).toEqual(attendu);
+    // Et concrètement : le modèle vu en direct y est, une seule fois.
+    expect(
+      optionValues(select('model')).filter((v) => v === 'gpt-6-preview-not-catalogued'),
+    ).toEqual(['gpt-6-preview-not-catalogued']);
+    // La clé est lue par l'action que l'écran d'édition utilise, pas une autre.
+    expect(listKeyModelsAction.mock.calls).toEqual([['key-openai']]);
   });
 
-  it('ouvrir la pastille liste les modèles donnés et les paliers du modèle courant', async () => {
-    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
-    expect(container.querySelector('[data-testid="model-effort-popover"]')).toBeNull();
-    await click(chip());
-    const labels = [...container.querySelectorAll('[role="radio"]')].map((b) => b.textContent);
-    expect(labels.some((t) => t?.includes('Claude Sonnet 5'))).toBe(true);
-    expect(labels.some((t) => t?.includes('Auto'))).toBe(true);
-    expect(labels.some((t) => t?.includes('Max'))).toBe(true);
-    // Aucun `<select>` natif : le DS remplace les widgets natifs.
-    expect(container.querySelector('select')).toBeNull();
+  it('le fournisseur n’ayant pas répondu, il reste le catalogue — le repli de l’écran d’édition', async () => {
+    listKeyModelsAction.mockResolvedValue({ ok: false, message: 'provider unreachable' });
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort={null} />);
+    await settle();
+    expect(optionValues(select('model'))).toEqual(modelIdsOf(buildModelOptionGroups('openai', [])));
   });
 
-  it('choisir un effort l’écrit sur l’AGENT, et la pastille prend la nouvelle valeur', async () => {
+  it('changer de fournisseur REPOSE le modèle sur celui du nouveau', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
-    await click(chip());
-    await click(option('High'));
+    await settle();
+    await choose(select('provider'), 'key-anthropic');
+    // Le modèle gpt-5 ne veut rien dire chez Anthropic : il est reposé sur le
+    // premier du catalogue de la nouvelle clé, comme sur l'écran d'édition.
+    // 'medium' existe pour claude-opus-5, donc il reste.
     expect(setAgentModelAndEffortAction.mock.calls).toEqual([
-      [{ agentId: 'agent-1', model: 'claude-opus-5', reasoningEffort: 'high' }],
+      [
+        {
+          agentId: 'agent-1',
+          llmKeyId: 'key-anthropic',
+          model: 'claude-opus-5',
+          reasoningEffort: 'medium',
+        },
+      ],
     ]);
-    expect(chip().textContent).toContain('High');
-    // Le panneau se referme sur le choix.
-    expect(container.querySelector('[data-testid="model-effort-popover"]')).toBeNull();
+    expect(select('provider').value).toBe('key-anthropic');
+    expect(select('model').value).toBe('claude-opus-5');
+    expect(select('effort').value).toBe('medium');
   });
 
-  it('choisir un modèle qui n’offre pas l’effort courant repasse à Auto', async () => {
+  it('changer de fournisseur LÂCHE un effort que le nouveau modèle n’offre pas', async () => {
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
-    await click(chip());
-    await click(option('Claude Sonnet 5'));
-    // 'medium' n'est pas dans les paliers de claude-sonnet-5 : il tombe, comme
-    // sur l'écran d'édition, plutôt que de partir vers un refus de l'action.
+    await settle();
+    await choose(select('provider'), 'key-deepseek');
     expect(setAgentModelAndEffortAction.mock.calls).toEqual([
-      [{ agentId: 'agent-1', model: 'claude-sonnet-5', reasoningEffort: null }],
+      [
+        {
+          agentId: 'agent-1',
+          llmKeyId: 'key-deepseek',
+          model: 'deepseek-chat',
+          reasoningEffort: null,
+        },
+      ],
     ]);
-    expect(chip().textContent).toContain('claude-sonnet-5');
-    expect(chip().textContent).toContain('Auto');
+    expect(select('model').value).toBe('deepseek-chat');
+    expect(select('effort').value).toBe('');
+    // Rien à régler pour ce modèle : la liste reste, inerte, et le dit.
+    expect(select('effort').disabled).toBe(true);
+    expect(select('effort').title).toBe('This model offers no reasoning setting');
   });
 
-  it('un échec se dit et la pastille GARDE l’ancienne valeur', async () => {
+  it('changer de modèle écrit le nouveau et garde un effort qu’il offre', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="high" />);
+    await settle();
+    await choose(select('model'), 'gpt-5-mini');
+    expect(setAgentModelAndEffortAction.mock.calls).toEqual([
+      [
+        {
+          agentId: 'agent-1',
+          llmKeyId: 'key-openai',
+          model: 'gpt-5-mini',
+          reasoningEffort: 'high',
+        },
+      ],
+    ]);
+    expect(select('model').value).toBe('gpt-5-mini');
+    expect(select('effort').value).toBe('high');
+  });
+
+  it('choisir un effort l’écrit sur l’AGENT, et la liste prend la nouvelle valeur', async () => {
+    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
+    await settle();
+    await choose(select('effort'), 'low');
+    expect(setAgentModelAndEffortAction.mock.calls).toEqual([
+      [{ agentId: 'agent-1', llmKeyId: 'key-openai', model: 'gpt-5', reasoningEffort: 'low' }],
+    ]);
+    expect(select('effort').value).toBe('low');
+  });
+
+  it('un échec se dit et les listes GARDENT les anciennes valeurs', async () => {
     setAgentModelAndEffortAction.mockResolvedValue({
       ok: false,
-      message: 'Only the workspace owner can change an agent’s model.',
+      message: 'That LLM key is disabled.',
     });
     await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
-    await click(chip());
-    await click(option('High'));
-    expect(toastError.mock.calls).toEqual([
-      ['Only the workspace owner can change an agent’s model.'],
-    ]);
+    await settle();
+    await choose(select('provider'), 'key-anthropic');
+    expect(toastError.mock.calls).toEqual([['That LLM key is disabled.']]);
     // Ce que l'écran montre est ce que la base contient (inv. #4).
-    expect(chip().textContent).toContain('Medium');
-    expect(chip().textContent).not.toContain('High');
+    expect(select('provider').value).toBe('key-openai');
+    expect(select('model').value).toBe('gpt-5');
+    expect(select('effort').value).toBe('medium');
   });
 
-  it('sans agent, pas de pastille : il n’y a rien à régler', async () => {
+  it('sans agent, aucune liste : il n’y a rien à régler', async () => {
     await render(<ThreadComposer conversationId="conv-1" />);
-    expect(container.querySelector('[data-testid="model-effort-chip"]')).toBeNull();
+    await settle();
+    expect(container.querySelector('[data-testid="composer-provider"]')).toBeNull();
+    expect(container.querySelector('[data-testid="composer-model"]')).toBeNull();
     // Et l'envoi est toujours là.
     expect(container.querySelector('button')).not.toBeNull();
   });
 
-  it('Échap referme le panneau sans rien écrire', async () => {
-    await render(<ThreadComposer conversationId="conv-1" {...PICKER} reasoningEffort="medium" />);
-    await click(chip());
-    await act(async () => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    });
-    expect(container.querySelector('[data-testid="model-effort-popover"]')).toBeNull();
-    expect(setAgentModelAndEffortAction.mock.calls).toEqual([]);
+  it('sans aucune clé LLM, aucune liste — et rien n’est demandé au fournisseur', async () => {
+    await render(
+      <ThreadComposer
+        conversationId="conv-1"
+        agentId="agent-1"
+        llmKeyId={null}
+        model=""
+        reasoningEffort={null}
+        llmKeys={[]}
+      />,
+    );
+    await settle();
+    expect(container.querySelector('[data-testid="composer-provider"]')).toBeNull();
+    expect(listKeyModelsAction.mock.calls).toEqual([]);
   });
 });

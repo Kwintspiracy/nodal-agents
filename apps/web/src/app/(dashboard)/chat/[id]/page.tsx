@@ -42,9 +42,9 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
 
   const { conversation, feed, verification, cost, deliveries, live, canReply } = result.data;
   const lastProof = verification.sequences.at(-1) ?? null;
-  // #138 — ce que la pastille du composeur montre et propose. Lu ICI, côté
-  // serveur : la pastille reste un composant client sans requête à elle.
-  // Un agent disparu ne fait pas rougir la page — la pastille se tait.
+  // #138 — ce que les trois listes du composeur montrent : la clé de l'agent,
+  // son modèle, son effort, et les clés actives de l'espace. Un agent disparu
+  // ne fait pas rougir la page — les listes se taisent.
   const choices = canReply ? await getAgentModelChoicesAction(conversation.agentId) : null;
   const modelChoices = choices?.ok ? choices.data : null;
   const pendingDeliveries = deliveries.filter(
@@ -99,10 +99,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
               conversationId={conversation.id}
               agentName={conversation.agentName}
               agentId={conversation.agentId}
+              llmKeyId={modelChoices?.llmKeyId ?? null}
               model={modelChoices?.model ?? null}
               reasoningEffort={modelChoices?.reasoningEffort ?? null}
-              modelOptions={modelChoices?.modelOptions ?? []}
-              effortsByModel={modelChoices?.effortsByModel ?? {}}
+              llmKeys={modelChoices?.llmKeys ?? []}
             />
           ) : (
             <p className="mx-auto max-w-[760px] text-body-13 text-ink-4">

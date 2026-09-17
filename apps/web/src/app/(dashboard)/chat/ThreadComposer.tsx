@@ -22,8 +22,7 @@ import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
-import type { ModelChoice } from '@/lib/model-choices.ts';
-import ModelEffortChip from './ModelEffortChip.tsx';
+import ModelEffortControls, { type ComposerLlmKey } from './ModelEffortControls.tsx';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -54,10 +53,10 @@ export default function ThreadComposer({
   placeholder,
   onBeforeSend,
   agentId,
+  llmKeyId,
   model,
   reasoningEffort,
-  modelOptions,
-  effortsByModel,
+  llmKeys,
 }: {
   conversationId: string;
   /** À qui on écrit — le placeholder le dit. Absent : « Reply… ». */
@@ -77,16 +76,16 @@ export default function ThreadComposer({
    */
   onBeforeSend?: () => Promise<string>;
   /**
-   * #138 — la pastille « modèle · effort ». Les cinq champs vont ensemble :
-   * sans agent (la page d'un projet qui n'en a pas encore), il n'y a rien à
-   * régler et la pastille ne s'affiche pas — plutôt qu'un réglage posé sur
-   * personne.
+   * #138 — les trois listes « provider / modèle / effort ». Les champs vont
+   * ensemble : sans agent (la page d'un projet qui n'en a pas encore), il n'y
+   * a rien à régler et les listes ne s'affichent pas — plutôt qu'un réglage
+   * posé sur personne.
    */
   agentId?: string | null;
+  llmKeyId?: string | null;
   model?: string | null;
   reasoningEffort?: string | null;
-  modelOptions?: ModelChoice[];
-  effortsByModel?: Record<string, string[]>;
+  llmKeys?: ComposerLlmKey[];
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
@@ -173,25 +172,18 @@ export default function ThreadComposer({
         // (revue Reviewer C) ; aucun token ne se tient entre ink-4 et ink-2.
         className="block max-h-[200px] min-h-[60px] w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-body-14 placeholder:text-ink-2/70"
       />
-      {/* La rangée d'actions : le réglage du modèle à gauche, l'envoi à
+      {/* La rangée d'actions : provider, modèle et effort à gauche, l'envoi à
           droite, sous la zone de texte. */}
       <div className="flex items-center justify-end gap-2">
-        {agentId !== undefined &&
-          agentId !== null &&
-          agentId !== '' &&
-          model !== undefined &&
-          model !== null &&
-          model !== '' && (
-            <div className="mr-auto min-w-0">
-              <ModelEffortChip
-                agentId={agentId}
-                model={model}
-                reasoningEffort={reasoningEffort ?? null}
-                modelOptions={modelOptions ?? []}
-                effortsByModel={effortsByModel ?? {}}
-              />
-            </div>
-          )}
+        {agentId !== undefined && agentId !== null && agentId !== '' && (
+          <ModelEffortControls
+            agentId={agentId}
+            llmKeyId={llmKeyId ?? null}
+            model={model ?? ''}
+            reasoningEffort={reasoningEffort ?? null}
+            llmKeys={llmKeys ?? []}
+          />
+        )}
         <PrimaryButton
           variant="neutral"
           size="sm"

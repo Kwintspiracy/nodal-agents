@@ -1,15 +1,27 @@
 // model-choices.ts — ce qu'un agent peut choisir comme modèle et comme effort.
 //
 // Ces fonctions vivaient dans `AgentComposer.tsx` (l'écran d'édition d'un
-// agent). Le sélecteur du composeur de chat (#138) change EXACTEMENT le même
-// réglage : le laisser recalculer les règles de son côté, c'est se donner deux
-// définitions de « cet effort existe-t-il », qui divergeront. Elles sont donc
-// ici, pures, importées par l'écran d'édition, par le composeur, et par
-// l'action serveur qui écrit la ligne — la même règle des trois côtés.
+// agent). Les trois listes du composeur de chat (#138) règlent EXACTEMENT les
+// mêmes champs : les laisser recalculer les règles de leur côté, c'est se
+// donner deux définitions de « quels modèles cette clé propose » et de « cet
+// effort existe-t-il », qui divergeront — et c'est précisément ce qui s'est
+// produit. Elles sont donc ici, pures, importées par l'écran d'édition, par le
+// composeur, et par l'action serveur qui écrit la ligne : la même règle des
+// trois côtés.
 //
-// Aucun appel réseau : le catalogue est une donnée statique du paquet partagé.
+// Ces fonctions sont PURES : aucune ne va au réseau. La liste vue en direct
+// chez le fournisseur est lue par `listKeyModelsAction` côté écran, et passée
+// ici en argument — c'est ce qui permet de prouver PAR UN TEST que le composeur
+// et l'écran d'édition proposent la même chose pour la même clé.
 
-import { MODEL_CATALOG, findModelCatalogEntry, modelOptionLabel } from '@nodal-agents/shared';
+import {
+  MODEL_CATALOG,
+  findModelCatalogEntry,
+  groupModelCatalog,
+  modelOptionLabel,
+  type ModelCatalogEntry,
+} from '@nodal-agents/shared';
+import { prettyProviderName } from './provider-names.ts';
 
 /** L'ordre des paliers d'un contrôle `budget` — du plus petit au plus grand. */
 export const REASONING_BUDGET_ORDER = ['low', 'medium', 'high', 'max'] as const;
@@ -43,44 +55,100 @@ export const REASONING_LABELS: Record<string, string> = {
   max: 'Max',
 };
 
-/** Un modèle proposable : son identifiant et le nom que l'écran affiche. */
+/**
+ * Un modèle proposable. `entry` n'existe que pour un modèle CATALOGUÉ : c'est
+ * lui qui porte les capacités (outils, raisonnement). Un modèle vu en direct
+ * chez le fournisseur n'en a pas — on ne sait rien de lui, et on ne prétend
+ * donc rien à son sujet (inv. #4).
+ */
 export interface ModelChoice {
   modelId: string;
   label: string;
+  entry?: ModelCatalogEntry;
+}
+
+/** Le groupe des modèles vus en direct, tel que l'écran d'édition le nomme. */
+export const LIVE_MODELS_GROUP = 'Live from provider';
+
+/** Une section de la liste déroulante. `group: null` = sans intitulé. */
+export interface ModelOptionGroup {
+  group: string | null;
+  models: ModelChoice[];
 }
 
 /**
- * Les modèles proposés pour un fournisseur : son catalogue curé, et le modèle
- * courant en tête s'il n'y figure pas (un identifiant libre ou un modèle vu
- * en direct sur l'écran d'édition reste choisissable, donc gardable).
+ * LA liste des modèles d'une clé — celle de l'écran d'édition, et donc celle
+ * du composeur : le catalogue curé du fournisseur, groupé et trié comme
+ * `groupModelCatalog` le fait, puis les identifiants vus EN DIRECT chez le
+ * fournisseur qui n'y sont pas déjà.
  *
- * Volontairement SANS appel au `/models` du fournisseur : ce catalogue sert
- * une pastille de composeur, ouverte des dizaines de fois par session, et une
- * liste en direct y coûterait une requête réseau par ouverture. L'écran
- * d'édition, lui, garde sa liste en direct.
+ * Une seule fonction pour les deux écrans, parce que le reproche était
+ * exactement celui-là : la liste du composeur ne ressemblait pas à celle des
+ * réglages. Deux constructions séparées finissent toujours par diverger.
+ *
+ * `liveModelIds` vide = le fournisseur n'a pas répondu, ou n'a pas encore été
+ * interrogé : il ne reste que le catalogue, exactement comme sur l'écran
+ * d'édition.
  */
-export function catalogModelChoices(provider: string, currentModel: string): ModelChoice[] {
-  const curated = (MODEL_CATALOG[provider] ?? []).map((entry) => ({
-    modelId: entry.modelId,
-    label: modelOptionLabel(entry),
+export function buildModelOptionGroups(
+  provider: string,
+  liveModelIds: readonly string[],
+): ModelOptionGroup[] {
+  const catalog = MODEL_CATALOG[provider] ?? [];
+  const groups: ModelOptionGroup[] = groupModelCatalog(catalog).map(({ group, models }) => ({
+    group,
+    models: models.map((entry) => ({
+      modelId: entry.modelId,
+      label: modelOptionLabel(entry),
+      entry,
+    })),
   }));
-  if (currentModel !== '' && !curated.some((c) => c.modelId === currentModel)) {
-    return [{ modelId: currentModel, label: currentModel }, ...curated];
+  const catalogued = new Set(catalog.map((m) => m.modelId));
+  const extraLive = liveModelIds.filter((id) => !catalogued.has(id));
+  if (extraLive.length > 0) {
+    groups.push({
+      group: LIVE_MODELS_GROUP,
+      models: extraLive.map((modelId) => ({ modelId, label: modelId })),
+    });
   }
-  return curated;
+  return groups;
+}
+
+/** Tous les identifiants d'une liste, dans l'ordre d'affichage. */
+export function modelIdsOf(groups: readonly ModelOptionGroup[]): string[] {
+  return groups.flatMap((g) => g.models.map((m) => m.modelId));
+}
+
+/** Le modèle figure-t-il dans la liste déroulante ? */
+export function isModelInOptions(groups: readonly ModelOptionGroup[], modelId: string): boolean {
+  return groups.some((g) => g.models.some((m) => m.modelId === modelId));
 }
 
 /**
- * Le modèle est-il choisissable pour ce fournisseur ? Vrai s'il est au
- * catalogue, ou s'il est DÉJÀ celui de l'agent — on ne refuse jamais de
- * réécrire ce qui est écrit, sinon changer d'effort seul deviendrait
- * impossible sur un modèle hors catalogue.
+ * Le modèle par défaut d'un fournisseur : le premier de son catalogue. C'est
+ * ce que l'écran d'édition pose quand on change de clé — un identifiant de
+ * modèle n'a de sens que chez son fournisseur.
  */
-export function isSelectableModel(
-  provider: string,
-  modelId: string,
-  currentModel: string,
-): boolean {
-  if (modelId === currentModel) return true;
-  return findModelCatalogEntry(provider, modelId) !== undefined;
+export function defaultModelForProvider(provider: string): string {
+  return MODEL_CATALOG[provider]?.[0]?.modelId ?? '';
+}
+
+/** Le libellé d'une clé LLM, écrit comme l'écran d'édition l'écrit. */
+export function llmKeyLabel(key: { nickname?: string | null; provider: string }): string {
+  const pretty = prettyProviderName(key.provider);
+  return `${key.nickname ?? pretty} (${pretty})`;
+}
+
+/**
+ * L'effort demandé est-il refusable ? Vrai SEULEMENT quand le modèle est
+ * catalogué et que son contrôle ne l'offre pas.
+ *
+ * Un modèle hors catalogue (un identifiant libre, un modèle vu en direct) ne
+ * dit rien de ses paliers : le refuser interdirait un réglage que l'écran
+ * d'édition accepte, et inventer un verdict à partir d'une absence serait un
+ * faux « non ». On ne refuse donc que ce qu'on SAIT faux.
+ */
+export function isRefusedEffort(provider: string, modelId: string, effort: string): boolean {
+  if (findModelCatalogEntry(provider, modelId) === undefined) return false;
+  return !reasoningOptionValues(provider, modelId).includes(effort);
 }

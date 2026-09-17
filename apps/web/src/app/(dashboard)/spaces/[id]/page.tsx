@@ -77,10 +77,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     rootAgentName: rootAgent?.name ?? null,
   });
 
-  // #138 — la pastille règle le modèle de l'agent à qui la saisie ÉCRIT : celui
-  // du fil prolongé, ou le ROOT qui recevra la conversation créée. Sans agent
-  // (un projet sans ROOT), il n'y a rien à régler et la pastille ne s'affiche
-  // pas.
+  // #138 — les listes règlent l'agent à qui la saisie ÉCRIT : celui du fil
+  // prolongé, ou le ROOT qui recevra la conversation créée. Sans agent (un
+  // projet sans ROOT), il n'y a rien à régler et elles ne s'affichent pas.
   const composerAgentId =
     landing !== null && landing.composerConversationId !== null
       ? (view?.conversation.agentId ?? null)
@@ -115,10 +114,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         thread={thread}
         composer={composer}
         agentId={composerAgentId}
+        llmKeyId={modelChoices?.llmKeyId ?? null}
         model={modelChoices?.model ?? null}
         reasoningEffort={modelChoices?.reasoningEffort ?? null}
-        modelOptions={modelChoices?.modelOptions ?? []}
-        effortsByModel={modelChoices?.effortsByModel ?? {}}
+        llmKeys={modelChoices?.llmKeys ?? []}
         {...(view !== null
           ? {
               // P4 — la barre d'état, ancrée tout en bas de l'écran.

@@ -20,7 +20,11 @@ import FieldLabel from './FieldLabel';
  * dynamic option lists.
  */
 function syncSectionLegends(select: HTMLSelectElement): void {
-  if (!CSS.supports('appearance', 'base-select')) return;
+  // `CSS` n'existe pas partout où ce composant se rend : jsdom, qui fait
+  // tourner les tests de composants, n'en fournit pas. Sans cette garde, un
+  // écran devenait introuvable en test pour une raison qui n'a rien à voir
+  // avec lui (#138).
+  if (typeof CSS === 'undefined' || !CSS.supports('appearance', 'base-select')) return;
   for (const group of select.querySelectorAll('optgroup')) {
     const label = group.getAttribute('label') ?? '';
     const legend = group.querySelector(':scope > legend');

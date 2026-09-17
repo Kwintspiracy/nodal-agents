@@ -14,7 +14,7 @@
 
 import ThreadComposer from '@/app/(dashboard)/chat/ThreadComposer.tsx';
 import { createProjectConversationAction } from '@/lib/project-actions.ts';
-import type { ModelChoice } from '@/lib/model-choices.ts';
+import type { ComposerLlmKey } from '@/app/(dashboard)/chat/ModelEffortControls.tsx';
 
 export default function ProjectComposer({
   projectId,
@@ -22,10 +22,10 @@ export default function ProjectComposer({
   agentName,
   placeholder,
   agentId,
+  llmKeyId,
   model,
   reasoningEffort,
-  modelOptions,
-  effortsByModel,
+  llmKeys,
 }: {
   projectId: string;
   conversationId: string | null;
@@ -33,21 +33,21 @@ export default function ProjectComposer({
   agentName?: string | null;
   /** Le placeholder en toutes lettres quand la saisie va OUVRIR une conversation. */
   placeholder?: string;
-  /** #138 — la pastille « modèle · effort », passée telle quelle. */
+  /** #138 — les trois listes de réglage, passées telles quelles. */
   agentId?: string | null;
+  llmKeyId?: string | null;
   model?: string | null;
   reasoningEffort?: string | null;
-  modelOptions?: ModelChoice[];
-  effortsByModel?: Record<string, string[]>;
+  llmKeys?: ComposerLlmKey[];
 }) {
   return (
     <ThreadComposer
       conversationId={conversationId ?? ''}
       agentId={agentId ?? null}
+      llmKeyId={llmKeyId ?? null}
       model={model ?? null}
       reasoningEffort={reasoningEffort ?? null}
-      modelOptions={modelOptions ?? []}
-      effortsByModel={effortsByModel ?? {}}
+      llmKeys={llmKeys ?? []}
       {...(agentName !== undefined ? { agentName } : {})}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onBeforeSend={
