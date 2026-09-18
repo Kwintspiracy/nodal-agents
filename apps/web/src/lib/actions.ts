@@ -13394,8 +13394,10 @@ export async function getCodingProcessDetailAction(
             kind: 'call',
             id: tc.id,
             toolName: tc.toolName,
-            toolInput: tc.toolInput,
-            toolOutput: tc.toolOutput,
+            // Rédigés comme dans le fil et dans Activity : l'écran d'un
+            // processus Code montrait la sortie brute (Reviewer C, #158).
+            toolInput: redactPresented(tc.toolInput),
+            toolOutput: tc.toolOutput === null ? null : redactSecretsInText(tc.toolOutput),
             durationMs: tc.durationMs,
             createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
             delegatedFrom:

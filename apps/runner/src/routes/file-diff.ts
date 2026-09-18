@@ -20,7 +20,7 @@ import { existsSync, statSync } from 'node:fs';
 import { relative } from 'node:path';
 import { agentJobs, agentWorkspaces, jobCheckpoints, toolCalls, and, eq } from '@nodal-agents/db';
 import { checkpointsRoot, diffFile } from '@nodal-agents/checkpoints';
-import { normalizePath, isWindowsPath } from '@nodal-agents/shared';
+import { normalizePath, isWindowsPath, redactSecretsInText } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../deps.ts';
 import { resolveScannedPath, scannedEditPath } from '../job/code-projects.ts';
 
@@ -129,7 +129,20 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
     const newString = typeof input['new_string'] === 'string' ? input['new_string'] : null;
     const path = typeof input['path'] === 'string' ? input['path'] : null;
     if (oldString !== null && newString !== null && path !== null) {
-      return c.json({ kind: 'fragment', oldString, newString, path }, 200);
+      // Le fragment part rédigé, comme la sortie brute et la carte partent
+      // rédigées vers le fil : un `file_edit` qui écrit un jeton dans un
+      // fichier ne le montre pas en clair à l'écran (Reviewer C, #158). Le
+      // chemin, lui, reste tel quel : c'est la clé du fichier, et le masquer
+      // casserait le diff sans rien protéger de plus que le nom.
+      return c.json(
+        {
+          kind: 'fragment',
+          oldString: redactSecretsInText(oldString),
+          newString: redactSecretsInText(newString),
+          path,
+        },
+        200,
+      );
     }
     return c.json({ kind: 'unavailable', reason: 'path_unresolved' }, 200);
   }
