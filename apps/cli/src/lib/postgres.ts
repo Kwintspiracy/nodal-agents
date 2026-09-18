@@ -617,8 +617,74 @@ export function isPostgresAuthFailure(err: unknown): boolean {
   return typeof code === 'string' && code.length === 5 && code.startsWith('28');
 }
 
-/** `pg_ctl stop -m fast` through the package, never at the cost of the real error. */
-async function stopQuietly(pg: { stop?: () => Promise<void> }): Promise<void> {
+/**
+ * Les lignes par lesquelles le POSTMASTER dit qu'il a renoncé au démarrage.
+ *
+ * Même argument que la classe 28 juste au-dessus, sur un autre cas : aucune de
+ * ces conditions ne devient vraie en attendant. Le postmaster est déjà sorti
+ * quand il les écrit, et la boucle d'attente ne fait plus que compter jusqu'à
+ * 180 s au-dessus d'un cadavre.
+ *
+ * Mesuré le 18/09/2026 en reproduisant l'issue #130 : sous `pnpm test`
+ * complet, le troisième démarrage de `postgres-auth-stop.pg.test.ts` écrivait
+ * `FATAL: pre-existing shared memory block is still in use` À LA PREMIÈRE
+ * SECONDE, puis le test attendait ses 120 s et mourait sur « Test timed out »
+ * — sans un mot du message que le journal portait depuis le début. Le
+ * diagnostic était déjà écrit dans ce fichier (`sharedMemHint`) ; il était
+ * seulement injoignable.
+ *
+ * La liste est COURTE et littérale à dessein. Un `FATAL` quelconque ne veut pas
+ * dire que le cluster est mort — une session refusée en écrit un pendant qu'il
+ * tourne très bien — et traiter toute la catégorie comme fatale transformerait
+ * un démarrage lent en démarrage raté, c'est-à-dire le défaut inverse.
+ */
+export const POSTMASTER_GAVE_UP: readonly RegExp[] = [
+  // Windows : la section de mémoire partagée d'un postmaster tué sans ménage
+  // est encore attachée. Elle est indexée par le DATA DIR, pas par le port.
+  /pre-existing shared memory block is still in use/i,
+  // Le port est pris, ou le système refuse de l'attribuer.
+  /could not create any TCP\/IP sockets/i,
+];
+
+/**
+ * La ligne par laquelle le postmaster a renoncé, ou `null`. Pure, pour être
+ * éprouvée sans cluster.
+ */
+export function postmasterGaveUp(lines: readonly string[]): string | null {
+  for (const line of lines) {
+    if (POSTMASTER_GAVE_UP.some((pattern) => pattern.test(line))) return line.trim();
+  }
+  return null;
+}
+
+/** Ce que l'attente de démarrage a besoin de savoir de son cluster. */
+export interface StartWatchers {
+  /** Ce que le postmaster a écrit jusqu'ici. Vide par défaut. */
+  logs?: () => readonly string[];
+  /**
+   * Un arrêt GRACIEUX du cluster, s'il y en a un. Rend false quand il n'a pas
+   * abouti, et l'appelant retombe alors sur celui du paquet.
+   *
+   * Il existe parce que `embedded-postgres@18.3.0-beta.17` arrête un cluster
+   * sous Windows par `taskkill /pid … /f /t` (dist/index.js, `stop()`) — un
+   * tir à balle réelle qui NE relâche PAS la section de mémoire partagée. Le
+   * prochain démarrage sur ce data dir meurt alors sur le FATAL ci-dessus.
+   * C'est le même raisonnement que `stopOrphanPostgres`, appliqué au cluster
+   * qu'on tient soi-même.
+   */
+  gracefulStop?: () => Promise<boolean>;
+}
+
+/** Arrête, sans jamais coûter l'erreur qu'on est en train de rapporter. */
+async function stopQuietly(
+  pg: { stop?: () => Promise<void> },
+  watchers: StartWatchers,
+): Promise<void> {
+  try {
+    if (watchers.gracefulStop && (await watchers.gracefulStop())) return;
+  } catch {
+    /* on retombe sur l'arrêt du paquet */
+  }
   try {
     await pg.stop?.();
   } catch {
@@ -626,11 +692,15 @@ async function stopQuietly(pg: { stop?: () => Promise<void> }): Promise<void> {
   }
 }
 
-export async function startAndWaitUntilReady(pg: {
-  start: () => Promise<void>;
-  stop?: () => Promise<void>;
-  getPgClient: (database?: string) => { connect: () => Promise<void>; end: () => Promise<void> };
-}): Promise<void> {
+export async function startAndWaitUntilReady(
+  pg: {
+    start: () => Promise<void>;
+    stop?: () => Promise<void>;
+    getPgClient: (database?: string) => { connect: () => Promise<void>; end: () => Promise<void> };
+  },
+  watchers: StartWatchers = {},
+): Promise<void> {
+  const readLogs = watchers.logs ?? ((): readonly string[] => []);
   let exitedEarly: unknown = null;
   let resolvedItself = false;
   // Attached SYNCHRONOUSLY, before any await: an unobserved rejection here
@@ -647,6 +717,13 @@ export async function startAndWaitUntilReady(pg: {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
     if (exitedEarly !== null) throw exitedEarly;
+    // FAIL LOUD, IMMEDIATELY (invariant #4). Le postmaster a dit qu'il
+    // renonçait ; le journal le porte déjà, et attendre ne le défera pas.
+    const gaveUp = postmasterGaveUp(readLogs());
+    if (gaveUp !== null) {
+      await stopQuietly(pg, watchers);
+      throw new Error(`Postgres gave up during startup: ${gaveUp}`);
+    }
     // `postgres` always exists after initdb; `nodalai` may not yet.
     const probe = pg.getPgClient('postgres');
     try {
@@ -657,7 +734,7 @@ export async function startAndWaitUntilReady(pg: {
       await probe.end().catch(() => {});
       // FAIL LOUD, IMMEDIATELY (invariant #4). Waiting cannot fix a password.
       if (isPostgresAuthFailure(err)) {
-        await stopQuietly(pg);
+        await stopQuietly(pg, watchers);
         const code = (err as { code?: string }).code;
         throw new Error(
           `Postgres refused the connection: authentication failed (SQLSTATE ${code}). ` +
@@ -675,7 +752,7 @@ export async function startAndWaitUntilReady(pg: {
     if (Date.now() > deadline) {
       // Same reason as the auth path: whatever we give up on, we do not leave a
       // postmaster running that no handle of ours can stop.
-      await stopQuietly(pg);
+      await stopQuietly(pg, watchers);
       throw new Error(
         `Postgres did not accept a connection within ${READY_TIMEOUT_MS / 1000}s of starting`,
       );
@@ -783,7 +860,10 @@ export async function startEmbeddedPostgres(
     // 2026-09-15 that log did not exist. The only trace of two crashes that day
     // was the runner's side of the disconnect.
     applyPostgresLoggingConfig(dataDir, logDirectory);
-    await startAndWaitUntilReady(pg);
+    await startAndWaitUntilReady(pg, {
+      logs: () => capturedLogs,
+      gracefulStop: () => stopThisCluster(dataDir),
+    });
   } catch (err) {
     const errMsg = err instanceof Error && err.message ? err.message : String(err);
     // The actionable failure is usually in the FATAL log lines, not the
@@ -879,9 +959,33 @@ export async function startEmbeddedPostgres(
       }
     },
     stop: async () => {
+      // GRACIEUX D'ABORD. `embedded-postgres@18.3.0-beta.17` arrête un cluster
+      // sous Windows par `taskkill /pid … /f /t` (dist/index.js, `stop()`) :
+      // le postmaster ne relâche alors pas sa section de mémoire partagée,
+      // indexée par le DATA DIR, et le démarrage SUIVANT sur ce dossier meurt
+      // sur « pre-existing shared memory block is still in use ». Ce fichier
+      // écrivait déjà tout cela à propos de `stopOrphanPostgres` ; le cluster
+      // qu'on tient soi-même passait pourtant encore par le tir à balle
+      // réelle. Mesuré le 18/09/2026 en reproduisant l'issue #130.
+      if (await stopThisCluster(dataDir)) return;
       await pg.stop();
     },
   };
+}
+
+/**
+ * Arrête le cluster de CE data dir par `pg_ctl stop -m fast`, le seul arrêt qui
+ * relâche la mémoire partagée. Rend false quand il n'a pas abouti — l'appelant
+ * retombe alors sur l'arrêt du paquet, et le refus a déjà écrit son code.
+ */
+async function stopThisCluster(dataDir: string): Promise<boolean> {
+  const claim = readPostmasterClaim(dataDir);
+  if (claim === null) {
+    // Aucun postmaster ne réclame ce dossier : il n'y a rien à arrêter
+    // gracieusement, et `pg_ctl` n'aurait rien à signaler.
+    return false;
+  }
+  return stopOrphanPostgres(claim.pid, dataDir);
 }
 
 // ─── Drizzle migrations ───────────────────────────────────────────────────────
