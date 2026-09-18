@@ -5,7 +5,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs, toolCalls, users, entities } from '@nodal-agents/db';
-import { readDeliveredReviewVerdict, parseReviewVerdictOutput } from '../../router/review-verdict';
+import {
+  readDeliveredReviewVerdict,
+  readFinalReviewVerdict,
+  parseReviewVerdictOutput,
+} from '../../router/review-verdict';
 import { OrchestrationError } from '../../errors';
 import type { JobId } from '../../types';
 
@@ -70,20 +74,35 @@ async function seedJob(): Promise<{ jobId: string; entityId: string }> {
   return { jobId: job!.id, entityId: entity!.id };
 }
 
-async function recordVerdictRow(
+/**
+ * Une ligne `tool_calls` DANS LA FORME DE PRODUCTION : `executeTool`
+ * (`packages/tools/src/execute.ts`) écrit `JSON.stringify(output)`, où `output`
+ * est la valeur rendue par `execute()` de l'outil.
+ */
+async function recordToolRow(
   jobId: string,
   entityId: string,
+  toolName: string,
   output: unknown,
   createdAt: Date,
 ): Promise<void> {
   await db.insert(toolCalls).values({
     entityId,
     jobId,
-    toolName: 'review_verdict',
+    toolName,
     toolInput: {},
     toolOutput: typeof output === 'string' ? output : JSON.stringify(output),
     createdAt,
   });
+}
+
+async function recordVerdictRow(
+  jobId: string,
+  entityId: string,
+  output: unknown,
+  createdAt: Date,
+): Promise<void> {
+  await recordToolRow(jobId, entityId, 'review_verdict', output, createdAt);
 }
 
 describe('parseReviewVerdictOutput @cap:organiser-equipe/moteur', () => {
@@ -170,5 +189,39 @@ describe('readDeliveredReviewVerdict @cap:organiser-equipe/moteur', () => {
     );
 
     expect(await readDeliveredReviewVerdict(db, jobId as JobId)).toBeNull();
+  });
+});
+
+describe('readFinalReviewVerdict @cap:organiser-equipe/moteur', () => {
+  it('rend le verdict quand il est le DERNIER appel d’outil du job', async () => {
+    // Le tour final d'un relecteur est « verdict puis return_result », et
+    // `return_result` n'écrit aucune ligne : le verdict reste bien le dernier.
+    const { jobId, entityId } = await seedJob();
+    await recordToolRow(
+      jobId,
+      entityId,
+      'read_file',
+      { ok: true },
+      new Date('2026-09-16T10:00:00Z'),
+    );
+    await recordVerdictRow(jobId, entityId, VERDICT_OUTPUT, new Date('2026-09-16T10:05:00Z'));
+
+    expect((await readFinalReviewVerdict(db, jobId as JobId))?.verdict).toBe('request_changes');
+  });
+
+  it('rend null quand un autre outil a tourné APRÈS le verdict', async () => {
+    const { jobId, entityId } = await seedJob();
+    await recordVerdictRow(jobId, entityId, VERDICT_OUTPUT, new Date('2026-09-16T10:00:00Z'));
+    await recordToolRow(
+      jobId,
+      entityId,
+      'tavily_search',
+      { ok: true, results: [] },
+      new Date('2026-09-16T10:05:00Z'),
+    );
+
+    expect(await readFinalReviewVerdict(db, jobId as JobId)).toBeNull();
+    // Le verdict, lui, reste le verdict de ce job pour son parent.
+    expect((await readDeliveredReviewVerdict(db, jobId as JobId))?.verdict).toBe('request_changes');
   });
 });

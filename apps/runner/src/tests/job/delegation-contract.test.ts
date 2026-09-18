@@ -1051,14 +1051,31 @@ const REVIEW_VERDICT_OUTPUT = {
 /** La phrase que le modèle a rendue comme résultat, à la place du rapport. */
 const PROSE_RESULT = 'J’ai couvert toutes les questions. Je constate maintenant le verdict.';
 
-async function recordReviewVerdict(jobId: string, output: unknown): Promise<void> {
+/**
+ * Écrit une ligne `tool_calls` DANS LA FORME DE PRODUCTION : le runner passe par
+ * `executeTool` (`packages/tools/src/execute.ts`), qui écrit
+ * `toolOutput: JSON.stringify(output)` où `output` est la valeur rendue par
+ * `execute()` de l'outil — pour `review_verdict`, `{ok, verdict, summary,
+ * findings, counts}` — et `turn: ctx.turn`, le tour de la boucle du runner.
+ */
+async function recordToolCall(
+  jobId: string,
+  toolName: string,
+  output: unknown,
+  turn: number,
+): Promise<void> {
   await db.insert(toolCalls).values({
     entityId: seed.entityId,
     jobId,
-    toolName: 'review_verdict',
-    toolInput: { verdict: 'request_changes' },
+    toolName,
+    toolInput: {},
     toolOutput: JSON.stringify(output),
+    turn,
   } as never);
+}
+
+async function recordReviewVerdict(jobId: string, output: unknown, turn = 1): Promise<void> {
+  await recordToolCall(jobId, 'review_verdict', output, turn);
 }
 
 async function seedParentAwaitingReview(toolUseId: string): Promise<string> {
@@ -1173,5 +1190,91 @@ describe('le verdict de revue voyage jusqu’au parent @cap:organiser-equipe/mot
     expect(row.status).toBe('completed');
     expect(row.error).toBeFalsy();
     expect(transcriptText(row.messages)).not.toContain('empty_deliverable');
+  });
+
+  it('un verdict suivi d’un travail sans rapport ne tient plus lieu de livrable', async () => {
+    // Revue de la PR #170, constat 1 : sans cette règle, un verdict posé au tour
+    // 2 faisait passer pour livré un run qui a ensuite fait autre chose et n'a
+    // rien écrit. Le dernier geste du job n'est pas le verdict : la garde tient.
+    const jobId = await insertJob({ channel: 'api' });
+    await recordReviewVerdict(jobId, REVIEW_VERDICT_OUTPUT, 2);
+    await recordToolCall(jobId, 'tavily_search', { ok: true, results: [] }, 3);
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          reasoning: 'je considère que c’est fini',
+          toolCalls: [
+            { toolCallId: 'rr-o', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('empty_deliverable');
+  });
+
+  it('une ligne de verdict illisible fait échouer le job par son code', async () => {
+    // Elle ne remonte pas en exception nue : le job porte `review_verdict_malformed`.
+    const jobId = await insertJob({ channel: 'api' });
+    await recordReviewVerdict(jobId, { ok: true, verdict: 'request_changes' });
+
+    const deps = makeDeps(
+      makeMockLlmClient([
+        {
+          reasoning: 'le verdict est posé',
+          toolCalls: [
+            { toolCallId: 'rr-m', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await jobRow(jobId);
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('review_verdict_malformed');
+  });
+
+  it('une ligne illisible ne laisse JAMAIS le parent suspendu', async () => {
+    // Revue de la PR #170, constat 2 : l'exception sortait de `resumeDelegated`
+    // avant la mise à jour du parent, qui restait `awaiting_delegation` avec un
+    // appel d'outil sans réponse. Le parent doit repartir, et savoir pourquoi.
+    const parentId = await seedParentAwaitingReview('assign-rv-3');
+    const childId = await insertJob({ channel: 'internal', parentJobId: parentId });
+    await recordReviewVerdict(childId, {
+      ok: true,
+      verdict: 'approve',
+      findings: 'pas un tableau',
+    });
+
+    await resumeDelegated(
+      parentId as JobId,
+      childId as JobId,
+      {
+        status: 'completed',
+        summary: PROSE_RESULT,
+        error: null,
+        exit_reason: 'return_result_success',
+        tools_used: ['review_verdict', 'return_result'],
+      },
+      db,
+    );
+
+    const row = await jobRow(parentId);
+    // Le parent est reparti : il n'attend plus une délégation qui ne viendra pas.
+    expect(row.status).toBe('pending');
+    const last = (row.messages as Array<{ role: string; content: unknown[] }>).at(-1)!;
+    const part = last.content[0] as { output: { type: string; value: string } };
+    expect(part.output.type).toBe('error-text');
+    expect(part.output.value).toContain(DELEGATION_FAILED_MARKER);
+    expect(part.output.value).toContain('review_verdict_malformed');
   });
 });

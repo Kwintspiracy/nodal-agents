@@ -93,6 +93,13 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
 /**
  * Attache au record le verdict que l'enfant a enregistré, s'il en a enregistré
  * un. Le verdict déjà porté par l'appelant l'emporte — il l'a lu de plus près.
+ *
+ * Une ligne illisible ne remonte PAS en exception : elle deviendrait une sortie
+ * de `resumeDelegated` AVANT la mise à jour du parent, qui resterait
+ * `awaiting_delegation` avec un appel d'outil sans réponse, et personne ne
+ * serait prévenu (revue de la PR #170, constat 2). La délégation devient donc
+ * un ÉCHEC nommé : le parent reçoit le `error-text` des délégations ratées,
+ * avec le code, et peut agir. Fort et à la bonne place.
  */
 async function withDeliveredReviewVerdict(
   outcome: DelegationOutcomeRecord,
@@ -100,7 +107,21 @@ async function withDeliveredReviewVerdict(
   db: AnyDrizzleDb,
 ): Promise<DelegationOutcomeRecord> {
   if (outcome.review_verdict) return outcome;
-  return { ...outcome, review_verdict: await readDeliveredReviewVerdict(db, childJobId) };
+  try {
+    return { ...outcome, review_verdict: await readDeliveredReviewVerdict(db, childJobId) };
+  } catch (err) {
+    if (!(err instanceof OrchestrationError) || err.code !== 'review_verdict_malformed') throw err;
+    console.error(
+      `[resume] child ${childJobId} recorded an unreadable review_verdict — the delegation is reported as failed:`,
+      err,
+    );
+    return {
+      ...outcome,
+      status: 'failed',
+      error: 'review_verdict_malformed',
+      review_verdict: null,
+    };
+  }
 }
 
 /**

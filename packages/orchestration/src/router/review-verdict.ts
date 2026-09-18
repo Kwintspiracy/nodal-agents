@@ -134,3 +134,35 @@ export async function readDeliveredReviewVerdict(
   if (!last) return null;
   return parseReviewVerdictOutput(last.toolOutput);
 }
+
+/**
+ * Le verdict est-il le DERNIER geste de ce job ?
+ *
+ * Question différente de celle du dessus, et c'est voulu. `readDelivered…`
+ * répond « qu'est-ce que ce job a produit pour son parent » : un verdict
+ * enregistré reste son verdict, même si le job a continué ensuite. Ici on
+ * répond « ce job a-t-il livré QUOI QUE CE SOIT », pour un job qui n'a écrit
+ * aucun texte — et là, un verdict posé au tour 2 suivi d'un travail sans
+ * rapport ne tient pas lieu de livrable (revue de la PR #170, constat 1).
+ *
+ * Donc : la dernière ligne `tool_calls` du job, tous outils confondus, doit
+ * être un `review_verdict` réussi. `return_result` ne fausse pas la lecture —
+ * il est exclu de l'exécution des outils (`callsToProcess` dans le runner) et
+ * n'écrit aucune ligne, si bien que le tour final « verdict puis signal »
+ * laisse bien le verdict en dernier.
+ */
+export async function readFinalReviewVerdict(
+  db: AnyDrizzleDb,
+  jobId: JobId,
+): Promise<ReviewVerdictRecord | null> {
+  const rows = await db
+    .select({ toolName: toolCalls.toolName, toolOutput: toolCalls.toolOutput })
+    .from(toolCalls)
+    .where(eq(toolCalls.jobId, jobId as string))
+    .orderBy(desc(toolCalls.createdAt), desc(toolCalls.turn))
+    .limit(1);
+
+  const last = rows[0];
+  if (!last || last.toolName !== REVIEW_VERDICT_TOOL) return null;
+  return parseReviewVerdictOutput(last.toolOutput);
+}
