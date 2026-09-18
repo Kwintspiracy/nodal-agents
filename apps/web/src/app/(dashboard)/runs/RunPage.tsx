@@ -21,12 +21,8 @@
 import type { ReactNode } from 'react';
 import type { SpaceConversationView } from '@/lib/actions.ts';
 import type { BackLink } from '@/lib/back-links.ts';
-import PageShell from '@/components/ui/PageShell';
 import StatusPill from '@/components/ui/StatusPill';
 import Markdown, { plainText } from '@/components/Markdown.tsx';
-import ThreadHeader from '@/app/(dashboard)/chat/[id]/ThreadHeader.tsx';
-import ThreadScreen from '@/app/(dashboard)/chat/[id]/ThreadScreen.tsx';
-import WorkBar from '@/app/(dashboard)/spaces/WorkBar.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
 import DeliveriesCard from '@/app/(dashboard)/spaces/DeliveriesCard.tsx';
@@ -35,6 +31,7 @@ import ConversationFeedView from '@/app/(dashboard)/spaces/ConversationFeedView.
 import VerificationSection from '@/app/(dashboard)/code/[id]/VerificationSection.tsx';
 import { threadAgents, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { truncate } from '@/lib/format-time';
+import RunScreen from './RunScreen.tsx';
 import RunHeaderCard from './RunHeaderCard.tsx';
 import ReviewSection from './ReviewSection.tsx';
 import ActivitySection from './ActivitySection.tsx';
@@ -56,55 +53,30 @@ export default function RunPage({ data, back, actions = null }: RunPageProps) {
   const title = truncate(plainText(job.task), 60);
 
   return (
-    <PageShell
-      fill
-      toolbarBleed
-      header={
-        <ThreadHeader
-          avatarName={agentName}
-          avatarUrl={job.agentAvatarUrl}
-          title={agentName !== '' ? `${agentName} · ${title}` : title}
-          subtitle={threadSubtitle('run', job.createdAt)}
-        />
-      }
-      toolbar={
-        <WorkBar
-          back={back}
-          agents={threadAgents(feed.items)}
-          status={<StatusPill variant={view.status.variant} label={view.status.label} />}
+    <RunScreen
+      avatarName={agentName}
+      avatarUrl={job.agentAvatarUrl}
+      title={agentName !== '' ? `${agentName} · ${title}` : title}
+      subtitle={threadSubtitle('run', job.createdAt)}
+      back={back}
+      agents={threadAgents(feed.items)}
+      status={<StatusPill variant={view.status.variant} label={view.status.label} />}
+      proofVerdict={lastProof?.verdict ?? null}
+      statusBar={
+        <StatusBar
+          cost={cost}
           proofVerdict={lastProof?.verdict ?? null}
+          proofSequences={verification.sequences.length}
+          pendingDeliveries={
+            data.deliveries.filter((d) => d.outcome === 'prepared' || d.outcome === 'attempted')
+              .length
+          }
+          live={view.live}
         />
       }
     >
-      <ThreadScreen
-        // Un run s'ouvre sur SA CARTE DE TÊTE et ne bouge jamais tout seul.
-        // L'écran d'un fil saute en bas à l'ouverture et suit ce qui arrive,
-        // parce qu'une conversation se lit par sa fin ; la page d'un run est un
-        // tableau, et elle s'ouvrait donc déjà défilée (Quentin, 18/09). Un run
-        // qui court ne doit pas non plus faire filer ce qu'on est en train de
-        // lire à chaque rafraîchissement.
-        follow="never"
-        // Les gouttières sont portées par le CORPS du run, sur la même boîte
-        // que sa largeur maximale — c'est ainsi que `PageShell` construit le
-        // corps de toutes les autres pages, et c'est la seule façon d'avoir la
-        // même largeur de contenu qu'elles.
-        sidePadding={false}
-        statusBar={
-          <StatusBar
-            cost={cost}
-            proofVerdict={lastProof?.verdict ?? null}
-            proofSequences={verification.sequences.length}
-            pendingDeliveries={
-              data.deliveries.filter((d) => d.outcome === 'prepared' || d.outcome === 'attempted')
-                .length
-            }
-            live={view.live}
-          />
-        }
-      >
-        <RunBody data={data} actions={actions} />
-      </ThreadScreen>
-    </PageShell>
+      <RunBody data={data} actions={actions} />
+    </RunScreen>
   );
 }
 

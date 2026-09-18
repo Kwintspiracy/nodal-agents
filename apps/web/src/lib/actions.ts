@@ -13106,7 +13106,12 @@ export type CodingToolCallView = {
   durationMs: number | null;
   createdAt: string | null;
   /** Set when this call happened in a DIRECT CHILD job (a delegated worker), not the root itself. */
-  delegatedFrom: { jobId: string; agentName: string | null } | null;
+  delegatedFrom: {
+    jobId: string;
+    agentName: string | null;
+    /** Son image, quand il en a une — la barre montre des visages, pas des initiales par défaut. */
+    agentAvatarUrl: string | null;
+  } | null;
 };
 
 /** One file's full edit history in this pipeline — the Changes panel's unit (v4, Quentin 19/08 third pass). */
@@ -13171,6 +13176,15 @@ export type CodingActivityItem =
 
 export type CodingProcessDetail = {
   header: CodingProcessRow & {
+    /**
+     * Le projet ENREGISTRÉ de ce process, quand son dossier en est un. C'est
+     * lui qui ouvre la page du dossier, derrière le bouton « Files » de la
+     * barre (18/09). `null` : dossier jamais déclaré, ou session de chat — et
+     * le bouton ne paraît pas, plutôt que de mener nulle part.
+     */
+    projectId: string | null;
+    /** L'image de l'agent qui a porté le process, quand il en a une. */
+    agentAvatarUrl: string | null;
     durationMs: number | null;
     /** EFFECTIVE input (hors cache, lectures ET écritures), root + direct children — même normalisation que les turn markers. */
     inputTokens: number;
@@ -13235,6 +13249,10 @@ export async function getCodingProcessDetailAction(
           createdAt: agentJobs.createdAt,
           totalDurationMs: agentJobs.totalDurationMs,
           verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
+          // L'image de l'agent : la barre de la page montre les VRAIS visages
+          // de ceux qui ont travaillé, comme les deux autres pages de run
+          // (18/09). Une colonne de plus sur une jointure déjà là.
+          agentAvatarUrl: agents.avatarUrl,
         })
         .from(agentJobs)
         .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -13251,6 +13269,7 @@ export async function getCodingProcessDetailAction(
         id: string;
         agentId: string | null;
         agentName: string | null;
+        agentAvatarUrl: string | null;
         totalDurationMs: number | null;
         parentJobId: string | null;
         verificationSkippedSurfaces: unknown;
@@ -13267,6 +13286,7 @@ export async function getCodingProcessDetailAction(
               // liste (revue Codex, 26/08).
               agentId: agentJobs.agentId,
               agentName: agents.name,
+              agentAvatarUrl: agents.avatarUrl,
               totalDurationMs: agentJobs.totalDurationMs,
               parentJobId: agentJobs.parentJobId,
               verificationSkippedSurfaces: agentJobs.verificationSkippedSurfaces,
@@ -13287,7 +13307,9 @@ export async function getCodingProcessDetailAction(
       // Direct children only — the stage rules are about what THIS job
       // delegated, not about the whole subtree.
       const childIds = descendants.filter((d) => d.parentJobId === jobId).map((d) => d.id);
-      const childAgentNameById = new Map(descendants.map((d) => [d.id, d.agentName]));
+      const childAgentById = new Map(
+        descendants.map((d) => [d.id, { name: d.agentName, avatarUrl: d.agentAvatarUrl }]),
+      );
       const allRelevantIds = [jobId, ...descendants.map((d) => d.id)];
 
       // Timeline = the ROOT's tool_calls merged chronologically with its
@@ -13596,7 +13618,11 @@ export async function getCodingProcessDetailAction(
             createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
             delegatedFrom:
               tc.jobId && tc.jobId !== jobId
-                ? { jobId: tc.jobId, agentName: childAgentNameById.get(tc.jobId) ?? null }
+                ? {
+                    jobId: tc.jobId,
+                    agentName: childAgentById.get(tc.jobId)?.name ?? null,
+                    agentAvatarUrl: childAgentById.get(tc.jobId)?.avatarUrl ?? null,
+                  }
                 : null,
           },
         });
@@ -13693,18 +13719,27 @@ export async function getCodingProcessDetailAction(
       // peuvent avoir été enregistrées avec des casses différentes. La liste
       // les groupe déjà ainsi ; une égalité stricte aurait fait retomber le
       // titre sur le nom du dossier dès qu'on ouvrait la « mauvaise » session.
+      //
+      // La ligne trouvée donne aussi son ID — celui du projet ENREGISTRÉ, le
+      // seul qui ouvre une page de dossier. Le bouton « Files » de la barre de
+      // /code/[id] en dépend (18/09) : sans ligne, le dossier n'est pas déclaré,
+      // il n'y a rien à ouvrir, et le bouton ne paraît pas.
+      const detailProject =
+        detailProjectPath !== null
+          ? ((
+              await db
+                .select({
+                  id: codeProjects.id,
+                  projectPath: codeProjects.projectPath,
+                  displayName: codeProjects.displayName,
+                  registeredAt: codeProjects.registeredAt,
+                })
+                .from(codeProjects)
+                .where(eq(codeProjects.entityId, entityId))
+            ).find((r) => projectKey(r.projectPath) === projectKey(detailProjectPath)) ?? null)
+          : null;
       const detailProjectName = detailProjectPath
-        ? (
-            await db
-              .select({
-                projectPath: codeProjects.projectPath,
-                displayName: codeProjects.displayName,
-              })
-              .from(codeProjects)
-              .where(eq(codeProjects.entityId, entityId))
-          )
-            .find((r) => projectKey(r.projectPath) === projectKey(detailProjectPath!))
-            ?.displayName?.trim() || projectNameFromPath(detailProjectPath)
+        ? detailProject?.displayName?.trim() || projectNameFromPath(detailProjectPath)
         : null;
 
       return ok({
@@ -13720,6 +13755,11 @@ export async function getCodingProcessDetailAction(
           costUsd,
           projectPath: detailProjectPath,
           projectName: detailProjectName,
+          // L'identifiant n'est rendu que pour un projet ENREGISTRÉ : la page
+          // d'un dossier exige `registered_at` (project-actions), donc une
+          // ligne de comptabilité donnerait un bouton qui mène à un 404.
+          projectId: detailProject?.registeredAt != null ? detailProject.id : null,
+          agentAvatarUrl: job.agentAvatarUrl ?? null,
           sessionType:
             verdicts.length > 0 && filesChanged === 0
               ? taskReferencesPullRequest(job.task)
@@ -13800,6 +13840,11 @@ export async function getCodingProcessDetailAction(
         costUsd: totalCost,
         projectPath: null,
         projectName: null,
+        // Une session de runtime n'est rattachée à aucun projet enregistré :
+        // pas de dossier à ouvrir, donc pas de bouton « Files ». Et le CLI
+        // n'est pas un agent de l'espace : il n'a pas d'image.
+        projectId: null,
+        agentAvatarUrl: null,
         sessionType: 'coding',
         // Une session de runtime n a PAS de code_task, donc le provider n existe
         // que dans cli_runs — c est le cas ou la jointure est la seule source.

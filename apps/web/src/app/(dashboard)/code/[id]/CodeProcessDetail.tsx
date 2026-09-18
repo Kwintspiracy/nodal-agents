@@ -1,173 +1,98 @@
 'use client';
 
-// CodeProcessDetail — the /code/[id] mission-control view (v5, Quentin 19/08
-// fourth pass): an accordion of every file's full diff didn't scale (15
-// files × 2000 lines). Layout now:
-//   - Left sidebar: the list of changed files (name + churn counter). Click
-//     to select; first file selected by default.
-//   - Central panel: the SELECTED file's diff only, independently
-//     scrollable, with the compact Activity trail underneath it.
-// Activity itself is unchanged in content from the previous pass: one line
-// per tool_call (icon, short name, target, duration, delegated badge) with
-// NO diff/output content inline — expanding a row shows only its raw
-// input/output JSON. Review verdicts keep their own rich card (a synthesis,
-// not a routine tool call), above the two-column layout. Turn markers (from
-// llm_calls / cli_runs — never guessed) are intercalated into Activity for
-// the only token/cost granularity the data actually supports: per turn,
-// never per tool.
+// CodeProcessDetail — LE CORPS de la page d'un process de code.
 //
-// Polls getCodingProcessDetailAction every 4s while the process is still in
-// the 'coding' stage — same interval-effect shape as CodeProcessesTable's
-// list poller.
+// 18/09 — cette page dessinait son propre écran : un en-tête à elle, des
+// verdicts à elle, une activité en lignes à elle. C'est un RUN, comme celui
+// d'une automatisation ou d'une délégation, et il se lit maintenant dans les
+// mêmes blocs, dans le même ordre (planche #135) : la carte de tête et ses sept
+// chiffres, ce qui a été livré, ce qui a été relu, ce qui a été prouvé, les
+// fichiers, et l'activité. La charpente (les deux barres, le défilement) vit
+// dans `RunScreen`, montée par la route ; ici ne reste que le corps et ce qui le
+// tient VIVANT.
+//
+// Ce qui reste propre à cette page, et pourquoi :
+//   - la FRAÎCHEUR. Un process de code court pendant des minutes et sa page est
+//     un tableau de bord qu'on regarde : elle se relit toutes les quatre
+//     secondes tant que l'étape est vivante. Depuis le 18/09 c'est
+//     `LiveRefresh` — le SERVEUR rend à nouveau, donc les barres du haut
+//     suivent l'état, alors qu'une sonde côté client ne rafraîchissait que ce
+//     corps et laissait la barre sur l'état du chargement.
+//   - les APPROBATIONS en attente, relues à la même cadence côté client : ce
+//     sont les seules choses qui BLOQUENT le process, et elles doivent
+//     apparaître sans attendre le rendu suivant.
+//
+// L'activité est dessinée avec les blocs du fil (`ToolBlock`, `ModelCallBlock`)
+// après traduction dans `code-run-view.ts` : un appel d'outil se lit pareil
+// qu'on l'ouvre depuis un run d'agent ou depuis un run de code.
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import {
-  getCodingProcessDetailAction,
   listApprovalsAction,
   type ApprovalRow,
   type CodingProcessDetail as CodingProcessDetailData,
-  type CodingToolCallView,
   type CodingActivityItem,
-  type CodingVerdictView,
 } from '@/lib/actions.ts';
 import ApprovalActions from '@/app/(dashboard)/approvals/ApprovalActions.tsx';
 import VerificationSection from './VerificationSection.tsx';
 import FileChangeBlock from './FileChangeBlock.tsx';
-import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
-import DisclosureButton from '@/components/ui/DisclosureButton';
-import TextButton from '@/components/ui/TextButton';
-import PillTabs from '@/components/ui/PillTabs';
-import { relativeTime } from '@/lib/format-time';
+import ToolBlock from '@/app/(dashboard)/spaces/ToolBlock.tsx';
+import ModelCallBlock from '@/app/(dashboard)/spaces/ModelCallBlock.tsx';
+import DeliveryBlock from '@/app/(dashboard)/spaces/DeliveryBlock.tsx';
+import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
+import RunHeaderCard from '@/app/(dashboard)/runs/RunHeaderCard.tsx';
+import ReviewSection from '@/app/(dashboard)/runs/ReviewSection.tsx';
+import ActivitySection from '@/app/(dashboard)/runs/ActivitySection.tsx';
+import {
+  codeActivityLabel,
+  codeDelivery,
+  codeIsLive,
+  codeOrigin,
+  codeRuntime,
+  codeStats,
+  codeStatus,
+  toolStepOfCall,
+  turnModelLines,
+} from './code-run-view.ts';
 
-const POLL_INTERVAL = 4000;
-const LINE_LIMIT = 16;
-
-const STAGE_LABEL: Record<string, string> = {
-  coding: 'Coding',
-  delegated: 'Delegated',
-  review: 'Review',
-  done: 'Done',
-  done_approved: 'Done · Approved',
-  failed: 'Failed',
-  chat: 'Chat',
-  awaiting_approval: 'Blocked · needs approval',
-};
-
-/**
- * Étapes où le process est encore VIVANT — la sonde continue de tourner.
- * `coding` seul était faux deux fois : un process délégué/en review bougeait
- * sans rafraîchir, et un process BLOQUÉ sur approbation figeait l'écran au
- * moment précis où l'utilisateur doit agir (punch list V1.1).
- */
-const LIVE_STAGES = new Set(['coding', 'delegated', 'review', 'awaiting_approval']);
-
-function stageVariant(stage: string): StatusVariant {
-  if (stage === 'coding' || stage === 'delegated' || stage === 'review') return 'run';
-  if (stage === 'done' || stage === 'done_approved') return 'done';
-  if (stage === 'failed' || stage === 'awaiting_approval') return 'warn';
-  return 'idle';
-}
-
-function stageLabel(stage: string): string {
-  return STAGE_LABEL[stage] ?? stage;
-}
-
-/**
- * PathTail — truncates a long path from the START, keeping the filename
- * (the end) visible instead of the drive/root (Quentin, 19/08 fifth pass).
- * Standard CSS trick: the container flips to `dir="rtl"` + `text-align:
- * left`, so the browser's ellipsis cuts the LEFT side of the box; the `<bdi
- * dir="ltr">` inside keeps the path's own characters (and punctuation like
- * `:` or `\`) reading left-to-right rather than being reversed by the outer
- * RTL context. Full path always available via the native `title` tooltip.
- */
-function PathTail({
-  text,
-  title,
-  className = '',
-}: {
-  text: string;
-  /** Full path for the hover tooltip, when `text` is only a fragment (e.g. FileListRow's separate name/dir lines). Defaults to `text`. */
-  title?: string;
-  className?: string;
-}) {
-  return (
-    <span
-      dir="rtl"
-      title={title ?? text}
-      className={`block overflow-hidden text-left text-ellipsis whitespace-nowrap ${className}`}
-    >
-      <bdi dir="ltr">{text}</bdi>
-    </span>
-  );
-}
+/** La cadence d'un process vivant : les approbations, et la relecture de la page. */
+export const POLL_INTERVAL = 4000;
 
 export default function CodeProcessDetail({
-  query,
-  initialDetail,
-  embedded = false,
+  detail,
+  refresh = true,
 }: {
-  query: { jobId: string } | { sessionId: string };
-  initialDetail: CodingProcessDetailData;
+  detail: CodingProcessDetailData;
   /**
-   * true = rendu DANS le poste de travail projet (/code, rail de sessions à
-   * gauche) : pas de lien « ← Code », pas de titre projet (le contexte projet
-   * vit au-dessus) — le titre redevient l'agent, acteur de la session.
+   * true (défaut) : la page se relit toute seule tant que le process court —
+   * `LiveRefresh`, comme les deux autres pages de run. C'est le SERVEUR qui
+   * rend à nouveau, donc les barres du haut suivent l'état au lieu de figer
+   * celui du chargement (Quentin, 18/09 : la barre de /code n'était pas celle
+   * de la maquette, faute d'une pastille qu'on n'osait pas y mettre).
+   *
+   * false : l'appelant tient lui-même la fraîcheur de sa donnée — c'est le cas
+   * du poste de travail projet, qui charge le détail côté client.
    */
-  embedded?: boolean;
+  refresh?: boolean;
 }) {
-  const [detail, setDetail] = useState(initialDetail);
-  // Synced in an effect, never during render (react-hooks/refs).
-  const stageRef = useRef(detail.header.stage);
-  useEffect(() => {
-    stageRef.current = detail.header.stage;
-  }, [detail.header.stage]);
+  const live = codeIsLive(detail.header.stage);
 
-  // Approbations en attente appartenant à CE pipeline. Chargées avec la même
-  // cadence que le détail ; résolues → le prochain tick les efface.
+  // Approbations en attente appartenant à CE pipeline, relues à la même
+  // cadence ; résolues → le prochain tick les efface. Elles restent côté
+  // client : ce sont les seules choses qui bloquent, et elles doivent
+  // apparaître sans attendre le rendu suivant du serveur.
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRow[]>([]);
-  const pipelineIdsRef = useRef(detail.pipelineJobIds);
+  const pipelineIds = detail.pipelineJobIds;
+  const pipelineIdsRef = useRef(pipelineIds);
   useEffect(() => {
-    pipelineIdsRef.current = detail.pipelineJobIds;
-  }, [detail.pipelineJobIds]);
-
-  // true tant que le process est vivant ; passe à false au premier effet qui
-  // le voit terminé — c'est la transition que le dernier tick guette.
-  const wasLiveRef = useRef(LIVE_STAGES.has(initialDetail.header.stage));
+    pipelineIdsRef.current = pipelineIds;
+  }, [pipelineIds]);
 
   useEffect(() => {
-    if (!LIVE_STAGES.has(stageRef.current)) {
-      // Le process n'est plus vivant : purger les cartes d'approbation, sinon
-      // elles restent affichées — boutons compris — sur un process terminé
-      // (revue P1 du 25/08).
-      setPendingApprovals([]);
-      if (!wasLiveRef.current) return;
-      wasLiveRef.current = false;
-      // DERNIER TICK. La preuve tourne à la finalisation — au moment exact où
-      // l'étape cesse d'être vivante et où ce poller s'arrête. Un tick de plus
-      // après la sortie de LIVE_STAGES ramène ce que la finalisation a écrit
-      // juste après le statut (T24) ; sans lui la section Verification reste
-      // vide jusqu'à un rechargement manuel.
-      let lastCancelled = false;
-      const last = setTimeout(() => {
-        void getCodingProcessDetailAction(query).then((result) => {
-          if (result.ok && !lastCancelled) setDetail(result.data);
-        });
-      }, POLL_INTERVAL);
-      return () => {
-        lastCancelled = true;
-        clearTimeout(last);
-      };
-    }
-    wasLiveRef.current = true;
+    if (!live) return;
     let cancelled = false;
     const tick = () => {
-      if (!LIVE_STAGES.has(stageRef.current)) return;
-      void getCodingProcessDetailAction(query).then((result) => {
-        if (result.ok && !cancelled) setDetail(result.data);
-      });
       // Filtré en SQL sur les jobs de CE pipeline : le navigateur ne reçoit
       // plus les approbations des autres jobs, et une approbation ancienne ne
       // peut plus tomber hors de la fenêtre des 100 plus récentes.
@@ -179,101 +104,58 @@ export default function CodeProcessDetail({
       );
     };
     const id = setInterval(tick, POLL_INTERVAL);
-    // Premier chargement des approbations sans attendre 4s — un process déjà
-    // bloqué au moment où la page s'ouvre doit montrer sa carte tout de suite.
+    // Premier chargement sans attendre 4 s — un process déjà bloqué au moment
+    // où la page s'ouvre doit montrer sa carte tout de suite.
     const first = setTimeout(tick, 0);
     return () => {
       cancelled = true;
       clearInterval(id);
       clearTimeout(first);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail.header.stage]);
+  }, [live]);
 
   const { header, activity, verdicts, changes } = detail;
-
-  // Agent filter for the Activity trail — only worth showing once delegation
-  // actually happened (root + at least one distinct delegated agent).
-  const [agentFilter, setAgentFilter] = useState('all');
-  const agentFilters = buildAgentFilters(activity, header.agentName);
-  const totalCalls = activity.filter((item) => item.kind === 'call').length;
-  // Turn markers are pipeline-wide, not per-agent — they only make sense in
-  // the "All" view (Quentin, 19/08).
-  const visibleActivity =
-    agentFilter === 'all'
-      ? activity
-      : activity.filter((item) => item.kind === 'call' && agentKeyForCall(item) === agentFilter);
+  const status = codeStatus(header.stage);
+  const delivered = codeDelivery(detail);
+  // Un process TERMINÉ ne montre aucune carte d'approbation — boutons compris
+  // (revue P1 du 25/08). C'est une lecture, pas un effet : vider l'état dans un
+  // effet déclenchait un rendu en cascade, et le résultat à l'écran est le même.
+  const approvals = live ? pendingApprovals : [];
 
   return (
-    <div className="space-y-6">
-      {!embedded && (
-        <Link href="/code" className="text-body-13 text-ink-3 hover:text-ink-2">
-          ← Code
-        </Link>
-      )}
+    // LA BOÎTE DE `PageShell`, à l'identique — largeur maximale ET gouttières
+    // sur le même élément, comme le corps d'un run d'agent : c'est ce qui donne
+    // la largeur de contenu de toutes les autres pages.
+    <div className="max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9" data-testid="run-body">
+      {refresh && <LiveRefresh live={live} everyMs={POLL_INTERVAL} />}
 
-      {/* Header — le PROJET d'abord (décision Quentin 25/08 : « si j'ouvre un
-          projet, la chose importante c'est le projet ») ; l'agent devient un
-          acteur, en tag. Sans projet dérivable — ou en mode embarqué, où le
-          projet titre déjà le poste de travail — l'agent reste le titre. */}
-      <div className="space-y-4 rounded-xl border border-rule-2 bg-paper p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          {!embedded && header.projectName ? (
-            <>
-              <span className="text-medium-15 text-ink" title={header.projectPath ?? undefined}>
-                {header.projectName}
-              </span>
-              <MonoMicroTag tone="agent">{header.agentName ?? 'Unknown agent'}</MonoMicroTag>
-            </>
-          ) : (
-            <span className="text-medium-15 text-ink">{header.agentName ?? 'Unknown agent'}</span>
-          )}
-          <MonoMicroTag tone="ink">{header.origin}</MonoMicroTag>
-          {/* Quel CLI a execute — la seule facon de lire un run pour la
-              securite (les deux ne confinent pas pareil, cf. PR #6) et de lui
-              attribuer son cout. */}
-          {header.providers.map((p) => (
-            <MonoMicroTag key={p} tone="ink">
-              {p}
-            </MonoMicroTag>
-          ))}
-          <StatusPill variant={stageVariant(header.stage)} label={stageLabel(header.stage)} />
-          {header.stage === 'coding' && (
-            <span className="animate-pulse text-body-12 text-ink-4">Live…</span>
-          )}
-        </div>
-        <p className="text-body-14 leading-[1.5]! text-ink-2">{header.task}</p>
-        <div className="grid grid-cols-2 gap-2 text-body-13 sm:grid-cols-3 lg:grid-cols-7">
-          {[
-            ['Cost', header.costUsd > 0 ? `$${header.costUsd.toFixed(2)}` : '—'],
-            [
-              'Duration',
-              header.durationMs != null ? `${(header.durationMs / 1000).toFixed(1)}s` : '—',
-            ],
-            ['Input tokens', header.inputTokens > 0 ? header.inputTokens.toLocaleString() : '—'],
-            ['Output tokens', header.outputTokens > 0 ? header.outputTokens.toLocaleString() : '—'],
-            ['Cache reads', header.cachedTokens > 0 ? header.cachedTokens.toLocaleString() : '—'],
-            ['Files changed', String(header.filesChanged)],
-            ['Activity', relativeTime(header.activityAt)],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-rule-2 bg-canvas px-3 py-2">
-              <p className="text-mono-11 tracking-wider text-ink-4 uppercase">{label}</p>
-              <p className="mt-0.5 truncate font-mono text-ink-2">{value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <RunHeaderCard
+        runId={header.id}
+        task={header.task}
+        agentName={header.agentName}
+        origin={codeOrigin(header)}
+        model={codeRuntime(header, activity)}
+        statusVariant={status.variant}
+        statusLabel={status.label}
+        stats={codeStats(header)}
+      />
 
-      {/* Approbations en attente du pipeline — la carte inline (punch list
-          V1.1, pattern dsh : bande ambre, justification, action, refuse/allow).
-          Au-dessus de tout : c'est la seule chose qui BLOQUE le process. */}
-      {pendingApprovals.map((a) => (
+      {/* La RÉPONSE d'un process de code n'existe pas dans cette donnée : le
+          détail ne porte ni `result` ni texte final. Rien n'est donc dessiné à
+          la place — ce que le run a fait se lit dans les blocs ci-dessous. */}
+
+      {delivered !== null && <DeliveryBlock summary={delivered} jobId={null} />}
+
+      {/* Les approbations en attente du pipeline : la seule chose qui BLOQUE le
+          process, donc au-dessus des sections qui racontent ce qui est fait. */}
+      {approvals.map((a) => (
         <div
           key={a.id}
-          className="space-y-3 rounded-xl border border-warn/40 border-l-4 border-l-warn bg-paper p-5"
+          className="space-y-3 overflow-hidden rounded-xl border border-warn/40 border-l-4 border-l-warn bg-paper p-4"
+          data-testid="approval-card"
         >
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-medium-14 text-ink">⏸ {a.explanation.what}</span>
+            <span className="text-medium-14 text-ink">{a.explanation.what}</span>
             <MonoMicroTag tone="ink">{a.agentName ?? 'agent'}</MonoMicroTag>
             <span className="text-mono-11 text-ink-4">{a.toolName}</span>
           </div>
@@ -284,7 +166,7 @@ export default function CodeProcessDetail({
                 : "L'agent n'a pas expliqué pourquoi."}
             </p>
             <p className="text-body-12 text-warn">
-              ⚠️ {a.explanation.effectLabel}
+              {a.explanation.effectLabel}
               {a.explanation.target && (
                 <span className="text-ink-2"> → {a.explanation.target}</span>
               )}
@@ -318,21 +200,17 @@ export default function CodeProcessDetail({
         </div>
       ))}
 
-      {/* v7 (spec Quentin 25/08) : UNE colonne, dans l'ordre — verdict de
-          review condensé (extensible), fichiers repliables façon PR review
-          (chevron + chemin + −N +N, diff à l'ouverture), puis l'activité
-          chronologique de TOUS les agents. Plus de sidebar de fichiers ni de
-          panneau central : les colonnes étroites, « ça ne va pas du tout ». */}
-      <VerdictsSection verdicts={verdicts} stage={header.stage} />
+      {/* La relecture, avec les VRAIS verdicts — c'est pour eux que la section
+          a été typée sur `CodingVerdictView` quand elle est née côté runs. */}
+      <ReviewSection verdicts={verdicts} reviewing={header.stage === 'review'} />
 
-      {/* La preuve — un verdict sur tout le run, avant le détail fichier par
-          fichier. Observation seule en ① (plan « Vérifier & Corriger », T24). */}
+      {/* La preuve — la même section, le même dessin, pour les trois routes. */}
       <VerificationSection
         sequences={detail.verificationRuns}
         skippedSurfaces={detail.verificationSkippedSurfaces}
         unconfigured={detail.verificationUnconfigured}
         stage={header.stage}
-        live={LIVE_STAGES.has(header.stage)}
+        live={live}
       />
 
       <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
@@ -350,371 +228,51 @@ export default function CodeProcessDetail({
         )}
       </div>
 
-      {/* Activity — la chronologie de la session, tous agents confondus. */}
-      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-          Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
-        </h2>
-        {agentFilters.length > 1 && (
-          <div className="border-b border-rule-2 px-4 py-2.5">
-            <PillTabs
-              tabs={[
-                { value: 'all', label: 'All', count: totalCalls },
-                ...agentFilters.map((a) => ({ value: a.key, label: a.label, count: a.count })),
-              ]}
-              value={agentFilter}
-              onChange={setAgentFilter}
-              variant="inset"
-            />
-          </div>
-        )}
+      {/* L'activité, toujours ouverte : c'est ce qu'on vient lire. Pas de
+          filtre par agent (Quentin a retiré la rangée de pastilles le 18/09) —
+          chaque bloc dit déjà qui l'a exécuté. */}
+      <ActivitySection label={codeActivityLabel(header, activity)}>
         {activity.length === 0 ? (
-          <p className="px-4 py-6 text-body-13 text-ink-4">
+          <p className="py-4 text-body-13 text-ink-4">
             {header.kind === 'chat'
               ? "Chat sessions don't record a tool-call trail yet, only their run history."
               : 'No activity recorded yet.'}
           </p>
         ) : (
-          <div className="max-h-[70vh] overflow-y-auto">
-            {visibleActivity.map((item, i) =>
-              item.kind === 'turn' ? (
-                <TurnMarkerRow key={`turn-${i}`} item={item} />
-              ) : (
-                <ActivityRow key={item.id} tc={item} />
-              ),
-            )}
+          <div className="space-y-2 py-2">
+            {activity.map((item, i) => (
+              <ActivityBlock key={item.kind === 'call' ? item.id : `turn-${i}`} item={item} />
+            ))}
           </div>
         )}
-      </div>
+      </ActivitySection>
     </div>
   );
-}
-
-// ─── Review verdict — condensé d'abord, complet sur demande ──────────────────
-
-/** Le statut condensé d'une review — lisible en une demi-seconde. */
-function verdictStatus(verdicts: CodingVerdictView[], stage: string) {
-  if (verdicts.length === 0) {
-    if (stage === 'review') return { variant: 'run' as StatusVariant, label: 'Review in progress' };
-    return null;
-  }
-  const last = verdicts[verdicts.length - 1]!;
-  return last.verdict === 'approve'
-    ? { variant: 'done' as StatusVariant, label: 'Approved' }
-    : { variant: 'warn' as StatusVariant, label: 'Changes requested' };
-}
-
-function VerdictsSection({ verdicts, stage }: { verdicts: CodingVerdictView[]; stage: string }) {
-  const [open, setOpen] = useState(false);
-  const status = verdictStatus(verdicts, stage);
-  if (!status) return null;
-  const last = verdicts[verdicts.length - 1] ?? null;
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-      <DisclosureButton
-        open={open}
-        onClick={() => verdicts.length > 0 && setOpen((v) => !v)}
-        className="w-full py-3"
-      >
-        <span className="text-mono-11 uppercase tracking-wider text-ink-4">Review</span>
-        <StatusPill variant={status.variant} label={status.label} />
-        {last?.summary && !open && (
-          <span className="min-w-0 truncate text-body-13 text-ink-3">{last.summary}</span>
-        )}
-        {verdicts.length > 1 && (
-          <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
-            {verdicts.length} verdicts
-          </span>
-        )}
-      </DisclosureButton>
-      {open && (
-        <div className="space-y-3 border-t border-rule-2 px-4 py-4">
-          {verdicts.map((v, i) => (
-            <VerdictCard key={i} verdict={v} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Bloc brut repliable — utilisé par Activity pour l'input/output JSON. */
-function CollapsibleLines({ text }: { text: string; tone?: 'default' }) {
-  const lines = text.split('\n');
-  const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? lines : lines.slice(0, LINE_LIMIT);
-  const hasMore = lines.length > LINE_LIMIT;
-  return (
-    <div>
-      <pre className="overflow-x-auto rounded-md bg-hover px-3 py-2 text-mono-12 leading-[1.5]! whitespace-pre text-ink-2">
-        {visible.join('\n')}
-      </pre>
-      {hasMore && !expanded && (
-        <TextButton
-          onClick={() => setExpanded(true)}
-          className="mt-1 text-body-12 text-ink-4 underline hover:text-ink-3"
-        >
-          Show all ({lines.length} lines)
-        </TextButton>
-      )}
-    </div>
-  );
-}
-
-// ─── Review verdicts ─────────────────────────────────────────────────────────
-
-function VerdictCard({ verdict }: { verdict: CodingVerdictView }) {
-  const approved = verdict.verdict === 'approve';
-  return (
-    <div className="space-y-2">
-      <StatusPill
-        variant={approved ? 'done' : 'warn'}
-        label={approved ? 'Approve' : (verdict.verdict ?? 'Request changes')}
-      />
-      {verdict.summary && <p className="text-body-13 text-ink-2">{verdict.summary}</p>}
-      {verdict.findings.length > 0 && (
-        <ul className="space-y-1.5">
-          {verdict.findings.map((f, i) => (
-            <li key={i} className="rounded-md border border-rule-2 px-3 py-2 text-body-13">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-mono-12 text-ink-3">
-                  {f.file ?? 'Unknown file'}
-                  {f.line ? `:${f.line}` : ''}
-                </span>
-                {f.severity && <MonoMicroTag tone="warn">{f.severity}</MonoMicroTag>}
-              </div>
-              {f.issue && <p className="mt-1 text-ink-2">{f.issue}</p>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ─── Activity (compact secondary trail) ────────────────────────────────────
-
-/** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
-function inputFilePath(input: Record<string, unknown>): string {
-  if (typeof input['file_path'] === 'string') return input['file_path'];
-  if (typeof input['notebook_path'] === 'string') return input['notebook_path'];
-  if (typeof input['path'] === 'string') return input['path'];
-  return '';
-}
-
-const FILE_TOOL_LABEL: Record<string, string> = {
-  'cli:Edit': 'Edit',
-  'cli:Write': 'Write',
-  'cli:MultiEdit': 'MultiEdit',
-  'cli:NotebookEdit': 'NotebookEdit',
-  file_edit: 'Edit file',
-  file_write: 'Write file',
-};
-
-function summarizeToolCall(tc: CodingToolCallView): {
-  shortName: string;
-  summary: string;
-  /** Whether `summary` is a file path (tail-truncate it) vs a command/description (truncate normally — the START matters more there). */
-  isPath: boolean;
-} {
-  const input = (tc.toolInput ?? {}) as Record<string, unknown>;
-  if (tc.toolName === 'code_task') {
-    return {
-      shortName: 'Code Task',
-      summary: typeof input['task'] === 'string' ? input['task'] : '',
-      isPath: false,
-    };
-  }
-  if (tc.toolName === 'review_verdict') {
-    return { shortName: 'Review', summary: '', isPath: false };
-  }
-  if (FILE_TOOL_LABEL[tc.toolName]) {
-    return {
-      shortName: FILE_TOOL_LABEL[tc.toolName]!,
-      summary: inputFilePath(input),
-      isPath: true,
-    };
-  }
-  if (tc.toolName.startsWith('cli:')) {
-    const bare = tc.toolName.slice('cli:'.length);
-    if (bare === 'Bash') {
-      return {
-        shortName: 'Bash',
-        summary: typeof input['command'] === 'string' ? input['command'] : '',
-        isPath: false,
-      };
-    }
-    // cli:Read / cli:Glob / cli:Grep etc. — still path-shaped targets.
-    return { shortName: bare, summary: inputFilePath(input), isPath: true };
-  }
-  return { shortName: tc.toolName, summary: '', isPath: false };
-}
-
-/** Groups a 'call' activity item to its owning agent — root job (sentinel key) or a delegated child, grouped by AGENT NAME (Quentin, 19/08: "chaque agent délégué DISTINCT", not per job — two delegate jobs to the same reviewer agent share one chip). Falls back to the job id only when the child has no resolvable agent name. */
-function agentKeyForCall(item: Extract<CodingActivityItem, { kind: 'call' }>): string {
-  if (!item.delegatedFrom) return '__root__';
-  return item.delegatedFrom.agentName ?? `job:${item.delegatedFrom.jobId}`;
-}
-
-type AgentFilterOption = { key: string; label: string; count: number };
-
-function buildAgentFilters(
-  activity: CodingActivityItem[],
-  rootAgentName: string | null,
-): AgentFilterOption[] {
-  const byKey = new Map<string, AgentFilterOption>();
-  for (const item of activity) {
-    if (item.kind !== 'call') continue;
-    const key = agentKeyForCall(item);
-    const label = item.delegatedFrom
-      ? (item.delegatedFrom.agentName ?? 'Delegated agent')
-      : (rootAgentName ?? 'Unknown agent');
-    const existing = byKey.get(key);
-    if (existing) existing.count += 1;
-    else byKey.set(key, { key, label, count: 1 });
-  }
-  // Root first, then delegated agents in first-appearance order.
-  const root = byKey.get('__root__');
-  const rest = Array.from(byKey.values()).filter((o) => o.key !== '__root__');
-  return root ? [root, ...rest] : rest;
-}
-
-function dotColorForTool(toolName: string): string {
-  if (FILE_TOOL_LABEL[toolName]) return 'bg-ok';
-  if (toolName === 'cli:Bash') return 'bg-warn';
-  if (toolName === 'review_verdict') return 'bg-run';
-  if (toolName === 'code_task') return 'bg-agent-vivid';
-  return 'bg-ink-3';
 }
 
 /**
- * A call the harness REFUSED — it did nothing. Detected from the CLI's
- * `<tool_use_error>` envelope (or a Nodal builtin's `{"ok":false}`). Kept
- * VISIBLE and flagged rather than hidden: "this agent tried to write and was
- * blocked" is the signal that tells you its posture is wrong — the one that
- * was missing while a read-only agent looked like it was coding for a day.
+ * Un pas de l'activité, dessiné comme le fil le dessine : un appel d'outil est
+ * un `ToolBlock` (ligne repliée, plaques Input/Result dépliées), un marqueur de
+ * tour est un `ModelCallBlock`. Rien n'est redessiné ici — seule la traduction
+ * vit dans `code-run-view.ts`.
  */
-function isRefusedCall(toolOutput: string | null): boolean {
-  if (!toolOutput) return false;
-  const head = toolOutput.slice(0, 400);
-  return head.includes('<tool_use_error>') || /^\s*\{"ok"\s*:\s*false\b/.test(head);
-}
-
-function ActivityRow({ tc }: { tc: CodingToolCallView }) {
-  const [open, setOpen] = useState(false);
-  const { shortName, summary, isPath } = summarizeToolCall(tc);
-  const refused = isRefusedCall(tc.toolOutput);
+function ActivityBlock({ item }: { item: CodingActivityItem }) {
+  if (item.kind === 'turn') {
+    return (
+      <>
+        {turnModelLines(item).map((line, i) => (
+          <ModelCallBlock key={i} model={line.model} usage={line.usage} />
+        ))}
+      </>
+    );
+  }
+  const delegate = item.delegatedFrom?.agentName ?? null;
   return (
-    <div className="border-b border-rule-2 last:border-0">
-      <DisclosureButton open={open} onClick={() => setOpen((v) => !v)}>
-        <span
-          className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotColorForTool(tc.toolName)}`}
-          aria-hidden
-        />
-        <span className="w-24 shrink-0 text-medium-13 text-ink">{shortName}</span>
-        {isPath ? (
-          <PathTail text={summary} className="min-w-0 flex-1 font-mono text-body-13 text-ink-3" />
-        ) : (
-          <span
-            className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink-3"
-            title={summary}
-          >
-            {summary}
-          </span>
-        )}
-        {refused && (
-          <MonoMicroTag tone="err" className="shrink-0">
-            refused
-          </MonoMicroTag>
-        )}
-        {tc.delegatedFrom && (
-          <MonoMicroTag tone="agent" className="shrink-0">
-            delegated{tc.delegatedFrom.agentName ? ` · ${tc.delegatedFrom.agentName}` : ''}
-          </MonoMicroTag>
-        )}
-        {tc.durationMs != null && (
-          <span className="shrink-0 text-mono-11 text-ink-4">{tc.durationMs}ms</span>
-        )}
-      </DisclosureButton>
-      {/* No diff/output content here on purpose (Quentin, 19/08) — Activity is
-          metrics-only. Expanding shows the raw input/output JSON, nothing typed. */}
-      {open && (
-        <div className="space-y-1.5 px-4 pb-4 pl-9">
-          <CollapsibleLines text={JSON.stringify(tc.toolInput, null, 2)} tone="default" />
-          {tc.toolOutput && <CollapsibleLines text={tc.toolOutput} tone="default" />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TurnMarkerRow({ item }: { item: Extract<CodingActivityItem, { kind: 'turn' }> }) {
-  const label = item.turn !== null ? `Turn ${item.turn}` : 'CLI turn';
-  // inputTokens est l'EFFECTIF (hors cache, lectures ET écritures) — même
-  // sémantique pour les tours Nodal et CLI. Le détail cache vit dans le
-  // title (hover).
-  const cacheParts = [
-    item.cachedTokens > 0 ? `${item.cachedTokens.toLocaleString()} cache reads` : null,
-    item.cacheCreationTokens != null && item.cacheCreationTokens > 0
-      ? `${item.cacheCreationTokens.toLocaleString()} cache writes`
-      : null,
-  ].filter(Boolean);
-  // % du prompt servi par le cache = lectures / (lectures + écritures +
-  // effectif). Les écritures comptent au dénominateur : un run qui AMORCE son
-  // cache (writes >> reads) n'est pas « caché », il paie plein pot ×1,25.
-  const promptTotal =
-    item.cachedTokens + (item.cacheCreationTokens ?? 0) + Math.max(0, item.inputTokens);
-  const cachedPct = promptTotal > 0 ? Math.round((item.cachedTokens / promptTotal) * 100) : 0;
-  return (
-    <div className="border-b border-rule-2 bg-canvas/50 last:border-0">
-      <div
-        className="flex flex-wrap items-center gap-2 px-4 py-2 text-mono-11 text-ink-4"
-        title={cacheParts.length > 0 ? cacheParts.join(' · ') : undefined}
-      >
-        <span className="tracking-wider uppercase">{label}</span>
-        <span>·</span>
-        <span>
-          {item.inputTokens.toLocaleString()} in / {item.outputTokens.toLocaleString()} out
-        </span>
-        {item.cachedTokens > 0 && (
-          <>
-            <span>·</span>
-            <span>{cachedPct}% cached</span>
-          </>
-        )}
-        {item.costUsd > 0 && (
-          <>
-            <span>·</span>
-            <span>${item.costUsd.toFixed(4)}</span>
-          </>
-        )}
-      </div>
-      {/* Per-model split (0079): a CLI turn can be served by several models —
-          the main one plus any sub-agent the CLI spawned on another tier.
-          Rendered only when the provider actually reported the split, and only
-          when it says something the line above doesn't (2+ models). */}
-      {item.modelUsage && item.modelUsage.length > 1 && (
-        <div className="flex flex-col gap-0.5 px-4 pb-2 pl-6 text-mono-11 text-ink-4">
-          {item.modelUsage.map((m) => (
-            <div key={m.model} className="flex flex-wrap items-center gap-2">
-              <span className="text-ink-3">{m.model}</span>
-              <span>
-                {m.inputTokens.toLocaleString()} in / {m.outputTokens.toLocaleString()} out
-              </span>
-              {(m.cachedTokens > 0 || (m.cacheCreationTokens ?? 0) > 0) && (
-                <span>
-                  · {m.cachedTokens.toLocaleString()} cache reads
-                  {m.cacheCreationTokens != null
-                    ? ` / ${m.cacheCreationTokens.toLocaleString()} writes`
-                    : ''}
-                </span>
-              )}
-              {m.costUsd != null && m.costUsd > 0 && <span>· ${m.costUsd.toFixed(4)}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <ToolBlock
+      step={toolStepOfCall(item, item.delegatedFrom?.jobId ?? '')}
+      {...(delegate !== null
+        ? { tag: <MonoMicroTag tone="agent">delegated · {delegate}</MonoMicroTag> }
+        : {})}
+    />
   );
 }
