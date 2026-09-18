@@ -54,6 +54,10 @@ import {
   reviewState,
   porteDesFaitsVerifies,
   fusionnerTableauGitHub,
+  releasesDuTableau,
+  releaseDuHash,
+  hashDeLaRelease,
+  SANS_RELEASE,
   pileDuneColonne,
   ORDRE_DES_BACS,
 } from './lib.mjs';
@@ -2886,6 +2890,135 @@ describe('revue : ce que le portail publie, et ce qu’il ne sait pas (revue C d
     );
     expect(etat.passes).toBe(0);
     expect(etat.warnings).toEqual(['review pass 1 has no readable verdict line']);
+  });
+});
+
+describe('la release d’une carte, lue sur le jalon GitHub (#177)', () => {
+  // Le jalon existe depuis toujours — les PR de la 0.8.10 le portent — et le
+  // tableau ne le rendait nulle part : « qu'est-ce qui constitue la 0.8.10 »
+  // ne se lisait que sur GitHub, une carte à la fois.
+
+  it('la carte porte le TITRE du jalon, et rien d’autre de lui', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        {
+          number: 117,
+          title: 'une issue du jalon',
+          state: 'CLOSED',
+          milestone: { number: 1, title: '0.8.10', description: 'tout ce qui suit la 0.8.9' },
+        },
+      ],
+      pr: [
+        {
+          number: 114,
+          title: 'sa PR',
+          state: 'MERGED',
+          mergedAt: '2026-09-16T10:00:00Z',
+          milestone: { title: '0.8.10' },
+        },
+      ],
+    });
+    expect(cartes.map((c) => c.release)).toEqual(['0.8.10', '0.8.10']);
+    // La description du jalon ne voyage pas : le tableau n'en a pas l'usage.
+    expect(JSON.stringify(cartes)).not.toContain('tout ce qui suit');
+  });
+
+  it('une carte sans jalon porte `null`, et la page en fait « no release »', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 186, title: 'sans jalon', state: 'OPEN' }],
+      pr: [{ number: 187, title: 'sans jalon non plus', state: 'OPEN', milestone: null }],
+    });
+    expect(cartes.every((c) => c.release === null)).toBe(true);
+    expect(releasesDuTableau(cartes)).toEqual([SANS_RELEASE]);
+  });
+
+  it('un titre de jalon vide ou fait d’espaces ne devient pas une release', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'a', state: 'OPEN', milestone: { title: '   ' } }],
+      pr: [],
+    });
+    expect(cartes[0].release).toBe(null);
+  });
+
+  it('les releases du filtre sont rangées de la plus RÉCENTE à la plus ancienne', () => {
+    // Un tri de chaînes mettrait `0.8.10` avant `0.8.9`, et le filtre
+    // s'ouvrirait sur la mauvaise — la faute même que ce dépôt a déjà payée.
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'CLOSED', milestone: { title: '0.8.9' } },
+        { number: 2, title: 'b', state: 'CLOSED', milestone: { title: '0.8.10' } },
+        { number: 3, title: 'c', state: 'OPEN', milestone: { title: '0.9.0' } },
+        { number: 4, title: 'd', state: 'OPEN', milestone: { title: '0.9.0-rc.1' } },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.9.0', '0.9.0-rc.1', '0.8.10', '0.8.9']);
+  });
+
+  it('un jalon qui n’est pas une version garde sa place, après les versions', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'OPEN', milestone: { title: 'Backlog' } },
+        { number: 2, title: 'b', state: 'OPEN', milestone: { title: '0.8.10' } },
+        { number: 3, title: 'c', state: 'OPEN' },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+
+  it('« no release » n’apparaît que si une carte n’a vraiment pas de jalon', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'a', state: 'OPEN', milestone: { title: '0.8.10' } }],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.8.10']);
+  });
+});
+
+describe('les jalons TELS QUE ce dépôt les nomme (#177)', () => {
+  it('« 0.9 » est une version, et vient après « 0.8.10 »', () => {
+    // Vu en collectant le 18/09/2026 : 16 cartes sous « 0.8.10 », 28 sous
+    // « 0.9 ». Sans lire les deux segments, « 0.9 » n'était pas une version et
+    // se rangeait parmi les jalons alphabétiques, donc APRÈS la release passée.
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'CLOSED', milestone: { title: '0.8.10' } },
+        { number: 2, title: 'b', state: 'OPEN', milestone: { title: '0.9' } },
+        { number: 3, title: 'c', state: 'OPEN', milestone: { title: 'Backlog' } },
+        { number: 4, title: 'd', state: 'OPEN' },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.9', '0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+});
+
+describe('le filtre de release vit dans l’adresse (revue C de #192)', () => {
+  it('lit la release d’une adresse, et rend tout le tableau quand il n’y en a pas', () => {
+    expect(releaseDuHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(releaseDuHash('#chantiers')).toBe('');
+    expect(releaseDuHash('')).toBe('');
+    expect(releaseDuHash(null)).toBe('');
+  });
+
+  it('une valeur encodée revient telle qu’elle a été écrite', () => {
+    expect(releaseDuHash('#chantiers?release=no%20release')).toBe('no release');
+    expect(hashDeLaRelease('no release')).toBe('#chantiers?release=no%20release');
+    expect(releaseDuHash(hashDeLaRelease('0.9'))).toBe('0.9');
+    expect(releaseDuHash(hashDeLaRelease('no release'))).toBe('no release');
+  });
+
+  it('« toutes les releases » est une adresse sans requête', () => {
+    expect(hashDeLaRelease('')).toBe('#chantiers');
+    expect(hashDeLaRelease(null)).toBe('#chantiers');
+  });
+
+  it('une adresse ABÎMÉE montre tout, jamais rien', () => {
+    // `%E0%A4%A` est un pourcentage incomplet : `decodeURIComponent` lève. Une
+    // page vide sur une adresse mal recopiée ferait croire à un tableau vide.
+    expect(releaseDuHash('#chantiers?release=%E0%A4%A')).toBe('');
+    expect(releaseDuHash('#chantiers?autre=chose')).toBe('');
   });
 });
 

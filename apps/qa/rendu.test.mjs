@@ -593,3 +593,106 @@ describe('ce que la colonne DIT de ce qu’elle replie (revue C de #188)', () =>
     expect(colonne).not.toContain('+ 3 older');
   });
 });
+
+describe('la release, SUR la page, et son filtre (#177)', () => {
+  const CARTES_RELEASE = [
+    carte({ numero: 117, titre: 'In 0.8.10', release: '0.8.10' }),
+    carte({
+      type: 'pr',
+      numero: 114,
+      titre: 'Its PR, merged',
+      etat: 'MERGED',
+      colonne: 'Done',
+      release: '0.8.10',
+    }),
+    carte({ numero: 190, titre: 'In the next one', release: '0.9.0' }),
+    carte({ numero: 191, titre: 'Attached to nothing', release: null }),
+  ];
+
+  let html = '';
+  beforeAll(() => {
+    html = rendre({
+      ...INSTANTANE,
+      chantiers: { ...(SOCLE.chantiers ?? {}), cartes: CARTES_RELEASE },
+    });
+  });
+
+  it('chaque carte porte sa release, et celle qui n’en a pas le DIT', () => {
+    expect(html).toContain('>0.8.10</span>');
+    expect(html).toContain('>0.9.0</span>');
+    expect(html).toContain('>no release</span>');
+  });
+
+  it('le filtre propose chaque release, avec le nombre de cartes qu’elle porte', () => {
+    const filtre = html.slice(html.indexOf('filtre-release'), html.indexOf('<div class="kanban"'));
+    expect(filtre).toContain('All releases');
+    expect(filtre).toContain('0.8.10 <b>2</b>');
+    expect(filtre).toContain('0.9.0 <b>1</b>');
+    expect(filtre).toContain('no release <b>1</b>');
+    // La plus récente en premier : `0.9.0` avant `0.8.10`.
+    expect(filtre.indexOf('0.9.0 <b>')).toBeLessThan(filtre.indexOf('0.8.10 <b>'));
+  });
+
+  it('chaque carte dit à quelle release elle appartient, pour que le filtre la trouve', () => {
+    expect(html).toContain('data-release="0.8.10"');
+    expect(html).toContain('data-release="no release"');
+  });
+
+  it('le filtre MASQUE des cartes déjà rendues, il ne recalcule pas le tableau', () => {
+    // Deux vérités pour un même chiffre seraient pires que pas de filtre : les
+    // comptes de colonne restent ceux du tableau entier, et le filtre ne fait
+    // que cacher des cartes qui sont là.
+    const kanban = html.slice(html.indexOf('<div class="kanban"'));
+    const aFaire = kanban.slice(kanban.indexOf('>To do<'), kanban.indexOf('>In progress<'));
+    expect(aFaire).toContain('<span class="compte">3</span>');
+    expect(html.slice(html.lastIndexOf('filtre-release__choix'))).toContain('t.hidden =');
+  });
+});
+
+describe('l’adresse porte la release, et la PAGE la relit (revue C de #192)', () => {
+  // Pas de DOM dans ce paquet, et en ajouter un pour un test serait une
+  // dépendance de plus sur le portail. Ce qui est éprouvé ici est donc le CODE
+  // QUE LA PAGE EMBARQUE : `build.mjs` inscrit les deux fonctions de `lib.mjs`
+  // telles quelles, ce test les extrait du HTML rendu et les exécute. Une page
+  // qui n'aurait plus la logique du hash ne peut pas passer.
+  let lireHash;
+  let ecrireHash;
+
+  beforeAll(() => {
+    const html = rendre(INSTANTANE);
+    const prendre = (nom) => {
+      const debut = html.indexOf(`function ${nom}(`);
+      expect(debut, `${nom} absente de la page`).toBeGreaterThan(-1);
+      // Jusqu'à la déclaration suivante, ou la fin du script : la fonction est
+      // inscrite entière, accolades comprises.
+      const fin = html.indexOf('\n  function ', debut + 1);
+      return html.slice(debut, fin > debut ? fin : html.indexOf('</script>', debut));
+    };
+    lireHash = new Function(`${prendre('releaseDuHash')}; return releaseDuHash;`)();
+    ecrireHash = new Function(`${prendre('hashDeLaRelease')}; return hashDeLaRelease;`)();
+  });
+
+  it('la page sait lire une release dans l’adresse', () => {
+    expect(lireHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(lireHash('#chantiers')).toBe('');
+  });
+
+  it('l’aller-retour tient, y compris sur « no release »', () => {
+    expect(lireHash(ecrireHash('0.8.10'))).toBe('0.8.10');
+    expect(lireHash(ecrireHash('no release'))).toBe('no release');
+    expect(ecrireHash('')).toBe('#chantiers');
+  });
+
+  it('la page applique le filtre au chargement, pas seulement au clic', () => {
+    // Sans cet appel, une adresse partagée ouvrirait le tableau entier et le
+    // lien ne vaudrait rien.
+    const html = rendre(INSTANTANE);
+    // Le filtre est posé AU DÉMARRAGE, juste après la vue : sans cet appel-là,
+    // une adresse partagée ouvrirait le tableau entier.
+    expect(html).toMatch(/montrer\(vueDuHash\(\) \|\| '#chantiers'\);\s*\n\s*appliquerFiltre\(\);/);
+    // Et l'adresse qui change le rejoue : sans quoi un retour en arrière du
+    // navigateur laisserait la page sur l'ancienne release.
+    expect(html).toContain("addEventListener('hashchange'");
+    expect(html).toContain('montrer(vueDuHash()); appliquerFiltre();');
+  });
+});
