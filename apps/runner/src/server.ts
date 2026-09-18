@@ -28,6 +28,7 @@ import {
   whatsappPairingStartRoute,
 } from './routes/whatsapp-pairing.ts';
 import { startCronTicker } from './cron/ticker.ts';
+import { reclaimJobsOfDeadRunners } from './cron/reclaim-jobs.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { startDiscordManager } from './channels/discord/manager.ts';
 import { startSlackManager } from './channels/slack/manager.ts';
@@ -364,6 +365,16 @@ async function main(): Promise<void> {
   // Pass runnerEnv to the ticker so it can re-attempt seedDefaultLlmKey on
   // each tick — covers the local-auth case where the first user signs up
   // AFTER the runner boot-time seed has already run and skipped on 0 entities.
+  // Les jobs que le runner PRÉCÉDENT tenait encore (#186). Au démarrage, et non
+  // au premier tour de cron : ce tour n'a lieu que deux minutes plus tard, et le
+  // faucheur attend cinq minutes de plus — pendant tout ce temps un parent
+  // attend un enfant que plus personne n'exécute. C'est la même passe, jouée
+  // tout de suite. Sans attendre : le serveur n'a pas à retarder son écoute pour
+  // une reprise, et une panne ici se DIT sans empêcher le boot.
+  void reclaimJobsOfDeadRunners(deps.db).catch((e: unknown) => {
+    console.error('[runner] startup reclaim of dead-runner jobs failed:', e);
+  });
+
   const ticker = cronTickerEnabled
     ? startCronTicker(deps, { runnerEnv, maxTickMs: cronTickMaxMs })
     : null;
