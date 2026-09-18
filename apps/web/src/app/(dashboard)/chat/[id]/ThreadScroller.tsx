@@ -20,6 +20,36 @@
 // sans nouveau rendu (une image qui finit de charger, un bloc qu'on déplie).
 // Observer la HAUTEUR attrape les deux, et rien d'autre.
 
+// OUVRIR UNE BOÎTE N'ÉTEINT PLUS À MOITIÉ LE SUIVI (19/09).
+//
+// La règle de Quentin est sans condition : « si je clique sur dérouler, la
+// position du scroll ne DOIT PAS bouger ». La PR #160 l'a tenue pour les gros
+// blocs seulement. Sa croissance étant celle du lecteur, elle décidait ensuite
+// du suivi d'après sa POSITION — `follow = staysAtBottom(el)` — et un bloc plus
+// court que `AT_BOTTOM_SLACK_PX` le laissait donc « en bas », suivi allumé.
+//
+// Ce qui a été MESURÉ le 18/09, sur `/chat/[id]` et sur `/spaces/[id]`, au
+// pixel près et aux mêmes chiffres des deux côtés (le composant est partagé) :
+// un bloc d'outil à carte lue, sans entrée à citer, grandit de 58 px. Le clic
+// ne déplaçait rien ; puis, 1,9 seconde plus tard, `LiveRefresh` ramenait une
+// ligne sur un travail qui courait, cette croissance-là tombait hors de la
+// fenêtre du geste, et le fil descendait : `scrollTop` 2459 → 2603, la tête de
+// la boîte qu'on venait d'ouvrir remontant de 144 px. Du siège du lecteur,
+// c'est le clic qui a fait filer la page.
+//
+// Alors une croissance du lecteur éteint le suivi, quelle que soit sa taille.
+// Il se rallume par le seul chemin qui parle de lui : `onScroll`, quand il
+// revient en bas.
+//
+// CE QUE CELA COÛTE, et c'est réel : une réponse qui arrive juste après un
+// PETIT dépliage n'est plus suivie ; elle attend sous le pli jusqu'à ce que le
+// lecteur redescende. La revue de la PR #160 (Reviewer C, constat P0-2) avait
+// plaidé l'inverse — garder le suivi quand le bloc est petit, pour ne pas punir
+// une arrivée innocente. L'incident tranche : une vue qui bouge sous les yeux
+// de quelqu'un qui vient de cliquer est un défaut qu'il voit, tandis qu'un
+// message qui attend sous le pli est un message qu'il trouve en descendant. Le
+// second est le moindre mal.
+//
 // CE QUI RESTE IMPARFAIT, ET POURQUOI ON S'ARRÊTE LÀ.
 //
 // Quatre passes de revue ont trouvé quatre entrelacements dans ce composant de
@@ -234,12 +264,15 @@ export default function ThreadScroller({
         return;
       }
       // Le lecteur vient de cliquer dans le fil : cette croissance est un bloc
-      // qu'il a ouvert. La zone visible ne bouge pas. Suit-on encore ? Ce que
-      // sa position dit, pas un « non » forcé : un petit bloc le laisse en bas
-      // et la réponse suivante doit encore descendre ; un grand bloc l'en
-      // éloigne, il lit, et son retour en bas (onScroll) rallumera le suivi.
+      // qu'il a ouvert. La zone visible ne bouge pas, et le suivi S'ÉTEINT —
+      // quelle que soit la taille du bloc. Il se rallume par le seul chemin qui
+      // dit quelque chose du lecteur : `onScroll`, quand il revient en bas.
+      //
+      // Voir l'en-tête de ce fichier, section « ouvrir une boîte n'éteint plus
+      // à moitié le suivi », pour ce que ce « non » forcé coûte et pourquoi il
+      // est le moindre mal.
       if (growthIsTheReaders({ gestureAt: gestureAt.current, now: performance.now() })) {
-        follow.current = staysAtBottom(el);
+        follow.current = false;
         selfScrollTop.current = null;
         return;
       }
@@ -271,16 +304,29 @@ export default function ThreadScroller({
         if (staysAtBottom(el)) {
           selfScrollTop.current = null;
           follow.current = true;
+          // LE GESTE EST FINI. Un dépliage arrive souvent en DEUX temps — le
+          // bloc, puis son corps quelques dizaines de millisecondes plus tard
+          // (mesuré : t=0 ms puis t=46 ms). Sans cette ligne, un lecteur qui
+          // descend en bas ENTRE les deux voyait la seconde croissance
+          // ré-éteindre le suivi qu'il venait de rallumer, et plus rien ne le
+          // rallumait : il était en bas, et une arrivée l'y laissait sans
+          // descendre. Attrapé par le cas B de `thread-unfold-keeps-scroll`.
+          //
+          // Une fois qu'il a déplacé la vue lui-même, ce qui grandit ensuite
+          // n'est plus attribuable à son clic.
+          gestureAt.current = null;
           return;
         }
         // Pas en bas, mais la position est EXACTEMENT celle que nous avons
         // écrite : c'est notre propre défilement qui arrive, pas un geste. Le
         // cas se produit quand le contenu grandit sans que le bas soit
-        // atteignable d'un coup.
+        // atteignable d'un coup. Le geste, lui, n'est PAS clos : ce
+        // défilement-là n'est pas le sien.
         if (selfScrollTop.current !== null && el.scrollTop === selfScrollTop.current) return;
         // Pas en bas, et la position n'est pas la nôtre : le lecteur a remonté.
         selfScrollTop.current = null;
         follow.current = false;
+        gestureAt.current = null;
       }}
     >
       {children}
