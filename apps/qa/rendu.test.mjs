@@ -441,3 +441,37 @@ describe('où en est la revue, SUR la carte (#128)', () => {
     expect(t).not.toContain('Pass 2');
   });
 });
+
+describe('ce que le portail n’a pas su lire de la revue, il le dit (revue C de #175)', () => {
+  it('une carte dont l’état de revue porte un avertissement le montre', () => {
+    const html = rendre({
+      ...INSTANTANE,
+      chantiers: {
+        ...(SOCLE.chantiers ?? {}),
+        cartes: [
+          carte({
+            type: 'pr',
+            numero: 300,
+            titre: 'A PR whose review state could not be fully read',
+            colonne: 'In review',
+            revue: {
+              passes: 0,
+              lastReviewer: null,
+              lastDate: null,
+              lastVerdict: null,
+              counts: null,
+              status: 'in-review',
+              warnings: ['comment list of PR #300 reached 100: a later review pass may be missing'],
+            },
+          }),
+        ],
+      },
+    });
+    const debut = html.indexOf('PR #300</span>');
+    expect(debut).toBeGreaterThan(-1);
+    const t = html.slice(debut, html.indexOf('</a>', debut));
+    expect(t).toContain('review state partly unreadable');
+    // La carte dit les DEUX choses : rien de lu, et une raison de s'en méfier.
+    expect(t).toContain('not reviewed yet');
+  });
+});

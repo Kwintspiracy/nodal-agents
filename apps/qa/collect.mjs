@@ -257,7 +257,13 @@ function chantiers() {
     return null;
   }
 
-  return { issues, pr, cartes };
+  // Les CARTES seules repartent d'ici : les lignes brutes ont servi à les
+  // construire et n'ont plus rien à faire dans un fichier suivi (revue C de la
+  // PR #175). Personne ne les lisait — la page ne connaît que `cartes` —, et
+  // elles portaient les corps des issues, des PR, et depuis #128 ceux des
+  // commentaires. `fusionnerTableauGitHub` reprojette de son côté : deux
+  // ceintures, parce qu'un secret republié ne se retire pas de l'historique.
+  return { cartes };
 }
 
 // ─── 7 ter. L'état de la release, DEMANDÉ, jamais raconté ─────────────────────

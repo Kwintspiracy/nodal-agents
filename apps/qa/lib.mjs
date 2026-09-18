@@ -567,7 +567,21 @@ export function cartesDuTableau({ issues, pr } = {}) {
   // objet, pour que les trois cartes d'un même travail disent la même chose.
   const revueDunePr = new Map();
   for (const p of pr) {
-    revueDunePr.set(p.number, reviewState([p.body, ...(p.comments ?? []).map((c) => c?.body)]));
+    const commentaires = p.comments ?? [];
+    const etat = reviewState([p.body, ...commentaires.map((c) => c?.body)]);
+    // Une liste de commentaires qui atteint le plafond d'une page peut être
+    // TRONQUÉE, et une passe plus récente serait alors invisible : la carte
+    // retomberait en « not reviewed yet » sans que rien ne le dise. Le cas
+    // n'est pas démontré sur ce dépôt — la plus longue liste y fait sept
+    // commentaires — et `gh` ne promet rien sur ce point ; il est donc DIT et
+    // non supposé résolu (revue C de la PR #175).
+    if (commentaires.length >= COMMENTAIRES_PAR_PAGE) {
+      etat.warnings = [
+        ...etat.warnings,
+        `comment list of PR #${p.number} reached ${COMMENTAIRES_PAR_PAGE}: a later review pass may be missing`,
+      ];
+    }
+    revueDunePr.set(p.number, etat);
   }
 
   const cartes = [
@@ -942,12 +956,46 @@ export function sansFaitsVerifies(cartes) {
 // dans les avertissements, jamais interprété au jugé. Ce portail existe contre
 // les affirmations ; il ne va pas en fabriquer une sur l'état d'une revue.
 
-/** `## Review pass <N> (<relecteur>, <AAAA-MM-JJ>)` — le titre, exactement. */
+/**
+ * `## Review pass <N> (<relecteur>, <AAAA-MM-JJ>)` — le titre, exactement.
+ *
+ * Deux libertés et deux exigences, qu'il vaut mieux écrire que découvrir
+ * (revue C de la PR #175) :
+ *   — le NIVEAU du titre est libre, de `#` à `######` : la convention pose
+ *     `##`, un commentaire qui remonte d'un cran reste lu ;
+ *   — la casse est libre ;
+ *   — le numéro est en CHIFFRES et la date en AAAA-MM-JJ ; « pass two » ou
+ *     « hier » sont refusés et dits, jamais devinés ;
+ *   — le nom du relecteur ne contient ni virgule ni parenthèse, puisque ce
+ *     sont elles qui délimitent les trois champs.
+ */
 const ENTETE_PASSE = /^review pass\s+(\d+)\s*\(\s*([^,()]+?)\s*,\s*(\d{4}-\d{2}-\d{2})\s*\)$/i;
 
-/** `Verdict: <approve|request_changes> (<b> blocking, <i> important, <m> minor)`. */
+/**
+ * `Verdict: <approve|request_changes> (<b> blocking, <i> important, <m> minor)`.
+ *
+ * Elle doit être la PREMIÈRE ligne non vide sous le titre : le texte libre
+ * vient après, jamais avant. C'est voulu — chercher le verdict n'importe où
+ * sous le titre le ferait trouver dans une phrase qui le CITE (« la passe 1
+ * disait Verdict: approve »), et la carte annoncerait un verdict que personne
+ * n'a rendu. Une ligne qui ne suit pas la forme fait une passe ignorée, dite
+ * dans `warnings` (revue C de la PR #175).
+ */
 const LIGNE_VERDICT =
   /^verdict:\s*(approve|request_changes)\s*\(\s*(\d+)\s+blocking\s*,\s*(\d+)\s+important\s*,\s*(\d+)\s+minor\s*\)$/i;
+
+/**
+ * La taille d'une page de commentaires que `gh` rend avec une PR.
+ *
+ * Ce n'est pas une mesure : `gh pr list --json comments` ne documente aucune
+ * garantie de complétude, et ce dépôt n'a pas de PR assez bavarde pour le
+ * montrer (la plus longue liste y fait sept commentaires, PR #45, comparée à
+ * `gh pr view 45 --json comments` : mêmes sept, mêmes identifiants). Cent est
+ * la page usuelle de l'API GraphQL. Une liste qui l'atteint est donc traitée
+ * comme PEUT-ÊTRE tronquée et le dit, plutôt que de laisser une carte retomber
+ * en silence sur « pas encore relue ».
+ */
+const COMMENTAIRES_PAR_PAGE = 100;
 
 /** Rien à dire : aucune passe lue, la PR attend encore sa première relecture. */
 const AUCUNE_REVUE = {
@@ -2146,7 +2194,15 @@ export function fusionnerTableauGitHub(mesure, frais) {
   if (!frais?.chantiers) return socle;
   return {
     ...socle,
-    chantiers: frais.chantiers,
+    // Le tableau publié ne porte QUE ses cartes — l'état dérivé —, jamais les
+    // lignes brutes de GitHub (revue C de la PR #175). Le snapshot est un
+    // fichier suivi, donc publié : y déposer les corps des issues et des PR,
+    // et depuis #128 les corps des COMMENTAIRES, revenait à republier des
+    // milliers de lignes écrites ailleurs, dont un secret cité dans une
+    // discussion. Personne ne lisait `issues` ni `pr` : la page ne connaît que
+    // `cartes`. La projection est ici, au point d'écriture, pour qu'aucun
+    // chemin d'assemblage ne puisse la contourner.
+    chantiers: { cartes: frais.chantiers.cartes ?? null },
     // Le prix d'une PR vient du même GitHub, par une requête distincte. Absent,
     // on garde le dernier connu : l'effacer ferait clignoter la page à chaque
     // requête un peu lente.

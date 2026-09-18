@@ -53,6 +53,7 @@ import {
   cadenceAffichee,
   reviewState,
   porteDesFaitsVerifies,
+  fusionnerTableauGitHub,
   ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -2787,5 +2788,102 @@ describe('les corps de GitHub arrivent en CRLF, et le portail doit les lire', ()
       '',
     );
     expect(reviewState(corps).passes).toBe(0);
+  });
+});
+
+describe('revue : ce que le portail publie, et ce qu’il ne sait pas (revue C de #175)', () => {
+  const passe = (n, date, verdict, b, i, m) =>
+    `## Review pass ${n} (Reviewer C, ${date})\n\nVerdict: ${verdict} (${b} blocking, ${i} important, ${m} minor)`;
+
+  it('le snapshot publié ne porte AUCUN texte de commentaire ni de corps', () => {
+    // Le snapshot est un fichier suivi, donc publié. Y déposer les corps des
+    // PR et de leurs commentaires republierait des milliers de lignes écrites
+    // ailleurs — un jeton cité dans une discussion en fait partie.
+    const SENTINELLE = 'SECRET-DANS-UN-COMMENTAIRE-sk-ant-xxx'; // secrets:allow (fixture)
+    const pr = [
+      {
+        number: 200,
+        title: 'A PR',
+        state: 'OPEN',
+        body: `Closes #9\n\n${SENTINELLE}`,
+        comments: [{ body: `${passe(1, '2026-09-18', 'approve', 0, 0, 0)}\n\n${SENTINELLE}` }],
+      },
+    ];
+    const issues = [{ number: 9, title: 'An issue', state: 'OPEN', body: SENTINELLE }];
+    // Le chemin RÉEL d'écriture : ce que le collecteur assemble, projeté par
+    // la fonction qui écrit le fichier.
+    const snapshot = fusionnerTableauGitHub(
+      { genereLe: '2026-09-18T00:00:00.000Z' },
+      {
+        chantiers: { issues, pr, cartes: cartesDuTableau({ issues, pr }) },
+        le: '2026-09-18T09:00:00.000Z',
+      },
+    );
+    expect(JSON.stringify(snapshot)).not.toContain(SENTINELLE);
+    // Et ce qui reste est bien ce que la page lit.
+    expect(Object.keys(snapshot.chantiers)).toEqual(['cartes']);
+    expect(snapshot.chantiers.cartes.find((c) => c.type === 'pr').revue.passes).toBe(1);
+  });
+
+  it('une même passe REPOSTÉE : la dernière lue gagne', () => {
+    // La session corrige un commentaire en le repostant. Deux passes 2, et
+    // c'est la seconde qui dit où on en est.
+    const etat = reviewState([
+      passe(2, '2026-09-17', 'request_changes', 1, 0, 0),
+      passe(2, '2026-09-18', 'approve', 0, 0, 2),
+    ]);
+    expect(etat.passes).toBe(2);
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une liste de commentaires au plafond d’une page le DIT', () => {
+    // `gh pr list --json comments` ne promet rien sur la complétude. Une passe
+    // au-delà du plafond ne doit pas faire retomber la carte en « pas encore
+    // relue » sans un mot.
+    const cent = Array.from({ length: 100 }, () => ({ body: 'rien à voir' }));
+    const cartes = cartesDuTableau({
+      issues: [],
+      pr: [{ number: 7, title: 'A talkative PR', state: 'OPEN', body: '', comments: cent }],
+    });
+    const revue = cartes[0].revue;
+    expect(revue.passes).toBe(0);
+    expect(revue.warnings).toEqual([
+      'comment list of PR #7 reached 100: a later review pass may be missing',
+    ]);
+  });
+
+  it('une liste courte ne déclenche aucun avertissement', () => {
+    const cartes = cartesDuTableau({
+      issues: [],
+      pr: [
+        {
+          number: 8,
+          title: 'A quiet PR',
+          state: 'OPEN',
+          body: '',
+          comments: [{ body: passe(1, '2026-09-18', 'approve', 0, 0, 0) }],
+        },
+      ],
+    });
+    expect(cartes[0].revue.warnings).toEqual([]);
+  });
+
+  it('le niveau du titre est libre, de # à ######', () => {
+    for (const diese of ['#', '##', '###', '######']) {
+      const etat = reviewState(
+        `${diese} Review pass 1 (Reviewer C, 2026-09-18)\n\nVerdict: approve (0 blocking, 0 important, 0 minor)`,
+      );
+      expect(etat.passes, diese).toBe(1);
+    }
+  });
+
+  it('le verdict doit être la PREMIÈRE ligne non vide sous le titre', () => {
+    // Sinon un verdict CITÉ dans le texte libre passerait pour rendu.
+    const etat = reviewState(
+      '## Review pass 1 (Reviewer C, 2026-09-18)\n\nJ’ai tout relu.\n\nVerdict: approve (0 blocking, 0 important, 0 minor)',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.warnings).toEqual(['review pass 1 has no readable verdict line']);
   });
 });

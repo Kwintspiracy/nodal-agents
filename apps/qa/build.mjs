@@ -947,12 +947,20 @@ function vueChantiers() {
     const pastilleRevue = etatRevue
       ? `<span class="pastille pastille--${etatRevue.ton}">${etatRevue.mot}</span>`
       : '';
+    // Ce que le portail n'a PAS su lire se dit. Un en-tête hors forme, ou une
+    // liste de commentaires peut-être tronquée, laisserait sinon la carte en
+    // « not reviewed yet » : une absence rendue comme un zéro, exactement ce
+    // que cette page reproche ailleurs.
+    const revueIllisible =
+      r && (r.warnings ?? []).length > 0
+        ? '<span class="pastille pastille--moyen">review state partly unreadable</span>'
+        : '';
     const ligneRevue =
       r && r.passes > 0
         ? `<span class="ticket__revue">Pass ${r.passes} · ${esc(r.lastReviewer)} · ${esc(r.lastDate)} · ${esc(r.lastVerdict)} (${Number(r.counts.blocking)} blocking, ${Number(r.counts.important)} important, ${Number(r.counts.minor)} minor)</span>`
         : '';
     return `<a class="ticket ticket--${c.type}" href="${esc(c.url)}" target="_blank" rel="noopener">
-      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${pastilleRevue}${ci}${sansFaits}</span>
+      <span class="ticket__tete"><span class="num-ticket">${c.type === 'pr' ? 'PR ' : ''}#${c.numero}</span>${c.brouillon ? '<span class="etiq etiq--gris">draft</span>' : ''}${c.parPr != null ? `<span class="etiq etiq--gris">PR #${Number(c.parPr)}</span>` : ''}${pastilleRevue}${revueIllisible}${ci}${sansFaits}</span>
       <span class="ticket__titre">${esc(c.titre)}</span>
       ${ligneRevue}
       ${etiquettes ? `<span class="ticket__pied">${etiquettes}</span>` : ''}
