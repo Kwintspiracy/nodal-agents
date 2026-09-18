@@ -110,6 +110,7 @@ import {
   CANCEL_UNDO_INTENT_RE,
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
+  readDeliveredReviewVerdict,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -4583,7 +4584,17 @@ async function runJob(
             .from(agentJobs)
             .where(eq(agentJobs.parentJobId, jobId as string));
           const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
-          if ((deliverableRow?.result ?? '').trim() === '' && !aChildDelivered) {
+          // Un verdict de revue ENREGISTRÉ est un livrable (issue #124) : il est
+          // validé par le schéma de l'outil, il voyage dans le record typé de la
+          // délégation, et il est plus précis que la phrase que l'agent aurait
+          // écrite. La règle ne connaît aucun agent (invariant #3) : tout job
+          // dont le dernier `review_verdict` a réussi a livré quelque chose.
+          const deliveredVerdict = await readDeliveredReviewVerdict(db, jobId as JobId);
+          if (
+            (deliverableRow?.result ?? '').trim() === '' &&
+            !aChildDelivered &&
+            !deliveredVerdict
+          ) {
             if (emptyDeliverableNudges < MAX_EMPTY_DELIVERABLE_NUDGES) {
               emptyDeliverableNudges += 1;
               trace('empty_deliverable_nudge', { turn, attempt: emptyDeliverableNudges });
