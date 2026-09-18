@@ -598,8 +598,8 @@ describe('l’intention de mutation, posée par executeTool', () => {
       },
     ] as never);
 
-    const dits = [];
-    const espion = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+    const dits: string[] = [];
+    const espion = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
       dits.push(args.map(String).join(' '));
     });
     try {
