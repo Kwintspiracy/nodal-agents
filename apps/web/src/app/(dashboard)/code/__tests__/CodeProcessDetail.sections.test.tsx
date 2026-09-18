@@ -112,6 +112,7 @@ const detail = (): CodingProcessDetail => ({
         },
       ],
       counts: null,
+      report: null,
     },
   ],
   changes: [
