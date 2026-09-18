@@ -25,11 +25,16 @@
 // perdraient l'un des deux.
 //
 // ⚠️ `created_at` est NULLABLE (`defaultNow()` sans `NOT NULL`,
-// packages/db/src/schema/jobs.ts). Une ligne sans date se range EN DERNIER
-// — « on ne sait pas quand » n'est pas « à l'instant » — et le curseur sait
-// la désigner (`-|<id>`). Sans ce cas, Postgres rendrait ces lignes EN TÊTE
-// (`DESC` = `NULLS FIRST`) et la comparaison de paires les exclurait ensuite
-// en silence.
+// packages/db/src/schema/jobs.ts). Une ligne sans date se range EN TÊTE : la
+// liste trie `DESC` tout court, donc `NULLS FIRST`, parce que c'est l'ordre
+// exact de l'index `(entity_id, created_at DESC)`. `NULLS LAST` aurait mieux
+// nommé les choses — « on ne sait pas quand » n'est pas « à l'instant » — mais
+// coûtait le balayage de TOUS les jobs de l'entité à chaque page, mesuré sur
+// 10 001 runs (Reviewer C, passe 1 de la PR #185).
+//
+// Le curseur sait désigner une telle ligne (`-|<id>`), et la borne la laisse
+// derrière une fois passée : ni doublon, ni trou, seulement une place qu'on
+// n'a pas choisie pour une ligne dont la date manque.
 
 import { LIVE_JOB_STATUSES } from '@nodal-agents/shared';
 

@@ -77,10 +77,11 @@ const semes: { id: string; createdAt: Date | null }[] = [];
 function dansLOrdrePromis(rows: readonly { id: string; createdAt: Date | null }[]): string[] {
   return [...rows]
     .sort((a, b) => {
-      // Une ligne sans date se range EN DERNIER.
+      // Une ligne sans date se range EN TÊTE : la liste trie `DESC` tout court,
+      // donc `NULLS FIRST`, qui est l'ordre de l'index (Reviewer C, passe 1).
       if (a.createdAt === null && b.createdAt === null) return a.id < b.id ? 1 : -1;
-      if (a.createdAt === null) return 1;
-      if (b.createdAt === null) return -1;
+      if (a.createdAt === null) return -1;
+      if (b.createdAt === null) return 1;
       const ecart = b.createdAt.getTime() - a.createdAt.getTime();
       if (ecart !== 0) return ecart;
       return a.id < b.id ? 1 : -1;
@@ -95,6 +96,14 @@ let petitEnfant = '';
 let runVoisin = '';
 /** Un run qui TOURNE : la suppression doit le laisser. */
 let runVivant = '';
+/** Un run SANS DATE : il se range en tête, et la borne doit le laisser derrière. */
+let runSansDate = '';
+/** Le run supprimable d'une sélection MIXTE, à côté d'un run vivant refusé. */
+let runLotMixte = '';
+/** Une racine dont la chaîne dépasse la borne : la suppression doit REFUSER. */
+let racineProfonde = '';
+/** Le fond de cette chaîne — il doit rester là, comme la racine. */
+let fondDeChaine = '';
 
 async function semerRun(opts: {
   task: string;
@@ -150,6 +159,40 @@ beforeAll(async () => {
     createdAt: new Date('2026-09-15T08:00:00Z'),
     status: 'processing',
   });
+  // Un run SANS DATE. `created_at` porte `DEFAULT now()` mais pas `NOT NULL` :
+  // il faut forcer la valeur. Il se range EN TÊTE depuis que la liste trie
+  // `DESC` tout court, l'ordre de l'index (Reviewer C, passe 1), et la borne
+  // doit le laisser derrière une fois passé.
+  runSansDate = await semerRun({ task: 'run sans date', createdAt: null });
+
+  // Le supprimable d'une sélection mixte : coché à côté de `runVivant`, que
+  // l'action refuse.
+  runLotMixte = await semerRun({
+    task: 'run à supprimer, dans un lot mixte',
+    createdAt: new Date('2026-09-14T08:00:00Z'),
+  });
+
+  // Une chaîne PLUS PROFONDE que `ROLLUP_MAX_DEPTH` : la descendance rendue
+  // serait incomplète, et supprimer laisserait des délégués orphelins.
+  racineProfonde = await semerRun({
+    task: 'une chaîne plus profonde que la borne',
+    createdAt: new Date('2026-09-13T08:00:00Z'),
+  });
+  fondDeChaine = racineProfonde;
+  for (let niveau = 0; niveau < 12; niveau += 1) {
+    const [enfantN] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: `délégué de niveau ${niveau}`,
+        status: 'completed',
+        parentJobId: fondDeChaine,
+      })
+      .returning({ id: agentJobs.id });
+    fondDeChaine = enfantN!.id;
+  }
 
   // Le run à supprimer, avec deux niveaux de délégués. Les enfants portent
   // `internal` et aucune conversation : ils ne sont PAS dans la liste, et rien
@@ -293,6 +336,18 @@ describe('la liste du dossier MCP se lit par pages @cap:parler-par-canal-externe
     expect(new Set(vus).size).toBe(attendus.length);
   });
 
+  it('met une ligne SANS DATE en tête, et ne la revoit plus ensuite', async () => {
+    const { encodeRunCursor } = await import('../external-runs.ts');
+    const p = await page();
+    // En tête : `DESC` tout court range les nuls d'abord, et c'est l'ordre de
+    // l'index.
+    expect(p.runs[0]?.id).toBe(runSansDate);
+    // Passée elle, il reste TOUT le reste, une fois, dans l'ordre.
+    const suite = await page(encodeRunCursor({ createdAt: null, id: runSansDate }));
+    expect(suite.runs.map((r) => r.id)).toEqual(attendus.filter((id) => id !== runSansDate));
+    expect(suite.runs.map((r) => r.id)).not.toContain(runSansDate);
+  });
+
   it('repart du DÉBUT sur un curseur illisible, plutôt que de rendre une page vide', async () => {
     const p = await page('nimportequoi');
     expect(p.runs.map((r) => r.id)).toEqual(attendus);
@@ -310,7 +365,9 @@ describe('supprimer des runs du dossier MCP @cap:parler-par-canal-externe/moteur
     const { deleteExternalRunsAction } = await import('../conversation-actions.ts');
     const r = await deleteExternalRunsAction([runVivant]);
     if (!r.ok) throw new Error(r.message);
-    expect(r.data).toEqual({ deleted: 0, skippedLive: 1 });
+    // Des IDENTIFIANTS, pas des comptes : c'est ce que l'écran retire de sa
+    // liste, et un compte ne dit pas QUI (Reviewer C, passe 1).
+    expect(r.data).toEqual({ deletedIds: [], skippedLiveIds: [runVivant] });
     // Il est toujours là.
     const reste = await testDb
       .select({ id: agentJobs.id })
@@ -323,7 +380,7 @@ describe('supprimer des runs du dossier MCP @cap:parler-par-canal-externe/moteur
     const { deleteExternalRunsAction } = await import('../conversation-actions.ts');
     const r = await deleteExternalRunsAction([runVoisin]);
     if (!r.ok) throw new Error(r.message);
-    expect(r.data.deleted).toBe(0);
+    expect(r.data.deletedIds).toEqual([]);
     const reste = await testDb
       .select({ id: agentJobs.id })
       .from(agentJobs)
@@ -331,11 +388,49 @@ describe('supprimer des runs du dossier MCP @cap:parler-par-canal-externe/moteur
     expect(reste).toHaveLength(1);
   });
 
+  it('SUPPRIME les uns et NOMME celui qu’il laisse — une sélection mixte', async () => {
+    // Le cas de la passe 1 : l'écran retirait toutes les lignes cochées, y
+    // compris celle que l'action refuse, et annonçait à côté qu'elle restait.
+    // L'action nomme donc les deux côtés, et c'est sur ces listes que l'écran
+    // travaille.
+    const { deleteExternalRunsAction } = await import('../conversation-actions.ts');
+    const r = await deleteExternalRunsAction([runLotMixte, runVivant]);
+    if (!r.ok) throw new Error(r.message);
+    expect(r.data.deletedIds).toEqual([runLotMixte]);
+    expect(r.data.skippedLiveIds).toEqual([runVivant]);
+
+    // Et la base dit la même chose que les deux listes.
+    const restants = await testDb
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(inArray(agentJobs.id, [runLotMixte, runVivant]));
+    expect(restants.map((x) => x.id)).toEqual([runVivant]);
+  });
+
+  it('REFUSE plutôt que de laisser des orphelins quand la chaîne est trop profonde', async () => {
+    // `collectDescendants` s'arrête à `ROLLUP_MAX_DEPTH` niveaux. Au-delà, sa
+    // descendance est incomplète et le `DELETE` laisserait des délégués que
+    // plus aucun run ne porte. L'action pose la question à la base et refuse
+    // (invariant #4) : rien n'est supprimé, et elle le dit.
+    const { deleteExternalRunsAction } = await import('../conversation-actions.ts');
+    const r = await deleteExternalRunsAction([racineProfonde]);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('la suppression aurait dû être refusée');
+    expect(r.code).toBe('chain_too_deep');
+
+    // RIEN n'est parti : ni la racine, ni le fond de la chaîne.
+    const restants = await testDb
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(inArray(agentJobs.id, [racineProfonde, fondDeChaine]));
+    expect(restants).toHaveLength(2);
+  });
+
   it('emporte la DESCENDANCE du run, et ce qui pend à elle', async () => {
     const { deleteExternalRunsAction } = await import('../conversation-actions.ts');
     const r = await deleteExternalRunsAction([racineAvecEnfants]);
     if (!r.ok) throw new Error(r.message);
-    expect(r.data).toEqual({ deleted: 1, skippedLive: 0 });
+    expect(r.data).toEqual({ deletedIds: [racineAvecEnfants], skippedLiveIds: [] });
 
     // La racine, son délégué et le délégué de son délégué : plus rien.
     const restants = await testDb
@@ -360,8 +455,11 @@ describe('supprimer des runs du dossier MCP @cap:parler-par-canal-externe/moteur
   it('retire la ligne de la liste, et n’emporte aucune autre', async () => {
     const p = await page();
     expect(p.runs.map((r) => r.id)).not.toContain(racineAvecEnfants);
-    // Les autres runs sont tous là, dans le même ordre.
-    expect(p.runs.map((r) => r.id)).toEqual(attendus.filter((id) => id !== racineAvecEnfants));
+    // Les autres runs sont tous là, dans le même ordre — moins celui que le cas
+    // de la sélection mixte vient de supprimer, lui aussi.
+    expect(p.runs.map((r) => r.id)).toEqual(
+      attendus.filter((id) => id !== racineAvecEnfants && id !== runLotMixte),
+    );
   });
 });
 
@@ -393,12 +491,26 @@ describe('deux vraies pages, sans doublon ni trou @cap:parler-par-canal-externe/
     enMasse.push(...rows);
   });
 
+  /**
+   * TOUT ce que le dossier doit rendre à cet instant, dans l'ordre promis : les
+   * runs de masse, ceux des blocs précédents, moins les deux que les cas de
+   * suppression ont fait partir. La ligne SANS DATE est en tête, devant les
+   * runs de masse pourtant plus récents — c'est ce que `NULLS FIRST` veut dire.
+   */
+  const toutLeDossier = (): string[] =>
+    dansLOrdrePromis([
+      ...enMasse,
+      ...semes.filter((s) => s.id !== racineAvecEnfants && s.id !== runLotMixte),
+    ]);
+
   it('rend une PREMIÈRE page pleine, et promet la suite', async () => {
     const p1 = await page();
-    // Cinquante, pas cinquante-cinq : la table ne se lit jamais entière.
+    // Cinquante, pas la table entière.
     expect(p1.runs).toHaveLength(50);
     expect(p1.nextCursor).not.toBeNull();
-    expect(p1.runs.map((r) => r.id)).toEqual(dansLOrdrePromis(enMasse).slice(0, 50));
+    expect(p1.runs.map((r) => r.id)).toEqual(toutLeDossier().slice(0, 50));
+    // La ligne sans date ouvre la liste, devant des runs plus récents qu'elle.
+    expect(p1.runs[0]?.id).toBe(runSansDate);
   });
 
   it('reprend à la 51e, sans revoir ni sauter une ligne', async () => {
@@ -408,10 +520,9 @@ describe('deux vraies pages, sans doublon ni trou @cap:parler-par-canal-externe/
     const vus = [...p1.runs, ...p2.runs].map((r) => r.id);
     // Aucun doublon : le curseur est EXCLUSIF.
     expect(new Set(vus).size).toBe(vus.length);
-    // Aucun trou : les cinquante-cinq runs de masse sont là, dans l'ordre, et
-    // la seconde page enchaîne sur la première.
-    expect(vus.slice(0, COMBIEN)).toEqual(dansLOrdrePromis(enMasse));
-    // Et la suite du dossier vient après eux, sans avoir été perdue.
+    // Aucun trou : la seconde page enchaîne exactement sur la première.
+    expect(vus).toEqual(toutLeDossier());
+    // La suite du dossier est bien là, sans avoir été perdue.
     expect(vus).toContain(runVivant);
   });
 
@@ -423,7 +534,8 @@ describe('deux vraies pages, sans doublon ni trou @cap:parler-par-canal-externe/
     // celui que le bloc précédent a supprimé.
     const attendusMaintenant = dansLOrdrePromis([
       ...enMasse,
-      ...semes.filter((s) => s.id !== racineAvecEnfants),
+      // Les deux runs que les cas de suppression ont fait partir.
+      ...semes.filter((s) => s.id !== racineAvecEnfants && s.id !== runLotMixte),
     ]);
     expect(ids).toEqual(attendusMaintenant);
   });

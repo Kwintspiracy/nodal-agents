@@ -30,7 +30,7 @@ type ListResult =
   | { ok: true; data: ExternalRunsPage }
   | { ok: false; code: string; message: string };
 type DeleteResult =
-  | { ok: true; data: { deleted: number; skippedLive: number } }
+  | { ok: true; data: { deletedIds: string[]; skippedLiveIds: string[] } }
   | { ok: false; code: string; message: string };
 
 const listExternalRunsAction = vi.hoisted(() =>
@@ -45,7 +45,7 @@ const deleteExternalRunsAction = vi.hoisted(() =>
   vi.fn(
     async (ids: readonly string[]): Promise<DeleteResult> => ({
       ok: true as const,
-      data: { deleted: ids.length, skippedLive: 0 },
+      data: { deletedIds: [...ids], skippedLiveIds: [] },
     }),
   ),
 );
@@ -280,7 +280,7 @@ describe('sélectionner et supprimer des runs @cap:parler-par-canal-externe/ecra
   it('DIT ce que l’action a vraiment supprimé, pas ce qu’on avait coché', async () => {
     deleteExternalRunsAction.mockResolvedValueOnce({
       ok: true,
-      data: { deleted: 0, skippedLive: 1 },
+      data: { deletedIds: [], skippedLiveIds: ['r-2'] },
     });
     await render(DEUX_RUNS);
     await clic('Select');
@@ -291,5 +291,55 @@ describe('sélectionner et supprimer des runs @cap:parler-par-canal-externe/ecra
     await confirmer('Delete');
     expect(toastSuccess).toHaveBeenCalledWith('0 runs deleted');
     expect(toastError).toHaveBeenCalledWith('1 run was left: it started again before the delete.');
+  });
+
+  it('GARDE la ligne que l’action a refusée, et retire les autres', async () => {
+    // Le défaut de la passe 1 (Reviewer C) : l'écran retirait TOUTES les lignes
+    // cochées, y compris celle que le serveur refuse parce qu'elle est repartie,
+    // pendant que le message disait qu'elle restait. `router.refresh()` ne la
+    // ramenait pas : cette liste garde son état jusqu'à un rechargement complet.
+    deleteExternalRunsAction.mockResolvedValueOnce({
+      ok: true,
+      // `r-3` est parti, `r-2` a redémarré entre le clic et l'écriture.
+      data: { deletedIds: ['r-3'], skippedLiveIds: ['r-2'] },
+    });
+    await render([...DEUX_RUNS, run({ id: 'r-3', task: 'Trier la boîte' })]);
+    await clic('Select');
+    await act(async () => {
+      cases()[1]!.click();
+      cases()[2]!.click();
+    });
+    await clic('Delete');
+    await confirmer('Delete');
+
+    // La ligne refusée est TOUJOURS LÀ, celle qui est partie ne l'est plus.
+    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2']);
+    expect(container.textContent).toContain('Publier la note de version');
+    expect(container.textContent).not.toContain('Trier la boîte');
+    // Et les deux messages disent la même chose que l'écran.
+    expect(toastSuccess).toHaveBeenCalledWith('1 run deleted');
+    expect(toastError).toHaveBeenCalledWith('1 run was left: it started again before the delete.');
+  });
+
+  it('DIT quand la chaîne est trop profonde, et ne retire aucune ligne', async () => {
+    // L'action refuse plutôt que de laisser des délégués orphelins : rien ne
+    // doit disparaître de l'écran non plus.
+    deleteExternalRunsAction.mockResolvedValueOnce({
+      ok: false,
+      code: 'chain_too_deep',
+      message: 'These runs delegate deeper than this screen can follow. Nothing was deleted.',
+    });
+    await render(DEUX_RUNS);
+    await clic('Select');
+    await act(async () => {
+      cases()[1]!.click();
+    });
+    await clic('Delete');
+    await confirmer('Delete');
+    expect(toastError).toHaveBeenCalledWith(
+      'These runs delegate deeper than this screen can follow. Nothing was deleted.',
+    );
+    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2']);
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });

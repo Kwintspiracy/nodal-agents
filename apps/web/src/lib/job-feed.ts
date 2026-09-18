@@ -98,6 +98,23 @@ export async function collectDescendants(
     }
     frontier = next;
   }
+  // La borne est ATTEINTE avec des enfants encore devant : la descendance
+  // rendue est INCOMPLÈTE, et le dire vaut mieux que la rendre en silence
+  // (invariant #4, Reviewer C sur la PR #185). Aucun appelant ne peut le
+  // deviner d'une liste qui a l'air normale — et pour celui qui SUPPRIME, la
+  // conséquence serait des délégués orphelins que plus aucun run ne porte.
+  //
+  // Un avertissement, pas une exception : cette fonction sert d'abord à
+  // DESSINER des fils, et refuser d'afficher une conversation parce qu'une
+  // chaîne est trop profonde serait pire que l'afficher tronquée. Les appelants
+  // à qui l'incomplétude coûte cher posent leur propre garde —
+  // `deleteExternalRunsAction` demande à la base s'il reste un orphelin, et
+  // refuse.
+  if (frontier.length > 0) {
+    console.warn(
+      `[job-feed] collectDescendants stopped at ${ROLLUP_MAX_DEPTH} levels with ${frontier.length} job(s) still below: the descendants returned are incomplete.`,
+    );
+  }
   return descendants;
 }
 

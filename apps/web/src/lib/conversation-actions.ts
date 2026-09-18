@@ -28,6 +28,7 @@ import {
   lt,
   ne,
   inArray,
+  notInArray,
   sql,
   agents,
   agentJobs,
@@ -56,6 +57,9 @@ import {
 } from './external-runs.ts';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
+// La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
+// dise plutôt que de la recopier en dur.
+import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
 import { redactPresented } from './redact-presented.ts';
 import { parsePresented } from './tool-card-payload.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
@@ -740,10 +744,22 @@ export async function listExternalRunsAction(
       })
       .from(agentJobs)
       .where(borne)
-      // `NULLS LAST` : une ligne sans date se range en dernier — « on ne sait
-      // pas quand » n'est pas « à l'instant ». Sans lui, `DESC` les mettrait en
-      // TÊTE, et la borne ci-dessous les ferait disparaître des pages suivantes.
-      .orderBy(sql`${agentJobs.createdAt} desc nulls last`, desc(agentJobs.id))
+      // `DESC` NU, donc `NULLS FIRST` — l'ordre exact de l'index
+      // `idx_agent_jobs_entity_created (entity_id, created_at DESC)`.
+      //
+      // Il portait `NULLS LAST`, pour ranger en dernier les lignes dont on
+      // ignore la date. Mesuré sur 10 001 runs (Reviewer C, passe 1), ce mot
+      // coûtait le balayage de TOUS les jobs de l'entité puis un tri complet —
+      // 8,1 ms et 10 001 lignes lues, là où l'index nu en lit 52 en 0,19 ms, et
+      // l'écart grandit avec la table. Une page qui coûte toute la table n'est
+      // pas une pagination.
+      //
+      // Le prix : une ligne sans date se range en TÊTE. Elle paraît donc sur la
+      // première page, et la borne ci-dessous la laisse derrière — ni doublon,
+      // ni trou, seulement une place qu'on n'a pas choisie pour une ligne dont
+      // la date manque. `created_at` porte `DEFAULT now()` (migration 0000) :
+      // le cas demande une écriture qui force `NULL`.
+      .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
       .limit(EXTERNAL_RUNS_PAGE + 1);
 
     const page = rows.slice(0, EXTERNAL_RUNS_PAGE);
@@ -760,25 +776,29 @@ export async function listExternalRunsAction(
 }
 
 /**
- * « Strictement après cette ligne », dans l'ordre exact de la liste.
+ * « Strictement après cette ligne », dans l'ordre exact de la liste —
+ * `created_at DESC` (donc `NULLS FIRST`), puis `id DESC`.
  *
  * Écrit en deux morceaux plutôt qu'en comparaison de paires, à cause des dates
  * absentes : `(NULL, id) < (date, id)` vaut NULL, donc FAUX, et une ligne sans
- * date disparaîtrait de toutes les pages suivantes au lieu de se ranger à la
- * fin.
+ * date disparaîtrait de toutes les pages au lieu de tenir sa place.
  *
- *   - curseur AVEC date : tout ce qui est plus ancien, puis, à date égale, un
- *     `id` plus petit ; et TOUTES les lignes sans date, qui viennent après ;
- *   - curseur SANS date : on est déjà dans la queue, seul l'`id` tranche.
+ *   - curseur SANS date : on est dans la TÊTE de la liste. Après lui viennent
+ *     les autres lignes sans date d'`id` plus petit, puis toutes les lignes
+ *     datées, sans exception ;
+ *   - curseur AVEC date : les lignes sans date sont déjà passées. Reste ce qui
+ *     est plus ancien, et, à date égale, un `id` plus petit.
  */
 function apresLaLigne(apres: RunCursor) {
   if (apres.createdAt === null) {
-    return and(isNull(agentJobs.createdAt), lt(agentJobs.id, apres.id));
+    return or(
+      and(isNull(agentJobs.createdAt), lt(agentJobs.id, apres.id)),
+      isNotNull(agentJobs.createdAt),
+    );
   }
   return or(
     lt(agentJobs.createdAt, apres.createdAt),
     and(eq(agentJobs.createdAt, apres.createdAt), lt(agentJobs.id, apres.id)),
-    isNull(agentJobs.createdAt),
   );
 }
 
@@ -804,10 +824,17 @@ function apresLaLigne(apres: RunCursor) {
  * pour reprendre, et le retirer sous ses pieds ferait échouer une reprise au
  * lieu de dire non. La liste le montre déjà — case désactivée — et la règle est
  * REFAITE ici, parce qu'un écran n'est pas une garde.
+ *
+ * **Ce qui revient est une LISTE D'IDENTIFIANTS, pas un compte** (Reviewer C,
+ * passe 1 de la PR #185). L'écran retirait toutes les lignes cochées et
+ * annonçait à côté « 1 run was left » : la ligne refusée disparaissait quand
+ * même, et `router.refresh()` ne la ramenait pas — la liste garde son état
+ * jusqu'à un rechargement complet. Deux chiffres ne disent pas QUI ; deux
+ * listes, si.
  */
 export async function deleteExternalRunsAction(
   ids: readonly string[],
-): Promise<ActionResult<{ deleted: number; skippedLive: number }>> {
+): Promise<ActionResult<{ deletedIds: string[]; skippedLiveIds: string[] }>> {
   try {
     const session = await getSession();
     if (!session.entityId) return fail('no_entity', 'No active entity');
@@ -827,11 +854,40 @@ export async function deleteExternalRunsAction(
     // LA MÊME règle que la case de l'écran, pas une seconde : `runIsDeletable`
     // (lib/external-runs.ts) est lue des deux côtés.
     const supprimables = racines.filter((r) => runIsDeletable(r.status)).map((r) => r.id);
-    const vivants = racines.length - supprimables.length;
-    if (supprimables.length === 0) return ok({ deleted: 0, skippedLive: vivants });
+    const skippedLiveIds = racines.filter((r) => !runIsDeletable(r.status)).map((r) => r.id);
+    if (supprimables.length === 0) return ok({ deletedIds: [], skippedLiveIds });
 
     const descendants = await collectDescendants(db, session.entityId, supprimables);
     const aSupprimer = [...supprimables, ...descendants.map((d) => d.id)];
+
+    // AUCUN ORPHELIN, et on le VÉRIFIE plutôt que de faire confiance à une
+    // borne (Reviewer C, passe 1). `collectDescendants` s'arrête à
+    // `ROLLUP_MAX_DEPTH` niveaux : sur une chaîne plus profonde — une base
+    // abîmée, un import — elle rendrait une descendance incomplète, et le
+    // `DELETE` laisserait des délégués que plus aucun run ne porte. La question
+    // se pose donc à la base, exactement : reste-t-il un enfant d'un job qu'on
+    // s'apprête à supprimer, hors de la liste ? Si oui, on ne supprime RIEN et
+    // on le dit (invariant #4).
+    const orphelins = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          inArray(agentJobs.parentJobId, aSupprimer),
+          notInArray(agentJobs.id, aSupprimer),
+        ),
+      )
+      .limit(1);
+    if (orphelins.length > 0) {
+      console.error(
+        `[deleteExternalRunsAction] delegation chain deeper than ${ROLLUP_MAX_DEPTH} levels — refusing to delete and leave orphans behind (first: ${orphelins[0]?.id})`,
+      );
+      return fail(
+        'chain_too_deep',
+        'These runs delegate deeper than this screen can follow. Nothing was deleted.',
+      );
+    }
 
     // UNE seule instruction, racines et descendants ensemble. Le SQL en ligne
     // des tests de base donne à `parent_job_id` une clé étrangère que la vraie
@@ -843,12 +899,12 @@ export async function deleteExternalRunsAction(
       .returning({ id: agentJobs.id });
 
     revalidatePath('/chat');
-    // Le compte des RACINES réellement parties : c'est ce que la personne a
-    // coché, et le seul nombre qu'elle peut vérifier des yeux.
+    // Les RACINES réellement parties, nommées une par une : c'est ce que
+    // l'écran retire de sa liste, et lui seul sait quelles lignes il affiche.
     const partiesSet = new Set(parties.map((r) => r.id));
     return ok({
-      deleted: supprimables.filter((id) => partiesSet.has(id)).length,
-      skippedLive: vivants,
+      deletedIds: supprimables.filter((id) => partiesSet.has(id)),
+      skippedLiveIds,
     });
   } catch (err) {
     console.error('[deleteExternalRunsAction]', err);

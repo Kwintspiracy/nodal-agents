@@ -134,19 +134,22 @@ export default function RunsFolderList({
         toast.error(r.message);
         return;
       }
-      // Le compte RÉEL, pas celui qu'on avait coché : un run reparti entre le
-      // clic et l'écriture est refusé par l'action, et le dire vaut mieux
-      // qu'annoncer une suppression qui n'a pas eu lieu.
-      toast.success(r.data.deleted === 1 ? '1 run deleted' : `${r.data.deleted} runs deleted`);
-      if (r.data.skippedLive > 0) {
+      // CE QUI EST VRAIMENT PARTI, nommé par l'action — pas ce qu'on avait
+      // coché (Reviewer C, passe 1). Un run reparti entre le clic et l'écriture
+      // est refusé : la liste retirait quand même sa ligne, et le message disait
+      // à côté qu'il restait. `router.refresh()` ne la ramenait pas, l'état de
+      // cette liste survivant jusqu'à un rechargement complet.
+      const partis = new Set(r.data.deletedIds);
+      setRuns((prev) => prev.filter((x) => !partis.has(x.id)));
+      toast.success(partis.size === 1 ? '1 run deleted' : `${partis.size} runs deleted`);
+      const restes = r.data.skippedLiveIds.length;
+      if (restes > 0) {
         toast.error(
-          r.data.skippedLive === 1
+          restes === 1
             ? '1 run was left: it started again before the delete.'
-            : `${r.data.skippedLive} runs were left: they started again before the delete.`,
+            : `${restes} runs were left: they started again before the delete.`,
         );
       }
-      const partis = new Set(ids);
-      setRuns((prev) => prev.filter((x) => !partis.has(x.id)));
       leaveSelection();
       // La barre latérale compte ces runs elle aussi : sans ce rafraîchissement,
       // son chiffre resterait celui d'avant la suppression.
@@ -255,7 +258,10 @@ export default function RunsFolderList({
       <ConfirmDialog
         open={confirmMass}
         title={chosen.length === 1 ? 'Delete this run?' : `Delete ${chosen.length} runs?`}
-        message="Their steps, tool calls and pending requests go with them. What they already cost stays counted."
+        // Les DÉLÉGUÉS sont nommés en premier (Reviewer C, passe 1) :
+        // supprimer un run emporte les runs qu'il a confiés à d'autres agents,
+        // et c'est la conséquence la moins attendue des quatre.
+        message="Their delegated runs, steps, tool calls and pending requests go with them. What they already cost stays counted."
         confirmLabel="Delete"
         onConfirm={confirmMassDelete}
         onCancel={() => setConfirmMass(false)}
