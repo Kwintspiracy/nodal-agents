@@ -262,14 +262,18 @@ export default function ProjectVerificationPanel({
   // pas décidé. Elle s'exécute pareil — c'est le mot qui change, pas le
   // pouvoir.
   const parLAgent = verification?.verifySource === 'agent';
+  // VERT quand c'est acquis (#181). Ces deux pastilles portaient `skill`,
+  // c'est-à-dire la couleur de l'entité Skill — un orange-rouge : « Approved »
+  // s'affichait dans la teinte que le reste de l'écran réserve à ce qui
+  // alerte. Une couleur ne peut pas contredire le mot qu'elle porte.
   const statusTag =
     status === 'approved' ? (
       parLAgent ? (
-        <MonoMicroTag tone="skill">
+        <MonoMicroTag tone="ok">
           Declared by the agent {relativeTime(verification?.verifyApprovedAt)}
         </MonoMicroTag>
       ) : (
-        <MonoMicroTag tone="skill">
+        <MonoMicroTag tone="ok">
           Approved {relativeTime(verification?.verifyApprovedAt)}
         </MonoMicroTag>
       )
