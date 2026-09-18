@@ -34,6 +34,8 @@ import {
   estimateCallCostUsd,
   isUntrustedTool,
   wrapUntrusted,
+  PROVIDER_REJECTED,
+  PROVIDER_REJECTED_PREFIX,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -762,7 +764,10 @@ export function providerRejectionOfTurn(err: unknown): number | null {
  * le rendent actionnable.
  */
 export function providerRejectionCode(faits: ProviderRejectionFacts): string {
-  return `provider_rejected_request:${faits.provider}/${faits.model} (http ${faits.status}, turn ${faits.turn})`;
+  // Le préfixe vient de `@nodal-agents/shared` : c'est à lui que l'écran
+  // reconnaît un refus (#194, revue passe 1). Écrit deux fois, un renommage
+  // ici aurait rendu l'écran muet sans faire rougir un seul test.
+  return `${PROVIDER_REJECTED_PREFIX}${faits.provider}/${faits.model} (http ${faits.status}, turn ${faits.turn})`;
 }
 
 /**
@@ -5245,14 +5250,14 @@ async function runJob(
       const livrable = [lastAssistantTextSeen, providerRejectionStopLine(faits)]
         .filter((t) => t !== '')
         .join('\n\n');
-      trace('provider_rejected_request', { turn, status: refusStatus });
+      trace(PROVIDER_REJECTED, { turn, status: refusStatus });
       await failJob(db, jobId as string, code, runStats(), messages, livrable);
       return {
         status: 'failed',
         error: code,
         result: livrable,
         toolsUsed,
-        exitReason: 'provider_rejected_request',
+        exitReason: PROVIDER_REJECTED,
         // Le seul geste que ces faits appellent : ce modèle-là ne passe pas.
         hint: 'switch_model',
       };

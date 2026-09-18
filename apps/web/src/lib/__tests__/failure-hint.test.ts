@@ -8,13 +8,25 @@
 // en slug brut.
 
 import { describe, it, expect } from 'vitest';
+import { PROVIDER_REJECTED, PROVIDER_REJECTED_PREFIX } from '@nodal-agents/shared';
 import { failureHint, hintSentence } from '../failure-hint.ts';
 
-// Le code exact que `providerRejectionCode` écrit dans `agent_jobs.error`
-// (apps/runner/src/job/execute.ts) — un vrai, pas une paraphrase.
-const REFUS = 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)';
+// Le code exact que `providerRejectionCode` écrit dans `agent_jobs.error`,
+// bâti sur LA constante partagée et non sur une copie de la chaîne : un
+// renommage du préfixe doit faire rougir ce fichier, au lieu de le laisser vert
+// sur un code que plus personne n'écrit (#194, revue passe 1).
+const REFUS = `${PROVIDER_REJECTED_PREFIX}openrouter/google/gemini-3.7-flash (http 400, turn 3)`;
 
 describe('failureHint — le geste se lit sur ce qui est persisté @cap:suivre-execution/ecran', () => {
+  it('la constante partagée vaut CE qu’elle doit valoir', () => {
+    // Épinglée en clair, une fois (revue passe 2). Tout le reste du fichier est
+    // bâti SUR elle : si la jonction `node_modules` d'un worktree la résout vers
+    // un autre paquet, elle vaut `undefined` et la suite passe au vert sur du
+    // vide — c'est arrivé. Cette ligne-là le dit tout de suite.
+    expect(PROVIDER_REJECTED_PREFIX).toBe('provider_rejected_request:');
+    expect(PROVIDER_REJECTED).toBe('provider_rejected_request');
+  });
+
   it('un refus du fournisseur appelle un changement de modèle', () => {
     expect(failureHint(REFUS)).toBe('switch_model');
   });
@@ -28,7 +40,15 @@ describe('failureHint — le geste se lit sur ce qui est persisté @cap:suivre-e
   });
 
   it('le code est lu au DÉBUT : un message qui cite le refus n’en est pas un', () => {
-    expect(failureHint('the child said provider_rejected_request happened')).toBeNull();
+    expect(failureHint(`the child said ${PROVIDER_REJECTED} happened`)).toBeNull();
+  });
+
+  it('les DEUX-POINTS font partie du code : un voisin de nom n’est pas ce refus', () => {
+    // Sans eux, un futur `provider_rejected_request_upstream` serait lu comme
+    // un refus de ce modèle-là, et l'écran enverrait changer un réglage qui
+    // n'y est pour rien (revue passe 1, constat C3).
+    expect(failureHint(`${PROVIDER_REJECTED}_upstream:openrouter/x (http 500, turn 1)`)).toBeNull();
+    expect(failureHint(PROVIDER_REJECTED)).toBeNull();
   });
 });
 
