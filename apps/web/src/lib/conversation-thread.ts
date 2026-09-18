@@ -152,8 +152,9 @@ function jobItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
 /**
  * Ce que la ligne de résumé dit du run (#135, #132).
  *
- * Les outils et le coût se lisent sur les TOTAUX du job — c'est la même source
- * que la barre d'état, et deux comptes du même travail ne peuvent pas diverger.
+ * Les outils et le coût se lisent sur les TOTAUX du job — la même source que
+ * la barre d'état — plus ceux des délégués dont le fil est assemblé dans le
+ * groupe, puisque le dépliage les montre.
  * Les délégations et les appels de modèle se comptent sur les items du GROUPE,
  * après le retrait de la réponse : la ligne promet ce que le dépliage montre,
  * et un tour dont la prose est sortie ne compte plus sa ligne de modèle deux
@@ -161,15 +162,26 @@ function jobItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
  * qu'il court (invariant #4 — on ne devine pas une fin).
  */
 function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
+  // Le travail d'un délégué dont le fil est assemblé DANS le groupe se déplie
+  // avec lui : ses outils et son coût comptent dans la ligne, sinon elle
+  // promettrait moins que ce que le dépliage montre (Reviewer C, passe 1).
+  let tools = job.feed.totals.toolCalls;
+  let costUsd = job.feed.totals.costUsd;
+  for (const item of work) {
+    if (item.kind !== 'child' || item.job.feed === undefined) continue;
+    tools += item.job.feed.totals.toolCalls;
+    const childCost = item.job.feed.totals.costUsd;
+    if (childCost !== null) costUsd = (costUsd ?? 0) + childCost;
+  }
   return {
-    tools: job.feed.totals.toolCalls,
+    tools,
     delegations: work.filter((i) => i.kind === 'child').length,
     modelCalls: work.filter((i) => i.kind === 'turn' && i.usage !== null).length,
     durationMs:
       job.completedAt !== null && job.createdAt !== null
         ? job.completedAt.getTime() - job.createdAt.getTime()
         : null,
-    costUsd: job.feed.totals.costUsd,
+    costUsd,
   };
 }
 
@@ -215,7 +227,14 @@ function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null 
   const prose = turn !== undefined && turn.kind === 'turn' ? turn.blocks[proseAt] : undefined;
   const lastProse = prose !== undefined && prose.kind === 'prose' ? prose : null;
 
-  if (result !== '' && (lastProse === null || lastProse.text.trim() !== result)) {
+  // `result` sort SEUL quand il se lit comme une réponse : pas un JSON rendu
+  // par `return_result` pour une machine, pas une version tronquée de la prose
+  // (Reviewer C, passe 1 : un résultat machine sorti brut cachait la vraie
+  // réponse, repliée). Dans ces deux cas, la prose reste ce qu'on lit.
+  // En vue DÉPLIÉE, la réponse sortie et la carte d'envoi qui porte le même
+  // texte se voient toutes deux : c'est assumé — l'une est ce qui a été dit,
+  // l'autre l'acte de l'envoyer.
+  if (result !== '' && readsAsReply(result, lastProse?.text ?? null)) {
     return { kind: 'answer', text: job.result ?? '' };
   }
   if (lastProse === null || turn === undefined || turn.kind !== 'turn') return null;
@@ -225,6 +244,28 @@ function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null 
   if (rest.length === 0 && turn.usage === null) work.splice(turnAt, 1);
   else work[turnAt] = { ...turn, blocks: rest };
   return { ...turn, blocks: [lastProse], usage: null };
+}
+
+/**
+ * `result` se lit-il comme une réponse à la personne — plutôt que la dernière
+ * prose de l'agent ? Non quand c'est du JSON (un `return_result` structuré,
+ * pour une machine), non quand c'est la même phrase (la prose sort alors avec
+ * son en-tête d'agent), non quand ce n'est qu'un début tronqué de la prose.
+ */
+function readsAsReply(result: string, lastProse: string | null): boolean {
+  const first = result[0];
+  if (first === '{' || first === '[') {
+    try {
+      JSON.parse(result);
+      return false;
+    } catch {
+      // Pas du JSON : une phrase qui commence par une accolade se lit.
+    }
+  }
+  if (lastProse === null) return true;
+  const prose = lastProse.trim();
+  if (prose === result) return false;
+  return !(result.length < prose.length && prose.startsWith(result.replace(/[….]+$/, '')));
 }
 
 /**

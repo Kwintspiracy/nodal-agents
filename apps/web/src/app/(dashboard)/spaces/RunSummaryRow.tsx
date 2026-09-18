@@ -11,8 +11,9 @@
 //
 // Ce qui est replié n'est PAS dans le DOM, comme pour `FoldableBlock` : un
 // corps caché en CSS resterait cherchable (Ctrl+F le trouverait dans une page
-// qui ne le montre pas) et pèserait sur chaque tour d'un fil de vingt blocs.
-// Les blocs restent construits au SERVEUR et arrivent en `children` — les
+// qui ne le montre pas). Ce n'est PAS un gain de poids : les blocs restent
+// construits au SERVEUR et arrivent en `children`, donc ils voyagent dans la
+// charge RSC même repliés — seul le DOM les ignore (Reviewer C, passe 1). Les
 // charger au clic n'est pas dans cette PR.
 //
 // La densité ne fixe que l'état de départ du GROUPE : chaque bloc à l'intérieur

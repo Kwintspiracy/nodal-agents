@@ -124,6 +124,25 @@ describe('migrations: agent_jobs.finalizing_at (0090)', () => {
   });
 });
 
+// Migration 0109: how dense a person reads a thread (#132) — a text column
+// with a default and a CHECK, so a value outside the two densities never
+// lands.
+describe('migrations: users.feed_density (0109)', () => {
+  it('column exists, defaults to folded, and refuses any other density', async () => {
+    const column = await db.execute(
+      sql`SELECT column_default FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'feed_density'`,
+    );
+    expect(column.rows.length).toBe(1);
+    expect(String(column.rows[0]?.column_default)).toContain('folded');
+    const id = crypto.randomUUID();
+    await expect(
+      db.execute(
+        sql`INSERT INTO users (id, email, name, feed_density) VALUES (${id}, ${`${id}@example.test`}, 'Density', 'compact')`,
+      ),
+    ).rejects.toThrow();
+  });
+});
+
 // Migration 0089: spot-check the columns that carry the mutable/atomic
 // distinction and the proof trace — the full CHECK behavior is covered by
 // constraints.test.ts, this just proves the columns exist as named.

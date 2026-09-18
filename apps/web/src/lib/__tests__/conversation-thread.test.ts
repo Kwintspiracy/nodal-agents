@@ -729,6 +729,83 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
     expect(items.map((i) => i.kind)).toEqual(['request', 'run']);
   });
 
+  it('un résultat machine (du JSON) ne sort pas brut : la dernière prose reste la réponse', () => {
+    // Reviewer C, passe 1 : un `return_result` structuré sorti tel quel
+    // cachait la vraie réponse, repliée.
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), result: '{"files": 3, "ok": true}' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+    const reponse = items[1];
+    expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+      { kind: 'prose', text: 'Voilà le bilan.' },
+    ]);
+  });
+
+  it('un résultat qui n’est qu’un début tronqué de la prose ne la remplace pas', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), result: 'Voilà le…' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+  });
+
+  it('une note du runner reste entre la demande et la réponse, hors du groupe', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:12Z'),
+          result: 'Voilà le bilan.',
+          feed: {
+            items: [
+              demande,
+              { kind: 'note', text: 'Le runner rappelle la consigne.', origin: 'runner' },
+              tourDeTravail([{ kind: 'prose', text: 'Voilà le bilan.' }]),
+            ],
+            totals: totals(),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'note', 'turn', 'run']);
+  });
+
+  it('la ligne compte aussi le travail d’un délégué dont le fil est dans le groupe', () => {
+    const delegueAvecFil: FeedItem = {
+      ...delegue(),
+      job: {
+        ...(delegue() as Extract<FeedItem, { kind: 'child' }>).job,
+        feed: { items: [], totals: totals({ toolCalls: 2, costUsd: 0.01 }) },
+      },
+    } as FeedItem;
+    const fini = travailFini();
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          ...fini,
+          feed: {
+            items: fini.feed.items.map((i) => (i.kind === 'child' ? delegueAvecFil : i)),
+            totals: fini.feed.totals,
+          },
+        }),
+      ],
+    });
+    const groupe = items.find((i) => i.kind === 'run');
+    // 3 outils du job + 2 du délégué ; 0.04 $ + 0.01 $.
+    expect(groupe?.kind === 'run' && groupe.summary.tools).toBe(5);
+    expect(groupe?.kind === 'run' && groupe.summary.costUsd).toBeCloseTo(0.05, 6);
+    expect(groupe?.kind === 'run' && groupe.summary.delegations).toBe(1);
+  });
+
   it('la ligne compte ce que le dépliage montre : outils, délégations, appels de modèle', () => {
     const { items } = buildConversationThread({
       conversation,
