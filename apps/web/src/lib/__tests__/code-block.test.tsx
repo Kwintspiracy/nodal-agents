@@ -34,7 +34,39 @@ describe('CodeBlock', () => {
     expect(bare).toContain('>1</div>');
   });
 
+  it('sans numéros de ligne, le code reste entier, coloré et copiable — la gouttière seule s’en va', () => {
+    const plain = renderToStaticMarkup(
+      <CodeBlock code={'{\n  "limit": 10\n}'} lang="json" lineNumbers={false} />,
+    );
+    expect(plain).not.toContain('>1</div>');
+    expect(plain).not.toContain('>2</div>');
+    expect(plain).toMatch(/class="text-code-key">&quot;limit&quot;</);
+    expect(plain).toContain('Copy');
+  });
+
   it('n’écrit aucune taille de police en pixels', () => {
     expect(html).not.toMatch(/text-\[\d/);
+  });
+
+  it('en JSON, chaque sorte de valeur porte SA couleur', () => {
+    const json = renderToStaticMarkup(
+      <CodeBlock code={'{\n  "limit": 10,\n  "query": "typecheck"\n}'} lang="json" />,
+    );
+    expect(json).toMatch(/class="text-code-key">&quot;limit&quot;</);
+    expect(json).toMatch(/class="text-code-string">&quot;typecheck&quot;</);
+    expect(json).toMatch(/class="text-code-number">10</);
+    expect(json).toMatch(/class="text-code-bracket">\{</);
+    // Rien n'est perdu : couleurs retirées, le texte est celui qu'on a donné.
+    expect(json.replace(/<[^>]*>/g, '').replace(/&quot;/g, '"')).toContain('"limit": 10,');
+  });
+
+  it('hors JSON, aucun jeton n’est coloré', () => {
+    expect(html).not.toMatch(/text-code-(?:key|string|number|keyword|punct|bracket)/);
+  });
+
+  it('le bloc pose son fond de code, et laisse son espacement à l’appelant', () => {
+    expect(html).toContain('bg-code-bg');
+    expect(html).toContain('mb-3');
+    expect(renderToStaticMarkup(<CodeBlock code="echo hi" className="" />)).not.toContain('mb-3');
   });
 });
