@@ -129,9 +129,10 @@ were read by Reviewer C against today's main. Ten held. Four findings still
 stood and are fixed here: a file write classified twice, before and after the
 hook, so a project declared in between left its verification state unfindable;
 the portal's guard against `</script>` in embedded JSON replaced `<` by `<`;
-the "see the run" link of an unstable capability pointed at the current run,
-which may be green; a side-effect import swallowed a journey's header. The
-minor findings are filed for 0.9.0.
+a capability or a journey that wavered without a single red had no link to
+the run that holds its trace (the finding as reported, a link to a wrong run,
+did not exist); a side-effect import swallowed a journey's header. The minor
+findings are filed for 0.9.0.
 
 ---
 
