@@ -1438,3 +1438,75 @@ describe('getConversationThreadAction — les secrets d’une carte (#150)', () 
     expect(JSON.stringify(r.data.feed)).not.toContain(secret);
   });
 });
+
+describe('listAllConversationsAction — aucun secret dans la boîte de réception', () => {
+  // SECRET-001, Reviewer C sur #179. Le titre d'un fil que personne n'a nommé
+  // EST la première demande de la personne, et l'aperçu la dernière réponse de
+  // l'agent : une clé collée dans l'une ou l'autre s'affichait en clair dans la
+  // liste. Le FIL était déjà masqué depuis l'audit ; sa liste, non.
+  //
+  // Mutation vérifiée : `redactSecretsInText` retiré de `firstLine`
+  // (lib/conversation-actions.ts) → les deux tests ci-dessous rougissent.
+
+  const CLE = 'sk-ant-api03-MNOPQRSTUVWXYZ0123456789ABCDEFGH'; // secrets:allow (fixture : clé factice)
+  const fil = { id: '' };
+
+  beforeAll(async () => {
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        // Titre VIDE : c'est la première demande qui devient le titre.
+        title: '',
+        origin: 'user',
+        channel: 'telegram',
+        chatId: 'secret-179',
+        createdAt: new Date('2026-09-18T07:00:00Z'),
+        updatedAt: new Date('2026-09-18T07:30:00Z'),
+      })
+      .returning({ id: conversations.id });
+    fil.id = conv!.id;
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: 'secret-179',
+      conversationId: fil.id,
+      task: `Enregistre la clé ${CLE} quelque part`,
+      status: 'completed',
+      result: `C'est fait, j'ai gardé ${CLE}.`,
+      messages: [],
+      createdAt: new Date('2026-09-18T07:10:00Z'),
+      completedAt: new Date('2026-09-18T07:20:00Z'),
+    });
+  });
+
+  it('masque la clé dans le titre de repli', async () => {
+    const { listAllConversationsAction } = await actions();
+    const r = await listAllConversationsAction();
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+    const ligne = r.data.find((c) => c.id === fil.id);
+    expect(ligne?.title).not.toContain(CLE);
+    expect(ligne?.title).toContain('[secret masqué]');
+    // Le reste de la demande survit : un titre entièrement masqué ne dirait
+    // plus de quel fil il s'agit.
+    expect(ligne?.title).toContain('Enregistre la clé');
+  });
+
+  it('la masque aussi dans l’aperçu, et ne la laisse nulle part dans la ligne', async () => {
+    const { listAllConversationsAction } = await actions();
+    const r = await listAllConversationsAction();
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+    const ligne = r.data.find((c) => c.id === fil.id);
+    expect(ligne?.lastPreview).not.toContain(CLE);
+    expect(JSON.stringify(ligne)).not.toContain(CLE);
+  });
+
+  it('laisse un fil ordinaire mot pour mot', async () => {
+    const { listAllConversationsAction } = await actions();
+    const r = await listAllConversationsAction();
+    if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
+    expect(r.data.find((c) => c.id === groupeConv.id)?.title).toBe('redige le bilan de septembre');
+  });
+});

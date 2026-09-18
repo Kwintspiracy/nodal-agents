@@ -69,6 +69,45 @@ describe('la ligne d’un run venu de dehors @cap:parler-par-canal-externe/moteu
   });
 });
 
+describe('le titre d’un run ne montre aucun secret @cap:parler-par-canal-externe/moteur', () => {
+  // SECRET-001, Reviewer C sur #179. Cette tâche a été POSTÉE par une machine à
+  // `/api/agent` : personne n'a relu ce qu'elle contenait avant qu'elle ne
+  // s'affiche dans une liste, sur une ligne qu'on n'a même pas à ouvrir.
+  //
+  // Mutation vérifiée : `redactSecretsInText` retiré de `runTitle` → les trois
+  // premiers tests ci-dessous rougissent.
+
+  it('masque une clé collée dans la tâche', () => {
+    const cle = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : clé factice)
+    const titre = runTitle(`Déployer avec ${cle}`);
+    expect(titre).not.toContain(cle);
+    expect(titre).toContain('[secret masqué]');
+    // Le reste de la phrase survit : une ligne entièrement masquée ne dirait
+    // plus de quel run il s'agit.
+    expect(titre).toContain('Déployer avec');
+  });
+
+  it('la masque même écrite en gras — le markdown est aplati AVANT', () => {
+    const cle = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'; // secrets:allow (fixture : clé factice)
+    const titre = runTitle(`**${cle}**`);
+    expect(titre).not.toContain(cle);
+    expect(titre).toContain('[secret masqué]');
+  });
+
+  it('ne laisse pas passer le DÉBUT d’une clé par la coupe', () => {
+    // La clé ouvre une tâche plus longue que le plafond : couper avant de
+    // masquer en aurait affiché l'essentiel.
+    const cle = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : jeton factice)
+    const titre = runTitle(`${cle} puis ${'x'.repeat(300)}`);
+    expect(titre).not.toContain('ghp_ABCDEFGHIJ');
+    expect(titre.startsWith('[secret masqué]')).toBe(true);
+  });
+
+  it('laisse une tâche ordinaire mot pour mot', () => {
+    expect(runTitle('Résumer les tickets ouverts')).toBe('Résumer les tickets ouverts');
+  });
+});
+
 describe('ce qu’un run attend, et ce qu’il fait @cap:parler-par-canal-externe/moteur', () => {
   it('fait remonter la question d’un DÉLÉGUÉ sur la ligne de son run de tête', () => {
     // Le cœur du sujet : la demande est portée par un job `internal` que rien

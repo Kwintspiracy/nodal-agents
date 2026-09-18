@@ -21,6 +21,7 @@
 // tourne laisse son parent en `awaiting_delegation`, un statut vivant : la
 // ligne de tête s'allume donc déjà, sans avoir à remonter la descendance.
 
+import { redactSecretsInText } from '@nodal-agents/shared';
 import { plainText } from '@/components/Markdown.tsx';
 import { truncate } from '@/lib/format-time';
 import { RUNNING_JOB_STATUSES } from '@/lib/chat-folders.ts';
@@ -63,15 +64,29 @@ function strongestWaiting(kinds: readonly string[]): RowWaiting {
 }
 
 /**
- * Le titre d'un run : la première ligne lisible de sa tâche.
+ * Le titre d'un run : la première ligne lisible de sa tâche, MASQUÉE.
  *
- * `plainText` d'abord — une tâche écrite en markdown s'afficherait sinon avec
- * ses dièses et ses astérisques, comme la liste des conversations le faisait
- * avant P2bis. Une tâche vide rend « Untitled run » : un titre vide se lirait
- * comme un défaut d'affichage.
+ * Trois gestes, dans cet ordre, et l'ordre est la moitié du sujet :
+ *
+ *   1. `plainText` aplatit le markdown — une tâche écrite en gras s'afficherait
+ *      sinon avec ses astérisques, et surtout un `**sk-…**` ne serait reconnu
+ *      par aucun motif de rédaction ;
+ *   2. `redactSecretsInText` masque (SECRET-001, Reviewer C sur #179). Ce titre
+ *      EST la tâche que quelqu'un a postée à `/api/agent` : une clé collée
+ *      dedans s'affichait en clair dans la liste, sur une ligne que personne
+ *      n'a besoin d'ouvrir pour la lire ;
+ *   3. `truncate` coupe EN DERNIER — couper d'abord laisserait passer les 120
+ *      premiers signes d'une clé, ce qui en est l'essentiel.
+ *
+ * La liste des conversations masque par la même règle et pour la même raison,
+ * à son propre bord de lecture (`firstLine`, lib/conversation-actions.ts) :
+ * elle coupe les siens à 60 signes AVANT que cette ligne ne les voie.
+ *
+ * Une tâche vide rend « Untitled run » : un titre vide se lirait comme un
+ * défaut d'affichage.
  */
 export function runTitle(task: string): string {
-  const line = plainText(task);
+  const line = redactSecretsInText(plainText(task));
   return line === '' ? 'Untitled run' : truncate(line, TITLE_MAX);
 }
 

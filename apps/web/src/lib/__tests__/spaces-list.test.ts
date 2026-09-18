@@ -66,7 +66,9 @@ describe('groupSpaces', () => {
         status: 'failed',
         costUsd: 0.04,
       }),
-      row({ id: 'd1', channel: 'api', task: 'Depuis le dashboard' }),
+      // `dashboard` depuis le 18/09 : c'est ce que la boîte « Send task »
+      // écrit. Elle écrivait `api`, le canal d'une demande venue de dehors.
+      row({ id: 'd1', channel: 'dashboard', task: 'Depuis le dashboard' }),
       row({
         id: 'c1',
         channel: 'cron',

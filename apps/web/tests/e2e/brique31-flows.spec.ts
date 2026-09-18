@@ -317,7 +317,8 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
     const jobId = jobIdMatch?.[1];
     expect(jobId, 'Should have a job ID in the URL').toBeTruthy();
 
-    // Assert DB row: chatId = expectedChatId, task = promptText (no suffix), channel = 'api'
+    // Assert DB row: chatId = expectedChatId, task = promptText (no suffix),
+    // channel = 'dashboard'
     const { agentJobs } = await import('@nodal-agents/db');
     const { db: dbCheck, close: closeCheck } = makeDbClient();
     try {
@@ -340,7 +341,11 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
         job?.chatId,
         'chatId must be set to the resolved owner chat (seeded = expectedChatId)',
       ).toBe(expectedChatId);
-      expect(job?.channel, 'channel stays api (origin = dashboard)').toBe('api');
+      // 'dashboard' since 18/09: the box writes where the request comes FROM.
+      // It wrote 'api', the value /api/agent writes, so a task sent from here
+      // was indistinguishable from one sent by a machine — and both landed in
+      // the MCP folder.
+      expect(job?.channel, 'channel records the dashboard origin').toBe('dashboard');
     } finally {
       await closeCheck();
     }

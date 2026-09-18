@@ -42,7 +42,7 @@ import {
   telegramAllowedChats,
   channelAllowedConversations,
 } from '@nodal-agents/db';
-import { normalizePath, stripGroupPrefix } from '@nodal-agents/shared';
+import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-agents/shared';
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
@@ -196,9 +196,19 @@ const PREVIEW_MAX = 120;
  * La première ligne LISIBLE d'un texte d'agent : son markdown est aplati
  * (P2bis) avant la coupe, sinon la liste des conversations affichait
  * « ## **PRD**, Podium » avec ses dièses et ses astérisques.
+ *
+ * ET MASQUÉE (SECRET-001, Reviewer C sur #179). Le titre d'un fil que personne
+ * n'a nommé EST la première demande de la personne, et l'aperçu est la dernière
+ * réponse de l'agent : une clé collée dans l'un ou l'autre s'affichait en clair
+ * dans la boîte de réception. Le fil, lui, était déjà masqué — pas sa liste.
+ *
+ * L'ORDRE compte, et c'est tout l'intérêt de le faire ici. Aplatir d'abord :
+ * un `**sk-…**` garde ses astérisques et aucun motif ne le reconnaît. Masquer
+ * ensuite, AVANT la coupe : couper à 60 signes d'abord laisserait passer les
+ * 60 premiers signes d'une clé, ce qui en est l'essentiel.
  */
 function firstLine(text: string, max: number): string {
-  const line = plainText(text);
+  const line = redactSecretsInText(plainText(text));
   return line.length <= max ? line : line.slice(0, max);
 }
 
