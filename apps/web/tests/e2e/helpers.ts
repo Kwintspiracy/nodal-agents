@@ -99,13 +99,47 @@ export function connectorCard(page: Page, label: string): Locator {
  * AUCUN identifiant compatible n'existe encore, la carte ouvre directement le
  * CredentialWizard (ConnectorsMarketplaceGrid, `needsWizard`). C'est le cas sur
  * une installation neuve — donc sur le runner.
+ *
+ * Rend LEQUEL des deux s'est ouvert, pour qu'un appelant puisse le dire au
+ * lieu de le supposer (issue #72).
  */
-export async function openConnectorInstallDialog(page: Page, label: string): Promise<void> {
+export async function openConnectorInstallDialog(
+  page: Page,
+  label: string,
+): Promise<ConnectorDialogKind> {
   await openConnectorLibrary(page);
   const card = connectorCard(page, label);
   await expect(card, `aucune carte catalogue pour « ${label} »`).toBeVisible({ timeout: 15_000 });
   await card.getByRole('button', { name: /^(install|add account)$/i }).click();
   await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
+  return openedConnectorDialog(page);
+}
+
+/**
+ * LAQUELLE des deux modales du bouton s'est ouverte.
+ *
+ * `wizard` — aucun identifiant compatible n'existe : c'est la PREMIÈRE fois
+ * qu'on connecte ce fournisseur (`CredentialWizard`).
+ * `add-form` — un identifiant existe déjà, et on choisit lequel utiliser
+ * (`ConnectorAddForm`).
+ *
+ * Les deux portent `role="dialog"` et ne se distinguaient jusqu'ici que par
+ * leur TITRE affiché. Un parcours qui ne sait pas laquelle il a devant lui peut
+ * passer au vert sur le mauvais chemin : c'est toute l'issue #72, où le même
+ * cas était vert sur la machine du propriétaire — un compte Google y existait —
+ * et rouge sur un runner neuf, sans que rien ne dise que les deux ne prouvaient
+ * pas la même chose.
+ */
+export type ConnectorDialogKind = 'wizard' | 'add-form';
+
+export async function openedConnectorDialog(page: Page): Promise<ConnectorDialogKind> {
+  if (await page.getByTestId('credential-wizard-dialog').isVisible()) return 'wizard';
+  if (await page.getByTestId('connector-add-dialog').isVisible()) return 'add-form';
+  throw new Error(
+    'CONNECTOR_DIALOG_UNKNOWN : une modale est ouverte mais ne porte ni ' +
+      '`credential-wizard-dialog` ni `connector-add-dialog`. Le parcours ne peut pas dire ' +
+      'quel chemin il éprouve, et un vert ne vaudrait alors rien.',
+  );
 }
 
 /**
