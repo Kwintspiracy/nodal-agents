@@ -1,8 +1,10 @@
 // llm-timeout-turn.test.ts — un tour qui expire ne jette pas le travail fait
 // (issue #121).
 //
-// L'incident : Reviewer A avait travaillé douze tours (vingt lectures de
-// fichiers) quand le treizième a expiré. Le job est passé `failed`, son
+// L'incident : un agent de revue avait travaillé douze tours (vingt lectures
+// de fichiers) quand le treizième a expiré. (Le nom de l'agent est dans
+// l'issue, pas ici : un nom d'agent d'une installation réelle n'a rien à faire
+// dans la source, invariant #1.) Le job est passé `failed`, son
 // résultat était l'exception recopiée (« LLM call timed out after 300000ms …
 // and no explanation was provided »), et le parent n'a rien reçu des douze
 // tours.
@@ -20,12 +22,18 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agents } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
-import { createEmbeddingClient, LLMTimeoutError } from '@nodal-agents/llm';
+import { createEmbeddingClient, AllProvidersFailedError, LLMTimeoutError } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { executeJob, timeoutErrorCode, timeoutStopLine } from '../../job/execute.ts';
+import {
+  delegationRecordFromOutcome,
+  executeJob,
+  timeoutErrorCode,
+  timeoutOfTurn,
+  timeoutStopLine,
+} from '../../job/execute.ts';
 
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   let active: RunnerDeps['llmClient'] | null = null;
@@ -50,11 +58,20 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   };
 });
 
-/** Un tour du modèle simulé, ou une expiration à la place de la réponse. */
+/**
+ * Un tour du modèle simulé, ou une expiration à la place de la réponse.
+ *
+ * `timesOut` : l'expiration nue, celle d'un agent à un seul fournisseur.
+ * `timesOutViaFailover` : la même, arrivée au bout d'une chaîne de repli
+ * épuisée — c'est `AllProvidersFailedError` qui sort, l'expiration étant sa
+ * cause (revue C de la PR #172).
+ */
 type MockTurn =
-  | { timesOut: true }
+  | { timesOut: true; timesOutViaFailover?: false }
+  | { timesOut?: false; timesOutViaFailover: true }
   | {
       timesOut?: false;
+      timesOutViaFailover?: false;
       text?: string;
       toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
     };
@@ -76,10 +93,10 @@ function makeMockLlmClient(
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async () => {
-      const response = (responses[callIndex] ?? responses[responses.length - 1]!) as Exclude<
-        MockTurn,
-        { timesOut: true }
-      >;
+      const response = (responses[callIndex] ?? responses[responses.length - 1]!) as {
+        text?: string;
+        toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+      };
       callIndex++;
       const content: Array<
         | { type: 'text'; text: string }
@@ -120,11 +137,16 @@ function makeMockLlmClient(
     generateText: (args) => {
       if (compteur) compteur.appels += 1;
       const prevu = responses[callIndex];
-      if (prevu && 'timesOut' in prevu && prevu.timesOut) {
+      if (prevu?.timesOut === true || prevu?.timesOutViaFailover === true) {
         callIndex++;
-        return Promise.reject(new LLMTimeoutError(PROVIDER, MODEL, 300_000)) as ReturnType<
-          RunnerDeps['llmClient']['generateText']
-        >;
+        const expiration = new LLMTimeoutError(PROVIDER, MODEL, 300_000);
+        // La chaîne de repli ne rend pas l'expiration telle quelle : elle rend
+        // son propre échec, l'expiration en cause.
+        const leve =
+          prevu.timesOutViaFailover === true
+            ? new AllProvidersFailedError(2, expiration)
+            : expiration;
+        return Promise.reject(leve) as ReturnType<RunnerDeps['llmClient']['generateText']>;
       }
       return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
@@ -320,6 +342,108 @@ describe('un tour qui expire @cap:organiser-equipe/moteur', () => {
     expect(row.error ?? '').toContain('llm_timeout:');
     expect(row.error ?? '').toContain(`${PROVIDER}/${MODEL}`);
     expect(row.error ?? '').toContain('turn 2');
+  });
+
+  it('DERRIÈRE UNE CHAÎNE DE REPLI épuisée, l’expiration est reconnue de la même façon', async () => {
+    // Revue C de la PR #172 : avec plusieurs fournisseurs, ce qui remonte est
+    // `AllProvidersFailedError`. Sans la lecture de sa cause, le tour n'était
+    // pas rejoué et le travail mourait de l'ancienne mort.
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const deps = makeDeps(
+      makeMockLlmClient(
+        [
+          PREMIER_TOUR,
+          { timesOutViaFailover: true },
+          {
+            text: 'Avis : la jonction doit être résolue avant le test de préfixe.',
+            toolCalls: [
+              { toolCallId: 'rr-2', toolName: 'return_result', args: { status: 'success' } },
+            ],
+          },
+        ],
+        compteur,
+      ),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('completed');
+    const row = await jobRow(jobId);
+    expect(row.result ?? '').toContain('la jonction doit être résolue');
+    expect(row.turn).toBe(2);
+    expect(compteur.appels).toBe(3);
+  });
+
+  it('une chaîne épuisée SANS expiration n’est pas rejouée — elle garde son propre code', async () => {
+    // La lecture de la cause n'élargit rien d'autre : une chaîne tombée sur
+    // autre chose part vers la capture extérieure, qui a son code à elle.
+    const jobId = await insertJob();
+    const compteur = { appels: 0 };
+    const client = makeMockLlmClient([PREMIER_TOUR], compteur);
+    const vraiGenerate = client.generateText;
+    let appel = 0;
+    const deps = makeDeps({
+      ...client,
+      generateText: ((args: Parameters<typeof vraiGenerate>[0]) => {
+        appel += 1;
+        if (appel === 2) {
+          return Promise.reject(
+            new AllProvidersFailedError(2, new Error('502 Bad Gateway')),
+          ) as ReturnType<typeof vraiGenerate>;
+        }
+        return vraiGenerate(args);
+      }) as typeof vraiGenerate,
+    });
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    const row = await jobRow(jobId);
+    expect(row.error ?? '').toBe('all_providers_failed');
+    expect(row.error ?? '').not.toContain('llm_timeout');
+    // Deux appels : le tour ordinaire, puis celui qui échoue. Aucun rejeu.
+    expect(appel).toBe(2);
+  });
+});
+
+describe('ce que le PARENT reçoit d’un tour expiré @cap:organiser-equipe/moteur', () => {
+  it('l’enregistrement typé porte le travail partiel en résumé, et timeout en raison de sortie', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([PREMIER_TOUR, { timesOut: true }, { timesOut: true }]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+    if (outcome.status !== 'failed') throw new Error('le travail devait échouer');
+
+    // Le VRAI constructeur, sur le VRAI résultat du travail — c'est lui que les
+    // deux points de reprise appellent pour remplir le tour de l'outil du parent.
+    const record = delegationRecordFromOutcome(outcome);
+
+    expect(record.status).toBe('failed');
+    expect(record.summary).toContain('douze fichiers');
+    expect(record.summary).toContain('[stopped: llm timeout');
+    expect(record.exit_reason).toBe('timeout');
+    expect(record.tools_used).toContain('save_memory');
+    // Le résumé n'est PAS vide : c'est toute la différence avec l'incident,
+    // où le parent ne recevait rien des tours déjà faits.
+    expect(record.summary).not.toBe('');
+  });
+});
+
+describe('lire une expiration sous ses deux formes @cap:organiser-equipe/moteur', () => {
+  const expiration = new LLMTimeoutError('openrouter', 'qwen/qwen3.8-max', 300_000);
+
+  it('la reconnaît nue, et au bout d’une chaîne épuisée', () => {
+    expect(timeoutOfTurn(expiration)).toBe(expiration);
+    expect(timeoutOfTurn(new AllProvidersFailedError(2, expiration))).toBe(expiration);
+  });
+
+  it('ne reconnaît rien d’autre', () => {
+    expect(timeoutOfTurn(new AllProvidersFailedError(2, new Error('502 Bad Gateway')))).toBeNull();
+    expect(timeoutOfTurn(new Error('boom'))).toBeNull();
+    expect(timeoutOfTurn(null)).toBeNull();
   });
 });
 

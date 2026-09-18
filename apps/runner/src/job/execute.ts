@@ -556,7 +556,7 @@ export type ExecuteJobResult =
  * never a status write — moving it out of that neighbourhood keeps the gate
  * honest instead of loosening it.
  */
-function delegationRecordFromOutcome(
+export function delegationRecordFromOutcome(
   outcome: Extract<ExecuteJobResult, { status: 'completed' | 'failed' }>,
 ): DelegationOutcomeRecord {
   if (outcome.status === 'completed') {
@@ -667,6 +667,30 @@ export function timeoutStopLine(faits: TimeoutFacts): string {
 /** Des millisecondes en secondes entières, jamais négatives. */
 function secondes(ms: number): string {
   return `${Math.max(0, Math.round(ms / 1000))}s`;
+}
+
+/**
+ * L'expiration derrière l'erreur d'un tour, ou `null` si ce n'en est pas une.
+ *
+ * Deux formes, et la seconde manquait (revue C de la PR #172) : un client à UN
+ * fournisseur lève `LLMTimeoutError` ; un client à plusieurs essaie la chaîne
+ * et, quand elle est épuisée, lève `AllProvidersFailedError` en portant la
+ * dernière erreur dans `underlyingCause` (`packages/llm/src/failover.ts`, où
+ * une expiration est explicitement de celles qui font passer au suivant). Sans
+ * cette seconde lecture, un agent qui a un repli configuré mourait de
+ * l'ancienne mort, exactement celle de #121.
+ *
+ * Rien d'autre n'est élargi : une chaîne épuisée sur des 5xx ou sur un quota
+ * n'est pas une expiration et repart vers la capture extérieure, qui a son
+ * propre code pour elle. L'erreur rendue est celle du fournisseur qui a
+ * VRAIMENT expiré — le dernier essayé, pas le premier de la liste.
+ */
+export function timeoutOfTurn(err: unknown): LLMTimeoutError | null {
+  if (err instanceof LLMTimeoutError) return err;
+  if (err instanceof AllProvidersFailedError && err.underlyingCause instanceof LLMTimeoutError) {
+    return err.underlyingCause;
+  }
+  return null;
 }
 
 // ─── executeJob ───────────────────────────────────────────────────────────────
@@ -3075,7 +3099,11 @@ async function runJob(
         // Le budget vaut pour CE tour : un tour qui répond le remet à zéro
         // (juste après le `finally`). Un travail de quarante tours n'est donc
         // pas condamné par une expiration au cinquième.
-        if (genErr instanceof LLMTimeoutError) {
+        //
+        // L'expiration se lit sous ses DEUX formes, `timeoutOfTurn` : en
+        // direct, et au bout d'une chaîne de repli épuisée.
+        const expiration = timeoutOfTurn(genErr);
+        if (expiration !== null) {
           msExpiresCeTour += Date.now() - appelCommenceA;
           if (expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
             expirationsCeTour += 1;
@@ -3089,9 +3117,12 @@ async function runJob(
           // livrable : douze tours de lecture n'ont pas à disparaître parce que
           // le treizième a expiré. Le parent le reçoit par l'enregistrement
           // typé (`delegationRecordFromOutcome`), avec `exit_reason: timeout`.
+          // Le fournisseur et le modèle viennent de l'expiration elle-même :
+          // derrière une chaîne de repli, celui qui a expiré est le DERNIER
+          // essayé, pas celui que porte la configuration du client.
           const faits = {
-            provider: llmClient.config.provider,
-            model: llmClient.config.model,
+            provider: expiration.provider,
+            model: expiration.model,
             turn,
             elapsedMs: msExpiresCeTour,
           };
