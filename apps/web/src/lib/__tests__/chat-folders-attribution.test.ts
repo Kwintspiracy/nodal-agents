@@ -111,6 +111,41 @@ beforeAll(async () => {
     status: 'pending',
   });
 
+  // Un délégué rattaché à une conversation que la liste ne MONTRE pas — un
+  // entretien d'accueil Slack (`origin = 'onboarding'`). Le dossier Slack ne
+  // doit pas compter ce que sa liste ne peut pas afficher (Reviewer C, #157).
+  const [accueil] = await testDb
+    .insert(conversations)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'slack',
+      chatId: '77',
+      origin: 'onboarding',
+      title: 'un entretien d’accueil',
+    })
+    .returning({ id: conversations.id });
+  const [enfantAccueil] = await testDb
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'task-board',
+      task: 'un sous-travail né d’un accueil',
+      status: 'awaiting_approval',
+      conversationId: accueil!.id,
+    })
+    .returning({ id: agentJobs.id });
+  await testDb.insert(approvalRequests).values({
+    entityId: seed.entityId,
+    jobId: enfantAccueil!.id,
+    agentId: seed.agentId,
+    toolName: 'ask_user',
+    toolInput: { question: 'et pour l’accueil ?' },
+    kind: 'question',
+    status: 'pending',
+  });
+
   // Un délégué SANS conversation : il attend lui aussi, mais rien ne dit d'où
   // il vient. Il ne doit tomber dans AUCUN dossier (invariant #4).
   const [orphelin] = await testDb
@@ -196,6 +231,27 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
 
   it('fait porter au lien « Channels » le même chiffre que la pastille', async () => {
     const [waiting, snapshot] = [await attentes(), await instantane()];
+    expect(
+      chatWaitingTotal({ channels: snapshot.channels, waiting, running: snapshot.running }),
+    ).toBe(1);
+  });
+
+  it('ne compte pas dans un dossier ce que sa liste ne montre pas : l’accueil reste dehors', async () => {
+    const [waiting, snapshot] = [await attentes(), await instantane()];
+    // La demande du délégué de l'accueil est lue SANS canal de conversation :
+    // sa conversation n'est pas listable, donc elle ne range rien.
+    const accueil = waiting.find(
+      (w) => w.jobChannel === 'task-board' && w.conversationChannel === 'slack',
+    );
+    expect(accueil).toBeUndefined();
+    const rows = chatFolders({
+      channels: snapshot.channels,
+      waiting,
+      running: snapshot.running,
+      pathname: '/chat',
+      folderParam: null,
+    });
+    expect(rows.find((r) => r.key === 'slack')?.waiting ?? 0).toBe(0);
     expect(
       chatWaitingTotal({ channels: snapshot.channels, waiting, running: snapshot.running }),
     ).toBe(1);

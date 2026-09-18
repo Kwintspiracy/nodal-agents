@@ -5902,8 +5902,19 @@ export async function listApprovalsAction(
       .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
       // Le canal de la conversation, pour que le dossier compte la demande là
       // où la LIGNE l'affiche déjà (#148). `left`, parce qu'un job sans
-      // conversation reste une demande à rendre.
-      .leftJoin(conversations, eq(conversations.id, agentJobs.conversationId))
+      // conversation reste une demande à rendre. Seule une conversation que la
+      // liste des chats MONTRE (`origin` user/project — l'entretien d'accueil
+      // reste dehors) range le travail : sinon la pastille du dossier
+      // compterait une demande qu'aucune ligne n'affiche (Reviewer C, #157).
+      // L'entité est refiltrée par sûreté, pas par nécessité.
+      .leftJoin(
+        conversations,
+        and(
+          eq(conversations.id, agentJobs.conversationId),
+          eq(conversations.entityId, session.entityId),
+          inArray(conversations.origin, ['user', 'project']),
+        ),
+      )
       .where(where)
       .orderBy(desc(approvalRequests.requestedAt))
       .limit(100);

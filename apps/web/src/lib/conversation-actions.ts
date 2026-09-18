@@ -536,7 +536,17 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
           n: sql<number>`count(*)::int`,
         })
         .from(agentJobs)
-        .leftJoin(conversations, eq(conversations.id, agentJobs.conversationId))
+        // Seule une conversation que la liste MONTRE (`origin` user/project)
+        // range le run : la même frontière que la requête `channels` au-dessus,
+        // sinon le point du dossier s'allumerait sans ligne (Reviewer C, #157).
+        .leftJoin(
+          conversations,
+          and(
+            eq(conversations.id, agentJobs.conversationId),
+            eq(conversations.entityId, session.entityId),
+            inArray(conversations.origin, ['user', 'project']),
+          ),
+        )
         .where(
           and(
             eq(agentJobs.entityId, session.entityId),
