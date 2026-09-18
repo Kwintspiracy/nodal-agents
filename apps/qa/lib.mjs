@@ -2237,24 +2237,40 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
  * Un commentaire qui suit du CODE n'est pas un en-tête : c'est ce qui
  * distingue cette fonction de la regex qu'elle remplace.
  */
+/**
+ * La ligne qui TERMINE une déclaration `import`.
+ *
+ * Deux formes la terminent, et la seconde manquait : le `from` d'un import
+ * nommé, et le point-virgule d'un import à effet de bord. `import
+ * './helpers.ts';` tient sur une ligne et ne porte aucun `from` ; le drapeau
+ * « on est dans un import » restait donc levé jusqu'à la fin du fichier, tout
+ * l'en-tête était sauté, et la page Journeys affichait « no description » sous
+ * un parcours qui en avait une (revue après coup de la PR #86).
+ *
+ * Un import sur plusieurs lignes ne peut pas se faire prendre par le
+ * point-virgule : entre ses accolades on trouve des virgules, jamais un
+ * point-virgule.
+ */
+const finDImport = (ligne) => /\bfrom\b/.test(ligne) || ligne.endsWith(';');
+
 export function intentionDunParcours(texte) {
   const lignes = String(texte ?? '').split(/\r?\n/);
 
   // ── L'en-tête : on saute le vide et les imports, et on s'arrête au premier
   // code. `import … from '…'` tient parfois sur plusieurs lignes ; on reste
-  // dedans jusqu'au `from`.
+  // dedans jusqu'à la fin de la déclaration.
   let i = 0;
   let dansImport = false;
   const brut = [];
   for (; i < lignes.length; i++) {
     const l = lignes[i].trim();
     if (dansImport) {
-      if (/\bfrom\b/.test(l)) dansImport = false;
+      if (finDImport(l)) dansImport = false;
       continue;
     }
     if (l === '') continue;
     if (/^import\b/.test(l)) {
-      if (!/\bfrom\b/.test(l)) dansImport = true;
+      if (!finDImport(l)) dansImport = true;
       continue;
     }
     if (l.startsWith('/*')) {

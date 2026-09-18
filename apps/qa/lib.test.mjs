@@ -2490,9 +2490,11 @@ describe('le rendu mène à la cause, et seulement quand elle existe', () => {
     expect(source).toMatch(/const lienRun = \(url\) =>\s*\n?\s*url\s*\n?\s*\?/);
   });
 
-  it('un parcours vert ne porte pas de lien : il n’y a rien à aller voir', () => {
-    expect(vue('vueParcours')).toContain("r?.rouge ? lienRun(s.execution?.url) : ''");
-  });
+  // « Un parcours vert ne porte pas de lien » se lit désormais SUR LA PAGE,
+  // dans `rendu.test.mjs` : cherché dans le source, il ne disait que la forme
+  // d'une condition, et il est tombé le jour où cette condition a dû accepter
+  // un cas instable — un parcours qui a vacillé est le seul dont le run porte
+  // une trace, et la page n'y menait pas.
 
   it('le cadre « Prix d’une PR » dit l’absence plutôt qu’un zéro', () => {
     const cadre = vue('cadrePrix');
@@ -2591,6 +2593,28 @@ describe('intentionDunParcours — la description d’un parcours, pas son bande
   it('un commentaire posé APRÈS les imports compte encore comme en-tête', () => {
     const texte = `import { test } from '@playwright/test';\nimport path from 'node:path';\n\n// Le propriétaire renomme son agent depuis la liste.\n\ntest('a', () => {});\n`;
     expect(intentionDunParcours(texte)).toBe('Le propriétaire renomme son agent depuis la liste.');
+  });
+
+  // Le drapeau « on est dans un import » ne retombait que sur un `from`. Un
+  // import à effet de bord n'en a pas : il restait levé jusqu'à la fin du
+  // fichier, l'en-tête était sauté, et la page Journeys affichait
+  // « no description » sous un parcours qui en avait une.
+  it('un import à effet de bord n’avale pas l’en-tête qui le suit', () => {
+    const texte = `import './helpers.ts';\n\n// Le propriétaire fait ceci.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci.');
+  });
+
+  it('un import à effet de bord suivi d’un import nommé n’avale rien non plus', () => {
+    const texte = `import './helpers.ts';\nimport { test } from '@playwright/test';\n\n// Le propriétaire fait cela.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire fait cela.');
+  });
+
+  // La garde de la garde : le point-virgule ne doit pas faire retomber le
+  // drapeau au milieu d'un import sur plusieurs lignes. Entre ses accolades on
+  // ne trouve que des virgules, et la ligne qui le ferme porte son `from`.
+  it('un import sur plusieurs lignes reste sauté en entier', () => {
+    const texte = `import {\n  test,\n  expect,\n} from '@playwright/test';\n\n// Le propriétaire fait ceci encore.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci encore.');
   });
 
   it('un commentaire posé après du CODE n’est plus un en-tête', () => {
