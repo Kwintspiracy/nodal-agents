@@ -194,6 +194,52 @@ describe('ToolBlock', () => {
     expect(container.textContent).toContain('awaiting approval');
   });
 
+  it('ouvert, l’entrée et le résultat sont du CODE : mis en forme, coloré, copiable', async () => {
+    const container = await mount(
+      tool({
+        toolName: 'enqueue_job',
+        input: { limit: 10, query: 'typecheck' },
+        outputText: '{"job_id":"01143a54","status":"queued","retries":0,"done":false}',
+      }),
+    );
+    await clickHead(container);
+
+    // Le résultat compact est RENDU mis en forme — c'est ce qu'on lit, pas la
+    // ligne d'origine.
+    expect(container.textContent).toContain('"job_id": "01143a54"');
+    expect(container.textContent).toContain('"retries": 0');
+    expect(container.textContent).not.toContain('{"job_id":"01143a54"');
+    // …et coloré : les clés, les chaînes, les nombres, les littéraux.
+    expect(container.innerHTML).toContain('class="text-code-key">"job_id"');
+    expect(container.innerHTML).toContain('class="text-code-string">"queued"');
+    expect(container.innerHTML).toContain('class="text-code-number">0');
+    expect(container.innerHTML).toContain('class="text-code-keyword">false');
+    // L'entrée aussi, dans son propre bloc.
+    expect(container.innerHTML).toContain('class="text-code-key">"query"');
+    // Deux blocs, deux boutons copier — un par bloc.
+    const copies = [...container.querySelectorAll('button')].filter((b) =>
+      (b.textContent ?? '').includes('Copy'),
+    );
+    expect(copies).toHaveLength(2);
+    // Les deux étiquettes restent au-dessus de leur bloc.
+    expect(container.textContent).toContain('Input');
+    expect(container.textContent).toContain('Result');
+  });
+
+  it('un résultat qui n’est pas du JSON reste du texte, sans pastille de langue', async () => {
+    const container = await mount(
+      tool({ toolName: 'run_command', input: {}, outputText: 'ENOENT: no such file' }),
+    );
+    await clickHead(container);
+
+    expect(container.textContent).toContain('ENOENT: no such file');
+    expect(container.innerHTML).not.toMatch(/text-code-(?:key|string|number|keyword|bracket)/);
+    // Pas de pastille `json` : l'annoncer serait faux.
+    expect(container.innerHTML).not.toContain('>json<');
+    // Mais il reste copiable, comme tout bloc de code.
+    expect(container.textContent).toContain('Copy');
+  });
+
   it('un appel muet n’offre pas un chevron qui n’ouvre rien', () => {
     const html = renderToStaticMarkup(
       <ToolBlock step={tool({ input: {}, outputText: null, durationMs: null })} />,

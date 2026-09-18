@@ -58,6 +58,20 @@
   --c-feed-composer: #dde3ee;
   --c-feed-prose: #5c5c5c;
 
+  /* Code palette — the plate a code block sits on, plus one colour per JSON
+     token (see lib/json-tokens.ts): keys, strings, numbers and literals each
+     their own; separators (colon, comma) tinted, braces and brackets in the
+     text colour. A warm, low-contrast plate so a block stays readable on a
+     light screen; the dark set is below. */
+  --c-code-bg: #fffbeb;
+  --c-code-text: #1f1f1f;
+  --c-code-key: #036a96;
+  --c-code-string: #846e15;
+  --c-code-number: #644ac9;
+  --c-code-keyword: #644ac9;
+  --c-code-punct: #a3144d;
+  --c-code-bracket: #1f1f1f;
+
   color-scheme: light;
 
   /* Legacy aliases — existing dashboard pages still read these.
@@ -123,6 +137,17 @@
   --c-feed-composer: #1f2430;
   --c-feed-prose: #a3a3a3;
 
+  /* Code palette, dark: keys cyan, strings yellow, numbers and literals
+     purple, separators pink, braces and brackets in the text colour. */
+  --c-code-bg: #282a36;
+  --c-code-text: #f8f8f2;
+  --c-code-key: #8be9fd;
+  --c-code-string: #f1fa8c;
+  --c-code-number: #bd93f9;
+  --c-code-keyword: #bd93f9;
+  --c-code-punct: #ff79c6;
+  --c-code-bracket: #f8f8f2;
+
   color-scheme: dark;
 }
 
@@ -170,6 +195,17 @@
   --color-feed-metric: var(--c-feed-metric);
   --color-feed-composer: var(--c-feed-composer);
   --color-feed-prose: var(--c-feed-prose);
+
+  /* Code palette — the plate (`bg-code-bg`, `text-code-text`) and the JSON
+     tokens (`text-code-key` and friends, see lib/json-tokens.ts). */
+  --color-code-bg: var(--c-code-bg);
+  --color-code-text: var(--c-code-text);
+  --color-code-key: var(--c-code-key);
+  --color-code-string: var(--c-code-string);
+  --color-code-number: var(--c-code-number);
+  --color-code-keyword: var(--c-code-keyword);
+  --color-code-punct: var(--c-code-punct);
+  --color-code-bracket: var(--c-code-bracket);
 
   /* Type scale — bumped one step up from the original handoff for legibility,
      and snapped to whole pixels (the handoff used fractional sizes like 12.5px).

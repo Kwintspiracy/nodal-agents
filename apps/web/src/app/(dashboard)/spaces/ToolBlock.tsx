@@ -13,6 +13,10 @@
 // COULEUR — le nom de l'outil en `feed/tool`, son argument en `feed/argument`,
 // les durées en `feed/metric`.
 //
+// Le corps déplié, lui, est du CODE : l'entrée et le résultat passent par
+// `CodeBlock`, qui les numérote, les colore quand c'est du JSON et offre de
+// les copier. Un gros bloc gris en petite police grise n'est pas une lecture.
+//
 // Composant CLIENT depuis #135 : le dépliage est un état du navigateur. Le coût
 // est assumé (issue #132) ; ce fichier n'importe rien de serveur-seulement, et
 // `RunRow` — l'autre appelant — est déjà client.
@@ -20,7 +24,9 @@
 import { List } from '@phosphor-icons/react/dist/ssr';
 import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
+import CodeBlock from '@/components/ui/CodeBlock';
 import type { Step } from '@/lib/conversation-feed.ts';
+import { prettyJson } from '@/lib/json-tokens.ts';
 import { formatMs, shortToolName } from './format.ts';
 
 type ToolStep = Extract<Step, { kind: 'tool' }>;
@@ -122,8 +128,8 @@ function Body({ step }: { step: ToolStep }) {
   const json = inputJson(step.input);
   const note = rawNote(step);
   // Une carte lue se résume (`StepLine`) ; sans charge utile, le plus vrai
-  // qu'on ait est la sortie telle qu'elle a été écrite — bornée en hauteur,
-  // jamais coupée en silence.
+  // qu'on ait est la sortie telle qu'elle a été écrite — dans un bloc de code,
+  // bornée en hauteur, jamais coupée en silence.
   const raw = step.presented === null && step.outcome === 'success';
   const failed = step.outcome === 'error' || step.outcome === 'blocked';
   return (
@@ -131,16 +137,12 @@ function Body({ step }: { step: ToolStep }) {
       {json !== null && (
         <>
           <p className="text-mono-11 text-ink-4">Input</p>
-          <pre className="max-h-64 overflow-auto text-mono-12 text-ink-3 whitespace-pre-wrap break-words">
-            {json}
-          </pre>
+          <CodeBlock code={json} lang="json" className="" />
         </>
       )}
       <p className="text-mono-11 text-ink-4">Result</p>
       {raw ? (
-        <pre className="max-h-64 overflow-auto text-mono-12 text-ink-3 whitespace-pre-wrap break-words">
-          {step.outputText ?? excerptOfInput(step.input) ?? ''}
-        </pre>
+        <RawResult text={step.outputText ?? excerptOfInput(step.input) ?? ''} />
       ) : (
         <div className={`text-mono-12 break-words ${failed ? 'text-err' : 'text-ink-3'}`}>
           <StepLine step={step} />
@@ -148,6 +150,21 @@ function Body({ step }: { step: ToolStep }) {
       )}
       {note !== null && <p className="text-mono-11 text-ink-4">{note}</p>}
     </FoldableBody>
+  );
+}
+
+/**
+ * La sortie BRUTE d'un appel, dans un bloc de code. Une sortie d'outil est du
+ * JSON neuf fois sur dix : on la met en forme et on la colore. Le reste — une
+ * ligne de log, un message d'erreur — reste du texte, sans pastille de langue,
+ * parce que l'annoncer `json` serait faux.
+ */
+function RawResult({ text }: { text: string }) {
+  const pretty = prettyJson(text);
+  return pretty !== null ? (
+    <CodeBlock code={pretty} lang="json" className="" />
+  ) : (
+    <CodeBlock code={text} className="" />
   );
 }
 
