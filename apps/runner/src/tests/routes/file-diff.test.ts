@@ -176,6 +176,35 @@ describe('GET /api/jobs/:jobId/file-diff', () => {
     expect(body.truncated).toBe(false);
   });
 
+  it('file_write : le diff part RÉDIGÉ — un jeton écrit dans un fichier suivi ne se lit pas à l’écran', async () => {
+    // Reviewer C, #158, passe 2 : le fragment était rédigé, la branche git de
+    // la même route rendait le contenu du fichier tel quel.
+    const jeton = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture)
+    await writeFile(join(ws, 'secret.env'), 'ANTHROPIC_API_KEY=\n');
+    const avant = await snapshot(store, ws, 'tour 7');
+    await db
+      .insert(jobCheckpoints)
+      .values({ jobId: seed.jobId, turn: 7, workspace: ws, sha: avant!.sha });
+    await writeFile(join(ws, 'secret.env'), `ANTHROPIC_API_KEY=${jeton}\n`);
+    await callRow({
+      toolCallId: 'call-secret-diff',
+      toolName: 'file_write',
+      toolInput: { path: 'secret.env', content: `ANTHROPIC_API_KEY=${jeton}\n` },
+      turn: 7,
+    });
+
+    const body = (await (await get(seed.jobId, 'toolCallId=call-secret-diff')).json()) as {
+      kind: string;
+      text: string;
+      path: string;
+    };
+    expect(body.kind).toBe('diff');
+    expect(body.path).toBe('secret.env');
+    expect(body.text).toContain('+ANTHROPIC_API_KEY=');
+    expect(body.text).not.toContain(jeton);
+    expect(body.text).toContain(REDACTED_TEXT);
+  });
+
   it('un tour SUIVANT existe : la borne haute est cet instantané, et la réponse le dit', async () => {
     await writeFile(join(ws, 'code.txt'), 'v1\n');
     const t1 = await snapshot(store, ws, 'tour 1');

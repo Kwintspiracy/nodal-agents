@@ -237,7 +237,10 @@ export async function fileDiffRoute(c: Context, deps: RunnerDeps): Promise<Respo
     return c.json(
       {
         kind: 'diff',
-        text: diff.text,
+        // Rédigé comme le fragment : c'est le dépliage cliquable de la carte
+        // « files », et un `.env` écrit par l'agent y montrerait son jeton en
+        // clair (Reviewer C, #158, passe 2).
+        text: redactSecretsInText(diff.text),
         truncated: diff.truncated,
         path: relPath,
         from: from.sha,
