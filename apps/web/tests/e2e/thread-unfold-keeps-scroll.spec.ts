@@ -26,6 +26,16 @@
  * Aucun modèle n'est appelé ici. Les lignes sont semées directement en base,
  * comme le font les autres parcours pilotés par la base (`delegation-outcome`),
  * et tout ce qui est créé est supprimé en `afterAll`.
+ *
+ * ⚠️ CE FICHIER CHANGE UN RÉGLAGE DE LA PERSONNE, et il faut le savoir : il
+ * pose `users.feed_density = 'folded'` pour la durée du fichier et le rend en
+ * `afterAll`, dans un `finally` pour qu'un échec du ménage ne l'emporte pas.
+ * Reste un cas qu'aucun `finally` ne couvre : un run TUÉ entre les deux (Ctrl+C,
+ * un budget dépassé, la machine qui s'éteint) laisse la préférence sur
+ * « folded ». Rien ne casse — c'est le défaut du produit — mais quelqu'un qui
+ * lisait en « unfolded » lira replié. Pour la retrouver : relancer ce fichier
+ * jusqu'au bout, ou remettre la densité depuis l'écran des préférences (la
+ * bascule « Folded / Unfolded » de la barre d'un fil).
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -96,29 +106,37 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  const { agentJobs, chatMessages, conversations, agents, inArray } =
-    await import('@nodal-agents/db');
-  const { db, close } = makeDbClient();
+  // La densité est rendue dans un `finally` qui enveloppe TOUT le ménage : un
+  // `delete` qui lève, ou un `close()` qui refuse, laissait sinon la personne
+  // avec une préférence qu'elle n'a pas choisie (Reviewer C, passe 2 de la
+  // PR #169). Le réglage de quelqu'un ne doit pas dépendre de la réussite d'une
+  // suppression de lignes de test.
   try {
-    if (created.conversationIds.length > 0) {
-      await db
-        .delete(chatMessages)
-        .where(inArray(chatMessages.conversationId, created.conversationIds));
-    }
-    // Les lignes `tool_calls` partent avec leur job (ON DELETE CASCADE).
-    if (created.jobIds.length > 0) {
-      await db.delete(agentJobs).where(inArray(agentJobs.id, created.jobIds));
-    }
-    if (created.conversationIds.length > 0) {
-      await db.delete(conversations).where(inArray(conversations.id, created.conversationIds));
-    }
-    if (created.agentIds.length > 0) {
-      await db.delete(agents).where(inArray(agents.id, created.agentIds));
+    const { agentJobs, chatMessages, conversations, agents, inArray } =
+      await import('@nodal-agents/db');
+    const { db, close } = makeDbClient();
+    try {
+      if (created.conversationIds.length > 0) {
+        await db
+          .delete(chatMessages)
+          .where(inArray(chatMessages.conversationId, created.conversationIds));
+      }
+      // Les lignes `tool_calls` partent avec leur job (ON DELETE CASCADE).
+      if (created.jobIds.length > 0) {
+        await db.delete(agentJobs).where(inArray(agentJobs.id, created.jobIds));
+      }
+      if (created.conversationIds.length > 0) {
+        await db.delete(conversations).where(inArray(conversations.id, created.conversationIds));
+      }
+      if (created.agentIds.length > 0) {
+        await db.delete(agents).where(inArray(agents.id, created.agentIds));
+      }
+    } finally {
+      await close();
     }
   } finally {
-    await close();
+    if (densityBefore !== null) await setFeedDensity(densityBefore);
   }
-  if (densityBefore !== null) await setFeedDensity(densityBefore);
 });
 
 /**
@@ -447,6 +465,11 @@ test.describe('déplier un bloc du fil @cap:parler-a-un-agent/ecran', () => {
     const afterBox = await runRow.boundingBox();
     expect(afterBox).not.toBeNull();
     const growth = after.scrollHeight - before.scrollHeight;
+    // BIEN AU-DELÀ DE LA MARGE, et c'est le sens de ce nombre : `ThreadScroller`
+    // juge « en bas » à `AT_BOTTOM_SLACK_PX` près (64 px). Un bloc qui grandit
+    // de moins que ça laisse le lecteur « en bas » et ne prouve donc pas la même
+    // chose — c'est l'AUTRE cas, celui que la PR `fix/unfold-small-block`
+    // couvre. 100 met ce parcours franchement du bon côté de la frontière.
     expect(growth, 'le groupe déplié n’a pas grandi').toBeGreaterThan(100);
 
     // La position du lecteur, au pixel près. C'est LA promesse de #160.
@@ -486,7 +509,10 @@ test.describe('déplier un bloc du fil @cap:parler-a-un-agent/ecran', () => {
     expect(afterBox).not.toBeNull();
 
     const growth = afterBlock - beforeBlock;
-    // Un vrai dépliage, pas deux pixels de bordure.
+    // Un vrai dépliage, pas deux pixels de bordure — et surtout PLUS que la
+    // marge de 64 px (`AT_BOTTOM_SLACK_PX`) : sous elle, le lecteur compte
+    // encore comme « en bas » et le cas devient celui de la PR
+    // `fix/unfold-small-block`, pas celui-ci.
     expect(growth, 'le bloc déplié n’a pas grandi').toBeGreaterThan(100);
 
     expect(after.scrollTop, 'le dépliage a déplacé le lecteur').toBe(before.scrollTop);
