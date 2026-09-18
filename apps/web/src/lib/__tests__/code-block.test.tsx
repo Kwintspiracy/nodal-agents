@@ -34,6 +34,16 @@ describe('CodeBlock', () => {
     expect(bare).toContain('>1</div>');
   });
 
+  it('sans numéros de ligne, le code reste entier, coloré et copiable — la gouttière seule s’en va', () => {
+    const plain = renderToStaticMarkup(
+      <CodeBlock code={'{\n  "limit": 10\n}'} lang="json" lineNumbers={false} />,
+    );
+    expect(plain).not.toContain('>1</div>');
+    expect(plain).not.toContain('>2</div>');
+    expect(plain).toMatch(/class="text-code-key">&quot;limit&quot;</);
+    expect(plain).toContain('Copy');
+  });
+
   it('n’écrit aucune taille de police en pixels', () => {
     expect(html).not.toMatch(/text-\[\d/);
   });

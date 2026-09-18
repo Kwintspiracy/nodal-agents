@@ -36,16 +36,23 @@ export default function CodeBlock({
   lang = null,
   filename = null,
   className = 'mb-3',
+  lineNumbers = true,
 }: {
   code: string;
   lang?: string | null;
   filename?: string | null;
   /**
    * L'espacement extérieur du bloc. Par défaut la marge du markdown ; un
-   * appelant qui pose déjà sa propre gouttière (le corps d'un appel d'outil)
+   * appelant qui pose déjà son propre espacement (le corps d'un appel d'outil)
    * passe `''`, plutôt que d'espérer qu'une classe en écrase une autre.
    */
   className?: string;
+  /**
+   * La gouttière de numéros de ligne. Un bloc de code du markdown les garde :
+   * on peut citer une ligne. L'entrée ou le résultat d'un appel d'outil ne les
+   * veut pas (Quentin, 18/09) : c'est une charge utile, pas un fichier.
+   */
+  lineNumbers?: boolean;
 }) {
   // La dernière ligne d'un bloc de code se termine presque toujours par un
   // saut : le compter donnerait un numéro de plus que de lignes écrites.
@@ -66,16 +73,22 @@ export default function CodeBlock({
         />
       </div>
       <div className="max-h-[480px] overflow-auto">
-        <div className="grid grid-cols-[36px_1fr] py-2">
-          <div className="pr-2 text-right text-mono-13 text-ink-4 select-none" aria-hidden>
-            {lines.map((_, i) => (
-              <div key={i}>{i + 1}</div>
-            ))}
+        {lineNumbers ? (
+          <div className="grid grid-cols-[36px_1fr] py-2">
+            <div className="pr-2 text-right text-mono-13 text-ink-4 select-none" aria-hidden>
+              {lines.map((_, i) => (
+                <div key={i}>{i + 1}</div>
+              ))}
+            </div>
+            <pre className="pr-4 text-mono-13">
+              {lang === 'json' ? <Coloured code={body} /> : body}
+            </pre>
           </div>
-          <pre className="pr-4 text-mono-13">
+        ) : (
+          <pre className="px-4 py-3 text-mono-13 whitespace-pre-wrap break-words">
             {lang === 'json' ? <Coloured code={body} /> : body}
           </pre>
-        </div>
+        )}
       </div>
     </div>
   );

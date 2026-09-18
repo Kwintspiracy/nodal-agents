@@ -224,6 +224,9 @@ describe('ToolBlock', () => {
     // Les deux étiquettes restent au-dessus de leur bloc.
     expect(container.textContent).toContain('Input');
     expect(container.textContent).toContain('Result');
+    // Pas de numéros de ligne : une charge utile n'est pas un fichier.
+    expect(container.innerHTML).not.toContain('>1</div>');
+    expect(container.innerHTML).not.toContain('>2</div>');
   });
 
   it('un résultat qui n’est pas du JSON reste du texte, sans pastille de langue', async () => {

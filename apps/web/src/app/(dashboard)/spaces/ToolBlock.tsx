@@ -14,8 +14,9 @@
 // les durées en `feed/metric`.
 //
 // Le corps déplié, lui, est du CODE : l'entrée et le résultat passent par
-// `CodeBlock`, qui les numérote, les colore quand c'est du JSON et offre de
-// les copier. Un gros bloc gris en petite police grise n'est pas une lecture.
+// `CodeBlock`, qui les colore quand c'est du JSON et offre de les copier —
+// sans numéros de ligne : une charge utile n'est pas un fichier (Quentin,
+// 18/09). Un gros bloc gris en petite police grise n'est pas une lecture.
 //
 // Composant CLIENT depuis #135 : le dépliage est un état du navigateur. Le coût
 // est assumé (issue #132) ; ce fichier n'importe rien de serveur-seulement, et
@@ -137,7 +138,7 @@ function Body({ step }: { step: ToolStep }) {
       {json !== null && (
         <>
           <p className="text-mono-11 text-ink-4">Input</p>
-          <CodeBlock code={json} lang="json" className="" />
+          <CodeBlock code={json} lang="json" className="" lineNumbers={false} />
         </>
       )}
       <p className="text-mono-11 text-ink-4">Result</p>
@@ -162,9 +163,9 @@ function Body({ step }: { step: ToolStep }) {
 function RawResult({ text }: { text: string }) {
   const pretty = prettyJson(text);
   return pretty !== null ? (
-    <CodeBlock code={pretty} lang="json" className="" />
+    <CodeBlock code={pretty} lang="json" className="" lineNumbers={false} />
   ) : (
-    <CodeBlock code={text} className="" />
+    <CodeBlock code={text} className="" lineNumbers={false} />
   );
 }
 
