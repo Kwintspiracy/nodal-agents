@@ -111,6 +111,7 @@ import {
   CANCEL_UNDO_INTENT_RE,
   CANCEL_UNDO_INTENT_SCAN_CHARS,
   VERIFY_BEFORE_ASSERT_NUDGE,
+  readFinalReviewVerdict,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -122,6 +123,7 @@ import type {
   SameToolStreakState,
   ErrorStreakState,
   DelegationOutcomeRecord,
+  ReviewVerdictRecord,
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
@@ -4722,7 +4724,39 @@ async function runJob(
             .from(agentJobs)
             .where(eq(agentJobs.parentJobId, jobId as string));
           const aChildDelivered = childDeliverables.some((r) => (r.result ?? '').trim() !== '');
-          if ((deliverableRow?.result ?? '').trim() === '' && !aChildDelivered) {
+          // Un verdict de revue ENREGISTRÉ est un livrable (issue #124) : il est
+          // validé par le schéma de l'outil, il voyage dans le record typé de la
+          // délégation, et il est plus précis que la phrase que l'agent aurait
+          // écrite. La règle ne connaît aucun agent (invariant #3).
+          //
+          // Le verdict doit être le DERNIER geste du job : posé au tour 2 puis
+          // suivi d'un travail sans rapport, il ne tient plus lieu de livrable
+          // pour ce run-là (revue de la PR #170, constat 1).
+          //
+          // Une ligne illisible lève : on échoue ce job par son code plutôt que
+          // de laisser l'exception remonter, et jamais en silence (invariant #4).
+          let deliveredVerdict: ReviewVerdictRecord | null = null;
+          try {
+            deliveredVerdict = await readFinalReviewVerdict(db, jobId as JobId);
+          } catch (err) {
+            trace('review_verdict_malformed', { turn });
+            console.error(
+              `[job ${jobId}] review_verdict row unreadable — failing the job rather than guessing:`,
+              err,
+            );
+            await failJob(db, jobId as string, 'review_verdict_malformed', runStats(), messages);
+            return {
+              status: 'failed',
+              error: 'review_verdict_malformed',
+              exitReason: 'review_verdict_malformed',
+              toolsUsed,
+            };
+          }
+          if (
+            (deliverableRow?.result ?? '').trim() === '' &&
+            !aChildDelivered &&
+            !deliveredVerdict
+          ) {
             if (emptyDeliverableNudges < MAX_EMPTY_DELIVERABLE_NUDGES) {
               emptyDeliverableNudges += 1;
               trace('empty_deliverable_nudge', { turn, attempt: emptyDeliverableNudges });
