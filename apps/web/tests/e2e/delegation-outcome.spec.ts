@@ -201,6 +201,23 @@ async function seedDelegationThread(opts: {
   }
 }
 
+/**
+ * Unfold the run's work (#135, #132).
+ *
+ * The thread now opens FOLDED by default — the agent's answer first, and the
+ * run's blocks under one summary row. That is the owner's default, so the
+ * journey follows it instead of asking the product to change: the delegation
+ * block is one click away, and clicking that row is what a reader does. The
+ * click is asserted, not assumed: without the row, the rest of this file would
+ * fail on an invisible block and blame the wrong thing.
+ */
+async function showTheWork(page: Page): Promise<void> {
+  const row = page.locator('[data-testid^="run-summary-"]').first();
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(row).toHaveAttribute('aria-expanded', 'true');
+}
+
 /** The whole rendered thread as plain text — what the user can actually read. */
 async function threadText(page: Page): Promise<string> {
   const scroller = page.locator('[data-thread-scroller]');
@@ -227,8 +244,10 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
 
     await page.goto(`/chat/${conversationId}`);
 
-    // 1. The thread carries the parent's honest answer, not a waiting note.
+    // 1. The thread carries the parent's honest answer, not a waiting note —
+    //    and it reads WITHOUT unfolding anything: that is the point of #132.
     await expect(page.getByText('the specialist returned nothing')).toBeVisible();
+    await showTheWork(page);
 
     // 2. The delegation is on screen and marked as NOT ok — a red dot, which is
     //    what tells a reader at a glance that this handoff did not land.
@@ -271,6 +290,7 @@ test.describe('what the thread says when a delegation ends @cap:organiser-equipe
     await page.goto(`/chat/${conversationId}`);
 
     await expect(page.getByText('Here is what the specialist found')).toBeVisible();
+    await showTheWork(page);
 
     const delegation = page.locator('[data-delegation]').first();
     await expect(delegation).toBeVisible();

@@ -13,7 +13,14 @@ import {
   olderTurnsNote,
 } from '../conversation-thread.ts';
 import type { ThreadAuditRow, ThreadJob } from '../conversation-thread.ts';
-import type { ConversationFeed, FeedItem, FeedTotals } from '../conversation-feed.ts';
+import type {
+  ConversationFeed,
+  FeedItem,
+  FeedTotals,
+  Step,
+  TurnBlock,
+  TurnUsage,
+} from '../conversation-feed.ts';
 import type { ProductionVerdict } from '../chat-or-work.ts';
 
 const totals = (over: Partial<FeedTotals> = {}): FeedTotals => ({
@@ -85,6 +92,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   feed: feedDeJob('fais ceci', 'voilà'),
   createdAt: null,
   completedAt: null,
+  result: null,
   verdict: chat,
   project: null,
   proof: [],
@@ -132,13 +140,14 @@ describe('buildConversationThread — une conversation de canal', () => {
     });
 
     expect(items.some((i) => i.kind === 'history')).toBe(false);
+    // #135 / #132 — la RÉPONSE d'abord, le travail sous elle dans un groupe.
     expect(items.map((i) => i.kind)).toEqual([
       'request',
-      'turn',
       'answer',
+      'run',
       'request',
-      'turn',
       'answer',
+      'run',
       'produced',
     ]);
     const demandes = items.filter((i) => i.kind === 'request').map((i) => i.text);
@@ -336,8 +345,8 @@ describe('buildConversationThread — une conversation du dashboard', () => {
       'request',
       'turn',
       'handoff',
-      'turn',
       'answer',
+      'run',
       'produced',
     ]);
     const consigne = items.find((i) => i.kind === 'handoff');
@@ -368,7 +377,7 @@ describe('buildConversationThread — une conversation du dashboard', () => {
       ],
       jobs: [job({ jobId: 'j1', feed: feedDeJob('bilan', 'fait') })],
     });
-    expect(items.map((i) => i.kind)).toEqual(['request', 'handoff', 'turn', 'answer']);
+    expect(items.map((i) => i.kind)).toEqual(['request', 'handoff', 'answer', 'run']);
   });
 
   it('un job purgé est DIT, jamais sauté en silence', () => {
@@ -465,7 +474,11 @@ describe('buildConversationThread — ce que le fil ne peut pas dire', () => {
         }),
       ],
     });
-    expect(items.filter((i) => i.kind === 'turn')).toHaveLength(1);
+    // Le tour compacté vit maintenant DANS le groupe du run : la compaction se
+    // fait donc AVANT le groupe, sans quoi elle ne verrait plus rien.
+    const groupe = items.find((i) => i.kind === 'run');
+    expect(items.filter((i) => i.kind === 'turn')).toHaveLength(0);
+    expect(groupe?.kind === 'run' && groupe.items.filter((i) => i.kind === 'turn')).toHaveLength(1);
   });
 
   it('un tour qui a produit ET porte des lignes anciennes garde son encart, sans note', () => {
@@ -519,5 +532,409 @@ describe('buildConversationThread — ce que le fil ne peut pas dire', () => {
       truncated: { messages: false, jobs: false },
     });
     expect(items.some((i) => i.kind === 'note')).toBe(false);
+  });
+});
+
+// ─── Le travail sous sa ligne de résumé (#135, #132) ─────────────────────────
+//
+// Le principe de Quentin : la réponse de l'agent d'abord, et sous elle UNE
+// ligne qui résume le run. Ce qui se prouve ici est la STRUCTURE — ce qui sort
+// du groupe, ce qui y reste, et ce que la ligne compte. L'écran est prouvé à
+// côté (`RunSummaryRow.test.tsx`, `ConversationFeedView.test.tsx`).
+
+const usage = (): TurnUsage => ({
+  inputTokens: 100,
+  outputTokens: 20,
+  cachedTokens: 0,
+  cacheCreationTokens: 0,
+  costUsd: 0.02,
+  durationMs: 1200,
+  calls: 1,
+});
+
+const outil = (name: string): Extract<Step, { kind: 'tool' }> => ({
+  kind: 'tool',
+  toolName: name,
+  toolCallId: `c-${name}`,
+  jobId: 'j1',
+  card: null,
+  presented: null,
+  input: {},
+  outputText: null,
+  outcome: 'success',
+  durationMs: 40,
+  lineCounts: {},
+  question: null,
+});
+
+const tourDeTravail = (blocks: TurnBlock[]): FeedItem => ({
+  kind: 'turn',
+  index: 1,
+  turn: 1,
+  turnSource: 'audit',
+  agent: { name: 'Agent One', slug: 'agent-one', avatarUrl: null },
+  model: 'a-model',
+  at: null,
+  blocks,
+  usage: usage(),
+});
+
+const delegue = (): FeedItem => ({
+  kind: 'child',
+  from: { name: 'Agent One', slug: 'agent-one', avatarUrl: null },
+  job: {
+    id: 'child-1',
+    agentName: 'Agent Two',
+    agentSlug: 'agent-two',
+    agentAvatarUrl: null,
+    status: 'completed',
+    task: 'relire le bilan',
+    result: 'rien à redire',
+    error: null,
+    createdAt: null,
+    completedAt: null,
+  },
+});
+
+const demande: FeedItem = {
+  kind: 'request',
+  text: 'fais le bilan',
+  origin: { channel: 'telegram', scheduleName: null, chatId: '4242' },
+  at: null,
+};
+
+describe('buildConversationThread — le travail sous sa ligne de résumé', () => {
+  const travailFini = (): ThreadJob =>
+    job({
+      jobId: 'j1',
+      createdAt: new Date('2026-09-17T12:00:00Z'),
+      completedAt: new Date('2026-09-17T12:00:12Z'),
+      feed: {
+        items: [
+          demande,
+          tourDeTravail([
+            { kind: 'prose', text: 'Je commence par lire les notes.' },
+            { kind: 'steps', steps: [outil('file_read'), outil('file_search')] },
+          ]),
+          tourDeTravail([{ kind: 'prose', text: 'Voilà le bilan.' }]),
+          delegue(),
+        ],
+        totals: totals({ toolCalls: 3, costUsd: 0.04 }),
+      },
+    });
+
+  it('groupe le travail en UN item, après la réponse', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [travailFini()],
+    });
+    // La réponse sortie du groupe reste un TOUR : c'est l'agent qui parle, avec
+    // son nom, son image et son heure — une plaque anonyme les perdrait.
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+  });
+
+  it('la dernière prose du dernier tour SORT du groupe ; une prose intermédiaire y reste', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [travailFini()],
+    });
+    const reponse = items[1];
+    expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+      { kind: 'prose', text: 'Voilà le bilan.' },
+    ]);
+    // Le tour sorti ne porte NI jetons NI durée : sa ligne de modèle reste dans
+    // le groupe, avec le travail qu'elle a payé.
+    expect(reponse?.kind === 'turn' && reponse.usage).toBeNull();
+
+    const groupe = items[2];
+    if (groupe?.kind !== 'run') throw new Error('le fil n’a pas posé de groupe de run');
+    const proses = groupe.items.flatMap((i) =>
+      i.kind === 'turn' ? i.blocks.filter((b) => b.kind === 'prose').map((b) => b.text) : [],
+    );
+    expect(proses).toEqual(['Je commence par lire les notes.']);
+    expect(groupe.items.map((i) => i.kind)).toEqual(['turn', 'turn', 'child']);
+  });
+
+  it('quand la dernière prose EST ce que le travail a rendu, le tour sort du groupe, sans doublon', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), result: 'Voilà le bilan.' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+    const reponse = items[1];
+    expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+      { kind: 'prose', text: 'Voilà le bilan.' },
+    ]);
+    const groupe = items[2];
+    if (groupe?.kind !== 'run') throw new Error('le fil n’a pas posé de groupe de run');
+    const proses = groupe.items.flatMap((i) =>
+      i.kind === 'turn' ? i.blocks.filter((b) => b.kind === 'prose').map((b) => b.text) : [],
+    );
+    expect(proses).toEqual(['Je commence par lire les notes.']);
+  });
+
+  it('quand la dernière prose n’est qu’une annonce, ce qu’on lit dehors est ce que le travail a RENDU', () => {
+    // Le cas vu par Quentin (18/09) : l'agent publie sa réponse par une carte
+    // d'envoi, puis rend son résultat ; sa dernière phrase dit « je publie ».
+    // Sortir cette phrase cachait la vraie réponse dans le groupe replié.
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:12Z'),
+          result: '# Revue\n\nTrois constats, aucun bloquant.',
+          feed: {
+            items: [
+              demande,
+              tourDeTravail([
+                { kind: 'prose', text: 'Je lis la PR.' },
+                { kind: 'steps', steps: [outil('file_read')] },
+              ]),
+              tourDeTravail([
+                { kind: 'prose', text: 'Je publie la revue sur le dashboard.' },
+                { kind: 'steps', steps: [outil('dashboard_publish')] },
+              ]),
+            ],
+            totals: totals({ toolCalls: 2, costUsd: 0.02 }),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'answer', 'run']);
+    expect(items[1]).toEqual({
+      kind: 'answer',
+      text: '# Revue\n\nTrois constats, aucun bloquant.',
+    });
+    // L'annonce et la carte restent dans le groupe, où le dépliage les montre.
+    const groupe = items[2];
+    if (groupe?.kind !== 'run') throw new Error('le fil n’a pas posé de groupe de run');
+    const proses = groupe.items.flatMap((i) =>
+      i.kind === 'turn' ? i.blocks.filter((b) => b.kind === 'prose').map((b) => b.text) : [],
+    );
+    expect(proses).toEqual(['Je lis la PR.', 'Je publie la revue sur le dashboard.']);
+  });
+
+  it('un travail qui court ne sort rien : sa dernière phrase est une étape, pas une réponse', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), completedAt: null, result: 'Voilà le bilan.' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'run']);
+  });
+
+  it('un résultat machine (du JSON) ne sort pas brut : la dernière prose reste la réponse', () => {
+    // Reviewer C, passe 1 : un `return_result` structuré sorti tel quel
+    // cachait la vraie réponse, repliée.
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), result: '{"files": 3, "ok": true}' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+    const reponse = items[1];
+    expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+      { kind: 'prose', text: 'Voilà le bilan.' },
+    ]);
+  });
+
+  it('un résultat qui n’est qu’un début tronqué de la prose ne la remplace pas', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), result: 'Voilà le…' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+  });
+
+  it('une note du runner reste entre la demande et la réponse, hors du groupe', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:12Z'),
+          result: 'Voilà le bilan.',
+          feed: {
+            items: [
+              demande,
+              { kind: 'note', text: 'Le runner rappelle la consigne.', origin: 'runner' },
+              tourDeTravail([{ kind: 'prose', text: 'Voilà le bilan.' }]),
+            ],
+            totals: totals(),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'note', 'turn', 'run']);
+  });
+
+  it('la ligne compte aussi le travail d’un délégué dont le fil est dans le groupe', () => {
+    const delegueAvecFil: FeedItem = {
+      ...delegue(),
+      job: {
+        ...(delegue() as Extract<FeedItem, { kind: 'child' }>).job,
+        feed: { items: [], totals: totals({ toolCalls: 2, costUsd: 0.01 }) },
+      },
+    } as FeedItem;
+    const fini = travailFini();
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          ...fini,
+          feed: {
+            items: fini.feed.items.map((i) => (i.kind === 'child' ? delegueAvecFil : i)),
+            totals: fini.feed.totals,
+          },
+        }),
+      ],
+    });
+    const groupe = items.find((i) => i.kind === 'run');
+    // 3 outils du job + 2 du délégué ; 0.04 $ + 0.01 $.
+    expect(groupe?.kind === 'run' && groupe.summary.tools).toBe(5);
+    expect(groupe?.kind === 'run' && groupe.summary.costUsd).toBeCloseTo(0.05, 6);
+    expect(groupe?.kind === 'run' && groupe.summary.delegations).toBe(1);
+  });
+
+  it('la ligne compte ce que le dépliage montre : outils, délégations, appels de modèle', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [travailFini()],
+    });
+    const groupe = items.find((i) => i.kind === 'run');
+    expect(groupe?.kind === 'run' && groupe.summary).toEqual({
+      tools: 3,
+      delegations: 1,
+      modelCalls: 2,
+      durationMs: 12_000,
+      costUsd: 0.04,
+    });
+  });
+
+  it('une durée et un coût inconnus restent null — jamais un zéro', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          feed: {
+            items: [demande, tourDeTravail([{ kind: 'steps', steps: [outil('file_read')] }])],
+            totals: totals({ toolCalls: 1, costUsd: null }),
+          },
+        }),
+      ],
+    });
+    const groupe = items.find((i) => i.kind === 'run');
+    expect(groupe?.kind === 'run' && groupe.summary.durationMs).toBeNull();
+    expect(groupe?.kind === 'run' && groupe.summary.costUsd).toBeNull();
+  });
+
+  it('un job qui porte un item `answer` le garde DEHORS, et tout son travail dedans', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:12Z'),
+          feed: {
+            items: [
+              demande,
+              tourDeTravail([{ kind: 'steps', steps: [outil('file_write')] }]),
+              { kind: 'answer', text: 'Le bilan est écrit.' },
+            ],
+            totals: totals({ toolCalls: 1 }),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'answer', 'run']);
+    expect(items[1]).toEqual({ kind: 'answer', text: 'Le bilan est écrit.' });
+    const groupe = items[2];
+    expect(groupe?.kind === 'run' && groupe.items.map((i) => i.kind)).toEqual(['turn']);
+  });
+
+  it('un travail ÉCHOUÉ garde son échec dehors, APRÈS le groupe — et sa dernière phrase dedans', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:05Z'),
+          feed: {
+            items: [
+              demande,
+              tourDeTravail([{ kind: 'prose', text: 'Je tente autre chose.' }]),
+              { kind: 'failure', text: 'le dossier est introuvable' },
+            ],
+            totals: totals({ toolCalls: 0 }),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'run', 'failure']);
+    const groupe = items[1];
+    expect(
+      groupe?.kind === 'run' &&
+        groupe.items.some((i) => i.kind === 'turn' && i.blocks.some((b) => b.kind === 'prose')),
+    ).toBe(true);
+  });
+
+  it('un travail QUI COURT ne fabrique pas de réponse : sa dernière phrase reste dans le groupe', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: null,
+          feed: {
+            items: [demande, tourDeTravail([{ kind: 'prose', text: 'Je regarde le dossier.' }])],
+            totals: totals({ toolCalls: 0 }),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'run']);
+  });
+
+  it('un job de pure conversation n’a AUCUN groupe — il n’y a pas de travail à replier', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:01Z'),
+          feed: {
+            items: [demande, tourDeTravail([{ kind: 'prose', text: 'Bonjour.' }])],
+            totals: totals({ toolCalls: 0 }),
+          },
+        }),
+      ],
+    });
+    // Le tour qui ne fait que parler garde son appel de modèle : sa prose est
+    // sortie, mais sa ligne de modèle reste — donc un groupe d'UN item.
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+    const groupe = items[2];
+    expect(groupe?.kind === 'run' && groupe.summary.modelCalls).toBe(1);
+    expect(groupe?.kind === 'run' && groupe.summary.tools).toBe(0);
   });
 });

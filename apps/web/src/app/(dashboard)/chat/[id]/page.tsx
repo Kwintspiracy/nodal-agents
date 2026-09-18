@@ -16,7 +16,8 @@ import LiveRefresh from '@/app/(dashboard)/spaces/LiveRefresh.tsx';
 import StatusBar from '@/app/(dashboard)/spaces/StatusBar.tsx';
 import { originLabel, threadAgents, threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
 import { getConversationThreadAction } from '@/lib/conversation-actions.ts';
-import { getAgentModelChoicesAction } from '@/lib/actions.ts';
+import { getAgentModelChoicesAction, getFeedDensityAction } from '@/lib/actions.ts';
+import { DEFAULT_FEED_DENSITY } from '@/lib/feed-density.ts';
 import { plainText } from '@/components/Markdown.tsx';
 import { truncate } from '@/lib/format-time';
 import ThreadComposer from '../ThreadComposer.tsx';
@@ -51,6 +52,10 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
   // ne fait pas rougir la page — les listes se taisent.
   const choices = canReply ? await getAgentModelChoicesAction(conversation.agentId) : null;
   const modelChoices = choices?.ok ? choices.data : null;
+  // #132 — à quelle densité CETTE personne lit un fil. Une lecture qui échoue
+  // ne fait pas rougir la page : le fil s'ouvre replié, le défaut dessiné.
+  const densityResult = await getFeedDensityAction();
+  const density = densityResult.ok ? densityResult.data : DEFAULT_FEED_DENSITY;
   const pendingDeliveries = deliveries.filter(
     (d) => d.outcome === 'prepared' || d.outcome === 'attempted',
   ).length;
@@ -101,6 +106,7 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
           status={<StatusPill variant={live ? 'run' : 'idle'} />}
           proofVerdict={lastProof?.verdict ?? null}
           filesHref={project ? `/spaces/${project.id}/files` : null}
+          density={density}
         />
       }
     >
@@ -143,7 +149,11 @@ export default async function ChatThreadPage({ params }: { params: Promise<{ id:
           }
         >
           <LiveRefresh live={live} />
-          <ConversationFeedView feed={feed} deliverables={verification.deliverables} />
+          <ConversationFeedView
+            feed={feed}
+            deliverables={verification.deliverables}
+            density={density}
+          />
           <PendingTurn
             agentName={conversation.agentName ?? 'Agent'}
             agentAvatarUrl={conversation.agentAvatarUrl}

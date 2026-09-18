@@ -952,6 +952,7 @@ export async function getConversationThreadAction(
       feed: assembled[i]!.feed,
       createdAt: r.job.createdAt,
       completedAt: r.job.completedAt,
+      result: r.job.result,
       verdict: classifyProduction({
         conversation: conversationRef,
         rows: rowsByRoot.get(r.job.id) ?? [],

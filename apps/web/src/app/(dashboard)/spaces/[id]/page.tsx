@@ -16,6 +16,8 @@ import { notFound } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
 import StatusPill from '@/components/ui/StatusPill';
 import { getProjectThreadPageAction } from '@/lib/project-actions.ts';
+import { getFeedDensityAction } from '@/lib/actions.ts';
+import { DEFAULT_FEED_DENSITY } from '@/lib/feed-density.ts';
 import { getConversationThreadAction } from '@/lib/conversation-actions.ts';
 import { getAgentModelChoicesAction } from '@/lib/actions.ts';
 import { composerPresentation, projectLanding } from '@/lib/project-landing.ts';
@@ -54,6 +56,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const thread =
     landing === null ? null : await getConversationThreadAction(landing.conversationId);
   const view = thread !== null && thread.ok ? thread.data : null;
+  // #132 — à quelle densité CETTE personne lit un fil. Une lecture qui échoue
+  // ne fait pas rougir la page : le fil s'ouvre replié, le défaut dessiné.
+  const densityResult = await getFeedDensityAction();
+  const density = densityResult.ok ? densityResult.data : DEFAULT_FEED_DENSITY;
   const lastProof = view?.verification.sequences.at(-1) ?? null;
   const pendingDeliveries =
     view?.deliveries.filter((d) => d.outcome === 'prepared' || d.outcome === 'attempted').length ??
@@ -115,6 +121,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             : {})}
           proofVerdict={lastProof?.verdict ?? null}
           filesHref={`/spaces/${project.id}/files`}
+          density={density}
         />
       }
     >
@@ -123,6 +130,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           du projet quand on peut y répondre depuis le web ; sinon (un fil
           Telegram qu'on lit ici) le premier envoi crée celle du projet. */}
       <ProjectThread
+        density={density}
         projectId={project.id}
         conversationId={landing?.composerConversationId ?? null}
         thread={thread}

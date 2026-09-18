@@ -117,6 +117,10 @@ export function threadAgents(items: readonly FeedItem[]): ThreadAgent[] {
   const walk = (list: readonly FeedItem[]): void => {
     for (const item of list) {
       if (item.kind === 'turn') push(item.agent.name, item.agent.slug, item.agent.avatarUrl);
+      // #135 — le travail d'un run vit dans un GROUPE depuis #132 : ses tours
+      // et ses délégations y sont, plus au niveau du fil. Sans cette descente,
+      // la barre d'un fil replié n'aurait plus montré aucun agent.
+      else if (item.kind === 'run') walk(item.items);
       else if (item.kind === 'child') {
         push(item.job.agentName, item.job.agentSlug, item.job.agentAvatarUrl);
         if (item.job.feed) walk(item.job.feed.items);

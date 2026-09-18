@@ -988,3 +988,97 @@ describe('ConversationFeedView — le handoff', () => {
     expect(html).not.toContain('aria-expanded');
   });
 });
+
+// ─── Le travail sous sa ligne de résumé (#135, #132) ─────────────────────────
+//
+// Ce qui se prouve ici n'est pas la ligne (elle a son fichier) mais le FIL :
+// un item `run` se dessine bien comme une ligne repliée, ses blocs ne sont pas
+// dans la page tant qu'on n'a pas cliqué, et la densité de la personne décide
+// de l'état de départ — pas une constante.
+
+const runFeed = (): ConversationFeed => ({
+  items: [
+    {
+      kind: 'turn',
+      index: 1,
+      turn: 1,
+      turnSource: 'audit',
+      agent: { name: 'Agent One', slug: 'agent-one', avatarUrl: null },
+      model: 'a-model',
+      at: null,
+      blocks: [{ kind: 'prose', text: 'The report is written.' }],
+      usage: null,
+    },
+    {
+      kind: 'run',
+      jobId: 'job-run',
+      agent: { name: 'Agent One', slug: 'agent-one', avatarUrl: null },
+      model: 'a-model',
+      at: null,
+      summary: { tools: 3, delegations: 1, modelCalls: 2, durationMs: 12_000, costUsd: 0.04 },
+      items: [
+        {
+          kind: 'turn',
+          index: 1,
+          turn: 1,
+          turnSource: 'audit',
+          agent: { name: 'Agent One', slug: 'agent-one', avatarUrl: null },
+          model: 'a-model',
+          at: null,
+          blocks: [
+            { kind: 'steps', steps: [tool({ toolName: 'grep_le_dossier', input: { q: 'x' } })] },
+          ],
+          usage: null,
+        },
+      ],
+    },
+  ],
+  totals: {
+    turns: 1,
+    toolCalls: 3,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    costUsd: 0.04,
+    llmDurationMs: 0,
+    models: [],
+  },
+});
+
+describe('ConversationFeedView — le travail replié @cap:suivre-execution/ecran', () => {
+  it('la réponse se lit sans déplier ; le travail du run n’est PAS dans la page', () => {
+    const html = renderToStaticMarkup(<ConversationFeedView feed={runFeed()} />);
+    expect(html).toContain('The report is written.');
+    expect(html).toContain('3 tools · 1 delegation · 2 model calls');
+    expect(html).toContain('Show the work');
+    expect(html).not.toContain('grep_le_dossier');
+  });
+
+  it('un clic sur la ligne met le travail dans la page', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={runFeed()} />);
+    });
+    expect(container.textContent).not.toContain('grep_le_dossier');
+    const row = container.querySelector<HTMLButtonElement>('[data-testid="run-summary-job-run"]');
+    if (!row) throw new Error('le fil n’a pas dessiné de ligne de résumé');
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('grep_le_dossier');
+  });
+
+  it('la densité « unfolded » ouvre le travail dès le premier rendu', () => {
+    const html = renderToStaticMarkup(<ConversationFeedView feed={runFeed()} density="unfolded" />);
+    expect(html).toContain('grep_le_dossier');
+    expect(html).toContain('Hide the work');
+  });
+
+  it('la densité « folded » le referme — le réglage décide, pas le composant', () => {
+    const html = renderToStaticMarkup(<ConversationFeedView feed={runFeed()} density="folded" />);
+    expect(html).not.toContain('grep_le_dossier');
+  });
+});

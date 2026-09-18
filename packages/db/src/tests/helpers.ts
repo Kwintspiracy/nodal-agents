@@ -34,6 +34,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       name text NOT NULL DEFAULT '',
       email_verified boolean NOT NULL DEFAULT false,
       image text,
+      -- #132 — how dense this person reads a thread (migration 0109).
+      feed_density text NOT NULL DEFAULT 'folded'
+        CHECK (feed_density IN ('folded', 'unfolded')),
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );

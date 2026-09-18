@@ -121,7 +121,14 @@ export default async function ScheduledRunPage({ params }: { params: Promise<{ i
           </p>
         )}
         <LiveRefresh live={live} />
-        <ConversationFeedView feed={feed} deliverables={verification.deliverables} />
+        {/* #132 — la page d'un run est la vue DÉPLIÉE, toujours : on y vient
+            pour voir le travail, pas pour lire une réponse. Elle ne montre donc
+            pas le réglage de densité — il n'y changerait rien. */}
+        <ConversationFeedView
+          feed={feed}
+          deliverables={verification.deliverables}
+          density="unfolded"
+        />
         {/* P3 — la preuve, la même carte que le détail Code (elle n'est jamais
           vide : elle dit « pas encore », « hors vérification », « rien à
           configurer »), puis la file d'envoi. */}

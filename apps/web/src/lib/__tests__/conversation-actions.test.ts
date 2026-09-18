@@ -30,6 +30,13 @@ import {
   sql,
 } from '@nodal-agents/db';
 import { projectKey } from '@nodal-agents/shared';
+import type { FeedItem } from '../conversation-feed.ts';
+
+/** Le fil tel qu'on le lit DÉPLIÉ : le travail d'un job vit dans un item
+ *  `run` (#132) ; ces tests regardent ce qu'il contient, pas le pliage. */
+function unfolded(items: FeedItem[]): FeedItem[] {
+  return items.flatMap((i) => (i.kind === 'run' ? [i, ...i.items] : [i]));
+}
 
 let testDb: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -679,7 +686,7 @@ describe('getConversationThreadAction — une conversation de canal', () => {
     const r = await getConversationThreadAction(telegramConv.id);
     if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
 
-    const child = r.data.feed.items.find(
+    const child = unfolded(r.data.feed.items).find(
       (i) => i.kind === 'child' && i.job.id === telegramConv.child,
     );
     if (child?.kind !== 'child') throw new Error('item child attendu');
@@ -687,7 +694,7 @@ describe('getConversationThreadAction — une conversation de canal', () => {
     // la carte persistée sur sa ligne d'audit — pas seulement son texte.
     const nested = child.job.feed;
     if (nested === undefined) throw new Error('le fil du délégué manque');
-    const turn = nested.items.find((i) => i.kind === 'turn');
+    const turn = unfolded(nested.items).find((i) => i.kind === 'turn');
     if (turn?.kind !== 'turn') throw new Error('tour du délégué attendu');
     expect(turn.blocks.some((b) => b.kind === 'prose' && b.text.includes('Rien à signaler'))).toBe(
       true,
@@ -698,14 +705,14 @@ describe('getConversationThreadAction — une conversation de canal', () => {
     ]);
     // Un seul niveau : le délégué n'a pas d'enfant ici, et s'il en avait, leur
     // fil ne serait pas assemblé (CHILD_FEED_DEPTH).
-    expect(nested.items.filter((i) => i.kind === 'child')).toHaveLength(0);
+    expect(unfolded(nested.items).filter((i) => i.kind === 'child')).toHaveLength(0);
   });
 
   it('seules les 20 délégations les plus récentes ouvrent leur fil ; les plus anciennes gardent leur texte (passe 49)', async () => {
     const { getConversationThreadAction } = await actions();
     const r = await getConversationThreadAction(telegramConv.id);
     if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
-    const children = r.data.feed.items.filter((i) => i.kind === 'child');
+    const children = unfolded(r.data.feed.items).filter((i) => i.kind === 'child');
     // 22 délégués du job A : le récent (10:00:20) et 21 anciens (09:00 → 09:20).
     expect(children).toHaveLength(22);
     const withFeed = children.filter((c) => c.kind === 'child' && c.job.feed !== undefined);
@@ -841,7 +848,7 @@ describe('getConversationThreadAction — les fils assembles ensemble', () => {
     const r = await getConversationThreadAction(auditConv.id);
     if (!r.ok) throw new Error(`echec inattendu : ${r.code} ${r.message}`);
 
-    const commandes = r.data.feed.items.flatMap((i) =>
+    const commandes = unfolded(r.data.feed.items).flatMap((i) =>
       i.kind === 'turn'
         ? i.blocks.flatMap((b) =>
             b.kind === 'card' && b.step.presented?.card === 'terminal'

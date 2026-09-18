@@ -15,6 +15,8 @@ import type { ReactNode } from 'react';
 import AvatarStack from '@/components/ui/AvatarStack';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import StatusPill from '@/components/ui/StatusPill';
+import DensityToggle from './DensityToggle.tsx';
+import type { FeedDensity } from '@/lib/feed-density.ts';
 import type { ThreadAgent } from './format.ts';
 
 /**
@@ -31,6 +33,7 @@ export default function WorkBar({
   status,
   proofVerdict = null,
   filesHref = null,
+  density = null,
 }: {
   /** D'où l'on vient — le motif de « Back to agents » : un chevron, un mot. */
   back: { label: string; href: string };
@@ -44,6 +47,13 @@ export default function WorkBar({
    * null : pas de projet, pas de bouton.
    */
   filesHref?: string | null;
+  /**
+   * #132 — la densité de lecture de la personne, quand l'écran la laisse
+   * choisir. `null` : pas de contrôle. La page d'un run ne le montre pas —
+   * elle est la vue DÉPLIÉE par définition, et un contrôle qui ne changerait
+   * rien là où on est venu voir le travail serait un bouton menteur.
+   */
+  density?: FeedDensity | null;
 }) {
   return (
     // #135 — la barre dessinée : 54 px, un fond, deux filets, d'un bord à
@@ -86,6 +96,9 @@ export default function WorkBar({
         {proofVerdict === 'green' && <StatusPill variant="done" label="Verified" />}
         {proofVerdict === 'red' && <StatusPill variant="warn" label="Checks failed" />}
         {status}
+        {/* #132 — tout au bout : le réglage porte sur la LECTURE du fil, pas
+            sur le travail. */}
+        {density !== null && <DensityToggle density={density} />}
       </div>
     </div>
   );
