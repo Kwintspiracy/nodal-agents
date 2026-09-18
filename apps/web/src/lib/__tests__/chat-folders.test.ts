@@ -18,6 +18,7 @@ import {
   folderOfJobChannel,
   folderOfWork,
   DASHBOARD_FOLDER,
+  MCP_FOLDER,
   RUNNING_JOB_STATUSES,
   type WorkOrigin,
 } from '../chat-folders.ts';
@@ -44,6 +45,7 @@ function folders(input: Partial<Parameters<typeof chatFolders>[0]> = {}) {
     channels: [],
     waiting: [],
     running: {},
+    externalRuns: 0,
     pathname: '/chat',
     folderParam: null,
     ...input,
@@ -84,13 +86,12 @@ describe("l'attribution d'une attente à son dossier @cap:reprendre-conversation
   });
 
   it('ne range dans AUCUN dossier ce qui ne vient d’aucun d’eux', () => {
-    // `api` = la boîte « New task », `internal` = un agent qui appelle un agent,
+    // `internal` = un agent qui appelle un agent, `webhook` = un déclencheur,
     // `null` = un job disparu sous la jointure. Aucun n'est un dossier de chat.
-    expect(folderOfJobChannel('api')).toBeNull();
     expect(folderOfJobChannel('internal')).toBeNull();
-    expect(folderOfJobChannel('mcp')).toBeNull();
+    expect(folderOfJobChannel('webhook')).toBeNull();
     expect(folderOfJobChannel(null)).toBeNull();
-    const rows = folders({ channels: ['telegram'], waiting: waiting('api', 'internal', null) });
+    const rows = folders({ channels: ['telegram'], waiting: waiting('internal', 'webhook', null) });
     expect(rows.every((r) => r.waiting === 0)).toBe(true);
   });
 });
@@ -115,6 +116,7 @@ describe("l'attente suit le canal de SA CONVERSATION @cap:reprendre-conversation
       channels: ['telegram'],
       waiting: waitingInConversation('task-board', 'telegram', 3),
       running: {},
+      externalRuns: 0,
     };
     const rows = chatFolders({ ...input, pathname: '/chat', folderParam: null });
     expect(byKey(rows, 'telegram').waiting).toBe(3);
@@ -255,6 +257,7 @@ describe('le compte du lien « Chat » @cap:reprendre-conversation/moteur', () =
       channels: ['telegram', 'slack'],
       waiting: waiting('telegram', 'telegram', 'slack', 'dashboard', 'cron'),
       running: {},
+      externalRuns: 0,
     };
     const rows = chatFolders({ ...input, pathname: '/chat', folderParam: null });
     const somme = rows.reduce((n, r) => n + r.waiting, 0);
@@ -268,15 +271,119 @@ describe('le compte du lien « Chat » @cap:reprendre-conversation/moteur', () =
     expect(
       chatWaitingTotal({
         channels: ['telegram'],
-        waiting: waiting('telegram', 'api', 'internal'),
+        // `internal` seul ne dit d'où vient rien ; `api` dit « de dehors » et
+        // compte donc, dans le dossier MCP.
+        waiting: waiting('telegram', 'internal'),
         running: {},
+        externalRuns: 0,
       }),
     ).toBe(1);
   });
 
   it('vaut zéro quand rien n’attend — le lien ne porte alors aucun chiffre', () => {
     expect(
-      chatWaitingTotal({ channels: ['telegram'], waiting: [], running: { telegram: 3 } }),
+      chatWaitingTotal({
+        channels: ['telegram'],
+        waiting: [],
+        running: { telegram: 3 },
+        externalRuns: 4,
+      }),
     ).toBe(0);
+  });
+});
+
+describe('le dossier MCP — ce qui arrive de dehors @cap:parler-par-canal-externe/moteur', () => {
+  // Quentin, 18/09/2026. Un run lancé par `/api/agent` ou par le serveur MCP
+  // n'a pas de conversation : personne ne lui parle. Il n'apparaissait qu'en
+  // marge de /code, sous « Other sessions ». Il a son dossier, au même endroit
+  // que les canaux — c'est bien un endroit d'où le travail arrive.
+  //
+  // Mutation vérifiée : `api` retiré de `MCP_JOB_CHANNELS` → « range un run de
+  // l'API » rougit ; `externalRuns` ignoré dans `existingKeys` → « n'existe que
+  // s'il y a un run » rougit dans les deux sens ; le canal de tête lu AVANT le
+  // canal du job dans `folderOfWork` → « ne remonte pas la chaîne quand le job
+  // se range lui-même » rougit.
+
+  it('range un run de l’API et un run du serveur MCP dans le MÊME dossier', () => {
+    expect(folderOfJobChannel('api')).toBe(MCP_FOLDER);
+    expect(folderOfJobChannel('mcp')).toBe(MCP_FOLDER);
+    const rows = folders({ externalRuns: 2, waiting: waiting('api', 'mcp') });
+    expect(byKey(rows, MCP_FOLDER).waiting).toBe(2);
+    // Et nulle part ailleurs : surtout pas dans « Nodal chats », le dossier qui
+    // ramasserait tout si la règle se trompait.
+    expect(byKey(rows, DASHBOARD_FOLDER).waiting).toBe(0);
+  });
+
+  it('compte la question d’un DÉLÉGUÉ de ce run, qui ne dit rien de lui-même', () => {
+    // Un délégué porte `channel = 'internal'` et hérite du `conversation_id` de
+    // son parent — donc rien, puisque le parent n'en a pas. Seul le canal de
+    // TÊTE dit d'où la chaîne est partie.
+    expect(
+      folderOfWork({ jobChannel: 'internal', conversationChannel: null, rootChannel: 'mcp' }),
+    ).toBe(MCP_FOLDER);
+    const rows = folders({
+      externalRuns: 1,
+      waiting: [{ jobChannel: 'internal', conversationChannel: null, rootChannel: 'api' }],
+    });
+    expect(byKey(rows, MCP_FOLDER).waiting).toBe(1);
+  });
+
+  it('ne remonte PAS la chaîne quand le job se range déjà lui-même', () => {
+    // Un délégué Telegram d'un run venu de dehors reste dans Telegram : son
+    // propre canal a un dossier, et le canal de tête ne doit pas le déplacer.
+    expect(
+      folderOfWork({ jobChannel: 'telegram', conversationChannel: null, rootChannel: 'mcp' }),
+    ).toBe('telegram');
+    // Et la conversation passe toujours en premier, chaîne ou pas.
+    expect(
+      folderOfWork({ jobChannel: 'internal', conversationChannel: 'slack', rootChannel: 'mcp' }),
+    ).toBe('slack');
+  });
+
+  it('ne range pas un travail de Telegram dans le dossier MCP', () => {
+    const rows = folders({ channels: ['telegram'], externalRuns: 3, waiting: waiting('telegram') });
+    expect(byKey(rows, 'telegram').waiting).toBe(1);
+    expect(byKey(rows, MCP_FOLDER).waiting).toBe(0);
+  });
+
+  it('n’existe que si un run est venu de dehors', () => {
+    expect(folders({ channels: ['telegram'] }).map((r) => r.key)).not.toContain(MCP_FOLDER);
+    expect(folders({ externalRuns: 1 }).map((r) => r.key)).toContain(MCP_FOLDER);
+  });
+
+  it('n’existe PAS parce qu’une conversation porte ce canal — il tient à des RUNS', () => {
+    // Sans quoi le dossier s'ouvrirait sur une liste vide : il liste des runs,
+    // et une conversation `api` n'en est pas un.
+    expect(folders({ channels: ['api'], externalRuns: 0 }).map((r) => r.key)).not.toContain(
+      MCP_FOLDER,
+    );
+  });
+
+  it('FERME la liste des dossiers, après les canaux', () => {
+    const rows = folders({ channels: ['telegram', 'discord'], externalRuns: 1 });
+    expect(rows.map((r) => r.key)).toEqual([DASHBOARD_FOLDER, 'telegram', 'discord', MCP_FOLDER]);
+  });
+
+  it('se nomme « MCP » et mène à sa propre vue', () => {
+    const row = byKey(folders({ externalRuns: 1 }), MCP_FOLDER);
+    expect(row.label).toBe('MCP');
+    expect(row.href).toBe('/chat?folder=mcp');
+  });
+
+  it('allume son point vert quand un de ces runs tourne', () => {
+    const rows = folders({ externalRuns: 2, running: { [MCP_FOLDER]: 1 } });
+    expect(byKey(rows, MCP_FOLDER).running).toBe(true);
+    expect(byKey(rows, MCP_FOLDER).waiting).toBe(0);
+  });
+
+  it('est actif quand l’URL le désigne, et lui seul', () => {
+    const rows = folders({
+      channels: ['telegram'],
+      externalRuns: 1,
+      pathname: '/chat',
+      folderParam: MCP_FOLDER,
+    });
+    expect(byKey(rows, MCP_FOLDER).active).toBe(true);
+    expect(byKey(rows, 'telegram').active).toBe(false);
   });
 });

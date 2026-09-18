@@ -57,7 +57,7 @@ import { buildConversationThread } from './conversation-thread.ts';
 import { chatKey, LIST_MAX } from './chat-key.ts';
 import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
 import { classifyProduction } from './chat-or-work.ts';
-import { folderOfWork, RUNNING_JOB_STATUSES } from './chat-folders.ts';
+import { folderOfWork, MCP_JOB_CHANNELS, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
@@ -504,7 +504,53 @@ export type ChatFoldersSnapshot = {
    * n'y figure pas — il tourne, mais aucune ligne ne peut le montrer.
    */
   runningConversationIds: string[];
+  /**
+   * Combien de runs de TÊTE viennent de dehors — `/api/agent` ou le serveur
+   * MCP, donc `channel` à `api` ou `mcp`, sans parent et sans conversation.
+   * C'est ce qui fait EXISTER le dossier MCP (18/09), comme une conversation
+   * fait exister celui d'un canal.
+   */
+  externalRuns: number;
 };
+
+/**
+ * Ce qu'un run venu de dehors est dans la liste de son dossier.
+ *
+ * Pas de conversation, donc pas de fil : la ligne ouvre la page du RUN. Le
+ * titre est la tâche demandée — la seule chose que la machine à l'autre bout a
+ * écrite.
+ */
+export type ExternalRunRow = {
+  id: string;
+  /** La tâche, telle qu'elle a été demandée. Coupée à l'affichage, pas ici. */
+  task: string;
+  /** Le statut du job de tête : c'est lui qui dit si le run avance encore. */
+  status: string | null;
+  createdAt: Date | null;
+};
+
+/**
+ * Ce qui fait d'un job un RUN VENU DE DEHORS, écrit à UN seul endroit : le
+ * compte qui fait exister le dossier et la liste qu'il ouvre doivent dire la
+ * même chose, sinon le dossier s'affiche vide ou disparaît en portant des
+ * lignes.
+ *
+ * `parent_job_id IS NULL` — un délégué n'est pas un run à lui seul, c'est une
+ * étape de celui qui l'a créé. `conversation_id IS NULL` — un job `api`
+ * rattaché à une conversation est un TOUR DE CHAT, et `folderOfWork` le range
+ * déjà dans le dossier de cette conversation.
+ */
+/** Le plafond de la liste, du même ordre que les autres listes du dossier. */
+const EXTERNAL_RUNS_MAX = 200;
+
+function runsFromOutside(entityId: string) {
+  return and(
+    eq(agentJobs.entityId, entityId),
+    isNull(agentJobs.parentJobId),
+    isNull(agentJobs.conversationId),
+    inArray(agentJobs.channel, [...MCP_JOB_CHANNELS]),
+  );
+}
 
 export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSnapshot>> {
   try {
@@ -512,7 +558,7 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
 
-    const [channelRows, runningRows, runningConvRows] = await Promise.all([
+    const [channelRows, runningRows, runningConvRows, externalRows] = await Promise.all([
       db
         .selectDistinct({ channel: conversations.channel })
         .from(conversations)
@@ -568,15 +614,27 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
             isNotNull(agentJobs.conversationId),
           ),
         ),
+      // Combien de runs viennent de dehors — le chiffre qui fait exister le
+      // dossier MCP. Un `count` en base : la liste, elle, ne se lit qu'en
+      // ouvrant le dossier.
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(agentJobs)
+        .where(runsFromOutside(session.entityId)),
     ]);
 
     const running: Record<string, number> = {};
     for (const r of runningRows) {
       // Un run devient un DOSSIER par la même règle que partout ailleurs : le
       // canal de sa conversation d'abord, le sien ensuite. Un canal qui n'en
-      // désigne aucun (`api`, `internal`, `mcp`…) n'allume aucun point : son
-      // run existe, il n'est dans aucun dossier de chat, et il reste lisible
-      // sur la page des runs.
+      // désigne aucun (`internal`, `webhook`, `task-board`…) n'allume aucun
+      // point : son run existe, il n'est dans aucun dossier de chat, et il
+      // reste lisible sur la page des runs.
+      //
+      // ⚠️ UN DÉLÉGUÉ QUI TOURNE n'a pas besoin d'être compté ici : son parent
+      // est alors `awaiting_delegation`, un statut vivant, et c'est le parent
+      // qui porte le canal du dossier. Remonter la chaîne pour le point vert
+      // compterait deux fois la même chose.
       const key = folderOfWork(r);
       if (key === null) continue;
       running[key] = (running[key] ?? 0) + r.n;
@@ -591,10 +649,45 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
       runningConversationIds: runningConvRows
         .map((r) => r.conversationId)
         .filter((id): id is string => id !== null),
+      externalRuns: externalRows[0]?.n ?? 0,
     });
   } catch (err) {
     console.error('[getChatFoldersAction]', err);
     return fail('db_error', 'Failed to load the chat folders');
+  }
+}
+
+/**
+ * Les runs venus de dehors, les plus récents d'abord — la liste du dossier
+ * MCP.
+ *
+ * Les mêmes conditions que le compte du menu (`runsFromOutside`), et rien de
+ * plus : ni approbation ni descendance ne se lit ici. Ce qui ATTEND la
+ * personne vient des approbations que la page a déjà en main, comme pour les
+ * dossiers de canal — les relire ferait deux vérités pour le même chiffre.
+ */
+export async function listExternalRunsAction(): Promise<ActionResult<ExternalRunRow[]>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const db = getDb();
+
+    const rows = await db
+      .select({
+        id: agentJobs.id,
+        task: agentJobs.task,
+        status: agentJobs.status,
+        createdAt: agentJobs.createdAt,
+      })
+      .from(agentJobs)
+      .where(runsFromOutside(session.entityId))
+      .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
+      .limit(EXTERNAL_RUNS_MAX);
+
+    return ok(rows);
+  } catch (err) {
+    console.error('[listExternalRunsAction]', err);
+    return fail('db_error', 'Failed to load the runs started from outside');
   }
 }
 

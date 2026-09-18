@@ -142,6 +142,7 @@ import {
   type VerificationSequenceView,
   type VerificationUnconfiguredView,
 } from './verification-runs-view.ts';
+import { readJobRoots } from './job-lineage.ts';
 import type { JobTriggerContext, AnyDrizzleDb } from '@nodal-agents/db';
 import {
   DeliveryError,
@@ -5831,6 +5832,22 @@ export type ApprovalRow = {
    */
   conversationChannel: string | null;
   /**
+   * Le canal du job de TÊTE de la chaîne (18/09). Il ne sert QUE lorsque ni la
+   * conversation ni le canal du job ne désignent de dossier : c'est le cas
+   * d'un délégué d'un run venu de dehors, qui porte `internal` et aucune
+   * conversation. Sans lui, sa question n'était comptée dans aucun dossier.
+   *
+   * `null` quand la chaîne n'a pas pu être remontée (`lib/job-lineage.ts`) —
+   * jamais une supposition (invariant #4).
+   */
+  rootChannel: string | null;
+  /**
+   * L'identifiant de ce job de tête — la LIGNE qui porte la demande dans un
+   * dossier qui liste des RUNS, comme `conversationId` la porte dans un
+   * dossier qui liste des conversations. Égal à `jobId` pour un job de tête.
+   */
+  rootJobId: string | null;
+  /**
    * Structured, readable explanation of what is being approved. Computed
    * server-side so the client renders it without another round trip, and so the
    * dashboard and the channel cards say the SAME thing.
@@ -5898,6 +5915,9 @@ export async function listApprovalsAction(
         jobChannel: agentJobs.channel,
         conversationId: agentJobs.conversationId,
         conversationChannel: conversations.channel,
+        // La chaîne, pas une requête de plus : un job de tête (le cas courant)
+        // porte `null` ici et se résout sans rien lire.
+        jobParentJobId: agentJobs.parentJobId,
       })
       .from(approvalRequests)
       .leftJoin(agents, eq(agents.id, approvalRequests.agentId))
@@ -5920,6 +5940,21 @@ export async function listApprovalsAction(
       .where(where)
       .orderBy(desc(approvalRequests.requestedAt))
       .limit(100);
+
+    // La TÊTE de chaque chaîne (18/09). Une seule remontée pour toute la page,
+    // par génération : un délégué d'un run venu de dehors ne dit rien de sa
+    // provenance sur lui-même, et sans elle sa question ne serait comptée dans
+    // aucun dossier du menu Chat. Les jobs de tête — presque toutes les lignes
+    // — se résolvent sans aucune requête.
+    const roots = await readJobRoots(
+      db,
+      session.entityId,
+      rows.map((r) => ({
+        id: r.jobId,
+        channel: r.jobChannel,
+        parentJobId: r.jobParentJobId,
+      })),
+    );
 
     // Resolve the MCP server behind each namespaced tool, so the card can say
     // WHOSE tool this is. Without it the reviewer sees `mcp_fetch__fetch_markdown`
@@ -5947,8 +5982,15 @@ export async function listApprovalsAction(
         // approvals page and the sidebar/NotificationsBell provider.
         const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
         const ctx = mcpByTool.get(r.toolName) ?? null;
+        // `jobParentJobId` ne sort PAS de l'action : il n'a servi qu'à remonter
+        // la chaîne, et les deux champs de tête disent déjà ce que l'écran en
+        // fait.
+        const { jobParentJobId: _chaine, ...rest } = r;
+        const root = roots.get(r.jobId) ?? { rootJobId: null, rootChannel: null };
         return {
-          ...r,
+          ...rest,
+          rootJobId: root.rootJobId,
+          rootChannel: root.rootChannel,
           toolInput: safeInput,
           status: r.status ?? 'pending',
           explanation: explainApproval({
