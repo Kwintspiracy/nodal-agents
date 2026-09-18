@@ -88,9 +88,12 @@ export function budgetedLines(
  * d'AVANT, une ligne ajoutée son numéro d'APRÈS, une ligne de contexte fait
  * avancer les deux et montre celui d'après.
  *
- * `hidden` compte les lignes des deux versions que la plaque n'a PAS
- * dessinées — une rangée de contexte en consomme une de chaque côté, une
- * rangée signée une seule. Jamais un rendu sans fin, jamais une coupe muette.
+ * Ce qui manque est compté PAR VERSION (Reviewer C, passe 2). Une rangée de
+ * contexte consomme une ligne de chaque côté, une rangée signée une seule :
+ * additionner les deux restes donnait un nombre que rien à l'écran ne
+ * représente — un fichier de 200 lignes entièrement réécrit montre 40 + 40
+ * rangées et annonçait « 320 lignes de plus ». Jamais un rendu sans fin,
+ * jamais une coupe muette, et jamais un compte qui promet des rangées.
  *
  * Comparer les DÉBUTS et non les textes entiers peut, sur un remaniement
  * complet, apparier autrement que ne l'aurait fait le diff global. Les rangées
@@ -99,12 +102,13 @@ export function budgetedLines(
 export function buildPlateRows(
   edits: readonly CodingChangeView[],
   limit: number,
-): { rows: PlateRow[]; hidden: number } {
+): { rows: PlateRow[]; hiddenOld: number; hiddenNew: number } {
   const rows: PlateRow[] = [];
   let oldNum = 0;
   let newNum = 0;
   let shown = 0;
-  let hidden = 0;
+  let hiddenOld = 0;
+  let hiddenNew = 0;
   // La barre d'édition n'est posée qu'au moment où une ligne la suit : sans
   // ça, une édition entièrement coupée par la borne laissait une barre
   // orpheline en bas de la plaque.
@@ -140,10 +144,26 @@ export function buildPlateRows(
       shown++;
       rows.push({ kind: 'line', sign: line.kind, num, text: line.text });
     }
-    hidden += before.total - usedOld + (after.total - usedNew);
+    hiddenOld += before.total - usedOld;
+    hiddenNew += after.total - usedNew;
   });
 
-  return { rows, hidden };
+  return { rows, hiddenOld, hiddenNew };
+}
+
+/**
+ * Le pied de la plaque, ou `null` quand elle a tout montré.
+ *
+ * Une seule version tronquée — le cas courant, une écriture — se dit d'une
+ * phrase. Les deux tronquées se disent en deux nombres : additionner ferait
+ * croire à autant de rangées de plus.
+ */
+export function hiddenNote(hiddenOld: number, hiddenNew: number): string | null {
+  if (hiddenOld > 0 && hiddenNew > 0) {
+    return `… ${hiddenOld} old, ${hiddenNew} new lines not shown`;
+  }
+  const only = hiddenOld + hiddenNew;
+  return only > 0 ? `… and ${only} more lines` : null;
 }
 
 function PlateLine({ row }: { row: Extract<PlateRow, { kind: 'line' }> }) {
@@ -165,10 +185,11 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
   // Ouvert d'entrée : la planche montre les fichiers dépliés, et la borne de
   // 80 lignes rend la page finie même sur un pipeline bavard.
   const [open, setOpen] = useState(true);
-  const { rows, hidden } = useMemo(
+  const { rows, hiddenOld, hiddenNew } = useMemo(
     () => buildPlateRows(group.edits, PLATE_LINE_LIMIT),
     [group.edits],
   );
+  const note = hiddenNote(hiddenOld, hiddenNew);
   // Le geste porté sur ce fichier, dit dans le vocabulaire du fil. Le groupe
   // rassemble plusieurs appels sur un même chemin : c'est le PREMIER qui le
   // nomme — un fichier écrit puis retouché a bien été écrit.
@@ -220,10 +241,8 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
               </div>
             </div>
           )}
-          {hidden > 0 && (
-            <p className="border-t border-rule-2 px-4 py-1.5 text-mono-11 text-ink-4">
-              … and {hidden} more lines
-            </p>
+          {note !== null && (
+            <p className="border-t border-rule-2 px-4 py-1.5 text-mono-11 text-ink-4">{note}</p>
           )}
         </div>
       )}
