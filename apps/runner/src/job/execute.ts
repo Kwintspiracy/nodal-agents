@@ -47,6 +47,7 @@ import {
 import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 import {
   QuotaExhaustedError,
+  LLMTimeoutError,
   MessageStructureError,
   AllProvidersFailedError,
   isContextOverflowError,
@@ -619,6 +620,53 @@ export function shortBlockReason(reason: string): string {
   if (!r) return BLOCK_NO_REASON;
   const firstSentence = r.split(/(?<=[.!?])\s/)[0] ?? r;
   return firstSentence.length > 240 ? firstSentence.slice(0, 239).trimEnd() + '…' : firstSentence;
+}
+
+// ─── expiration d'un tour ─────────────────────────────────────────────────────
+
+/** Les faits qu'un tour expiré laisse derrière lui — rien qui soit à inventer. */
+export interface TimeoutFacts {
+  provider: string;
+  model: string;
+  /** Le tour atteint : celui qui a expiré, pas le suivant. */
+  turn: number;
+  /** Le temps passé à attendre CE tour, rejeu compris. */
+  elapsedMs: number;
+}
+
+/**
+ * Le code machine d'un tour expiré, pour `agent_jobs.error`.
+ *
+ * De la même famille que `context_window_exceeded:<modèle> (…)` : un code, puis
+ * les faits qui le rendent actionnable. Ce qui est lu par une personne est la
+ * ligne ci-dessous, jamais celui-ci.
+ */
+export function timeoutErrorCode(faits: TimeoutFacts): string {
+  return `llm_timeout:${faits.provider}/${faits.model} (turn ${faits.turn}, ${secondes(faits.elapsedMs)})`;
+}
+
+/**
+ * La ligne que l'utilisateur lit quand un tour a expiré jusqu'au bout.
+ *
+ * Même nature que `[stopped: …]` et `[delegation stopped: … — no deliverable]`
+ * un peu plus bas : une ligne de PLATEFORME, entre crochets, faite de CHAMPS
+ * TYPÉS — le fournisseur, le modèle, le tour atteint, le temps passé. Ce n'est
+ * pas la voix de l'agent, et l'invariant #2 tient : le harnais ne raconte rien,
+ * il pose les faits qu'il a.
+ *
+ * Ce qu'elle remplace (#121) : l'exception recopiée telle quelle dans le
+ * résultat, « ⚠️ The task could not be completed (LLM call timed out after
+ * 300000ms: openrouter/qwen/qwen3.8-max) and no explanation was provided ».
+ * Elle disait le temps d'UN appel, taisait le tour atteint, et laissait croire
+ * que rien n'avait été fait. Pure — testée à part.
+ */
+export function timeoutStopLine(faits: TimeoutFacts): string {
+  return `[stopped: llm timeout — ${faits.provider}/${faits.model}, turn ${faits.turn}, ${secondes(faits.elapsedMs)}]`;
+}
+
+/** Des millisecondes en secondes entières, jamais négatives. */
+function secondes(ms: number): string {
+  return `${Math.max(0, Math.round(ms / 1000))}s`;
 }
 
 // ─── executeJob ───────────────────────────────────────────────────────────────
@@ -2912,6 +2960,13 @@ async function runJob(
   const MAX_UNAVAILABLE_TOOL_NUDGES = 3;
   let unavailableToolNudges = 0;
 
+  // Expiration d'un tour : UN rejeu, puis l'échec (#121). Le compteur et le
+  // temps perdu valent pour le tour en cours, et sont remis à zéro dès qu'un
+  // tour répond — voir la capture de `LLMTimeoutError` dans la boucle.
+  const MAX_LLM_TIMEOUT_TURN_RETRIES = 1;
+  let expirationsCeTour = 0;
+  let msExpiresCeTour = 0;
+
   try {
     while (true) {
       turn += 1;
@@ -2995,6 +3050,7 @@ async function runJob(
         void touchJob(db, jobId as string).catch(() => {});
       }, 60_000);
       let response: Awaited<ReturnType<typeof llmClient.generateText>>;
+      const appelCommenceA = Date.now();
       try {
         response = await llmClient.generateText({
           system: systemPrompt,
@@ -3006,6 +3062,53 @@ async function runJob(
           toolChoice,
         });
       } catch (genErr) {
+        // Un tour qui EXPIRE ne tue plus un travail qui avançait (#121).
+        //
+        // Le transcript est intact — la réponse n'est jamais revenue, donc
+        // `messages` n'a pas bougé —, et le même tour est redemandé UNE fois,
+        // avec exactement les mêmes messages. Ce rejeu n'est pas celui de
+        // `withStaleRetry` (packages/llm) : celui-là rouvre une connexion neuve
+        // sur le MÊME appel, dans la même minute, et il a déjà eu lieu quand
+        // l'erreur arrive ici. Celui-ci est d'un autre ordre — un tour entier,
+        // redemandé, après que le transport a rendu les armes.
+        //
+        // Le budget vaut pour CE tour : un tour qui répond le remet à zéro
+        // (juste après le `finally`). Un travail de quarante tours n'est donc
+        // pas condamné par une expiration au cinquième.
+        if (genErr instanceof LLMTimeoutError) {
+          msExpiresCeTour += Date.now() - appelCommenceA;
+          if (expirationsCeTour < MAX_LLM_TIMEOUT_TURN_RETRIES) {
+            expirationsCeTour += 1;
+            trace('llm_timeout_turn_retry', { turn, attempt: expirationsCeTour });
+            // Le MÊME tour est rejoué : sans ce retrait, la boucle le compterait
+            // deux fois et le tour annoncé à l'utilisateur ne serait plus le sien.
+            turn -= 1;
+            continue;
+          }
+          // Budget épuisé. Ce que le travail a écrit AVANT d'expirer reste le
+          // livrable : douze tours de lecture n'ont pas à disparaître parce que
+          // le treizième a expiré. Le parent le reçoit par l'enregistrement
+          // typé (`delegationRecordFromOutcome`), avec `exit_reason: timeout`.
+          const faits = {
+            provider: llmClient.config.provider,
+            model: llmClient.config.model,
+            turn,
+            elapsedMs: msExpiresCeTour,
+          };
+          const code = timeoutErrorCode(faits);
+          const livrable = [lastAssistantTextSeen, timeoutStopLine(faits)]
+            .filter((t) => t !== '')
+            .join('\n\n');
+          trace('llm_timeout_exhausted', { turn, elapsedMs: msExpiresCeTour });
+          await failJob(db, jobId as string, code, runStats(), messages, livrable);
+          return {
+            status: 'failed',
+            error: code,
+            result: livrable,
+            toolsUsed,
+            exitReason: 'timeout',
+          };
+        }
         // Recoverable: the model named a tool that isn't in its whitelist, so
         // the AI SDK rejected the whole turn before returning. Rather than
         // hard-killing an otherwise-productive job on one bad tool name, feed
@@ -3037,6 +3140,11 @@ async function runJob(
       } finally {
         clearInterval(hbInterval);
       }
+      // Le tour a répondu : son budget d'expiration repart à zéro, et le temps
+      // perdu avec. Ce qui est compté plus bas est CE tour-ci, pas la mémoire
+      // d'un tour plus ancien qui, lui, s'est remis en marche.
+      expirationsCeTour = 0;
+      msExpiresCeTour = 0;
 
       // Accumulate token usage. Some providers may return undefined/NaN for
       // either field — coerce to 0 so we never persist NaN. Local providers
