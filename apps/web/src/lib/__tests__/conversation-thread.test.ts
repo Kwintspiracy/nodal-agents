@@ -883,7 +883,7 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
             items: [
               demande,
               tourDeTravail([{ kind: 'prose', text: 'Je tente autre chose.' }]),
-              { kind: 'failure', text: 'le dossier est introuvable' },
+              { kind: 'failure', text: 'le dossier est introuvable', hint: null },
             ],
             totals: totals({ toolCalls: 0 }),
           },
