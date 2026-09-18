@@ -6,7 +6,10 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import { failureText, writtenFile } from '../../presenters';
-import { deliverableTypeForWrittenFile } from '../../verification/written-file-type';
+import {
+  declaredWrittenFileType,
+  deliverableTypeForWrittenFile,
+} from '../../verification/written-file-type';
 import { fileDeliverableKey } from '../../verification/office-file-key';
 import {
   resolveAndCheckPath,
@@ -138,14 +141,19 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
       // La clé du document, pour la carte (P12) — la même que celle posée
       // par l'intention, calculée par la même fonction. Un fichier de projet
       // n'en porte pas : son état est celui du projet.
-      // Le type est lu AVANT d'écrire, comme le fait le hook qui a posé
-      // l'intention : les deux voient alors le MÊME disque. Écrire le premier
-      // `package.json` d'un dossier change la réponse entre les deux lectures —
-      // avant, aucun manifeste, donc `document` ; après, `code_project` — et la
-      // carte repartait sans clé alors que la ligne d'état existait sous celle
-      // du fichier (revue Codex post-merge de la PR #66, constat C3).
+      //
+      // Le type n'est PAS reclassé ici : c'est la décision du hook, relue
+      // telle quelle. Elle était refaite, et l'écart entre les deux réponses
+      // rendait l'état introuvable — que l'écart vienne du disque (le premier
+      // `package.json` d'un dossier, revue Codex post-merge de la PR #66,
+      // constat C3) ou de la table `code_projects`, qui peut changer entre le
+      // hook et ici (revue C, dette #88). Un seul classement, donc aucun écart
+      // possible. Le repli n'existe que hors du seam, où aucune intention n'a
+      // été posée — voir `declaredWrittenFileType`.
+      const deliverableType =
+        declaredWrittenFileType(ctx, path) ?? (await deliverableTypeForWrittenFile(ctx, path));
       const deliverableKey =
-        (await deliverableTypeForWrittenFile(ctx, path)) === 'document'
+        deliverableType === 'document'
           ? fileDeliverableKey(
               path,
               (ctx.workspaces ?? []).map((w) => w.path),
