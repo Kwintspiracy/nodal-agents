@@ -101,7 +101,13 @@ const HASH_CHANNELS = new Set(['discord', 'slack']);
  * branché le bot lui-même et que personne n'a « demandé » ; l'écrire par défaut
  * rendait indistinguables tous les chats anonymes (revue Codex, PR #48).
  */
-export function chatLabel(row: ChannelChatRow): string {
+export function chatLabel(
+  // Ce que le NOM demande, et rien de plus : le canal, l'interlocuteur, le nom
+  // qu'on lui connaît et sa nature. Une ligne entière convient toujours ; le
+  // sous-menu de la barre latérale, lui, ne lit que ces quatre colonnes et n'a
+  // aucune raison d'en fabriquer d'autres pour appeler cette fonction.
+  row: Pick<ChannelChatRow, 'channel' | 'chatId' | 'name' | 'kind'>,
+): string {
   const salon = row.kind === 'channel' || row.kind === 'group';
   if (row.name !== null && row.name !== '') {
     // Le `#` distingue un salon d'un privé : sur Discord et Slack, l'allowlist

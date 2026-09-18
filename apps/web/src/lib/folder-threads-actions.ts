@@ -6,26 +6,32 @@
 // Chaque dossier du menu Channels porte un chevron : il montre ses cinq
 // derniers fils, puis un « See all » qui ouvre sa liste. Ce ne sont pas
 // d'autres lignes que celles de la liste — ce sont LES MÊMES, coupées aux
-// premières, avec les mêmes titres et dans le même ordre. D'où cette lecture,
-// qui ne fait qu'appeler celles de la page et regrouper leur résultat : écrire
-// ici une seconde requête « les cinq derniers fils » aurait donné deux vérités
-// pour le même sous-menu, et elles auraient divergé au premier correctif.
+// premières, avec les mêmes titres et dans le même ordre.
+//
+// ⚠️ LE PLAFOND DE CINQ EST EN SQL, et il ne l'était pas (Reviewer C, passe 1
+// de la PR #206). Ce module appelait `listAllConversationsAction`, qui ramène
+// jusqu'à deux cents conversations avec leurs deux agrégats `array_agg`, puis
+// coupait à cinq en TypeScript : le premier dépliage payait la page de liste
+// entière pour quinze lignes. Il lit maintenant
+// `listFolderThreadReadsAction`, deux requêtes BORNÉES
+// (lib/folder-threads-sql.ts) qui ne rapportent que ce que le menu dessine.
 //
 // ⚠️ POURQUOI UN MODULE À PART, et pas une action de plus dans
-// `conversation-actions.ts`. Le regroupement a besoin de `groupChatLists`
+// `conversation-actions.ts`. Le nommage d'un chat passe par `chatLabel`
 // (lib/chat-list.ts), qui lit déjà le TYPE `ConversationListRow` de
 // conversation-actions : l'y appeler aurait bouclé, et dependency-cruiser
 // refuse un cycle, `import type` ou non (c'est la raison pour laquelle
 // `chatKey` a son propre fichier).
 //
-// ⚠️ UNE SEULE LECTURE POUR TOUS LES DOSSIERS, jamais une par dossier. Les
-// quatre appels ci-dessous couvrent l'ensemble du menu et partent en
-// parallèle ; un dossier de plus ne coûte pas un aller-retour de plus. C'est
-// la même discipline que `getChatFoldersAction`, et pour la même raison : le
-// menu compte autant de dossiers que la personne a branché de canaux.
+// ⚠️ AUCUNE REQUÊTE PAR DOSSIER, ni par fil. Les appels ci-dessous partent en
+// parallèle et couvrent l'ensemble du menu d'un coup : un canal branché demain
+// ne coûte pas un aller-retour de plus. Ce n'est pas « une requête » — c'en
+// est une poignée, chacune bornée — mais aucune ne se multiplie avec le
+// nombre de dossiers ni avec celui des fils. C'est la même discipline que
+// `getChatFoldersAction`, et pour la même raison.
 
 import 'server-only';
-import { chatLabel, groupChatLists } from './chat-list.ts';
+import { chatKey, chatLabel } from './chat-list.ts';
 import {
   DASHBOARD_FOLDER,
   FOLDER_THREADS_MAX,
@@ -35,22 +41,18 @@ import {
   type FolderThreadSource,
 } from './chat-folders.ts';
 import { runIsRunning, runTitle } from './external-runs.ts';
-import { truncate } from './format-time';
 import { listApprovalsAction } from './actions.ts';
 import {
   getChatFoldersAction,
-  listAllConversationsAction,
   listChatNamesAction,
   listCurrentThreadByChatAction,
   listExternalRunsAction,
+  listFolderThreadReadsAction,
   type ActionResult,
 } from './conversation-actions.ts';
 
 /** Les fils dépliables de chaque dossier. Une clé absente = rien à déplier. */
 export type FolderThreadsSnapshot = Readonly<Record<string, readonly FolderThread[]>>;
-
-/** La même borne que les lignes de « Nodal chats » : le CSS coupe le reste. */
-const TITLE_MAX = 120;
 
 /**
  * Les cinq derniers fils de chaque dossier du menu.
@@ -64,8 +66,9 @@ const TITLE_MAX = 120;
  * ressemblent trait pour trait (invariant #4).
  */
 export async function listFolderThreadsAction(): Promise<ActionResult<FolderThreadsSnapshot>> {
-  const [conversations, names, currents, runs, approvals, folders] = await Promise.all([
-    listAllConversationsAction(),
+  const [lectures, names, currents, runs, approvals, folders] = await Promise.all([
+    // Deux requêtes BORNÉES à cinq lignes par dossier, le plafond en SQL.
+    listFolderThreadReadsAction(FOLDER_THREADS_MAX),
     listChatNamesAction(),
     listCurrentThreadByChatAction(),
     // Cinq suffisent : c'est tout ce que le sous-menu déplie, et le dossier
@@ -79,19 +82,12 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
     getChatFoldersAction(),
   ]);
 
-  if (!conversations.ok) return conversations;
+  if (!lectures.ok) return lectures;
   if (!names.ok) return names;
   if (!currents.ok) return currents;
   if (!runs.ok) return runs;
   if (!approvals.ok) return approvals;
   if (!folders.ok) return folders;
-
-  const { channels, dashboard } = groupChatLists(
-    conversations.data,
-    names.data,
-    currents.data.current,
-    currents.data.listable,
-  );
 
   // Les conversations sur lesquelles quelque chose attend. Une demande sans
   // conversation ne se pose sur AUCUN fil : elle vient d'une tâche de l'API ou
@@ -108,32 +104,42 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
 
   const rows: FolderThreadSource[] = [];
 
-  for (const c of channels) {
+  for (const c of lectures.data.chats) {
     // Un chat dont la base n'a désigné AUCUN fil courant n'ouvre rien. Sa
     // ligne existe dans la liste du dossier, qui dit à côté d'elle pourquoi
     // elle ne mène nulle part ; un raccourci du menu qui ne mène nulle part,
     // lui, n'est pas un raccourci. Il est donc absent du sous-menu, et jamais
     // remplacé par un lien inventé (invariant #4).
-    const id = c.currentConversationId;
-    if (id === null) continue;
+    const key = chatKey(c.agentId, c.channel, c.chatId);
+    const id = currents.data.current[key];
+    if (id === undefined) continue;
+    const nom = names.data[`${c.channel}:${c.chatId}`];
     rows.push({
       folder: c.channel,
-      key: c.key,
-      title: chatLabel(c),
+      key,
+      // Le MÊME nom que la ligne de la liste, par la MÊME fonction : le `#`
+      // d'un salon Discord, « Direct » pour un privé sans nom, l'identifiant
+      // en dernier recours.
+      title: chatLabel({
+        channel: c.channel,
+        chatId: c.chatId,
+        name: nom?.name ?? null,
+        kind: nom?.kind ?? null,
+      }),
       href: `/chat/${id}`,
       waiting: attendSurFil.has(id),
       running: tourne.has(id),
     });
   }
 
-  for (const c of dashboard) {
+  for (const c of lectures.data.conversations) {
     rows.push({
       folder: DASHBOARD_FOLDER,
       key: c.id,
       // Le MÊME titre que la ligne de la liste (`conversationRows`) : déjà
       // masqué et coupé par la lecture (#179), « Untitled » quand personne ne
       // l'a nommé et que l'IA ne l'a pas encore renommé.
-      title: c.title === '' ? 'Untitled' : truncate(c.title, TITLE_MAX),
+      title: c.title === '' ? 'Untitled' : c.title,
       href: `/chat/${c.id}`,
       waiting: attendSurFil.has(c.id),
       running: tourne.has(c.id),
