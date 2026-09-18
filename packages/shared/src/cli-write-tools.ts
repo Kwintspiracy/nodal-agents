@@ -12,7 +12,8 @@
 //
 //   1. le contexte Runtime d'un agent (`apps/runner`), pour dire quels projets
 //      ont été édités récemment ;
-//   2. l'onglet Code et le fil (`apps/web/src/lib/coding-changes.ts`) ;
+//   2. l'onglet Code et le fil (`apps/web/src/lib/actions.ts`, qui en portait
+//      une copie jusqu'à cette PR) ;
 //   3. la vérification (`packages/tools`), depuis l'issue #102 : ces lignes
 //      sont la SEULE façon de savoir quels fichiers constater après un run de
 //      harnais, puisque le seam ne les a jamais vus passer.
@@ -33,37 +34,63 @@ export const CLI_WRITE_TOOLS: readonly string[] = [
 ];
 
 /**
- * Les chemins de fichiers qu'une ligne d'un outil CLI DÉCLARE avoir écrits.
+ * Ce qu'une ligne d'outil CLI déclare d'un fichier : son chemin, et ce qu'elle
+ * dit lui avoir fait.
+ *
+ * Le GENRE compte pour qui va vérifier : une suppression se constate par
+ * l'ABSENCE du fichier, une écriture par sa présence. Les confondre ferait dire
+ * « jamais vu sur le disque » d'une suppression parfaitement réussie — un fait
+ * faux (revue C de la PR #196, passe 2).
+ */
+export interface CliWriteDeclaration {
+  readonly path: string;
+  /** `delete` quand la ligne dit avoir supprimé ; `write` pour tout le reste. */
+  readonly kind: 'write' | 'delete';
+}
+
+/** Les mots par lesquels un runtime dit « j'ai supprimé ce fichier ». */
+const MOTS_DE_SUPPRESSION = new Set(['delete', 'deleted', 'remove', 'removed']);
+
+/**
+ * Les fichiers qu'une ligne d'un outil CLI DÉCLARE avoir touchés.
  *
  * Deux formes, et rien d'autre n'est deviné :
  *   — Claude Code pose un chemin par appel, sous `file_path` (ou `path`, selon
  *     l'outil) ;
  *   — Codex pose `changes: [{ path, kind, diff }]`, plusieurs fichiers dans le
- *     même appel.
+ *     même appel, et son `kind` distingue `add`, `update` et `delete`.
  *
  * Rend une liste vide pour tout le reste, y compris une entrée absente ou d'une
  * forme inconnue : un chemin inventé ferait constater un fichier que personne
  * n'a nommé.
  */
-export function pathsDeclaredByCliWrite(toolName: string, toolInput: unknown): readonly string[] {
+export function pathsDeclaredByCliWrite(
+  toolName: string,
+  toolInput: unknown,
+): readonly CliWriteDeclaration[] {
   if (!CLI_WRITE_TOOLS.includes(toolName)) return [];
   const input = (toolInput ?? null) as Record<string, unknown> | null;
   if (input === null || typeof input !== 'object') return [];
 
   const changes = Array.isArray(input['changes']) ? input['changes'] : null;
   if (changes !== null) {
-    const out: string[] = [];
+    const out: CliWriteDeclaration[] = [];
     for (const c of changes) {
       if (!c || typeof c !== 'object') continue;
-      const p = (c as Record<string, unknown>)['path'];
-      if (typeof p === 'string' && p.trim() !== '') out.push(p);
+      const rec = c as Record<string, unknown>;
+      const p = rec['path'];
+      if (typeof p !== 'string' || p.trim() === '') continue;
+      const mot = typeof rec['kind'] === 'string' ? rec['kind'].toLowerCase() : '';
+      out.push({ path: p, kind: MOTS_DE_SUPPRESSION.has(mot) ? 'delete' : 'write' });
     }
     return out;
   }
 
   for (const cle of ['file_path', 'path', 'notebook_path']) {
     const p = input[cle];
-    if (typeof p === 'string' && p.trim() !== '') return [p];
+    // Les outils de Claude Code listés plus haut écrivent tous : celui qui
+    // supprime n'y est pas, donc ce qui passe par ici est une écriture.
+    if (typeof p === 'string' && p.trim() !== '') return [{ path: p, kind: 'write' }];
   }
   return [];
 }

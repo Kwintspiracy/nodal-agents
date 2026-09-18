@@ -24,7 +24,7 @@ import { snapshot, headCheckpoint } from '@nodal-agents/checkpoints';
 import { stat } from 'node:fs/promises';
 import { writeMutationIntent, type DirtiedDeliverable } from './verification/intent';
 import { markDeliverablesProduced } from './verification/produced';
-import { constatedHarnessWrites } from './verification/harness';
+import { constatedHarnessWrites, lignesDeHarnaisDejaLa } from './verification/harness';
 import {
   changedFileTargets,
   observedDeliverableKeys,
@@ -658,8 +658,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   //
   // L'état des fichiers VISÉS est pris AVANT l'outil (issue #60) : c'est la
   // seule façon de constater, après, qu'il a réellement écrit. Une cible
-  // dossier n'est pas prise — elle reste déclarative, voir `observed.ts`.
+  // dossier n'est pas prise — elle ne crédite plus rien, voir `observed.ts`.
   const filesBefore = mutationTargets ? await snapshotFileTargets(mutationTargets) : null;
+  // Et, pour un harnais, les lignes vivantes que ce job porte DÉJÀ : elles
+  // bornent à CE run la lecture d'après (revue C de la PR #196, passe 2). Sans
+  // elles, un second `code_task` dans le même dossier héritait des lignes du
+  // premier, dont les fichiers sont toujours sur le disque — le faux vert de
+  // #102, revenu par la bande.
+  const harnaisAvant = auditTool.reportsHarnessWrites
+    ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
+    : new Set<string>();
   try {
     const output = await tool.execute(validatedInput, ctx);
     const durationMs = Date.now() - startMs;
@@ -698,12 +706,21 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
               ...mutationTargets.filter((t) => t.kind === 'dir').map((t) => t.path),
               ...(ctx.workspaces ?? []).map((w) => w.path),
             ],
+            dejaLa: harnaisAvant,
           })
-        : { constates: [], introuvables: [] };
+        : { constates: [], introuvables: [], toujoursLa: [] };
+      // Chaque désaccord sous son propre nom : une écriture annoncée dont le
+      // fichier manque n'est pas une suppression annoncée qui n'a pas eu lieu.
       if (harnais.introuvables.length > 0) {
         console.warn(
           `[verification] HARNESS_FILE_NOT_ON_DISK tool=${auditTool.name} job=${ctx.jobId} ` +
             `paths=${harnais.introuvables.join(',')}`,
+        );
+      }
+      if (harnais.toujoursLa.length > 0) {
+        console.warn(
+          `[verification] HARNESS_FILE_STILL_ON_DISK tool=${auditTool.name} job=${ctx.jobId} ` +
+            `paths=${harnais.toujoursLa.join(',')}`,
         );
       }
       const aConstater = {

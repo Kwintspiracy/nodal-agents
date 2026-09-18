@@ -79,6 +79,9 @@ beforeEach(async () => {
   // Le réglage d'espace revient au défaut (tout coché) — un test qui décoche
   // une surface ne doit pas décider pour les suivants.
   await db.update(entities).set({ verificationSurfaces: {} }).where(eq(entities.id, seed.entityId));
+  // Le harnais factice ne rapporte rien par défaut : chaque test dit ce que SON
+  // run laisse comme lignes vivantes.
+  lignesDuProchainRun = [];
   await db.update(agents).set({ cliDefaults: null }).where(eq(agents.id, seed.agentId));
 });
 
@@ -167,8 +170,37 @@ const harnaisFactice = {
       deliverableType: 'code_project' as const,
     },
   ],
-  execute: async () => ({ ok: true }),
+  // Les lignes vivantes arrivent PENDANT le run, comme l'enregistreur les pose
+  // pendant une vraie session. Les poser avant l'appel les rangerait parmi
+  // celles d'un run PRÉCÉDENT, que le seam écarte justement, et le test ne
+  // prouverait plus rien.
+  execute: async (_input: unknown, c: ToolContext) => {
+    for (const ligne of lignesDuProchainRun) {
+      await c.db.insert(toolCalls).values({
+        entityId: c.entityId,
+        jobId: c.jobId,
+        card: 'files',
+        ...ligne,
+      } as never);
+    }
+    return { ok: true };
+  },
 };
+
+/** Ce que le harnais factice « rapportera » à son prochain appel. */
+let lignesDuProchainRun: Array<{ toolName: string; toolInput: Record<string, unknown> }> = [];
+
+/** Une ligne `cli:Write` — la forme de Claude Code : un chemin par appel. */
+const ligneEcriture = (path: string) => ({
+  toolName: 'cli:Write',
+  toolInput: { file_path: path, content: 'peu importe' },
+});
+
+/** Une ligne `cli:file_change` — la forme de Codex : plusieurs, avec un genre. */
+const ligneCodex = (changements: Array<{ path: string; kind: string }>) => ({
+  toolName: 'cli:file_change',
+  toolInput: { changes: changements.map((c) => ({ ...c, diff: '+1' })) },
+});
 
 const exists = async (p: string): Promise<boolean> => {
   try {
@@ -555,20 +587,12 @@ describe('l’intention de mutation, posée par executeTool', () => {
     await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
     await writeFile(join(ws, 'zeta', 'a.ts'), 'export const a = 1;', 'utf8');
     await writeFile(join(ws, 'zeta', 'b.ts'), 'export const b = 2;', 'utf8');
-    await db.insert(toolCalls).values([
-      {
-        entityId: seed.entityId,
-        jobId,
-        toolName: 'cli:file_change',
-        card: 'files',
-        toolInput: {
-          changes: [
-            { path: join(ws, 'zeta', 'a.ts'), kind: 'update', diff: '+1' },
-            { path: join(ws, 'zeta', 'b.ts'), kind: 'add', diff: '+2' },
-          ],
-        },
-      },
-    ] as never);
+    lignesDuProchainRun = [
+      ligneCodex([
+        { path: join(ws, 'zeta', 'a.ts'), kind: 'update' },
+        { path: join(ws, 'zeta', 'b.ts'), kind: 'add' },
+      ]),
+    ];
 
     const res = await executeTool(
       harnaisFactice as never,
@@ -583,20 +607,95 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(zeta?.produced, 'et ses fichiers rapportés sont sur le disque').toBe(true);
   });
 
+  it('un SECOND run n’hérite pas des fichiers du premier @cap:verifier-un-livrable/moteur', async () => {
+    // Revue C, passe 2. Les lignes vivantes étaient lues pour tout le JOB : un
+    // second `code_task` dans le même dossier héritait de celles du premier, et
+    // le fichier que le PREMIER avait écrit est toujours sur le disque. Le
+    // second passait donc pour avoir produit sans avoir rien écrit — le faux
+    // vert de #102, revenu par la bande.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await writeFile(join(ws, 'zeta', 'a.ts'), 'export const a = 1;', 'utf8');
+    lignesDuProchainRun = [ligneEcriture(join(ws, 'zeta', 'a.ts'))];
+
+    const premier = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(premier.outcome === 'error' ? premier.error : premier.outcome).toBe('success');
+    const apresPremier = (await statesOf(jobId)).find(
+      (r) => r.canonicalKey === keyOf(join(ws, 'zeta')),
+    );
+    expect(apresPremier?.produced, 'le premier run a bien écrit').toBe(true);
+
+    // On efface la trace de production pour repartir du même point qu'un job
+    // neuf sur ce projet : ce qui est testé est le SECOND run, qui n'écrit rien
+    // et ne pose aucune ligne nouvelle.
+    await db
+      .update(jobDeliverableVerificationState)
+      .set({ produced: false })
+      .where(eq(jobDeliverableVerificationState.jobId, jobId));
+
+    // Le second run ne rapporte RIEN : aucune ligne nouvelle.
+    lignesDuProchainRun = [];
+    const second = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(second.outcome === 'error' ? second.error : second.outcome).toBe('success');
+    const apresSecond = (await statesOf(jobId)).find(
+      (r) => r.canonicalKey === keyOf(join(ws, 'zeta')),
+    );
+    expect(apresSecond?.produced, 'le second n’a rien écrit, et n’hérite de rien').toBe(false);
+  });
+
+  it('une SUPPRESSION rapportée est constatée par l’absence @cap:verifier-un-livrable/moteur', async () => {
+    // Un fichier supprimé est constaté par son ABSENCE. Le dire « jamais vu sur
+    // le disque » énoncerait un fait faux d'une suppression réussie.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    lignesDuProchainRun = [ligneCodex([{ path: join(ws, 'zeta', 'parti.ts'), kind: 'delete' }])];
+
+    const res = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.produced, 'le fichier annoncé supprimé n’est pas là').toBe(true);
+  });
+
+  it('un fichier VIDÉ est une écriture, pas une absence @cap:verifier-un-livrable/moteur', async () => {
+    // Un harnais qui vide un fichier a bel et bien écrit. Le compter comme
+    // « jamais sur le disque » serait le troisième fait faux de cette famille.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+    await writeFile(join(ws, 'zeta', 'vide.ts'), '', 'utf8');
+    lignesDuProchainRun = [ligneEcriture(join(ws, 'zeta', 'vide.ts'))];
+
+    const res = await executeTool(
+      harnaisFactice as never,
+      { purpose: 'test', cwd: 'zeta' },
+      ctx(),
+      autoApprove('code_task'),
+    );
+    expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
+    const zeta = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(zeta?.produced, 'le fichier est là, vide, donc écrit').toBe(true);
+  });
+
   it('un fichier RAPPORTÉ que le disque ne porte pas n’est pas constaté, et c’est dit @cap:verifier-un-livrable/moteur', async () => {
     // Le rapport du CLI ne suffit jamais : on va voir. Un fichier annoncé mais
     // absent ne crédite rien, et la ligne de journal le nomme (invariant #4).
     await mkdir(join(ws, 'zeta'), { recursive: true });
     await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
-    await db.insert(toolCalls).values([
-      {
-        entityId: seed.entityId,
-        jobId,
-        toolName: 'cli:Write',
-        card: 'files',
-        toolInput: { file_path: join(ws, 'zeta', 'jamais-ecrit.ts'), content: 'x' },
-      },
-    ] as never);
+    lignesDuProchainRun = [ligneEcriture(join(ws, 'zeta', 'jamais-ecrit.ts'))];
 
     const dits: string[] = [];
     const espion = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {

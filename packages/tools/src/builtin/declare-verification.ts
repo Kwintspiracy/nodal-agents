@@ -190,8 +190,10 @@ export const declareVerificationTool: ToolDefinition<
         reason:
           `No write was constated in ${path} during this run. A write is constated by reading ` +
           'the files a tool NAMES, before and after it runs; what a shell command writes under ' +
-          'its working directory is never read, so it supports nothing here. Write what proves ' +
-          'this project with a file tool, or name the file you wrote, then declare how it is ' +
+          'its working directory is never read, so it supports nothing here. A coding harness ' +
+          'sits in between: the files it REPORTS are looked for on disk, with no before and ' +
+          'after, so a run that reported none supports nothing either. Write what proves this ' +
+          'project with a file tool, or name the file you wrote, then declare how it is ' +
           'verified. If a tool did report a failure, fix that first.',
       };
     }
