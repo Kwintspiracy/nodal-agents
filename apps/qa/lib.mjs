@@ -681,7 +681,9 @@ function instant(valeur) {
  */
 export function pileDuneColonne(cartes, nom, maintenant = Date.now(), jours = JOURS_DE_FENETRE) {
   const dedans = (cartes ?? []).filter((c) => c.colonne === nom);
-  if (!COLONNES_FINIES.has(nom)) return { montrees: dedans, replies: 0 };
+  if (!COLONNES_FINIES.has(nom)) {
+    return { montrees: dedans, replies: 0, plusAnciennes: 0, sansDate: 0 };
+  }
 
   const datees = dedans
     .map((c) => ({ carte: c, quand: instant(c.finiLe) }))
@@ -693,9 +695,17 @@ export function pileDuneColonne(cartes, nom, maintenant = Date.now(), jours = JO
       ? dansLaFenetre
       : datees.slice(0, MINIMUM_VISIBLE).filter((d) => d.quand !== null);
 
+  // Le repli se compte en DEUX, parce que ce sont deux choses (revue C de la
+  // PR #188) : ce qui est plus ancien que la fenêtre, et ce dont on ignore la
+  // date. Les mettre ensemble sous « older » affirmerait d'une carte sans date
+  // qu'elle est vieille, et c'est justement ce qu'on ne sait pas.
+  const sansDate = dedans.filter((c) => instant(c.finiLe) === null).length;
+  const replies = dedans.length - montrees.length;
   return {
     montrees: montrees.map((d) => d.carte),
-    replies: dedans.length - montrees.length,
+    replies,
+    plusAnciennes: replies - sansDate,
+    sansDate,
   };
 }
 

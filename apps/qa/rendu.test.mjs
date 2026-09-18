@@ -559,3 +559,37 @@ describe('« Done » est une fenêtre, et les PR mergées y sont (#176)', () => 
     expect(numeros).toEqual([109, 103, 110, 112, 111, 113, 112, 114, 113, 118, 114, 120, 115, 116]);
   });
 });
+
+describe('ce que la colonne DIT de ce qu’elle replie (revue C de #188)', () => {
+  it('nomme séparément les plus anciennes et celles qu’elle ne sait pas dater', () => {
+    const vieille = (n) =>
+      carte({
+        numero: n,
+        titre: `Old ${n}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      });
+    const html = rendre({
+      ...INSTANTANE,
+      chantiers: {
+        ...(SOCLE.chantiers ?? {}),
+        cartes: [
+          carte({
+            numero: 1,
+            titre: 'Closed yesterday',
+            etat: 'CLOSED',
+            colonne: 'Done',
+            finiLe: new Date(Date.now() - 86_400_000).toISOString(),
+          }),
+          vieille(2),
+          vieille(3),
+          carte({ numero: 4, titre: 'Closed, date unknown', etat: 'CLOSED', colonne: 'Done' }),
+        ],
+      },
+    });
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne).toContain('+ 2 older, 1 with no closing date');
+    expect(colonne).not.toContain('+ 3 older');
+  });
+});

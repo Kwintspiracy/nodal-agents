@@ -2994,3 +2994,50 @@ describe('pileDuneColonne — ce qu’une colonne finie montre (#176)', () => {
     expect(replies).toBe(0);
   });
 });
+
+describe('le repli compte à part ce qu’on ne sait pas dater (revue C de #188)', () => {
+  const MAINTENANT = Date.parse('2026-09-18T09:00:00.000Z');
+  const vieille = (n) => ({
+    number: n,
+    title: `vieille ${n}`,
+    state: 'CLOSED',
+    closedAt: new Date(MAINTENANT - 30 * 86_400_000).toISOString(),
+  });
+  const sansDate = (n) => ({ number: n, title: `sans date ${n}`, state: 'CLOSED' });
+
+  it('« older » ne parle que de ce qui a une date ; le reste est compté à part', () => {
+    // Dire « + 5 older » d'une carte dont on ignore la date de fermeture, c'est
+    // affirmer d'elle exactement ce qu'on ne sait pas.
+    const cartes = cartesDuTableau({
+      issues: [vieille(1), vieille(2), vieille(3), sansDate(4), sansDate(5)],
+      pr: [],
+    });
+    const pile = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    // La fenêtre est vide : les trois plus récentes DATÉES sont montrées.
+    expect(pile.montrees).toHaveLength(3);
+    expect(pile.replies).toBe(2);
+    expect(pile.plusAnciennes).toBe(0);
+    expect(pile.sansDate).toBe(2);
+  });
+
+  it('les deux comptes se séparent quand il y a des deux', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        ...Array.from({ length: 6 }, (_, k) => vieille(10 + k)),
+        sansDate(20),
+        {
+          number: 30,
+          title: 'finie hier',
+          state: 'CLOSED',
+          closedAt: new Date(MAINTENANT - 86_400_000).toISOString(),
+        },
+      ],
+      pr: [],
+    });
+    const pile = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(pile.montrees.map((c) => c.numero)).toEqual([30]);
+    expect(pile.plusAnciennes).toBe(6);
+    expect(pile.sansDate).toBe(1);
+    expect(pile.replies).toBe(7);
+  });
+});

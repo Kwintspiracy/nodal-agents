@@ -975,14 +975,23 @@ function vueChantiers() {
   // qui avait fait disparaître les PR mergées.
   const colonnes = COLONNES.map((nom) => {
     const dedans = cartes.filter((c) => c.colonne === nom);
-    const { montrees, replies } = pileDuneColonne(cartes, nom);
+    const { montrees, plusAnciennes, sansDate } = pileDuneColonne(cartes, nom);
     const fini = nom === 'Done' || nom === 'Abandoned';
+    // Deux comptes, parce que ce sont deux faits : ce qui est plus vieux que la
+    // fenêtre, et ce dont GitHub n'a pas donné la date de fin. « + 63 older »
+    // affirmait des secondes ce qu'on ne sait pas d'elles.
+    const repli = [
+      plusAnciennes > 0 ? `+ ${plusAnciennes} older` : '',
+      sansDate > 0 ? `${plusAnciennes > 0 ? '' : '+ '}${sansDate} with no closing date` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
     return `<section class="colonne">
       <header><h3>${esc(nom)}</h3><span class="compte">${dedans.length}</span></header>
       ${fini ? `<p class="fenetre">last ${JOURS_DE_FENETRE} days, newest first</p>` : ''}
       <div class="pile">
         ${montrees.length ? montrees.map(carte).join('') : '<p class="vide">Nothing here.</p>'}
-        ${replies > 0 ? `<p class="vide">+ ${replies} older</p>` : ''}
+        ${repli ? `<p class="vide">${repli}</p>` : ''}
       </div>
     </section>`;
   }).join('');
