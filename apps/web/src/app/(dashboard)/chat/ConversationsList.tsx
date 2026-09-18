@@ -1,54 +1,51 @@
 'use client';
 
-// ConversationsList — les conversations OUVERTES DEPUIS LE DASHBOARD.
+// ConversationsList — le dossier « Nodal chats » : ses conversations, et ce
+// qu'on peut en faire.
 //
 // Elle listait aussi les fils de canal (P7). Ils ont leur tableau à part
 // depuis le 08/09 : un chat ne se ferme jamais et ne se supprime pas, alors
 // qu'une conversation d'ici est jetable — on l'ouvre d'un bouton, on la
-// supprime, l'IA la renomme. Les mélanger donnait 45 lignes Telegram pour un
-// seul chat, noyant les dix conversations du dashboard.
+// supprime, l'IA la renomme.
 //
-// La colonne « Origin » est partie avec eux : elle disait « from the
-// dashboard » sur chaque ligne, ce qui est désormais la définition du tableau.
+// DEUX CHANGEMENTS DU 18/09, tous deux dits par Quentin en ouvrant le dossier.
+//
+// 1. « Je n'ai plus d'option pour créer un nouveau chat. » Le dossier ouvert
+//    depuis le menu rendait la liste de la planche #135 SANS barre d'actions :
+//    créer, chercher et supprimer ne vivaient plus que dans la vue entière, que
+//    le menu n'ouvre plus. La barre revient ici, et c'est le même composant qui
+//    sert les deux vues — deux listes parallèles auraient divergé au premier
+//    correctif.
+// 2. « Il faut juste un titre de conversation. » Les lignes sont celles de la
+//    planche (`ConversationRow`), mais SANS agent ni dernier message : voir
+//    `conversation-rows.ts`. Le tableau à six colonnes disparaît avec elles, et
+//    la corbeille par ligne avec lui — une ligne est un lien, et supprimer
+//    passe par le mode « Select », qui était déjà la seconde façon de le faire.
 //
 // Le filtre reste côté client : deux cents lignes tiennent en mémoire, et
 // taper doit répondre à la frappe.
-//
-// Ce qui est repris du chat à deux volets qui disparaît ici : la recherche, la
-// suppression avec confirmation, le bouton « nouvelle conversation ».
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Trash } from '@phosphor-icons/react';
-import AgentAvatar from '@/components/ui/AgentAvatar';
 import Checkbox from '@/components/ui/Checkbox';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import ConversationRow from '@/components/ui/ConversationRow';
 import EmptyState from '@/components/ui/EmptyState';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
-import RowActionButton from '@/components/ui/RowActionButton';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
-import {
-  createConversationAction,
-  deleteConversationAction,
-  deleteConversationsAction,
-} from '@/lib/actions.ts';
-import type { ConversationListRow } from '@/lib/conversation-actions.ts';
-import { relativeTime, truncate } from '@/lib/format-time';
+import { createConversationAction, deleteConversationsAction } from '@/lib/actions.ts';
+import type { ConversationRowModel } from './conversation-rows.ts';
 
-export default function ConversationsList({ rows }: { rows: ConversationListRow[] }) {
+export default function ConversationsList({ rows }: { rows: ConversationRowModel[] }) {
   const router = useRouter();
   const [query, setQuery] = useState('');
-  const [target, setTarget] = useState<ConversationListRow | null>(null);
   /**
    * Le MODE sélection. Les cases ne sont pas là en permanence : on entre en
    * sélection par le bouton « Select », et on en sort par « Cancel » (Quentin,
    * 07/09 : « la checkbox visible en permanence, c'est la pire UX ; il
    * pourrait y avoir un bouton Select qui déclenche l'apparition du toggle »).
-   * En sélection, l'action de ligne disparaît : deux façons de supprimer sur
-   * le même écran, à deux bouts opposés, c'était le second défaut.
    */
   const [selecting, setSelecting] = useState(false);
   /**
@@ -64,18 +61,19 @@ export default function ConversationsList({ rows }: { rows: ConversationListRow[
   const [noRoot, setNoRoot] = useState(false);
   const [isPending, startTransition] = useTransition();
 
+  // La recherche porte sur le TITRE, qui est tout ce que la ligne montre
+  // désormais : chercher dans un champ invisible rendrait des lignes dont rien
+  // n'expliquerait la présence.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q === '') return rows;
-    return rows.filter(
-      (r) => r.title.toLowerCase().includes(q) || (r.agentName ?? '').toLowerCase().includes(q),
-    );
+    return rows.filter((r) => r.chatName.toLowerCase().includes(q));
   }, [rows, query]);
 
   // Ce qui est coché ET encore visible : cocher, chercher autre chose, puis
   // supprimer ne doit pas emporter des lignes qu'on ne voit plus.
   const visiblePicked = useMemo(
-    () => filtered.filter((r) => picked.has(r.id)).map((r) => r.id),
+    () => filtered.map((r) => r.id).filter((id): id is string => id !== null && picked.has(id)),
     [filtered, picked],
   );
   const allVisiblePicked = filtered.length > 0 && visiblePicked.length === filtered.length;
@@ -97,8 +95,11 @@ export default function ConversationsList({ rows }: { rows: ConversationListRow[
   function toggleAllVisible(): void {
     setPicked((prev) => {
       const next = new Set(prev);
-      if (allVisiblePicked) for (const r of filtered) next.delete(r.id);
-      else for (const r of filtered) next.add(r.id);
+      for (const r of filtered) {
+        if (r.id === null) continue;
+        if (allVisiblePicked) next.delete(r.id);
+        else next.add(r.id);
+      }
       return next;
     });
   }
@@ -134,20 +135,6 @@ export default function ConversationsList({ rows }: { rows: ConversationListRow[
     });
   }
 
-  function confirmDelete(): void {
-    const victim = target;
-    if (!victim) return;
-    setTarget(null);
-    startTransition(async () => {
-      const r = await deleteConversationAction(victim.id);
-      if (!r.ok) {
-        toast.error(r.message);
-        return;
-      }
-      router.refresh();
-    });
-  }
-
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-3">
@@ -166,6 +153,14 @@ export default function ConversationsList({ rows }: { rows: ConversationListRow[
             >
               Delete
             </PrimaryButton>
+            {filtered.length > 0 && (
+              // Tout cocher vivait dans l'en-tête du tableau. Le tableau est
+              // parti ; le geste reste, dans la barre, sinon vider un dossier
+              // de cinquante fils redevient cinquante clics.
+              <PrimaryButton variant="neutral" size="sm" onClick={toggleAllVisible}>
+                {allVisiblePicked ? 'Clear selection' : 'Select all'}
+              </PrimaryButton>
+            )}
             <PrimaryButton variant="neutral" size="sm" onClick={leaveSelection}>
               Cancel
             </PrimaryButton>
@@ -214,99 +209,32 @@ export default function ConversationsList({ rows }: { rows: ConversationListRow[
           }
         />
       ) : (
-        <Table>
-          <THead>
-            {selecting && (
-              <Th className="w-[36px]">
-                <Checkbox
-                  checked={allVisiblePicked}
-                  onChange={toggleAllVisible}
-                  aria-label={allVisiblePicked ? 'Clear selection' : 'Select all conversations'}
-                />
-              </Th>
-            )}
-            <Th>Agent</Th>
-            <Th>Conversation</Th>
-            <Th className="hidden lg:table-cell">Project</Th>
-            <Th align="right" className="hidden sm:table-cell">
-              Turns
-            </Th>
-            <Th className="hidden lg:table-cell">Last activity</Th>
-            <Th align="right">
-              <span className="sr-only">Actions</span>
-            </Th>
-          </THead>
-          <tbody>
-            {filtered.map((r) => (
-              <Tr key={r.id}>
-                {selecting && (
-                  <Td>
-                    <Checkbox
-                      checked={picked.has(r.id)}
-                      onChange={() => toggle(r.id)}
-                      aria-label={`Select ${r.title !== '' ? r.title : 'Untitled'}`}
-                    />
-                  </Td>
-                )}
-                <Td>
-                  <span className="flex items-center gap-2 text-body-13 text-ink">
-                    <AgentAvatar
-                      name={r.agentName ?? 'Agent'}
-                      imageUrl={r.agentAvatarUrl}
-                      size="sm"
-                      shape="square"
-                    />
-                    <span className="truncate">{r.agentName ?? 'Agent'}</span>
-                  </span>
-                </Td>
-                <Td>
-                  <Link
-                    href={`/chat/${r.id}`}
-                    className="block max-w-[52ch] truncate text-body-13 text-ink-2 hover:text-ink"
-                  >
-                    {r.title !== '' ? truncate(r.title, 120) : 'Untitled'}
-                  </Link>
-                  {r.lastPreview !== null && (
-                    <span className="block max-w-[52ch] truncate text-body-12 text-ink-4">
-                      {r.lastPreview}
-                    </span>
-                  )}
-                </Td>
-                <Td className="hidden text-body-12 text-ink-3 lg:table-cell">
-                  {r.currentProject ? (
-                    <Link
-                      href={`/spaces/${r.currentProject.id}`}
-                      className="hover:text-ink-2"
-                      title={r.currentProject.path}
-                    >
-                      {r.currentProject.name}
-                    </Link>
-                  ) : (
-                    ''
-                  )}
-                </Td>
-                <Td align="right" className="hidden text-mono-12 text-ink-2 sm:table-cell">
-                  {r.turns}
-                </Td>
-                <Td className="hidden text-body-12 whitespace-nowrap text-ink-3 lg:table-cell">
-                  {r.updatedAt ? relativeTime(r.updatedAt) : ''}
-                </Td>
-                <Td align="right">
-                  {!selecting && (
-                    <RowActionButton
-                      square
-                      tone="danger"
-                      icon={<Trash size={14} weight="bold" />}
-                      title="Delete conversation"
-                      onClick={() => setTarget(r)}
-                      disabled={isPending}
-                    />
-                  )}
-                </Td>
-              </Tr>
-            ))}
-          </tbody>
-        </Table>
+        // Pas d'écart entre les lignes : la planche les sépare d'un trait, dans
+        // une seule boîte. `overflow-hidden` fait suivre les coins arrondis à la
+        // première et à la dernière.
+        <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+          {filtered.map(({ key, ...ligne }) => {
+            const id = ligne.id;
+            return selecting && id !== null ? (
+              // La case vit À CÔTÉ de la ligne, jamais dedans : la ligne est un
+              // lien, et une case posée à l'intérieur d'un lien ne se coche pas.
+              <div key={key} className="flex items-center bg-paper">
+                <span className="pl-4">
+                  <Checkbox
+                    checked={picked.has(id)}
+                    onChange={() => toggle(id)}
+                    aria-label={`Select ${ligne.chatName}`}
+                  />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <ConversationRow rowKey={key} {...ligne} />
+                </span>
+              </div>
+            ) : (
+              <ConversationRow key={key} rowKey={key} {...ligne} />
+            );
+          })}
+        </div>
       )}
 
       <ConfirmDialog
@@ -320,15 +248,6 @@ export default function ConversationsList({ rows }: { rows: ConversationListRow[
         confirmLabel="Delete"
         onConfirm={confirmMassDelete}
         onCancel={() => setConfirmMass(false)}
-      />
-
-      <ConfirmDialog
-        open={target !== null}
-        title="Delete this conversation?"
-        message={`“${target?.title !== '' ? (target?.title ?? '') : 'Untitled'}” and its turns will be removed. The work it produced stays.`}
-        confirmLabel="Delete"
-        onConfirm={confirmDelete}
-        onCancel={() => setTarget(null)}
       />
     </>
   );
