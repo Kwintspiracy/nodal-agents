@@ -28,6 +28,8 @@
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import Markdown from '@/components/Markdown.tsx';
+import ClampedText from '@/app/(dashboard)/spaces/ClampedText.tsx';
 import { originLabel } from '@/app/(dashboard)/spaces/format.ts';
 
 type Pending = {
@@ -208,8 +210,13 @@ export default function PendingTurn({
               <p className="mb-1.5 text-right text-mono-11 text-ink-4">
                 {originLabel({ channel: 'dashboard', scheduleName: null, chatId: null })}
               </p>
-              <div className="rounded-xl bg-hover px-4 py-3">
-                <p className="max-w-[68ch] text-body-15 whitespace-pre-wrap text-ink">{p.text}</p>
+              {/* Rendu EXACTEMENT comme la demande le sera (`ConversationFeedView`,
+                  `case 'request'`) : même bulle, même Markdown — la hauteur ne
+                  saute pas quand le vrai tour remplace la copie (Reviewer C). */}
+              <div className="rounded-xl bg-hover px-4 py-3" data-testid="pending-text">
+                <ClampedText plain={p.text}>
+                  <Markdown text={p.text} tone="user" />
+                </ClampedText>
               </div>
             </div>
           </div>

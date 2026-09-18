@@ -121,7 +121,7 @@ function shown(): string[] {
     (el) =>
       el.dataset.testid === 'pending-thinking'
         ? 'thinking'
-        : (el.querySelector('p:last-child')?.textContent ?? ''),
+        : (el.querySelector('[data-testid="pending-text"]')?.textContent?.trim() ?? ''),
   );
 }
 
