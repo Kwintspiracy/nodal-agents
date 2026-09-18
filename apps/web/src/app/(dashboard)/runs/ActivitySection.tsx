@@ -7,8 +7,9 @@
 // pour lire ce qu'il a rendu, pas pour relire ses quarante appels d'outil.
 // Ouverte tant qu'il court : là, on est venu le regarder travailler.
 //
-// Pas de filtre par agent (Quentin, 18/09 a retiré les pastilles All / Alfred /
-// Reviewer C) : la chronologie dit déjà qui parle à chaque bloc.
+// Pas de filtre par agent : Quentin a retiré du tableau (18/09) la rangée de
+// pastilles qui en proposait un par agent — la chronologie dit déjà qui parle à
+// chaque bloc.
 
 import { useState, type ReactNode } from 'react';
 import DisclosureButton from '@/components/ui/DisclosureButton';
