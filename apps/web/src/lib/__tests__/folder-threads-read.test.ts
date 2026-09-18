@@ -161,9 +161,39 @@ describe('la borne est dans le SQL ÉMIS @cap:reprendre-conversation/moteur', ()
     // jamais pour en dessiner cinq.
     expect(requete).toContain('row_number() over');
     expect(requete).toContain('partition by');
-    expect(requete).toMatch(/"rn" <= \$\d+/);
-    // Le plafond voyage en PARAMÈTRE, jamais collé dans le texte.
+    // La coupe elle-même : un prédicat borné, dont la valeur voyage en
+    // PARAMÈTRE et n'est jamais collée dans le texte.
+    //
+    // Le NOM de la colonne de rang n'est pas épinglé : le renommer ne change
+    // rien à ce que la requête fait, et un test qui rougirait pour ça
+    // parlerait d'autre chose que de la borne (Reviewer C, passe 2).
+    expect(requete).toMatch(/<= \$\d+/);
     expect(params).toContain(5);
+    // Et la borne est bien la SEULE chose que le paramètre porte : un `limit`
+    // ajouté par-dessus dirait que la fenêtre ne suffit pas.
+    expect(requete).not.toContain('limit');
+  });
+
+  it('DEMANDE son ordre, au lieu de le tenir du plan d’exécution', async () => {
+    const { folderChatsQuery } = await import('../folder-threads-sql.ts');
+    const { sql } = folderChatsQuery(commeDb(testDb), seed.entityId, 5).toSQL();
+
+    // La fenêtre porte son propre `order by` DANS son `over (…)` ; celui-là
+    // classe le calcul du rang, pas les lignes rendues. On le retire donc
+    // avant de chercher l'ordre de la requête elle-même.
+    const sansFenetre = sql
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/over \([^)]*\)/g, 'over ()');
+    expect(sansFenetre).toContain('order by');
+
+    // POURQUOI cette assertion existe, et pas seulement le test d'ordre du
+    // haut de fichier : retirer cet `order by` ne rougit PAS sur PGlite, qui
+    // rend les lignes dans l'ordre où la fenêtre les a numérotées. L'ordre
+    // n'en est pas garanti pour autant — aucune base ne le promet sans
+    // `order by`, et un index qui change suffit à le défaire. Il se prouve
+    // donc ici, sur le SQL émis, faute de pouvoir se prouver sur les lignes
+    // (Reviewer C, passe 2 de la PR #206).
   });
 
   it('borne « Nodal chats » par un limit, et pas après coup', async () => {

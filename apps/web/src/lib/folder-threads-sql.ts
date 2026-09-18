@@ -84,10 +84,19 @@ export function folderChatsQuery(db: Db, entityId: string, perFolder: number) {
     .groupBy(conversations.channel, conversations.agentId, conversations.chatId)
     .as('chats');
 
-  return db
-    .select({ channel: chats.channel, agentId: chats.agentId, chatId: chats.chatId })
-    .from(chats)
-    .where(sql`${chats.rn} <= ${perFolder}`);
+  return (
+    db
+      .select({ channel: chats.channel, agentId: chats.agentId, chatId: chats.chatId })
+      .from(chats)
+      .where(sql`${chats.rn} <= ${perFolder}`)
+      // L'ORDRE SE DEMANDE, il ne s'espère pas. La requête englobante n'en
+      // portait aucun : l'appelant ne retrie rien, et sans `order by` une base
+      // rend ses lignes comme son plan l'arrange — l'ordre juste par chance
+      // aujourd'hui, un autre le jour où un index change (Reviewer C, passe 2 de
+      // la PR #206). Par canal puis par rang : chaque dossier reçoit ses lignes
+      // groupées, et dans l'ordre de sa liste.
+      .orderBy(chats.channel, chats.rn)
+  );
 }
 
 /**
