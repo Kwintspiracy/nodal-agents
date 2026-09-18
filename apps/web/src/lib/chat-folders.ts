@@ -329,10 +329,34 @@ export type FolderThread = {
   title: string;
   /** Où mène la ligne : un fil (`/chat/<id>`) ou un run (`/jobs/<id>`). */
   href: string;
+  /**
+   * Quelque chose ATTEND LA PERSONNE sur ce fil : une approbation, une
+   * question. Exactement ce que compte la pastille du dossier, lu au niveau du
+   * FIL plutôt qu'à celui du dossier — la même lecture, la même règle.
+   */
+  waiting: boolean;
+  /** Un run TOURNE sur ce fil. La même donnée que le point vert du dossier. */
+  running: boolean;
 };
 
 /** Une ligne de liste, avec le dossier où elle se range. */
 export type FolderThreadSource = FolderThread & { folder: string };
+
+/**
+ * Le point d'un fil doit-il APPELER la personne ?
+ *
+ * Oui dès qu'il y a de quoi revenir : une demande en attente, ou un run qui
+ * tourne. Rien d'autre.
+ *
+ * ⚠️ CE N'EST PAS « NON LU ». La base ne porte AUCUN état de lecture — pas de
+ * `last_read_at`, nulle part — et c'est une décision (17/09/2026), pas un
+ * oubli. Peindre en rouge un fil « non lu » afficherait un fait que rien ne
+ * peut vérifier (invariant #4). Le jour où la colonne existe, elle s'ajoute
+ * ici, et le point voudra dire une chose de plus.
+ */
+export function threadCallsFor(thread: Pick<FolderThread, 'waiting' | 'running'>): boolean {
+  return thread.waiting || thread.running;
+}
 
 /**
  * Combien de fils un sous-menu déplie.
@@ -359,16 +383,23 @@ export function folderThreads(
 ): Record<string, FolderThread[]> {
   const byFolder: Record<string, FolderThread[]> = {};
   for (const r of rows) {
+    const ligne: FolderThread = {
+      key: r.key,
+      title: r.title,
+      href: r.href,
+      waiting: r.waiting,
+      running: r.running,
+    };
     const seen = byFolder[r.folder];
     if (seen === undefined) {
-      byFolder[r.folder] = [{ key: r.key, title: r.title, href: r.href }];
+      byFolder[r.folder] = [ligne];
       continue;
     }
     // On CONTINUE de parcourir plutôt que de s'arrêter : les lignes arrivent
     // mêlées, tous dossiers confondus, et le cinquième fil de Telegram peut
     // très bien précéder le premier de Slack.
     if (seen.length >= max) continue;
-    seen.push({ key: r.key, title: r.title, href: r.href });
+    seen.push(ligne);
   }
   return byFolder;
 }

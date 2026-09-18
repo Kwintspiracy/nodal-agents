@@ -59,16 +59,29 @@ export type SidebarDepth = 'nav' | 'folder' | 'thread';
 const DEPTH: Record<SidebarDepth, string> = {
   nav: 'gap-3 px-3 text-legacy-16 lg:gap-2.5 lg:text-body-13 lg:leading-none!',
   folder: 'gap-2 pr-2.5 pl-7 text-body-13',
-  thread: 'gap-2 pr-2.5 pl-12 text-body-13',
+  // Le MÊME retrait que `folder` : le point d'un fil se pose dans la colonne
+  // de l'icône de son dossier, et son titre commence là où commence le nom du
+  // dossier (Quentin, 19/09/2026).
+  thread: 'gap-2 pr-2.5 pl-7 text-body-13',
 };
 
 type Props = {
-  href: string;
+  /**
+   * Où mène la ligne. ABSENT quand la ligne ne mène nulle part et se contente
+   * de plier ce qu'elle porte — c'est le cas des dossiers de Channels depuis le
+   * 19/09/2026 : cliquer leur nom les déplie, et seul « See all » ouvre leur
+   * liste. Sans `href`, la ligne est un `<button>` et `onToggle` la mène.
+   */
+  href?: string;
+  /** Ce que la ligne plie, quand elle n'est pas un lien. */
+  onToggle?: () => void;
+  /** L'état que `onToggle` bascule — rendu en `aria-expanded`. */
+  expanded?: boolean;
   /** L'infobulle, et le nom de la ligne quand elle est coupée. */
   title?: string;
   /** La ligne est-elle celle où l'on se trouve ? */
   active?: boolean;
-  /** Pose `aria-current="page"` sur le lien actif. */
+  /** Pose `aria-current="page"` sur la ligne active. */
   markCurrent?: boolean;
   depth?: SidebarDepth;
   /** Ouvre dans un nouvel onglet : un lien qui QUITTE l'application. */
@@ -88,6 +101,8 @@ type Props = {
 
 export default function SidebarRow({
   href,
+  onToggle,
+  expanded,
   title,
   active = false,
   markCurrent = false,
@@ -112,7 +127,17 @@ export default function SidebarRow({
       data-sidebar-row=""
       className={tint === undefined ? sidebarRowClass(active) : `${SIDEBAR_ROW} ${tint}`}
     >
-      {external ? (
+      {href === undefined ? (
+        // Une ligne qui ne mène nulle part est un BOUTON, pas un lien vidé de
+        // son adresse : le clavier, le rôle annoncé et l'absence d'adresse à
+        // copier en découlent tout seuls. C'est le seul `<button>` nu du rail,
+        // et il est ici, dans `components/ui`, là où le DS touche l'élément
+        // natif une fois pour toutes — la règle `no-restricted-syntax` y fait
+        // exception pour cette raison exacte.
+        <button type="button" onClick={onToggle} aria-expanded={expanded} {...commun}>
+          {children}
+        </button>
+      ) : external ? (
         <a href={href} target="_blank" rel="noopener noreferrer" {...commun}>
           {children}
         </a>

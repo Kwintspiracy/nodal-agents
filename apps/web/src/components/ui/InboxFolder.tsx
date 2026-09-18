@@ -2,10 +2,15 @@
 
 // InboxFolder — une ligne du groupe « Chat folders » (#135).
 //
-// Plus en RETRAIT qu'un `SidebarLink`, et rien d'autre : ce n'est pas une
-// destination de plus dans la barre, c'est un sous-endroit de « Chat ». Le
-// retrait à gauche (28 px) aligne son icône sous le libellé du lien parent,
-// ce qui est la seule chose qui dise « ceci est dedans ».
+// Plus en RETRAIT qu'un `SidebarLink` : ce n'est pas une destination de plus
+// dans la barre, c'est un sous-endroit de « Chat ». Le retrait à gauche
+// (28 px) aligne son icône sous le libellé du lien parent, ce qui est la seule
+// chose qui dise « ceci est dedans ».
+//
+// Et ce n'est plus un LIEN depuis le 19/09/2026 (Quentin) : la ligne entière
+// plie et déplie le dossier, chevron compris, et « See all » est la seule
+// chose du sous-menu qui ouvre la liste. C'est donc un bouton — vrai bouton,
+// avec son focus clavier et son `aria-expanded`, pas un lien sans adresse.
 //
 // Sa FORME, en revanche, est celle de toutes les lignes du rail depuis le
 // 19/09/2026 : elle vient de `SidebarRow`. Elle était plus basse, ses coins
@@ -26,30 +31,38 @@ type Props = {
   /** L'identité du dossier — sert au `data-testid`. */
   folderKey: string;
   label: string;
-  href: string;
   icon: ReactNode;
   /** Ce qui attend la personne. 0 → aucune pastille. */
   waiting: number;
   /** Un run tourne ici. */
   running: boolean;
   active: boolean;
-  /** Le chevron qui déplie les derniers fils. Frère du lien dans la ligne. */
+  /** Le dossier est-il déplié ? */
+  expanded: boolean;
+  /** Ce que la ligne fait quand on la clique : plier, ou déplier. */
+  onToggle: () => void;
+  /** Le chevron qui déplie les derniers fils. Frère du bouton dans la ligne. */
   caret?: ReactNode;
 };
 
 export default function InboxFolder({
   folderKey,
   label,
-  href,
   icon,
   waiting,
   running,
   active,
+  expanded,
+  onToggle,
   caret,
 }: Props) {
   return (
     <SidebarRow
-      href={href}
+      // AUCUNE adresse (Quentin, 19/09/2026) : cliquer un dossier le DÉPLIE, il
+      // ne navigue plus. Sa liste entière reste à un clic, par « See all », qui
+      // est désormais la seule chose du sous-menu qui y mène.
+      onToggle={onToggle}
+      expanded={expanded}
       title={label}
       active={active}
       markCurrent

@@ -34,9 +34,11 @@ import {
   type FolderThread,
   type FolderThreadSource,
 } from './chat-folders.ts';
-import { runTitle } from './external-runs.ts';
+import { runIsRunning, runTitle } from './external-runs.ts';
 import { truncate } from './format-time';
+import { listApprovalsAction } from './actions.ts';
 import {
+  getChatFoldersAction,
   listAllConversationsAction,
   listChatNamesAction,
   listCurrentThreadByChatAction,
@@ -62,19 +64,27 @@ const TITLE_MAX = 120;
  * ressemblent trait pour trait (invariant #4).
  */
 export async function listFolderThreadsAction(): Promise<ActionResult<FolderThreadsSnapshot>> {
-  const [conversations, names, currents, runs] = await Promise.all([
+  const [conversations, names, currents, runs, approvals, folders] = await Promise.all([
     listAllConversationsAction(),
     listChatNamesAction(),
     listCurrentThreadByChatAction(),
     // Cinq suffisent : c'est tout ce que le sous-menu déplie, et le dossier
     // MCP n'a pas de « See all » d'une autre forme que les autres.
     listExternalRunsAction({ limit: FOLDER_THREADS_MAX }),
+    // Ce qui ATTEND la personne, et OÙ ÇA TOURNE — les deux signaux du point
+    // de chaque fil (19/09/2026). Les MÊMES lectures que la pastille et le
+    // point vert du dossier, rangées par fil au lieu de l'être par dossier :
+    // une par fil aurait été un aller-retour par ligne du menu.
+    listApprovalsAction({ status: 'pending' }),
+    getChatFoldersAction(),
   ]);
 
   if (!conversations.ok) return conversations;
   if (!names.ok) return names;
   if (!currents.ok) return currents;
   if (!runs.ok) return runs;
+  if (!approvals.ok) return approvals;
+  if (!folders.ok) return folders;
 
   const { channels, dashboard } = groupChatLists(
     conversations.data,
@@ -82,6 +92,19 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
     currents.data.current,
     currents.data.listable,
   );
+
+  // Les conversations sur lesquelles quelque chose attend. Une demande sans
+  // conversation ne se pose sur AUCUN fil : elle vient d'une tâche de l'API ou
+  // d'une automation, et lui choisir une ligne inventerait sa provenance.
+  const attendSurFil = new Set(
+    approvals.data.map((a) => a.conversationId).filter((id): id is string => id !== null),
+  );
+  // Et les runs de tête sur lesquels quelque chose attend : une question posée
+  // par un délégué remonte à la ligne du run qui l'a lancé.
+  const attendSurRun = new Set(
+    approvals.data.map((a) => a.rootJobId).filter((id): id is string => id !== null),
+  );
+  const tourne = new Set(folders.data.runningConversationIds);
 
   const rows: FolderThreadSource[] = [];
 
@@ -91,12 +114,15 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
     // elle ne mène nulle part ; un raccourci du menu qui ne mène nulle part,
     // lui, n'est pas un raccourci. Il est donc absent du sous-menu, et jamais
     // remplacé par un lien inventé (invariant #4).
-    if (c.currentConversationId === null) continue;
+    const id = c.currentConversationId;
+    if (id === null) continue;
     rows.push({
       folder: c.channel,
       key: c.key,
       title: chatLabel(c),
-      href: `/chat/${c.currentConversationId}`,
+      href: `/chat/${id}`,
+      waiting: attendSurFil.has(id),
+      running: tourne.has(id),
     });
   }
 
@@ -109,6 +135,8 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       // l'a nommé et que l'IA ne l'a pas encore renommé.
       title: c.title === '' ? 'Untitled' : truncate(c.title, TITLE_MAX),
       href: `/chat/${c.id}`,
+      waiting: attendSurFil.has(c.id),
+      running: tourne.has(c.id),
     });
   }
 
@@ -120,6 +148,11 @@ export async function listFolderThreadsAction(): Promise<ActionResult<FolderThre
       // Un run venu de dehors n'a pas de fil : sa ligne ouvre sa page, comme
       // dans la liste du dossier.
       href: `/jobs/${r.id}`,
+      waiting: attendSurRun.has(r.id),
+      // Un run sans conversation n'est dans aucun `runningConversationIds` :
+      // c'est son STATUT qui dit s'il avance, la même règle que sa ligne dans
+      // la liste du dossier.
+      running: runIsRunning(r.status),
     });
   }
 

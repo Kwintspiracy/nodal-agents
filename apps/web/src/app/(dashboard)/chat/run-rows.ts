@@ -21,8 +21,7 @@
 // tourne laisse son parent en `awaiting_delegation`, un statut vivant : la
 // ligne de tête s'allume donc déjà, sans avoir à remonter la descendance.
 
-import { RUNNING_JOB_STATUSES } from '@/lib/chat-folders.ts';
-import { runTitle } from '@/lib/external-runs.ts';
+import { runIsRunning, runTitle } from '@/lib/external-runs.ts';
 import type { ExternalRunRow } from '@/lib/conversation-actions.ts';
 import {
   conversationTimeLabel,
@@ -30,10 +29,11 @@ import {
   type RowWaiting,
 } from './conversation-rows.ts';
 
-// `runTitle` vit dans `lib/external-runs.ts` depuis le 18/09/2026 : le
-// sous-menu d'un dossier de la barre latérale nomme les mêmes runs, et sa
-// lecture est une action serveur. Réexporté pour que rien ne change à l'usage.
-export { runTitle };
+// `runTitle` et `runIsRunning` vivent dans `lib/external-runs.ts` depuis le
+// 18/09/2026 : le sous-menu d'un dossier de la barre latérale nomme les mêmes
+// runs et allume leur point par les mêmes règles, et sa lecture est une action
+// serveur. Réexportés pour que rien ne change à l'usage.
+export { runIsRunning, runTitle };
 
 /** Une demande en attente, rattachée au run de tête qui la porte. */
 export type WaitingOnRun = {
@@ -61,11 +61,6 @@ function strongestWaiting(kinds: readonly string[]): RowWaiting {
   if (kinds.includes('question')) return 'question';
   if (kinds.includes('approval')) return 'approval';
   return null;
-}
-
-/** Un run avance-t-il encore ? Les mêmes statuts que le point vert des dossiers. */
-export function runIsRunning(status: string | null): boolean {
-  return status !== null && RUNNING_JOB_STATUSES.includes(status);
 }
 
 /**

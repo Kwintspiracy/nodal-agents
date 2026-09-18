@@ -262,7 +262,11 @@ describe('le chevron du groupe Channels @cap:reprendre-conversation/ecran', () =
 async function renderTout(): Promise<void> {
   vi.mocked(listFolderThreadsAction).mockResolvedValue({
     ok: true,
-    data: { telegram: [{ key: 't1', title: 'Invoice for March', href: '/chat/t1' }] },
+    data: {
+      telegram: [
+        { key: 't1', title: 'Invoice for March', href: '/chat/t1', waiting: false, running: false },
+      ],
+    },
   });
   await renderSidebar(['telegram']);
   await click(container.querySelector('[data-testid="folder-caret-telegram"]')!);

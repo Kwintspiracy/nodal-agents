@@ -38,6 +38,7 @@
 
 import { LIVE_JOB_STATUSES, redactSecretsInText } from '@nodal-agents/shared';
 import { plainText } from '@/components/Markdown.tsx';
+import { RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import { truncate } from './format-time';
 
 /** Ce qu'il faut d'une ligne pour savoir où reprendre après elle. */
@@ -141,4 +142,15 @@ const TITLE_MAX = 120;
 export function runTitle(task: string): string {
   const line = redactSecretsInText(plainText(task));
   return line === '' ? 'Untitled run' : truncate(line, TITLE_MAX);
+}
+
+/**
+ * Un run avance-t-il encore ? Les mêmes statuts que le point vert des dossiers.
+ *
+ * Ici pour la même raison que `runTitle` : le sous-menu de la barre latérale
+ * allume le point d'un run par cette règle, et sa lecture est une action
+ * serveur.
+ */
+export function runIsRunning(status: string | null): boolean {
+  return status !== null && RUNNING_JOB_STATUSES.includes(status);
 }

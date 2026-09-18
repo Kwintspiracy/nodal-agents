@@ -26,6 +26,7 @@
 import { useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
+  ArrowRight,
   ChatCircleText,
   DiscordLogo,
   PaperPlaneTilt,
@@ -40,7 +41,13 @@ import SidebarCaret from './ui/SidebarCaret';
 import SidebarRow, { SIDEBAR_ROW } from './ui/SidebarRow';
 import { useApprovals } from './ApprovalsProvider';
 import { useChatFolders } from './ChatFoldersProvider';
-import { chatFolders, DASHBOARD_FOLDER, MCP_FOLDER } from '@/lib/chat-folders.ts';
+import {
+  chatFolders,
+  threadCallsFor,
+  DASHBOARD_FOLDER,
+  MCP_FOLDER,
+  type FolderThread,
+} from '@/lib/chat-folders.ts';
 import {
   listFolderThreadsAction,
   type FolderThreadsSnapshot,
@@ -74,7 +81,31 @@ const FOLDER_ICON: Readonly<Record<string, PhosphorIcon>> = {
  * même hauteur, même retrait que les fils qu'elle remplace — sans en prendre
  * le survol, parce qu'il n'y a rien à cliquer.
  */
-const THREAD_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-12 text-body-13 text-ink-4`;
+const THREAD_NOTE = `${SIDEBAR_ROW} pr-2.5 pl-7 text-body-13 text-ink-4`;
+
+/**
+ * Le point d'un fil, dans la COLONNE de l'icône de son dossier — même largeur,
+ * même retrait, si bien que les points d'un sous-menu et les icônes des
+ * dossiers tombent sur une seule verticale.
+ *
+ * Deux couleurs, et deux seulement : `attention` quand le fil a quelque chose
+ * pour la personne, `ink-4` sinon. Il ne clignote pas — ce n'est pas un
+ * `LiveDot`, qui dit « ça bouge en ce moment » ; celui-ci dit « il y a de quoi
+ * revenir ». Ce que ce rouge veut dire exactement, et ce qu'il ne veut PAS
+ * dire, vit avec la règle : `threadCallsFor`, lib/chat-folders.ts.
+ */
+function ThreadDot({ thread }: { thread: FolderThread }) {
+  const appelle = threadCallsFor(thread);
+  return (
+    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+      <span
+        data-testid="thread-dot"
+        data-calls={appelle ? 'yes' : 'no'}
+        className={`h-1.5 w-1.5 rounded-full ${appelle ? 'bg-attention' : 'bg-ink-4'}`}
+      />
+    </span>
+  );
+}
 
 export default function ChatFolderGroup() {
   const pathname = usePathname();
@@ -127,18 +158,20 @@ export default function ChatFolderGroup() {
         const fils = threads === null ? null : (threads[f.key] ?? []);
         return (
           <div key={f.key}>
-            {/* Le chevron est DANS la ligne du dossier, frère de son lien : le
-                survol appartient à la ligne entière, chevron compris. Il vivait
-                à côté, dans un conteneur sans fond, et la ligne s'éclairait à
-                moitié (Quentin, 19/09/2026). */}
+            {/* Toute la ligne PLIE le dossier, libellé et chevron (Quentin,
+                19/09/2026) : elle ne navigue plus. Le chevron est dans la
+                ligne, frère de son bouton, si bien que le survol appartient à
+                la ligne entière — il vivait à côté, dans un conteneur sans
+                fond, et la ligne s'éclairait à moitié. */}
             <InboxFolder
               folderKey={f.key}
               label={f.label}
-              href={f.href}
               icon={<Icon size={14} className="h-3.5 w-3.5" />}
               waiting={f.waiting}
               running={f.running}
               active={f.active}
+              expanded={ouvert}
+              onToggle={() => basculer(f.key)}
               caret={
                 <SidebarCaret
                   open={ouvert}
@@ -165,20 +198,34 @@ export default function ChatFolderGroup() {
                       depth="thread"
                       testId={`folder-thread-${f.key}`}
                     >
+                      <ThreadDot thread={t} />
                       <span className="flex-1 truncate leading-5">{t.title}</span>
                     </SidebarRow>
                   ))
                 )}
-                {/* « See all » mène à la liste ENTIÈRE du dossier, le même
-                    endroit que son nom au-dessus. Il est là parce que cinq fils
-                    ne sont pas tous les fils, et que rien d'autre ne le dit. */}
+                {/* « See all » mène à la liste ENTIÈRE du dossier — depuis le
+                    19/09/2026, c'est la SEULE chose du sous-menu qui y mène,
+                    le nom du dossier ne servant plus qu'à plier. Il est là
+                    parce que cinq fils ne sont pas tous les fils, et que rien
+                    d'autre ne le dirait. */}
                 <SidebarRow
                   href={f.href}
                   title="See all"
                   depth="thread"
                   testId={`folder-see-all-${f.key}`}
                 >
+                  {/* Une place vide de la largeur d'un point : le libellé
+                      s'aligne alors sur les titres des fils au-dessus. */}
+                  <span className="h-3.5 w-3.5 shrink-0" />
                   <span className="flex-1 truncate leading-5 font-medium!">See all</span>
+                  {/* La flèche dit où l'on va, et elle ferme la ligne comme la
+                      flèche d'un lien externe ferme la sienne. */}
+                  <ArrowRight
+                    size={14}
+                    weight="bold"
+                    data-testid="see-all-arrow"
+                    className="h-3.5 w-3.5 shrink-0 text-ink-4"
+                  />
                 </SidebarRow>
               </div>
             )}

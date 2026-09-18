@@ -16,6 +16,7 @@ import {
   chatFolders,
   chatWaitingTotal,
   folderThreads,
+  threadCallsFor,
   FOLDER_THREADS_MAX,
   folderOfJobChannel,
   folderOfWork,
@@ -394,8 +395,19 @@ describe('le dossier MCP — ce qui arrive de dehors @cap:parler-par-canal-exter
 // ─── Les derniers fils d'un dossier (18/09/2026) ─────────────────────────────
 
 /** Un fil de liste, réduit à ce que le sous-menu en montre. */
-function fil(folder: string, n: number): FolderThreadSource {
-  return { folder, key: `${folder}-${n}`, title: `${folder} ${n}`, href: `/chat/${folder}-${n}` };
+function fil(
+  folder: string,
+  n: number,
+  etat: { waiting?: boolean; running?: boolean } = {},
+): FolderThreadSource {
+  return {
+    folder,
+    key: `${folder}-${n}`,
+    title: `${folder} ${n}`,
+    href: `/chat/${folder}-${n}`,
+    waiting: etat.waiting ?? false,
+    running: etat.running ?? false,
+  };
 }
 
 describe('folderThreads @cap:reprendre-conversation/ecran', () => {
@@ -436,5 +448,34 @@ describe('folderThreads @cap:reprendre-conversation/ecran', () => {
   it('ne fabrique AUCUN dossier pour qui n’a pas de fil', () => {
     expect(folderThreads([])).toEqual({});
     expect(folderThreads([fil(MCP_FOLDER, 1)]).telegram).toBeUndefined();
+  });
+
+  it('transporte l’état de chaque fil, sans y toucher', () => {
+    // Le point du sous-menu ne se recalcule pas ici : il lit ce que la lecture
+    // a rangé sur le fil.
+    const dossiers = folderThreads([
+      fil('telegram', 1, { waiting: true }),
+      fil('telegram', 2, { running: true }),
+      fil('telegram', 3),
+    ]);
+    expect(dossiers.telegram?.map((t) => [t.waiting, t.running])).toEqual([
+      [true, false],
+      [false, true],
+      [false, false],
+    ]);
+  });
+});
+
+describe('threadCallsFor @cap:reprendre-conversation/ecran', () => {
+  it('appelle la personne dès qu’une demande attend, ou qu’un run tourne', () => {
+    expect(threadCallsFor({ waiting: true, running: false })).toBe(true);
+    expect(threadCallsFor({ waiting: false, running: true })).toBe(true);
+    expect(threadCallsFor({ waiting: true, running: true })).toBe(true);
+  });
+
+  it('se tait quand il n’y a ni l’un ni l’autre', () => {
+    // Et JAMAIS pour « non lu » : la base ne porte aucun état de lecture
+    // (décision du 17/09/2026), donc rien ici ne peut le dire.
+    expect(threadCallsFor({ waiting: false, running: false })).toBe(false);
   });
 });
