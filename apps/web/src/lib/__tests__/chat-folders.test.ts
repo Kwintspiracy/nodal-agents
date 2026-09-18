@@ -16,13 +16,27 @@ import {
   chatFolders,
   chatWaitingTotal,
   folderOfJobChannel,
+  folderOfWork,
   DASHBOARD_FOLDER,
   RUNNING_JOB_STATUSES,
+  type WorkOrigin,
 } from '../chat-folders.ts';
 
-/** Une attente, réduite à ce que l'attribution lit. */
-function waiting(...channels: (string | null)[]): { jobChannel: string | null }[] {
-  return channels.map((jobChannel) => ({ jobChannel }));
+/** Une attente portée par un job, et par AUCUNE conversation. */
+function waiting(...channels: (string | null)[]): WorkOrigin[] {
+  return channels.map((jobChannel) => ({ jobChannel, conversationChannel: null }));
+}
+
+/**
+ * Une attente portée par un job d'un canal, DANS une conversation d'un autre —
+ * ce qu'un délégué du tableau des tâches est toujours (#148).
+ */
+function waitingInConversation(
+  jobChannel: string | null,
+  conversationChannel: string | null,
+  n = 1,
+): WorkOrigin[] {
+  return Array.from({ length: n }, () => ({ jobChannel, conversationChannel }));
 }
 
 function folders(input: Partial<Parameters<typeof chatFolders>[0]> = {}) {
@@ -77,6 +91,69 @@ describe("l'attribution d'une attente à son dossier @cap:reprendre-conversation
     expect(folderOfJobChannel('mcp')).toBeNull();
     expect(folderOfJobChannel(null)).toBeNull();
     const rows = folders({ channels: ['telegram'], waiting: waiting('api', 'internal', null) });
+    expect(rows.every((r) => r.waiting === 0)).toBe(true);
+  });
+});
+
+describe("l'attente suit le canal de SA CONVERSATION @cap:reprendre-conversation/moteur", () => {
+  // #148. Un job délégué que le tableau des tâches crée porte
+  // `channel = 'task-board'` — le dossier de personne — et le
+  // `conversation_id` de son créateur. La LIGNE de la conversation s'allumait,
+  // la pastille du dossier comptait zéro. La règle lit la conversation d'abord.
+
+  it('range dans le dossier du canal de la conversation, pas dans celui du job', () => {
+    const rows = folders({
+      channels: ['telegram'],
+      waiting: waitingInConversation('task-board', 'telegram'),
+    });
+    expect(byKey(rows, 'telegram').waiting).toBe(1);
+    expect(byKey(rows, DASHBOARD_FOLDER).waiting).toBe(0);
+  });
+
+  it('fait compter au total du menu exactement ce que la pastille affiche', () => {
+    const input = {
+      channels: ['telegram'],
+      waiting: waitingInConversation('task-board', 'telegram', 3),
+      running: {},
+    };
+    const rows = chatFolders({ ...input, pathname: '/chat', folderParam: null });
+    expect(byKey(rows, 'telegram').waiting).toBe(3);
+    expect(chatWaitingTotal(input)).toBe(3);
+  });
+
+  it('ouvre le dossier du canal de la conversation même sans conversation lue', () => {
+    // Sans cela, la seule attente d'un canal disparaîtrait du menu en silence
+    // parce que le job qui la porte n'a pas son canal.
+    const rows = folders({ channels: [], waiting: waitingInConversation('task-board', 'slack') });
+    expect(byKey(rows, 'slack').waiting).toBe(1);
+  });
+
+  it('retombe sur le canal du job quand le travail n’a pas de conversation', () => {
+    expect(folderOfWork({ jobChannel: 'telegram', conversationChannel: null })).toBe('telegram');
+    // Un délégué du tableau des tâches SANS conversation n'est dans aucun
+    // dossier : rien d'autre ne dit d'où il vient (invariant #4).
+    expect(folderOfWork({ jobChannel: 'task-board', conversationChannel: null })).toBeNull();
+    const rows = folders({ channels: ['telegram'], waiting: waiting('task-board') });
+    expect(rows.every((r) => r.waiting === 0)).toBe(true);
+  });
+
+  it('suit la conversation même quand le job a un canal de dossier, lui aussi', () => {
+    // La conversation décide, toujours — pas le plus « précis » des deux. Une
+    // règle qui choisirait au cas par cas ne serait plus lisible.
+    expect(folderOfWork({ jobChannel: 'telegram', conversationChannel: 'dashboard' })).toBe(
+      DASHBOARD_FOLDER,
+    );
+    expect(folderOfWork({ jobChannel: 'dashboard', conversationChannel: 'slack' })).toBe('slack');
+  });
+
+  it('ne range nulle part un travail dont la conversation n’a aucun dossier', () => {
+    // Une conversation de `cron` n'est pas un endroit où l'on parle : le
+    // travail reste entier sur /approvals, dans aucun dossier de chat.
+    expect(folderOfWork({ jobChannel: 'task-board', conversationChannel: 'cron' })).toBeNull();
+    const rows = folders({
+      channels: ['telegram'],
+      waiting: waitingInConversation('task-board', 'cron'),
+    });
     expect(rows.every((r) => r.waiting === 0)).toBe(true);
   });
 });

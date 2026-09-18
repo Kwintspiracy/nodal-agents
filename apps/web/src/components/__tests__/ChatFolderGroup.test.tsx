@@ -47,16 +47,24 @@ async function render(node: ReactElement): Promise<void> {
   });
 }
 
-/** Une approbation en attente, réduite à ce que le menu en lit. */
-function pending(jobChannel: string | null, n = 1): PendingApproval[] {
+/**
+ * Une approbation en attente, réduite à ce que le menu en lit : le canal de son
+ * job, et celui de sa CONVERSATION quand elle en a une (#148).
+ */
+function pending(
+  jobChannel: string | null,
+  n = 1,
+  conversationChannel: string | null = null,
+): PendingApproval[] {
   return Array.from({ length: n }, (_, i) => ({
-    id: `a${jobChannel ?? 'none'}${i}`,
-    jobId: `j${i}`,
+    id: `a${jobChannel ?? 'none'}${conversationChannel ?? ''}${i}`,
+    jobId: `j${jobChannel ?? 'none'}${i}`,
     toolName: 'send_message',
     agentName: null,
     toolInput: {},
     requestedAt: null,
     jobChannel,
+    conversationChannel,
   }));
 }
 
@@ -125,6 +133,18 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
     });
     expect(folderRow('telegram').textContent).toContain('3');
     expect(folderRow('slack').textContent).toContain('1');
+  });
+
+  it('écrit la pastille d’un délégué du tableau des tâches sur le dossier de son fil', async () => {
+    // #148. Le job porte `task-board`, qui n'est le dossier de personne ; sa
+    // conversation porte Telegram. La ligne du fil s'allumait déjà ; c'est la
+    // pastille du dossier qui restait muette au-dessus d'elle.
+    await renderGroup({
+      channels: ['telegram'],
+      approvals: pending('task-board', 2, 'telegram'),
+    });
+    expect(folderRow('telegram').textContent).toContain('2');
+    expect(folderRow('dashboard').textContent).toBe('Nodal chats');
   });
 
   it('ne rend PAS de pastille à zéro — pas même un « 0 »', async () => {

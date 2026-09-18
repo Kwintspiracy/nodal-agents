@@ -67,6 +67,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       toolInput: r.toolInput,
       requestedAt: r.requestedAt,
       jobChannel: r.jobChannel,
+      conversationChannel: r.conversationChannel,
     }));
   }
 

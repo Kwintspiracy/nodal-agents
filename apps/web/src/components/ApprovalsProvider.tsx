@@ -9,7 +9,14 @@ import { usePolling } from '@/lib/use-polling';
 // to client bundles that don't need the rest.
 export type PendingApproval = Pick<
   ApprovalRow,
-  'id' | 'jobId' | 'toolName' | 'agentName' | 'toolInput' | 'requestedAt' | 'jobChannel'
+  | 'id'
+  | 'jobId'
+  | 'toolName'
+  | 'agentName'
+  | 'toolInput'
+  | 'requestedAt'
+  | 'jobChannel'
+  | 'conversationChannel'
 >;
 
 type ApprovalsContextValue = {
@@ -43,9 +50,12 @@ export function ApprovalsProvider({
         toolInput: r.toolInput,
         requestedAt: r.requestedAt,
         // D'OÙ vient la demande. Le menu Chat range chaque attente dans son
-        // dossier avec ce seul champ (#135) — la pastille d'un dossier est
-        // exactement le nombre de lignes qui le désignent.
+        // dossier avec ces deux champs (#135, #148) — le canal de sa
+        // conversation d'abord, celui de son job quand elle n'en a pas. La
+        // pastille d'un dossier est exactement le nombre de lignes qui le
+        // désignent.
         jobChannel: r.jobChannel,
+        conversationChannel: r.conversationChannel,
       })),
     );
   }, []);

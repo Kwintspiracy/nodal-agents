@@ -56,7 +56,7 @@ import { buildConversationThread } from './conversation-thread.ts';
 import { chatKey, LIST_MAX } from './chat-key.ts';
 import type { ThreadJob, ThreadProject, ThreadProofRun } from './conversation-thread.ts';
 import { classifyProduction } from './chat-or-work.ts';
-import { folderOfJobChannel, RUNNING_JOB_STATUSES } from './chat-folders.ts';
+import { folderOfWork, RUNNING_JOB_STATUSES } from './chat-folders.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import {
@@ -477,7 +477,10 @@ export type ChatIdentities = Readonly<Record<string, { name: string | null; kind
  *     Les mêmes prédicats que la désignation du fil courant, pour que l'index
  *     partiel `idx_conversations_listable_chats` les serve ;
  *   - `running` — combien de runs TOURNENT, par dossier. Groupé en SQL : une
- *     requête par dossier redeviendrait un N+1 au premier canal ajouté ;
+ *     requête par dossier redeviendrait un N+1 au premier canal ajouté. Le
+ *     dossier se lit sur le canal de la CONVERSATION du run quand il en a une
+ *     (#148), sur le sien sinon — la règle de `folderOfWork`, la même que la
+ *     pastille ;
  *   - `runningConversationIds` — SUR QUELLES conversations ils tournent, pour
  *     le point vert d'une LIGNE de la liste (#135). Un `distinct` en SQL, pas
  *     une lecture par ligne affichée.
@@ -521,16 +524,26 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
             inArray(conversations.origin, ['user', 'project']),
           ),
         ),
+      // Groupé sur les DEUX canaux — celui du job et celui de sa conversation —
+      // parce que c'est le second qui range le travail quand il existe (#148).
+      // La règle reste en TypeScript, la même que la pastille et que la ligne ;
+      // un `coalesce` en SQL en ferait une deuxième, à tenir d'accord avec la
+      // première. Le groupe a au pire autant de lignes que de paires de canaux.
       db
-        .select({ channel: agentJobs.channel, n: sql<number>`count(*)::int` })
+        .select({
+          jobChannel: agentJobs.channel,
+          conversationChannel: conversations.channel,
+          n: sql<number>`count(*)::int`,
+        })
         .from(agentJobs)
+        .leftJoin(conversations, eq(conversations.id, agentJobs.conversationId))
         .where(
           and(
             eq(agentJobs.entityId, session.entityId),
             inArray(agentJobs.status, [...RUNNING_JOB_STATUSES]),
           ),
         )
-        .groupBy(agentJobs.channel),
+        .groupBy(agentJobs.channel, conversations.channel),
       // Les CONVERSATIONS où ça tourne. Une seule lecture, dédupliquée en
       // base : trois jobs d'un même fil n'allument qu'un point, et cinquante
       // lignes à l'écran ne font pas cinquante requêtes.
@@ -548,11 +561,12 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
 
     const running: Record<string, number> = {};
     for (const r of runningRows) {
-      // Le canal d'un job devient un DOSSIER par la même règle que partout
-      // ailleurs. Un canal qui n'en désigne aucun (`api`, `internal`, `mcp`…)
-      // n'allume aucun point : son run existe, il n'est dans aucun dossier de
-      // chat, et il reste lisible sur la page des runs.
-      const key = folderOfJobChannel(r.channel);
+      // Un run devient un DOSSIER par la même règle que partout ailleurs : le
+      // canal de sa conversation d'abord, le sien ensuite. Un canal qui n'en
+      // désigne aucun (`api`, `internal`, `mcp`…) n'allume aucun point : son
+      // run existe, il n'est dans aucun dossier de chat, et il reste lisible
+      // sur la page des runs.
+      const key = folderOfWork(r);
       if (key === null) continue;
       running[key] = (running[key] ?? 0) + r.n;
     }
