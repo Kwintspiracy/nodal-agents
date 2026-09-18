@@ -54,6 +54,11 @@ import {
   reviewState,
   porteDesFaitsVerifies,
   fusionnerTableauGitHub,
+  releasesDuTableau,
+  releaseDuHash,
+  hashDeLaRelease,
+  SANS_RELEASE,
+  pileDuneColonne,
   ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -2885,5 +2890,287 @@ describe('revue : ce que le portail publie, et ce qu’il ne sait pas (revue C d
     );
     expect(etat.passes).toBe(0);
     expect(etat.warnings).toEqual(['review pass 1 has no readable verdict line']);
+  });
+});
+
+describe('la release d’une carte, lue sur le jalon GitHub (#177)', () => {
+  // Le jalon existe depuis toujours — les PR de la 0.8.10 le portent — et le
+  // tableau ne le rendait nulle part : « qu'est-ce qui constitue la 0.8.10 »
+  // ne se lisait que sur GitHub, une carte à la fois.
+
+  it('la carte porte le TITRE du jalon, et rien d’autre de lui', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        {
+          number: 117,
+          title: 'une issue du jalon',
+          state: 'CLOSED',
+          milestone: { number: 1, title: '0.8.10', description: 'tout ce qui suit la 0.8.9' },
+        },
+      ],
+      pr: [
+        {
+          number: 114,
+          title: 'sa PR',
+          state: 'MERGED',
+          mergedAt: '2026-09-16T10:00:00Z',
+          milestone: { title: '0.8.10' },
+        },
+      ],
+    });
+    expect(cartes.map((c) => c.release)).toEqual(['0.8.10', '0.8.10']);
+    // La description du jalon ne voyage pas : le tableau n'en a pas l'usage.
+    expect(JSON.stringify(cartes)).not.toContain('tout ce qui suit');
+  });
+
+  it('une carte sans jalon porte `null`, et la page en fait « no release »', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 186, title: 'sans jalon', state: 'OPEN' }],
+      pr: [{ number: 187, title: 'sans jalon non plus', state: 'OPEN', milestone: null }],
+    });
+    expect(cartes.every((c) => c.release === null)).toBe(true);
+    expect(releasesDuTableau(cartes)).toEqual([SANS_RELEASE]);
+  });
+
+  it('un titre de jalon vide ou fait d’espaces ne devient pas une release', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'a', state: 'OPEN', milestone: { title: '   ' } }],
+      pr: [],
+    });
+    expect(cartes[0].release).toBe(null);
+  });
+
+  it('les releases du filtre sont rangées de la plus RÉCENTE à la plus ancienne', () => {
+    // Un tri de chaînes mettrait `0.8.10` avant `0.8.9`, et le filtre
+    // s'ouvrirait sur la mauvaise — la faute même que ce dépôt a déjà payée.
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'CLOSED', milestone: { title: '0.8.9' } },
+        { number: 2, title: 'b', state: 'CLOSED', milestone: { title: '0.8.10' } },
+        { number: 3, title: 'c', state: 'OPEN', milestone: { title: '0.9.0' } },
+        { number: 4, title: 'd', state: 'OPEN', milestone: { title: '0.9.0-rc.1' } },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.9.0', '0.9.0-rc.1', '0.8.10', '0.8.9']);
+  });
+
+  it('un jalon qui n’est pas une version garde sa place, après les versions', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'OPEN', milestone: { title: 'Backlog' } },
+        { number: 2, title: 'b', state: 'OPEN', milestone: { title: '0.8.10' } },
+        { number: 3, title: 'c', state: 'OPEN' },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+
+  it('« no release » n’apparaît que si une carte n’a vraiment pas de jalon', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'a', state: 'OPEN', milestone: { title: '0.8.10' } }],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.8.10']);
+  });
+});
+
+describe('les jalons TELS QUE ce dépôt les nomme (#177)', () => {
+  it('« 0.9 » est une version, et vient après « 0.8.10 »', () => {
+    // Vu en collectant le 18/09/2026 : 16 cartes sous « 0.8.10 », 28 sous
+    // « 0.9 ». Sans lire les deux segments, « 0.9 » n'était pas une version et
+    // se rangeait parmi les jalons alphabétiques, donc APRÈS la release passée.
+    const cartes = cartesDuTableau({
+      issues: [
+        { number: 1, title: 'a', state: 'CLOSED', milestone: { title: '0.8.10' } },
+        { number: 2, title: 'b', state: 'OPEN', milestone: { title: '0.9' } },
+        { number: 3, title: 'c', state: 'OPEN', milestone: { title: 'Backlog' } },
+        { number: 4, title: 'd', state: 'OPEN' },
+      ],
+      pr: [],
+    });
+    expect(releasesDuTableau(cartes)).toEqual(['0.9', '0.8.10', 'Backlog', SANS_RELEASE]);
+  });
+});
+
+describe('le filtre de release vit dans l’adresse (revue C de #192)', () => {
+  it('lit la release d’une adresse, et rend tout le tableau quand il n’y en a pas', () => {
+    expect(releaseDuHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(releaseDuHash('#chantiers')).toBe('');
+    expect(releaseDuHash('')).toBe('');
+    expect(releaseDuHash(null)).toBe('');
+  });
+
+  it('une valeur encodée revient telle qu’elle a été écrite', () => {
+    expect(releaseDuHash('#chantiers?release=no%20release')).toBe('no release');
+    expect(hashDeLaRelease('no release')).toBe('#chantiers?release=no%20release');
+    expect(releaseDuHash(hashDeLaRelease('0.9'))).toBe('0.9');
+    expect(releaseDuHash(hashDeLaRelease('no release'))).toBe('no release');
+  });
+
+  it('« toutes les releases » est une adresse sans requête', () => {
+    expect(hashDeLaRelease('')).toBe('#chantiers');
+    expect(hashDeLaRelease(null)).toBe('#chantiers');
+  });
+
+  it('une adresse ABÎMÉE montre tout, jamais rien', () => {
+    // `%E0%A4%A` est un pourcentage incomplet : `decodeURIComponent` lève. Une
+    // page vide sur une adresse mal recopiée ferait croire à un tableau vide.
+    expect(releaseDuHash('#chantiers?release=%E0%A4%A')).toBe('');
+    expect(releaseDuHash('#chantiers?autre=chose')).toBe('');
+  });
+});
+
+describe('pileDuneColonne — ce qu’une colonne finie montre (#176)', () => {
+  // Le 16/09/2026, la colonne « Done » gardait ses huit premières cartes par
+  // numéro décroissant, c'est-à-dire par ordre d'OUVERTURE : les huit issues
+  // fermées ce jour-là ont pris les huit places, et les six PR mergées le même
+  // jour sont parties dans « + 67 more ». Le tableau montrait 75 cartes finies
+  // et pas une seule des PR qui les avaient finies.
+
+  const LE_JOUR = Date.parse('2026-09-16T18:00:00.000Z');
+  const MAINTENANT = Date.parse('2026-09-17T09:00:00.000Z');
+  const heure = (h) => new Date(LE_JOUR + h * 3600_000).toISOString();
+
+  /** Le vrai jour du 16/09 : huit issues fermées, six PR mergées, mêlées. */
+  const journee = () => {
+    const issues = Array.from({ length: 8 }, (_, k) => ({
+      number: 109 + k,
+      title: `issue ${k}`,
+      state: 'CLOSED',
+      closedAt: heure(k),
+    }));
+    const pr = [103, 112, 113, 114, 118, 120].map((n, k) => ({
+      number: n,
+      title: `pr ${n}`,
+      state: 'MERGED',
+      mergedAt: heure(k + 0.5),
+    }));
+    return cartesDuTableau({ issues, pr });
+  };
+
+  it('les QUATORZE cartes du jour sont montrées, PR mergées comprises', () => {
+    const { montrees, replies } = pileDuneColonne(journee(), 'Done', MAINTENANT);
+    expect(montrees).toHaveLength(14);
+    expect(replies).toBe(0);
+    // Les six PR du jour sont là, celles-là mêmes qui manquaient.
+    const prMontrees = montrees.filter((c) => c.type === 'pr').map((c) => c.numero);
+    expect(prMontrees.sort((a, b) => a - b)).toEqual([103, 112, 113, 114, 118, 120]);
+  });
+
+  it('elles sont rangées du plus récemment fini au plus ancien, les deux familles MÊLÉES', () => {
+    const { montrees } = pileDuneColonne(journee(), 'Done', MAINTENANT);
+    const dates = montrees.map((c) => c.finiLe);
+    expect([...dates].sort().reverse()).toEqual(dates);
+    // Mêlées : la première PR n'est pas reléguée derrière toutes les issues.
+    const premierPr = montrees.findIndex((c) => c.type === 'pr');
+    const derniereIssue = montrees.map((c) => c.type).lastIndexOf('issue');
+    expect(premierPr).toBeLessThan(derniereIssue);
+  });
+
+  it('ce qui est plus vieux que la fenêtre est REPLIÉ, et compté', () => {
+    const vieux = Array.from({ length: 20 }, (_, k) => ({
+      number: 10 + k,
+      title: `vieille ${k}`,
+      state: 'CLOSED',
+      closedAt: new Date(LE_JOUR - (30 + k) * 86_400_000).toISOString(),
+    }));
+    const cartes = [...journee(), ...cartesDuTableau({ issues: vieux, pr: [] })];
+    const { montrees, replies } = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(montrees).toHaveLength(14);
+    expect(replies).toBe(20);
+  });
+
+  it('une carte SANS date de fin est repliée, jamais datée d’office', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 1, title: 'fermée sans date', state: 'CLOSED' }],
+      pr: [],
+    });
+    const { montrees, replies } = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(montrees).toEqual([]);
+    expect(replies).toBe(1);
+  });
+
+  it('une semaine sans rien finir montre quand même les trois dernières', () => {
+    // Vider la colonne sous un « + 75 older » cacherait jusqu'au dernier
+    // travail livré, que le plafond de huit montrait au moins.
+    const vieilles = Array.from({ length: 9 }, (_, k) => ({
+      number: 10 + k,
+      title: `vieille ${k}`,
+      state: 'CLOSED',
+      closedAt: new Date(LE_JOUR - (20 + k) * 86_400_000).toISOString(),
+    }));
+    const { montrees, replies } = pileDuneColonne(
+      cartesDuTableau({ issues: vieilles, pr: [] }),
+      'Done',
+      MAINTENANT,
+    );
+    expect(montrees).toHaveLength(3);
+    expect(replies).toBe(6);
+    // Et ce sont les trois PLUS RÉCENTES.
+    expect(montrees.map((c) => c.numero)).toEqual([10, 11, 12]);
+  });
+
+  it('une colonne VIVANTE montre tout : un appel à l’action ne se replie pas', () => {
+    const cartes = cartesDuTableau({
+      issues: Array.from({ length: 12 }, (_, k) => ({
+        number: 200 + k,
+        title: `à faire ${k}`,
+        state: 'OPEN',
+        labels: [{ name: 'decision' }],
+      })),
+      pr: [],
+    });
+    const { montrees, replies } = pileDuneColonne(cartes, 'To do', MAINTENANT);
+    expect(montrees).toHaveLength(12);
+    expect(replies).toBe(0);
+  });
+});
+
+describe('le repli compte à part ce qu’on ne sait pas dater (revue C de #188)', () => {
+  const MAINTENANT = Date.parse('2026-09-18T09:00:00.000Z');
+  const vieille = (n) => ({
+    number: n,
+    title: `vieille ${n}`,
+    state: 'CLOSED',
+    closedAt: new Date(MAINTENANT - 30 * 86_400_000).toISOString(),
+  });
+  const sansDate = (n) => ({ number: n, title: `sans date ${n}`, state: 'CLOSED' });
+
+  it('« older » ne parle que de ce qui a une date ; le reste est compté à part', () => {
+    // Dire « + 5 older » d'une carte dont on ignore la date de fermeture, c'est
+    // affirmer d'elle exactement ce qu'on ne sait pas.
+    const cartes = cartesDuTableau({
+      issues: [vieille(1), vieille(2), vieille(3), sansDate(4), sansDate(5)],
+      pr: [],
+    });
+    const pile = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    // La fenêtre est vide : les trois plus récentes DATÉES sont montrées.
+    expect(pile.montrees).toHaveLength(3);
+    expect(pile.replies).toBe(2);
+    expect(pile.plusAnciennes).toBe(0);
+    expect(pile.sansDate).toBe(2);
+  });
+
+  it('les deux comptes se séparent quand il y a des deux', () => {
+    const cartes = cartesDuTableau({
+      issues: [
+        ...Array.from({ length: 6 }, (_, k) => vieille(10 + k)),
+        sansDate(20),
+        {
+          number: 30,
+          title: 'finie hier',
+          state: 'CLOSED',
+          closedAt: new Date(MAINTENANT - 86_400_000).toISOString(),
+        },
+      ],
+      pr: [],
+    });
+    const pile = pileDuneColonne(cartes, 'Done', MAINTENANT);
+    expect(pile.montrees.map((c) => c.numero)).toEqual([30]);
+    expect(pile.plusAnciennes).toBe(6);
+    expect(pile.sansDate).toBe(1);
+    expect(pile.replies).toBe(7);
   });
 });

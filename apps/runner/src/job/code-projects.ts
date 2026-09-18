@@ -32,6 +32,7 @@ import {
 } from '@nodal-agents/db';
 import type { CodeProjectSummary } from '@nodal-agents/orchestration';
 import {
+  CLI_WRITE_TOOLS,
   PROJECT_MARKERS,
   isAbsolutePath,
   isWindowsPath,
@@ -63,13 +64,11 @@ export { projectKey };
  * entre l'onglet Code et le prompt des agents.
  */
 export const EDIT_TOOLS = [
-  'cli:Edit',
-  'cli:Write',
-  'cli:MultiEdit',
-  'cli:NotebookEdit',
-  // Le nom que porte une écriture d'un agent en runtime CODEX — même raison que
-  // dans l'onglet Code, et le même besoin d'accord entre les deux vues.
-  'cli:file_change',
+  // La part CLI vit dans `@nodal-agents/shared` depuis l'issue #102 : la
+  // vérification en a besoin elle aussi, pour savoir quels fichiers constater
+  // après un run de harnais, et une TROISIÈME copie aurait divergé au premier
+  // outil ajouté — l'argument même qui avait fait exporter cette liste.
+  ...CLI_WRITE_TOOLS,
   'file_edit',
   'file_write',
 ];

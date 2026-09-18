@@ -48,6 +48,8 @@ vi.mock('../guarded-tick.ts', async (importOriginal) => {
     ): Promise<GuardedTickResult> => {
       recordCall(maxTickMs);
       const zero: GuardedTickResult = {
+        jobsReclaimed: 0,
+        parentsResumedAfterReclaim: 0,
         orphanJobsReset: 0,
         pendingRecovered: 0,
         stalePendingFailed: 0,

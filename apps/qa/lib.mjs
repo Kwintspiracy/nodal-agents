@@ -594,6 +594,12 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: (i.labels ?? []).map((l) => l.name),
       majLe: i.updatedAt ?? null,
       creeLe: i.createdAt ?? null,
+      // Quand cette carte a été FINIE — `null` tant qu'elle ne l'est pas, et
+      // `null` aussi quand GitHub ne l'a pas dit. Jamais remplacée par la date
+      // de mise à jour : une carte rouverte puis commentée serait datée d'un
+      // jour où rien ne s'est fini (#176).
+      finiLe: i.closedAt ?? null,
+      release: titreDeJalon(i.milestone),
       parPr: couvertes.get(i.number) ?? null,
       // L'état de la revue de LA PR qui la ferme, quand il y en a une : les
       // trois cartes d'un même travail se lisaient « In review » sans jamais
@@ -611,6 +617,10 @@ export function cartesDuTableau({ issues, pr } = {}) {
       etiquettes: [],
       majLe: p.updatedAt ?? null,
       creeLe: p.createdAt ?? null,
+      // Le merge d'abord : une PR mergée est fermée dans la foulée, et les deux
+      // dates sont à la seconde près. C'est le merge qui a fini le travail.
+      finiLe: p.mergedAt ?? p.closedAt ?? null,
+      release: titreDeJalon(p.milestone),
       ci: etatCi(p.statusCheckRollup),
       revue: revueDunePr.get(p.number) ?? null,
       ...provenance(p.body),
@@ -618,6 +628,177 @@ export function cartesDuTableau({ issues, pr } = {}) {
   ];
 
   return cartes.map((c) => ({ ...c, colonne: colonneDeCarte(c) }));
+}
+
+// ─── À quelle release une carte appartient ────────────────────────────────────
+//
+// Le jalon GitHub le dit déjà — les PR de la 0.8.10 le portent —, et le tableau
+// ne le rendait nulle part (#177). « Qu'est-ce qui constitue la 0.8.10 » ne se
+// lisait donc que sur GitHub, une carte à la fois.
+//
+// Le titre du jalon, et rien d'autre : ni sa description, ni sa date. Une carte
+// sans jalon dit « no release » — c'est un fait, et un travail non rattaché
+// mérite d'être vu comme tel, pas d'être rendu invisible.
+
+/** Ce que le tableau retient d'un jalon : son titre, ou `null`. */
+export function titreDeJalon(jalon) {
+  const titre = typeof jalon?.title === 'string' ? jalon.title.trim() : '';
+  return titre === '' ? null : titre;
+}
+
+/** Ce que porte une carte sans jalon — dit, jamais laissé en blanc. */
+export const SANS_RELEASE = 'no release';
+
+/**
+ * La release demandée par une adresse : `#chantiers?release=0.9` → `0.9`.
+ *
+ * Le filtre vit dans l'ADRESSE (revue C de la PR #192) : sans cela, « ce qui
+ * constitue la 0.9 » ne se partageait pas — le lien renvoyait au tableau
+ * entier, et le destinataire devait deviner quel bouton cliquer. Rien, une
+ * adresse sans requête ou une valeur illisible rendent `''`, c'est-à-dire tout
+ * le tableau : une adresse abîmée montre trop, jamais rien.
+ *
+ * Écrite pour être lue DEUX fois : ici par les tests, et par la page, où
+ * `build.mjs` l'inscrit telle quelle. Elle ne ferme donc sur rien et n'emploie
+ * que ce qu'un navigateur connaît depuis toujours.
+ */
+export function releaseDuHash(hash) {
+  var brut = String(hash == null ? '' : hash);
+  var i = brut.indexOf('?');
+  if (i < 0) return '';
+  var m = /(?:^|&)release=([^&]*)/.exec(brut.slice(i + 1));
+  if (!m) return '';
+  try {
+    return decodeURIComponent(m[1]);
+  } catch (e) {
+    return '';
+  }
+}
+
+/** L'adresse qui montre une release : `0.9` → `#chantiers?release=0.9`. */
+export function hashDeLaRelease(release) {
+  var r = String(release == null ? '' : release);
+  return r === '' ? '#chantiers' : '#chantiers?release=' + encodeURIComponent(r);
+}
+
+/**
+ * Le titre d'un jalon ramené à une forme que `comparerSemver` sait lire, ou
+ * `null` si ce n'en est pas une.
+ *
+ * Deux segments comptent : ce dépôt nomme ses jalons « 0.9 » autant que
+ * « 0.8.10 » (vu en collectant le 18/09/2026 — 28 cartes sous « 0.9 »). Sans
+ * cette lecture, « 0.9 » n'était pas une version du tout et se rangeait
+ * APRÈS « 0.8.10 », dans les jalons alphabétiques : le filtre s'ouvrait sur la
+ * release passée en donnant la suivante pour un nom quelconque.
+ */
+function comparable(titre) {
+  const t = String(titre ?? '').trim();
+  if (/^v?\d+\.\d+$/.test(t)) return `${t}.0`;
+  return comparerSemver(t, t) === null ? null : t;
+}
+
+/**
+ * Les releases présentes sur le tableau, pour en faire un filtre.
+ *
+ * Rangées de la plus récente à la plus ancienne par `comparerSemver`, qui sait
+ * déjà que `0.8.10` vient après `0.8.9` — un tri de chaînes mettrait la 0.8.10
+ * avant la 0.8.9 et le filtre s'ouvrirait sur la mauvaise. Ce qui n'est pas un
+ * numéro de version garde son ordre alphabétique, après les numéros : un jalon
+ * nommé « Backlog » n'est pas une version et ne prétend pas l'être.
+ * « no release » ferme la marche quand au moins une carte n'a pas de jalon.
+ */
+export function releasesDuTableau(cartes) {
+  const titres = [
+    ...new Set(
+      (cartes ?? []).map((c) => c.release).filter((r) => typeof r === 'string' && r !== ''),
+    ),
+  ];
+  const versions = titres.filter((t) => comparable(t) !== null);
+  const autres = titres.filter((t) => comparable(t) === null).sort();
+  versions.sort((a, b) => -(comparerSemver(comparable(a), comparable(b)) ?? 0));
+  const sansJalon = (cartes ?? []).some((c) => !c.release);
+  return [...versions, ...autres, ...(sansJalon ? [SANS_RELEASE] : [])];
+}
+
+// ─── Ce qu'une colonne MONTRE ─────────────────────────────────────────────────
+//
+// « Done » gardait ses huit premières cartes dans l'ordre où elles arrivaient,
+// c'est-à-dire par numéro décroissant : l'ordre d'OUVERTURE, pas celui
+// d'achèvement. Le 16/09/2026, les huit issues fermées de la journée ont donc
+// rempli les huit places, et les six PR mergées le même jour sont parties dans
+// « + 67 more » : le tableau a montré 75 cartes finies et pas une seule des PR
+// qui les avaient finies (#176).
+//
+// La colonne répond maintenant à la question qu'on lui pose vraiment — « qu'a-
+// t-on fini ces jours-ci ? » — donc une FENÊTRE de temps, du plus récent au
+// plus ancien, et le reste replié sous son compte.
+
+/** La fenêtre de « Done » : ce qui s'est fini dans la semaine. */
+export const JOURS_DE_FENETRE = 7;
+
+/**
+ * Le minimum qu'une colonne finie montre quand la fenêtre est vide.
+ *
+ * Une semaine sans rien finir est un fait, et la colonne le dit en ne montrant
+ * presque rien. Mais la vider complètement sous un « + 75 older » cacherait
+ * jusqu'au dernier travail livré, que le plafond de huit montrait au moins.
+ * Trois cartes : assez pour savoir où on en était, trop peu pour faire croire
+ * que c'est de cette semaine.
+ */
+const MINIMUM_VISIBLE = 3;
+
+/** Les colonnes qui regardent en arrière, et se lisent donc par date. */
+const COLONNES_FINIES = new Set(['Done', 'Abandoned']);
+
+/** Une date lisible en millisecondes, ou `null` — jamais une date inventée. */
+function instant(valeur) {
+  const t = Date.parse(String(valeur ?? ''));
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Ce qu'une colonne montre, et ce qu'elle replie.
+ *
+ * Les colonnes vivantes (« To do » à « In review ») montrent tout : ce sont des
+ * appels à l'action, et en cacher un le ferait oublier.
+ *
+ * Les colonnes finies se rangent du plus récemment fini au plus ancien, PR
+ * mergées et issues fermées MÊLÉES. Pas de bande « merged » à part : la
+ * question est chronologique, la carte d'une PR se reconnaît déjà à son liseré
+ * et à son « PR #n », et couper la colonne en deux rendrait la même question
+ * qu'aujourd'hui — laquelle des deux piles faut-il lire d'abord.
+ *
+ * Une carte SANS date de fin ne peut pas entrer dans une fenêtre : elle est
+ * repliée avec les anciennes, jamais datée d'office.
+ */
+export function pileDuneColonne(cartes, nom, maintenant = Date.now(), jours = JOURS_DE_FENETRE) {
+  const dedans = (cartes ?? []).filter((c) => c.colonne === nom);
+  if (!COLONNES_FINIES.has(nom)) {
+    return { montrees: dedans, replies: 0, plusAnciennes: 0, sansDate: 0 };
+  }
+
+  const datees = dedans
+    .map((c) => ({ carte: c, quand: instant(c.finiLe) }))
+    .sort((a, b) => (b.quand ?? -Infinity) - (a.quand ?? -Infinity));
+  const depuis = maintenant - jours * 24 * 60 * 60 * 1000;
+  const dansLaFenetre = datees.filter((d) => d.quand !== null && d.quand >= depuis);
+  const montrees =
+    dansLaFenetre.length > 0
+      ? dansLaFenetre
+      : datees.slice(0, MINIMUM_VISIBLE).filter((d) => d.quand !== null);
+
+  // Le repli se compte en DEUX, parce que ce sont deux choses (revue C de la
+  // PR #188) : ce qui est plus ancien que la fenêtre, et ce dont on ignore la
+  // date. Les mettre ensemble sous « older » affirmerait d'une carte sans date
+  // qu'elle est vieille, et c'est justement ce qu'on ne sait pas.
+  const sansDate = dedans.filter((c) => instant(c.finiLe) === null).length;
+  const replies = dedans.length - montrees.length;
+  return {
+    montrees: montrees.map((d) => d.carte),
+    replies,
+    plusAnciennes: replies - sansDate,
+    sansDate,
+  };
 }
 
 // ─── Ce que le dépôt sait de sa propre release ────────────────────────────────

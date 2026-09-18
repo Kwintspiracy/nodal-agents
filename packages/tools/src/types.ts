@@ -435,6 +435,27 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
     ctx: ToolContext,
   ) => Promise<readonly MutationTarget[]>;
   /**
+   * Cet outil fait écrire un TIERS, qui déclare lui-même ses fichiers.
+   *
+   * Le cas est celui d'un harnais de code (`code_task`) : le CLI écrit dans son
+   * propre processus, et ses écritures n'arrivent JAMAIS par `executeTool`. Le
+   * seam ne peut donc ni prendre d'empreinte avant ni comparer après — il ne
+   * sait même pas quels fichiers regarder. Ce que le CLI a touché arrive en
+   * lignes `tool_calls` VIVANTES (`cli:Write`, `cli:file_change`, …), écrites
+   * pendant la session.
+   *
+   * Avec ce drapeau, le seam lit ces lignes après l'appel et CONSTATE sur le
+   * disque chaque chemin rapporté (issue #102, revue C de la PR #196). Sans
+   * lui, depuis qu'une cible dossier ne crédite plus rien, aucun run de harnais
+   * ne serait constaté et `declare_verification` les refuserait tous — un faux
+   * rouge sur tout le flux des runtimes.
+   *
+   * Un drapeau et non une fonction : la lecture est la même pour quiconque
+   * délègue à un CLI, elle vit à un seul endroit (`verification/harness.ts`),
+   * et le seam n'a ainsi aucun nom d'outil à connaître.
+   */
+  reportsHarnessWrites?: boolean;
+  /**
    * Optional PER-CALL destructiveness check, complementing the static
    * `defaultApproval` above for tools where gating depends on the call's
    * actual TARGET, not the tool's identity — e.g. `file_write`/`file_edit`

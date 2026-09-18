@@ -25,8 +25,10 @@ import {
   desc,
   isNull,
   isNotNull,
+  lt,
   ne,
   inArray,
+  notInArray,
   sql,
   agents,
   agentJobs,
@@ -46,9 +48,19 @@ import { normalizePath, redactSecretsInText, stripGroupPrefix } from '@nodal-age
 import { plainText } from '@/components/Markdown.tsx';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
+import { revalidatePath } from 'next/cache';
+import {
+  decodeRunCursor,
+  encodeRunCursor,
+  runIsDeletable,
+  type RunCursor,
+} from './external-runs.ts';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
-import { redactPresented } from './redact-presented.ts';
+// La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
+// dise plutôt que de la recopier en dur.
+import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
+import { redactAuditRow } from './redact-presented.ts';
 import { parsePresented } from './tool-card-payload.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
 import { buildConversationThread } from './conversation-thread.ts';
@@ -540,20 +552,41 @@ export type ExternalRunRow = {
   createdAt: Date | null;
 };
 
+/** Une page de la liste, et de quoi demander la suivante. */
+export type ExternalRunsPage = {
+  runs: ExternalRunRow[];
+  /**
+   * Où reprendre. `null` = il n'y a plus rien après, et le bouton « Load more »
+   * disparaît — un bouton qui rendrait une page vide se lirait comme une panne.
+   */
+  nextCursor: string | null;
+};
+
+/**
+ * La taille d'UNE page (#183). La table entière ne se lit jamais : la base du
+ * propriétaire porte déjà plus de cent runs de tête, et ce nombre ne fait que
+ * monter — c'est une machine qui les crée.
+ *
+ * Cinquante, comme une boîte de réception : de quoi remplir l'écran et
+ * quelques défilements, sans faire attendre l'ouverture du dossier.
+ */
+const EXTERNAL_RUNS_PAGE = 50;
+
+/** Combien de runs une suppression accepte d'un coup. */
+const EXTERNAL_RUNS_DELETE_MAX = 200;
+
 /**
  * Ce qui fait d'un job un RUN VENU DE DEHORS, écrit à UN seul endroit : le
- * compte qui fait exister le dossier et la liste qu'il ouvre doivent dire la
- * même chose, sinon le dossier s'affiche vide ou disparaît en portant des
- * lignes.
+ * compte qui fait exister le dossier, la liste qu'il ouvre et la suppression
+ * doivent dire la même chose, sinon le dossier s'affiche vide ou disparaît en
+ * portant des lignes — ou l'on supprime par cette porte un job qu'elle ne
+ * montre pas.
  *
  * `parent_job_id IS NULL` — un délégué n'est pas un run à lui seul, c'est une
  * étape de celui qui l'a créé. `conversation_id IS NULL` — un job `api`
  * rattaché à une conversation est un TOUR DE CHAT, et `folderOfWork` le range
  * déjà dans le dossier de cette conversation.
  */
-/** Le plafond de la liste, du même ordre que les autres listes du dossier. */
-const EXTERNAL_RUNS_MAX = 200;
-
 function runsFromOutside(entityId: string) {
   return and(
     eq(agentJobs.entityId, entityId),
@@ -669,19 +702,38 @@ export async function getChatFoldersAction(): Promise<ActionResult<ChatFoldersSn
 }
 
 /**
- * Les runs venus de dehors, les plus récents d'abord — la liste du dossier
- * MCP.
+ * UNE PAGE des runs venus de dehors, les plus récents d'abord — la liste du
+ * dossier MCP (#183).
  *
  * Les mêmes conditions que le compte du menu (`runsFromOutside`), et rien de
  * plus : ni approbation ni descendance ne se lit ici. Ce qui ATTEND la
  * personne vient des approbations que la page a déjà en main, comme pour les
  * dossiers de canal — les relire ferait deux vérités pour le même chiffre.
+ *
+ * LA PAGE SUIVANTE SE DEMANDE PAR CURSEUR, pas par `offset` : une machine peut
+ * poster un run entre deux pages, et un rang se décale quand une ligne entre
+ * ou sort (voir `lib/external-runs-cursor.ts`). La borne `(created_at, id)`
+ * désigne une LIGNE ; ce qui arrive après ne la déplace pas.
+ *
+ * `N + 1` lignes sont lues, jamais un `count` : la ligne en trop ne sert qu'à
+ * SAVOIR s'il y en a d'autres, et elle n'est pas rendue. Compter à part
+ * coûterait une seconde requête pour une réponse que cette lecture contient
+ * déjà.
  */
-export async function listExternalRunsAction(): Promise<ActionResult<ExternalRunRow[]>> {
+export async function listExternalRunsAction(
+  opts: { cursor?: string | null } = {},
+): Promise<ActionResult<ExternalRunsPage>> {
   try {
     const session = await getSession();
     if (!session.entityId) return fail('no_entity', 'No active entity');
     const db = getDb();
+
+    // Un curseur illisible repart du DÉBUT plutôt que de rendre une page vide.
+    const apres = decodeRunCursor(opts.cursor ?? null);
+    const borne =
+      apres === null
+        ? runsFromOutside(session.entityId)
+        : and(runsFromOutside(session.entityId), apresLaLigne(apres));
 
     const rows = await db
       .select({
@@ -691,14 +743,203 @@ export async function listExternalRunsAction(): Promise<ActionResult<ExternalRun
         createdAt: agentJobs.createdAt,
       })
       .from(agentJobs)
-      .where(runsFromOutside(session.entityId))
+      .where(borne)
+      // `DESC` NU, donc `NULLS FIRST` — l'ordre exact de l'index
+      // `idx_agent_jobs_entity_created (entity_id, created_at DESC)`.
+      //
+      // Il portait `NULLS LAST`, pour ranger en dernier les lignes dont on
+      // ignore la date. Mesuré sur 10 001 runs (Reviewer C, passe 1), ce mot
+      // coûtait le balayage de TOUS les jobs de l'entité puis un tri complet —
+      // 8,1 ms et 10 001 lignes lues, là où l'index nu en lit 52 en 0,19 ms, et
+      // l'écart grandit avec la table. Une page qui coûte toute la table n'est
+      // pas une pagination.
+      //
+      // Le prix : une ligne sans date se range en TÊTE. Elle paraît donc sur la
+      // première page, et la borne ci-dessous la laisse derrière — ni doublon,
+      // ni trou, seulement une place qu'on n'a pas choisie pour une ligne dont
+      // la date manque. `created_at` porte `DEFAULT now()` (migration 0000) :
+      // le cas demande une écriture qui force `NULL`.
       .orderBy(desc(agentJobs.createdAt), desc(agentJobs.id))
-      .limit(EXTERNAL_RUNS_MAX);
+      .limit(EXTERNAL_RUNS_PAGE + 1);
 
-    return ok(rows);
+    const page = rows.slice(0, EXTERNAL_RUNS_PAGE);
+    const encore = rows.length > EXTERNAL_RUNS_PAGE;
+    const derniere = page[page.length - 1];
+    return ok({
+      runs: page,
+      nextCursor: encore && derniere !== undefined ? encodeRunCursor(derniere) : null,
+    });
   } catch (err) {
     console.error('[listExternalRunsAction]', err);
     return fail('db_error', 'Failed to load the runs started from outside');
+  }
+}
+
+/**
+ * « Strictement après cette ligne », dans l'ordre exact de la liste —
+ * `created_at DESC` (donc `NULLS FIRST`), puis `id DESC`.
+ *
+ * Écrit en deux morceaux plutôt qu'en comparaison de paires, à cause des dates
+ * absentes : `(NULL, id) < (date, id)` vaut NULL, donc FAUX, et une ligne sans
+ * date disparaîtrait de toutes les pages au lieu de tenir sa place.
+ *
+ *   - curseur SANS date : on est dans la TÊTE de la liste. Après lui viennent
+ *     les autres lignes sans date d'`id` plus petit, puis toutes les lignes
+ *     datées, sans exception ;
+ *   - curseur AVEC date : les lignes sans date sont déjà passées. Reste ce qui
+ *     est plus ancien, et, à date égale, un `id` plus petit.
+ */
+function apresLaLigne(apres: RunCursor) {
+  if (apres.createdAt === null) {
+    return or(
+      and(isNull(agentJobs.createdAt), lt(agentJobs.id, apres.id)),
+      isNotNull(agentJobs.createdAt),
+    );
+  }
+  return or(
+    lt(agentJobs.createdAt, apres.createdAt),
+    and(eq(agentJobs.createdAt, apres.createdAt), lt(agentJobs.id, apres.id)),
+  );
+}
+
+/**
+ * Supprimer des runs venus de dehors, AVEC leur descendance (#183).
+ *
+ * **Pourquoi la descendance, explicitement.** `agent_jobs.parent_job_id` n'est
+ * PAS une clé étrangère dans la vraie base (migration 0000 : une colonne et
+ * deux index, aucune contrainte) : rien ne suit un parent supprimé, et ses
+ * délégués resteraient là, orphelins et invisibles — plus aucun run ne les
+ * porterait. On les supprime donc à la main, niveau par niveau
+ * (`collectDescendants`), dans la MÊME instruction que leurs racines.
+ *
+ * **Ce qui part avec eux, et ce qui reste.** Les tables qui cascadent :
+ * `tool_calls`, `approval_requests`, `job_deliveries`, `job_checkpoints`,
+ * `job_deliverable_verification_state`. Celles qui se contentent d'oublier le
+ * job (`ON DELETE SET NULL`) : `llm_calls` — donc le COÛT déjà dépensé reste
+ * compté, ce qui est voulu, une facture ne s'annule pas en effaçant sa
+ * ligne — `chat_messages`, `cli_runs`, `tasks`, `verification_runs`,
+ * `code_projects.registered_job_id`.
+ *
+ * **Un run VIVANT ne se supprime pas.** Il écrit encore : le runner le relit
+ * pour reprendre, et le retirer sous ses pieds ferait échouer une reprise au
+ * lieu de dire non. La liste le montre déjà — case désactivée — et la règle est
+ * REFAITE ici, parce qu'un écran n'est pas une garde.
+ *
+ * **Ce qui revient est une LISTE D'IDENTIFIANTS, pas un compte** (Reviewer C,
+ * passe 1 de la PR #185). L'écran retirait toutes les lignes cochées et
+ * annonçait à côté « 1 run was left » : la ligne refusée disparaissait quand
+ * même, et `router.refresh()` ne la ramenait pas — la liste garde son état
+ * jusqu'à un rechargement complet. Deux chiffres ne disent pas QUI ; deux
+ * listes, si.
+ */
+export async function deleteExternalRunsAction(
+  ids: readonly string[],
+): Promise<ActionResult<{ deletedIds: string[]; skippedLiveIds: string[] }>> {
+  try {
+    const session = await getSession();
+    if (!session.entityId) return fail('no_entity', 'No active entity');
+    const parsed = z.array(z.string().guid()).min(1).max(EXTERNAL_RUNS_DELETE_MAX).safeParse(ids);
+    if (!parsed.success) return fail('validation_failed', 'Invalid run ids');
+    const db = getDb();
+
+    // Les racines DEMANDÉES qui sont vraiment des runs de dehors DE CETTE
+    // ENTITÉ. Une ligne absente d'ici — un job d'un autre espace, un délégué,
+    // un tour de chat — n'est pas refusée une par une : elle n'entre
+    // simplement jamais dans ce qui suit.
+    const racines = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(and(runsFromOutside(session.entityId), inArray(agentJobs.id, parsed.data)));
+
+    // LA MÊME règle que la case de l'écran, pas une seconde : `runIsDeletable`
+    // (lib/external-runs.ts) est lue des deux côtés.
+    const supprimables = racines.filter((r) => runIsDeletable(r.status)).map((r) => r.id);
+    const skippedLiveIds = racines.filter((r) => !runIsDeletable(r.status)).map((r) => r.id);
+    if (supprimables.length === 0) return ok({ deletedIds: [], skippedLiveIds });
+
+    // ─── UNE SEULE TRANSACTION : marche, vérification, suppression ──────────
+    //
+    // Les trois gestes étaient trois allers-retours séparés (Reviewer C, passe
+    // 2). Entre la vérification et le `DELETE`, un délégué inséré par le runner
+    // survivait en orphelin — exactement ce que cette action prétend empêcher.
+    //
+    // CE QUE LA TRANSACTION FERME. La marche et la vérification lisent le MÊME
+    // état, et la suppression est tout ou rien : plus de demi-suppression où
+    // les racines partent pendant qu'une descendance lue avant reste. Une
+    // erreur en cours de route ne laisse rien derrière elle.
+    //
+    // CE QU'ELLE NE FERME PAS, et il faut le dire. En `READ COMMITTED` — le
+    // niveau par défaut — chaque instruction prend son propre instantané : un
+    // délégué dont l'insertion est validée APRÈS l'instantané du `DELETE`
+    // devient orphelin, transaction ou pas. La fenêtre passe de trois
+    // allers-retours à l'intérieur d'une instruction, elle ne disparaît pas.
+    // Seule une clé étrangère sur `parent_job_id` la fermerait vraiment, et la
+    // vraie base n'en a pas (migration 0000) ; la poser est un sujet à part, qui
+    // touche toutes les écritures de jobs. C'est nommé ici plutôt que promis
+    // ailleurs (invariant #4).
+    const issue = await db.transaction(async (tx) => {
+      const descendants = await collectDescendants(tx, session.entityId, supprimables);
+      const aSupprimer = [...supprimables, ...descendants.map((d) => d.id)];
+
+      // AUCUN ORPHELIN, et on le VÉRIFIE plutôt que de faire confiance à une
+      // borne (Reviewer C, passe 1). `collectDescendants` s'arrête à
+      // `ROLLUP_MAX_DEPTH` niveaux : sur une chaîne plus profonde — une base
+      // abîmée, un import — elle rendrait une descendance incomplète, et le
+      // `DELETE` laisserait des délégués que plus aucun run ne porte. La
+      // question se pose donc à la base, exactement : reste-t-il un enfant d'un
+      // job qu'on s'apprête à supprimer, hors de la liste ?
+      const orphelins = await tx
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, session.entityId),
+            inArray(agentJobs.parentJobId, aSupprimer),
+            notInArray(agentJobs.id, aSupprimer),
+          ),
+        )
+        .limit(1);
+      if (orphelins.length > 0) {
+        console.error(
+          `[deleteExternalRunsAction] delegation chain deeper than ${ROLLUP_MAX_DEPTH} levels — refusing to delete and leave orphans behind (first: ${orphelins[0]?.id})`,
+        );
+        // On REND le refus plutôt que de lever : une exception ferait un
+        // `db_error` sans nom, et la personne lirait « impossible de
+        // supprimer » au lieu de la raison. Rien n'a été écrit, il n'y a donc
+        // rien à annuler.
+        return { refuse: true as const };
+      }
+
+      // UNE seule instruction, racines et descendants ensemble. Le SQL en ligne
+      // des tests de base donne à `parent_job_id` une clé étrangère que la
+      // vraie base n'a pas ; en un seul `DELETE`, la vérification tombe en fin
+      // d'instruction et les deux côtés s'accordent.
+      const parties = await tx
+        .delete(agentJobs)
+        .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.id, aSupprimer)))
+        .returning({ id: agentJobs.id });
+      return { refuse: false as const, parties };
+    });
+
+    if (issue.refuse) {
+      return fail(
+        'chain_too_deep',
+        'These runs delegate deeper than this screen can follow. Nothing was deleted.',
+      );
+    }
+    const parties = issue.parties;
+
+    revalidatePath('/chat');
+    // Les RACINES réellement parties, nommées une par une : c'est ce que
+    // l'écran retire de sa liste, et lui seul sait quelles lignes il affiche.
+    const partiesSet = new Set(parties.map((r) => r.id));
+    return ok({
+      deletedIds: supprimables.filter((id) => partiesSet.has(id)),
+      skippedLiveIds,
+    });
+  } catch (err) {
+    console.error('[deleteExternalRunsAction]', err);
+    return fail('db_error', 'Failed to delete the runs');
   }
 }
 
@@ -967,8 +1208,12 @@ export async function getConversationThreadAction(
       const brut = diteFiles ? parsePresented(row.presented) : null;
       const bucket = rowsByRoot.get(root) ?? [];
       bucket.push({
-        ...row,
-        presented: redactPresented(row.presented),
+        // Les TROIS lectures d'une ligne passent par la MÊME porte : la carte,
+        // la sortie brute, l'entrée (Reviewer C, passe 3). Aucun écran ne rend
+        // la sortie de ces lignes aujourd'hui — mais « masquer ce qui se rend
+        // aujourd'hui » est exactement le raisonnement qui avait laissé le trou
+        // de #150. On masque à la porte, pas à l'usage.
+        ...redactAuditRow(row),
         rawFilePaths:
           brut !== null && brut.card === 'files' ? brut.files.map((f) => f.path) : undefined,
       });

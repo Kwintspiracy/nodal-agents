@@ -7,11 +7,14 @@
 //   - il ne le fait PAS quand le lecteur a remonté l'historique, sinon
 //     remonter devient impossible.
 
-import { describe, it, expect } from 'vitest';
-import {
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { act, createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import ThreadScroller, {
   staysAtBottom,
   scrollbarGutterOf,
   growthIsTheReaders,
+  scrollPolicy,
   AT_BOTTOM_SLACK_PX,
   READER_GESTURE_WINDOW_MS,
 } from '../ThreadScroller.tsx';
@@ -75,6 +78,20 @@ describe('growthIsTheReaders', () => {
   });
 });
 
+// Ce que l'écran demande à la zone : un FIL se lit par sa fin, un TABLEAU (la
+// page d'un run) s'ouvre en haut et ne bouge jamais tout seul. Le run
+// s'ouvrait déjà défilé, parce qu'il héritait des règles du chat (Quentin,
+// 18/09).
+describe('scrollPolicy', () => {
+  it('un fil s’ouvre en bas et suit ce qui arrive', () => {
+    expect(scrollPolicy('bottom')).toEqual({ jumpOnMount: true, followsGrowth: true });
+  });
+
+  it('un tableau ne saute nulle part et ne suit rien', () => {
+    expect(scrollPolicy('never')).toEqual({ jumpOnMount: false, followsGrowth: false });
+  });
+});
+
 // La gouttière que la saisie doit se réserver pour tomber sur le fil (Quentin,
 // 17/09 : la saisie était décalée d'une demi-barre vers la droite).
 describe('scrollbarGutterOf', () => {
@@ -88,5 +105,251 @@ describe('scrollbarGutterOf', () => {
 
   it('jamais négatif, quoi que le navigateur mesure', () => {
     expect(scrollbarGutterOf({ offsetWidth: 0, clientWidth: 12 })).toBe(0);
+  });
+});
+
+// ─── La décision qui n'est PAS une fonction pure ─────────────────────────────
+//
+// « Une croissance du lecteur éteint le suivi » ne se lit dans aucune des
+// fonctions ci-dessus : le drapeau vit dans une `ref` du composant, et il n'y
+// avait rien à exporter qui vaille — une fonction qui rend `false` ne prouve
+// rien. Alors le COMPOSANT est monté, avec un `ResizeObserver` qu'on tient et
+// une géométrie qu'on écrit, et on regarde ce qu'il fait de `scrollTop`.
+//
+// Ce que ces deux cas attrapent, et que le navigateur met neuf secondes à
+// montrer : un bloc plus court que `AT_BOTTOM_SLACK_PX` laissait le lecteur
+// « en bas », donc le suivi allumé, et la croissance SUIVANTE — un
+// rafraîchissement, 1,9 s plus tard — descendait le fil (mesuré le 18/09 sur
+// /chat et sur /spaces : `scrollTop` 2459 → 2603).
+
+/** Le `ResizeObserver` que le composant croit utiliser, et qu'on déclenche. */
+function captureResizeObserver(): { fire: () => void } {
+  const callbacks: Array<() => void> = [];
+  class FakeResizeObserver {
+    constructor(cb: () => void) {
+      callbacks.push(cb);
+    }
+    observe(): void {}
+    disconnect(): void {}
+  }
+  vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+  return {
+    fire: () => {
+      for (const cb of callbacks) cb();
+    },
+  };
+}
+
+/**
+ * Une géométrie ÉCRITE sur l'élément : jsdom ne pose aucune boîte, donc
+ * `scrollHeight` et consorts y valent zéro et `scrollTop` ne retient rien.
+ */
+function giveGeometry(
+  el: HTMLElement,
+  geometry: { scrollHeight: number; clientHeight: number; scrollTop: number },
+): { scrollTop: () => number; setScrollHeight: (v: number) => void } {
+  let scrollTop = geometry.scrollTop;
+  let scrollHeight = geometry.scrollHeight;
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+  Object.defineProperty(el, 'clientHeight', {
+    configurable: true,
+    get: () => geometry.clientHeight,
+  });
+  Object.defineProperty(el, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: (v: number) => {
+      scrollTop = v;
+    },
+  });
+  return {
+    scrollTop: () => scrollTop,
+    setScrollHeight: (v: number) => {
+      scrollHeight = v;
+    },
+  };
+}
+
+describe('ThreadScroller — ouvrir une boîte éteint le suivi @cap:parler-a-un-agent/ecran', () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(async () => {
+    if (root) await act(async () => root!.unmount());
+    container?.remove();
+    container = null;
+    root = null;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** Monte le fil, rend la zone et de quoi la piloter. */
+  async function mountThread(): Promise<{
+    el: HTMLElement;
+    fire: () => void;
+    geometry: ReturnType<typeof giveGeometry>;
+  }> {
+    const observer = captureResizeObserver();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(createElement(ThreadScroller, null, createElement('p', null, 'le fil')));
+    });
+    const el = container.querySelector<HTMLElement>('[data-thread-scroller]');
+    if (!el) throw new Error('aucune zone de défilement rendue');
+    // 3000 px de contenu, 800 px de fenêtre, le lecteur AU RAS DU BAS.
+    const geometry = giveGeometry(el, { scrollHeight: 3000, clientHeight: 800, scrollTop: 2200 });
+    // Un défilement, pour que le composant PARTE de cet état.
+    //
+    // Sans lui, le test ne prouvait rien : l'effet de montage écrit `scrollTop`
+    // avant que cette géométrie n'existe (jsdom ne pose aucune boîte, tout y
+    // vaut zéro), le composant retient donc « ma dernière position = 0 », et la
+    // première croissance est lue comme un GESTE DE DÉFILEMENT du lecteur — la
+    // branche d'avant celle qu'on veut éprouver. Les deux cas passaient alors
+    // avec l'ancienne décision comme avec la nouvelle.
+    await act(async () => {
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    return { el, fire: observer.fire, geometry };
+  }
+
+  it('un PETIT dépliage éteint le suivi : la croissance d’après ne descend plus le fil', async () => {
+    const { el, fire, geometry } = await mountThread();
+    const now = vi.spyOn(performance, 'now');
+
+    // Le lecteur clique DANS le fil : c'est le geste.
+    now.mockReturnValue(1_000);
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+
+    // Le bloc s'ouvre : 58 px, MOINS que la marge — c'est tout le cas.
+    geometry.setScrollHeight(3058);
+    expect(
+      3058 - geometry.scrollTop() - 800,
+      'le bloc doit être plus court que la marge, sinon ce cas ne prouve rien',
+    ).toBeLessThan(AT_BOTTOM_SLACK_PX);
+    now.mockReturnValue(1_100);
+    await act(async () => fire());
+    expect(geometry.scrollTop(), 'le dépliage a déplacé le lecteur').toBe(2200);
+
+    // 1,9 s plus tard : une arrivée ordinaire, hors de la fenêtre du geste.
+    geometry.setScrollHeight(3400);
+    now.mockReturnValue(1_000 + READER_GESTURE_WINDOW_MS + 1_100);
+    await act(async () => fire());
+
+    expect(
+      geometry.scrollTop(),
+      'le fil a suivi une arrivée alors que le lecteur venait d’ouvrir une boîte',
+    ).toBe(2200);
+  });
+
+  it('…et il se rallume quand le lecteur redescend jusqu’en bas', async () => {
+    const { el, fire, geometry } = await mountThread();
+    const now = vi.spyOn(performance, 'now');
+
+    now.mockReturnValue(1_000);
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+    geometry.setScrollHeight(3058);
+    now.mockReturnValue(1_100);
+    await act(async () => fire());
+    expect(geometry.scrollTop()).toBe(2200);
+
+    // Le lecteur redescend au ras du bas : `onScroll` rallume le suivi.
+    el.scrollTop = 3058 - 800;
+    await act(async () => {
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+
+    // L'arrivée suivante le suit de nouveau.
+    geometry.setScrollHeight(3400);
+    now.mockReturnValue(1_000 + READER_GESTURE_WINDOW_MS + 1_100);
+    await act(async () => fire());
+
+    expect(geometry.scrollTop(), 'revenu en bas, le lecteur devrait être suivi de nouveau').toBe(
+      3400,
+    );
+  });
+
+  it('le lecteur qui descend AVANT que son bloc se pose n’est pas déplacé par lui', async () => {
+    // Le défaut par l'AUTRE porte (Reviewer C, passe 2 de la PR #187). Le
+    // lecteur clique, puis descend en bas avant que le bloc n'ait grandi — une
+    // fraction de seconde, et un dépliage met déjà 46 ms à se poser. Si son
+    // défilement suffisait à faire de cette croissance une ARRIVÉE, le fil la
+    // suivrait et la boîte qu'il vient d'ouvrir remonterait : ce que cette PR
+    // répare, à un ordre d'événements près.
+    const { el, fire, geometry } = await mountThread();
+    const now = vi.spyOn(performance, 'now');
+
+    now.mockReturnValue(1_000);
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+
+    // Il descend en bas, DANS la fenêtre du geste, avant toute croissance.
+    el.scrollTop = 3000 - 800;
+    now.mockReturnValue(1_050);
+    await act(async () => {
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    expect(geometry.scrollTop()).toBe(2200);
+
+    // Le bloc se pose enfin, toujours dans la fenêtre.
+    geometry.setScrollHeight(3400);
+    now.mockReturnValue(1_150);
+    await act(async () => fire());
+
+    expect(
+      geometry.scrollTop(),
+      'la croissance du bloc a déplacé le lecteur qui venait de l’ouvrir',
+    ).toBe(2200);
+  });
+
+  it('le lecteur qui redescend ENTRE deux croissances d’un même dépliage reste suivi', async () => {
+    // Un dépliage arrive souvent en DEUX temps : le bloc, puis son corps
+    // quelques dizaines de millisecondes plus tard (mesuré : t=0 ms, t=46 ms).
+    // Si le lecteur descend en bas entre les deux, la SECONDE croissance est
+    // encore dans la fenêtre du geste — et sans le drapeau « il a défilé
+    // depuis » elle rééteignait le suivi qu'il venait de rallumer, sans que
+    // rien ne le rallume ensuite. Attrapé par le cas B de
+    // `thread-unfold-keeps-scroll.spec.ts`, arrivé par la PR #169 et mergé
+    // avant celle-ci.
+    const { el, fire, geometry } = await mountThread();
+    const now = vi.spyOn(performance, 'now');
+
+    now.mockReturnValue(1_000);
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+
+    // Premier temps du dépliage.
+    geometry.setScrollHeight(3400);
+    now.mockReturnValue(1_050);
+    await act(async () => fire());
+
+    // Le lecteur descend jusqu'en bas, DANS la fenêtre du geste.
+    el.scrollTop = 3400 - 800;
+    now.mockReturnValue(1_100);
+    await act(async () => {
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+
+    // Second temps du dépliage, toujours dans la fenêtre.
+    geometry.setScrollHeight(3600);
+    now.mockReturnValue(1_150);
+    await act(async () => fire());
+
+    // Et l'arrivée suivante, bien après : elle doit le suivre.
+    geometry.setScrollHeight(4000);
+    now.mockReturnValue(1_000 + READER_GESTURE_WINDOW_MS + 1_000);
+    await act(async () => fire());
+
+    expect(
+      geometry.scrollTop(),
+      'le lecteur était en bas et n’a pas été suivi : la queue du dépliage a éteint le suivi',
+    ).toBe(4000);
   });
 });

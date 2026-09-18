@@ -380,12 +380,12 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
   });
 });
 
-/** Les runs venus de dehors, tels que la page du dossier les reçoit. */
+/** La PREMIÈRE page des runs venus de dehors, telle que la page la reçoit. */
 async function runsDeDehors() {
   const { listExternalRunsAction } = await import('../conversation-actions.ts');
   const result = await listExternalRunsAction();
   if (!result.ok) throw new Error(result.message);
-  return result.data;
+  return result.data.runs;
 }
 
 describe('le dossier MCP lit ce que la base en dit @cap:parler-par-canal-externe/moteur', () => {

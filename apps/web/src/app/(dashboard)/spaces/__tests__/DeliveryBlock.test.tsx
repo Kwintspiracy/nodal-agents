@@ -317,6 +317,11 @@ describe('DeliveryBlock — ce que l’écran dessine', () => {
     expect(html).toContain('Delivered');
     expect(html).not.toContain('Delivery summary');
     expect(html).toContain('Not verified');
+    // Le crochet reste VERT : il dit « livré », pas « vérifié » — c'est la
+    // pastille qui dit la preuve (Quentin, 18/09). Gris, un run livré sans
+    // preuve avait l'air éteint.
+    expect(html).toMatch(/<svg[^>]*class="[^"]*text-ok/);
+    expect(html).not.toMatch(/<svg[^>]*class="[^"]*text-ink-4/);
     expect(html).not.toContain('Tests');
     expect(html).not.toContain('Proof');
     expect(html).not.toContain('Reviewed by');

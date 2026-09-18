@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { blocksFromContent } from '../JobMessages';
+import { blocksFromContent } from '../transcript-blocks.ts';
 
 describe('blocksFromContent — tool-result extraction across SDK shapes', () => {
   it('extracts payload from AI SDK v6 shape (output.value)', () => {

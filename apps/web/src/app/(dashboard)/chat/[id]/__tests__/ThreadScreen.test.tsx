@@ -71,6 +71,30 @@ describe('ThreadScreen @cap:parler-a-un-agent/ecran', () => {
     expect(slot.className).toContain('relative');
   });
 
+  it('un fil suit le bas par défaut, et le dit dans le DOM', async () => {
+    // La page d'un run demande l'inverse (`follow="never"`) ; sans défaut
+    // explicite ici, les deux écrans auraient divergé en silence.
+    await render(
+      <ThreadScreen composer={<div>la saisie</div>}>
+        <p>le fil</p>
+      </ThreadScreen>,
+    );
+    expect(container.querySelector('[data-thread-scroller]')?.getAttribute('data-follow')).toBe(
+      'bottom',
+    );
+  });
+
+  it('un écran qui ne suit pas le bas le dit aussi', async () => {
+    await render(
+      <ThreadScreen follow="never">
+        <p>le tableau</p>
+      </ThreadScreen>,
+    );
+    expect(container.querySelector('[data-thread-scroller]')?.getAttribute('data-follow')).toBe(
+      'never',
+    );
+  });
+
   it('le fil publie sa gouttière sur le parent, en pixels', async () => {
     await render(
       <ThreadScreen composer={<div>la saisie</div>}>

@@ -40,7 +40,6 @@ import { groupChatLists } from '@/lib/chat-list.ts';
 import { folderOfWork, MCP_FOLDER } from '@/lib/chat-folders.ts';
 import { chatFolderView, folderSubtitle } from './folder-view.ts';
 import { conversationRows } from './conversation-rows.ts';
-import { runRows, runningCount } from './run-rows.ts';
 import ChannelChatsTable from './ChannelChatsTable.tsx';
 import ChatListNotices from './ChatListNotices.tsx';
 import ConversationsList from './ConversationsList.tsx';
@@ -107,9 +106,11 @@ export default async function ChatPage({
   const shownChannels =
     view.channel === null ? channels : channels.filter((c) => c.channel === view.channel);
 
-  // Les runs venus de dehors. `runsRead` vaut `null` hors du dossier MCP — ce
-  // n'est PAS un échec, et le bandeau ne doit donc pas s'allumer.
-  const runs: ExternalRunRow[] = runsRead !== null && runsRead.ok ? runsRead.data : [];
+  // La PREMIÈRE page des runs venus de dehors (#183). `runsRead` vaut `null`
+  // hors du dossier MCP — ce n'est PAS un échec, et le bandeau ne doit donc pas
+  // s'allumer.
+  const runs: ExternalRunRow[] = runsRead !== null && runsRead.ok ? runsRead.data.runs : [];
+  const runsCursor = runsRead !== null && runsRead.ok ? runsRead.data.nextCursor : null;
   const runsUnreadable = runsRead !== null && !runsRead.ok;
 
   // Ce que la personne attend, rangé par la MÊME règle que le menu.
@@ -122,15 +123,21 @@ export default async function ChatPage({
   // attentes viennent des approbations rangées par la règle du menu, les runs
   // du même instantané.
   //
-  // Le dossier MCP compte ses RUNS, et les compte SUR SES LIGNES : le menu,
-  // lui, compte aussi ce qui dépasse le plafond de la liste, et deux chiffres
-  // différents sous le même mot ne se lisent plus.
+  // Le dossier MCP compte ses RUNS — TOUS, pas ceux de la page chargée (#183).
+  // Depuis la pagination, « 50 runs » sous le titre d'un dossier qui en porte
+  // cent dirait la taille d'une page, pas celle du dossier ; et le chiffre
+  // changerait à chaque « Load more ». C'est le même compte que le menu, donc
+  // le même que la barre latérale affiche à côté.
   const subtitle =
     view.key === null
       ? 'Your channels, and the conversations you started here.'
       : view.showRuns
         ? (folderSubtitle(
-            { conversations: runs.length, waiting: waitingHere, running: runningCount(runs) },
+            {
+              conversations: folders.ok ? folders.data.externalRuns : runs.length,
+              waiting: waitingHere,
+              running: folders.ok ? (folders.data.running[MCP_FOLDER] ?? 0) : 0,
+            },
             'run',
           ) ?? undefined)
         : (folderSubtitle({
@@ -167,7 +174,16 @@ export default async function ChatPage({
     return (
       <PageShell title={view.title} subtitle={subtitle}>
         <ChatListNotices runsUnreadable={runsUnreadable} waitingUnreadable={!approvals.ok} />
-        <RunsFolderList rows={runRows({ runs, waiting: approvals.ok ? approvals.data : [] })} />
+        {/* Les LIGNES se construisent côté client, avec la même règle : c'est
+            lui qui reçoit les pages suivantes, et deux constructions de la
+            même ligne auraient divergé au premier correctif. Les attentes,
+            elles, sont celles que la page a déjà lues — elles valent pour
+            toutes les pages, une demande se rattachant à son job de tête. */}
+        <RunsFolderList
+          initialRuns={runs}
+          initialCursor={runsCursor}
+          waiting={approvals.ok ? approvals.data : []}
+        />
       </PageShell>
     );
   }

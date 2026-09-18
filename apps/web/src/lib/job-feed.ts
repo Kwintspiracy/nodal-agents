@@ -30,6 +30,27 @@ import { redactPresented } from './redact-presented.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
+/**
+ * La base, OU une transaction ouverte dessus.
+ *
+ * Dérivé de `Db` plutôt qu'importé de drizzle : le type d'une transaction est
+ * celui que `db.transaction` passe à son rappel, quel que soit le pilote. Une
+ * lecture qui doit pouvoir se faire DANS une transaction — la descendance d'un
+ * job juste avant de le supprimer — s'écrit avec ce type et sert les deux.
+ */
+export type DbOrTx = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/**
+ * CE QU'UN RUN A RENDU, masqué comme sa transcription l'est déjà (#194, revue
+ * passe 1). La page d'un job masquait `result` et `error` depuis toujours
+ * (`jobs/[id]/page.tsx`) ; le fil, lui, les posait BRUTS — et c'est le fil
+ * qu'on lit. Un `run_command` qui échoue en recopiant `ANTHROPIC_API_KEY=…`
+ * dans son message d'erreur s'affichait donc masqué d'un écran, en clair de
+ * l'autre. Une seule porte, celle par où les lignes entrent dans le fil.
+ */
+function redactedText(value: string | null): string | null {
+  return value === null ? null : redactSecretsInText(value);
+}
 
 /** Le job tel que la requête d'appel le rend : la ligne, plus l'agent joint. */
 export type JobFeedInput = {
@@ -63,7 +84,10 @@ export type DescendantJob = {
  * P2, passe 20). Chaque ligne porte sa trace D8 des surfaces décochées.
  */
 export async function collectDescendants(
-  db: Db,
+  // `DbOrTx` : la suppression des runs venus de dehors appelle cette marche
+  // DANS sa transaction, pour que la descendance et la vérification qui suit
+  // voient le même état (#183, Reviewer C passe 2).
+  db: DbOrTx,
   entityId: string,
   rootIds: readonly string[],
 ): Promise<DescendantJob[]> {
@@ -97,6 +121,28 @@ export async function collectDescendants(
       next.push(r.id);
     }
     frontier = next;
+  }
+  // La borne est ATTEINTE avec des enfants encore devant : la descendance
+  // rendue est INCOMPLÈTE, et le dire vaut mieux que la rendre en silence
+  // (invariant #4, Reviewer C sur la PR #185). Aucun appelant ne peut le
+  // deviner d'une liste qui a l'air normale — et pour celui qui SUPPRIME, la
+  // conséquence serait des délégués orphelins que plus aucun run ne porte.
+  //
+  // Un avertissement, pas une exception : cette fonction sert d'abord à
+  // DESSINER des fils, et refuser d'afficher une conversation parce qu'une
+  // chaîne est trop profonde serait pire que l'afficher tronquée. Les appelants
+  // à qui l'incomplétude coûte cher posent leur propre garde —
+  // `deleteExternalRunsAction` demande à la base s'il reste un orphelin, et
+  // refuse.
+  if (frontier.length > 0) {
+    // Les IDENTIFIANTS, pas seulement leur nombre (Reviewer C, passe 2) : un
+    // compte dit qu'il y a un problème, une liste dit par où commencer à
+    // regarder. Bornée à dix, parce qu'un journal n'est pas un export.
+    const devant = frontier.slice(0, 10).join(', ');
+    const reste = frontier.length > 10 ? ` (+${frontier.length - 10} more)` : '';
+    console.warn(
+      `[job-feed] collectDescendants stopped at ${ROLLUP_MAX_DEPTH} levels with ${frontier.length} job(s) still below — the descendants returned are incomplete. Still ahead: ${devant}${reste}`,
+    );
   }
   return descendants;
 }
@@ -289,8 +335,8 @@ export async function assembleJobFeeds(
         channel: job.channel,
         chatId: job.chatId,
         status: job.status,
-        result: job.result,
-        error: job.error,
+        result: redactedText(job.result),
+        error: redactedText(job.error),
         agentName: input.agentName,
         agentSlug: input.agentSlug,
         agentAvatarUrl: input.agentAvatarUrl,
@@ -300,7 +346,10 @@ export async function assembleJobFeeds(
         scheduleName,
         children: (childrenByJob.get(job.id) ?? []).map((c) => {
           const childFeed = childFeedById.get(c.id);
-          return childFeed === undefined ? c : { ...c, feed: childFeed };
+          // Le délégué passe par la même rédaction que sa tête : son échec se
+          // lit dans le bloc de la délégation, exactement comme celui du job.
+          const child = { ...c, result: redactedText(c.result), error: redactedText(c.error) };
+          return childFeed === undefined ? child : { ...child, feed: childFeed };
         }),
       },
       // La sortie brute ET la CARTE, masquées ensemble : la carte est bâtie à

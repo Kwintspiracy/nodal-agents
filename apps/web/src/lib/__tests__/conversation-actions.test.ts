@@ -29,7 +29,7 @@ import {
   eq,
   sql,
 } from '@nodal-agents/db';
-import { projectKey } from '@nodal-agents/shared';
+import { projectKey, REDACTED_TEXT } from '@nodal-agents/shared';
 import type { FeedItem } from '../conversation-feed.ts';
 
 /** Le fil tel qu'on le lit DÉPLIÉ : le travail d'un job vit dans un item
@@ -1435,6 +1435,125 @@ describe('getConversationThreadAction — les secrets d’une carte (#150)', () 
     // Le récapitulatif nomme le même chemin masqué, et n'en compte qu'un.
     expect(encart.summary.files).toBe(1);
     expect(encart.summary.filePaths).toEqual(['cles/[secret masqué] (sk-).txt']);
+    expect(JSON.stringify(r.data.feed)).not.toContain(secret);
+  });
+
+  it('l’ÉCHEC d’un run, et celui de son délégué, partent masqués eux aussi (#194)', async () => {
+    // Reviewer C sur #194. Fuite préexistante : la page d'un job masquait
+    // `result` et `error` (`jobs/[id]/page.tsx`), le fil les posait BRUTS — et
+    // c'est le fil qu'on lit. Un outil qui échoue en recopiant une variable
+    // d'environnement dans son message d'erreur suffisait.
+    const secret = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345'; // secrets:allow (fixture : clé factice)
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Run en échec',
+        origin: 'user',
+        channel: 'telegram',
+        chatId: 'secret-194',
+        createdAt: new Date('2026-09-18T09:00:00Z'),
+        updatedAt: new Date('2026-09-18T09:10:00Z'),
+      })
+      .returning({ id: conversations.id });
+
+    const [job] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'secret-194',
+        conversationId: conv!.id,
+        task: 'Appelle l’API',
+        status: 'failed',
+        error: `command failed: ANTHROPIC_API_KEY=${secret}`,
+        messages: [{ role: 'user', content: 'Appelle l’API' }],
+        createdAt: new Date('2026-09-18T09:00:00Z'),
+        completedAt: new Date('2026-09-18T09:01:00Z'),
+      })
+      .returning({ id: agentJobs.id });
+
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: job!.id,
+      channel: 'internal',
+      task: 'Sous-tâche',
+      status: 'failed',
+      error: `child failed: ANTHROPIC_API_KEY=${secret}`,
+      createdAt: new Date('2026-09-18T09:00:30Z'),
+      completedAt: new Date('2026-09-18T09:00:45Z'),
+    });
+
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(conv!.id);
+    if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
+
+    // Le fil du run : l'item d'échec porte le texte masqué, pas la clé.
+    const echec = r.data.feed.items.find((i) => i.kind === 'failure');
+    if (echec?.kind !== 'failure') throw new Error('item failure attendu');
+    expect(echec.text).not.toContain(secret);
+    expect(echec.text).toContain(REDACTED_TEXT);
+
+    // Le bloc de la délégation rend `job.error` du délégué : même masquage.
+    // La délégation vit DANS le groupe de travail du tour (#135), pas à la
+    // racine du fil : on la cherche aux deux niveaux.
+    const plats: FeedItem[] = r.data.feed.items.flatMap((i) =>
+      i.kind === 'run' ? [i, ...i.items] : [i],
+    );
+    const enfant = plats.find((i) => i.kind === 'child');
+    if (enfant?.kind !== 'child') throw new Error('item child attendu');
+    expect(enfant.job.error).not.toContain(secret);
+    expect(enfant.job.error).toContain(REDACTED_TEXT);
+
+    expect(JSON.stringify(r.data.feed)).not.toContain(secret);
+  });
+
+  it('un échec SANS code d’erreur retombe sur son résultat, masqué lui aussi (#194)', async () => {
+    // L'item d'échec prend `job.error ?? job.result` : un run qui meurt sans
+    // code d'erreur affiche donc son RÉSULTAT. Rédiger `error` seul aurait
+    // laissé cette porte-là ouverte (revue passe 2).
+    const secret = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA98765'; // secrets:allow (fixture : clé factice)
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Run en échec sans code',
+        origin: 'user',
+        channel: 'telegram',
+        chatId: 'secret-194-result',
+        createdAt: new Date('2026-09-18T11:00:00Z'),
+        updatedAt: new Date('2026-09-18T11:10:00Z'),
+      })
+      .returning({ id: conversations.id });
+
+    await testDb.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: 'secret-194-result',
+      conversationId: conv!.id,
+      task: 'Appelle l’API',
+      status: 'failed',
+      error: null,
+      result: `stopped while writing ANTHROPIC_API_KEY=${secret}`,
+      messages: [{ role: 'user', content: 'Appelle l’API' }],
+      createdAt: new Date('2026-09-18T11:00:00Z'),
+      completedAt: new Date('2026-09-18T11:01:00Z'),
+    });
+
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(conv!.id);
+    if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
+
+    const echec = r.data.feed.items.find((i) => i.kind === 'failure');
+    if (echec?.kind !== 'failure') throw new Error('item failure attendu');
+    expect(echec.text).toContain('stopped while writing');
+    expect(echec.text).not.toContain(secret);
+    expect(echec.text).toContain(REDACTED_TEXT);
     expect(JSON.stringify(r.data.feed)).not.toContain(secret);
   });
 });

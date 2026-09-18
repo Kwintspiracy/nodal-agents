@@ -67,6 +67,16 @@ const carte = (o) => ({
   ...o,
 });
 
+/**
+ * L'instant où ce rendu tourne, à une heure près.
+ *
+ * Depuis #176, « Done » est une FENÊTRE de sept jours : une carte finie se
+ * montre parce qu'elle vient d'être finie, et une carte sans date de fin se
+ * replie. Les fixtures finies portent donc une date relative au rendu, et non
+ * une date en dur qui sortirait de la fenêtre dès la semaine suivante.
+ */
+const TOUT_A_LHEURE = new Date(Date.now() - 3600_000).toISOString();
+
 /** Les cartes qui exercent les deux rendus, et rien d'autre : la page est lisible. */
 const CARTES = [
   carte({ numero: 68, titre: 'Publish 0.8.9 to npm' }),
@@ -77,6 +87,7 @@ const CARTES = [
     titre: 'Closed agent card with no proof',
     etat: 'CLOSED',
     colonne: 'Done',
+    finiLe: TOUT_A_LHEURE,
     parUnAgent: true,
     faitsVerifies: false,
   }),
@@ -398,6 +409,7 @@ describe('où en est la revue, SUR la carte (#128)', () => {
             titre: 'A PR already merged',
             etat: 'MERGED',
             colonne: 'Done',
+            finiLe: TOUT_A_LHEURE,
             revue: REVUE_OK,
           }),
         ],
@@ -473,5 +485,224 @@ describe('ce que le portail n’a pas su lire de la revue, il le dit (revue C de
     expect(t).toContain('review state partly unreadable');
     // La carte dit les DEUX choses : rien de lu, et une raison de s'en méfier.
     expect(t).toContain('not reviewed yet');
+  });
+});
+
+describe('« Done » est une fenêtre, et les PR mergées y sont (#176)', () => {
+  // Le 16/09/2026 : huit issues fermées et six PR mergées le même jour. La
+  // colonne en montrait huit, par numéro décroissant, donc aucune des PR.
+  const ilYA = (heures) => new Date(Date.now() - heures * 3600_000).toISOString();
+
+  const JOURNEE = [
+    ...Array.from({ length: 8 }, (_, k) =>
+      carte({
+        numero: 109 + k,
+        titre: `Closed issue ${k}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: ilYA(k + 1),
+      }),
+    ),
+    ...[103, 112, 113, 114, 118, 120].map((n, k) =>
+      carte({
+        type: 'pr',
+        numero: n,
+        titre: `Merged PR ${n}`,
+        etat: 'MERGED',
+        colonne: 'Done',
+        finiLe: ilYA(k + 1.5),
+      }),
+    ),
+    // Et l'histoire d'avant, qui doit se replier sans faire de bruit.
+    ...Array.from({ length: 61 }, (_, k) =>
+      carte({
+        numero: 10 + k,
+        titre: `Old closed issue ${k}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: new Date(Date.now() - (30 + k) * 86_400_000).toISOString(),
+      }),
+    ),
+  ];
+
+  let html = '';
+  beforeAll(() => {
+    html = rendre({
+      ...INSTANTANE,
+      chantiers: { ...(SOCLE.chantiers ?? {}), cartes: JOURNEE },
+    });
+  });
+
+  it('les six PR mergées du jour sont SUR la page', () => {
+    for (const n of [103, 112, 113, 114, 118, 120]) {
+      expect(html, `PR #${n} absente`).toContain(`PR #${n}</span>`);
+    }
+  });
+
+  it('les quatorze cartes du jour sont montrées, et le reste est replié sous son compte', () => {
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne.match(/class="ticket /g) ?? []).toHaveLength(14);
+    expect(colonne).toContain('+ 61 older');
+    expect(colonne).toContain('last 7 days, newest first');
+  });
+
+  it('la colonne compte TOUT, même ce qu’elle ne montre pas', () => {
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne).toContain('<span class="compte">75</span>');
+  });
+
+  it('les cartes se suivent du plus récemment fini au plus ancien', () => {
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    const numeros = [...colonne.matchAll(/>(?:PR )?#(\d+)<\/span>/g)].map((m) => Number(m[1]));
+    // Une heure sépare chaque carte : l'ordre attendu est donc connu d'avance,
+    // et il ENTRELACE les deux familles.
+    expect(numeros).toEqual([109, 103, 110, 112, 111, 113, 112, 114, 113, 118, 114, 120, 115, 116]);
+  });
+});
+
+describe('ce que la colonne DIT de ce qu’elle replie (revue C de #188)', () => {
+  it('nomme séparément les plus anciennes et celles qu’elle ne sait pas dater', () => {
+    const vieille = (n) =>
+      carte({
+        numero: n,
+        titre: `Old ${n}`,
+        etat: 'CLOSED',
+        colonne: 'Done',
+        finiLe: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      });
+    const html = rendre({
+      ...INSTANTANE,
+      chantiers: {
+        ...(SOCLE.chantiers ?? {}),
+        cartes: [
+          carte({
+            numero: 1,
+            titre: 'Closed yesterday',
+            etat: 'CLOSED',
+            colonne: 'Done',
+            finiLe: new Date(Date.now() - 86_400_000).toISOString(),
+          }),
+          vieille(2),
+          vieille(3),
+          carte({ numero: 4, titre: 'Closed, date unknown', etat: 'CLOSED', colonne: 'Done' }),
+        ],
+      },
+    });
+    const colonne = html.slice(html.indexOf('>Done<'), html.indexOf('>Abandoned<'));
+    expect(colonne).toContain('+ 2 older, 1 with no closing date');
+    expect(colonne).not.toContain('+ 3 older');
+  });
+});
+
+describe('la release, SUR la page, et son filtre (#177)', () => {
+  const CARTES_RELEASE = [
+    carte({ numero: 117, titre: 'In 0.8.10', release: '0.8.10' }),
+    carte({
+      type: 'pr',
+      numero: 114,
+      titre: 'Its PR, merged',
+      etat: 'MERGED',
+      colonne: 'Done',
+      release: '0.8.10',
+    }),
+    carte({ numero: 190, titre: 'In the next one', release: '0.9.0' }),
+    carte({ numero: 191, titre: 'Attached to nothing', release: null }),
+  ];
+
+  let html = '';
+  beforeAll(() => {
+    html = rendre({
+      ...INSTANTANE,
+      chantiers: { ...(SOCLE.chantiers ?? {}), cartes: CARTES_RELEASE },
+    });
+  });
+
+  it('chaque carte porte sa release, et celle qui n’en a pas le DIT', () => {
+    expect(html).toContain('>0.8.10</span>');
+    expect(html).toContain('>0.9.0</span>');
+    expect(html).toContain('>no release</span>');
+  });
+
+  it('le filtre propose chaque release, avec le nombre de cartes qu’elle porte', () => {
+    const filtre = html.slice(html.indexOf('filtre-release'), html.indexOf('<div class="kanban"'));
+    expect(filtre).toContain('All releases');
+    expect(filtre).toContain('0.8.10 <b>2</b>');
+    expect(filtre).toContain('0.9.0 <b>1</b>');
+    expect(filtre).toContain('no release <b>1</b>');
+    // La plus récente en premier : `0.9.0` avant `0.8.10`.
+    expect(filtre.indexOf('0.9.0 <b>')).toBeLessThan(filtre.indexOf('0.8.10 <b>'));
+  });
+
+  it('chaque carte dit à quelle release elle appartient, pour que le filtre la trouve', () => {
+    expect(html).toContain('data-release="0.8.10"');
+    expect(html).toContain('data-release="no release"');
+  });
+
+  it('le filtre MASQUE des cartes déjà rendues, il ne recalcule pas le tableau', () => {
+    // Deux vérités pour un même chiffre seraient pires que pas de filtre : les
+    // comptes de colonne restent ceux du tableau entier, et le filtre ne fait
+    // que cacher des cartes qui sont là.
+    const kanban = html.slice(html.indexOf('<div class="kanban"'));
+    const aFaire = kanban.slice(kanban.indexOf('>To do<'), kanban.indexOf('>In progress<'));
+    expect(aFaire).toContain('<span class="compte">3</span>');
+    expect(html.slice(html.lastIndexOf('filtre-release__choix'))).toContain('t.hidden =');
+  });
+
+  it('une carte écartée DISPARAÎT : la feuille de style honore `hidden` (#205)', () => {
+    // Le script pose `hidden`, mais `.ticket{display:flex}` est une règle
+    // d'auteur, et elle bat le `[hidden]{display:none}` du navigateur : la
+    // pastille s'allumait, l'adresse changeait, aucune carte ne bougeait (vu
+    // par le propriétaire, 18/09). La feuille doit donc le dire elle-même.
+    const style = html.slice(html.indexOf('<style'), html.indexOf('</style>'));
+    expect(style).toContain('.ticket{display:flex');
+    expect(style).toContain('.ticket[hidden]{display:none}');
+  });
+});
+
+describe('l’adresse porte la release, et la PAGE la relit (revue C de #192)', () => {
+  // Pas de DOM dans ce paquet, et en ajouter un pour un test serait une
+  // dépendance de plus sur le portail. Ce qui est éprouvé ici est donc le CODE
+  // QUE LA PAGE EMBARQUE : `build.mjs` inscrit les deux fonctions de `lib.mjs`
+  // telles quelles, ce test les extrait du HTML rendu et les exécute. Une page
+  // qui n'aurait plus la logique du hash ne peut pas passer.
+  let lireHash;
+  let ecrireHash;
+
+  beforeAll(() => {
+    const html = rendre(INSTANTANE);
+    const prendre = (nom) => {
+      const debut = html.indexOf(`function ${nom}(`);
+      expect(debut, `${nom} absente de la page`).toBeGreaterThan(-1);
+      // Jusqu'à la déclaration suivante, ou la fin du script : la fonction est
+      // inscrite entière, accolades comprises.
+      const fin = html.indexOf('\n  function ', debut + 1);
+      return html.slice(debut, fin > debut ? fin : html.indexOf('</script>', debut));
+    };
+    lireHash = new Function(`${prendre('releaseDuHash')}; return releaseDuHash;`)();
+    ecrireHash = new Function(`${prendre('hashDeLaRelease')}; return hashDeLaRelease;`)();
+  });
+
+  it('la page sait lire une release dans l’adresse', () => {
+    expect(lireHash('#chantiers?release=0.9')).toBe('0.9');
+    expect(lireHash('#chantiers')).toBe('');
+  });
+
+  it('l’aller-retour tient, y compris sur « no release »', () => {
+    expect(lireHash(ecrireHash('0.8.10'))).toBe('0.8.10');
+    expect(lireHash(ecrireHash('no release'))).toBe('no release');
+    expect(ecrireHash('')).toBe('#chantiers');
+  });
+
+  it('la page applique le filtre au chargement, pas seulement au clic', () => {
+    // Sans cet appel, une adresse partagée ouvrirait le tableau entier et le
+    // lien ne vaudrait rien.
+    const html = rendre(INSTANTANE);
+    // Le filtre est posé AU DÉMARRAGE, juste après la vue : sans cet appel-là,
+    // une adresse partagée ouvrirait le tableau entier.
+    expect(html).toMatch(/montrer\(vueDuHash\(\) \|\| '#chantiers'\);\s*\n\s*appliquerFiltre\(\);/);
+    // Et l'adresse qui change le rejoue : sans quoi un retour en arrière du
+    // navigateur laisserait la page sur l'ancienne release.
+    expect(html).toContain("addEventListener('hashchange'");
+    expect(html).toContain('montrer(vueDuHash()); appliquerFiltre();');
   });
 });
