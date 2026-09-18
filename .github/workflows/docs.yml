@@ -43,9 +43,23 @@ on:
   # deploy », run 34944913597). Ici le contexte est celui de la branche de base.
   # Aucun code de la pull request n'est exécuté : le job fait `checkout` de
   # `main` explicitement, et ne rend que le portail.
+  #
+  # `unlabeled` et `edited` rejoignent la liste (#178) : le tableau lit les
+  # ÉTIQUETTES d'une pull request et son CORPS — c'est là que vit le
+  # « Closes #n » qui rattache une PR à son issue. Sans ces deux types, retirer
+  # une étiquette ou corriger un corps laissait la carte figée jusqu'au filet
+  # horaire, alors que POSER l'étiquette republiait aussitôt : une asymétrie que
+  # personne ne pouvait deviner depuis la page.
+  #
+  # TOUJOURS PAS `synchronize`, et c'est délibéré : il part à chaque poussée sur
+  # chaque PR ouverte, et chaque départ coûte un rendu complet des docs puis un
+  # déploiement Pages. Ce qu'il ferait bouger — l'état des vérifications — bouge
+  # de toute façon tout seul, sans qu'aucun événement ne le dise : c'est
+  # précisément ce que le filet horaire ci-dessous rattrape.
   pull_request_target:
     branches: [main]
-    types: [opened, closed, reopened, labeled, ready_for_review, converted_to_draft]
+    types:
+      [opened, closed, reopened, labeled, unlabeled, edited, ready_for_review, converted_to_draft]
   schedule:
     # Le filet : les états de la CI ne portent aucun événement d'issue, et un
     # webhook se perd. 41 et non 0 pour ne pas rejoindre la vague de l'heure.
