@@ -27,6 +27,7 @@ import { markDeliverablesProduced } from './verification/produced';
 import {
   changedFileTargets,
   observedDeliverableKeys,
+  dossiersNonConstates,
   snapshotFileTargets,
 } from './verification/observed';
 import { attachProductionToProject } from './projects/attach';
@@ -681,7 +682,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       //
       // « Réellement écrit » se CONSTATE (issue #60) : un fichier visé dont
       // l'empreinte n'a pas bougé n'est pas produit, quoi que l'outil ait dit.
-      const observed = observedDeliverableKeys({
+      const aConstater = {
         changedFiles: await changedFileTargets(mutationTargets, filesBefore ?? new Map()),
         dirTargets: mutationTargets.filter((t) => t.kind === 'dir'),
         workspaceRoots: (ctx.workspaces ?? []).map((w) => w.path),
@@ -689,7 +690,21 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // deux clés pour la même écriture, et `produced` reste faux sur un
         // fichier constaté (revue Codex post-merge de la PR #66, constat C4).
         isProjectRoot: projectRootPredicate(await loadDeclaredCodeRoots(ctx.db, ctx.entityId)),
-      });
+      };
+      const observed = observedDeliverableKeys(aConstater);
+      // Un dossier visé dont RIEN n'a été constaté se dit ici, par un code
+      // (issue #102, invariant #4). C'est le cas d'un `run_command` : son `cwd`
+      // ne crédite plus rien, et le silence serait exactement le faux vert
+      // qu'on vient de retirer. `markDeliverablesProduced` journalise de son
+      // côté les livrables nommés et non constatés ; cette ligne-ci nomme la
+      // CAUSE, qui n'est pas une panne d'écriture.
+      const sansConstat = dossiersNonConstates(aConstater);
+      if (sansConstat.size > 0) {
+        console.warn(
+          `[verification] VERIFICATION_DIR_NOT_CONSTATED tool=${auditTool.name} job=${ctx.jobId} ` +
+            `keys=${[...sansConstat].join(',')}`,
+        );
+      }
       await markDeliverablesProduced(ctx.db, ctx.jobId, mutationDeliverables, observed);
       await attachProductionToProject(
         {

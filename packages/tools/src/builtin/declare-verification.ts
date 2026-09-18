@@ -175,11 +175,24 @@ export const declareVerificationTool: ToolDefinition<
       };
     }
     if (!trace.produced) {
+      // Ce refus disait « the tool that targeted it reported a failure ».
+      // Depuis l'issue #102, c'est parfois faux, et c'est le prix assumé du
+      // correctif : une cible DOSSIER — le `cwd` d'un shell — ne crédite plus
+      // rien, puisque rien n'est lu sous un dossier. Un `run_command` qui a
+      // parfaitement réussi arrive donc ici, et lui répondre qu'il a échoué
+      // l'enverrait réparer un travail qui n'est pas cassé.
+      //
+      // La phrase dit maintenant le FAIT — aucune écriture constatée —, ce que
+      // le harnais lit et ne lit pas, et la sortie : nommer un fichier. Une
+      // absence dite, pas un verdict sur le travail (invariant #4).
       return {
         declared: false,
         reason:
-          `Nothing was successfully written to ${path} in this run: the tool that targeted it ` +
-          'reported a failure. Fix the work first, then declare how it is verified.',
+          `No write was constated in ${path} during this run. A write is constated by reading ` +
+          'the files a tool NAMES, before and after it runs; what a shell command writes under ' +
+          'its working directory is never read, so it supports nothing here. Write what proves ' +
+          'this project with a file tool, or name the file you wrote, then declare how it is ' +
+          'verified. If a tool did report a failure, fix that first.',
       };
     }
 

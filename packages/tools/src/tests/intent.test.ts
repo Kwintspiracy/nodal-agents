@@ -31,6 +31,7 @@ import { writeMutationIntent, codeProjectLockOrder } from '../verification/inten
 import { fileWriteTool } from '../builtin/file-ops/file-write';
 import { fileEditTool } from '../builtin/file-ops/file-edit';
 import { runCommandTool } from '../builtin/run-command';
+import { declareVerificationTool } from '../builtin/declare-verification';
 import { runSkillScriptTool } from '../builtin/run-skill-script';
 import { codeTaskTool } from '../builtin/code-task';
 import { OFFICE_TOOLS } from '../builtin/office-ops';
@@ -475,11 +476,15 @@ describe('l’intention de mutation, posée par executeTool', () => {
     expect(rows[0]!.addressed, 'la racine à manifeste EST le projet visé').toBe(true);
   });
 
-  it('une écriture RÉUSSIE marque le livrable comme produit', async () => {
-    // `produced` est ce qui autorisera `declare_verification` à dire comment on
-    // vérifie ce projet. Il n'est posé qu'ici, après le succès — et sur les
-    // seuls livrables NOMMÉS : une racine voisine salie par précaution ne
-    // devient pas quelque chose que ce travail a produit.
+  it('un shell qui n’écrit RIEN ne produit rien — son cwd ne le crédite plus (#102)', async () => {
+    // Ce test disait l'inverse jusqu'à l'issue #102 : `echo ok` dans `zeta`
+    // posait `produced` sur `zeta` sur la foi de la cible seule, alors que la
+    // commande n'a pas touché un octet, et `declare_verification` accordait
+    // ensuite à ce tour le droit de dire comment ce projet se vérifie.
+    //
+    // Rien n'est lu sous un dossier, donc une cible dossier ne crédite plus.
+    // Ce qui survit de l'ancien test est son autre moitié, et elle compte
+    // toujours : une racine voisine salie par PRÉCAUTION n'est pas produite.
     await mkdir(join(ws, 'zeta'), { recursive: true });
     await mkdir(join(ws, 'alpha'), { recursive: true });
 
@@ -491,12 +496,77 @@ describe('l’intention de mutation, posée par executeTool', () => {
     );
     expect(res.outcome === 'error' ? res.error : res.outcome).toBe('success');
 
-    const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r.produced]));
-    expect(parCle.get(keyOf(join(ws, 'zeta'))), 'le cwd visé est produit').toBe(true);
-    expect(parCle.get(keyOf(join(ws, 'alpha'))), 'une précaution n’est pas produite').toBe(false);
+    const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r]));
+    const zeta = parCle.get(keyOf(join(ws, 'zeta')));
+    expect(zeta?.addressed, 'le cwd a bien été VISÉ').toBe(true);
+    expect(zeta?.produced, 'mais rien n’y a été constaté').toBe(false);
+    expect(parCle.get(keyOf(join(ws, 'alpha')))?.produced, 'ni la précaution').toBe(false);
   });
 
-  it('un shell qui sort NON-ZÉRO marque quand même le projet produit', async () => {
+  it('un FICHIER écrit dans le même projet, lui, le produit', async () => {
+    // L'autre côté de #102, et la raison pour laquelle le correctif n'est pas
+    // un faux rouge : ce qu'un outil NOMME est lu avant et après, donc
+    // constaté. Le tour qui écrit vraiment garde son `produced`.
+    //
+    // Le manifeste fait de `zeta` un PROJET DE CODE : sans lui, le fichier
+    // écrit serait typé `document` (`written-file-type.ts`) et sa ligne d'état
+    // porterait une autre clé que celle du projet — le test passerait à côté.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+
+    const shell = await executeTool(
+      runCommandTool as never,
+      { purpose: 'test', command: 'echo ok', cwd: 'zeta' },
+      ctx(),
+      autoApprove('run_command'),
+    );
+    expect(shell.outcome === 'error' ? shell.error : shell.outcome).toBe('success');
+
+    const ecriture = await executeTool(
+      fileWriteTool as never,
+      { purpose: 'test', path: 'zeta/app.js', content: '// ce que le shell n’a pas écrit\n' },
+      ctx(),
+      autoApprove('file_write'),
+    );
+    expect(ecriture.outcome === 'error' ? ecriture.error : ecriture.outcome).toBe('success');
+
+    const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r]));
+    expect(parCle.get(keyOf(join(ws, 'zeta')))?.produced, 'le fichier est constaté').toBe(true);
+  });
+
+  it('et `declare_verification` le DIT au lieu d’accuser une panne (#102)', async () => {
+    // Le bout de la chaîne, sur de vraies lignes : un shell réussit dans un
+    // projet, rien n'y est constaté, et l'outil qui voudrait déclarer la preuve
+    // reçoit le FAIT — pas « l'outil qui le visait a rapporté un échec », qui
+    // enverrait réparer un travail intact.
+    await mkdir(join(ws, 'zeta'), { recursive: true });
+    await writeFile(join(ws, 'zeta', 'package.json'), '{"name":"zeta"}', 'utf8');
+
+    const shell = await executeTool(
+      runCommandTool as never,
+      { purpose: 'test', command: 'echo ok', cwd: 'zeta' },
+      ctx(),
+      autoApprove('run_command'),
+    );
+    expect(shell.outcome === 'error' ? shell.error : shell.outcome).toBe('success');
+
+    const etat = (await statesOf(jobId)).find((r) => r.canonicalKey === keyOf(join(ws, 'zeta')));
+    expect(etat?.addressed, 'le projet a bien été visé').toBe(true);
+    expect(etat?.produced).toBe(false);
+
+    const refus = (await declareVerificationTool.execute(
+      { project_path: join(ws, 'zeta'), commands: [{ command: 'node --check app.js' }] },
+      ctx(),
+    )) as { declared: boolean; reason?: string };
+    expect(refus.declared).toBe(false);
+    expect(refus.reason).toContain('No write was constated');
+    // Ce que le refus ne dit PLUS : une panne qui n'a pas eu lieu.
+    expect(refus.reason).not.toContain('reported a failure');
+    // Et la preuve n'est pas posée sur le projet.
+    expect((await projectRow(keyOf(join(ws, 'zeta'))))?.verifyCommands ?? null).toBeNull();
+  });
+
+  it('le code de sortie d’un shell ne décide de RIEN, dans un sens ni dans l’autre', async () => {
     // Revue Codex PR #49, passes 3 puis 4 — et la 4 renverse la 3.
     //
     // La passe 3 avait raison : un `exit 1` ne PROUVE pas qu'on a produit. La
@@ -505,11 +575,11 @@ describe('l’intention de mutation, posée par executeTool', () => {
     // `build && test` sort non-zéro sur un test rouge alors que le build a
     // écrit son dossier de sortie.
     //
-    // Juger sur le code de sortie refusait donc des productions réelles, et
-    // cassait au passage le rattachement du REGISTRE des projets, qui lit le
-    // même signal depuis la PR #46. Le statut d'un processus ne dit rien de ce
-    // qui a été écrit sur le disque ; le savoir demande de le CONSTATER, et
-    // c'est un mécanisme à part (backlog).
+    // La leçon tient toujours, et l'issue #102 la mène au bout : puisque le
+    // statut d'un processus ne dit rien de ce qui a été écrit, et que rien
+    // n'est lu sous le dossier où il a tourné, il n'y a RIEN à créditer — dans
+    // un sens comme dans l'autre. Avant, `exit 1` posait `produced` ; il ne le
+    // pose plus, pas plus que `exit 0`.
     await mkdir(join(ws, 'zeta'), { recursive: true });
 
     const res = await executeTool(
@@ -523,7 +593,7 @@ describe('l’intention de mutation, posée par executeTool', () => {
     const parCle = new Map((await statesOf(jobId)).map((r) => [r.canonicalKey, r]));
     const zeta = parCle.get(keyOf(join(ws, 'zeta')));
     expect(zeta?.addressed, 'le cwd a bien été VISÉ').toBe(true);
-    expect(zeta?.produced, 'et un code de sortie ne dit pas qu’il n’a rien écrit').toBe(true);
+    expect(zeta?.produced, 'et rien n’a été constaté sous lui').toBe(false);
   });
 
   it('une tentative qui n’écrit RIEN salit le projet sans le marquer produit', async () => {
