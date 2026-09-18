@@ -10,9 +10,9 @@
 // type d'entrée emprunté à la lib Code plutôt qu'un type jumeau.
 //
 // Un run d'automatisation n'a pas de relecture : la ligne se dessine quand
-// même, muette et non dépliable. Une section absente laisserait croire que la
-// relecture n'existe pas sur cet écran ; « 0 verdicts » dit qu'il n'y en a pas
-// eu (invariant #4 — jamais silencieux).
+// même, muette — et SANS chevron, puisqu'il n'y a rien dessous. Une section
+// absente laisserait croire que la relecture n'existe pas sur cet écran ;
+// « 0 verdicts » dit qu'il n'y en a pas eu (invariant #4 — jamais silencieux).
 
 import { useState } from 'react';
 import type { CodingVerdictView } from '@/lib/actions.ts';
@@ -45,7 +45,31 @@ export default function ReviewSection({
   const [open, setOpen] = useState(false);
   const status = verdictStatus(verdicts, reviewing);
   const last = verdicts[verdicts.length - 1] ?? null;
-  const openable = verdicts.length > 0;
+  const count = (
+    <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
+      {verdicts.length} {verdicts.length === 1 ? 'verdict' : 'verdicts'}
+    </span>
+  );
+
+  // RIEN À OUVRIR : la rangée n'est pas un bouton (Quentin, 18/09). Un chevron
+  // qui ne déplie rien se lit comme une panne, et le titre se cale alors sur
+  // ceux des autres sections — même gouttière de 16 px que « VERIFICATION » et
+  // « ACTIVITY », puisqu'il n'y a plus de chevron devant lui.
+  if (verdicts.length === 0) {
+    return (
+      <div
+        className="overflow-hidden rounded-xl border border-rule-2 bg-paper"
+        data-testid="review-section"
+      >
+        <div className="flex items-center gap-2 px-4 py-3">
+          <h2 className="shrink-0 text-mono-11 tracking-wider text-ink-4 uppercase">Review</h2>
+          {status !== null && <StatusPill variant={status.variant} label={status.label} />}
+          <span className="min-w-0 truncate text-body-13 text-ink-3">No review on this run</span>
+          {count}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -54,22 +78,16 @@ export default function ReviewSection({
     >
       <DisclosureButton
         open={open}
-        onClick={() => openable && setOpen((v) => !v)}
+        onClick={() => setOpen((v) => !v)}
         inset="tight"
         testId="review-row"
       >
         <span className="shrink-0 text-mono-11 tracking-wider text-ink-4 uppercase">Review</span>
         {status !== null && <StatusPill variant={status.variant} label={status.label} />}
-        {openable ? (
-          last?.summary !== null && last?.summary !== undefined && last.summary !== '' && !open ? (
-            <span className="min-w-0 truncate text-body-13 text-ink-3">{last.summary}</span>
-          ) : null
-        ) : (
-          <span className="min-w-0 truncate text-body-13 text-ink-3">No review on this run</span>
+        {last?.summary !== null && last?.summary !== undefined && last.summary !== '' && !open && (
+          <span className="min-w-0 truncate text-body-13 text-ink-3">{last.summary}</span>
         )}
-        <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
-          {verdicts.length} {verdicts.length === 1 ? 'verdict' : 'verdicts'}
-        </span>
+        {count}
       </DisclosureButton>
       {open && (
         <div className="space-y-3 border-t border-rule-2 px-4 py-4">

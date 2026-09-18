@@ -65,6 +65,8 @@ const VERDICT: CodingVerdictView = {
 describe('ReviewSection @cap:suivre-execution/ecran', () => {
   it('avec un verdict, un clic montre le constat, son fichier et sa ligne', async () => {
     const host = await mount(<ReviewSection verdicts={[VERDICT]} />);
+    // Il y a quelque chose dessous : la rangée EST un bouton.
+    expect(host.querySelectorAll('button')).toHaveLength(1);
     expect(host.textContent).toContain('1 verdict');
     expect(host.textContent).toContain('Two majors closed, one minor left.');
     expect(host.textContent).not.toContain('apps/web/src/lib/actions.ts:13398');
@@ -75,12 +77,17 @@ describe('ReviewSection @cap:suivre-execution/ecran', () => {
     expect(host.textContent).toContain('Raw tool output.');
   });
 
-  it('sans verdict, la ligne le dit et ne s’ouvre pas', async () => {
+  it('sans verdict, la ligne le dit — et n’est pas un bouton', async () => {
     const host = await mount(<ReviewSection verdicts={[]} />);
     expect(host.textContent).toContain('No review on this run');
     expect(host.textContent).toContain('0 verdicts');
-
-    await click(host.querySelector('[data-testid="review-row"]'));
-    expect(host.querySelector('[data-testid="review-verdict"]')).toBeNull();
+    // Rien à déplier, donc pas de chevron et pas de bouton : un chevron qui
+    // n'ouvre rien se lit comme une panne (Quentin, 18/09).
+    expect(host.querySelectorAll('button')).toHaveLength(0);
+    expect(host.querySelector('[data-testid="review-row"]')).toBeNull();
+    // Le titre se cale sur ceux des autres sections, à 16 px du bord.
+    const titre = host.querySelector('h2');
+    expect(titre?.textContent).toBe('Review');
+    expect(titre?.parentElement?.className).toContain('px-4');
   });
 });
