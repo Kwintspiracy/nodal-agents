@@ -22,7 +22,6 @@ import type {
   VerificationUnconfiguredView,
 } from '@/lib/verification-runs-view.ts';
 import { surfaceLabel } from '@/lib/verification-runs-view.ts';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { relativeTime } from '@/lib/format-time';
 
@@ -162,6 +161,16 @@ export default function VerificationSection({
   );
 }
 
+/**
+ * Une séquence de preuve, dessinée au tableau (#135, 18/09) : son verdict, la
+ * chose prouvée, son compte — puis ses commandes en LIGNES, sur le fond de la
+ * page, une par rang.
+ *
+ * Le tableau de cinq colonnes a disparu : une commande de preuve est longue
+ * (« pnpm --filter @nodal-agents/web exec vitest run … ») et quatre colonnes
+ * étroites la coupaient pour aligner trois nombres. Les mêmes faits, dans le
+ * même ordre — rang, commande, code de sortie, durée, verdict — sur une ligne.
+ */
 function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
   const tag = verdictTag(sequence.verdict);
   return (
@@ -169,7 +178,7 @@ function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
         <MonoMicroTag tone={tag.tone}>{tag.label}</MonoMicroTag>
         <span
-          className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink"
+          className="min-w-0 flex-1 truncate text-mono-13 text-ink"
           title={sequence.canonicalKey}
         >
           {sequence.canonicalKey}
@@ -179,36 +188,32 @@ function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
           {sequence.startedAt ? ` · ${relativeTime(sequence.startedAt)}` : ''}
         </span>
       </div>
-      <div className="overflow-x-auto">
-        <Table frame={false}>
-          <THead>
-            <Th>#</Th>
-            <Th>Command</Th>
-            <Th align="right">Exit</Th>
-            <Th align="right">Duration</Th>
-            <Th>Verdict</Th>
-          </THead>
-          <tbody>
-            {sequence.runs.map((r) => {
-              const t = verdictTag(r.verdict);
-              return (
-                <Tr key={`${r.sequenceId}:${r.commandRank}`}>
-                  <Td className="text-mono-11 text-ink-4">{r.commandRank}</Td>
-                  <Td className="font-mono text-body-13 text-ink">{r.command}</Td>
-                  <Td align="right" className="text-mono-11 text-ink-3">
-                    {exitLabel(r)}
-                  </Td>
-                  <Td align="right" className="text-mono-11 text-ink-3">
-                    {durationLabel(r.durationMs)}
-                  </Td>
-                  <Td>
-                    <MonoMicroTag tone={t.tone}>{t.label}</MonoMicroTag>
-                  </Td>
-                </Tr>
-              );
-            })}
-          </tbody>
-        </Table>
+      <div>
+        {sequence.runs.map((r) => {
+          const t = verdictTag(r.verdict);
+          return (
+            <div
+              key={`${r.sequenceId}:${r.commandRank}`}
+              className="flex flex-wrap items-center gap-2 border-t border-rule-2 bg-canvas px-4 py-2"
+              data-testid="verification-command"
+            >
+              <span className="shrink-0 text-mono-11 text-ink-4">{r.commandRank}</span>
+              <span className="min-w-0 flex-1 truncate text-mono-13 text-ink" title={r.command}>
+                {r.command}
+              </span>
+              {/* « exit 0 » quand la commande a rendu un code ; le mot seul
+                  quand elle n'en a pas rendu (« timeout ») — « exit timeout »
+                  ne veut rien dire. */}
+              <span className="shrink-0 text-mono-11 text-ink-3">
+                {r.outcomeKind === 'exit' ? `exit ${exitLabel(r)}` : exitLabel(r)}
+              </span>
+              <span className="shrink-0 text-mono-11 text-ink-3">
+                {durationLabel(r.durationMs)}
+              </span>
+              <MonoMicroTag tone={t.tone}>{t.label}</MonoMicroTag>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
