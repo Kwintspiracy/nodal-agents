@@ -58,6 +58,7 @@ const detail = (): CodingProcessDetail => ({
     projectPath: 'D:/APPS/NodalAI',
     projectName: 'NodalAI',
     projectId: 'project-1',
+    agentAvatarUrl: '/avatars/dev-c.png',
     sessionType: 'coding',
     durationMs: 408_000,
     inputTokens: 184_300,
@@ -83,7 +84,7 @@ const detail = (): CodingProcessDetail => ({
       toolOutput: '{"ok":true}',
       durationMs: 20,
       createdAt: '2026-09-18T09:59:30.000Z',
-      delegatedFrom: { jobId: 'child-1', agentName: 'Reviewer C' },
+      delegatedFrom: { jobId: 'child-1', agentName: 'Reviewer C', agentAvatarUrl: null },
     },
     {
       kind: 'turn',

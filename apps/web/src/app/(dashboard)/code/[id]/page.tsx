@@ -75,6 +75,7 @@ export default async function CodeProcessPage({ params }: Props) {
   return (
     <RunScreen
       avatarName={agentName}
+      avatarUrl={header.agentAvatarUrl}
       title={agentName !== '' ? `${agentName} · ${title}` : title}
       subtitle={threadSubtitle('code', at)}
       back={{ label: 'Back to Code', href: '/code' }}

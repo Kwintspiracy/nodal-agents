@@ -129,32 +129,35 @@ export function codeFilesHref(header: Pick<CodeHeader, 'projectId'>): string | n
 
 /**
  * Les agents qui ont travaillé : celui du process, puis les délégués nommés
- * par les lignes d'audit, dans l'ordre où ils paraissent. Dédoublonnés par nom
- * — le détail d'un process ne porte ni slug ni image, la barre montre donc des
- * initiales, jamais un portrait inventé.
+ * par les lignes d'audit, dans l'ordre où ils paraissent. Dédoublonnés par NOM
+ * — le détail d'un process ne porte pas de slug. Chacun avec son image quand il
+ * en a une (18/09) : la barre montre des visages, comme sur les deux autres
+ * pages de run ; sans image, ses initiales, jamais un portrait inventé.
  */
 export function codeAgents(
-  header: Pick<CodeHeader, 'agentName'>,
+  header: Pick<CodeHeader, 'agentName' | 'agentAvatarUrl'>,
   activity: readonly CodingActivityItem[],
 ): ThreadAgent[] {
   const out: ThreadAgent[] = [];
   const seen = new Set<string>();
-  const push = (name: string | null): void => {
+  const push = (name: string | null, avatarUrl: string | null): void => {
     if (name === null || name === '') return;
     if (seen.has(name)) return;
     seen.add(name);
-    out.push({ key: name, name, avatarUrl: null });
+    out.push({ key: name, name, avatarUrl });
   };
-  push(header.agentName);
+  push(header.agentName, header.agentAvatarUrl);
   for (const item of activity) {
-    if (item.kind === 'call') push(item.delegatedFrom?.agentName ?? null);
+    if (item.kind === 'call' && item.delegatedFrom) {
+      push(item.delegatedFrom.agentName, item.delegatedFrom.agentAvatarUrl);
+    }
   }
   return out;
 }
 
 /** Ce que la ligne d'Activity dit d'elle-même : « 11 steps · 2 agents · 6 min 48 ». */
 export function codeActivityLabel(
-  header: Pick<CodeHeader, 'agentName' | 'durationMs'>,
+  header: Pick<CodeHeader, 'agentName' | 'agentAvatarUrl' | 'durationMs'>,
   activity: readonly CodingActivityItem[],
 ): string {
   const agents = codeAgents(header, activity).length;

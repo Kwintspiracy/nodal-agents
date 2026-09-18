@@ -60,6 +60,7 @@ const detail = (): CodingProcessDetail => ({
     projectPath: null,
     projectName: null,
     projectId: null,
+    agentAvatarUrl: null,
     sessionType: 'coding',
     durationMs: 4200,
     inputTokens: 100,

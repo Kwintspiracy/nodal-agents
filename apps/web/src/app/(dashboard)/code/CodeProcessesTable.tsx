@@ -27,27 +27,23 @@
 // 'coding' — le regroupement est recalculé à chaque rafraîchissement.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   listCodingProcessesAction,
-  getCodingProcessDetailAction,
   setCodeProjectHiddenAction,
   renameCodeProjectAction,
   type CodeProjectPrefs,
   type CodingProcessRow,
-  type CodingProcessDetail as CodingProcessDetailData,
 } from '@/lib/actions.ts';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextButton from '@/components/ui/TextButton';
-import Select from '@/components/ui/Select';
 import TextInput from '@/components/ui/TextInput';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { projectKey } from '@nodal-agents/shared';
 import { relativeTime } from '@/lib/format-time';
-import CodeProcessDetail from './[id]/CodeProcessDetail.tsx';
-import { codeIsLive } from './[id]/code-run-view.ts';
 import ProjectVerificationPanel, { type ProjectVerification } from './ProjectVerificationPanel.tsx';
 
 const POLL_INTERVAL = 5000;
@@ -185,15 +181,12 @@ export default function CodeProcessesTable({
     verificationByKey(initialPrefs),
   );
   const [selected, setSelected] = useState<string | null>(null);
-  // Session ouverte dans le poste de travail projet ; null = la plus récente.
-  const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   /** Projet en cours de renommage (clé), et le texte saisi. */
   const [renaming, setRenaming] = useState<{ key: string; value: string } | null>(null);
 
   function openProjectView(key: string) {
     setSelected(key);
-    setSessionKey(null);
   }
 
   // A ref mirrors `rows` so the polling effect can read the latest list
@@ -343,13 +336,6 @@ export default function CodeProcessesTable({
   const openProject = selected ? projects.find((p) => p.key === selected) : null;
   if (openProject) {
     const sessions = openProject.sessions;
-    const effectiveKey =
-      sessionKey && sessions.some((s) => `${s.kind}-${s.id}` === sessionKey)
-        ? sessionKey
-        : sessions[0]
-          ? `${sessions[0].kind}-${sessions[0].id}`
-          : null;
-    const current = sessions.find((s) => `${s.kind}-${s.id}` === effectiveKey) ?? null;
     const filesTotal = sessions.reduce((n, s) => n + s.filesChanged, 0);
 
     return (
@@ -392,45 +378,22 @@ export default function CodeProcessesTable({
           />
         )}
 
-        {/* Sélecteur de session — le <select> natif DS, libellés COURTS et
-            une seule ligne (décision Quentin 25/08, option a : le contenu
-            riche appartient à l'écran en dessous, pas au sélecteur). */}
-        <Select
-          value={effectiveKey ?? ''}
-          onChange={(e) => setSessionKey(e.target.value)}
-          aria-label="Session"
-        >
-          {sessions.map((s) => {
-            const key = `${s.kind}-${s.id}`;
-            const type =
-              s.sessionType === 'pr_review'
-                ? 'PR review'
-                : s.sessionType === 'review'
-                  ? 'Review'
-                  : 'Coding';
-            return (
-              <option key={key} value={key}>
-                {type} · {s.agentName ?? 'Unknown agent'} · {stageLabel(s.stage)} ·{' '}
-                {relativeTime(s.activityAt)}
-              </option>
-            );
-          })}
-        </Select>
-
-        {/* La session sélectionnée, en PLEINE largeur, une seule colonne :
-            verdict de review condensé, diffs par fichier repliables, activité
-            chronologique de tous les agents — le même poste de travail que
-            /code/[id], embarqué. */}
-        {current ? (
-          <EmbeddedProcessDetail
-            key={effectiveKey}
-            query={current.kind === 'job' ? { jobId: current.id } : { sessionId: current.id }}
-          />
-        ) : (
-          <p className="rounded-xl border border-rule-2 bg-paper px-6 py-10 text-center text-body-14 text-ink-4">
-            No session in this project yet.
-          </p>
-        )}
+        {/* LES SESSIONS DU PROJET, une par ligne, chacune un lien vers SA PAGE
+            (18/09). Elles se dépliaient ici même, sous un sélecteur : un run
+            est une PAGE — c'est ce que font Scheduled et Activity — et le
+            corps d'un run porte la boîte d'une page entière, qui rétrécissait
+            à l'intérieur de celle-ci (Quentin : « tout ce qui est en dessous a
+            soudainement réduit en largeur »). */}
+        <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+          <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+            Sessions{sessions.length > 0 ? ` · ${sessions.length}` : ''}
+          </h2>
+          {sessions.length === 0 ? (
+            <p className="px-4 py-6 text-body-13 text-ink-4">No session in this project yet.</p>
+          ) : (
+            sessions.map((s) => <SessionRow key={`${s.kind}-${s.id}`} session={s} />)
+          )}
+        </div>
       </div>
     );
   }
@@ -622,73 +585,39 @@ function ProjectCard({
 // natif sobre : « le contenu riche appartient à l'écran, pas au sélecteur ».
 
 /**
- * Charge puis rend le détail d'une session DANS le poste de travail projet.
- * Le composant CodeProcessDetail exige un initialDetail (la page /code/[id]
- * le fournit côté serveur) — embarqué, ce wrapper le charge côté client, avec
- * un état de chargement honnête, puis remonte à chaque changement de session
- * (key posée par l'appelant).
+ * UNE SESSION du projet, en une ligne qui mène à SA PAGE.
+ *
+ * Le run se dépliait ici même ; il a maintenant une adresse, comme un run
+ * d'automatisation ou un run d'Activity (18/09). La ligne dit ce qu'il faut
+ * pour choisir : qui a travaillé, sur quoi, où ça en est, ce que ça a coûté et
+ * quand ça a bougé pour la dernière fois.
  */
-function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { sessionId: string } }) {
-  const [detail, setDetail] = useState<CodingProcessDetailData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // La donnée est chargée ICI, donc c'est ici qu'elle se RELIT tant que le
-  // process court (18/09). La page /code/[id], elle, se relit côté serveur
-  // (`LiveRefresh`) et rafraîchit ses barres avec ; ce poste de travail n'a pas
-  // de barres à lui, et un `router.refresh()` y rechargerait toute la liste
-  // des sessions toutes les quatre secondes.
-  const live = detail !== null && codeIsLive(detail.header.stage);
-  useEffect(() => {
-    let cancelled = false;
-    const read = () => {
-      void getCodingProcessDetailAction(query).then((result) => {
-        if (cancelled) return;
-        if (result.ok) setDetail(result.data);
-        else setError(result.message);
-      });
-    };
-    read();
-    // Vivant : on relit sans fin. Terminé : UNE relecture de plus, quatre
-    // secondes après — la preuve tourne à la finalisation, juste après le
-    // statut (T24), et sans ce dernier tour la section Verification reste vide
-    // jusqu'à un rechargement à la main.
-    const timer = live ? setInterval(read, POLL_INTERVAL) : setTimeout(read, POLL_INTERVAL);
-    return () => {
-      cancelled = true;
-      if (live) clearInterval(timer as ReturnType<typeof setInterval>);
-      else clearTimeout(timer as ReturnType<typeof setTimeout>);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live]);
-
-  if (error) {
-    return (
-      <p className="rounded-xl border border-err/25 bg-paper px-6 py-10 text-center text-body-14 text-err">
-        {error}
-      </p>
-    );
-  }
-  if (!detail) {
-    // Squelette animé (retour Quentin 25/08 : sans loader, « on pense que
-    // c'est planté ») — la silhouette des sections qui arrivent.
-    return (
-      <div className="animate-pulse space-y-4" aria-label="Loading session" role="status">
-        <div className="h-24 rounded-xl border border-rule-2 bg-paper" />
-        <div className="h-12 rounded-xl border border-rule-2 bg-paper" />
-        <div className="space-y-0 overflow-hidden rounded-xl border border-rule-2 bg-paper">
-          <div className="h-10 border-b border-rule-2 bg-hover/60" />
-          <div className="h-10 border-b border-rule-2" />
-          <div className="h-10 border-b border-rule-2 bg-hover/40" />
-          <div className="h-10" />
-        </div>
-        <p className="text-center text-body-13 text-ink-4">Loading session…</p>
-      </div>
-    );
-  }
-  // Le corps est le MÊME partout depuis le 18/09 : la page d'un process n'a
-  // plus d'en-tête à elle qu'il aurait fallu masquer ici — la charpente (les
-  // deux barres du fil) vit dans `RunScreen`, montée par la route.
-  // `refresh={false}` : la fraîcheur est tenue ci-dessus, par la lecture qui a
-  // chargé cette donnée.
-  return <CodeProcessDetail detail={detail} refresh={false} />;
+function SessionRow({ session }: { session: CodingProcessRow }) {
+  const type =
+    session.sessionType === 'pr_review'
+      ? 'PR review'
+      : session.sessionType === 'review'
+        ? 'Review'
+        : 'Coding';
+  return (
+    <Link
+      href={`/code/${session.kind}-${session.id}`}
+      className="flex flex-wrap items-center gap-3 border-b border-rule-2 px-4 py-2.5 last:border-b-0 hover:bg-hover"
+      data-testid={`session-row-${session.kind}-${session.id}`}
+    >
+      <AgentAvatar name={session.agentName ?? 'Unknown agent'} size="sm" shape="round" />
+      <span className="shrink-0 text-medium-13 text-ink">
+        {session.agentName ?? 'Unknown agent'}
+      </span>
+      <MonoMicroTag tone="ink">{type}</MonoMicroTag>
+      <span className="min-w-0 flex-1 truncate text-body-13 text-ink-3" title={session.task}>
+        {session.task}
+      </span>
+      <StatusPill variant={stageVariant(session.stage)} label={stageLabel(session.stage)} />
+      <span className="shrink-0 text-mono-11 text-ink-4">
+        {session.costUsd > 0 ? `$${session.costUsd.toFixed(2)}` : '—'}
+      </span>
+      <span className="shrink-0 text-mono-11 text-ink-4">{relativeTime(session.activityAt)}</span>
+    </Link>
+  );
 }
