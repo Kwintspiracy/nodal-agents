@@ -1,97 +1,295 @@
-// RunsFolderList.test.tsx — le dossier MCP, RENDU (18/09/2026).
+// RunsFolderList.test.tsx — le dossier MCP, RENDU et CLIQUÉ (#179, puis #183).
 //
-// Ce qu'il prouve, et qu'aucun test pur ne voit : le dossier affiche bien ses
-// runs, chacun avec son titre et un lien vers SA page, et il ne porte ni
-// saisie, ni bouton « New conversation », ni case à cocher — ces gestes-là
-// agissent sur des conversations, et ces lignes n'en sont pas.
+// Ce qu'il prouve, et qu'aucun test pur ne voit :
 //
-// Rendu dans jsdom, assertions sur le CONTENU rendu — le texte, les adresses —
-// jamais sur des appels comptés (invariant #5).
+//   - la liste affiche ses runs, chacun avec son titre et un lien vers SA page,
+//     et elle ne porte ni saisie ni bouton de création ;
+//   - « Load more » demande la page suivante AVEC le curseur rendu par la
+//     précédente, et l'ajoute sous les lignes déjà là — sans doublon ;
+//   - le mode sélection coche, coche tout, et ne supprime qu'APRÈS confirmation
+//     par `<ConfirmDialog />`, jamais par un dialogue natif (invariant #10) ;
+//   - un run VIVANT a sa case désactivée, « Select all » ne le prend pas, et
+//     l'écran dit pourquoi.
 //
-// Mutations vérifiées : `href` de `runRows` ramené à `/chat/<id>` → « mène à la
-// page du run » rougit ; l'état vide remplacé par une boîte vide → « dit qu'il
-// n'y a rien » rougit.
+// Rendu dans jsdom et CLIQUÉ : les assertions portent sur le contenu rendu et
+// sur ce que l'action mockée a REÇU, jamais sur des appels comptés (invariant
+// #5).
+//
+// Mutations vérifiées : le curseur non transmis à `listExternalRunsAction` →
+// « demande la suite avec le curseur » rougit ; `disabled` retiré de la case →
+// « ne coche que les runs terminés » rougit ; le dédoublonnage retiré →
+// « ne double aucune ligne » rougit ; l'état vide remplacé par une boîte vide →
+// « dit qu'il n'y a rien » rougit.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import type { ExternalRunRow, ExternalRunsPage } from '@/lib/conversation-actions.ts';
+
+type ListResult =
+  | { ok: true; data: ExternalRunsPage }
+  | { ok: false; code: string; message: string };
+type DeleteResult =
+  | { ok: true; data: { deleted: number; skippedLive: number } }
+  | { ok: false; code: string; message: string };
+
+const listExternalRunsAction = vi.hoisted(() =>
+  vi.fn(
+    async (_opts?: { cursor?: string | null }): Promise<ListResult> => ({
+      ok: true as const,
+      data: { runs: [], nextCursor: null },
+    }),
+  ),
+);
+const deleteExternalRunsAction = vi.hoisted(() =>
+  vi.fn(
+    async (ids: readonly string[]): Promise<DeleteResult> => ({
+      ok: true as const,
+      data: { deleted: ids.length, skippedLive: 0 },
+    }),
+  ),
+);
+const refresh = vi.hoisted(() => vi.fn());
+const toastSuccess = vi.hoisted(() => vi.fn());
+const toastError = vi.hoisted(() => vi.fn());
+
+vi.mock('@/lib/conversation-actions.ts', () => ({
+  listExternalRunsAction,
+  deleteExternalRunsAction,
+}));
+vi.mock('sonner', () => ({ toast: { success: toastSuccess, error: toastError } }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh, push: vi.fn() }) }));
+
 import RunsFolderList from '../RunsFolderList.tsx';
-import { runRows } from '../run-rows.ts';
-import type { ExternalRunRow } from '@/lib/conversation-actions.ts';
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
+  document.body.innerHTML = '';
+});
+
+function run(over: Partial<ExternalRunRow> = {}): ExternalRunRow {
+  return {
+    id: 'r-1',
+    task: 'Résumer les tickets ouverts',
+    status: 'completed',
+    createdAt: new Date('2026-09-18T09:00:00'),
+    ...over,
+  };
+}
+
+/** Deux runs : le premier TOURNE, le second est terminé. */
+const DEUX_RUNS: ExternalRunRow[] = [
+  run({ id: 'r-1', task: 'Résumer les tickets ouverts', status: 'processing' }),
+  run({ id: 'r-2', task: 'Publier la note de version', status: 'completed' }),
+];
+
+async function render(
+  runs: ExternalRunRow[],
+  cursor: string | null = null,
+  waiting: { rootJobId: string | null; kind: string }[] = [],
+): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
-});
-
-function rendre(
-  runs: ExternalRunRow[],
-  waiting: { rootJobId: string | null; kind: string }[] = [],
-) {
-  act(() => {
-    root.render(<RunsFolderList rows={runRows({ runs, waiting, now: new Date() })} />);
+  await act(async () => {
+    root.render(<RunsFolderList initialRuns={runs} initialCursor={cursor} waiting={waiting} />);
   });
 }
 
-const DEUX_RUNS: ExternalRunRow[] = [
-  {
-    id: '11111111-1111-1111-1111-111111111111',
-    task: 'Résumer les tickets ouverts',
-    status: 'processing',
-    createdAt: new Date(),
-  },
-  {
-    id: '22222222-2222-2222-2222-222222222222',
-    task: 'Publier la note de version',
-    status: 'completed',
-    createdAt: new Date(),
-  },
-];
+/** Un bouton par son libellé, DANS TOUT LE DOCUMENT — la confirmation est un portail. */
+function bouton(label: string): HTMLButtonElement {
+  const found = [...document.querySelectorAll('button')].find(
+    (b) => (b.textContent ?? '').trim() === label,
+  );
+  if (!found) throw new Error(`aucun bouton « ${label} » — boutons présents : ${libelles()}`);
+  return found as HTMLButtonElement;
+}
+
+function libelles(): string {
+  return [...document.querySelectorAll('button')]
+    .map((b) => `« ${(b.textContent ?? '').trim()} »`)
+    .join(', ');
+}
+
+async function clic(label: string): Promise<void> {
+  const el = bouton(label);
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+/** Le DERNIER bouton portant ce libellé : celui du portail de confirmation. */
+async function confirmer(label: string): Promise<void> {
+  const tous = [...document.querySelectorAll('button')].filter(
+    (b) => (b.textContent ?? '').trim() === label,
+  );
+  await act(async () => {
+    tous[tous.length - 1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+function cases(): HTMLInputElement[] {
+  return [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+}
+
+function liens(): (string | null)[] {
+  return [...container.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+}
 
 describe('le dossier MCP liste les runs venus de dehors @cap:parler-par-canal-externe/ecran', () => {
-  it('affiche chaque run avec son titre, et mène à la page du run', () => {
-    rendre(DEUX_RUNS);
-    const liens = [...container.querySelectorAll('a')];
-    expect(liens.map((a) => a.getAttribute('href'))).toEqual([
-      '/jobs/11111111-1111-1111-1111-111111111111',
-      '/jobs/22222222-2222-2222-2222-222222222222',
-    ]);
+  it('affiche chaque run avec son titre, et mène à la page du run', async () => {
+    await render(DEUX_RUNS);
+    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2']);
     expect(container.textContent).toContain('Résumer les tickets ouverts');
     expect(container.textContent).toContain('Publier la note de version');
   });
 
-  it('dit sur la ligne ce qui attend la personne, et ce qui tourne', () => {
-    rendre(DEUX_RUNS, [{ rootJobId: '22222222-2222-2222-2222-222222222222', kind: 'question' }]);
+  it('dit sur la ligne ce qui attend la personne, et ce qui tourne', async () => {
+    await render(DEUX_RUNS, null, [{ rootJobId: 'r-2', kind: 'question' }]);
     expect(container.textContent).toContain('Question asked');
-    // Le premier run TOURNE : le point vert de la ligne, et lui seul — un
-    // point, jamais un nombre.
     const lignes = [...container.querySelectorAll('a')];
     expect(lignes[0]?.querySelector('.bg-ok')).not.toBeNull();
     expect(lignes[1]?.querySelector('.bg-ok')).toBeNull();
   });
 
-  it('n’offre NI composition, NI création, NI sélection — ce ne sont pas des conversations', () => {
-    rendre(DEUX_RUNS);
-    expect(container.querySelector('button')).toBeNull();
-    expect(container.querySelector('input')).toBeNull();
+  it('n’offre NI composition NI création — ce ne sont pas des conversations', async () => {
+    await render(DEUX_RUNS);
+    expect(container.querySelector('input[type="text"]')).toBeNull();
     expect(container.querySelector('textarea')).toBeNull();
-    expect(container.textContent).not.toContain('New conversation');
-    expect(container.textContent).not.toContain('Select');
-    expect(container.textContent).not.toContain('Delete');
+    expect(document.body.textContent).not.toContain('New conversation');
   });
 
-  it('dit qu’il n’y a rien plutôt que de montrer une boîte vide', () => {
-    rendre([]);
+  it('dit qu’il n’y a rien plutôt que de montrer une boîte vide', async () => {
+    await render([]);
     expect(container.textContent).toContain('No run started from outside Nodal yet.');
     expect(container.querySelector('a')).toBeNull();
+  });
+});
+
+describe('la liste se charge page par page @cap:parler-par-canal-externe/ecran', () => {
+  it('ne propose « Load more » que s’il reste quelque chose', async () => {
+    await render(DEUX_RUNS, null);
+    expect(document.body.textContent).not.toContain('Load more');
+    await render(DEUX_RUNS, '2026-09-18T09:00:00.000Z|r-2');
+    expect(document.body.textContent).toContain('Load more');
+  });
+
+  it('demande la suite AVEC le curseur, et l’ajoute sous les lignes déjà là', async () => {
+    listExternalRunsAction.mockResolvedValueOnce({
+      ok: true,
+      data: { runs: [run({ id: 'r-3', task: 'Trier la boîte' })], nextCursor: null },
+    });
+    await render(DEUX_RUNS, '2026-09-18T09:00:00.000Z|r-2');
+    await clic('Load more');
+    // Le CURSEUR reçu, pas un rang : c'est toute la différence avec un `offset`.
+    expect(listExternalRunsAction).toHaveBeenCalledWith({
+      cursor: '2026-09-18T09:00:00.000Z|r-2',
+    });
+    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2', '/jobs/r-3']);
+    expect(container.textContent).toContain('Trier la boîte');
+    // Plus rien après : le bouton disparaît plutôt que de promettre une page vide.
+    expect(document.body.textContent).not.toContain('Load more');
+  });
+
+  it('ne double AUCUNE ligne quand la page suivante en renvoie une déjà là', async () => {
+    listExternalRunsAction.mockResolvedValueOnce({
+      ok: true,
+      data: { runs: [run({ id: 'r-2' }), run({ id: 'r-4', task: 'La suite' })], nextCursor: null },
+    });
+    await render(DEUX_RUNS, 'curseur');
+    await clic('Load more');
+    expect(liens()).toEqual(['/jobs/r-1', '/jobs/r-2', '/jobs/r-4']);
+  });
+
+  it('DIT qu’une page n’a pas pu être lue, plutôt que de s’arrêter en silence', async () => {
+    listExternalRunsAction.mockResolvedValueOnce({
+      ok: false,
+      code: 'db_error',
+      message: 'Failed to load the runs started from outside',
+    });
+    await render(DEUX_RUNS, 'curseur');
+    await clic('Load more');
+    expect(container.textContent).toContain('The next runs couldn’t be read just now.');
+    // Le bouton reste : la suite existe toujours, on n'a pas pu la lire.
+    expect(document.body.textContent).toContain('Load more');
+  });
+});
+
+describe('sélectionner et supprimer des runs @cap:parler-par-canal-externe/ecran', () => {
+  it('n’affiche aucune case tant qu’on n’est pas en sélection', async () => {
+    await render(DEUX_RUNS);
+    expect(cases()).toHaveLength(0);
+    expect(document.body.textContent).toContain('Select');
+  });
+
+  it('« Delete » DEMANDE, et ne supprime qu’après confirmation', async () => {
+    await render(DEUX_RUNS);
+    await clic('Select');
+    await act(async () => {
+      cases()[1]!.click();
+    });
+    await clic('Delete');
+    // La demande est posée par le dialogue du design system, et RIEN n'est
+    // encore parti.
+    expect(document.body.textContent).toContain('Delete this run?');
+    expect(deleteExternalRunsAction).not.toHaveBeenCalled();
+
+    await confirmer('Delete');
+    expect(deleteExternalRunsAction).toHaveBeenCalledWith(['r-2']);
+    // La ligne quitte l'écran sans attendre un rechargement, et la barre
+    // latérale est prévenue — elle compte ces runs elle aussi.
+    expect(liens()).toEqual(['/jobs/r-1']);
+    expect(toastSuccess).toHaveBeenCalledWith('1 run deleted');
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('ne coche QUE les runs terminés, « Select all » compris', async () => {
+    await render([...DEUX_RUNS, run({ id: 'r-5', task: 'Encore une', status: 'failed' })]);
+    await clic('Select');
+    // `r-1` tourne : sa case est désactivée.
+    expect(cases().map((c) => c.disabled)).toEqual([true, false, false]);
+    await clic('Select all');
+    expect(container.textContent).toContain('2 selected');
+    await clic('Delete');
+    await confirmer('Delete');
+    expect(deleteExternalRunsAction).toHaveBeenCalledWith(['r-2', 'r-5']);
+  });
+
+  it('dit POURQUOI un run ne peut pas être coché', async () => {
+    await render(DEUX_RUNS);
+    await clic('Select');
+    expect(container.textContent).toContain('1 run is still going, so it can’t be deleted yet.');
+    expect(cases()[0]?.getAttribute('aria-label')).toContain('is still going');
+  });
+
+  it('« Cancel » sort du mode et décoche tout', async () => {
+    await render(DEUX_RUNS);
+    await clic('Select');
+    await act(async () => {
+      cases()[1]!.click();
+    });
+    await clic('Cancel');
+    expect(cases()).toHaveLength(0);
+    expect(deleteExternalRunsAction).not.toHaveBeenCalled();
+  });
+
+  it('DIT ce que l’action a vraiment supprimé, pas ce qu’on avait coché', async () => {
+    deleteExternalRunsAction.mockResolvedValueOnce({
+      ok: true,
+      data: { deleted: 0, skippedLive: 1 },
+    });
+    await render(DEUX_RUNS);
+    await clic('Select');
+    await act(async () => {
+      cases()[1]!.click();
+    });
+    await clic('Delete');
+    await confirmer('Delete');
+    expect(toastSuccess).toHaveBeenCalledWith('0 runs deleted');
+    expect(toastError).toHaveBeenCalledWith('1 run was left: it started again before the delete.');
   });
 });
