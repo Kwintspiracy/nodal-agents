@@ -16,7 +16,12 @@ export default function HistoryGroup({
   const [open, setOpen] = useState(false);
   return (
     <div className="mt-2 max-w-[720px] overflow-hidden rounded-[10px] border border-dashed border-rule-2 bg-canvas">
-      <DisclosureButton open={open} onClick={() => setOpen((v) => !v)} className="py-2">
+      <DisclosureButton
+        open={open}
+        onClick={() => setOpen((v) => !v)}
+        inset="tight"
+        className="py-2"
+      >
         <span className="text-medium-13 text-ink-3">Earlier in this conversation</span>
         <span className="ml-auto text-mono-11 text-ink-4">
           {exchanges.length} {exchanges.length === 1 ? 'message' : 'messages'}

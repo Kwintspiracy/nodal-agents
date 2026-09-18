@@ -51,7 +51,8 @@ export default function DelegationDisclosure({
         <DisclosureButton
           open={open}
           onClick={() => setOpen((v) => !v)}
-          className="h-[40px] py-0 px-3"
+          inset="tight"
+          className="h-[40px] py-0"
         >
           {avatar}
           <span className="min-w-0 flex-1 truncate text-left text-body-13 text-ink">{title}</span>

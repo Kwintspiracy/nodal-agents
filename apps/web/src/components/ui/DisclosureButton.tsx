@@ -20,6 +20,16 @@ type Props = {
    * own trailing meta carries its `ml-auto`.
    */
   chevron?: 'start' | 'end';
+  /**
+   * Horizontal inset of the row — the ONLY way to set it. `default` is 16px,
+   * `tight` 12px (the thread board, #135), `none` 0 for a row that carries no
+   * frame of its own. It is a prop and not a `className` because Tailwind emits
+   * one rule per utility in a fixed order: `.px-4` comes last of the four, so a
+   * caller appending `px-3` or `px-0` was silently overruled and every foldable
+   * block of the feed sat at 16px (#151). A `px-*` in `className` is now a
+   * defect, and `__tests__/DisclosureButton.test.tsx` refuses it.
+   */
+  inset?: 'default' | 'tight' | 'none';
   className?: string;
   /** Passed through as `data-testid` — tests and e2e journeys target the row
    *  that unfolds, which is otherwise indistinguishable from any other row. */
@@ -34,11 +44,15 @@ type Props = {
  * list (DS Phase 2R) instead of hand-rolling a raw <button> with a chevron
  * span at each call site.
  */
+/** 16px / 12px / 0 — written out so Tailwind sees each class literally. */
+const INSET = { default: 'px-4', tight: 'px-3', none: 'px-0' } as const;
+
 export default function DisclosureButton({
   open,
   onClick,
   children,
   chevron = 'start',
+  inset = 'default',
   className = '',
   testId,
 }: Props) {
@@ -53,7 +67,7 @@ export default function DisclosureButton({
       onClick={onClick}
       aria-expanded={open}
       data-testid={testId}
-      className={`flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-hover ${className}`}
+      className={`flex w-full items-center gap-2 ${INSET[inset]} py-3 text-left hover:bg-hover ${className}`}
     >
       {chevron === 'start' && caret}
       {children}
