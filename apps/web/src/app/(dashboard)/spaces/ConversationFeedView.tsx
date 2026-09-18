@@ -53,6 +53,7 @@ export default function ConversationFeedView({
   feed,
   deliverables = [],
   density = DEFAULT_FEED_DENSITY,
+  width = 'thread',
 }: {
   feed: ConversationFeed;
   deliverables?: ReadonlyArray<DeliverableStatusView>;
@@ -62,6 +63,15 @@ export default function ConversationFeedView({
    * ensuite pour son compte, et chaque bloc dedans aussi.
    */
   density?: FeedDensity;
+  /**
+   * La COLONNE dans laquelle le fil se dessine. `thread` (défaut) est la
+   * colonne de lecture de 760 px, centrée, des trois écrans de fil. `full`
+   * prend toute la largeur de son cadre : la page d'un run (18/09) est un
+   * tableau de bord, ses cartes vont d'un bord à l'autre, et la chronologie
+   * vit DANS l'une d'elles — une colonne centrée y laissait deux marges
+   * blanches à l'intérieur d'une carte.
+   */
+  width?: 'thread' | 'full';
 }) {
   if (feed.items.length === 0) {
     return <p className="text-body-13 text-ink-4">Nothing recorded yet.</p>;
@@ -70,7 +80,7 @@ export default function ConversationFeedView({
     deliverables.map((d) => [deliverableStatusKey(d.jobId, d.canonicalKey), d.status]),
   );
   return (
-    <div className="mx-auto max-w-[760px]">
+    <div className={width === 'full' ? 'w-full min-w-0' : 'mx-auto max-w-[760px]'}>
       <FeedItems items={feed.items} deliverables={byKey} density={density} />
     </div>
   );

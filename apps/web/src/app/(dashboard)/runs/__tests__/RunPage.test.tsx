@@ -1,0 +1,175 @@
+// RunPage.test.tsx — l'ORDRE des blocs de la page d'un run, et l'état de
+// départ de sa chronologie.
+//
+// C'est la décision produit du 18/09 : un run est un tableau de bord, et ce
+// tableau se lit du haut vers le bas — ce qui a été demandé, ce que le run a
+// répondu, ce qu'il a livré, ce qui a été relu, ce qui a été prouvé, et enfin
+// ce qu'il a fait. Un bloc qui remonte ou qui descend change ce qu'on lit en
+// premier : l'ordre se prouve, il ne se relit pas à l'œil à chaque PR.
+//
+// La chronologie est REPLIÉE sur un run terminé (on vient lire ce qu'il a
+// rendu) et OUVERTE tant qu'il court (on vient le regarder travailler).
+
+import { describe, it, expect, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { SpaceConversationView } from '@/lib/actions.ts';
+import type { ConversationFeed, FeedItem } from '@/lib/conversation-feed.ts';
+
+// `LiveRefresh` appelle `useRouter`, qui exige un routeur monté ; un rendu
+// statique n'en a pas. Ce qui est en jeu ici est l'ORDRE des blocs, jamais la
+// navigation.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: () => {}, refresh: () => {} }),
+}));
+
+import { RunBody } from '../RunPage.tsx';
+
+const totals: ConversationFeed['totals'] = {
+  turns: 2,
+  toolCalls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedTokens: 0,
+  cacheCreationTokens: 0,
+  costUsd: null,
+  llmDurationMs: 0,
+  models: [],
+};
+
+const turn = (index: number, text: string): FeedItem => ({
+  kind: 'turn',
+  index,
+  turn: index,
+  turnSource: 'audit',
+  agent: { name: 'Alfred', slug: 'alfred', avatarUrl: null },
+  model: 'z-ai/glm-5.3',
+  blocks: [{ kind: 'prose', text }],
+  usage: null,
+  at: null,
+});
+
+const delivered: FeedItem = {
+  kind: 'produced',
+  jobId: 'job-1',
+  verdict: { isWork: true, items: [], uncertain: 0, more: 0, unclassified: 0 },
+  project: null,
+  summary: {
+    files: 0,
+    filePaths: [],
+    lines: null,
+    tests: null,
+    durationMs: 41_000,
+    costUsd: 0.04,
+    reviews: [],
+    checks: [],
+    verdict: null,
+  },
+};
+
+const TASK = 'Weekly digest of the open GitHub issues';
+const STEP = 'Reading the issues opened this week.';
+const REPLY = 'Digest posted. Fourteen issues were opened this week.';
+
+function data(live: boolean): SpaceConversationView {
+  return {
+    job: {
+      id: 'job-1',
+      task: TASK,
+      channel: 'cron',
+      status: live ? 'processing' : 'completed',
+      agentName: 'Alfred',
+      agentSlug: 'alfred',
+      agentAvatarUrl: null,
+      createdAt: new Date('2026-09-18T09:00:00Z'),
+      completedAt: live ? null : new Date('2026-09-18T09:00:41Z'),
+      conversationId: null,
+      parentJobId: null,
+      scheduleName: 'every Monday 09:00',
+    },
+    feed: { items: [turn(1, STEP), turn(2, REPLY), delivered], totals },
+    verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
+    cost: {
+      byAgent: [],
+      totals: {
+        calls: 0,
+        inputTokens: 12_410,
+        outputTokens: 1_180,
+        cachedTokens: 8_900,
+        cacheCreationTokens: 0,
+        costUsd: 0.0423,
+        unpricedCalls: 0,
+        llmDurationMs: 0,
+        durationMs: 41_200,
+        humanWaitMs: 0,
+        proofMs: 0,
+      },
+    },
+    deliveries: [],
+  };
+}
+
+describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
+  const html = renderToStaticMarkup(<RunBody data={data(false)} />);
+
+  it('les blocs se suivent : demande, réponse, livraison, revue, preuve, activité', () => {
+    const at = (needle: string): number => {
+      const i = html.indexOf(needle);
+      expect(i, `« ${needle} » est dans la page`).toBeGreaterThan(-1);
+      return i;
+    };
+    const ordre = [
+      at(TASK),
+      at('data-testid="run-reply"'),
+      at('>Delivered<'),
+      at('data-testid="review-section"'),
+      at('data-testid="verification-section"'),
+      at('data-testid="activity-section"'),
+    ];
+    expect(ordre).toEqual([...ordre].sort((a, b) => a - b));
+  });
+
+  it('l’en-tête porte l’agent, la routine, le modèle et les chiffres du run', () => {
+    expect(html).toContain('Alfred');
+    expect(html).toContain('scheduled · every Monday 09:00');
+    expect(html).toContain('z-ai/glm-5.3');
+    expect(html).toContain('$0.04');
+    expect(html).toContain('41.2 s');
+    expect(html).toContain('12,410');
+  });
+
+  it('la réponse est SORTIE du fil : elle se lit sans rien déplier', () => {
+    expect(html).toContain(REPLY);
+    // Et une seule fois : la chronologie repliée ne la reprend pas dessous.
+    expect(html.split(REPLY)).toHaveLength(2);
+  });
+
+  it('la revue d’un run d’automatisation le dit, sans prétendre à un verdict', () => {
+    expect(html).toContain('No review on this run');
+    expect(html).toContain('0 verdicts');
+  });
+
+  it('la preuve n’est jamais muette, même quand rien n’a tourné', () => {
+    expect(html).toContain('No proof ran for this process.');
+  });
+
+  it('la chronologie d’un run TERMINÉ est repliée — son contenu n’est pas dans la page', () => {
+    // Un seul bloc reste dans la chronologie : le tour qui portait la réponse
+    // l'a perdue (elle est sortie en haut) et n'avait rien d'autre à montrer.
+    expect(html).toContain('1 step · 1 agent · 41 s');
+    expect(html).not.toContain(STEP);
+  });
+});
+
+describe('RunPage — un run qui court @cap:suivre-execution/ecran', () => {
+  const html = renderToStaticMarkup(<RunBody data={data(true)} />);
+
+  it('la chronologie est OUVERTE : on est venu le regarder travailler', () => {
+    expect(html).toContain(STEP);
+  });
+
+  it('rien ne sort du fil tant qu’il court : pas de réponse, pas de durée inventée', () => {
+    expect(html).not.toContain('data-testid="run-reply"');
+    expect(html).toContain('2 steps · 1 agent');
+    expect(html).not.toContain('2 steps · 1 agent ·');
+  });
+});

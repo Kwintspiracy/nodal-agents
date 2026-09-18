@@ -251,8 +251,12 @@ function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null 
  * prose de l'agent ? Non quand c'est du JSON (un `return_result` structuré,
  * pour une machine), non quand c'est la même phrase (la prose sort alors avec
  * son en-tête d'agent), non quand ce n'est qu'un début tronqué de la prose.
+ *
+ * Exporté depuis la page d'un run (`runs/run-view.ts`), qui sort la réponse de
+ * la chronologie avec la MÊME règle : deux lectures de « qu'est-ce qu'une
+ * réponse » auraient divergé au premier cas ajouté.
  */
-function readsAsReply(result: string, lastProse: string | null): boolean {
+export function readsAsReply(result: string, lastProse: string | null): boolean {
   const first = result[0];
   if (first === '{' || first === '[') {
     try {
