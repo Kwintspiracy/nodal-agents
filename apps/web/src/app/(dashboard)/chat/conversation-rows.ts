@@ -22,12 +22,15 @@ import type { ConversationListRow } from '@/lib/conversation-actions.ts';
 import { formatClock, truncate } from '@/lib/format-time';
 
 /**
- * Le titre d'une conversation du dashboard tient dans une étiquette mono en
- * capitales : au-delà, elle mange la ligne et pousse l'heure dehors. La coupe
- * est FAITE ICI plutôt que par le CSS, parce que l'étiquette ne s'étire pas —
- * elle se sert de sa largeur naturelle.
+ * Une borne au titre d'une conversation du dashboard, et rien de plus.
+ *
+ * Il tenait dans une étiquette mono coupée à 40 signes, parce qu'une étiquette
+ * ne s'étire pas. Depuis le 18/09 le titre EST la ligne principale et le CSS le
+ * coupe à la largeur réelle de l'écran, qui est la seule bonne mesure : couper
+ * plus tôt en JavaScript perdrait des mots qu'un écran large affiche très bien.
+ * Ce plafond ne borne donc plus que ce qu'on envoie au navigateur.
  */
-const TITLE_MAX = 40;
+const TITLE_MAX = 120;
 
 /** Ce qu'une ligne attend de la personne. `null` = rien. */
 export type RowWaiting = 'question' | 'approval' | null;
@@ -51,8 +54,12 @@ export type ConversationRowModel = {
   key: string;
   /** Où mène la ligne. `null` = pas de lien, et la ligne le DIT (« unavailable »). */
   href: string | null;
-  agentName: string | null;
-  agentAvatarUrl: string | null;
+  /**
+   * L'agent de la ligne. `null` quand la ligne n'en montre AUCUN — le dossier
+   * « Nodal chats », où toutes les conversations sont celles du même agent :
+   * son nom répété n'apprend rien, et c'est le titre qui distingue les fils.
+   */
+  agent: { name: string | null; avatarUrl: string | null } | null;
   /**
    * Le nom du CHAT : la personne ou le salon à l'autre bout pour un canal, le
    * titre du fil pour une conversation de Nodal. Jamais vide.
@@ -174,8 +181,9 @@ export function conversationRows(input: ConversationRowsInput): ConversationRowM
       id,
       key: c.key,
       href: id === null ? null : `/chat/${id}`,
-      agentName: c.agentName,
-      agentAvatarUrl: c.agentAvatarUrl,
+      // Un dossier de canal montre l'agent : il CHANGE d'une ligne à l'autre,
+      // et c'est lui qui répond à l'autre bout.
+      agent: { name: c.agentName, avatarUrl: c.agentAvatarUrl },
       chatName: chatLabel(c),
       preview: c.lastPreview,
       time: conversationTimeLabel(c.updatedAt, now),
@@ -188,13 +196,20 @@ export function conversationRows(input: ConversationRowsInput): ConversationRowM
       id: c.id,
       key: c.id,
       href: `/chat/${c.id}`,
-      agentName: c.agentName,
-      agentAvatarUrl: c.agentAvatarUrl,
+      // AUCUN agent sur ces lignes (Quentin, 18/09 : « pas besoin de répéter
+      // l'agent partout avec son avatar »). Ce sont toutes les conversations
+      // ouvertes ici, avec le même agent : le répéter coûtait la moitié de la
+      // ligne sans distinguer un fil d'un autre.
+      agent: null,
       // Un fil que personne n'a nommé et que l'IA n'a pas encore renommé n'a
-      // pas de titre. « Untitled » dit ce que c'est ; l'étiquette vide se
-      // lirait comme un défaut d'affichage.
+      // pas de titre. « Untitled » dit ce que c'est ; un titre vide se lirait
+      // comme un défaut d'affichage.
       chatName: c.title === '' ? 'Untitled' : truncate(c.title, TITLE_MAX),
-      preview: c.lastPreview,
+      // PAS de dernier message (Quentin, 18/09). Le titre dit de quoi parle le
+      // fil ; le dernier mot posté, lui, est souvent une phrase de politesse ou
+      // la moitié d'un compte rendu, et il poussait le titre en haut d'une
+      // ligne à deux étages pour ne rien apprendre.
+      preview: null,
       time: conversationTimeLabel(c.updatedAt, now),
       ...etat(c.id),
     });

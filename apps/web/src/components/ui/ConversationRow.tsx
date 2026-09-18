@@ -15,6 +15,14 @@
 // ⚠️ La maquette dessine aussi une pastille « Unread ». Elle n'est pas rendue :
 // la base ne porte aucun état de lecture, et aucune ligne ne peut donc dire
 // qu'elle n'est pas lue (invariant #4). Voir `conversation-rows.ts`.
+//
+// UNE LIGNE PEUT N'AVOIR AUCUN AGENT (18/09). Dans « Nodal chats », toutes les
+// conversations sont celles du même agent : son avatar et son nom, répétés sur
+// chaque ligne, n'apprenaient rien et poussaient le titre — la seule chose qui
+// distingue un fil d'un autre — dans une étiquette étroite. `agent: null` rend
+// alors le titre en ligne principale, et rien d'autre. Les dossiers de canal
+// gardent la ligne dessinée par la planche : là, l'agent CHANGE d'une ligne à
+// l'autre.
 
 import Link from 'next/link';
 import AgentAvatar from './AgentAvatar';
@@ -33,8 +41,13 @@ type Props = {
   rowKey: string;
   /** Où mène la ligne. `null` → pas de lien, et la ligne le dit. */
   href: string | null;
-  agentName: string | null;
-  agentAvatarUrl: string | null;
+  /**
+   * L'agent de la ligne — son avatar et son nom. `null` quand la ligne n'en
+   * montre aucun : ni avatar, ni nom, et le nom du chat devient la ligne
+   * principale. `name: null` est autre chose : un agent est bien là, mais son
+   * nom ne se lit pas, et la ligne écrit « — ».
+   */
+  agent: { name: string | null; avatarUrl: string | null } | null;
   /** Le nom du chat : la personne, le salon, ou le titre du fil. */
   chatName: string;
   /** Le dernier mot. `null` → la seconde ligne n'existe pas. */
@@ -54,35 +67,48 @@ export default function ConversationRow({
   id,
   rowKey,
   href,
-  agentName,
-  agentAvatarUrl,
+  agent,
   chatName,
   preview,
   time,
   waiting,
   running,
 }: Props) {
+  // L'état est DIT sur la ligne, pas seulement suggéré par l'absence de lien :
+  // sur cinquante lignes, il fallait sinon deviner laquelle n'ouvre rien
+  // (revue Codex, PR #48, passe 8).
+  const indisponible = href === null && (
+    <MonoMicroTag tone="ink" className="shrink-0">
+      unavailable
+    </MonoMicroTag>
+  );
+
   const corps = (
     <>
-      <AgentAvatar name={agentName ?? ''} imageUrl={agentAvatarUrl} size="md" shape="square" />
+      {agent !== null && (
+        <AgentAvatar name={agent.name ?? ''} imageUrl={agent.avatarUrl} size="md" shape="square" />
+      )}
       {/* min-w-0 : sans lui, le texte long refuse de se couper et pousse
           l'heure et la pastille hors de la ligne. */}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-2">
-          {/* Un agent sans nom lisible s'écrit « — », la convention du reste du
-              tableau de bord : un blanc se lirait comme un défaut d'affichage. */}
-          <span className="truncate text-medium-14 text-ink">{agentName ?? '—'}</span>
-          <MonoMicroTag tone="ink" className="max-w-[18ch] shrink-0 truncate">
-            {chatName}
-          </MonoMicroTag>
-          {href === null && (
-            // L'état est DIT sur la ligne, pas seulement suggéré par l'absence
-            // de lien : sur cinquante lignes, il fallait sinon deviner laquelle
-            // n'ouvre rien (revue Codex, PR #48, passe 8).
-            <MonoMicroTag tone="ink" className="shrink-0">
-              unavailable
-            </MonoMicroTag>
+          {agent === null ? (
+            // Sans agent, le titre EST la ligne : il prend la place, la graisse
+            // et la couleur qu'occupait le nom, et se coupe par le CSS plutôt
+            // que dans une étiquette qui ne s'étire pas.
+            <span className="truncate text-medium-14 text-ink">{chatName}</span>
+          ) : (
+            <>
+              {/* Un agent sans nom lisible s'écrit « — », la convention du reste
+                  du tableau de bord : un blanc se lirait comme un défaut
+                  d'affichage. */}
+              <span className="truncate text-medium-14 text-ink">{agent.name ?? '—'}</span>
+              <MonoMicroTag tone="ink" className="max-w-[18ch] shrink-0 truncate">
+                {chatName}
+              </MonoMicroTag>
+            </>
           )}
+          {indisponible}
         </span>
         {preview !== null && <span className="truncate text-body-13 text-ink-3">{preview}</span>}
       </span>

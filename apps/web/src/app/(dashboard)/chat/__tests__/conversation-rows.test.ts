@@ -158,7 +158,7 @@ describe('la forme d’une ligne @cap:reprendre-conversation/moteur', () => {
     expect(rows[0]).toMatchObject({
       id: 'conv-1',
       href: '/chat/conv-1',
-      agentName: 'Marlow',
+      agent: { name: 'Marlow', avatarUrl: null },
       chatName: 'Mireille',
       preview: 'C’est envoyé.',
     });
@@ -190,7 +190,11 @@ describe('la forme d’une ligne @cap:reprendre-conversation/moteur', () => {
     expect(rows[0]!.running).toBe(false);
   });
 
-  it('une conversation de Nodal : son titre en étiquette, son lien, son aperçu', () => {
+  it('une conversation de Nodal : SON TITRE, et ni agent ni dernier message', () => {
+    // Quentin, 18/09 : « pas besoin de répéter l'agent partout avec son
+    // avatar ; pas besoin de montrer le dernier message posté ; il faut juste
+    // un titre de conversation ». Ces lignes sont toutes du même agent, et le
+    // dernier mot posté est le plus souvent une politesse.
     const rows = conversationRows({
       conversations: [conversation({ id: 'conv-9', title: 'Ranger les factures' })],
       now: NOW,
@@ -199,16 +203,34 @@ describe('la forme d’une ligne @cap:reprendre-conversation/moteur', () => {
       id: 'conv-9',
       key: 'conv-9',
       href: '/chat/conv-9',
+      agent: null,
       chatName: 'Ranger les factures',
-      preview: 'Voilà le tableau.',
+      preview: null,
     });
+    // L'heure reste : c'est elle qui range la liste dans le temps.
+    expect(rows[0]!.time).toBe('11:00');
   });
 
-  it('un titre très long est coupé — l’étiquette ne pousse pas l’heure dehors', () => {
-    const titre = 'Reprendre le dossier de la cave et lister tout ce qui traîne depuis mars';
+  it('un chat de CANAL garde son agent et son dernier mot — seul Nodal chats change', () => {
+    const rows = conversationRows({ chats: [chat()], now: NOW });
+    expect(rows[0]!.agent).toEqual({ name: 'Marlow', avatarUrl: null });
+    expect(rows[0]!.preview).toBe('C’est envoyé.');
+  });
+
+  it('un titre démesuré est borné, et le dit par ses points de suspension', () => {
+    // La coupe fine revient au CSS, à la largeur réelle de l'écran ; ce plafond
+    // ne borne que ce qu'on envoie au navigateur.
+    const titre =
+      'Reprendre le dossier de la cave et lister tout ce qui traîne depuis mars '.repeat(3);
     const rows = conversationRows({ conversations: [conversation({ title: titre })], now: NOW });
-    expect(rows[0]!.chatName.length).toBeLessThanOrEqual(41);
+    expect(rows[0]!.chatName.length).toBeLessThanOrEqual(121);
     expect(rows[0]!.chatName.endsWith('…')).toBe(true);
+  });
+
+  it('un titre d’une ligne n’est PAS coupé — l’écran s’en charge', () => {
+    const titre = 'Reprendre le dossier de la cave et lister ce qui traîne';
+    const rows = conversationRows({ conversations: [conversation({ title: titre })], now: NOW });
+    expect(rows[0]!.chatName).toBe(titre);
   });
 
   it('un fil que personne n’a nommé s’écrit « Untitled », jamais vide', () => {
