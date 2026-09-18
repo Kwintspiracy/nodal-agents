@@ -50,6 +50,27 @@
 // message qui attend sous le pli est un message qu'il trouve en descendant. Le
 // second est le moindre mal.
 //
+// LA RÈGLE EXACTE, et pourquoi il a fallu un drapeau de plus.
+//
+// Un dépliage se pose en DEUX temps (mesuré : t=0 ms puis t=46 ms), et le
+// lecteur peut défiler entre les deux. Deux exigences se croisent alors, et la
+// seule fenêtre de temps ne sait pas les départager :
+//
+//   · sa parole la plus récente doit gagner. S'il descend en bas après son
+//     clic, la queue de son propre dépliage ne doit pas rééteindre le suivi
+//     qu'il vient de rallumer — sinon il est en bas et plus rien ne le suit
+//     (cas B de `thread-unfold-keeps-scroll.spec.ts`, dans la PR #169, mergée
+//     avant celle-ci) ;
+//   · sa vue ne doit jamais bouger sous son clic. La première écriture de cette
+//     PR clôturait le geste au retour en bas, ce qui rendait la croissance
+//     suivante « ordinaire » — donc suivie, donc la boîte ouverte remontait :
+//     le même défaut par une autre porte (Reviewer C, passe 2 de la PR #187).
+//
+// D'où `scrolledSinceGesture`. La croissance du lecteur ne déplace JAMAIS la
+// vue ; elle n'éteint le suivi que s'il n'a pas défilé depuis son geste. Les
+// deux exigences tiennent, et l'état ajouté est un booléen à deux écrivains :
+// le geste le remet à faux, le défilement du lecteur le met à vrai.
+//
 // CE QUI RESTE IMPARFAIT, ET POURQUOI ON S'ARRÊTE LÀ.
 //
 // Quatre passes de revue ont trouvé quatre entrelacements dans ce composant de
@@ -179,6 +200,23 @@ export default function ThreadScroller({
    * vers le bas, sous ses yeux, et on ne le déplace pas.
    */
   const gestureAt = useRef<number | null>(null);
+  /**
+   * Le lecteur a-t-il DÉPLACÉ LA VUE lui-même depuis son geste ?
+   *
+   * Un seul booléen, et il départage deux situations que la seule fenêtre de
+   * temps confond (Reviewer C, passe 2 de la PR #187) :
+   *
+   *   - il clique et ne bouge pas : la croissance de son bloc doit éteindre le
+   *     suivi, sans quoi l'arrivée suivante le descend (le défaut du 18/09) ;
+   *   - il clique PUIS descend en bas avant que le bloc n'ait fini de se poser
+   *     (un dépliage arrive en deux temps, mesuré t=0 ms puis t=46 ms) : son
+   *     défilement est sa parole la plus récente, et la queue de son propre
+   *     dépliage n'a pas à la contredire.
+   *
+   * Dans les DEUX cas, la croissance ne déplace jamais la vue. Ce drapeau ne
+   * décide que du sort du suivi.
+   */
+  const scrolledSinceGesture = useRef(false);
 
   /**
    * Descendre, sans que notre propre geste passe pour celui du lecteur.
@@ -272,7 +310,10 @@ export default function ThreadScroller({
       // à moitié le suivi », pour ce que ce « non » forcé coûte et pourquoi il
       // est le moindre mal.
       if (growthIsTheReaders({ gestureAt: gestureAt.current, now: performance.now() })) {
-        follow.current = false;
+        // La vue ne bouge pas — c'est la règle, sans condition. Le SUIVI, lui,
+        // ne s'éteint que si le lecteur n'a pas déplacé la vue depuis son
+        // geste : s'il l'a fait, son défilement est plus récent que son clic.
+        if (!scrolledSinceGesture.current) follow.current = false;
         selfScrollTop.current = null;
         return;
       }
@@ -293,9 +334,13 @@ export default function ThreadScroller({
       // d'état et ne fasse grandir le fil.
       onPointerDownCapture={() => {
         gestureAt.current = performance.now();
+        scrolledSinceGesture.current = false;
       }}
       onKeyDownCapture={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') gestureAt.current = performance.now();
+        if (e.key === 'Enter' || e.key === ' ') {
+          gestureAt.current = performance.now();
+          scrolledSinceGesture.current = false;
+        }
       }}
       onScroll={() => {
         const el = ref.current;
@@ -304,17 +349,10 @@ export default function ThreadScroller({
         if (staysAtBottom(el)) {
           selfScrollTop.current = null;
           follow.current = true;
-          // LE GESTE EST FINI. Un dépliage arrive souvent en DEUX temps — le
-          // bloc, puis son corps quelques dizaines de millisecondes plus tard
-          // (mesuré : t=0 ms puis t=46 ms). Sans cette ligne, un lecteur qui
-          // descend en bas ENTRE les deux voyait la seconde croissance
-          // ré-éteindre le suivi qu'il venait de rallumer, et plus rien ne le
-          // rallumait : il était en bas, et une arrivée l'y laissait sans
-          // descendre. Attrapé par le cas B de `thread-unfold-keeps-scroll`.
-          //
-          // Une fois qu'il a déplacé la vue lui-même, ce qui grandit ensuite
-          // n'est plus attribuable à son clic.
-          gestureAt.current = null;
+          // Il a déplacé la vue LUI-MÊME : la queue de son dépliage ne
+          // rééteindra pas le suivi qu'il vient de rallumer. Elle ne le
+          // déplacera pas non plus — voir le rappel de l'observateur.
+          scrolledSinceGesture.current = true;
           return;
         }
         // Pas en bas, mais la position est EXACTEMENT celle que nous avons
@@ -326,7 +364,7 @@ export default function ThreadScroller({
         // Pas en bas, et la position n'est pas la nôtre : le lecteur a remonté.
         selfScrollTop.current = null;
         follow.current = false;
-        gestureAt.current = null;
+        scrolledSinceGesture.current = true;
       }}
     >
       {children}

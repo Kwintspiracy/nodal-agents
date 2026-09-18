@@ -259,13 +259,49 @@ describe('ThreadScroller — ouvrir une boîte éteint le suivi @cap:parler-a-un
     );
   });
 
+  it('le lecteur qui descend AVANT que son bloc se pose n’est pas déplacé par lui', async () => {
+    // Le défaut par l'AUTRE porte (Reviewer C, passe 2 de la PR #187). Le
+    // lecteur clique, puis descend en bas avant que le bloc n'ait grandi — une
+    // fraction de seconde, et un dépliage met déjà 46 ms à se poser. Si son
+    // défilement suffisait à faire de cette croissance une ARRIVÉE, le fil la
+    // suivrait et la boîte qu'il vient d'ouvrir remonterait : ce que cette PR
+    // répare, à un ordre d'événements près.
+    const { el, fire, geometry } = await mountThread();
+    const now = vi.spyOn(performance, 'now');
+
+    now.mockReturnValue(1_000);
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+
+    // Il descend en bas, DANS la fenêtre du geste, avant toute croissance.
+    el.scrollTop = 3000 - 800;
+    now.mockReturnValue(1_050);
+    await act(async () => {
+      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    expect(geometry.scrollTop()).toBe(2200);
+
+    // Le bloc se pose enfin, toujours dans la fenêtre.
+    geometry.setScrollHeight(3400);
+    now.mockReturnValue(1_150);
+    await act(async () => fire());
+
+    expect(
+      geometry.scrollTop(),
+      'la croissance du bloc a déplacé le lecteur qui venait de l’ouvrir',
+    ).toBe(2200);
+  });
+
   it('le lecteur qui redescend ENTRE deux croissances d’un même dépliage reste suivi', async () => {
     // Un dépliage arrive souvent en DEUX temps : le bloc, puis son corps
     // quelques dizaines de millisecondes plus tard (mesuré : t=0 ms, t=46 ms).
     // Si le lecteur descend en bas entre les deux, la SECONDE croissance est
-    // encore dans la fenêtre du geste — et sans clôture du geste elle
-    // ré-éteignait le suivi qu'il venait de rallumer, sans que rien ne le
-    // rallume ensuite. Attrapé par le cas B de `thread-unfold-keeps-scroll`.
+    // encore dans la fenêtre du geste — et sans le drapeau « il a défilé
+    // depuis » elle rééteignait le suivi qu'il venait de rallumer, sans que
+    // rien ne le rallume ensuite. Attrapé par le cas B de
+    // `thread-unfold-keeps-scroll.spec.ts`, dans la PR #169, mergée avant
+    // celle-ci ; ce fichier n'en porte donc pas la copie.
     const { el, fire, geometry } = await mountThread();
     const now = vi.spyOn(performance, 'now');
 
