@@ -19,6 +19,7 @@
 //                             terminal path confirmed (crash, expired lease),
 //                             then the sweep of exhausted ones (owner alerted)
 
+import { reclaimJobsOfDeadRunners } from './reclaim-jobs.ts';
 import {
   resetOrphanedJobs,
   resetOrphanedTasks,
@@ -50,6 +51,10 @@ import {
 // ─── CronTickResult ───────────────────────────────────────────────────────────
 
 export interface CronTickResult {
+  /** Jobs repris à un runner mort, échoués en `runner_restarted` (#186). */
+  jobsReclaimed: number;
+  /** Parents remis en marche avec l'échec de l'enfant repris (#186). */
+  parentsResumedAfterReclaim: number;
   orphanJobsReset: number;
   pendingRecovered: number;
   stalePendingFailed: number;
@@ -180,6 +185,16 @@ function resolveSkillUpdateCheckEnv(): SkillUpdateCheckTickEnv {
  * @param maxTasksPerTick  Max tasks to execute in Phase 5 (default 5)
  */
 export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promise<CronTickResult> {
+  // Phase 0 — les jobs qu'un runner mort tenait encore (#186). AVANT le
+  // faucheur : elle regarde la même chose, plus tôt (deux battements et demi
+  // au lieu de cinq minutes) et, surtout, elle prévient le parent qui attendait
+  // l'enfant. Ce que le faucheur ramasserait ensuite est déjà fini.
+  const reclaim = await guardPhase(
+    'reclaimJobsOfDeadRunners',
+    () => reclaimJobsOfDeadRunners(deps.db),
+    { reclaimed: 0, parentsResumed: 0 },
+  );
+
   const orphanJobsReset = await guardPhase(
     'resetOrphanedJobs',
     () => resetOrphanedJobs(deps.db),
@@ -453,6 +468,8 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   }
 
   return {
+    jobsReclaimed: reclaim.reclaimed,
+    parentsResumedAfterReclaim: reclaim.parentsResumed,
     orphanJobsReset,
     pendingRecovered,
     stalePendingFailed,
