@@ -2217,20 +2217,37 @@ export function regrouperParCapacite({ capacites, preuves } = {}) {
 }
 
 /**
+ * Un `import` qui tient tout entier sur SA ligne.
+ *
+ * Rien d'ouvert, rien en suspens : aucune accolade laissée béante, et pas de
+ * virgule finale qui annonce une suite. `import './x'` en est un, sans point-
+ * virgule et sans `from` — et c'est du JavaScript valide, que le point-virgule
+ * seul ne rattrapait pas (revue C de la PR #214).
+ *
+ * `import {` n'en est pas un : son accolade attend sa fermeture. `import a,`
+ * non plus : sa virgule attend la suite.
+ */
+const importDuneSeuleLigne = (ligne) =>
+  /^import\b/.test(ligne) &&
+  !ligne.endsWith(',') &&
+  ligne.split('{').length === ligne.split('}').length;
+
+/**
  * La ligne qui TERMINE une déclaration `import`.
  *
- * Deux formes la terminent, et la seconde manquait : le `from` d'un import
- * nommé, et le point-virgule d'un import à effet de bord. `import
- * './helpers.ts';` tient sur une ligne et ne porte aucun `from` ; le drapeau
- * « on est dans un import » restait donc levé jusqu'à la fin du fichier, tout
- * l'en-tête était sauté, et la page Journeys affichait « no description » sous
- * un parcours qui en avait une (revue après coup de la PR #86).
+ * Trois formes la terminent, et deux manquaient : le `from` d'un import nommé,
+ * le point-virgule, et l'import d'une seule ligne qui n'a ni l'un ni l'autre.
+ * `import './helpers.ts';` ne porte aucun `from` ; le drapeau « on est dans un
+ * import » restait donc levé jusqu'à la fin du fichier, tout l'en-tête était
+ * sauté, et la page Journeys affichait « no description » sous un parcours qui
+ * en avait une (revue après coup de la PR #86).
  *
- * Un import sur plusieurs lignes ne peut pas se faire prendre par le
- * point-virgule : entre ses accolades on trouve des virgules, jamais un
- * point-virgule.
+ * Un import sur PLUSIEURS lignes ne se fait prendre par aucune des trois : son
+ * accolade reste ouverte jusqu'à la ligne qui porte son `from`, et entre ses
+ * accolades on ne trouve que des virgules, jamais un point-virgule.
  */
-const finDImport = (ligne) => /\bfrom\b/.test(ligne) || ligne.endsWith(';');
+const finDImport = (ligne) =>
+  /\bfrom\b/.test(ligne) || ligne.endsWith(';') || importDuneSeuleLigne(ligne);
 
 /**
  * La description d'un parcours : la première phrase UTILE de son fichier.

@@ -2604,17 +2604,39 @@ describe('intentionDunParcours — la description d’un parcours, pas son bande
     expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci.');
   });
 
+  // Et SANS point-virgule : `import './x'` est du JavaScript valide, que la
+  // règle du point-virgule seul ne rattrapait pas (revue C de la PR #214). Un
+  // import d'une ligne finit à sa ligne, ponctué ou non.
+  it('un import à effet de bord sans point-virgule n’avale pas l’en-tête non plus', () => {
+    const texte = `import './x'\n\n// Le propriétaire fait ceci.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci.');
+  });
+
+  it('un import nommé sans point-virgule ne l’avale pas davantage', () => {
+    const texte = `import { test } from '@playwright/test'\n\n// Le propriétaire fait ceci aussi.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci aussi.');
+  });
+
   it('un import à effet de bord suivi d’un import nommé n’avale rien non plus', () => {
     const texte = `import './helpers.ts';\nimport { test } from '@playwright/test';\n\n// Le propriétaire fait cela.\n\ntest('a', () => {});\n`;
     expect(intentionDunParcours(texte)).toBe('Le propriétaire fait cela.');
   });
 
-  // La garde de la garde : le point-virgule ne doit pas faire retomber le
-  // drapeau au milieu d'un import sur plusieurs lignes. Entre ses accolades on
-  // ne trouve que des virgules, et la ligne qui le ferme porte son `from`.
+  // La garde de la garde : ni le point-virgule ni « l'import d'une seule
+  // ligne » ne doivent faire retomber le drapeau au milieu d'un import qui
+  // s'étale. Son accolade reste ouverte jusqu'à la ligne qui porte son `from`,
+  // et entre ses accolades on ne trouve que des virgules.
   it('un import sur plusieurs lignes reste sauté en entier', () => {
     const texte = `import {\n  test,\n  expect,\n} from '@playwright/test';\n\n// Le propriétaire fait ceci encore.\n\ntest('a', () => {});\n`;
     expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci encore.');
+  });
+
+  // La même, sans le `from` sur la ligne d'ouverture ET sans point-virgule au
+  // bout : c'est le cas que « l'import d'une seule ligne » pourrait casser s'il
+  // ne regardait pas les accolades.
+  it('un import sur plusieurs lignes non ponctué reste sauté en entier', () => {
+    const texte = `import {\n  test,\n} from '@playwright/test'\n\n// Le propriétaire fait ceci enfin.\n\ntest('a', () => {});\n`;
+    expect(intentionDunParcours(texte)).toBe('Le propriétaire fait ceci enfin.');
   });
 
   it('un commentaire posé après du CODE n’est plus un en-tête', () => {
