@@ -2404,6 +2404,18 @@ export async function listRoutineStatesAction(): Promise<
 // P4 — la forme du coût (`SpaceCostView`) vit dans space-cost.ts, avec sa
 // fonction : la déclarer ici faisait un cycle d'import (revue CI du 06/09).
 
+/**
+ * La RAISON d'un envoi qui n'est pas parti, lue sur son reçu
+ * (`{ messageId, reason }`, écrit par l'outbox du runner). `null` quand le
+ * reçu n'en porte pas — un envoi confirmé n'a rien à expliquer, et une forme
+ * inattendue ne devient pas une raison inventée.
+ */
+function deliveryReason(receipt: unknown): string | null {
+  if (receipt === null || typeof receipt !== 'object') return null;
+  const reason = (receipt as { reason?: unknown }).reason;
+  return typeof reason === 'string' && reason.trim() !== '' ? reason : null;
+}
+
 export type SpaceConversationView = {
   job: {
     id: string;
@@ -2437,6 +2449,10 @@ export type SpaceConversationView = {
     chatId: string;
     outcome: string;
     attempts: number;
+    /** Le message envoyé, secrets masqués à l'affichage (SECRET-001). */
+    payload: string;
+    /** La raison écrite sur le reçu quand l'envoi n'est pas parti ; `null` sinon. */
+    reason: string | null;
     createdAt: Date | null;
     updatedAt: Date | null;
   }>;
@@ -2557,6 +2573,11 @@ export async function getSpaceConversationAction(
           chatId: jobDeliveries.chatId,
           outcome: jobDeliveries.outcome,
           attempts: jobDeliveries.attempts,
+          // LE MESSAGE lui-même, et le reçu qui dit pourquoi il n'est pas parti
+          // (18/09) : la file d'envoi annonçait un message sans jamais le
+          // montrer. Le texte est masqué à l'AFFICHAGE, comme le reste.
+          payload: jobDeliveries.payload,
+          receipt: jobDeliveries.receipt,
           createdAt: jobDeliveries.createdAt,
           updatedAt: jobDeliveries.updatedAt,
         })
@@ -2725,7 +2746,20 @@ export async function getSpaceConversationAction(
       feed: feedWithDelivery,
       verification,
       cost,
-      deliveries: deliveryRows,
+      // Le message est masqué ICI, à l'affichage : un envoi peut porter un
+      // jeton que l'agent a recopié, et la file d'envoi est un troisième
+      // chemin de lecture des mêmes textes (#150). La RAISON vient du reçu,
+      // telle que le runner l'a écrite — jamais traduite en une phrase.
+      deliveries: deliveryRows.map((d) => ({
+        channel: d.channel,
+        chatId: d.chatId,
+        outcome: d.outcome,
+        attempts: d.attempts,
+        payload: redactSecretsInText(d.payload),
+        reason: deliveryReason(d.receipt),
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+      })),
     });
   } catch (err) {
     console.error('[getSpaceConversationAction]', err);
