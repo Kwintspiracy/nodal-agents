@@ -171,8 +171,9 @@ export const CAPACITES = [
     nom: 'Approve or refuse',
     question: 'Does it really wait for me when it is supposed to wait?',
     exigee: true,
-    ecranAttendu:
-      'That a pending action shows in the thread with Approve and Refuse, that the click unblocks the agent, and that refusing stops it.',
+    // PR #159 (18/09) a posé le premier test d'écran de cette capacité
+    // (`ChatFolderGroup.test.tsx`, la pastille d'Approvals) : la phrase
+    // d'attente est tombée, le registre refuse un plan sur un niveau prouvé.
   },
   {
     slug: 'executer-une-commande',
