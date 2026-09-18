@@ -668,5 +668,8 @@ function EmbeddedProcessDetail({ query }: { query: { jobId: string } | { session
       </div>
     );
   }
-  return <CodeProcessDetail query={query} initialDetail={detail} embedded />;
+  // Le corps est le MÊME partout depuis le 18/09 : la page d'un process n'a
+  // plus d'en-tête à elle qu'il aurait fallu masquer ici — la charpente (les
+  // deux barres du fil) vit dans `RunScreen`, montée par la route.
+  return <CodeProcessDetail query={query} initialDetail={detail} />;
 }

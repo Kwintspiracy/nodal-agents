@@ -22,6 +22,7 @@
 // est assumé (issue #132) ; ce fichier n'importe rien de serveur-seulement, et
 // `RunRow` — l'autre appelant — est déjà client.
 
+import type { ReactNode } from 'react';
 import { List } from '@phosphor-icons/react/dist/ssr';
 import FoldableBlock, { FoldableBody } from './FoldableBlock.tsx';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -101,7 +102,7 @@ function rawNote(step: ToolStep): string | null {
   return step.card === null ? 'no card recorded' : `${step.card} · raw`;
 }
 
-export default function ToolBlock({ step }: { step: ToolStep }) {
+export default function ToolBlock({ step, tag = null }: { step: ToolStep; tag?: ReactNode }) {
   const arg = excerptOfInput(step.input);
   const head = (
     <>
@@ -109,6 +110,11 @@ export default function ToolBlock({ step }: { step: ToolStep }) {
       <span className="shrink-0 text-mono-12 text-feed-tool" title={step.toolName}>
         {shortToolName(step.toolName)}
       </span>
+      {/* Une marque posée après le nom de l'outil. La page d'un run de code y
+          dit quel DÉLÉGUÉ a passé l'appel (18/09) ; le fil n'en a pas besoin,
+          sa délégation est un bloc à elle. Un créneau plutôt qu'un second
+          composant : deux blocs d'appel auraient divergé au premier réglage. */}
+      {tag}
       {arg !== null && (
         <span className="min-w-0 flex-1 truncate text-mono-12 text-feed-argument">({arg})</span>
       )}

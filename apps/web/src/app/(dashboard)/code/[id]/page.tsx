@@ -1,8 +1,24 @@
+// /code/[id] — LE RUN D'UN PROCESS DE CODE.
+//
+// 18/09 — la troisième route qui montre un run, et la dernière à se poser sur
+// la charpente commune (`RunScreen`) : les deux barres du fil en haut, le corps
+// qui défile dessous, et dans ce corps les mêmes blocs que `/scheduled/[id]` et
+// `/jobs/[id]`, dans le même ordre.
+//
+// Ce que cette route décide, et qu'elle est seule à savoir : d'où l'on vient
+// (Code), qui a travaillé, et ce que dit la preuve. Le CORPS, lui, est vivant :
+// il se relit tout seul tant que le process court (`CodeProcessDetail`).
+
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getCodingProcessDetailAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
+import RunScreen from '@/app/(dashboard)/runs/RunScreen.tsx';
+import { threadSubtitle } from '@/app/(dashboard)/spaces/format.ts';
+import { truncate } from '@/lib/format-time';
+import { plainText } from '@/components/Markdown.tsx';
 import CodeProcessDetail from './CodeProcessDetail.tsx';
+import { codeAgents } from './code-run-view.ts';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
@@ -47,11 +63,29 @@ export default async function CodeProcessPage({ params }: Props) {
     );
   }
 
-  const { header } = result.data;
+  const { header, activity, verificationRuns } = result.data;
+  const agentName = header.agentName ?? '';
+  const title = truncate(plainText(header.task), 60);
+  const lastProof = verificationRuns.at(-1) ?? null;
+  // La seule date que ce détail porte est celle de sa dernière activité.
+  const at = header.activityAt === null ? null : new Date(header.activityAt);
 
   return (
-    <PageShell title={header.agentName ?? 'Coding process'} subtitle={header.id}>
+    <RunScreen
+      avatarName={agentName}
+      title={agentName !== '' ? `${agentName} · ${title}` : title}
+      subtitle={threadSubtitle('code', at)}
+      back={{ label: 'Back to Code', href: '/code' }}
+      agents={codeAgents(header, activity)}
+      proofVerdict={lastProof?.verdict ?? null}
+      // PAS de pastille d'état dans la barre : elle est rendue UNE fois, par le
+      // serveur, tandis que le corps se relit tout seul toutes les quatre
+      // secondes. Sur un process vivant, la pastille aurait figé « Coding »
+      // au-dessus d'une carte disant « Done » — un écran qui se contredit est
+      // pire qu'un écran qui se tait. L'état vit donc dans la carte de tête, où
+      // il est toujours frais.
+    >
       <CodeProcessDetail query={parsedId} initialDetail={result.data} />
-    </PageShell>
+    </RunScreen>
   );
 }
