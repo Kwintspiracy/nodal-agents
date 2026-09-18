@@ -30,7 +30,7 @@ const header = (
   id: JOB,
   kind: 'job',
   agentId: null,
-  agentName: 'Dev C',
+  agentName: 'Ada',
   origin: 'api',
   status: 'completed',
   stage: 'done',
@@ -274,15 +274,15 @@ describe('code-run-view — l’activité @cap:suivre-execution/ecran', () => {
       call(),
       call({
         id: 'c2',
-        delegatedFrom: { jobId: 'j2', agentName: 'Reviewer C', agentAvatarUrl: '/r.png' },
+        delegatedFrom: { jobId: 'j2', agentName: 'Hopper', agentAvatarUrl: '/r.png' },
       }),
       call({
         id: 'c3',
-        delegatedFrom: { jobId: 'j3', agentName: 'Reviewer C', agentAvatarUrl: null },
+        delegatedFrom: { jobId: 'j3', agentName: 'Hopper', agentAvatarUrl: null },
       }),
     ];
     const agents = codeAgents(header({ agentAvatarUrl: '/dev-c.png' }), activity);
-    expect(agents.map((a) => a.name)).toEqual(['Dev C', 'Reviewer C']);
+    expect(agents.map((a) => a.name)).toEqual(['Ada', 'Hopper']);
     // La barre montre des VISAGES : l'image voyage jusqu'à elle (18/09).
     expect(agents.map((a) => a.avatarUrl)).toEqual(['/dev-c.png', '/r.png']);
     // Sans image, rien d'inventé — `AgentAvatar` retombe sur les initiales.

@@ -41,7 +41,7 @@ const row = (over: Partial<CodingProcessRow> = {}): CodingProcessRow => ({
   id: JOB_ID,
   kind: 'job',
   agentId: null,
-  agentName: 'Dev C',
+  agentName: 'Ada',
   origin: 'api',
   status: 'completed',
   stage: 'done',
@@ -113,7 +113,7 @@ describe('CodeProcessesTable — les sessions d’un projet @cap:suivre-executio
 
     const ligne = container.querySelector(`[data-testid="session-row-job-${JOB_ID}"]`);
     const texte = ligne?.textContent ?? '';
-    expect(texte).toContain('Dev C');
+    expect(texte).toContain('Ada');
     expect(texte).toContain('Unfolding a block must not move the scroll');
     expect(texte).toContain('Done');
     expect(texte).toContain('$1.92');

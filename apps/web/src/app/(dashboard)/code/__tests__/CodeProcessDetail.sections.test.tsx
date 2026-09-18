@@ -46,7 +46,7 @@ const detail = (): CodingProcessDetail => ({
     id: JOB_ID,
     kind: 'job',
     agentId: null,
-    agentName: 'Dev C',
+    agentName: 'Ada',
     origin: 'api',
     status: 'completed',
     stage: 'done',
@@ -84,7 +84,7 @@ const detail = (): CodingProcessDetail => ({
       toolOutput: '{"ok":true}',
       durationMs: 20,
       createdAt: '2026-09-18T09:59:30.000Z',
-      delegatedFrom: { jobId: 'child-1', agentName: 'Reviewer C', agentAvatarUrl: null },
+      delegatedFrom: { jobId: 'child-1', agentName: 'Hopper', agentAvatarUrl: null },
     },
     {
       kind: 'turn',
@@ -217,7 +217,7 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
   it('l’en-tête porte l’agent, le projet, le harnais et les sept chiffres', async () => {
     await render(detail());
     const text = container.textContent ?? '';
-    expect(text).toContain('Dev C');
+    expect(text).toContain('Ada');
     expect(text).toContain('code · NodalAI');
     expect(text).toContain('claude');
     expect(text).toContain('$1.92');
@@ -239,6 +239,19 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     expect(text).toContain('apps/web/src/lib/actions.ts:13398');
     expect(text).toContain('major');
     expect(text).toContain('The timeline returns the raw tool output.');
+  });
+
+  it('un process SANS relecture le dit, et sa ligne ne s’ouvre pas', async () => {
+    // Le cas courant d'une session de code : personne n'a été mandaté pour
+    // relire. La section se dessine quand même — elle ne peut pas se taire
+    // (invariant #4) — et sans chevron, puisqu'il n'y a rien dessous.
+    await render({ ...detail(), verdicts: [] });
+    const texte = container.textContent ?? '';
+    expect(texte).toContain('No review on this run');
+    expect(texte).toContain('0 verdicts');
+    expect(container.querySelector('[data-testid="review-row"]')).toBeNull();
+    const section = container.querySelector('[data-testid="review-section"]');
+    expect(section?.querySelectorAll('button')).toHaveLength(0);
   });
 
   it('ce qui a été livré se lit en haut : fichiers, lignes, preuve', async () => {
@@ -263,7 +276,7 @@ describe('CodeProcessDetail — un process de code se lit comme un run @cap:suiv
     expect(text).toContain('Bash');
     expect(text).toContain('pnpm exec vitest run ThreadScroller');
     expect(text).toContain('1.4 s');
-    expect(text).toContain('delegated · Reviewer C');
+    expect(text).toContain('delegated · Hopper');
     // Le marqueur de tour rend sa ligne d'appel de modèle.
     expect(text).toContain('4,120 in');
     expect(text).toContain('3,900 cached');
