@@ -86,3 +86,67 @@ describe('ProjectVerificationPanel — ce que l’écran dit', () => {
     expect(html).toContain('node --check app.js');
   });
 });
+
+// ─── La COULEUR de la pastille d'état (#181) ────────────────────────────────
+
+/** La pastille d'état seule, prise dans le rendu par son `data-testid`. */
+function pastilleEtat(verification: ProjectVerification | null): HTMLElement {
+  document.body.innerHTML = rendu(verification);
+  const hote = document.querySelector('[data-testid="verify-status"]');
+  const tag = hote?.firstElementChild;
+  if (!(tag instanceof HTMLElement)) throw new Error('the status tag is not rendered');
+  return tag;
+}
+
+describe('ProjectVerificationPanel — une couleur ne contredit pas son mot @cap:verifier-un-livrable/ecran', () => {
+  // Les deux verdicts positifs portaient `tone="skill"`, la couleur de
+  // l'entité Skill : un orange-rouge. « Approved » s'affichait donc dans la
+  // teinte que le reste de l'écran garde pour ce qui alerte.
+  const ACQUIS = {
+    verifyCommands: COMMANDES,
+    verifyApprovedAt: new Date('2026-09-08T13:50:00Z'),
+    verifyManifestHash: 'h',
+    verifyStatus: 'approved' as const,
+  };
+
+  it('« Approved » est VERT, et d’aucune couleur d’alerte', () => {
+    const tag = pastilleEtat({ ...ACQUIS, verifySource: 'owner' });
+    expect(tag.textContent).toContain('Approved');
+    expect(tag.className).toContain('text-ok');
+    expect(tag.className).toContain('bg-ok-bg');
+    expect(tag.className).not.toContain('skill');
+    expect(tag.className).not.toContain('text-err');
+    expect(tag.className).not.toContain('text-warn');
+  });
+
+  it('« Declared by the agent » l’est aussi : c’est la PROVENANCE qui change, pas l’état', () => {
+    const tag = pastilleEtat({ ...ACQUIS, verifySource: 'agent' });
+    expect(tag.textContent).toContain('Declared by the agent');
+    expect(tag.className).toContain('text-ok');
+    expect(tag.className).not.toContain('skill');
+  });
+
+  it('ce qui n’est PAS acquis garde sa couleur : ambre en attente, neutre sans rien', () => {
+    const attente = pastilleEtat({
+      verifyCommands: COMMANDES,
+      verifyApprovedAt: null,
+      verifyManifestHash: 'h',
+      verifyStatus: 'pending_approval',
+      verifySource: 'agent',
+    });
+    expect(attente.textContent).toContain('Needs your approval');
+    expect(attente.className).toContain('text-warn');
+    expect(attente.className).not.toContain('text-ok');
+
+    const rien = pastilleEtat({
+      verifyCommands: null,
+      verifyApprovedAt: null,
+      verifyManifestHash: null,
+      verifyStatus: 'not_configured',
+      verifySource: null,
+    });
+    expect(rien.textContent).toContain('Nothing declared yet');
+    expect(rien.className).toContain('text-ink-3');
+    expect(rien.className).not.toContain('text-ok');
+  });
+});
