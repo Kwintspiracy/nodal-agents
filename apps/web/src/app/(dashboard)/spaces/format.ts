@@ -30,7 +30,13 @@ export function originLabel(origin: Origin): string {
   if (origin.channel === 'cron') {
     return origin.scheduleName ? `via automation “${origin.scheduleName}”` : 'via automation';
   }
-  if (origin.channel === 'api' || origin.channel === 'dashboard') return 'from the dashboard';
+  if (origin.channel === 'dashboard') return 'from the dashboard';
+  // `api` disait « from the dashboard » parce que la boîte « Send task »
+  // écrivait ce canal. Elle écrit `dashboard` depuis le 18/09, et `api` ne
+  // nomme plus qu'une demande venue de dehors : la dire « du tableau de bord »
+  // attribuerait à la personne ce qu'une machine a demandé.
+  if (origin.channel === 'api') return 'from the API';
+  if (origin.channel === 'mcp') return 'from the MCP server';
   if (origin.channel === 'internal') return 'from another agent';
   if (origin.channel === 'task-board') return 'from the task board';
   return `via ${origin.channel.charAt(0).toUpperCase()}${origin.channel.slice(1)}`;

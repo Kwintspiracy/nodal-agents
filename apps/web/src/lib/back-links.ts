@@ -7,31 +7,41 @@
 // ou son automation) : le retour se calcule, il n'a pas besoin d'un `?from=`
 // qui se perdrait au premier lien copié.
 
-import { folderHref, folderLabel, folderOfJobChannel } from './chat-folders.ts';
+import { folderHref, folderLabel, folderOfJobChannel, MCP_FOLDER } from './chat-folders.ts';
 
 export type BackLink = { label: string; href: string };
 
 /**
  * Un fil ramène dans SON dossier : un chat Discord dans « Discord », une
  * conversation du dashboard dans « Nodal chats ». Un canal qui n'a pas de
- * dossier (api, webhook…) ramène à la liste entière.
+ * dossier (webhook, task-board…) ramène à la liste entière.
+ *
+ * Le dossier MCP est EXCLU, bien que `api` et `mcp` y mènent pour un run : il
+ * liste des runs, pas des fils. Y renvoyer un fil le déposerait sur une liste
+ * où il ne figure pas (invariant #4).
  */
 export function threadBackLink(channel: string): BackLink {
   const key = folderOfJobChannel(channel);
-  if (key === null) return { label: 'Back to channels', href: '/chat' };
+  if (key === null || key === MCP_FOLDER) return { label: 'Back to channels', href: '/chat' };
   return { label: `Back to ${folderLabel(key)}`, href: folderHref(key) };
 }
 
 /**
  * Un run ramène là d'où on l'a ouvert, dans l'ordre de ce qu'il EST : une
  * automation revient aux routines ; un run d'une conversation revient à cette
- * conversation (c'est « Open run » qui y mène) ; le reste revient à Activity,
- * la liste des runs.
+ * conversation (c'est « Open run » qui y mène) ; un run venu de dehors revient
+ * au dossier MCP, d'où on vient de le lister (18/09) ; le reste revient à
+ * Activity, la liste des runs.
  */
 export function runBackLink(job: { channel: string; conversationId: string | null }): BackLink {
   if (job.channel === 'cron') return { label: 'Back to Scheduled', href: '/scheduled' };
   if (job.conversationId !== null && job.conversationId !== '') {
     return { label: 'Back to the conversation', href: `/chat/${job.conversationId}` };
+  }
+  // APRÈS la conversation, jamais avant : un job `api` qui porte un fil est un
+  // tour de chat, et c'est le fil qu'on rouvre — pas la liste des runs.
+  if (folderOfJobChannel(job.channel) === MCP_FOLDER) {
+    return { label: `Back to ${folderLabel(MCP_FOLDER)}`, href: folderHref(MCP_FOLDER) };
   }
   return { label: 'Back to Activity', href: '/logs' };
 }

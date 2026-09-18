@@ -17,13 +17,18 @@
 // par la conversation retirée — `return folderOfJobChannel(origin.jobChannel)`
 // seul — rend rouges « la pastille du dossier », « le total du menu » et « le
 // point vert », la ligne restant verte : exactement le désaccord de l'issue.
+//
+// Depuis le 18/09 il prouve la même chose du dossier MCP : un run venu de
+// dehors n'a pas de conversation, son délégué n'en a pas non plus, et c'est sa
+// CHAÎNE qui range l'attente. Voir le dernier `describe`.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agentJobs, approvalRequests, conversations } from '@nodal-agents/db';
-import { chatFolders, chatWaitingTotal, DASHBOARD_FOLDER } from '../chat-folders.ts';
+import { chatFolders, chatWaitingTotal, DASHBOARD_FOLDER, MCP_FOLDER } from '../chat-folders.ts';
 import { conversationRows } from '@/app/(dashboard)/chat/conversation-rows.ts';
+import { runRows } from '@/app/(dashboard)/chat/run-rows.ts';
 import type { ChannelChatRow } from '../chat-list.ts';
 
 let testDb: TestDb;
@@ -58,6 +63,9 @@ vi.mock('@nodal-agents/auth', async (importOriginal) => {
 
 /** Le fil Telegram : celui d'où la personne parle, et le dossier qui doit compter. */
 let filTelegram = '';
+
+/** Le run demandé par le serveur MCP — la TÊTE dont la chaîne porte l'attente. */
+let runDeDehors = '';
 
 beforeAll(async () => {
   const result = await spinUpTestDb();
@@ -178,6 +186,57 @@ beforeAll(async () => {
     status: 'processing',
     conversationId: filTelegram,
   });
+
+  // ─── Les runs venus de DEHORS (18/09) ──────────────────────────────────────
+  // Deux runs de tête sans conversation : l'un demandé par le serveur MCP,
+  // l'autre par `/api/agent`. Aucun n'a de conversation — c'est exactement ce
+  // que dit la base du propriétaire — et c'est le dossier MCP qui les porte.
+  const [runMcp] = await testDb
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'mcp',
+      task: 'le run demandé par le serveur MCP',
+      // Il a délégué : c'est son enfant qui attend, et lui reste vivant.
+      status: 'awaiting_delegation',
+      conversationId: null,
+    })
+    .returning({ id: agentJobs.id });
+  runDeDehors = runMcp!.id;
+
+  await testDb.insert(agentJobs).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    channel: 'api',
+    task: 'la tâche envoyée par l’API',
+    status: 'completed',
+    conversationId: null,
+  });
+
+  // L'ENFANT de ce run : `internal`, aucune conversation — il ne dit RIEN de sa
+  // provenance. Seule sa chaîne le rattache au dossier MCP.
+  const [delegueDeDehors] = await testDb
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'internal',
+      task: 'le sous-travail d’un run venu de dehors',
+      status: 'awaiting_approval',
+      conversationId: null,
+      parentJobId: runMcp!.id,
+    })
+    .returning({ id: agentJobs.id });
+  await testDb.insert(approvalRequests).values({
+    entityId: seed.entityId,
+    jobId: delegueDeDehors!.id,
+    agentId: seed.agentId,
+    toolName: 'ask_user_from_outside',
+    toolInput: { question: 'et pour le run de dehors ?' },
+    kind: 'question',
+    status: 'pending',
+  });
 });
 
 /** Les attentes telles que la barre latérale et la page les reçoivent. */
@@ -219,6 +278,7 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
       channels: snapshot.channels,
       waiting,
       running: snapshot.running,
+      externalRuns: snapshot.externalRuns,
       pathname: '/chat',
       folderParam: null,
     });
@@ -231,9 +291,17 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
 
   it('fait porter au lien « Channels » le même chiffre que la pastille', async () => {
     const [waiting, snapshot] = [await attentes(), await instantane()];
-    expect(
-      chatWaitingTotal({ channels: snapshot.channels, waiting, running: snapshot.running }),
-    ).toBe(1);
+    const entrees = {
+      channels: snapshot.channels,
+      waiting,
+      running: snapshot.running,
+      externalRuns: snapshot.externalRuns,
+    };
+    const rows = chatFolders({ ...entrees, pathname: '/chat', folderParam: null });
+    // À LA LETTRE la somme des pastilles : une question sur Telegram, une sur
+    // le run venu de dehors. Le délégué sans fil n'est nulle part.
+    expect(chatWaitingTotal(entrees)).toBe(rows.reduce((n, r) => n + r.waiting, 0));
+    expect(chatWaitingTotal(entrees)).toBe(2);
   });
 
   it('ne compte pas dans un dossier ce que sa liste ne montre pas : l’accueil reste dehors', async () => {
@@ -248,13 +316,20 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
       channels: snapshot.channels,
       waiting,
       running: snapshot.running,
+      externalRuns: snapshot.externalRuns,
       pathname: '/chat',
       folderParam: null,
     });
     expect(rows.find((r) => r.key === 'slack')?.waiting ?? 0).toBe(0);
+    // Deux attentes rangées en tout — Telegram et MCP — et l'accueil dehors.
     expect(
-      chatWaitingTotal({ channels: snapshot.channels, waiting, running: snapshot.running }),
-    ).toBe(1);
+      chatWaitingTotal({
+        channels: snapshot.channels,
+        waiting,
+        running: snapshot.running,
+        externalRuns: snapshot.externalRuns,
+      }),
+    ).toBe(2);
   });
 
   it('pose la MÊME pastille sur la ligne de la conversation', async () => {
@@ -288,15 +363,104 @@ describe('le dossier compte ce que sa ligne affiche @cap:reprendre-conversation/
   it('allume le point vert du dossier pour un délégué qui TOURNE sur le fil', async () => {
     const snapshot = await instantane();
     // Un seul `processing`, et il porte `channel = 'task-board'` : compté sur
-    // son propre canal, il n'allumait aucun dossier.
-    expect(snapshot.running).toEqual({ telegram: 1 });
+    // son propre canal, il n'allumait aucun dossier. Les deux `mcp` à côté sont
+    // le run venu de dehors — resté vivant pendant que son délégué attend — et
+    // le job `api` que `seedMinimal` crée lui-même, `pending` et sans
+    // conversation, donc un run de dehors lui aussi.
+    expect(snapshot.running).toEqual({ telegram: 1, mcp: 2 });
     const rows = chatFolders({
       channels: snapshot.channels,
       waiting: await attentes(),
       running: snapshot.running,
+      externalRuns: snapshot.externalRuns,
       pathname: '/chat',
       folderParam: null,
     });
     expect(rows.find((r) => r.key === 'telegram')?.running).toBe(true);
+  });
+});
+
+/** Les runs venus de dehors, tels que la page du dossier les reçoit. */
+async function runsDeDehors() {
+  const { listExternalRunsAction } = await import('../conversation-actions.ts');
+  const result = await listExternalRunsAction();
+  if (!result.ok) throw new Error(result.message);
+  return result.data;
+}
+
+describe('le dossier MCP lit ce que la base en dit @cap:parler-par-canal-externe/moteur', () => {
+  // La moitié qu'aucun test pur ne voit : les lectures rendent bien les
+  // colonnes dont le dossier MCP se nourrit, sur une vraie base, et le compte
+  // du menu et la liste du dossier parlent des MÊMES lignes.
+  //
+  // Mutation vérifiée : la remontée de chaîne retirée de `listApprovalsAction`
+  // (`rootChannel` rendu `null`) → « compte la question d'un délégué » rougit,
+  // et le dossier redevient muet exactement comme avant le 18/09 ;
+  // `conversation_id IS NULL` retiré de `runsFromOutside` → rien ne bouge ici,
+  // parce qu'aucun run de dehors n'a de conversation — c'est ce que la base du
+  // propriétaire disait déjà.
+
+  it('compte les runs de tête venus de dehors, et eux seuls', async () => {
+    const snapshot = await instantane();
+    // Le run MCP, la tâche de l'API, et le job `api` que `seedMinimal` crée
+    // lui-même — trois jobs de tête sans conversation. Ni les délégués (ils ont
+    // un parent), ni le travail des conversations.
+    expect(snapshot.externalRuns).toBe(3);
+  });
+
+  it('liste ces runs, les plus récents d’abord, avec leur tâche', async () => {
+    const runs = await runsDeDehors();
+    expect(runs.map((r) => r.task)).toEqual([
+      'la tâche envoyée par l’API',
+      'le run demandé par le serveur MCP',
+      // Le job du semis, créé avant les deux autres : l'ordre est bien celui de
+      // la création, du plus récent au plus ancien.
+      'Test task',
+    ]);
+    // Aucun délégué dans la liste : un sous-travail n'est pas un run.
+    expect(runs.some((r) => r.task.includes('sous-travail'))).toBe(false);
+  });
+
+  it('remonte la question d’un délégué jusqu’au canal ET au run de tête', async () => {
+    const demande = (await attentes()).find((a) => a.toolName === 'ask_user_from_outside');
+    // Sur lui-même, ce job ne dit rien : `internal`, aucune conversation.
+    expect(demande?.jobChannel).toBe('internal');
+    expect(demande?.conversationChannel).toBeNull();
+    // Sa chaîne, elle, dit tout.
+    expect(demande?.rootChannel).toBe('mcp');
+    expect(demande?.rootJobId).toBe(runDeDehors);
+  });
+
+  it('allume la pastille du dossier MCP pour cette question', async () => {
+    const [waiting, snapshot] = [await attentes(), await instantane()];
+    const rows = chatFolders({
+      channels: snapshot.channels,
+      waiting,
+      running: snapshot.running,
+      externalRuns: snapshot.externalRuns,
+      pathname: '/chat',
+      folderParam: null,
+    });
+    expect(rows.find((r) => r.key === MCP_FOLDER)?.waiting).toBe(1);
+    expect(rows.find((r) => r.key === MCP_FOLDER)?.running).toBe(true);
+    // Et pas ailleurs : Telegram garde la sienne, « Nodal chats » n'a rien.
+    expect(rows.find((r) => r.key === 'telegram')?.waiting).toBe(1);
+    expect(rows.find((r) => r.key === DASHBOARD_FOLDER)?.waiting).toBe(0);
+  });
+
+  it('pose la MÊME pastille sur la LIGNE du run, par le job de tête', async () => {
+    const rows = runRows({ runs: await runsDeDehors(), waiting: await attentes() });
+    const ligne = rows.find((r) => r.id === runDeDehors);
+    expect(ligne?.waiting).toBe('question');
+    expect(ligne?.href).toBe(`/jobs/${runDeDehors}`);
+    // L'autre run n'a rien : une demande ne se pose pas sur la première ligne
+    // venue.
+    expect(rows.find((r) => r.id !== runDeDehors)?.waiting).toBeNull();
+  });
+
+  it('rend un job de tête comme sa propre tête — sans remonter quoi que ce soit', async () => {
+    const demande = (await attentes()).find((a) => a.toolName === 'ask_user');
+    expect(demande?.rootJobId).toBe(demande?.jobId);
+    expect(demande?.rootChannel).toBe('task-board');
   });
 });

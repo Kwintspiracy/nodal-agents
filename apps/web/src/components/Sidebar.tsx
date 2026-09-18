@@ -139,8 +139,8 @@ export default function Sidebar({
   // dossiers rendus juste en dessous (#135). Il se calcule ici et non dans le
   // groupe parce que la ligne « Chat » appartient à la boucle de NAV — mais
   // avec la MÊME fonction, sur les mêmes entrées.
-  const { channels, running } = useChatFolders();
-  const chatWaiting = chatWaitingTotal({ channels, waiting: pending, running });
+  const { channels, running, externalRuns } = useChatFolders();
+  const chatWaiting = chatWaitingTotal({ channels, waiting: pending, running, externalRuns });
 
   // Close mobile menu on route change.
   useEffect(() => {

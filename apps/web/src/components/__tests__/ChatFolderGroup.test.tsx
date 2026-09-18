@@ -72,6 +72,7 @@ async function renderGroup(opts: {
   approvals?: PendingApproval[];
   channels?: string[];
   running?: Record<string, number>;
+  externalRuns?: number;
 }): Promise<void> {
   await render(
     <ApprovalsProvider initial={opts.approvals ?? []}>
@@ -82,6 +83,7 @@ async function renderGroup(opts: {
           // Le menu ne s'en sert pas : il compte par DOSSIER. Les lignes d'un
           // dossier, elles, s'en servent (#135).
           runningConversationIds: [],
+          externalRuns: opts.externalRuns ?? 0,
         }}
       >
         <ChatFolderGroup />
@@ -124,6 +126,23 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
   it('ne rend AUCUNE ligne pour un canal sans conversation', async () => {
     await renderGroup({ channels: ['telegram'] });
     expect(container.querySelector('[data-testid="inbox-folder-discord"]')).toBeNull();
+  });
+
+  it('rend la ligne MCP dès qu’un run est venu de dehors, et la met en DERNIER', async () => {
+    // Quentin, 18/09 : les runs lancés par `/api/agent` ou par le serveur MCP
+    // ont leur entrée, au bout de la liste des dossiers.
+    await renderGroup({ channels: ['telegram'], externalRuns: 4 });
+    expect(folderRow('mcp').textContent).toContain('MCP');
+    expect(folderRow('mcp').getAttribute('href')).toBe('/chat?folder=mcp');
+    const ordre = [...container.querySelectorAll('[data-testid^="inbox-folder-"]')].map((el) =>
+      el.getAttribute('data-testid'),
+    );
+    expect(ordre).toEqual(['inbox-folder-dashboard', 'inbox-folder-telegram', 'inbox-folder-mcp']);
+  });
+
+  it('ne rend AUCUNE ligne MCP tant qu’aucun run n’est venu de dehors', async () => {
+    await renderGroup({ channels: ['telegram'] });
+    expect(container.querySelector('[data-testid="inbox-folder-mcp"]')).toBeNull();
   });
 
   it('écrit sur la pastille le nombre qui attend dans CE dossier', async () => {
@@ -185,8 +204,19 @@ describe('le groupe de dossiers @cap:reprendre-conversation/ecran', () => {
 
 describe('le compte porté par le lien « Chat » @cap:reprendre-conversation/ecran', () => {
   it('affiche le total des attentes des dossiers', async () => {
-    const waiting = [...pending('telegram', 2), ...pending('dashboard', 1), ...pending('api', 5)];
-    const total = chatWaitingTotal({ channels: ['telegram'], waiting, running: {} });
+    // `internal` ne dit d'où vient rien : ces cinq-là ne sont dans aucun
+    // dossier et ne montent dans aucun total.
+    const waiting = [
+      ...pending('telegram', 2),
+      ...pending('dashboard', 1),
+      ...pending('internal', 5),
+    ];
+    const total = chatWaitingTotal({
+      channels: ['telegram'],
+      waiting,
+      running: {},
+      externalRuns: 0,
+    });
     expect(total).toBe(3);
     await render(<SidebarLink href="/chat" label="Channels" count={total} isActive={false} />);
     const link = container.querySelector('a');
