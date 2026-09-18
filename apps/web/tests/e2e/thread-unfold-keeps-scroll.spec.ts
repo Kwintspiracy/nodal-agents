@@ -33,12 +33,32 @@ import { makeDbClient, requireLiveStack, resolveActingUser, testSlugSuffix } fro
 
 /**
  * Marge, en pixels, sous laquelle `ThreadScroller` considère qu'on est « en
- * bas » (`AT_BOTTOM_SLACK_PX`). Recopiée plutôt qu'importée : un parcours
- * Playwright qui importerait un composant client tirerait React dans le
- * processus de test pour lire une constante. `thread-autoscroll.spec.ts` écrit
- * la même valeur, pour la même raison.
+ * bas ».
+ *
+ * ⚠️ C'est une COPIE de la constante `AT_BOTTOM_SLACK_PX` exportée par
+ * `apps/web/src/app/(dashboard)/chat/[id]/ThreadScroller.tsx`, et les deux
+ * doivent rester égales : si le composant change sa marge sans que cette ligne
+ * suive, les cas ci-dessous continueront de passer en mesurant autre chose.
+ * Recopiée plutôt qu'importée parce qu'un parcours Playwright qui importerait
+ * un composant client tirerait React dans le processus de test pour lire un
+ * nombre ; `thread-autoscroll.spec.ts` écrit la même valeur, pour la même
+ * raison.
  */
 const AT_BOTTOM_SLACK_PX = 64;
+
+/**
+ * La densité sous laquelle ces cas ont un sens (#132, #153).
+ *
+ * Le groupe d'un run s'ouvre replié ou déplié selon la PRÉFÉRENCE de la
+ * personne (`users.feed_density`, lue par `getFeedDensityAction`, passée à
+ * `RunSummaryRow defaultOpen`). Le cas C a besoin d'une ligne REPLIÉE à
+ * déplier : sur une base où le propriétaire lit en « unfolded », il rougissait
+ * à sa première assertion et le scénario ne pouvait même pas se jouer
+ * (Reviewer C, passe 1 de la PR #169). La préférence est donc posée pour la
+ * durée du fichier, puis RENDUE telle qu'elle était — un parcours ne laisse pas
+ * derrière lui un réglage qu'il a changé.
+ */
+const DENSITY_FOR_THESE_CASES = 'folded';
 
 /**
  * Attente, en millisecondes, plus longue que la fenêtre pendant laquelle une
@@ -65,9 +85,13 @@ const created: { jobIds: string[]; conversationIds: string[]; agentIds: string[]
   agentIds: [],
 };
 
+/** La densité que la personne lisait avant ce fichier, pour la lui rendre. */
+let densityBefore: string | null = null;
+
 test.beforeAll(async () => {
   await requireLiveStack();
   acting = await resolveActingUser();
+  densityBefore = await setFeedDensity(DENSITY_FOR_THESE_CASES);
   conversationId = await seedThread();
 });
 
@@ -94,7 +118,32 @@ test.afterAll(async () => {
   } finally {
     await close();
   }
+  if (densityBefore !== null) await setFeedDensity(densityBefore);
 });
+
+/**
+ * Pose la densité de lecture de la personne au nom de qui le dashboard agit, et
+ * rend celle qu'elle avait. `null` si la ligne n'existe pas — il n'y a alors
+ * rien à rendre.
+ */
+async function setFeedDensity(density: string): Promise<string | null> {
+  const { users, eq } = await import('@nodal-agents/db');
+  const { db, close } = makeDbClient();
+  try {
+    const [row] = await db
+      .select({ density: users.feedDensity })
+      .from(users)
+      .where(eq(users.id, acting.userId))
+      .limit(1);
+    if (row === undefined) return null;
+    if (row.density !== density) {
+      await db.update(users).set({ feedDensity: density }).where(eq(users.id, acting.userId));
+    }
+    return row.density;
+  } finally {
+    await close();
+  }
+}
 
 /** Une ligne de `chat_messages` telle que ce parcours l'écrit. */
 type SeededMessage = {
@@ -291,6 +340,35 @@ function distanceToBottom(m: ScrollMetrics): number {
   return m.scrollHeight - m.scrollTop - m.clientHeight;
 }
 
+/**
+ * Les mesures une fois la géométrie POSÉE : deux relevés consécutifs
+ * identiques.
+ *
+ * Une attente fixe ne dit rien de ce qu'elle attend — trop courte elle mesure
+ * un fil à moitié rendu, trop longue elle allonge la suite pour rien, et dans
+ * les deux cas personne ne sait laquelle des deux (Reviewer C, passe 1 de la
+ * PR #169). Ce qu'on attend ici est nommé : que le fil ait fini de bouger.
+ */
+async function settledMetrics(page: Page): Promise<ScrollMetrics> {
+  let previous: ScrollMetrics | null = null;
+  let current: ScrollMetrics | null = null;
+  await expect
+    .poll(
+      async () => {
+        previous = current;
+        current = await scrollMetrics(page);
+        return (
+          previous !== null &&
+          previous.scrollHeight === current.scrollHeight &&
+          previous.scrollTop === current.scrollTop
+        );
+      },
+      { timeout: 10_000, intervals: [50, 50, 100, 100, 200, 250] },
+    )
+    .toBe(true);
+  return current as unknown as ScrollMetrics;
+}
+
 /** La hauteur du bloc auquel appartient ce bouton, arrondie au pixel. */
 async function blockHeight(row: Locator): Promise<number> {
   return row.evaluate((btn) => {
@@ -335,8 +413,9 @@ async function openTheFoldedToolRowInTheMiddle(page: Page): Promise<Locator> {
   // Au MILIEU de la zone visible. `scrollIntoView` n'est pas un geste du
   // lecteur au sens de #160 (aucun pointerdown) : il défile, et c'est tout.
   await toolRow.evaluate((btn) => btn.scrollIntoView({ block: 'center' }));
-  // Laisser l'événement de défilement être distribué avant de mesurer.
-  await page.waitForTimeout(300);
+  // Attendre que la géométrie se pose — l'événement de défilement distribué,
+  // le composant revenu au repos — plutôt qu'un délai fixe.
+  await settledMetrics(page);
   return toolRow;
 }
 
@@ -359,9 +438,12 @@ test.describe('déplier un bloc du fil @cap:parler-a-un-agent/ecran', () => {
 
     await runRow.click();
     await expect(runRow).toHaveAttribute('aria-expanded', 'true');
-    await page.waitForTimeout(300);
-
-    const after = await scrollMetrics(page);
+    // La croissance a bien eu lieu, et elle est finie : on mesure un fil au
+    // repos, pas un fil à mi-rendu.
+    await expect
+      .poll(async () => (await scrollMetrics(page)).scrollHeight, { timeout: 10_000 })
+      .toBeGreaterThan(before.scrollHeight);
+    const after = await settledMetrics(page);
     const afterBox = await runRow.boundingBox();
     expect(afterBox).not.toBeNull();
     const growth = after.scrollHeight - before.scrollHeight;
@@ -397,9 +479,8 @@ test.describe('déplier un bloc du fil @cap:parler-a-un-agent/ecran', () => {
     // Le corps est bien là : c'est lui qui fait grandir le fil. Sa dernière
     // ligne, pas la première — un corps tronqué en porterait une sans l'autre.
     await expect(toolRow.locator('xpath=..')).toContainText('line 40');
-    await page.waitForTimeout(300);
-
-    const after = await scrollMetrics(page);
+    // Le fil au repos, plutôt qu'un délai fixe choisi au jugé.
+    const after = await settledMetrics(page);
     const afterBlock = await blockHeight(toolRow);
     const afterBox = await toolRow.boundingBox();
     expect(afterBox).not.toBeNull();
@@ -441,13 +522,14 @@ test.describe('déplier un bloc du fil @cap:parler-a-un-agent/ecran', () => {
         ?.firstElementChild as HTMLElement | null;
       if (inner) inner.appendChild(document.createElement('div')).style.height = '900px';
     });
-    await page.waitForTimeout(600);
 
-    const after = await scrollMetrics(page);
+    // L'assertion EST l'attente : le fil doit revenir au ras du bas. Un délai
+    // fixe ne disait ni ce qu'il attendait ni pourquoi cette durée-là.
+    await expect
+      .poll(async () => distanceToBottom(await scrollMetrics(page)), { timeout: 10_000 })
+      .toBeLessThan(AT_BOTTOM_SLACK_PX);
+
+    const after = await settledMetrics(page);
     expect(after.scrollTop, 'le fil n’a pas suivi l’arrivée').toBeGreaterThan(atBottom.scrollTop);
-    expect(
-      distanceToBottom(after),
-      'le lecteur revenu en bas doit être ramené en bas par une arrivée',
-    ).toBeLessThan(AT_BOTTOM_SLACK_PX);
   });
 });
