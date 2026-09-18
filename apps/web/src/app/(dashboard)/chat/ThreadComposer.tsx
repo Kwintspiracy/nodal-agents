@@ -16,13 +16,14 @@
 // Telegram ou Slack se vérifie canal par canal, et P7 ne le fait pas. La page
 // le dit en toutes lettres plutôt que d'offrir un champ qui ne partirait pas.
 
-import { useRef, useState, useTransition } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import { sendChatMessageAction } from '@/lib/actions.ts';
 import ModelEffortChip, { type ComposerLlmKey } from './ModelEffortChip.tsx';
+import { usePendingTurn } from './PendingTurn.tsx';
 
 /** Au-delà, la zone défile au lieu de grandir : le fil reste visible. */
 const COMPOSER_MAX_HEIGHT_PX = 200;
@@ -41,6 +42,14 @@ export const COMPOSER_ROWS = 3;
 export const COMPOSER_MIN_HEIGHT_PX = COMPOSER_ROWS * COMPOSER_LINE_HEIGHT_PX;
 
 /** La zone épouse son texte : trois lignes à vide, autant qu'il en faut ensuite. */
+/** Combien de temps, au plus, un envoi attend que sa réponse soit à l'écran
+ *  avant de laisser partir le suivant. */
+const RENDER_WAIT_MS = 15_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function fitToContent(el: HTMLTextAreaElement): void {
   el.style.height = 'auto';
   const wanted = Math.max(el.scrollHeight, COMPOSER_MIN_HEIGHT_PX);
@@ -92,44 +101,106 @@ export default function ThreadComposer({
 }) {
   const router = useRouter();
   const [message, setMessage] = useState('');
-  const [isPending, startTransition] = useTransition();
   const box = useRef<HTMLTextAreaElement>(null);
+  /**
+   * P8 — la conversation qu'on est en train d'OUVRIR. Deux messages envoyés
+   * à la suite avant que la page ait relu son id en créeraient deux : le
+   * premier envoi ouvre, les suivants attendent la même ouverture.
+   */
+  const opening = useRef<Promise<string> | null>(null);
+  /**
+   * La file des envois : un message ne part que lorsque la réponse au
+   * précédent est RENDUE. Le routeur de Next traite ses actions une par une,
+   * dans l'ordre où on les lui donne : trois envois d'un coup, et la
+   * relecture du fil demandée à la fin du premier se rangeait derrière les
+   * deux autres — l'écran ne bougeait qu'après le troisième (Quentin,
+   * 18/09). Ici, la relecture est demandée AVANT l'envoi suivant, donc
+   * traitée avant lui.
+   */
+  const queue = useRef<Promise<void>>(Promise.resolve());
 
-  /** Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le dit. */
-  const canSend = !isPending && message.trim() !== '';
+  /**
+   * Y a-t-il quelque chose à envoyer, maintenant ? La couleur du bouton le
+   * dit. Un message déjà parti n'empêche pas le suivant (Quentin, 18/09) :
+   * le fil montre ce qui attend, et le runner prend les tours dans l'ordre.
+   */
+  const canSend = message.trim() !== '';
+  const pendingTurn = usePendingTurn();
+
+  /** Vider la zone, et la remesurer VIDE — voir le commentaire dans `send`. */
+  function clearBox(): void {
+    setMessage('');
+    if (box.current) {
+      box.current.value = '';
+      fitToContent(box.current);
+    }
+  }
 
   function send(): void {
     const text = message.trim();
     if (text === '') return;
-    startTransition(async () => {
+    // Le message part : il quitte la zone et paraît dans le fil TOUT DE SUITE
+    // (`PendingTurn`), avant que le modèle ait répondu — comme dans n'importe
+    // quel chat (Quentin, 18/09). S'il ne part pas, il revient dans la zone.
+    // La zone se remesure VIDE : React ne vide le DOM qu'à la réconciliation,
+    // et mesurer avant laissait une zone haute après l'envoi (revue Codex,
+    // passes 57-58). On vide donc la valeur du DOM soi-même avant de mesurer
+    // — l'état contrôlé la remet à '' au rendu suivant, sans conflit.
+    const id = pendingTurn.begin(text);
+    clearBox();
+    // PAS une transition React : React regroupe les transitions en cours et
+    // ne rend l'écran qu'une fois TOUTES finies. Chaque envoi prend son tour
+    // dans la file, et relit le fil quand SA réponse est là.
+    queue.current = queue.current.then(async () => {
+      // Le texte revient dans la zone — DEVANT ce qu'on a tapé depuis, s'il y a.
+      const giveBack = (): void => {
+        pendingTurn.end(id);
+        setMessage((typed) => (typed.trim() === '' ? text : `${text}\n\n${typed}`));
+      };
       let target = conversationId;
       if (onBeforeSend) {
         try {
-          target = await onBeforeSend();
+          opening.current ??= onBeforeSend();
+          target = await opening.current;
         } catch (err) {
+          opening.current = null;
           toast.error(err instanceof Error ? err.message : 'Could not open the conversation');
+          giveBack();
           return;
         }
       }
       if (target === '') {
         toast.error('No conversation to write to');
+        giveBack();
         return;
       }
-      const r = await sendChatMessageAction({ conversationId: target, message: text });
+      let r: Awaited<ReturnType<typeof sendChatMessageAction>>;
+      try {
+        r = await sendChatMessageAction({ conversationId: target, message: text });
+      } catch (err) {
+        // Une action qui ne revient pas (réseau coupé) ne bloque pas la file.
+        toast.error(err instanceof Error ? err.message : 'Could not send the message');
+        giveBack();
+        return;
+      }
       if (!r.ok) {
         toast.error(r.message);
+        giveBack();
         return;
       }
-      setMessage('');
-      // La zone se remesure VIDE : React ne vide le DOM qu'à la réconciliation,
-      // et mesurer avant laissait une zone haute après l'envoi (revue Codex,
-      // passes 57-58). On vide donc la valeur du DOM soi-même avant de mesurer
-      // — l'état contrôlé la remet à '' au rendu suivant, sans conflit.
-      if (box.current) {
-        box.current.value = '';
-        fitToContent(box.current);
-      }
+      // Le fil relu porte les deux tours ; la copie de `PendingTurn` s'efface
+      // d'elle-même quand le fil rendu porte son texte (pas ici : effacer
+      // avant la relecture ferait clignoter le fil). La relecture est
+      // demandée MAINTENANT, avant que le message suivant parte.
+      pendingTurn.settle(id);
       router.refresh();
+      // Et on attend que la réponse soit À L'ÉCRAN avant de faire partir le
+      // message suivant : l'appel d'une action serveur est une transition
+      // React, et React lie les transitions en cours — lancé plus tôt, le
+      // suivant retenait l'affichage de celle-ci jusqu'à sa propre fin. Une
+      // borne, pour qu'un texte que le fil ne rendrait jamais tel quel ne
+      // bloque pas la file.
+      await Promise.race([pendingTurn.rendered(id), sleep(RENDER_WAIT_MS)]);
     });
   }
 
@@ -167,7 +238,6 @@ export default function ThreadComposer({
               ? `Reply to ${agentName}…`
               : 'Reply…'
         }
-        disabled={isPending}
         containerClassName="min-w-0"
         // `block` : en ligne, la zone laisse 5 px de descente sous elle dans
         // son conteneur, et la rangée d'actions se calait sur CE bas-là.
@@ -209,7 +279,7 @@ export default function ThreadComposer({
           onClick={send}
           disabled={!canSend}
         >
-          {isPending ? 'Sending…' : 'Send'}
+          Send
         </PrimaryButton>
       </div>
     </div>
