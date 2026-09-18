@@ -48,6 +48,7 @@ import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
+import { redactPresented } from './redact-presented.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
 import { buildConversationThread } from './conversation-thread.ts';
 // UNE seule définition de la clé d'un chat, des deux côtés. Elle vit dans son
@@ -807,12 +808,18 @@ export async function getConversationThreadAction(
 
     // Les lignes d'audit rangées SOUS leur job de tête : la production d'un
     // sous-agent fait l'encart du tour parent (lecture (b) du plan).
+    //
+    // La CARTE est masquée en entrant ici (#150) : l'encart « Produced » nomme
+    // les fichiers et les envois qu'elle porte, et c'est un troisième chemin de
+    // lecture des mêmes lignes. Le masquage ne change que des chaînes de forme
+    // credential : la carte, son étiquette et ses comptes traversent intacts,
+    // donc le classement chat/travail rend le même verdict.
     const rowsByRoot = new Map<string, Array<(typeof classifiableRows)[number]>>();
     for (const row of classifiableRows) {
       const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
       if (root === undefined) continue;
       const bucket = rowsByRoot.get(root) ?? [];
-      bucket.push(row);
+      bucket.push({ ...row, presented: redactPresented(row.presented) });
       rowsByRoot.set(root, bucket);
     }
 

@@ -1358,3 +1358,83 @@ describe('listCurrentThreadByChatAction — la base désigne, avec la règle du 
     expect(Object.keys(r.data.current).some((k) => k.includes(':dashboard:'))).toBe(false);
   });
 });
+
+describe('getConversationThreadAction — les secrets d’une carte (#150)', () => {
+  it('l’encart de production nomme le fichier MASQUÉ, et le fil ne porte le jeton nulle part', async () => {
+    // Troisième chemin de lecture des mêmes lignes `tool_calls` : celui du
+    // récapitulatif, qui NOMME les fichiers écrits d'après la carte. Il ne
+    // passe pas par la rédaction du fil, et rendait le chemin tel qu'en base.
+    // Forme Anthropic plutôt que Slack : la protection de pousse de GitHub
+    // prend une fixture `xoxb-…` pour un vrai jeton et refuse le commit.
+    const secret = 'sk-ant-api03-QRSTUVWXYZ0123456789ABCDEFGHIJ'; // secrets:allow (fixture : clé factice)
+    const [conv] = await testDb
+      .insert(conversations)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        title: 'Sauvegarde',
+        origin: 'user',
+        channel: 'telegram',
+        chatId: 'secret-150',
+        createdAt: new Date('2026-09-17T09:00:00Z'),
+        updatedAt: new Date('2026-09-17T09:10:00Z'),
+      })
+      .returning({ id: conversations.id });
+
+    const [job] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: 'secret-150',
+        conversationId: conv!.id,
+        task: 'Sauvegarde le jeton dans un fichier',
+        status: 'completed',
+        result: 'Fichier écrit.',
+        messages: [
+          { role: 'user', content: 'Sauvegarde le jeton dans un fichier' },
+          { role: 'assistant', content: 'Fichier écrit.' },
+        ],
+        createdAt: new Date('2026-09-17T09:00:00Z'),
+        completedAt: new Date('2026-09-17T09:01:00Z'),
+      })
+      .returning({ id: agentJobs.id });
+
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: job!.id,
+      toolName: 'file_write',
+      card: 'files',
+      presented: {
+        card: 'files',
+        files: [{ path: `cles/${secret}.txt`, action: 'created', detail: `jeton ${secret}` }],
+        total: 1,
+        truncated: false,
+      },
+      riskLevel: 'write',
+      toolInput: { path: `cles/${secret}.txt` },
+      toolOutput: 'written',
+    });
+
+    const { getConversationThreadAction } = await actions();
+    const r = await getConversationThreadAction(conv!.id);
+    if (!r.ok) throw new Error(`échec inattendu : ${r.code} ${r.message}`);
+
+    const encart = r.data.feed.items.find((i) => i.kind === 'produced');
+    if (encart?.kind !== 'produced') throw new Error('item produced attendu');
+    // Le verdict ne change pas — c'est bien une production, avec un fichier.
+    expect(encart.verdict.isWork).toBe(true);
+    expect(encart.verdict.items).toEqual([
+      {
+        kind: 'file',
+        label: 'cles/[secret masqué] (sk-).txt',
+        path: 'cles/[secret masqué] (sk-).txt',
+      },
+    ]);
+    // Le récapitulatif nomme le même chemin masqué, et n'en compte qu'un.
+    expect(encart.summary.files).toBe(1);
+    expect(encart.summary.filePaths).toEqual(['cles/[secret masqué] (sk-).txt']);
+    expect(JSON.stringify(r.data.feed)).not.toContain(secret);
+  });
+});

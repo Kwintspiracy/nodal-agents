@@ -374,6 +374,71 @@ describe('listRunCallsAction @cap:suivre-execution/moteur', () => {
     expect(dates).toEqual([...dates].sort((a, b) => a - b));
   });
 
+  it('#150 : la CARTE, l’entrée et la sortie d’un appel sont masquées ici aussi', async () => {
+    // La liste des appels d'un run est un SECOND chemin de lecture des mêmes
+    // lignes : elle ne passe pas par le fil, et rendait la carte telle qu'en
+    // base — masquée dans la conversation, en clair ici.
+    const secret = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // secrets:allow (fixture : jeton factice)
+    const commande = `git clone https://${secret}@github.com/exemple/depot.git`;
+    const [run] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Cloner le dépôt',
+        status: 'completed',
+        createdAt: at(600),
+      })
+      .returning({ id: agentJobs.id });
+
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: run!.id,
+      toolName: 'run_command',
+      toolInput: { command: commande },
+      toolOutput: `remote: jeton ${secret} accepté`,
+      durationMs: 900,
+      turn: 1,
+      toolCallId: 'c_clone',
+      card: 'terminal',
+      presented: {
+        card: 'terminal',
+        command: commande,
+        exitCode: 0,
+        timedOut: false,
+        stdoutTail: `remote: jeton ${secret} accepté`,
+        stdoutTruncated: false,
+        stderrTail: '',
+        stderrTruncated: false,
+      },
+      createdAt: at(620),
+    });
+
+    const { listRunCallsAction } = await import('../actions.ts');
+    const r = await listRunCallsAction({ jobId: run!.id });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const masque = 'git clone https://[secret masqué] (gh*_)@github.com/exemple/depot.git';
+    const appel = r.data.items[0];
+    expect(appel?.kind === 'tool' && appel.step.presented).toEqual({
+      card: 'terminal',
+      command: masque,
+      exitCode: 0,
+      timedOut: false,
+      stdoutTail: 'remote: jeton [secret masqué] (gh*_) accepté',
+      stdoutTruncated: false,
+      stderrTail: '',
+      stderrTruncated: false,
+    });
+    expect(appel?.kind === 'tool' && appel.step.outputText).toBe(
+      'remote: jeton [secret masqué] (gh*_) accepté',
+    );
+    expect(appel?.kind === 'tool' && appel.step.input).toEqual({ command: masque });
+    expect(JSON.stringify(r.data)).not.toContain(secret);
+  });
+
   it('refuse un run qui n’est pas de cette entité', async () => {
     const { listRunCallsAction } = await import('../actions.ts');
     const r = await listRunCallsAction({ jobId: '11111111-1111-4111-8111-111111111111' });

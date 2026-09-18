@@ -187,6 +187,7 @@ import {
   findModelCatalogEntry,
   LIVE_JOB_STATUSES,
   isShellProgram,
+  redactSecretsInText,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth, LocalAuthProvider, ClaimError } from '@nodal-agents/auth';
@@ -213,6 +214,7 @@ import {
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
+import { redactPresented } from './redact-presented.ts';
 import { probeContextWindow } from '@nodal-agents/llm';
 import {
   systemSkillSlugs,
@@ -9015,9 +9017,14 @@ export async function listRunCallsAction(raw: unknown): Promise<ActionResult<Run
           toolCallId: r.toolCallId,
           jobId,
           card: isToolCard(r.card) ? r.card : null,
-          presented: parsePresented(r.presented),
-          input: r.toolInput,
-          outputText: r.toolOutput,
+          // Entrée, sortie et CARTE masquées comme le fil les masque (#150) :
+          // cette liste est un second chemin de lecture des mêmes lignes, et
+          // un secret caché dans le fil restait lisible ici. Les comptes plus
+          // bas lisent la ligne BRUTE : masquer change le texte, jamais le
+          // nombre de lignes écrites.
+          presented: parsePresented(redactPresented(r.presented)),
+          input: redactPresented(r.toolInput),
+          outputText: r.toolOutput === null ? null : redactSecretsInText(r.toolOutput),
           outcome,
           durationMs: r.durationMs,
           // Ce que l'appel a écrit, compté comme le fil le compte (même

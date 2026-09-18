@@ -26,6 +26,7 @@ import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
 import type { ConversationFeed } from './conversation-feed.ts';
 import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
+import { redactPresented } from './redact-presented.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
@@ -302,9 +303,14 @@ export async function assembleJobFeeds(
           return childFeed === undefined ? c : { ...c, feed: childFeed };
         }),
       },
+      // La sortie brute ET la CARTE, masquées ensemble : la carte est bâtie à
+      // partir de cette même sortie, et `ToolBlock` la rend DE PRÉFÉRENCE à
+      // elle. Rédiger l'une sans l'autre montrait le jeton en clair sur la
+      // carte pendant que la vue brute le masquait (#150).
       (toolsByJob.get(job.id) ?? []).map((t) => ({
         ...t,
         toolOutput: t.toolOutput === null ? null : redactSecretsInText(t.toolOutput),
+        presented: redactPresented(t.presented),
       })),
       llmByJob.get(job.id) ?? [],
       (questionsByJob.get(job.id) ?? []).map((q) => ({
