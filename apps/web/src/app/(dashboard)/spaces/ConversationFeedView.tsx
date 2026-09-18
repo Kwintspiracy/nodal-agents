@@ -18,6 +18,7 @@ import type {
   ConversationFeed,
   FeedChildJob,
   FeedItem,
+  ReviewVerdictRecord,
   Step,
   TurnBlock,
 } from '@/lib/conversation-feed.ts';
@@ -845,8 +846,58 @@ export function delegationVerdict(result: string | null): string | null {
   if (head === undefined) return null;
   const inline = /^verdict(?:\s+[^\s:—]+)?\s*[:—]\s*(.+)$/i.exec(head);
   if (inline?.[1] !== undefined) return inline[1];
+  // ⚠️ CETTE BRANCHE NE SE DÉCLENCHE JAMAIS, et le dire vaut mieux que la
+  // laisser promettre. `plainText` ne rend que la PREMIÈRE ligne lisible d'un
+  // markdown (components/Markdown.tsx) : « Verdict\nça passe » arrive ici comme
+  // « Verdict » tout court, et `next` est toujours absent. Constaté le
+  // 18/09/2026 en écrivant les tests de #174.
+  //
+  // Elle n'est pas retirée et le repli n'est pas corrigé ICI : réparer la
+  // lecture changerait ce que le fil affiche pour toute une famille de
+  // résultats — ceux qui titrent « ## Verdict » — et #174 ne porte que sur la
+  // préférence du verdict ENREGISTRÉ. Un correctif de la prose est un sujet à
+  // lui seul, avec son avant/après sous les yeux de quelqu'un.
   if (/^verdict$/i.test(head)) return next ?? null;
   return null;
+}
+
+/**
+ * La ligne de verdict d'une délégation : L'ENREGISTRÉ D'ABORD, la prose ensuite
+ * (#174).
+ *
+ * Le fil lisait la première ligne du résultat de l'enfant. Depuis #170 l'outil
+ * `review_verdict` écrit le verdict TYPÉ — validé par son schéma, compté par
+ * gravité — et une prose qui dit autre chose ne doit plus gagner : un
+ * relecteur qui écrit « Verdict global : rien à signaler » après avoir
+ * enregistré `request_changes` avec deux bloquants faisait afficher au bloc le
+ * contraire de ce qu'il a livré.
+ *
+ * Ce qui s'écrit alors : le mot du verdict, puis les constats PAR GRAVITÉ, et
+ * seulement les gravités présentes. « 0 minor » demande d'être lu pour
+ * apprendre qu'il n'y a rien ; une revue propre s'écrit « Approved », un point
+ * c'est tout.
+ *
+ * La prose reste le repli, mot pour mot : un délégué qui n'a enregistré aucun
+ * verdict n'a que ça, et c'est toujours mieux qu'une ligne vide.
+ */
+export function delegationVerdictLine(job: {
+  result: string | null;
+  reviewVerdict?: ReviewVerdictRecord | null;
+}): string | null {
+  const record = job.reviewVerdict;
+  if (record === undefined || record === null) return delegationVerdict(job.result);
+  const mot = record.verdict === 'approve' ? 'Approved' : 'Changes requested';
+  const compte = (
+    [
+      ['blocker', record.counts.blocker],
+      ['major', record.counts.major],
+      ['minor', record.counts.minor],
+    ] as const
+  )
+    .filter(([, n]) => n > 0)
+    .map(([nom, n]) => `${n} ${nom}${n > 1 ? 's' : ''}`)
+    .join(', ');
+  return compte === '' ? mot : `${mot} · ${compte}`;
 }
 
 /**
@@ -901,7 +952,7 @@ function DelegationGroup({
   const failed = job.status === 'failed' || job.status === 'cancelled';
   const done = job.status === 'completed';
   const summary = job.task !== null ? truncate(plainText(job.task), 80) : '';
-  const verdict = delegationVerdict(job.result);
+  const verdict = delegationVerdictLine(job);
   // Pleine largeur, comme tout bloc du fil (#135, remarque de Quentin sur
   // #140) : la gouttière de 46 px rentrait la délégation par rapport aux blocs
   // d'outil juste au-dessus, et le fil se lisait en escalier.
@@ -927,6 +978,17 @@ function DelegationGroup({
             />
             <span className="shrink-0 text-medium-13 text-ink">{toName}</span>
             <span className="min-w-0 flex-1 truncate text-body-13 text-ink-3">{summary}</span>
+            {/* LE VERDICT DANS LA TÊTE (#174), et plus au fond du bloc : on
+                parcourt un fil de revues replié, et la conclusion de chacune
+                est justement ce qu'on cherche sans l'ouvrir. Coupé à une
+                trentaine de signes, parce que le repli d'une prose peut être
+                une phrase entière — le verdict ENREGISTRÉ, lui, tient
+                toujours. */}
+            {verdict !== null && (
+              <span className="max-w-[30ch] shrink-0 truncate text-body-13 text-feed-delegation">
+                {verdict}
+              </span>
+            )}
             {/* La pastille dit d'un coup d'œil si la passe a atterri ; elle ne
                 se dessine pas tant que le délégué court (rien à dire encore). */}
             {(done || failed) && (
@@ -972,14 +1034,19 @@ function DelegationGroup({
                 {job.error !== null && <p className="text-body-13 text-err">{job.error}</p>}
               </>
             )}
+            {/* Le RÉSUMÉ du verdict enregistré, ici et pas dans la tête : la
+                tête porte la conclusion, le corps porte ce qui la justifie. La
+                prose n'a pas de résumé à part — son verdict EST sa phrase, déjà
+                dans la tête et déjà dans « Result » juste au-dessus. */}
+            {job.reviewVerdict != null && job.reviewVerdict.summary !== '' && (
+              <div>
+                <BlockLabel>Verdict</BlockLabel>
+                <p className="text-body-13 text-ink-2">{job.reviewVerdict.summary}</p>
+              </div>
+            )}
             {/* P8 : le fil d'un JOB vit sur /scheduled/[id] — /spaces/<id> est
                 devenu la page d'un PROJET. */}
             <div className="flex items-center gap-2">
-              {verdict !== null && (
-                <span className="min-w-0 truncate text-body-13 text-feed-delegation">
-                  {verdict}
-                </span>
-              )}
               <Link
                 href={`/scheduled/${job.id}`}
                 className="ml-auto flex shrink-0 items-center gap-1.5 text-medium-13 text-ink-2 hover:text-ink"

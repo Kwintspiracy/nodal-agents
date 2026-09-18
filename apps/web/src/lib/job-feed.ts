@@ -14,6 +14,7 @@ import 'server-only';
 import {
   eq,
   and,
+  desc,
   inArray,
   agents,
   agentJobs,
@@ -21,6 +22,11 @@ import {
   llmCalls,
   approvalRequests,
 } from '@nodal-agents/db';
+import {
+  parseReviewVerdictOutput,
+  REVIEW_VERDICT_TOOL,
+  type ReviewVerdictRecord,
+} from '@nodal-agents/orchestration';
 import { redactTranscriptForDisplay, redactSecretsInText } from '@nodal-agents/shared';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { buildConversationFeed } from './conversation-feed.ts';
@@ -133,6 +139,64 @@ const CHILD_FEED_DEPTH = 1;
  * et le lien vers leur run.
  */
 export const CHILD_FEEDS_MAX = 20;
+
+/**
+ * Le verdict ENREGISTRÉ de chaque job donné, quand il en a livré un (#174).
+ *
+ * La règle est celle de l'orchestration, à la lettre : le DERNIER appel à
+ * `review_verdict`, « dernier » au sens de `seq`, l'ordre d'ÉCRITURE
+ * (migration 0110). Ni l'heure ni le tour ne le disent — deux appels d'un même
+ * tour portent le même `turn` et souvent le même `created_at`. La sortie est
+ * relue par le parseur de l'outil, jamais par un second lecteur maison : c'est
+ * le schéma de l'outil qui a validé ce verdict, et deux lectures auraient
+ * divergé.
+ *
+ * ⚠️ UNE LIGNE ILLISIBLE NE TUE PAS LE FIL. `parseReviewVerdictOutput` LÈVE sur
+ * une sortie qui s'annonce réussie sans respecter le contrat — c'est le bon
+ * geste dans l'orchestration, où le parent doit échouer plutôt que recevoir un
+ * verdict tronqué. Ici, la même exception effacerait la conversation entière
+ * pour une ligne abîmée. Elle est donc retenue, et ce job n'a simplement pas de
+ * verdict typé : le bloc retombe sur la prose, comme avant #170, ce qui est
+ * exactement ce qu'on sait dire de lui.
+ */
+async function lireVerdictsLivres(
+  db: Db,
+  entityId: string,
+  jobIds: readonly string[],
+): Promise<Map<string, ReviewVerdictRecord>> {
+  const parJob = new Map<string, ReviewVerdictRecord>();
+  if (jobIds.length === 0) return parJob;
+
+  const rows = await db
+    .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+    .from(toolCalls)
+    .where(
+      and(
+        inArray(toolCalls.jobId, [...jobIds]),
+        eq(toolCalls.entityId, entityId),
+        eq(toolCalls.toolName, REVIEW_VERDICT_TOOL),
+      ),
+    )
+    // Décroissant : la PREMIÈRE ligne vue pour un job est donc la dernière
+    // écrite, et les suivantes — des appels corrigés, repris — sont ignorées.
+    .orderBy(desc(toolCalls.seq));
+
+  // Les jobs déjà tranchés. Pas `parJob` : sa ligne la plus récente peut ne
+  // RIEN livrer — un appel refusé après un succès dit que le relecteur s'est
+  // repris — et il faut alors s'arrêter là, sans remonter au succès d'avant.
+  const tranches = new Set<string>();
+  for (const row of rows) {
+    if (row.jobId === null || tranches.has(row.jobId)) continue;
+    tranches.add(row.jobId);
+    try {
+      const verdict = parseReviewVerdictOutput(row.toolOutput);
+      if (verdict !== null) parJob.set(row.jobId, verdict);
+    } catch (err) {
+      console.warn(`[job-feed] job ${row.jobId} carries an unreadable review_verdict:`, err);
+    }
+  }
+  return parJob;
+}
 
 export async function assembleJobFeeds(
   db: Db,
@@ -260,6 +324,28 @@ export async function assembleJobFeeds(
     });
   }
 
+  // Le VERDICT ENREGISTRÉ de chaque délégué (#174). Le fil le déduisait de la
+  // PROSE de l'enfant — « Verdict global : … » — alors que depuis #170 l'outil
+  // `review_verdict` l'écrit typé dans `tool_calls`, validé par son schéma. Une
+  // prose trompeuse faisait donc dire au bloc autre chose que ce qui a été
+  // enregistré.
+  //
+  // UNE requête pour tous les enfants de ce niveau, jamais une par enfant. Et
+  // pas une lecture des lignes déjà chargées : celles-là sont celles des
+  // PARENTS (`ids`), et le fil d'un enfant n'est assemblé que dans la limite de
+  // profondeur — au-delà il n'y aurait rien à relire.
+  //
+  // Pourquoi pas la transcription du parent, qui porte pourtant le même JSON
+  // sans coûter une requête : il faudrait y retrouver le résultat d'outil qui
+  // correspond À CET enfant, par son identifiant d'appel, et cette
+  // correspondance se perd dès qu'un tour est tronqué. La ligne `tool_calls`
+  // est la source que l'orchestration elle-même relit.
+  const verdictsParEnfant = await lireVerdictsLivres(
+    db,
+    entityId,
+    childRows.map((r) => r.id),
+  );
+
   const childrenByJob = groupBy(childRows, (r) => r.parentJobId);
   const toolsByJob = groupBy(toolRows, (r) => r.jobId);
   const llmByJob = groupBy(llmRows, (r) => r.jobId);
@@ -300,7 +386,8 @@ export async function assembleJobFeeds(
         scheduleName,
         children: (childrenByJob.get(job.id) ?? []).map((c) => {
           const childFeed = childFeedById.get(c.id);
-          return childFeed === undefined ? c : { ...c, feed: childFeed };
+          const avecVerdict = { ...c, reviewVerdict: verdictsParEnfant.get(c.id) ?? null };
+          return childFeed === undefined ? avecVerdict : { ...avecVerdict, feed: childFeed };
         }),
       },
       // La sortie brute ET la CARTE, masquées ensemble : la carte est bâtie à
