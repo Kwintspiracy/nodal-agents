@@ -19,6 +19,7 @@ import type { CodingVerdictView } from '@/lib/actions.ts';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
+import Markdown from '@/components/Markdown.tsx';
 
 /** Le statut condensé d'une relecture — lisible en une demi-seconde. */
 function verdictStatus(
@@ -124,6 +125,17 @@ function VerdictCard({ verdict }: { verdict: CodingVerdictView }) {
             </li>
           ))}
         </ul>
+      )}
+      {/* LE RAPPORT du relecteur, en toutes lettres. Il se lisait ailleurs :
+          l'orchestrateur le recopiait dans sa réponse finale, et la page
+          montrait donc la même relecture deux fois — une fois en prose
+          flottante sous l'en-tête, une fois ici en structure (Quentin, 18/09 :
+          « il ne devrait y en avoir qu'une seule et elle devrait être dans le
+          bloc review prévu à cet effet »). */}
+      {verdict.report !== null && verdict.report !== '' && (
+        <div className="border-t border-rule-2 pt-2" data-testid="review-report">
+          <Markdown text={verdict.report} />
+        </div>
       )}
     </div>
   );

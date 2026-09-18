@@ -259,6 +259,8 @@ describe('run-view — la demande retirée de la chronologie @cap:suivre-executi
 
 describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', () => {
   const done = { completedAt: new Date('2026-09-18T09:00:41Z') };
+  /** Le rapport d'un relecteur, tel que le bloc Review le porte déjà. */
+  const RAPPORT = '# Rapport\n\nDeux majeurs fermés, un mineur reste.';
 
   it('un item `answer` sort du fil, et le fil ne le montre plus', () => {
     const items: FeedItem[] = [turn(), { kind: 'answer', text: 'Digest posted.' }];
@@ -294,6 +296,27 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
     const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Fourteen issues.' }] })];
     const lifted = liftReply(items, { ...done, result: '{"issues":14}' });
     expect(lifted.reply).toBe('Fourteen issues.');
+  });
+
+  it('une réponse qui RECOPIE le rapport d’un verdict ne se lit pas deux fois', () => {
+    // Quentin, 18/09 : l'orchestrateur rendait le rapport de son relecteur tel
+    // quel, et la page montrait la même relecture deux fois — en prose sous
+    // l'en-tête, puis dans le bloc Review. « Il ne devrait y en avoir qu'une
+    // seule et elle devrait être dans le bloc review prévu à cet effet. »
+    const recopie = `Rapport de la relecture, tel quel :\n\n---\n\n${RAPPORT}`;
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: recopie }] })];
+    expect(liftReply(items, done, [RAPPORT]).reply).toBeNull();
+  });
+
+  it('une réponse qui REFORMULE reste : c’est un autre texte, pas une copie', () => {
+    const propre = 'Reviewer C a fermé les deux majeurs. Je livre.';
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: propre }] })];
+    expect(liftReply(items, done, [RAPPORT]).reply).toBe(propre);
+  });
+
+  it('un rapport vide ou absent n’efface aucune réponse', () => {
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Fait.' }] })];
+    expect(liftReply(items, done, [null, '', '   ']).reply).toBe('Fait.');
   });
 
   it('rien ne sort tant que le run court : sa dernière phrase est une étape', () => {

@@ -237,6 +237,7 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
               summary: 'Two majors closed, one minor left.',
               findings: [{ file: 'apps/web/src/lib/actions.ts', line: 13398, severity: 'major' }],
               counts: null,
+              report: null,
             },
           ],
         }}

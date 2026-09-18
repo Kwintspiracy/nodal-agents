@@ -217,7 +217,7 @@ import {
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
-import { redactPresented } from './redact-presented.ts';
+import { redactAuditRow, redactPresented } from './redact-presented.ts';
 import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
@@ -2539,6 +2539,7 @@ export async function getSpaceConversationAction(
       classifiableRows,
       projectRows,
       workspaceRoots,
+      reviewVerdicts,
     ] = await Promise.all([
       db
         .select({
@@ -2669,11 +2670,14 @@ export async function getSpaceConversationAction(
       // ramène au relatif avant d'être compté, sinon le même fichier compte
       // deux fois (passe 57).
       entityWorkspaceRoots(db, session.entityId),
+      // La relecture de ce travail et de sa descendance — la lecture PARTAGÉE
+      // avec le détail Code, pour que les trois portes d'un run en disent la
+      // même chose. Ici et non après ce bloc : elle ne dépend d'aucune de ces
+      // lectures, et en série elle ajoutait son aller-retour à chaque ouverture
+      // de page (Reviewer C, passe 2). Ses deux requêtes à elle restent
+      // enchaînées : le rapport se lit sur les jobs que les verdicts désignent.
+      readReviewVerdicts(db, session.entityId, relevantIds),
     ]);
-    // La relecture de ce travail et de sa descendance — la lecture partagée
-    // avec le détail Code, pour que les trois portes d'un run en disent la
-    // même chose.
-    const reviewVerdicts = await readReviewVerdicts(db, session.entityId, relevantIds);
     const cost = aggregateSpaceCost({
       calls: costRows,
       approvals: approvalRows,
@@ -2713,10 +2717,11 @@ export async function getSpaceConversationAction(
     // La carte est masquée en entrant (#150) : le récapitulatif nomme les
     // fichiers et les envois qu'elle porte, c'est un chemin de lecture de plus
     // des mêmes lignes.
-    const auditRows = classifiableRows.map((r) => ({
-      ...r,
-      presented: redactPresented(r.presented),
-    }));
+    // Les TROIS lectures d'une même ligne passent par la même porte : la carte,
+    // la sortie brute et l'entrée (`redactAuditRow`). Masquer la carte seule
+    // laissait un jeton voyager dans `toolOutput` jusqu'au premier écran qui
+    // l'afficherait (Reviewer C, passe 2).
+    const auditRows = classifiableRows.map(redactAuditRow);
     const projectRow = projectRows[0];
     const runJob: ThreadJob = {
       jobId: job.id,

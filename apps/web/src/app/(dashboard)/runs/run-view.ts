@@ -247,14 +247,22 @@ export function dropTaskRequest(items: readonly FeedItem[], task: string): FeedI
 export function liftReply(
   items: readonly FeedItem[],
   job: Pick<RunJob, 'completedAt'> & { result?: string | null },
+  /**
+   * Les RAPPORTS déjà portés par les verdicts de relecture. Une réponse qui en
+   * recopie un n'est pas abandonnée dans la chronologie : elle n'est
+   * simplement pas affichée deux fois (voir `dropsCopiedReport`).
+   */
+  reports: readonly (string | null)[] = [],
 ): { reply: string | null; items: FeedItem[] } {
   const out = [...items];
   if (job.completedAt === null) return { reply: null, items: out };
+  const keep = (reply: string | null): string | null =>
+    reply !== null && dropsCopiedReport(reply, reports) ? null : reply;
   const answerAt = out.findIndex((i) => i.kind === 'answer');
   if (answerAt >= 0) {
     const answer = out[answerAt];
     out.splice(answerAt, 1);
-    return { reply: answer?.kind === 'answer' ? answer.text : null, items: out };
+    return { reply: keep(answer?.kind === 'answer' ? answer.text : null), items: out };
   }
   if (out.some((i) => i.kind === 'failure')) return { reply: null, items: out };
 
@@ -269,7 +277,7 @@ export function liftReply(
   const lastProse = block !== undefined && block.kind === 'prose' ? block : null;
 
   if (result !== '' && readsAsReply(result, lastProse?.text ?? null)) {
-    return { reply: job.result ?? '', items: out };
+    return { reply: keep(job.result ?? ''), items: out };
   }
   if (lastProse === null || turn === undefined || turn.kind !== 'turn') {
     return { reply: null, items: out };
@@ -278,7 +286,32 @@ export function liftReply(
   // Un tour vidé de sa prose et sans appel de modèle n'a plus rien à montrer.
   if (rest.length === 0 && turn.usage === null) out.splice(turnAt, 1);
   else out[turnAt] = { ...turn, blocks: rest };
-  return { reply: lastProse.text, items: out };
+  return { reply: keep(lastProse.text), items: out };
+}
+
+/**
+ * Cette réponse RECOPIE-T-ELLE un rapport déjà montré par le bloc Review ?
+ *
+ * Le cas vu par Quentin (18/09, run `94bc9dfb…`) : l'orchestrateur délègue la
+ * relecture, puis rend le rapport du relecteur TEL QUEL comme réponse finale,
+ * précédé d'une phrase de présentation. La page montrait alors la même
+ * relecture deux fois — une fois en prose flottante sous l'en-tête, une fois
+ * dans le bloc prévu pour elle. Sa décision : « il ne devrait y en avoir
+ * qu'une seule et elle devrait être dans le bloc review prévu à cet effet ».
+ *
+ * La règle est une ÉGALITÉ DE CONTENU, jamais une heuristique de mots : la
+ * réponse contient-elle le rapport, aux blancs près ? Un orchestrateur qui
+ * REFORMULE écrit un autre texte, et sa réponse reste — c'est sa parole, pas
+ * une copie.
+ */
+function dropsCopiedReport(reply: string, reports: readonly (string | null)[]): boolean {
+  const flat = normalizeText(reply);
+  if (flat === '') return false;
+  return reports.some((report) => {
+    if (report === null) return false;
+    const needle = normalizeText(report);
+    return needle !== '' && flat.includes(needle);
+  });
 }
 
 /**
@@ -357,7 +390,13 @@ export type RunView = {
 export function runView(data: SpaceConversationView): RunView {
   // Dans l'ordre : la demande s'en va (elle titre la page), puis la réponse et
   // le récapitulatif montent au-dessus de la chronologie.
-  const lifted = liftReply(dropTaskRequest(data.feed.items, data.job.task), data.job);
+  // Les rapports déjà portés par le bloc Review : une réponse qui en recopie un
+  // ne se lit pas deux fois sur la même page (Quentin, 18/09).
+  const lifted = liftReply(
+    dropTaskRequest(data.feed.items, data.job.task),
+    data.job,
+    data.verdicts.map((v) => v.report),
+  );
   const { delivered, items } = liftDelivered(lifted.items);
   return {
     stats: runStats(data),
