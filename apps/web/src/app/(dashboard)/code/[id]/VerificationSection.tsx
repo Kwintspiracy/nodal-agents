@@ -21,8 +21,9 @@ import type {
   VerificationSequenceView,
   VerificationUnconfiguredView,
 } from '@/lib/verification-runs-view.ts';
+import { useState } from 'react';
 import { surfaceLabel } from '@/lib/verification-runs-view.ts';
-import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
+import DisclosureButton from '@/components/ui/DisclosureButton';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import { relativeTime } from '@/lib/format-time';
 
@@ -36,11 +37,51 @@ export type VerificationSectionProps = {
   live: boolean;
 };
 
-const VERDICT_TAG: Record<string, { tone: 'skill' | 'err' | 'warn'; label: string }> = {
-  green: { tone: 'skill', label: 'green' },
+/**
+ * La couleur d'un verdict ne contredit JAMAIS son mot (Quentin, 18/09 : il a
+ * vu « green » écrit en rouge). `green` portait `tone="skill"`, qui est la
+ * couleur d'entité des skills — un orange-rouge. Il porte maintenant `ok`, la
+ * couleur sémantique du vert, la même que la pastille « Done ».
+ */
+const VERDICT_TAG: Record<string, { tone: 'ok' | 'err' | 'warn'; label: string }> = {
+  green: { tone: 'ok', label: 'green' },
   red: { tone: 'err', label: 'red' },
   infra_error: { tone: 'warn', label: 'infra error' },
 };
+
+/**
+ * Le verdict de TOUTE la section, celui que la ligne repliée porte : vert si
+ * chaque séquence est verte, sinon la première qui ne l'est pas. `null` quand
+ * rien n'a tourné — la ligne dit alors ce qui manque, en toutes lettres,
+ * plutôt qu'un verdict sur rien.
+ */
+function overallVerdict(sequences: readonly VerificationSequenceView[]) {
+  if (sequences.length === 0) return null;
+  const failed = sequences.find((s) => s.verdict !== 'green');
+  return verdictTag(failed?.verdict ?? 'green');
+}
+
+/**
+ * Ce que la ligne repliée dit du contenu : de quoi décider si on ouvre. Quand
+ * rien n'a tourné, c'est la PHRASE du corps qui remonte ici — sinon la section
+ * repliée serait silencieuse sur le seul cas où elle a quelque chose à avouer
+ * (invariant #4).
+ */
+function foldedSummary(input: {
+  isChat: boolean;
+  sequences: readonly VerificationSequenceView[];
+  live: boolean;
+}): string {
+  if (input.isChat) return CHAT_LINE;
+  if (input.sequences.length === 0) return input.live ? LIVE_LINE : NOTHING_RAN_LINE;
+  const commands = input.sequences.reduce((acc, s) => acc + s.runs.length, 0);
+  return `${input.sequences.length} ${input.sequences.length === 1 ? 'sequence' : 'sequences'} · ${commands} ${commands === 1 ? 'command' : 'commands'}`;
+}
+
+const CHAT_LINE =
+  'Chat turns are not under verification yet: a chat turn has no job, so no proof runs for it.';
+const LIVE_LINE = 'No proof yet. Proof commands run when the process finishes.';
+const NOTHING_RAN_LINE = 'No proof ran for this process.';
 
 /**
  * Ce qu'on dit d'un livrable que la preuve n'a pas éprouvé.
@@ -96,25 +137,37 @@ export default function VerificationSection({
   stage,
   live,
 }: VerificationSectionProps) {
+  const [open, setOpen] = useState(false);
   const isChat = stage === 'chat';
   const nothingRan = sequences.length === 0;
+  const overall = overallVerdict(sequences);
+  const summary = foldedSummary({ isChat, sequences, live });
 
   return (
     <div
       className="overflow-hidden rounded-xl border border-rule-2 bg-paper"
       data-testid="verification-section"
     >
-      <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-        Verification{sequences.length > 0 ? ` · ${sequences.length}` : ''}
-      </h2>
+      {/* REPLIÉE par défaut (Quentin, 18/09), mais jamais muette : la ligne
+          porte le compte, le verdict d'ensemble et ce qu'il y a dessous. On
+          ouvre pour lire les commandes, pas pour savoir si ça a tenu. */}
+      <DisclosureButton
+        open={open}
+        onClick={() => setOpen((v) => !v)}
+        inset="tight"
+        testId="verification-row"
+      >
+        <span className="shrink-0 text-mono-11 tracking-wider text-ink-4 uppercase">
+          Verification{sequences.length > 0 ? ` · ${sequences.length}` : ''}
+        </span>
+        {overall !== null && <MonoMicroTag tone={overall.tone}>{overall.label}</MonoMicroTag>}
+        <span className="min-w-0 truncate text-body-13 text-ink-3">{summary}</span>
+      </DisclosureButton>
 
-      {isChat ? (
-        <p className="px-4 py-6 text-body-13 text-ink-4">
-          Chat turns are not under verification yet: a chat turn has no job, so no proof runs for
-          it.
-        </p>
+      {!open ? null : isChat ? (
+        <p className="border-t border-rule-2 px-4 py-6 text-body-13 text-ink-4">{CHAT_LINE}</p>
       ) : (
-        <>
+        <div className="border-t border-rule-2">
           {skippedSurfaces.length > 0 && (
             <ul className="space-y-1.5 border-b border-rule-2 px-4 py-3">
               {skippedSurfaces.map((key) => (
@@ -149,19 +202,27 @@ export default function VerificationSection({
 
           {nothingRan ? (
             <p className="px-4 py-6 text-body-13 text-ink-4">
-              {live
-                ? 'No proof yet. Proof commands run when the process finishes.'
-                : 'No proof ran for this process.'}
+              {live ? LIVE_LINE : NOTHING_RAN_LINE}
             </p>
           ) : (
             sequences.map((s) => <SequenceBlock key={s.sequenceId} sequence={s} />)
           )}
-        </>
+        </div>
       )}
     </div>
   );
 }
 
+/**
+ * Une séquence de preuve, dessinée au tableau (#135, 18/09) : son verdict, la
+ * chose prouvée, son compte — puis ses commandes en LIGNES, sur le fond de la
+ * page, une par rang.
+ *
+ * Le tableau de cinq colonnes a disparu : une commande de preuve est longue
+ * (« pnpm --filter @nodal-agents/web exec vitest run … ») et quatre colonnes
+ * étroites la coupaient pour aligner trois nombres. Les mêmes faits, dans le
+ * même ordre — rang, commande, code de sortie, durée, verdict — sur une ligne.
+ */
 function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
   const tag = verdictTag(sequence.verdict);
   return (
@@ -169,7 +230,7 @@ function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
         <MonoMicroTag tone={tag.tone}>{tag.label}</MonoMicroTag>
         <span
-          className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink"
+          className="min-w-0 flex-1 truncate text-mono-13 text-ink"
           title={sequence.canonicalKey}
         >
           {sequence.canonicalKey}
@@ -179,36 +240,32 @@ function SequenceBlock({ sequence }: { sequence: VerificationSequenceView }) {
           {sequence.startedAt ? ` · ${relativeTime(sequence.startedAt)}` : ''}
         </span>
       </div>
-      <div className="overflow-x-auto">
-        <Table frame={false}>
-          <THead>
-            <Th>#</Th>
-            <Th>Command</Th>
-            <Th align="right">Exit</Th>
-            <Th align="right">Duration</Th>
-            <Th>Verdict</Th>
-          </THead>
-          <tbody>
-            {sequence.runs.map((r) => {
-              const t = verdictTag(r.verdict);
-              return (
-                <Tr key={`${r.sequenceId}:${r.commandRank}`}>
-                  <Td className="text-mono-11 text-ink-4">{r.commandRank}</Td>
-                  <Td className="font-mono text-body-13 text-ink">{r.command}</Td>
-                  <Td align="right" className="text-mono-11 text-ink-3">
-                    {exitLabel(r)}
-                  </Td>
-                  <Td align="right" className="text-mono-11 text-ink-3">
-                    {durationLabel(r.durationMs)}
-                  </Td>
-                  <Td>
-                    <MonoMicroTag tone={t.tone}>{t.label}</MonoMicroTag>
-                  </Td>
-                </Tr>
-              );
-            })}
-          </tbody>
-        </Table>
+      <div>
+        {sequence.runs.map((r) => {
+          const t = verdictTag(r.verdict);
+          return (
+            <div
+              key={`${r.sequenceId}:${r.commandRank}`}
+              className="flex flex-wrap items-center gap-2 border-t border-rule-2 bg-canvas px-4 py-2"
+              data-testid="verification-command"
+            >
+              <span className="shrink-0 text-mono-11 text-ink-4">{r.commandRank}</span>
+              <span className="min-w-0 flex-1 truncate text-mono-13 text-ink" title={r.command}>
+                {r.command}
+              </span>
+              {/* « exit 0 » quand la commande a rendu un code ; le mot seul
+                  quand elle n'en a pas rendu (« timeout ») — « exit timeout »
+                  ne veut rien dire. */}
+              <span className="shrink-0 text-mono-11 text-ink-3">
+                {r.outcomeKind === 'exit' ? `exit ${exitLabel(r)}` : exitLabel(r)}
+              </span>
+              <span className="shrink-0 text-mono-11 text-ink-3">
+                {durationLabel(r.durationMs)}
+              </span>
+              <MonoMicroTag tone={t.tone}>{t.label}</MonoMicroTag>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

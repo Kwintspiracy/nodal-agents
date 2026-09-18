@@ -573,6 +573,220 @@ describe('getSpaceConversationAction', () => {
     expect(nue?.kind === 'tool' && nue.outputText).toBe('vide');
   });
 
+  it('18/09 : un run qui a PRODUIT porte son récapitulatif de livraison, compté sur ses lignes', async () => {
+    // La page d'un run montre « Delivered » en haut ; ce bloc est posé par la
+    // MÊME fonction que le fil d'une conversation (`afterJobItems`), sur les
+    // lignes d'audit du travail et de ses délégués, plus sa preuve. On écrit
+    // donc de vraies lignes et on lit les COMPTES rendus, pas des appels.
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'Écris le digest de la semaine',
+        status: 'completed',
+        result: 'Digest écrit.',
+        completedAt: new Date(),
+        messages: [
+          { role: 'user', content: 'Écris le digest de la semaine' },
+          { role: 'assistant', content: 'Digest écrit.' },
+        ],
+      })
+      .returning();
+    const runId = j!.id;
+    // Un délégué qui écrit un SECOND fichier : ses lignes comptent dans le
+    // récapitulatif de la racine, et sa preuve verte aussi (T24).
+    const [delegate] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 'écris l’annexe',
+        status: 'completed',
+        parentJobId: runId,
+      })
+      .returning();
+    await testDb.insert(toolCalls).values([
+      {
+        entityId: seed.entityId,
+        jobId: runId,
+        toolName: 'file_write',
+        toolInput: { path: 'digest.md', content: 'une ligne\ndeux lignes\n' },
+        toolOutput: JSON.stringify({ ok: true }),
+        durationMs: 20,
+        turn: 1,
+        toolCallId: 'c_w1',
+        card: 'files',
+        presented: {
+          card: 'files',
+          files: [{ path: 'digest.md', action: 'written', bytes: 22 }],
+          total: 1,
+          truncated: false,
+        },
+      },
+      {
+        entityId: seed.entityId,
+        jobId: delegate!.id,
+        toolName: 'file_write',
+        toolInput: { path: 'annexe.md', content: 'annexe\n' },
+        toolOutput: JSON.stringify({ ok: true }),
+        durationMs: 15,
+        turn: 1,
+        toolCallId: 'c_w2',
+        card: 'files',
+        presented: {
+          card: 'files',
+          files: [{ path: 'annexe.md', action: 'written', bytes: 7 }],
+          total: 1,
+          truncated: false,
+        },
+      },
+      // Un fichier seulement LU ne se livre pas : il ne doit pas compter.
+      {
+        entityId: seed.entityId,
+        jobId: runId,
+        toolName: 'file_list',
+        toolInput: { path: '.' },
+        toolOutput: JSON.stringify({ ok: true }),
+        durationMs: 4,
+        turn: 1,
+        toolCallId: 'c_l1',
+        card: 'files',
+        presented: {
+          card: 'files',
+          files: [{ path: 'brouillon.md', action: 'listed' }],
+          total: 1,
+          truncated: false,
+        },
+      },
+    ]);
+    await testDb.insert(verificationRuns).values({
+      jobId: delegate!.id,
+      entityId: seed.entityId,
+      deliverableType: 'office_file',
+      canonicalKey: 'digest.md',
+      sequenceId: '55555555-5555-4555-8555-555555555555',
+      commandRank: 1,
+      command: 'pnpm lint:md',
+      exitCode: 0,
+      outcomeKind: 'exit',
+      durationMs: 300,
+      verdict: 'green',
+    });
+
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(runId);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const produced = r.data.feed.items.find((i) => i.kind === 'produced');
+    expect(produced, 'le fil du run porte son récapitulatif de livraison').toBeDefined();
+    if (produced?.kind !== 'produced') return;
+    expect(produced.jobId).toBe(runId);
+    // Deux fichiers écrits, celui de la racine et celui du délégué ; le
+    // fichier seulement listé n'en est pas un.
+    expect(produced.summary.filePaths).toEqual(['digest.md', 'annexe.md']);
+    expect(produced.summary.files).toBe(2);
+    // La preuve du délégué remonte : une commande, verte.
+    expect(produced.summary.tests).toEqual({ passed: 1, total: 1 });
+    expect(produced.summary.verdict).toBe('green');
+    expect(produced.summary.checks).toEqual([{ command: 'pnpm lint:md', ok: true }]);
+    // Le délégué paraît comme relecteur du travail, avec ce qu'il a rendu.
+    expect(produced.summary.reviews.map((x) => x.ok)).toEqual([true]);
+  });
+
+  it('18/09 : le verdict rendu par un DÉLÉGUÉ remonte au run, comme sur le détail Code', async () => {
+    // Le même travail — une demande de relecture déléguée à un relecteur — se
+    // lisait de deux façons : ouvert depuis Code il montrait le verdict, ouvert
+    // depuis son dossier il disait « aucune relecture ». Les deux chargeurs
+    // lisent maintenant les mêmes lignes.
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Peer review de la PR #185 de ce dépôt',
+        status: 'completed',
+        result: 'Relecture rendue.',
+        completedAt: new Date(),
+        messages: [{ role: 'user', content: 'Peer review de la PR #185 de ce dépôt' }],
+      })
+      .returning();
+    // Le RAPPORT du relecteur, celui que son job rend — et qui contient une
+    // clé recopiée par mégarde : elle ne doit pas atteindre l'écran.
+    const secret = 'sk-ant-api03-ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'; // secrets:allow (fixture : clé factice pour éprouver la rédaction)
+    const rapport = `# Rapport
+
+Deux majeurs fermés. La clé ${secret} traînait dans un log.`;
+    const [reviewer] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 'relis la PR',
+        status: 'completed',
+        result: rapport,
+        parentJobId: j!.id,
+      })
+      .returning();
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: reviewer!.id,
+      toolName: 'review_verdict',
+      toolInput: {},
+      // La forme que l'outil écrit VRAIMENT (`ok: true` compris) : c'est elle
+      // que le lecteur de l'orchestration valide.
+      toolOutput: JSON.stringify({
+        ok: true,
+        verdict: 'request_changes',
+        summary: 'Two majors closed, one minor left.',
+        findings: [
+          {
+            file: 'apps/web/src/lib/actions.ts',
+            line: 13398,
+            issue: 'The timeline returns the raw tool output.',
+            severity: 'major',
+          },
+        ],
+        counts: { blocker: 0, major: 1, minor: 0 },
+      }),
+      durationMs: 5,
+      turn: 1,
+      toolCallId: 'c_rv',
+      card: null,
+      presented: null,
+    });
+
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(j!.id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.verdicts).toHaveLength(1);
+    expect(r.data.verdicts[0]).toMatchObject({
+      jobId: reviewer!.id,
+      verdict: 'request_changes',
+      summary: 'Two majors closed, one minor left.',
+    });
+    expect(r.data.verdicts[0]?.findings[0]?.line).toBe(13398);
+    // Le rapport entier voyage avec le verdict — c'est LUI que le bloc Review
+    // montre, au lieu de le laisser recopié dans la réponse (18/09).
+    expect(r.data.verdicts[0]?.report).toContain('Deux majeurs fermés.');
+    expect(r.data.verdicts[0]?.report).not.toContain(secret);
+    expect(r.data.verdicts[0]?.report).toContain('[secret masqué]');
+  });
+
+  it('un travail SANS relecture n’en invente pas', async () => {
+    const { getSpaceConversationAction } = await actions();
+    const sans = await getSpaceConversationAction(jobId);
+    expect(sans.ok).toBe(true);
+    if (!sans.ok) return;
+    expect(sans.data.verdicts).toEqual([]);
+  });
+
   it("P3 : la preuve d'un délégué remonte à la racine, et la file d'envoi se lit telle quelle", async () => {
     const { getSpaceConversationAction } = await actions();
     const r = await getSpaceConversationAction(jobId);

@@ -170,13 +170,42 @@ export function growthIsTheReaders(m: { gestureAt: number | null; now: number })
   return m.gestureAt !== null && m.now - m.gestureAt < READER_GESTURE_WINDOW_MS;
 }
 
+/**
+ * Ce que la zone fait du bas du contenu.
+ *
+ * `bottom` — les deux règles d'une messagerie : on ouvre en bas, et une arrivée
+ * descend le fil tant qu'on y est. C'est un FIL : on le lit par sa fin.
+ * `never` — la zone ne déplace jamais la vue : elle s'ouvre en haut et ne suit
+ * aucune croissance. C'est un TABLEAU (la page d'un run, 18/09) : on l'ouvre sur
+ * son en-tête, et un run qui court n'a pas à faire filer ce qu'on est en train
+ * de lire.
+ */
+export type ThreadFollow = 'bottom' | 'never';
+
+/**
+ * Ce que le mode autorise : sauter en bas à l'ouverture, et suivre la
+ * croissance du contenu. Une fonction pure, pour être éprouvée sans navigateur
+ * — c'est la seule décision que le mode prend.
+ */
+export function scrollPolicy(follow: ThreadFollow): {
+  jumpOnMount: boolean;
+  followsGrowth: boolean;
+} {
+  const follows = follow === 'bottom';
+  return { jumpOnMount: follows, followsGrowth: follows };
+}
+
 export default function ThreadScroller({
   children,
   className,
+  follow: followMode = 'bottom',
 }: {
   children: ReactNode;
   className?: string;
+  /** Voir `ThreadFollow`. Par défaut un fil, qui se lit par sa fin. */
+  follow?: ThreadFollow;
 }) {
+  const policy = scrollPolicy(followMode);
   const ref = useRef<HTMLDivElement>(null);
   /** Faut-il suivre le bas ? Vrai tant que le lecteur n'a pas remonté. */
   const follow = useRef(true);
@@ -259,7 +288,10 @@ export default function ThreadScroller({
   // d'autre.
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el) scrollToBottom(el);
+    if (el && policy.jumpOnMount) scrollToBottom(el);
+    // `policy` est dérivé d'une prop qui ne change pas d'un rendu à l'autre sur
+    // un écran donné ; l'effet reste à l'ouverture, comme avant.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // La gouttière, mesurée et posée sur le parent AVANT la peinture, puis
@@ -285,6 +317,9 @@ export default function ThreadScroller({
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
+    // Un tableau ne suit rien : pas d'observateur du tout, donc rien qui puisse
+    // déplacer la vue pendant qu'on lit.
+    if (!policy.followsGrowth) return;
     const observed = el.firstElementChild ?? el;
     const ro = new ResizeObserver(() => {
       // `follow` ne suffit pas : il n'est mis à jour qu'à la RÉCEPTION d'un
@@ -321,6 +356,7 @@ export default function ThreadScroller({
     });
     ro.observe(observed);
     return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -329,6 +365,9 @@ export default function ThreadScroller({
       // Repère stable pour les tests de bout en bout : `.overflow-y-auto` seul
       // désigne aussi le conteneur du layout du dashboard, qui défile lui aussi.
       data-thread-scroller=""
+      // Ce que cette zone fait du bas — lisible dans le DOM, donc éprouvable
+      // depuis l'écran qui la monte comme depuis un parcours de bout en bout.
+      data-follow={followMode}
       className={className}
       // En capture : le geste est noté AVANT que le bloc cliqué ne change
       // d'état et ne fasse grandir le fil.

@@ -263,8 +263,12 @@ function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null 
  * prose de l'agent ? Non quand c'est du JSON (un `return_result` structuré,
  * pour une machine), non quand c'est la même phrase (la prose sort alors avec
  * son en-tête d'agent), non quand ce n'est qu'un début tronqué de la prose.
+ *
+ * Exporté depuis la page d'un run (`runs/run-view.ts`), qui sort la réponse de
+ * la chronologie avec la MÊME règle : deux lectures de « qu'est-ce qu'une
+ * réponse » auraient divergé au premier cas ajouté.
  */
-function readsAsReply(result: string, lastProse: string | null): boolean {
+export function readsAsReply(result: string, lastProse: string | null): boolean {
   const first = result[0];
   if (first === '{' || first === '[') {
     try {
@@ -450,8 +454,13 @@ function deliverySummary(job: ThreadJob): DeliverySummary {
  * Ce qui suit les items d'un job : l'encart quand il a produit, sinon l'aveu
  * d'ignorance quand ses lignes ne se classent pas. Jamais les deux — l'encart
  * porte déjà son propre compte d'incertitude.
+ *
+ * Exportée pour le chargeur d'UN run (`getSpaceConversationAction`), qui la
+ * pose sur son job de tête : la page d'un run doit dire de ce run EXACTEMENT
+ * ce que le chat en dit, et une seconde lecture des mêmes lignes aurait
+ * divergé au premier correctif.
  */
-function afterJobItems(job: ThreadJob): FeedItem[] {
+export function afterJobItems(job: ThreadJob): FeedItem[] {
   if (job.verdict.isWork) {
     return [
       {
