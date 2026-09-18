@@ -51,6 +51,9 @@ import {
   sansCommentairesYaml,
   exclusionsDuBalayage,
   cadenceAffichee,
+  reviewState,
+  porteDesFaitsVerifies,
+  fusionnerTableauGitHub,
   ORDRE_DES_BACS,
 } from './lib.mjs';
 import { CAPACITES } from './capacites.mjs';
@@ -2602,5 +2605,285 @@ describe('intentionDunParcours — la description d’un parcours, pas son bande
       .filter((f) => f.endsWith('.spec.ts'))
       .filter((f) => !intentionDunParcours(readFileSync(join(dossier, f), 'utf8')));
     expect(sans).toEqual([]);
+  });
+});
+
+describe('reviewState — où en est la revue d’une PR (#128)', () => {
+  // Le tableau disait « In review » et rien d'autre : PR #114 s'affichait trois
+  // fois, sur sa carte et sur les deux issues qu'elle ferme, sans qu'aucune ne
+  // dise par qui, combien de passes, ni avec quel verdict.
+
+  /** Une passe, dans la forme que la session d'orchestration poste. */
+  const passe = (n, date, verdict, b, i, m) =>
+    `## Review pass ${n} (Reviewer C, ${date})\n\nVerdict: ${verdict} (${b} blocking, ${i} important, ${m} minor)\n\nLu en entier : boucle, gardes, signature.`;
+
+  it('deux passes : la DERNIÈRE décide, et les deux sont comptées', () => {
+    const etat = reviewState([
+      passe(1, '2026-09-17', 'request_changes', 1, 2, 3),
+      passe(2, '2026-09-18', 'approve', 0, 0, 4),
+    ]);
+    expect(etat.passes).toBe(2);
+    expect(etat.lastReviewer).toBe('Reviewer C');
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.lastVerdict).toBe('approve');
+    expect(etat.counts).toEqual({ blocking: 0, important: 0, minor: 4 });
+    expect(etat.status).toBe('approved-waiting-merge');
+    expect(etat.warnings).toEqual([]);
+  });
+
+  it('l’ordre des commentaires ne décide pas : le NUMÉRO de passe le fait', () => {
+    // Une vieille PR peut porter la passe 1 dans son corps et la passe 2 en
+    // commentaire, ou l'inverse si quelqu'un recopie. Le numéro tranche.
+    const etat = reviewState([
+      passe(2, '2026-09-18', 'approve', 0, 0, 1),
+      passe(1, '2026-09-17', 'request_changes', 2, 0, 0),
+    ]);
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une passe CITÉE dans un bloc de code n’est pas une passe rendue', () => {
+    const corps = [
+      'The format the session posts from now on:',
+      '',
+      '```markdown',
+      passe(3, '2026-09-18', 'approve', 0, 0, 0),
+      '```',
+      '',
+      'Nothing has been reviewed yet.',
+    ].join('\n');
+    const etat = reviewState(corps);
+    expect(etat.passes).toBe(0);
+    expect(etat.status).toBe('in-review');
+    expect(etat.lastVerdict).toBe(null);
+  });
+
+  it('aucune passe : la PR est en revue, et la page ne prétend rien d’autre', () => {
+    const etat = reviewState(['Closes #128\n\n## Verified\n\n`pnpm test` → 250 passed', '']);
+    expect(etat).toEqual({
+      passes: 0,
+      lastReviewer: null,
+      lastDate: null,
+      lastVerdict: null,
+      counts: null,
+      status: 'in-review',
+      warnings: [],
+    });
+  });
+
+  it('des comptes mal formés : la passe est IGNORÉE et nommée dans les avertissements', () => {
+    const etat = reviewState(
+      '## Review pass 2 (Reviewer C, 2026-09-18)\n\nVerdict: approve (a few blocking, some important)\n',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.status).toBe('in-review');
+    expect(etat.warnings).toEqual(['review pass 2 has no readable verdict line']);
+  });
+
+  it('un en-tête mal formé est dit, jamais deviné', () => {
+    const etat = reviewState(
+      '## Review pass two (Reviewer C, hier)\n\nVerdict: approve (0 blocking, 0 important, 0 minor)\n',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.warnings).toEqual([
+      'unreadable review pass header: "Review pass two (Reviewer C, hier)"',
+    ]);
+  });
+
+  it('une passe qui demande des changements le dit', () => {
+    const etat = reviewState(passe(1, '2026-09-18', 'request_changes', 2, 1, 5));
+    expect(etat.status).toBe('changes-requested');
+    expect(etat.counts).toEqual({ blocking: 2, important: 1, minor: 5 });
+  });
+
+  it('approuvée MAIS avec un constat important : ce n’est pas un vert', () => {
+    // La condition d'arrêt de la boucle du CLAUDE.md est « aucun bloquant ET
+    // aucun important ». Un « approve (0 blocking, 2 important) » ne l'atteint
+    // pas, et le peindre en vert ferait merger sur un malentendu.
+    const etat = reviewState(passe(3, '2026-09-18', 'approve', 0, 2, 7));
+    expect(etat.status).toBe('changes-requested');
+  });
+
+  it('un verdict qui se contredit est lu du côté SÉVÈRE', () => {
+    const etat = reviewState(passe(1, '2026-09-18', 'request_changes', 0, 0, 0));
+    expect(etat.lastVerdict).toBe('request_changes');
+    expect(etat.status).toBe('changes-requested');
+  });
+
+  it('la carte d’une issue porte l’état de la revue de la PR qui la ferme', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 128, title: 'Board says nothing about the review', state: 'OPEN' }],
+      pr: [
+        {
+          number: 200,
+          title: 'feat(qa): review state on the board',
+          state: 'OPEN',
+          body: 'Closes #128',
+          comments: [{ body: passe(2, '2026-09-18', 'approve', 0, 0, 4) }],
+        },
+      ],
+    });
+    const issue = cartes.find((c) => c.type === 'issue');
+    const pr = cartes.find((c) => c.type === 'pr');
+    // Les deux cartes disent la MÊME chose : c'est tout l'objet de #128.
+    expect(issue.parPr).toBe(200);
+    expect(issue.revue.status).toBe('approved-waiting-merge');
+    expect(issue.revue.passes).toBe(2);
+    expect(pr.revue).toEqual(issue.revue);
+  });
+
+  it('une PR sans commentaire ni passe laisse ses cartes en « in-review »', () => {
+    const cartes = cartesDuTableau({
+      issues: [{ number: 9, title: 'Something', state: 'OPEN' }],
+      pr: [{ number: 10, title: 'A PR', state: 'OPEN', body: 'Fixes #9' }],
+    });
+    expect(cartes.find((c) => c.type === 'issue').revue.status).toBe('in-review');
+    expect(cartes.find((c) => c.type === 'pr').revue.passes).toBe(0);
+  });
+});
+
+describe('les corps de GitHub arrivent en CRLF, et le portail doit les lire', () => {
+  // Constaté le 18/09/2026 en RENDANT le tableau sur les vraies cartes : la
+  // PR #172 portait sa section « Verified » et s'affichait « no verified
+  // facts ». `gh` rend les corps en CRLF ; un `\r` en fin de ligne est un
+  // terminateur pour JavaScript, que `.` ne reconnaît pas, donc « ## Verified\r »
+  // n'était plus un titre du tout. Le portail accusait des cartes honnêtes,
+  // exactement ce qu'il existe pour empêcher.
+  const crlf = (...lignes) => lignes.join('\r\n');
+
+  it('une section « Verified » en CRLF est vue', () => {
+    const corps = crlf('## Verified', '', '```', '$ pnpm test', '386 passed', '```', '');
+    expect(porteDesFaitsVerifies(corps)).toBe(true);
+  });
+
+  it('un bloc de code en CRLF se REFERME, donc ce qui le suit est relu', () => {
+    // Sans la clôture, tout le corps après le premier bloc passait pour du
+    // code : une passe de revue écrite dessous disparaissait sans un mot.
+    const corps = crlf(
+      '## Verified',
+      '',
+      '```',
+      '$ pnpm test',
+      '```',
+      '',
+      '## Review pass 1 (Reviewer C, 2026-09-18)',
+      '',
+      'Verdict: approve (0 blocking, 0 important, 1 minor)',
+      '',
+    );
+    const etat = reviewState(corps);
+    expect(etat.passes).toBe(1);
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une passe citée dans un bloc CRLF reste ignorée', () => {
+    const corps = crlf(
+      'The format:',
+      '',
+      '```markdown',
+      '## Review pass 4 (Reviewer C, 2026-09-18)',
+      '',
+      'Verdict: approve (0 blocking, 0 important, 0 minor)',
+      '```',
+      '',
+    );
+    expect(reviewState(corps).passes).toBe(0);
+  });
+});
+
+describe('revue : ce que le portail publie, et ce qu’il ne sait pas (revue C de #175)', () => {
+  const passe = (n, date, verdict, b, i, m) =>
+    `## Review pass ${n} (Reviewer C, ${date})\n\nVerdict: ${verdict} (${b} blocking, ${i} important, ${m} minor)`;
+
+  it('le snapshot publié ne porte AUCUN texte de commentaire ni de corps', () => {
+    // Le snapshot est un fichier suivi, donc publié. Y déposer les corps des
+    // PR et de leurs commentaires republierait des milliers de lignes écrites
+    // ailleurs — un jeton cité dans une discussion en fait partie.
+    const SENTINELLE = 'SECRET-DANS-UN-COMMENTAIRE-sk-ant-xxx'; // secrets:allow (fixture)
+    const pr = [
+      {
+        number: 200,
+        title: 'A PR',
+        state: 'OPEN',
+        body: `Closes #9\n\n${SENTINELLE}`,
+        comments: [{ body: `${passe(1, '2026-09-18', 'approve', 0, 0, 0)}\n\n${SENTINELLE}` }],
+      },
+    ];
+    const issues = [{ number: 9, title: 'An issue', state: 'OPEN', body: SENTINELLE }];
+    // Le chemin RÉEL d'écriture : ce que le collecteur assemble, projeté par
+    // la fonction qui écrit le fichier.
+    const snapshot = fusionnerTableauGitHub(
+      { genereLe: '2026-09-18T00:00:00.000Z' },
+      {
+        chantiers: { issues, pr, cartes: cartesDuTableau({ issues, pr }) },
+        le: '2026-09-18T09:00:00.000Z',
+      },
+    );
+    expect(JSON.stringify(snapshot)).not.toContain(SENTINELLE);
+    // Et ce qui reste est bien ce que la page lit.
+    expect(Object.keys(snapshot.chantiers)).toEqual(['cartes']);
+    expect(snapshot.chantiers.cartes.find((c) => c.type === 'pr').revue.passes).toBe(1);
+  });
+
+  it('une même passe REPOSTÉE : la dernière lue gagne', () => {
+    // La session corrige un commentaire en le repostant. Deux passes 2, et
+    // c'est la seconde qui dit où on en est.
+    const etat = reviewState([
+      passe(2, '2026-09-17', 'request_changes', 1, 0, 0),
+      passe(2, '2026-09-18', 'approve', 0, 0, 2),
+    ]);
+    expect(etat.passes).toBe(2);
+    expect(etat.lastDate).toBe('2026-09-18');
+    expect(etat.status).toBe('approved-waiting-merge');
+  });
+
+  it('une liste de commentaires au plafond d’une page le DIT', () => {
+    // `gh pr list --json comments` ne promet rien sur la complétude. Une passe
+    // au-delà du plafond ne doit pas faire retomber la carte en « pas encore
+    // relue » sans un mot.
+    const cent = Array.from({ length: 100 }, () => ({ body: 'rien à voir' }));
+    const cartes = cartesDuTableau({
+      issues: [],
+      pr: [{ number: 7, title: 'A talkative PR', state: 'OPEN', body: '', comments: cent }],
+    });
+    const revue = cartes[0].revue;
+    expect(revue.passes).toBe(0);
+    expect(revue.warnings).toEqual([
+      'comment list of PR #7 reached 100: a later review pass may be missing',
+    ]);
+  });
+
+  it('une liste courte ne déclenche aucun avertissement', () => {
+    const cartes = cartesDuTableau({
+      issues: [],
+      pr: [
+        {
+          number: 8,
+          title: 'A quiet PR',
+          state: 'OPEN',
+          body: '',
+          comments: [{ body: passe(1, '2026-09-18', 'approve', 0, 0, 0) }],
+        },
+      ],
+    });
+    expect(cartes[0].revue.warnings).toEqual([]);
+  });
+
+  it('le niveau du titre est libre, de # à ######', () => {
+    for (const diese of ['#', '##', '###', '######']) {
+      const etat = reviewState(
+        `${diese} Review pass 1 (Reviewer C, 2026-09-18)\n\nVerdict: approve (0 blocking, 0 important, 0 minor)`,
+      );
+      expect(etat.passes, diese).toBe(1);
+    }
+  });
+
+  it('le verdict doit être la PREMIÈRE ligne non vide sous le titre', () => {
+    // Sinon un verdict CITÉ dans le texte libre passerait pour rendu.
+    const etat = reviewState(
+      '## Review pass 1 (Reviewer C, 2026-09-18)\n\nJ’ai tout relu.\n\nVerdict: approve (0 blocking, 0 important, 0 minor)',
+    );
+    expect(etat.passes).toBe(0);
+    expect(etat.warnings).toEqual(['review pass 1 has no readable verdict line']);
   });
 });
