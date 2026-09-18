@@ -131,6 +131,12 @@ export default function RunsFolderList({
     startTransition(async () => {
       const r = await deleteExternalRunsAction(ids);
       if (!r.ok) {
+        // LE MESSAGE SEUL, sans le code (Reviewer C, passe 2, mineur retenu et
+        // écarté). Aucun écran de ce produit n'affiche de slug d'erreur, et
+        // celui-ci — `chain_too_deep` — n'apprend rien à qui lit : le message
+        // dit déjà ce qui s'est passé ET que rien n'a été supprimé. Le code vit
+        // dans le journal du serveur, à côté de l'identifiant du job, c'est-à-dire
+        // là où on le cherche quand on cherche.
         toast.error(r.message);
         return;
       }

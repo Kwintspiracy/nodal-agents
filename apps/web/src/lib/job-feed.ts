@@ -30,6 +30,15 @@ import { redactPresented } from './redact-presented.ts';
 import type { getDb } from './server.ts';
 
 type Db = ReturnType<typeof getDb>;
+/**
+ * La base, OU une transaction ouverte dessus.
+ *
+ * Dérivé de `Db` plutôt qu'importé de drizzle : le type d'une transaction est
+ * celui que `db.transaction` passe à son rappel, quel que soit le pilote. Une
+ * lecture qui doit pouvoir se faire DANS une transaction — la descendance d'un
+ * job juste avant de le supprimer — s'écrit avec ce type et sert les deux.
+ */
+export type DbOrTx = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /** Le job tel que la requête d'appel le rend : la ligne, plus l'agent joint. */
 export type JobFeedInput = {
@@ -63,7 +72,10 @@ export type DescendantJob = {
  * P2, passe 20). Chaque ligne porte sa trace D8 des surfaces décochées.
  */
 export async function collectDescendants(
-  db: Db,
+  // `DbOrTx` : la suppression des runs venus de dehors appelle cette marche
+  // DANS sa transaction, pour que la descendance et la vérification qui suit
+  // voient le même état (#183, Reviewer C passe 2).
+  db: DbOrTx,
   entityId: string,
   rootIds: readonly string[],
 ): Promise<DescendantJob[]> {
@@ -111,8 +123,13 @@ export async function collectDescendants(
   // `deleteExternalRunsAction` demande à la base s'il reste un orphelin, et
   // refuse.
   if (frontier.length > 0) {
+    // Les IDENTIFIANTS, pas seulement leur nombre (Reviewer C, passe 2) : un
+    // compte dit qu'il y a un problème, une liste dit par où commencer à
+    // regarder. Bornée à dix, parce qu'un journal n'est pas un export.
+    const devant = frontier.slice(0, 10).join(', ');
+    const reste = frontier.length > 10 ? ` (+${frontier.length - 10} more)` : '';
     console.warn(
-      `[job-feed] collectDescendants stopped at ${ROLLUP_MAX_DEPTH} levels with ${frontier.length} job(s) still below: the descendants returned are incomplete.`,
+      `[job-feed] collectDescendants stopped at ${ROLLUP_MAX_DEPTH} levels with ${frontier.length} job(s) still below — the descendants returned are incomplete. Still ahead: ${devant}${reste}`,
     );
   }
   return descendants;

@@ -100,6 +100,9 @@ let runVivant = '';
 let runSansDate = '';
 /** Le run supprimable d'une sélection MIXTE, à côté d'un run vivant refusé. */
 let runLotMixte = '';
+/** Un run et son délégué, supprimés ensemble pour prouver la transaction. */
+let runSousTransaction = '';
+let delegueSousTransaction = '';
 /** Une racine dont la chaîne dépasse la borne : la suppression doit REFUSER. */
 let racineProfonde = '';
 /** Le fond de cette chaîne — il doit rester là, comme la racine. */
@@ -171,6 +174,24 @@ beforeAll(async () => {
     task: 'run à supprimer, dans un lot mixte',
     createdAt: new Date('2026-09-14T08:00:00Z'),
   });
+
+  // Un run et son délégué : ils doivent partir ENSEMBLE, sous une transaction.
+  runSousTransaction = await semerRun({
+    task: 'run supprimé sous transaction',
+    createdAt: new Date('2026-09-12T08:00:00Z'),
+  });
+  const [delegueT] = await testDb
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'internal',
+      task: 'son délégué',
+      status: 'completed',
+      parentJobId: runSousTransaction,
+    })
+    .returning({ id: agentJobs.id });
+  delegueSousTransaction = delegueT!.id;
 
   // Une chaîne PLUS PROFONDE que `ROLLUP_MAX_DEPTH` : la descendance rendue
   // serait incomplète, et supprimer laisserait des délégués orphelins.
@@ -407,6 +428,35 @@ describe('supprimer des runs du dossier MCP @cap:parler-par-canal-externe/moteur
     expect(restants.map((x) => x.id)).toEqual([runVivant]);
   });
 
+  it('fait la marche, la vérification et la suppression dans UNE transaction', async () => {
+    // Pourquoi cette forme d'assertion, et pas une insertion concurrente : pour
+    // prouver la course il faudrait insérer un délégué ENTRE la vérification et
+    // le `DELETE`, donc tenir le minutage de deux instructions — un test qui
+    // passerait ou non selon la charge de la machine ne prouverait rien. Ce qui
+    // se prouve ici est la STRUCTURE — un seul appel à `transaction` — et le
+    // RÉSULTAT, les deux lignes parties ensemble.
+    //
+    // Mutation vérifiée : les trois gestes remis hors transaction → ce cas
+    // rougit sur le compte, et rien d'autre ne bouge.
+    const espion = vi.spyOn(testDb, 'transaction');
+    try {
+      const { deleteExternalRunsAction } = await import('../conversation-actions.ts');
+      const r = await deleteExternalRunsAction([runSousTransaction]);
+      if (!r.ok) throw new Error(r.message);
+      expect(espion).toHaveBeenCalledTimes(1);
+      expect(r.data.deletedIds).toEqual([runSousTransaction]);
+    } finally {
+      espion.mockRestore();
+    }
+
+    // Et le travail a bien eu lieu DEDANS : les deux lignes sont parties.
+    const restants = await testDb
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(inArray(agentJobs.id, [runSousTransaction, delegueSousTransaction]));
+    expect(restants).toHaveLength(0);
+  });
+
   it('REFUSE plutôt que de laisser des orphelins quand la chaîne est trop profonde', async () => {
     // `collectDescendants` s'arrête à `ROLLUP_MAX_DEPTH` niveaux. Au-delà, sa
     // descendance est incomplète et le `DELETE` laisserait des délégués que
@@ -458,7 +508,9 @@ describe('supprimer des runs du dossier MCP @cap:parler-par-canal-externe/moteur
     // Les autres runs sont tous là, dans le même ordre — moins celui que le cas
     // de la sélection mixte vient de supprimer, lui aussi.
     expect(p.runs.map((r) => r.id)).toEqual(
-      attendus.filter((id) => id !== racineAvecEnfants && id !== runLotMixte),
+      attendus.filter(
+        (id) => id !== racineAvecEnfants && id !== runLotMixte && id !== runSousTransaction,
+      ),
     );
   });
 });
@@ -493,15 +545,15 @@ describe('deux vraies pages, sans doublon ni trou @cap:parler-par-canal-externe/
 
   /**
    * TOUT ce que le dossier doit rendre à cet instant, dans l'ordre promis : les
-   * runs de masse, ceux des blocs précédents, moins les deux que les cas de
+   * runs de masse, ceux des blocs précédents, moins les trois que les cas de
    * suppression ont fait partir. La ligne SANS DATE est en tête, devant les
    * runs de masse pourtant plus récents — c'est ce que `NULLS FIRST` veut dire.
    */
-  const toutLeDossier = (): string[] =>
-    dansLOrdrePromis([
-      ...enMasse,
-      ...semes.filter((s) => s.id !== racineAvecEnfants && s.id !== runLotMixte),
-    ]);
+  const PARTIS = new Set<string>();
+  const toutLeDossier = (): string[] => {
+    PARTIS.add(racineAvecEnfants).add(runLotMixte).add(runSousTransaction);
+    return dansLOrdrePromis([...enMasse, ...semes.filter((s) => !PARTIS.has(s.id))]);
+  };
 
   it('rend une PREMIÈRE page pleine, et promet la suite', async () => {
     const p1 = await page();
@@ -531,12 +583,7 @@ describe('deux vraies pages, sans doublon ni trou @cap:parler-par-canal-externe/
     expect(pages).toBeGreaterThan(1);
     expect(new Set(ids).size).toBe(ids.length);
     // Tout ce qui existe, une fois : les runs de masse et ceux d'avant, moins
-    // celui que le bloc précédent a supprimé.
-    const attendusMaintenant = dansLOrdrePromis([
-      ...enMasse,
-      // Les deux runs que les cas de suppression ont fait partir.
-      ...semes.filter((s) => s.id !== racineAvecEnfants && s.id !== runLotMixte),
-    ]);
-    expect(ids).toEqual(attendusMaintenant);
+    // ceux que les cas de suppression ont fait partir.
+    expect(ids).toEqual(toutLeDossier());
   });
 });

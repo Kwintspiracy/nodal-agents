@@ -857,46 +857,77 @@ export async function deleteExternalRunsAction(
     const skippedLiveIds = racines.filter((r) => !runIsDeletable(r.status)).map((r) => r.id);
     if (supprimables.length === 0) return ok({ deletedIds: [], skippedLiveIds });
 
-    const descendants = await collectDescendants(db, session.entityId, supprimables);
-    const aSupprimer = [...supprimables, ...descendants.map((d) => d.id)];
+    // ─── UNE SEULE TRANSACTION : marche, vérification, suppression ──────────
+    //
+    // Les trois gestes étaient trois allers-retours séparés (Reviewer C, passe
+    // 2). Entre la vérification et le `DELETE`, un délégué inséré par le runner
+    // survivait en orphelin — exactement ce que cette action prétend empêcher.
+    //
+    // CE QUE LA TRANSACTION FERME. La marche et la vérification lisent le MÊME
+    // état, et la suppression est tout ou rien : plus de demi-suppression où
+    // les racines partent pendant qu'une descendance lue avant reste. Une
+    // erreur en cours de route ne laisse rien derrière elle.
+    //
+    // CE QU'ELLE NE FERME PAS, et il faut le dire. En `READ COMMITTED` — le
+    // niveau par défaut — chaque instruction prend son propre instantané : un
+    // délégué dont l'insertion est validée APRÈS l'instantané du `DELETE`
+    // devient orphelin, transaction ou pas. La fenêtre passe de trois
+    // allers-retours à l'intérieur d'une instruction, elle ne disparaît pas.
+    // Seule une clé étrangère sur `parent_job_id` la fermerait vraiment, et la
+    // vraie base n'en a pas (migration 0000) ; la poser est un sujet à part, qui
+    // touche toutes les écritures de jobs. C'est nommé ici plutôt que promis
+    // ailleurs (invariant #4).
+    const issue = await db.transaction(async (tx) => {
+      const descendants = await collectDescendants(tx, session.entityId, supprimables);
+      const aSupprimer = [...supprimables, ...descendants.map((d) => d.id)];
 
-    // AUCUN ORPHELIN, et on le VÉRIFIE plutôt que de faire confiance à une
-    // borne (Reviewer C, passe 1). `collectDescendants` s'arrête à
-    // `ROLLUP_MAX_DEPTH` niveaux : sur une chaîne plus profonde — une base
-    // abîmée, un import — elle rendrait une descendance incomplète, et le
-    // `DELETE` laisserait des délégués que plus aucun run ne porte. La question
-    // se pose donc à la base, exactement : reste-t-il un enfant d'un job qu'on
-    // s'apprête à supprimer, hors de la liste ? Si oui, on ne supprime RIEN et
-    // on le dit (invariant #4).
-    const orphelins = await db
-      .select({ id: agentJobs.id })
-      .from(agentJobs)
-      .where(
-        and(
-          eq(agentJobs.entityId, session.entityId),
-          inArray(agentJobs.parentJobId, aSupprimer),
-          notInArray(agentJobs.id, aSupprimer),
-        ),
-      )
-      .limit(1);
-    if (orphelins.length > 0) {
-      console.error(
-        `[deleteExternalRunsAction] delegation chain deeper than ${ROLLUP_MAX_DEPTH} levels — refusing to delete and leave orphans behind (first: ${orphelins[0]?.id})`,
-      );
+      // AUCUN ORPHELIN, et on le VÉRIFIE plutôt que de faire confiance à une
+      // borne (Reviewer C, passe 1). `collectDescendants` s'arrête à
+      // `ROLLUP_MAX_DEPTH` niveaux : sur une chaîne plus profonde — une base
+      // abîmée, un import — elle rendrait une descendance incomplète, et le
+      // `DELETE` laisserait des délégués que plus aucun run ne porte. La
+      // question se pose donc à la base, exactement : reste-t-il un enfant d'un
+      // job qu'on s'apprête à supprimer, hors de la liste ?
+      const orphelins = await tx
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.entityId, session.entityId),
+            inArray(agentJobs.parentJobId, aSupprimer),
+            notInArray(agentJobs.id, aSupprimer),
+          ),
+        )
+        .limit(1);
+      if (orphelins.length > 0) {
+        console.error(
+          `[deleteExternalRunsAction] delegation chain deeper than ${ROLLUP_MAX_DEPTH} levels — refusing to delete and leave orphans behind (first: ${orphelins[0]?.id})`,
+        );
+        // On REND le refus plutôt que de lever : une exception ferait un
+        // `db_error` sans nom, et la personne lirait « impossible de
+        // supprimer » au lieu de la raison. Rien n'a été écrit, il n'y a donc
+        // rien à annuler.
+        return { refuse: true as const };
+      }
+
+      // UNE seule instruction, racines et descendants ensemble. Le SQL en ligne
+      // des tests de base donne à `parent_job_id` une clé étrangère que la
+      // vraie base n'a pas ; en un seul `DELETE`, la vérification tombe en fin
+      // d'instruction et les deux côtés s'accordent.
+      const parties = await tx
+        .delete(agentJobs)
+        .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.id, aSupprimer)))
+        .returning({ id: agentJobs.id });
+      return { refuse: false as const, parties };
+    });
+
+    if (issue.refuse) {
       return fail(
         'chain_too_deep',
         'These runs delegate deeper than this screen can follow. Nothing was deleted.',
       );
     }
-
-    // UNE seule instruction, racines et descendants ensemble. Le SQL en ligne
-    // des tests de base donne à `parent_job_id` une clé étrangère que la vraie
-    // base n'a pas ; en un seul `DELETE`, la vérification tombe en fin
-    // d'instruction et les deux côtés s'accordent.
-    const parties = await db
-      .delete(agentJobs)
-      .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.id, aSupprimer)))
-      .returning({ id: agentJobs.id });
+    const parties = issue.parties;
 
     revalidatePath('/chat');
     // Les RACINES réellement parties, nommées une par une : c'est ce que
