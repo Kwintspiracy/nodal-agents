@@ -34,6 +34,7 @@ import {
   isToolCard,
 } from './tool-card-payload.ts';
 import { lineCountsOfCall, type LineCounts } from './coding-changes.ts';
+import { failureHint, type FailureHint } from './failure-hint.ts';
 import type { ProductionVerdict } from './chat-or-work.ts';
 
 // ─── Entrées ──────────────────────────────────────────────────────────────────
@@ -259,7 +260,13 @@ export type FeedItem =
       from: { name: string | null; slug: string | null; avatarUrl: string | null };
     }
   | { kind: 'answer'; text: string }
-  | { kind: 'failure'; text: string }
+  /**
+   * Un run qui s'est arrêté. `hint` nomme le GESTE que cet échec appelle,
+   * quand il en appelle un (#184) — lu ici, dans le modèle, pour que les deux
+   * écrans qui rendent un échec en disent la même chose. `null` est la réponse
+   * ordinaire : presque aucun échec n'appelle un geste nommable.
+   */
+  | { kind: 'failure'; text: string; hint: FailureHint | null }
   /**
    * #135 / #132 — LE TRAVAIL d'un job, en un seul item.
    *
@@ -894,7 +901,13 @@ export function buildConversationFeed(
     // (constat de Quentin sur captures, 07/09 ; règle de structure, passe 52).
     if (!lastAgentTurnSpoke(items)) items.push({ kind: 'answer', text: job.result });
   } else if ((job.status === 'failed' || job.status === 'cancelled') && (job.error || job.result)) {
-    items.push({ kind: 'failure', text: job.error ?? job.result ?? '' });
+    items.push({
+      kind: 'failure',
+      text: job.error ?? job.result ?? '',
+      // Le geste se lit sur le CODE, pas sur le texte affiché : le repli
+      // `job.result` est une prose, elle ne nomme aucun geste.
+      hint: failureHint(job.error),
+    });
   }
 
   // Les totaux, depuis les appels LLM du job (la barre d'état de P4 s'en sert).

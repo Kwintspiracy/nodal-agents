@@ -48,3 +48,4 @@ export * from './types/verification';
 export * from './verification-manifest';
 export * from './verification-surfaces';
 export * from './fragment-diff';
+export * from './failure-codes';
