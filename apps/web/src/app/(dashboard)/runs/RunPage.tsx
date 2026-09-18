@@ -84,6 +84,11 @@ export default function RunPage({ data, back, actions = null }: RunPageProps) {
         // qui court ne doit pas non plus faire filer ce qu'on est en train de
         // lire à chaque rafraîchissement.
         follow="never"
+        // Les gouttières sont portées par le CORPS du run, sur la même boîte
+        // que sa largeur maximale — c'est ainsi que `PageShell` construit le
+        // corps de toutes les autres pages, et c'est la seule façon d'avoir la
+        // même largeur de contenu qu'elles.
+        sidePadding={false}
         statusBar={
           <StatusBar
             cost={cost}
@@ -119,13 +124,14 @@ export function RunBody({
   const view = runView(data);
 
   return (
-    // La largeur du corps de TOUTE page Nodal : `max-w-6xl`, calée à gauche,
-    // dans les gouttières que `ThreadScroller` porte déjà. Le tableau dessine
-    // un corps de 1140 px à 28 px des bords — c'est exactement cette règle sur
-    // un écran de 1440. Pleine largeur, les cartes s'étiraient d'un bord à
-    // l'autre et la page ne ressemblait plus à aucune autre (Quentin, vu sur
-    // la stack).
-    <div className="max-w-6xl min-w-0 space-y-4" data-testid="run-body">
+    // LA BOÎTE DE `PageShell`, à l'identique : largeur maximale ET gouttières
+    // sur le MÊME élément (`px-5 sm:px-8 lg:px-9 max-w-6xl`), calée à gauche.
+    // C'est ce qui donne la largeur de contenu de toutes les autres pages :
+    // 1152 − 2 × 36 = 1080 px au-delà de `lg`. Les porter séparément — les
+    // gouttières sur la zone de défilement, la largeur ici — faisait deux
+    // boîtes emboîtées et un contenu de 1152 px, soit 72 px de plus que partout
+    // ailleurs (Quentin, deux fois : « plus large que toutes les autres pages »).
+    <div className="max-w-6xl min-w-0 space-y-4 px-5 sm:px-8 lg:px-9" data-testid="run-body">
       <LiveRefresh live={view.live} />
 
       <RunHeaderCard
