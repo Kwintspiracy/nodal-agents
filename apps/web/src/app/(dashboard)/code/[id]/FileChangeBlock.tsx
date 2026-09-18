@@ -1,7 +1,18 @@
 'use client';
 
 // FileChangeBlock — un fichier changé de /code/[id], dessiné comme le bloc
-// « fichier » du fil (planche #135, GO Quentin 18/09).
+// « fichier » du fil (planche #135).
+//
+// DEUX DESSINS, UN SEUL MOTEUR — ILS RESTENT ALIGNÉS (Reviewer C, #164).
+// `spaces/FileDiff.tsx` dessine le même objet dans le fil, autrement : il
+// DEMANDE son diff au runner (un diff git pris dans un instantané, chargé au
+// premier clic), et le rend sans gouttière. Ici les fragments sont déjà en
+// mémoire — la page les tient de son action — et la planche #135 demande la
+// plaque numérotée. Fusionner les deux rendus maintenant changerait le fil,
+// que cette PR ne doit pas toucher ; le bloc du fil se posera sur cette
+// plaque-ci dans la PR #135 qui lui revient, et c'est CE fichier qui fait foi
+// pour le dessin. En attendant, une seule chose doit rester vraie des deux
+// côtés : les lignes sortent de `fragmentDiff`, jamais d'un second moteur.
 //
 // CE QUI DISPARAÎT AVEC LUI. La page rendait un diff SPLIT maison
 // (`buildSplitRows`, `SplitDiffCell`, `FileSplitDiff`) : deux demi-colonnes où
@@ -40,23 +51,60 @@ export type PlateRow =
   | { kind: 'edit-sep' };
 
 /**
+ * Les `budget` premières lignes d'un texte, ET son compte total.
+ *
+ * LE TEXTE EST COUPÉ AVANT LE DIFF (Reviewer C, #164). Une écriture de cent
+ * mille lignes passait entière dans `fragmentDiff`, qui au-delà de sa propre
+ * borne rend l'ancien PUIS le nouveau ligne à ligne : cent mille objets
+ * construits pour en dessiner quatre-vingts. La plaque ne montre jamais plus
+ * de `budget` rangées, donc plus de `budget` lignes de chaque version n'ont
+ * aucune chance d'y entrer.
+ *
+ * Le total, lui, est compté SANS construire le tableau entier : c'est lui qui
+ * garde « … and N more lines » exact alors que la comparaison est bornée.
+ */
+export function budgetedLines(
+  text: string | null,
+  budget: number,
+): { lines: string[]; total: number } {
+  if (text === null || text === '') return { lines: [], total: 0 };
+  let total = 1;
+  let seen = 0;
+  let cut = -1;
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+    total++;
+    seen++;
+    if (seen === budget) cut = i;
+  }
+  if (budget <= 0) return { lines: [], total };
+  const head = cut === -1 ? text : text.slice(0, cut);
+  return { lines: head.split('\n'), total };
+}
+
+/**
  * Les rangées d'un fichier, ses éditions mises bout à bout dans l'ordre.
  *
  * Deux compteurs, comme tout diff unifié : une ligne retirée porte son numéro
  * d'AVANT, une ligne ajoutée son numéro d'APRÈS, une ligne de contexte fait
- * avancer les deux et montre celui d'après. `hidden` compte les lignes que la
- * borne a laissées dehors — jamais un rendu sans fin, jamais une coupe muette.
+ * avancer les deux et montre celui d'après.
+ *
+ * `hidden` compte les lignes des deux versions que la plaque n'a PAS
+ * dessinées — une rangée de contexte en consomme une de chaque côté, une
+ * rangée signée une seule. Jamais un rendu sans fin, jamais une coupe muette.
+ *
+ * Comparer les DÉBUTS et non les textes entiers peut, sur un remaniement
+ * complet, apparier autrement que ne l'aurait fait le diff global. Les rangées
+ * montrées restent celles du début du changement, et ce qui manque est annoncé.
  */
 export function buildPlateRows(
   edits: readonly CodingChangeView[],
   limit: number,
-): { rows: PlateRow[]; hidden: number; simplified: boolean } {
+): { rows: PlateRow[]; hidden: number } {
   const rows: PlateRow[] = [];
   let oldNum = 0;
   let newNum = 0;
   let shown = 0;
   let hidden = 0;
-  let simplified = false;
   // La barre d'édition n'est posée qu'au moment où une ligne la suit : sans
   // ça, une édition entièrement coupée par la borne laissait une barre
   // orpheline en bas de la plaque.
@@ -64,21 +112,26 @@ export function buildPlateRows(
 
   edits.forEach((edit, index) => {
     if (index > 0) pendingSep = true;
-    const diff = fragmentDiff(edit.oldText ?? '', edit.newText ?? '');
-    if (diff.truncated) simplified = true;
+    const budget = Math.max(0, limit - shown);
+    const before = budgetedLines(edit.oldText, budget);
+    const after = budgetedLines(edit.newText, budget);
+    const diff = fragmentDiff(before.lines.join('\n'), after.lines.join('\n'));
+    let usedOld = 0;
+    let usedNew = 0;
     for (const line of diff.lines) {
+      if (shown >= limit) break;
       let num: number;
       if (line.kind === '-') {
         num = ++oldNum;
+        usedOld++;
       } else if (line.kind === '+') {
         num = ++newNum;
+        usedNew++;
       } else {
         oldNum++;
         num = ++newNum;
-      }
-      if (shown >= limit) {
-        hidden++;
-        continue;
+        usedOld++;
+        usedNew++;
       }
       if (pendingSep) {
         rows.push({ kind: 'edit-sep' });
@@ -87,9 +140,10 @@ export function buildPlateRows(
       shown++;
       rows.push({ kind: 'line', sign: line.kind, num, text: line.text });
     }
+    hidden += before.total - usedOld + (after.total - usedNew);
   });
 
-  return { rows, hidden, simplified };
+  return { rows, hidden };
 }
 
 function PlateLine({ row }: { row: Extract<PlateRow, { kind: 'line' }> }) {
@@ -111,7 +165,7 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
   // Ouvert d'entrée : la planche montre les fichiers dépliés, et la borne de
   // 80 lignes rend la page finie même sur un pipeline bavard.
   const [open, setOpen] = useState(true);
-  const { rows, hidden, simplified } = useMemo(
+  const { rows, hidden } = useMemo(
     () => buildPlateRows(group.edits, PLATE_LINE_LIMIT),
     [group.edits],
   );
@@ -165,11 +219,6 @@ export default function FileChangeBlock({ group }: { group: CodingFileChangeGrou
                 )}
               </div>
             </div>
-          )}
-          {simplified && (
-            <p className="border-t border-rule-2 px-4 py-1.5 text-mono-11 text-ink-4">
-              diff simplified: too long to compare line by line
-            </p>
           )}
           {hidden > 0 && (
             <p className="border-t border-rule-2 px-4 py-1.5 text-mono-11 text-ink-4">

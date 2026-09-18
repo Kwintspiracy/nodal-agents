@@ -13343,7 +13343,14 @@ export async function getCodingProcessDetailAction(
        */
       const attemptedTargets: ChangeRef[] = [];
       for (const tc of toolCallRows) {
-        const change = extractChange(tc.toolName, tc.toolInput);
+        // RÉDIGÉ AVANT D'ÊTRE LU (Reviewer C, #164). Ces écritures sont
+        // DESSINÉES : la plaque du bloc Files rend `old_string`, `new_string`
+        // et `content` tels quels. Le masquage d'écriture ne les couvre pas —
+        // `redactSecretsForAudit` masque par NOM de champ, et aucun de ces
+        // trois-là ne s'annonce comme un secret — tandis que la frise juste en
+        // dessous rédige depuis #158. Une clé écrite dans un fichier se lisait
+        // donc EN CLAIR dans Files et masquée dans Activity, sur le même appel.
+        const change = extractChange(tc.toolName, redactPresented(tc.toolInput));
         if (!change) continue;
         const attempted: ChangeRef = { rawPath: change.filePath, workspaces: wsOfCall(tc.jobId) };
         attemptedTargets.push(attempted);
