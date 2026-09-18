@@ -116,6 +116,15 @@ describe('isGeminiModel @cap:choisir-modele/moteur', () => {
     expect(isGeminiModel(null)).toBe(false);
     expect(isGeminiModel('')).toBe(false);
   });
+
+  it('lit le DERNIER segment, et Gemma n’est pas Gemini', () => {
+    // Chercher « /gemini » n'importe où dans la chaîne accrochait un nom de
+    // fournisseur ou de dossier sans qu'aucun modèle Gemini ne soit en jeu.
+    expect(isGeminiModel('google/gemma-3-27b')).toBe(false);
+    expect(isGeminiModel('gemini-labs/llama-4')).toBe(false);
+    expect(isGeminiModel('vendor/gemini/llama-4')).toBe(false);
+    expect(isGeminiModel('google/gemini-3.7-flash')).toBe(true);
+  });
 });
 
 describe('convertSchemaForGemini @cap:choisir-modele/moteur', () => {

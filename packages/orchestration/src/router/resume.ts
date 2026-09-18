@@ -26,7 +26,23 @@ export interface DelegationOutcomeRecord {
   exit_reason?: string | null;
   /** Tools the child actually ran, so the parent can see what was attempted. */
   tools_used?: string[];
+  /**
+   * Le geste que ce code d'échec appelle, quand il en appelle un — un CHAMP,
+   * jamais une phrase (#119, revue passe 1). Le harnais n'a pas à écrire
+   * « essaie un autre modèle » : il pose le fait, et l'écran ou le modèle le
+   * dit dans la langue de la personne (invariant #2).
+   */
+  hint?: JobFailureHint | null;
 }
+
+/**
+ * Les gestes que le harnais peut nommer après un échec. Un par cas, ajouté
+ * quand un cas le mérite — la liste reste courte exprès : un « conseil »
+ * fourre-tout ne se rend pas à l'écran.
+ *
+ * `switch_model` : le fournisseur a refusé la requête de ce modèle-là.
+ */
+export type JobFailureHint = 'switch_model';
 
 /**
  * What the child handed back. `string` = the child's text result on success and
@@ -72,6 +88,9 @@ export function renderDelegationOutcome(result: DelegationOutcomeRecord): string
       error: result.error ?? null,
       exit_reason: result.exit_reason ?? null,
       tools_used: result.tools_used ?? [],
+      // Toujours présent, `null` quand aucun geste n'est nommé : un champ qui
+      // apparaît et disparaît se lit comme une absence de contrat.
+      hint: result.hint ?? null,
     },
     null,
     2,

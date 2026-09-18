@@ -24,7 +24,9 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
+import { renderDelegationOutcome } from '@nodal-agents/orchestration';
 import {
+  delegationRecordFromOutcome,
   executeJob,
   providerRejectionCode,
   providerRejectionOfTurn,
@@ -261,7 +263,7 @@ describe('un fournisseur qui refuse la requête @cap:choisir-modele/moteur', () 
     expect(row.toolsUsed ?? []).toEqual([]);
   });
 
-  it('ce que la personne lit nomme les faits et le geste, jamais le JSON', async () => {
+  it('ce que la personne lit nomme les FAITS, jamais le JSON ni un conseil du harnais', async () => {
     const jobId = await insertJob();
     const deps = makeDeps(
       makeMockLlmClient([
@@ -276,7 +278,9 @@ describe('un fournisseur qui refuse la requête @cap:choisir-modele/moteur', () 
     expect(result).toContain(MODEL);
     expect(result).toContain('http 400');
     expect(result).toContain('turn 1');
-    expect(result).toContain('try another model for this agent');
+    // Et ce que le harnais ne dit PAS : le conseil, qui serait une phrase de sa
+    // main (invariant #2). Il voyage en champ typé, prouvé juste en dessous.
+    expect(result.toLowerCase()).not.toContain('try another model');
     // Ce qui est parti : le corps du fournisseur et la phrase creuse.
     expect(result).not.toContain('INVALID_ARGUMENT');
     expect(result).not.toContain('no explanation was provided');
@@ -305,6 +309,39 @@ describe('un fournisseur qui refuse la requête @cap:choisir-modele/moteur', () 
     const result = (await jobRow(jobId)).result ?? '';
     expect(result).toContain('trois fichiers');
     expect(result).toContain('[stopped: provider rejected the request');
+  });
+
+  it('le geste à faire est un CHAMP typé, porté jusqu’au parent', async () => {
+    const jobId = await insertJob();
+    const deps = makeDeps(
+      makeMockLlmClient([
+        { rejectsWith: apiCallError(400, 'Request contains an invalid argument.') },
+      ]),
+    );
+
+    const outcome = await executeJob(jobId as JobId, deps, testEnv);
+
+    expect(outcome.status).toBe('failed');
+    if (outcome.status !== 'failed') return;
+    expect(outcome.hint).toBe('switch_model');
+    expect(outcome.exitReason).toBe('provider_rejected_request');
+
+    // Le record TYPÉ que le parent reçoit le porte aussi : sans lui, un parent
+    // relaierait l'échec sans savoir qu'un autre modèle le réglerait.
+    const record = delegationRecordFromOutcome(outcome);
+    expect(record.hint).toBe('switch_model');
+    expect(record.exit_reason).toBe('provider_rejected_request');
+    expect(JSON.parse(renderDelegationOutcome(record))['hint']).toBe('switch_model');
+  });
+
+  it('une délégation ordinaire ne porte aucun geste', () => {
+    const record = delegationRecordFromOutcome({
+      status: 'completed',
+      result: 'Longueur de Planck : 1.616255e-35 m.',
+      toolsUsed: ['tavily_search'],
+    });
+    expect(record.hint ?? null).toBeNull();
+    expect(JSON.parse(renderDelegationOutcome(record))['hint']).toBeNull();
   });
 
   it('une panne du fournisseur (500) n’est PAS un refus et garde son chemin', async () => {
@@ -351,8 +388,15 @@ describe('les faits d’un refus, mis en mots @cap:choisir-modele/moteur', () =>
 
   it('la ligne lue par la personne est une ligne de plateforme, entre crochets', () => {
     expect(providerRejectionStopLine(faits)).toBe(
-      `[stopped: provider rejected the request — ${PROVIDER}/${MODEL}, http 400, turn 1 — try another model for this agent]`,
+      `[stopped: provider rejected the request — ${PROVIDER}/${MODEL}, http 400, turn 1]`,
     );
+  });
+
+  it('la ligne ne porte AUCUNE phrase de conseil', () => {
+    // Le harnais pose des faits ; le geste est un champ, pas une phrase.
+    const ligne = providerRejectionStopLine(faits);
+    expect(ligne.toLowerCase()).not.toContain('try');
+    expect(ligne.toLowerCase()).not.toContain('another model');
   });
 
   it('le code machine porte les mêmes faits', () => {

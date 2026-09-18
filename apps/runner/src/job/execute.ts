@@ -122,6 +122,7 @@ import type {
   SameToolStreakState,
   ErrorStreakState,
   DelegationOutcomeRecord,
+  JobFailureHint,
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
@@ -539,7 +540,16 @@ export type ExecuteJobResult =
   // not just the machine error code — never leave the user without an
   // explanation. The job row's own result column is filled independently by
   // failJob, so direct (non-delegated) surfaces don't depend on this.
-  | { status: 'failed'; error: string; result?: string; toolsUsed?: string[]; exitReason?: string }
+  // `hint` nomme le geste que cet échec appelle, quand il en appelle un
+  // (#119) : un CHAMP typé, jamais une phrase du harnais (invariant #2).
+  | {
+      status: 'failed';
+      error: string;
+      result?: string;
+      toolsUsed?: string[];
+      exitReason?: string;
+      hint?: JobFailureHint;
+    }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
   | { status: 'awaiting_delegation' }
@@ -574,6 +584,9 @@ export function delegationRecordFromOutcome(
     error: outcome.error || 'unknown',
     exit_reason: outcome.exitReason ?? null,
     tools_used: outcome.toolsUsed ?? [],
+    // Le geste voyage jusqu'au parent avec le reste : sans lui, le parent
+    // relaierait un échec sans savoir qu'un autre modèle le réglerait (#119).
+    hint: outcome.hint ?? null,
   };
 }
 
@@ -753,11 +766,12 @@ export function providerRejectionCode(faits: ProviderRejectionFacts): string {
 /**
  * La ligne que l'utilisateur lit quand le fournisseur a refusé la requête.
  *
- * Même nature que `timeoutStopLine` : une ligne de PLATEFORME, entre crochets,
- * faite de CHAMPS TYPÉS — le fournisseur, le modèle, le statut, le tour — plus
- * le SEUL geste que le harnais puisse honnêtement proposer. Ce n'est pas la voix
- * de l'agent, et l'invariant #2 tient : le harnais ne raconte rien, il pose les
- * faits qu'il a.
+ * Même nature que `timeoutStopLine`, et RIEN DE PLUS : une ligne de PLATEFORME,
+ * entre crochets, faite de CHAMPS TYPÉS — le fournisseur, le modèle, le statut,
+ * le tour. Pas un mot de conseil : une phrase du harnais, en anglais, est
+ * exactement ce que l'invariant #2 refuse (revue passe 1 de la PR #180). Le
+ * geste à faire voyage À CÔTÉ, en champ typé (`hint: 'switch_model'`) ; c'est
+ * l'écran, ou le modèle, qui le dit dans la langue de la personne.
  *
  * Ce qu'elle remplace (#119) : le JSON du fournisseur recopié tel quel, suivi de
  * « and no explanation was provided » — illisible, et muet sur ce qu'il y avait
@@ -766,7 +780,7 @@ export function providerRejectionCode(faits: ProviderRejectionFacts): string {
 export function providerRejectionStopLine(faits: ProviderRejectionFacts): string {
   return (
     `[stopped: provider rejected the request — ${faits.provider}/${faits.model}, ` +
-    `http ${faits.status}, turn ${faits.turn} — try another model for this agent]`
+    `http ${faits.status}, turn ${faits.turn}]`
   );
 }
 
@@ -5205,6 +5219,8 @@ async function runJob(
         result: livrable,
         toolsUsed,
         exitReason: 'provider_rejected_request',
+        // Le seul geste que ces faits appellent : ce modèle-là ne passe pas.
+        hint: 'switch_model',
       };
     }
 

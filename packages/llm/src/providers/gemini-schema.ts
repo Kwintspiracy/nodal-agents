@@ -90,6 +90,13 @@ export function convertSchemaForGemini(node: unknown, isRoot = true): unknown {
     out['description'] = node['description'];
   }
   if (node['required'] !== undefined) out['required'] = node['required'];
+  // `format` est recopié TEL QUEL, comme le fait le SDK sur la route native.
+  // Risque résiduel assumé, et nommé : zod émet des formats que Gemini ne
+  // documente pas (`z.string().url()` → `format: 'uri'`, vu sur
+  // `packages/tools/src/builtin/create-mcp.ts`). S'il devait en refuser un, la
+  // route native le ferait refuser de la même façon : cette copie EST la
+  // spécification, et s'en écarter ici serait inventer une règle que rien ne
+  // vérifie (revue passe 1 de la PR #180).
   if (node['format'] !== undefined) out['format'] = node['format'];
   // `const` n'existe pas chez Gemini : il se dit comme un `enum` d'une valeur.
   if (node['const'] !== undefined) out['enum'] = [node['const']];
@@ -200,11 +207,16 @@ export function sanitizeGeminiTools(tools: unknown): unknown {
  * `openrouter/google/gemini-…`. La détection est par NOM DE MODÈLE et non par
  * hôte — OpenRouter est un hôte unique pour toutes les familles, et c'est bien
  * l'inférence Gemini qui refuse le schéma, où qu'elle soit relayée.
+ *
+ * Le DERNIER segment, et lui seul : chercher « /gemini » n'importe où dans la
+ * chaîne accrocherait un préfixe d'agrégateur ou un dossier qui porte ce nom
+ * sans qu'aucun modèle Gemini ne soit en jeu (revue passe 1 de la PR #180).
+ * `gemma-…` reste dehors, comme il doit : ce n'est pas la même inférence.
  */
 export function isGeminiModel(modelId: string | null | undefined): boolean {
   if (!modelId) return false;
   const bare = modelId.trim().toLowerCase();
   if (!bare) return false;
   const tail = bare.includes('/') ? (bare.split('/').pop() ?? '') : bare;
-  return tail.startsWith('gemini') || bare.includes('/gemini');
+  return tail.startsWith('gemini-');
 }

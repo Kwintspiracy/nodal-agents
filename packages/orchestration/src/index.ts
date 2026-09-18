@@ -80,7 +80,7 @@ export {
   renderDelegationOutcome,
   DELEGATION_FAILED_MARKER,
 } from './router/resume';
-export type { DelegationOutcome, DelegationOutcomeRecord } from './router/resume';
+export type { DelegationOutcome, DelegationOutcomeRecord, JobFailureHint } from './router/resume';
 
 // ─── Router: only-one-per-turn ────────────────────────────────────────────────
 export { filterToolCallsForDelegation, buildDeferredToolResults } from './router/only-one-per-turn';
