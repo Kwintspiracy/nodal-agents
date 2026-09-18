@@ -107,6 +107,7 @@ function summaryOf(over: Partial<ThreadJob> & { feed: ConversationFeed }): Deliv
     jobId: 'j1',
     createdAt: null,
     completedAt: null,
+    result: null,
     verdict: travail,
     project: null,
     proof: [],

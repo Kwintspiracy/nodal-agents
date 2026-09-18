@@ -92,6 +92,7 @@ const job = (over: Partial<ThreadJob> & { jobId: string }): ThreadJob => ({
   feed: feedDeJob('fais ceci', 'voilà'),
   createdAt: null,
   completedAt: null,
+  result: null,
   verdict: chat,
   project: null,
   proof: [],
@@ -654,6 +655,78 @@ describe('buildConversationThread — le travail sous sa ligne de résumé', () 
     );
     expect(proses).toEqual(['Je commence par lire les notes.']);
     expect(groupe.items.map((i) => i.kind)).toEqual(['turn', 'turn', 'child']);
+  });
+
+  it('quand la dernière prose EST ce que le travail a rendu, le tour sort du groupe, sans doublon', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), result: 'Voilà le bilan.' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'turn', 'run']);
+    const reponse = items[1];
+    expect(reponse?.kind === 'turn' && reponse.blocks).toEqual([
+      { kind: 'prose', text: 'Voilà le bilan.' },
+    ]);
+    const groupe = items[2];
+    if (groupe?.kind !== 'run') throw new Error('le fil n’a pas posé de groupe de run');
+    const proses = groupe.items.flatMap((i) =>
+      i.kind === 'turn' ? i.blocks.filter((b) => b.kind === 'prose').map((b) => b.text) : [],
+    );
+    expect(proses).toEqual(['Je commence par lire les notes.']);
+  });
+
+  it('quand la dernière prose n’est qu’une annonce, ce qu’on lit dehors est ce que le travail a RENDU', () => {
+    // Le cas vu par Quentin (18/09) : l'agent publie sa réponse par une carte
+    // d'envoi, puis rend son résultat ; sa dernière phrase dit « je publie ».
+    // Sortir cette phrase cachait la vraie réponse dans le groupe replié.
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [
+        job({
+          jobId: 'j1',
+          createdAt: new Date('2026-09-17T12:00:00Z'),
+          completedAt: new Date('2026-09-17T12:00:12Z'),
+          result: '# Revue\n\nTrois constats, aucun bloquant.',
+          feed: {
+            items: [
+              demande,
+              tourDeTravail([
+                { kind: 'prose', text: 'Je lis la PR.' },
+                { kind: 'steps', steps: [outil('file_read')] },
+              ]),
+              tourDeTravail([
+                { kind: 'prose', text: 'Je publie la revue sur le dashboard.' },
+                { kind: 'steps', steps: [outil('dashboard_publish')] },
+              ]),
+            ],
+            totals: totals({ toolCalls: 2, costUsd: 0.02 }),
+          },
+        }),
+      ],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'answer', 'run']);
+    expect(items[1]).toEqual({
+      kind: 'answer',
+      text: '# Revue\n\nTrois constats, aucun bloquant.',
+    });
+    // L'annonce et la carte restent dans le groupe, où le dépliage les montre.
+    const groupe = items[2];
+    if (groupe?.kind !== 'run') throw new Error('le fil n’a pas posé de groupe de run');
+    const proses = groupe.items.flatMap((i) =>
+      i.kind === 'turn' ? i.blocks.filter((b) => b.kind === 'prose').map((b) => b.text) : [],
+    );
+    expect(proses).toEqual(['Je lis la PR.', 'Je publie la revue sur le dashboard.']);
+  });
+
+  it('un travail qui court ne sort rien : sa dernière phrase est une étape, pas une réponse', () => {
+    const { items } = buildConversationThread({
+      conversation,
+      messages: [],
+      jobs: [job({ ...travailFini(), completedAt: null, result: 'Voilà le bilan.' })],
+    });
+    expect(items.map((i) => i.kind)).toEqual(['request', 'run']);
   });
 
   it('la ligne compte ce que le dépliage montre : outils, délégations, appels de modèle', () => {

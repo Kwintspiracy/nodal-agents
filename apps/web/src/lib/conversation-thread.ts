@@ -77,6 +77,12 @@ export type ThreadJob = {
   createdAt: Date | null;
   /** Quand le travail s'est refermé. null : il court encore. */
   completedAt: Date | null;
+  /**
+   * Ce que le travail a RENDU (`agent_jobs.result`) : la chose livrée à la
+   * personne, par le canal ou le dashboard. C'est elle que le fil montre hors
+   * du groupe quand la dernière prose de l'agent n'est pas sa réponse.
+   */
+  result: string | null;
   verdict: ProductionVerdict;
   project: ThreadProject | null;
   /**
@@ -168,15 +174,27 @@ function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
 }
 
 /**
- * La RÉPONSE d'un run qui n'a pas d'item `answer`.
+ * La RÉPONSE d'un run qui n'a pas d'item `answer` — ce qu'on lit SANS déplier.
  *
  * `buildConversationFeed` ne pose `answer` que lorsque l'agent a fini SANS un
- * mot : quand il a parlé, sa réponse est sa dernière prose, et la répéter en
- * plaque afficherait deux fois le même texte. Le tableau de #135 la veut
- * pourtant DEHORS, au-dessus de la ligne de résumé. On la sort donc du groupe,
- * et la règle est celle-là, dite une fois : **le dernier bloc `prose` du dernier
- * tour**. Un bloc de prose plus haut est intermédiaire — l'agent qui annonce ce
- * qu'il va faire —, et il reste dans le groupe.
+ * mot : quand il a parlé (une prose, ou une carte d'envoi qui livre un texte),
+ * répéter `result` en plaque affichait deux fois le même texte dans un fil à
+ * plat. Le tableau de #135 veut pourtant la réponse DEHORS, au-dessus de la
+ * ligne de résumé — et Quentin (18/09) : « la réponse textuelle de l'agent est
+ * invisible, elle est DANS le feed de tools qui est fermé ». Deux cas :
+ *
+ *   - la dernière prose du dernier tour EST ce que le travail a rendu (l'agent
+ *     a fini par sa réponse) : on sort ce tour du groupe, avec son nom, son
+ *     image et son heure — une plaque anonyme les perdrait. Une prose plus
+ *     haut est intermédiaire (l'agent qui annonce ce qu'il va faire) et reste
+ *     dans le groupe ;
+ *   - elle ne l'est PAS (l'agent a publié sa réponse par une carte d'envoi puis
+ *     rendu son résultat ; sa dernière phrase n'est qu'une annonce) : ce qu'on
+ *     montre dehors est `result`, la chose livrée — jamais l'annonce. La prose
+ *     et la carte restent dans le groupe, où le dépliage les montre.
+ *
+ * Sans `result` (un travail d'avant la colonne, ou qui n'a rien rendu), la
+ * dernière prose sort, comme avant.
  *
  * Seulement sur un travail TERMINÉ (`completedAt`). Tant qu'il court, sa
  * dernière phrase n'est pas une réponse mais une étape ; la dessiner comme la
@@ -185,22 +203,28 @@ function runSummary(job: ThreadJob, work: readonly FeedItem[]): RunSummary {
  * Le tour sorti ne porte NI jetons NI durée : sa ligne de modèle reste dans le
  * groupe, avec le travail qu'elle a payé.
  */
-function liftAnswerTurn(job: ThreadJob, work: FeedItem[]): FeedItem | null {
+function answerOutsideTheRun(job: ThreadJob, work: FeedItem[]): FeedItem | null {
   if (job.completedAt === null) return null;
+  const result = job.result?.trim() ?? '';
   const turnAt = work.map((i) => i.kind).lastIndexOf('turn');
-  if (turnAt < 0) return null;
-  const turn = work[turnAt];
-  if (turn === undefined || turn.kind !== 'turn') return null;
-  const proseAt = turn.blocks.map((b) => b.kind).lastIndexOf('prose');
-  if (proseAt < 0) return null;
-  const prose = turn.blocks[proseAt];
-  if (prose === undefined || prose.kind !== 'prose') return null;
+  const turn = turnAt >= 0 ? work[turnAt] : undefined;
+  const proseAt =
+    turn !== undefined && turn.kind === 'turn'
+      ? turn.blocks.map((b) => b.kind).lastIndexOf('prose')
+      : -1;
+  const prose = turn !== undefined && turn.kind === 'turn' ? turn.blocks[proseAt] : undefined;
+  const lastProse = prose !== undefined && prose.kind === 'prose' ? prose : null;
+
+  if (result !== '' && (lastProse === null || lastProse.text.trim() !== result)) {
+    return { kind: 'answer', text: job.result ?? '' };
+  }
+  if (lastProse === null || turn === undefined || turn.kind !== 'turn') return null;
   const rest = turn.blocks.filter((_, i) => i !== proseAt);
   // Un tour vidé de sa prose et sans appel de modèle n'a plus rien à montrer :
   // il disparaît du groupe plutôt que d'y laisser un en-tête d'agent seul.
   if (rest.length === 0 && turn.usage === null) work.splice(turnAt, 1);
   else work[turnAt] = { ...turn, blocks: rest };
-  return { ...turn, blocks: [prose], usage: null };
+  return { ...turn, blocks: [lastProse], usage: null };
 }
 
 /**
@@ -238,7 +262,7 @@ function jobThreadItems(job: ThreadJob, asHandoff: boolean): FeedItem[] {
   // Un travail qui a ÉCHOUÉ ne se relit pas par sa dernière phrase : ce qu'il a
   // rendu est son échec, et la carte est juste sous le groupe. Sortir sa
   // dernière prose la ferait passer pour une réponse.
-  if (answer === null && failure === null) answer = liftAnswerTurn(job, work);
+  if (answer === null && failure === null) answer = answerOutsideTheRun(job, work);
 
   const first = work.find((i) => i.kind === 'turn');
   const out: FeedItem[] = [...lead, ...notes];
