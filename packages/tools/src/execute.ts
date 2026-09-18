@@ -668,8 +668,17 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const harnaisAvant = auditTool.reportsHarnessWrites
     ? await lignesDeHarnaisDejaLa(ctx.db, ctx.jobId)
     : new Set<string>();
+  // Ce que le hook a DÉCLARÉ voyage jusqu'à l'outil, sur un contexte dérivé —
+  // celui de l'appelant n'est pas modifié. Un outil qui doit connaître le type
+  // de ce qu'il écrit (donc la clé que portera sa carte) relit la décision de
+  // l'intention au lieu de la refaire après coup : reclasser rouvrait une
+  // fenêtre de course, la table `code_projects` pouvant changer entre les deux
+  // lectures, au bout de laquelle la carte et l'état posé ne parlaient plus du
+  // même livrable (revue C, dette #88). Voir `declaredMutationTargets`.
+  const execCtx: ToolContext =
+    mutationTargets === null ? ctx : { ...ctx, declaredMutationTargets: mutationTargets };
   try {
-    const output = await tool.execute(validatedInput, ctx);
+    const output = await tool.execute(validatedInput, execCtx);
     const durationMs = Date.now() - startMs;
     await _writeToolCall(ctx, auditTool, validatedInput, JSON.stringify(output), durationMs, {
       value: output,

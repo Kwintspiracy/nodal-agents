@@ -207,6 +207,26 @@ export interface ToolContext {
    * never break schedule creation.
    */
   resolveAgentToolNames?: (agentId: string) => Promise<Set<string>>;
+  /**
+   * Les cibles que le hook `resolveMutationTargets` de CET APPEL a déclarées,
+   * posées par le seam (`executeTool`) sur un contexte DÉRIVÉ, juste avant
+   * `tool.execute`. Jamais renseigné par le runner, jamais par un outil.
+   *
+   * POURQUOI CE CANAL EXISTE. Le hook ne se contente pas de nommer un chemin :
+   * il dit ce que cet appel PRODUIT (`deliverableType`), et c'est de là que
+   * l'intention tire la clé sous laquelle elle range l'état de vérification.
+   * Un outil qui a besoin de cette même clé pour sa carte doit donc RELIRE la
+   * décision du hook, jamais la refaire : entre deux classements, la table
+   * `code_projects` peut changer (un autre travail déclare le dossier, ou
+   * quelqu'un le déclare depuis l'écran). La carte repartait alors sous une
+   * clé que personne n'avait posée, et l'écran n'affichait plus aucun état —
+   * un repli silencieux (invariant #4). Voir `declaredWrittenFileType`
+   * (`verification/written-file-type.ts`), son seul lecteur d'aujourd'hui.
+   *
+   * ABSENT hors du seam : un `tool.execute` appelé directement (contextes de
+   * test légers) n'a posé AUCUNE intention, donc rien avec quoi diverger.
+   */
+  declaredMutationTargets?: readonly MutationTarget[];
 }
 
 // ─── ToolProvisioning ──────────────────────────────────────────────────────────

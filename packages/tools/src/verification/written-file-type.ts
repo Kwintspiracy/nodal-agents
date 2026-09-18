@@ -98,3 +98,44 @@ export async function deliverableTypeForWrittenFile(
     hasMarker,
   });
 }
+
+/**
+ * Le type que le hook de CET appel a DÉJÀ déclaré pour ce fichier — relu, pas
+ * recalculé —, ou `undefined` si personne ne l'a déclaré.
+ *
+ * POURQUOI RELIRE PLUTÔT QUE RECLASSER. La réponse de
+ * `deliverableTypeForWrittenFile` dépend d'une table, `code_projects`, qui
+ * change sous les pieds de l'appel : un autre travail déclare le dossier, ou
+ * quelqu'un le déclare depuis l'écran. Classer deux fois le même fichier — au
+ * hook, puis dans `execute` — ouvrait donc une fenêtre de course entre les deux
+ * lectures, et les deux issues étaient muettes :
+ *
+ *   - `document` puis `code_project` : l'intention range l'état sous la clé DU
+ *     FICHIER, la carte repart sans `deliverable_key`, et `DeliverableNote`
+ *     n'a plus rien à retrouver ;
+ *   - `code_project` puis `document` : l'état est rangé sous la clé DU PROJET,
+ *     la carte porte celle du fichier, et aucun état `(job, clé)` ne répond.
+ *
+ * Aucun faux vert, mais un état devenu introuvable sans qu'un écran le dise :
+ * un repli silencieux (invariant #4). Un seul classement par appel ferme la
+ * fenêtre, parce qu'il n'y a plus deux réponses à faire coïncider.
+ *
+ * `undefined` HORS DU SEAM n'est pas un repli : un `execute` appelé
+ * directement n'a posé aucune intention, donc aucun état avec lequel diverger.
+ * L'appelant classe alors lui-même, et c'est la seule réponse qui existe.
+ */
+export function declaredWrittenFileType(
+  ctx: ToolContext,
+  absPath: string,
+): WrittenFileType | undefined {
+  const cible = normalizePath(absPath);
+  for (const target of ctx.declaredMutationTargets ?? []) {
+    if (target.kind !== 'file' || normalizePath(target.path) !== cible) continue;
+    // Les autres types de livrable (un classeur Office, par exemple) ont leur
+    // propre chemin de clé : ils ne sont pas la réponse à CETTE question.
+    if (target.deliverableType === 'code_project' || target.deliverableType === 'document') {
+      return target.deliverableType;
+    }
+  }
+  return undefined;
+}
