@@ -10,6 +10,132 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.11 — Sep 19, 2026
+
+A release about reading a run without opening a chat. A run now has a page of
+its own, the same one whether it came from a schedule, from the Code screen
+or from an MCP client, and the thread reads a delegated review from the record
+the reviewer wrote rather than from a guess at its prose. The sidebar was
+redrawn on the owner's own list, and fourteen pull requests merged without a
+review in September were read after the fact; the four findings that still
+held are fixed here. No new capability; every change went through Reviewer C,
+and every finding was closed by a test that failed first.
+
+**A run is a board to follow, not a thread to read**
+
+- **One page for every run.** `/scheduled/<id>`, `/jobs/<id>` and `/code/<id>`
+  render the same page: a header card with the request, the agent, the origin,
+  the model and seven figures (cost, duration, tokens in and out, cache reads,
+  files changed, activity), then what was delivered, the review, the
+  verification, the files of a code run, and the whole activity, always open.
+  A run opens at the top and never scrolls itself. The old Code process detail
+  and its private components are gone; the Code list links to the run page.
+- **The run says which run it is.** The full identifier sits under the
+  header, selectable, with a copy button, on all three routes.
+- **The review is read once.** The same run showed its verdicts from the Code
+  screen and none from the MCP folder, because two loaders read two things.
+  They now share one reader, ordered by the sequence the tool wrote in, parsed
+  by the orchestration's own parser. A verdict carries the reviewer's full
+  report, rendered in the Review block. When a run carries a recorded verdict,
+  its own reply is not repeated above the block: the review is the answer.
+- **Audit rows are masked at the gate.** The card, the raw output and the
+  input of every tool row go through one redaction before any screen or
+  summary sees them, on the run page and in the conversation thread alike.
+- **Real zero, real title.** A cost or a duration that is genuinely zero
+  prints `0`; a dash means absent. The header title is the first line of the
+  request, cut at sixty characters, whole on hover.
+
+**The thread reads the verdict the reviewer recorded**
+
+- **A delegation's head says the recorded verdict.** Since the
+  `review_verdict` tool writes a typed record, the thread reads that row
+  instead of the first line of the child's prose, which could say the
+  opposite. The head reads `Approved`, or `Changes requested · 2 blockers,
+  1 minor`, only the severities that exist; the recorded summary sits in the
+  body. A refusal after a success leaves the delegate with no verdict, as the
+  reviewer meant. A row that breaks its own contract is logged and skipped,
+  never a truncated verdict.
+- **A child job carries its verdict and its redaction together.** The
+  delegate's result and error are masked like the parent's.
+
+**Channels, as drawn, and the sidebar on the owner's list**
+
+- **An MCP folder in Channels.** Runs started from outside Nodal, through the
+  MCP server or the API, get their own folder, paged fifty at a time, with
+  multi-select delete that refuses to orphan a live delegation. A task sent
+  from the dashboard no longer lands there.
+- **The sidebar.** Three hundred pixels wide, written once. "Spaces" reads
+  "Workspaces", "Home" reads "Dashboard". LLM provider leads the Operate
+  group, Settings follows Logs. The bottom group is "About Nodal-Agents", with
+  Documentation, Join Discord (the Discord icon, the link icon to the right)
+  and a link to the public quality board. The Code entry left the rail; its
+  pages stay reachable by link. Channels folds with a chevron; each folder
+  folds too, and open shows its five latest threads, bounded in SQL, with a
+  "See all" arrow to the full list. A dot in front of each thread is red when
+  the thread waits for you or has a run in progress, grey otherwise; there is
+  no read state, and the dot does not pretend one. Every row of the rail has
+  one shape, hover and selection running edge to edge, chevron included, and
+  Channels and Nodal chats no longer share an icon.
+- **The Files block of a code run is the feed's file block.** One diff plate,
+  budgeted at eighty lines, with the redaction applied before the diff is
+  extracted: a key written into a file no longer shows in Files.
+- **Unfolding never moves the view.** A block opened by the reader grows in
+  place, whatever its size; the follow-the-bottom mode switches off only if
+  the reader has not scrolled since the gesture. Proven in the browser.
+
+**A failed run says the gesture it calls for**
+
+- **A provider refusal names its remedy.** When a provider rejects a request
+  for a model, the failure carries a typed hint and the screen says "Try
+  another model for this agent", on the run and in the delegation block. The
+  code, its prefix and the hint live in one shared module. A job's error is
+  redacted at the feed gate like its result.
+- **A restart never leaves a job processing with nobody on it.** Jobs whose
+  runner stopped answering are reclaimed after a liveness window and marked
+  `runner_restarted`; a parent is woken only if the child it waited for is the
+  one that died.
+- **A late timeout keeps the turns already done.** A single-turn timeout is
+  replayed instead of discarding the whole job, and a provider failure that
+  hides a timeout is recognised as one.
+- **Gemini gets the schema subset it accepts, on every route.** Tool schemas
+  are sanitised by model family on the OpenRouter route too.
+- **A 429 that asks to retry is transient.** OpenRouter's "could not verify
+  available credits" was read as an exhausted quota; the classifier now names
+  its cases.
+- **A harness reports its writes, the disk confirms them.** Files a CLI
+  harness reports as written are checked on disk and scoped to that run;
+  a deletion is confirmed by absence; a run that times out confirms nothing.
+- **A directory target no longer counts as a write.**
+- **A recorded verdict is the job's deliverable.** Tool calls carry a write
+  sequence, and the delegation outcome carries the verdict the reviewer
+  recorded, so the parent reads it instead of the prose.
+
+**The quality portal**
+
+- **The board says where a review stands**, read from the review-pass
+  comments of each pull request, with what it could not parse said aloud.
+- **Done is a seven-day window**, merged pull requests included, and the two
+  dates are in UTC and say so.
+- **Every card says which release it belongs to**, and the release chip
+  filters the board; the chip now hides the cards it sets aside (the card
+  rule's `display:flex` used to beat the `hidden` attribute).
+- **The scope journey says which dialog it proves**, and the unfold journey
+  proves in the browser that a reader's scroll is kept.
+
+**Fourteen pull requests read after the fact**
+
+Merged on September 13 without a review when the quota was exhausted, they
+were read by Reviewer C against today's main. Ten held. Four findings still
+stood and are fixed here: a file write classified twice, before and after the
+hook, so a project declared in between left its verification state unfindable;
+the portal's guard against `</script>` in embedded JSON replaced `<` by `<`;
+a capability or a journey that wavered without a single red had no link to
+the run that holds its trace (the finding as reported, a link to a wrong run,
+did not exist); a side-effect import swallowed a journey's header. The minor
+findings are filed for 0.9.0.
+
+---
+
 ## v0.8.10 — Sep 16, 2026
 
 A release about trust in what Nodal tells you. The launcher no longer kills a
