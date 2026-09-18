@@ -11,7 +11,7 @@
 // after the escalation shipped, and a comment that states a rule gets read as
 // one (revue Codex de la dette de la PR #73, passe 3).
 
-import { eq, and, desc, sql } from '@nodal-agents/db';
+import { eq, and, asc, desc, sql } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
@@ -47,6 +47,27 @@ import type { RunnerDeps } from '../deps.ts';
 const HISTORY_CANDIDATE_LIMIT = 200;
 const DEFAULT_MODEL = 'claude-sonnet-4-6-20260217';
 const TITLE_MAX = 60;
+// Au-delà, on cesse de redemander un titre au modèle. La relance existe parce
+// qu'un seul essai rate — le modèle rend un paragraphe, `cleanTitle` le refuse,
+// et la conversation garde la première phrase de la personne POUR TOUJOURS
+// (14 fils du propriétaire dans ce cas le 18/09). Elle est bornée pour la
+// raison inverse : un fil dont le modèle ne sait décidément pas tirer un titre
+// ne doit pas payer un appel de plus à chaque tour, indéfiniment.
+const TITLE_RETRY_MAX_MESSAGES = 10;
+
+/**
+ * Le titre PROVISOIRE : la première phrase de la personne, tronquée.
+ *
+ * Écrit dès le premier message — il faut bien quelque chose dans la liste
+ * pendant que la réponse se génère — et RECALCULÉ plus tard pour reconnaître
+ * un titre que le modèle n'a jamais remplacé. Une seule fonction pour les deux
+ * usages : deux formules qui divergent d'un caractère feraient passer un titre
+ * provisoire pour un titre choisi, et il ne serait plus jamais renommé.
+ */
+function provisionalTitle(userMessage: string): string {
+  const t = userMessage.trim();
+  return t.slice(0, TITLE_MAX) + (t.length > TITLE_MAX ? '…' : '');
+}
 
 // The ONE tool the chat agent gets: escalate to a real job. Pure conversation +
 // memory recall need no tool (recall is auto-injected). When the user asks for
@@ -281,9 +302,10 @@ export async function runChatTurn(opts: {
     .values({ entityId, agentId, conversationId, role: 'user', content: message });
   // First message names the conversation (cheap auto-title; LLM summary later).
   if (!conv.title) {
-    const title =
-      message.trim().slice(0, TITLE_MAX) + (message.trim().length > TITLE_MAX ? '…' : '');
-    await db.update(conversations).set({ title }).where(eq(conversations.id, conversationId));
+    await db
+      .update(conversations)
+      .set({ title: provisionalTitle(message) })
+      .where(eq(conversations.id, conversationId));
   }
 
   // 1c. Runtime divert (étape E): the reply comes from the agent's Claude
@@ -564,6 +586,21 @@ export async function runChatTurn(opts: {
       .set({ updatedAt: new Date() })
       .where(eq(conversations.id, conversationId));
 
+    // Un tour qui escalade est un tour comme un autre pour la LISTE : il n'a
+    // jamais été nommé, et c'est précisément la forme des fils que le
+    // propriétaire lisait par leur première phrase (« Crée-moi une app assez
+    // simple dans laquelle je peux écrire, »). Les mêmes gardes s'appliquent —
+    // titre encore provisoire, conversation courte — donc aucun appel de plus
+    // sur un fil déjà nommé.
+    await nameConversationWhileProvisional({
+      db,
+      conversationId,
+      userMessage: message,
+      agentReply: reply,
+      generate: (system, prompt) =>
+        llmClient.generateText({ system, messages: [{ role: 'user', content: prompt }] }),
+    });
+
     return { ok: true, reply, spawnedJobId: job?.id };
   }
 
@@ -594,7 +631,7 @@ export async function runChatTurn(opts: {
   // avant : le nommer coûte un appel, et l'utilisateur attend sa réponse, pas
   // son titre. Un échec ne remonte pas : le titre provisoire (sa première
   // phrase) reste, ce qui est le pire cas acceptable.
-  await nameConversationOnce({
+  await nameConversationWhileProvisional({
     db,
     conversationId,
     userMessage: message,
@@ -607,14 +644,48 @@ export async function runChatTurn(opts: {
 }
 
 /**
- * Nomme la conversation d'après son PREMIER échange, une seule fois.
+ * La conversation porte-t-elle encore un titre PROVISOIRE ?
  *
- * « Une seule fois » se lit dans les données, pas dans un drapeau : le premier
- * échange est celui après lequel la conversation compte exactement deux
- * messages. Au troisième, on ne renomme plus — le titre appartient alors à
- * l'utilisateur, qui l'a lu et gardé.
+ * Trois formes, et trois seulement : rien, « Untitled », ou la première phrase
+ * de la personne tronquée par `provisionalTitle`. Tout le reste est un titre
+ * que le modèle a rendu — ou que quelqu'un a écrit — et il ne se remplace
+ * jamais : le relire pour le réécrire ferait changer un fil de nom sous les
+ * yeux de son lecteur.
  */
-async function nameConversationOnce(input: {
+async function titleIsProvisional(
+  db: Parameters<typeof loadConversationContext>[0],
+  conversationId: string,
+  title: string,
+): Promise<boolean> {
+  const t = title.trim();
+  if (t === '' || t === 'Untitled') return true;
+  const [first] = await db
+    .select({ content: chatMessages.content })
+    .from(chatMessages)
+    .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.role, 'user')))
+    .orderBy(asc(chatMessages.createdAt))
+    .limit(1);
+  // Sans premier message, rien ne dit à quoi ressemblerait le provisoire : on
+  // ne touche pas au titre plutôt que de deviner (invariant #4).
+  if (first === undefined) return false;
+  return t === provisionalTitle(first.content);
+}
+
+/**
+ * Nomme la conversation d'après l'échange, TANT QU'ELLE N'A PAS DE NOM.
+ *
+ * Le nommage tournait au seul premier échange (`count === 2`). Un essai unique
+ * suffit quand il réussit ; quand il rate — le modèle rend un paragraphe,
+ * `cleanTitle` le refuse, l'appel échoue — la conversation gardait sa première
+ * phrase brute jusqu'à la fin de sa vie, et c'est exactement ce que le
+ * propriétaire lisait dans sa liste (18/09).
+ *
+ * Il tourne donc à CHAQUE tour, sous deux gardes qui le bornent : le titre est
+ * encore provisoire (voir `titleIsProvisional` — un titre obtenu ne se
+ * remplace jamais), et la conversation compte au plus
+ * `TITLE_RETRY_MAX_MESSAGES` messages.
+ */
+async function nameConversationWhileProvisional(input: {
   db: Parameters<typeof loadConversationContext>[0];
   conversationId: string;
   userMessage: string;
@@ -626,7 +697,17 @@ async function nameConversationOnce(input: {
       .select({ n: sql<number>`count(*)` })
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, input.conversationId));
-    if (Number(count?.n ?? 0) !== 2) return;
+    if (Number(count?.n ?? 0) > TITLE_RETRY_MAX_MESSAGES) return;
+
+    // Le titre TEL QU'IL EST EN BASE. Celui lu au début du tour ne convient
+    // pas : ce même tour vient peut-être d'y écrire le provisoire.
+    const [row] = await input.db
+      .select({ title: conversations.title })
+      .from(conversations)
+      .where(eq(conversations.id, input.conversationId))
+      .limit(1);
+    if (row === undefined) return;
+    if (!(await titleIsProvisional(input.db, input.conversationId, row.title ?? ''))) return;
 
     const out = await input.generate(
       TITLE_SYSTEM_PROMPT,

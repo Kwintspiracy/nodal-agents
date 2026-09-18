@@ -11,10 +11,13 @@
 // la maquette dessine sa boîte de réception — une ligne par conversation,
 // l'agent, le chat, le dernier mot, l'heure, et ce qui s'y passe.
 //
-// La page SANS dossier garde ses deux tableaux. Ce n'est pas un oubli : la
-// vue entière mélange des chats de canal et des conversations de Nodal, que
-// la planche ne montre jamais ensemble, et décider de leur forme commune est
-// une décision produit à part entière.
+// La page SANS dossier garde ses DEUX SECTIONS empilées — le tableau des chats
+// de canal, puis les conversations de Nodal. Ce n'est pas un oubli : la vue
+// entière mélange deux choses que la planche ne montre jamais ensemble, et
+// décider de leur forme commune est une décision produit à part entière. Les
+// conversations de Nodal, elles, s'y rendent comme dans leur dossier, par le
+// même composant : deux formes des mêmes fils auraient divergé au premier
+// correctif.
 
 import PageShell from '@/components/ui/PageShell';
 import ConversationRow from '@/components/ui/ConversationRow';
@@ -105,31 +108,38 @@ export default async function ChatPage({
           running: folders.ok ? (folders.data.running[view.key] ?? 0) : 0,
         }) ?? undefined);
 
-  // Les lignes du dossier : ce que la maquette dessine. Construites ici pour
-  // TOUS les dossiers — un canal montre ses chats, « Nodal chats » ses
-  // conversations — par la même règle et la même lecture.
-  const rows =
-    view.key === null
+  // Ce qui se pose sur une ligne : les MÊMES approbations que le sous-titre et
+  // que le menu — une seule lecture, une seule vérité — rangées par
+  // conversation cette fois, pas par dossier.
+  const signes = {
+    waiting: approvals.ok ? approvals.data : [],
+    runningConversationIds: folders.ok ? folders.data.runningConversationIds : [],
+  };
+
+  // Les lignes de la maquette, par la même règle et la même lecture pour tous
+  // les dossiers : un canal montre ses chats, « Nodal chats » ses
+  // conversations. Celles du dashboard se construisent AUSSI pour la vue
+  // entière, qui rend la même liste : une seconde forme des mêmes fils aurait
+  // divergé au premier correctif.
+  const channelRows =
+    view.key === null || !view.showChannels
       ? []
-      : conversationRows({
-          ...(view.showDashboard ? { conversations: dashboard } : { chats: shownChannels }),
-          // Les MÊMES approbations que le sous-titre et que le menu : une
-          // seule lecture, une seule vérité. Rangées par conversation cette
-          // fois, pas par dossier.
-          waiting: approvals.ok ? approvals.data : [],
-          runningConversationIds: folders.ok ? folders.data.runningConversationIds : [],
-        });
+      : conversationRows({ chats: shownChannels, ...signes });
+  const dashboardRows = view.showDashboard
+    ? conversationRows({ conversations: dashboard, ...signes })
+    : [];
 
   return (
     <PageShell title={view.title} subtitle={subtitle}>
       {result.ok ? (
-        view.key !== null ? (
-          <>
-            {/* Aucun bandeau ne se perd dans la refonte : ce que la page ne
-                sait pas se dit AU-DESSUS de la liste, exactement comme le
-                tableau le disait. Les deux derniers sont propres à la liste —
-                sans eux, l'absence de point vert ou de pastille se lirait
-                comme « rien ne se passe » alors que la lecture a échoué. */}
+        <>
+          {/* Aucun bandeau ne se perd dans la refonte : ce que la page ne sait
+              pas se dit AU-DESSUS de la liste, exactement comme le tableau le
+              disait. Les deux derniers sont propres à la liste — sans eux,
+              l'absence de point vert ou de pastille se lirait comme « rien ne
+              se passe » alors que la lecture a échoué. Dans la vue entière,
+              c'est `ChannelChatsTable` qui porte les quatre premiers. */}
+          {view.key !== null && (
             <ChatListNotices
               threadsUnreadable={view.showChannels && threadsUnreadable}
               namesUnreadable={view.showChannels && namesUnreadable}
@@ -138,22 +148,9 @@ export default async function ChatPage({
               waitingUnreadable={!approvals.ok}
               runningUnreadable={!folders.ok}
             />
-            {rows.length === 0 ? (
-              <EmptyState title="No conversation in this folder yet." />
-            ) : (
-              // Pas d'écart entre les lignes : la planche les sépare d'un
-              // trait, dans une seule boîte. `overflow-hidden` fait suivre les
-              // coins arrondis à la première et à la dernière.
-              <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
-                {rows.map(({ key, ...ligne }) => (
-                  <ConversationRow key={key} rowKey={key} {...ligne} />
-                ))}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {view.showChannels && (
+          )}
+          {view.showChannels &&
+            (view.key === null ? (
               <ChannelChatsTable
                 rows={shownChannels}
                 threadsUnreadable={threadsUnreadable}
@@ -161,10 +158,24 @@ export default async function ChatPage({
                 missingCurrent={missingCurrent}
                 hiddenByWindow={hiddenByWindow}
               />
-            )}
-            {view.showDashboard && <ConversationsList rows={dashboard} />}
-          </>
-        )
+            ) : channelRows.length === 0 ? (
+              <EmptyState title="No conversation in this folder yet." />
+            ) : (
+              // Pas d'écart entre les lignes : la planche les sépare d'un
+              // trait, dans une seule boîte. `overflow-hidden` fait suivre les
+              // coins arrondis à la première et à la dernière.
+              <div className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+                {channelRows.map(({ key, ...ligne }) => (
+                  <ConversationRow key={key} rowKey={key} {...ligne} />
+                ))}
+              </div>
+            ))}
+          {/* « Nodal chats » : la même liste, et sa barre d'actions — créer,
+              chercher, supprimer. Un dossier de CANAL n'en a pas : on n'y ouvre
+              pas de conversation depuis le web, c'est la personne à l'autre
+              bout qui écrit la première. */}
+          {view.showDashboard && <ConversationsList rows={dashboardRows} />}
+        </>
       ) : (
         <p className="text-sm text-err">{result.message}</p>
       )}

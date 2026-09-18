@@ -8,7 +8,8 @@
 // Mutations vérifiées : le point vert rendu en même temps que la pastille
 // → le test « un seul signe » rougit ; la pastille rendue au repos → le test
 // « rien au repos » rougit ; `Approval pending` rendu pour une question → le
-// test de priorité rougit.
+// test de priorité rougit ; l'avatar et le nom rendus MÊME sans agent → les
+// tests de la ligne sans agent rougissent (18/09).
 
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -18,8 +19,7 @@ const BASE = {
   id: 'conv-1',
   rowKey: 'agent-1:telegram:42',
   href: '/chat/conv-1',
-  agentName: 'Marlow',
-  agentAvatarUrl: null,
+  agent: { name: 'Marlow', avatarUrl: null },
   chatName: 'Mireille',
   preview: 'C’est envoyé.',
   time: '14:02',
@@ -52,7 +52,7 @@ describe('la ligne d’une conversation @cap:reprendre-conversation/ecran', () =
   });
 
   it('montre la VRAIE image de l’agent quand il en a une', () => {
-    const html = render({ agentAvatarUrl: '/avatars/marlow.png' });
+    const html = render({ agent: { name: 'Marlow', avatarUrl: '/avatars/marlow.png' } });
     expect(html).toContain('img');
     expect(html).toContain(encodeURIComponent('/avatars/marlow.png'));
   });
@@ -115,5 +115,48 @@ describe('la ligne d’une conversation @cap:reprendre-conversation/ecran', () =
     expect(html).toContain('h-14');
     expect(html).toContain('gap-3.5');
     expect(html).toContain('px-4');
+  });
+});
+
+describe('la ligne SANS agent : le dossier « Nodal chats » @cap:reprendre-conversation/ecran', () => {
+  // Quentin, 18/09 : « pas besoin de répéter l'agent partout avec son avatar ;
+  // pas besoin de montrer le dernier message posté ; il faut juste un titre de
+  // conversation ». Ces lignes-là sont toutes du même agent.
+  const SANS_AGENT = { agent: null, chatName: 'Recettes du dimanche', preview: null } as const;
+
+  it('ni avatar ni nom d’agent — le titre est la ligne', () => {
+    const html = render(SANS_AGENT);
+    const t = texte(html);
+    expect(t).toContain('Recettes du dimanche');
+    expect(t).not.toContain('Marlow');
+    // L'avatar dessine soit une image, soit les initiales dans un carré : ni
+    // l'un ni l'autre ne doit rester.
+    expect(html).not.toContain('<img');
+    expect(t).not.toContain('MA');
+    // Et surtout pas le tiret de l'agent sans nom : il n'y a pas d'agent du
+    // tout, ce n'est pas un nom illisible.
+    expect(t).not.toContain('—');
+  });
+
+  it('le titre porte la graisse et la couleur de la ligne principale', () => {
+    const html = render(SANS_AGENT);
+    expect(html).toContain('truncate text-medium-14 text-ink');
+    // Pas d'étiquette mono : elle ne s'étire pas, et coupait le titre à 18
+    // signes au milieu de la ligne.
+    expect(html).not.toContain('font-mono');
+  });
+
+  it('le signe de ce qui s’y passe ne bouge pas, lui', () => {
+    expect(texte(render({ ...SANS_AGENT, waiting: 'approval' }))).toContain('Approval pending');
+    expect(render({ ...SANS_AGENT, running: true })).toContain('bg-ok ');
+    // L'heure non plus.
+    expect(texte(render(SANS_AGENT))).toContain('14:02');
+  });
+
+  it('sans fil désigné, elle le dit aussi', () => {
+    const html = render({ ...SANS_AGENT, id: null, href: null });
+    expect(html).not.toContain('<a ');
+    expect(texte(html)).toContain('unavailable');
+    expect(texte(html)).toContain('Recettes du dimanche');
   });
 });
