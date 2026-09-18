@@ -693,6 +693,83 @@ export function timeoutOfTurn(err: unknown): LLMTimeoutError | null {
   return null;
 }
 
+// ─── refus de la requête par le fournisseur ───────────────────────────────────
+
+/** Les faits qu'un refus laisse derrière lui — rien qui soit à inventer. */
+export interface ProviderRejectionFacts {
+  provider: string;
+  model: string;
+  /** Le statut HTTP rendu par le fournisseur. */
+  status: number;
+  /** Le tour atteint : celui qui a été refusé. */
+  turn: number;
+}
+
+/**
+ * Le statut d'un REFUS DE REQUÊTE, ou `null` si l'erreur n'en est pas un.
+ *
+ * 400 et 422, et rien d'autre : le fournisseur dit que la requête elle-même ne
+ * passe pas. Une clé invalide (401/403), un modèle inconnu (404) et un débit
+ * dépassé (429) ont chacun leur chemin et leur conseil ; les mettre ici rendrait
+ * la ligne fausse pour trois cas sur quatre.
+ *
+ * Le statut se lit sur l'erreur ou sur sa cause : le SDK lève un `APICallError`
+ * qui porte `statusCode`, que nos enveloppes reportent en `cause`.
+ */
+export function providerRejectionOfTurn(err: unknown): number | null {
+  let cur: unknown = err;
+  for (let i = 0; i < 5 && cur !== null && typeof cur === 'object'; i++) {
+    const c = cur as {
+      statusCode?: unknown;
+      status?: unknown;
+      underlyingCause?: unknown;
+      cause?: unknown;
+    };
+    const status =
+      typeof c.statusCode === 'number'
+        ? c.statusCode
+        : typeof c.status === 'number'
+          ? c.status
+          : null;
+    // Le PREMIER statut rencontré fait foi : en chercher un autre plus bas
+    // ferait passer une panne 500 pour un refus de requête.
+    if (status !== null) return status === 400 || status === 422 ? status : null;
+    const next = c.underlyingCause ?? c.cause;
+    if (next === cur) break;
+    cur = next;
+  }
+  return null;
+}
+
+/**
+ * Le code machine d'un refus, pour `agent_jobs.error` — même famille que
+ * `llm_timeout:…` et `context_window_exceeded:…` : un code, puis les faits qui
+ * le rendent actionnable.
+ */
+export function providerRejectionCode(faits: ProviderRejectionFacts): string {
+  return `provider_rejected_request:${faits.provider}/${faits.model} (http ${faits.status}, turn ${faits.turn})`;
+}
+
+/**
+ * La ligne que l'utilisateur lit quand le fournisseur a refusé la requête.
+ *
+ * Même nature que `timeoutStopLine` : une ligne de PLATEFORME, entre crochets,
+ * faite de CHAMPS TYPÉS — le fournisseur, le modèle, le statut, le tour — plus
+ * le SEUL geste que le harnais puisse honnêtement proposer. Ce n'est pas la voix
+ * de l'agent, et l'invariant #2 tient : le harnais ne raconte rien, il pose les
+ * faits qu'il a.
+ *
+ * Ce qu'elle remplace (#119) : le JSON du fournisseur recopié tel quel, suivi de
+ * « and no explanation was provided » — illisible, et muet sur ce qu'il y avait
+ * à faire.
+ */
+export function providerRejectionStopLine(faits: ProviderRejectionFacts): string {
+  return (
+    `[stopped: provider rejected the request — ${faits.provider}/${faits.model}, ` +
+    `http ${faits.status}, turn ${faits.turn} — try another model for this agent]`
+  );
+}
+
 // ─── executeJob ───────────────────────────────────────────────────────────────
 
 /**
@@ -5095,6 +5172,40 @@ async function runJob(
         `(configured ~${win} tokens — set the model's real context window in LLM providers)`;
       await failJob(db, jobId as string, code, runStats(), messages);
       return { status: 'failed', error: code };
+    }
+
+    // Le fournisseur a REFUSÉ la requête (#119). Vécu le 16/09/2026 : un modèle
+    // Gemini via OpenRouter rendait « 400 Request contains an invalid argument »
+    // au tour 1, et l'utilisateur recevait le JSON du fournisseur suivi de « and
+    // no explanation was provided ». Le JSON ne dit ni qui a refusé, ni ce qu'il
+    // y avait à faire. La ligne, elle, pose les faits et le seul geste possible.
+    //
+    // Après la garde du contexte, qui est un refus elle aussi mais dont le
+    // conseil est autrement précis, et après la chaîne de repli épuisée, qui
+    // raconte la chaîne et non un fournisseur.
+    const refusStatus = providerRejectionOfTurn(err);
+    if (refusStatus !== null) {
+      const faits: ProviderRejectionFacts = {
+        provider: llmClient.config.provider,
+        model: llmClient.config.model,
+        status: refusStatus,
+        turn,
+      };
+      const code = providerRejectionCode(faits);
+      // Ce que le travail avait écrit avant le refus reste le livrable : un
+      // refus au tour 9 n'efface pas huit tours (même règle que l'expiration).
+      const livrable = [lastAssistantTextSeen, providerRejectionStopLine(faits)]
+        .filter((t) => t !== '')
+        .join('\n\n');
+      trace('provider_rejected_request', { turn, status: refusStatus });
+      await failJob(db, jobId as string, code, runStats(), messages, livrable);
+      return {
+        status: 'failed',
+        error: code,
+        result: livrable,
+        toolsUsed,
+        exitReason: 'provider_rejected_request',
+      };
     }
 
     // AI SDK throws when the model calls a tool not in the allowed list. The
