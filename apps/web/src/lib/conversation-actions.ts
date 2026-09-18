@@ -49,6 +49,7 @@ import { headers } from 'next/headers';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
 import { redactPresented } from './redact-presented.ts';
+import { parsePresented } from './tool-card-payload.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
 import { buildConversationThread } from './conversation-thread.ts';
 // UNE seule définition de la clé d'un chat, des deux côtés. Elle vit dans son
@@ -838,12 +839,36 @@ export async function getConversationThreadAction(
     // lecture des mêmes lignes. Le masquage ne change que des chaînes de forme
     // credential : la carte, son étiquette et ses comptes traversent intacts,
     // donc le classement chat/travail rend le même verdict.
-    const rowsByRoot = new Map<string, Array<(typeof classifiableRows)[number]>>();
+    //
+    // Le masquage a un effet de bord sur le COMPTE (#161) : deux fichiers dont
+    // les chemins ne diffèrent que par une chaîne de forme credential masquent
+    // vers le même chemin. Les chemins d'AVANT masquage partent donc avec la
+    // ligne, pour la seule identité des fichiers dans le récapitulatif ; ils ne
+    // s'affichent nulle part, seule la carte masquée va jusqu'à l'écran.
+    const rowsByRoot = new Map<
+      string,
+      Array<(typeof classifiableRows)[number] & { rawFilePaths?: readonly string[] }>
+    >();
     for (const row of classifiableRows) {
       const root = row.jobId !== null ? rootOf.get(row.jobId) : undefined;
       if (root === undefined) continue;
+      // La validation Zod ne tourne que sur une charge qui se DIT `files` :
+      // seule cette carte porte des chemins, et valider toutes les autres pour
+      // jeter le résultat coûtait sur chaque ligne du fil (revue C, C2). Une
+      // charge qui ment sur son `card` est rejetée par `parsePresented` comme
+      // avant, et repart donc sans chemins bruts.
+      const diteFiles =
+        row.presented !== null &&
+        typeof row.presented === 'object' &&
+        (row.presented as { card?: unknown }).card === 'files';
+      const brut = diteFiles ? parsePresented(row.presented) : null;
       const bucket = rowsByRoot.get(root) ?? [];
-      bucket.push({ ...row, presented: redactPresented(row.presented) });
+      bucket.push({
+        ...row,
+        presented: redactPresented(row.presented),
+        rawFilePaths:
+          brut !== null && brut.card === 'files' ? brut.files.map((f) => f.path) : undefined,
+      });
       rowsByRoot.set(root, bucket);
     }
 
@@ -998,6 +1023,7 @@ export async function getConversationThreadAction(
         toolInput: row.toolInput,
         toolOutput: row.toolOutput,
         presented: row.presented,
+        rawFilePaths: row.rawFilePaths,
       })),
       workspaceRoots,
     }));
