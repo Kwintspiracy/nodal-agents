@@ -955,7 +955,30 @@ describe('buildConversationFeed — lignes anciennes, échecs, enfants', () => {
       job: child,
       from: { name: 'Veilleur', slug: 'veilleur', avatarUrl: null },
     });
-    expect(feed.items.at(-1)).toEqual({ kind: 'failure', text: 'delivery_spam_guard' });
+    expect(feed.items.at(-1)).toEqual({
+      kind: 'failure',
+      text: 'delivery_spam_guard',
+      hint: null,
+    });
+  });
+
+  it('un refus du fournisseur pose le GESTE sur l’item d’échec (#184)', () => {
+    // Le code exact qu'écrit `providerRejectionCode` (runner) : c'est le seul
+    // fait de ce refus qui atteigne la base, et c'est donc lui que le modèle
+    // du fil relit pour nommer le geste.
+    const j: FeedJob = {
+      ...job,
+      status: 'failed',
+      result: null,
+      error: 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)',
+      children: [],
+    };
+    const feed = buildConversationFeed(j, [], []);
+    expect(feed.items.at(-1)).toEqual({
+      kind: 'failure',
+      text: 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)',
+      hint: 'switch_model',
+    });
   });
 
   // #135 — « Les délégations ne sont jamais imbriquées » (tableau de Quentin).

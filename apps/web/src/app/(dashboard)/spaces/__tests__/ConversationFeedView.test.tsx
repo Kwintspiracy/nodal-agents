@@ -1082,3 +1082,88 @@ describe('ConversationFeedView — le travail replié @cap:suivre-execution/ecra
     expect(html).not.toContain('grep_le_dossier');
   });
 });
+
+// ─── Le geste sous un échec (#184) ───────────────────────────────────────────
+//
+// Le harnais NOMME le geste en champ typé et se tait ; la phrase est celle de
+// l'écran. Ce qui se prouve ici : elle paraît quand un geste est nommé, et
+// l'écran reste muet sinon — jamais un conseil posé sur un échec ordinaire.
+
+const feedEnEchec = (
+  hint: 'switch_model' | null,
+  text = 'provider_rejected_request',
+): ConversationFeed => ({
+  items: [
+    {
+      kind: 'request',
+      text: 'Résume la veille',
+      origin: { channel: 'dashboard', scheduleName: null, chatId: null },
+      at: null,
+    },
+    { kind: 'failure', text, hint },
+  ],
+  totals: { toolCalls: 0, costUsd: null, durationMs: 0 } as never,
+});
+
+describe('ConversationFeedView — le geste qu’un échec appelle @cap:suivre-execution/ecran', () => {
+  it('un geste nommé se dit en une phrase, sous l’échec', () => {
+    const html = renderToStaticMarkup(<ConversationFeedView feed={feedEnEchec('switch_model')} />);
+    expect(html).toContain('Failed');
+    expect(html).toContain('Try another model for this agent');
+  });
+
+  it('aucun geste, aucune phrase — l’échec reste seul', () => {
+    const html = renderToStaticMarkup(
+      <ConversationFeedView feed={feedEnEchec(null, 'delivery_spam_guard')} />,
+    );
+    expect(html).toContain('delivery_spam_guard');
+    expect(html).not.toContain('Try another model');
+  });
+
+  it('l’échec d’un DÉLÉGUÉ porte le même geste, dans le bloc de la délégation', async () => {
+    const refus = 'provider_rejected_request:openrouter/google/gemini-3.7-flash (http 400, turn 3)';
+    const feedAvecEnfant: ConversationFeed = {
+      items: [
+        {
+          kind: 'child',
+          job: {
+            id: 'child-1',
+            agentName: 'Analyste',
+            agentSlug: 'analyste',
+            agentAvatarUrl: null,
+            status: 'failed',
+            task: 'compare les deux rapports',
+            result: null,
+            error: refus,
+            createdAt: null,
+            completedAt: null,
+          },
+          from: { name: 'Veilleur', slug: 'veilleur', avatarUrl: null },
+        },
+      ],
+      totals: { toolCalls: 0, costUsd: null, durationMs: 0 } as never,
+    };
+    // Le corps d'une délégation n'est dans le DOM que DÉPLIÉ : il faut donc un
+    // vrai rendu et un vrai clic, pas un rendu statique.
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ConversationFeedView feed={feedAvecEnfant} />);
+    });
+    expect(container.textContent).not.toContain('Try another model');
+
+    const tete = container.querySelector<HTMLButtonElement>('[data-delegation] button');
+    if (!tete) throw new Error('la délégation n’a pas dessiné sa tête');
+    await act(async () => {
+      tete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain(refus);
+    expect(container.textContent).toContain('Try another model for this agent');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+});
