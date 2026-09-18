@@ -60,6 +60,7 @@ const VERDICT: CodingVerdictView = {
     },
   ],
   counts: null,
+  report: null,
 };
 
 describe('ReviewSection @cap:suivre-execution/ecran', () => {
@@ -75,6 +76,24 @@ describe('ReviewSection @cap:suivre-execution/ecran', () => {
     expect(host.textContent).toContain('apps/web/src/lib/actions.ts:13398');
     expect(host.textContent).toContain('major');
     expect(host.textContent).toContain('Raw tool output.');
+  });
+
+  it('ouvert, le bloc porte le RAPPORT du relecteur, en toutes lettres', async () => {
+    // C'est ICI que la relecture se lit, et nulle part ailleurs (Quentin,
+    // 18/09) : la réponse qui le recopiait ne s'affiche plus.
+    const rapport = 'Rapport complet : deux majeurs fermés, un mineur reste.';
+    const host = await mount(<ReviewSection verdicts={[{ ...VERDICT, report: rapport }]} />);
+    expect(host.textContent).not.toContain(rapport);
+
+    await click(host.querySelector('[data-testid="review-row"]'));
+    expect(host.querySelector('[data-testid="review-report"]')).not.toBeNull();
+    expect(host.textContent).toContain(rapport);
+  });
+
+  it('un verdict sans rapport n’en invente pas', async () => {
+    const host = await mount(<ReviewSection verdicts={[VERDICT]} />);
+    await click(host.querySelector('[data-testid="review-row"]'));
+    expect(host.querySelector('[data-testid="review-report"]')).toBeNull();
   });
 
   it('sans verdict, la ligne le dit — et n’est pas un bouton', async () => {

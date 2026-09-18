@@ -12,10 +12,13 @@
 import type { ReactNode } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
+import CopyButton from '@/components/ui/CopyButton';
 import { plainText } from '@/components/Markdown.tsx';
+import { truncate } from '@/lib/format-time';
 import type { RunStat } from './run-view.ts';
 
 export default function RunHeaderCard({
+  runId,
   task,
   agentName,
   origin,
@@ -25,6 +28,12 @@ export default function RunHeaderCard({
   stats,
   actions = null,
 }: {
+  /**
+   * L'identifiant du run. Il est à l'écran depuis le 18/09 : sans lui, rien
+   * sur la page ne dit DE QUEL run il s'agit, et deux pages ouvertes côte à
+   * côte ne se distinguaient pas (Quentin). Entier, sélectionnable, copiable.
+   */
+  runId: string;
   /** La demande, telle que le chargeur la rend (secrets déjà masqués). */
   task: string;
   agentName: string | null;
@@ -38,13 +47,20 @@ export default function RunHeaderCard({
   /** Ce que la route ajoute au bout de la première ligne (annuler un run vivant). */
   actions?: ReactNode;
 }) {
-  // Le titre est la PREMIÈRE LIGNE de la demande, à plat : une demande en
-  // markdown sur dix lignes ne fait pas un titre de dix lignes.
-  const title = plainText(task);
+  // Le titre est la PREMIÈRE LIGNE de la demande, à plat et COUPÉE à soixante
+  // caractères — la règle que les trois routes appliquent déjà à l'en-tête de
+  // page. `plainText` rend la première ligne ; sans la coupe, une demande d'un
+  // seul paragraphe de trois cents caractères passait entière dans la ligne de
+  // faits et repoussait l'agent, l'origine et l'état à la ligne suivante
+  // (Reviewer C, passe 1). Le texte entier reste juste dessous, et au survol.
+  const firstLine = plainText(task);
+  const title = truncate(firstLine, 60);
   return (
     <div className="space-y-4 rounded-xl border border-rule-2 bg-paper p-5">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="min-w-0 text-medium-15 text-ink">{title}</span>
+        <span className="min-w-0 text-medium-15 text-ink" title={firstLine}>
+          {title}
+        </span>
         {agentName !== null && agentName !== '' && (
           <MonoMicroTag tone="agent">{agentName}</MonoMicroTag>
         )}
@@ -55,6 +71,16 @@ export default function RunHeaderCard({
         <StatusPill variant={statusVariant} label={statusLabel} />
         {actions !== null && <span className="ml-auto shrink-0">{actions}</span>}
       </div>
+      {/* L'IDENTITÉ du run, sous sa ligne de faits : l'identifiant entier, à
+          copier d'un clic. C'est ce qu'on colle dans une commande, dans une
+          issue, ou ce qu'on compare entre deux onglets. */}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 truncate text-mono-11 text-ink-4 select-all" title={runId}>
+          run {runId}
+        </span>
+        <CopyButton value={runId} label="Copy" successMessage="Run id copied" />
+      </div>
+
       {/* La demande ENTIÈRE, telle qu'elle a été écrite — le détail Code la
           rend de la même façon, et à la même taille. Ses retours à la ligne
           sont gardés (`whitespace-pre-line`) : une consigne d'automatisation

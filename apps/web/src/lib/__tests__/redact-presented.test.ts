@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { REDACTED_TEXT } from '@nodal-agents/shared';
-import { redactPresented } from '../redact-presented.ts';
+import { redactAuditRow, redactPresented } from '../redact-presented.ts';
 
 // Jetons factices, de la forme que le masqueur reconnaît — aucun n'a jamais
 // existé.
@@ -64,5 +64,40 @@ describe('redactPresented @cap:suivre-execution/moteur', () => {
     // outil : le réécrire casserait le parsage sans rien protéger.
     const sortie = redactPresented({ card: 'text', text: `clé: ${CLE_ANTHROPIC}` });
     expect(Object.keys(sortie as Record<string, unknown>)).toEqual(['card', 'text']);
+  });
+});
+
+// Une ligne d'audit se lit à TROIS endroits — la carte, la sortie brute,
+// l'entrée — et le chargeur d'un run n'en masquait qu'un (Reviewer C, passe 2
+// du 18/09). La porte est commune depuis ; ce qui la franchit est masqué
+// partout, pas seulement là où on regarde aujourd'hui.
+describe('redactAuditRow @cap:suivre-execution/moteur', () => {
+  it('masque la sortie brute, l’entrée et la carte de la même ligne', () => {
+    const ligne = redactAuditRow({
+      toolName: 'cli:Bash',
+      toolInput: { command: `curl -H "x: ${CLE_ANTHROPIC}" https://api` },
+      toolOutput: `200 OK — jeton ${JETON_GITHUB}`,
+      presented: { card: 'text', text: `posé avec ${CLE_ANTHROPIC}` },
+    });
+    const tout = JSON.stringify(ligne);
+    expect(tout).not.toContain(CLE_ANTHROPIC);
+    expect(tout).not.toContain(JETON_GITHUB);
+    expect(ligne.toolOutput).toContain(REDACTED_TEXT);
+    expect(JSON.stringify(ligne.toolInput)).toContain(REDACTED_TEXT);
+    expect(JSON.stringify(ligne.presented)).toContain(REDACTED_TEXT);
+    // Le nom de l'outil et la forme de la ligne traversent intacts.
+    expect(ligne.toolName).toBe('cli:Bash');
+  });
+
+  it('une ligne sans sortie garde son absence de sortie', () => {
+    const ligne = redactAuditRow({
+      toolName: 'file_write',
+      toolInput: { path: 'a.md' },
+      toolOutput: null,
+      presented: null,
+    });
+    expect(ligne.toolOutput).toBeNull();
+    expect(ligne.presented).toBeNull();
+    expect(ligne.toolInput).toEqual({ path: 'a.md' });
   });
 });

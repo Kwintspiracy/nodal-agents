@@ -60,7 +60,7 @@ import { assembleJobFeeds, collectDescendants } from './job-feed.ts';
 // La borne de `collectDescendants`, nommée ici pour que le message d'erreur la
 // dise plutôt que de la recopier en dur.
 import { ROLLUP_MAX_DEPTH } from './coding-rollup.ts';
-import { redactPresented } from './redact-presented.ts';
+import { redactAuditRow } from './redact-presented.ts';
 import { parsePresented } from './tool-card-payload.ts';
 import { entityWorkspaceRoots } from './workspace-roots.ts';
 import { buildConversationThread } from './conversation-thread.ts';
@@ -1208,8 +1208,12 @@ export async function getConversationThreadAction(
       const brut = diteFiles ? parsePresented(row.presented) : null;
       const bucket = rowsByRoot.get(root) ?? [];
       bucket.push({
-        ...row,
-        presented: redactPresented(row.presented),
+        // Les TROIS lectures d'une ligne passent par la MÊME porte : la carte,
+        // la sortie brute, l'entrée (Reviewer C, passe 3). Aucun écran ne rend
+        // la sortie de ces lignes aujourd'hui — mais « masquer ce qui se rend
+        // aujourd'hui » est exactement le raisonnement qui avait laissé le trou
+        // de #150. On masque à la porte, pas à l'usage.
+        ...redactAuditRow(row),
         rawFilePaths:
           brut !== null && brut.card === 'files' ? brut.files.map((f) => f.path) : undefined,
       });

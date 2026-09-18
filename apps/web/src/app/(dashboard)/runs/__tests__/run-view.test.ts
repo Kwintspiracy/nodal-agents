@@ -86,6 +86,7 @@ function view(over: {
       ...over.job,
     },
     feed: { items: over.items ?? [turn()], totals },
+    verdicts: [],
     verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
     cost: {
       byAgent: [],
@@ -124,15 +125,25 @@ describe('run-view — les sept chiffres de l’en-tête @cap:suivre-execution/e
     ]);
   });
 
-  it('une valeur que la donnée ne dit pas s’écrit « — », jamais 0', () => {
-    const data = view({});
+  it('« — » veut dire ABSENT : un coût sans appel tarifé, une durée sans début', () => {
+    const data = view({ job: { createdAt: null } });
+    // Aucun appel tarifé : un coût inconnu n'est pas un coût nul.
     expect(valueOf(data, 'Cost')).toBe(UNKNOWN);
+    // Pas de date de début : il n'y a rien à mesurer.
     expect(valueOf(data, 'Duration')).toBe(UNKNOWN);
-    expect(valueOf(data, 'Input tokens')).toBe(UNKNOWN);
-    expect(valueOf(data, 'Output tokens')).toBe(UNKNOWN);
-    expect(valueOf(data, 'Cache reads')).toBe(UNKNOWN);
-    // Aucune carte `files` dans le fil : on ne sait pas, on ne dit pas « 0 ».
+    // Aucune carte `files` dans le fil : on ne sait pas ce qui a été écrit.
     expect(valueOf(data, 'Files changed')).toBe(UNKNOWN);
+  });
+
+  it('un vrai ZÉRO s’écrit 0 — un run qui n’a appelé aucun modèle n’est pas une donnée manquante', () => {
+    // Reviewer C, passe 1 : « 0 jeton » et « jeton inconnu » s'affichaient
+    // pareil, et le second est bien plus grave que le premier.
+    const data = view({});
+    expect(valueOf(data, 'Input tokens')).toBe('0');
+    expect(valueOf(data, 'Output tokens')).toBe('0');
+    expect(valueOf(data, 'Cache reads')).toBe('0');
+    // Un travail qui vient de commencer a une durée de zéro, pas d'inconnue.
+    expect(valueOf(data, 'Duration')).toBe('0 ms');
   });
 
   it('les valeurs connues sont formatées, coût compris', () => {
@@ -248,6 +259,8 @@ describe('run-view — la demande retirée de la chronologie @cap:suivre-executi
 
 describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', () => {
   const done = { completedAt: new Date('2026-09-18T09:00:41Z') };
+  /** Le rapport d'un relecteur, tel que le bloc Review le porte déjà. */
+  const RAPPORT = '# Rapport\n\nDeux majeurs fermés, un mineur reste.';
 
   it('un item `answer` sort du fil, et le fil ne le montre plus', () => {
     const items: FeedItem[] = [turn(), { kind: 'answer', text: 'Digest posted.' }];
@@ -285,13 +298,52 @@ describe('run-view — la réponse sortie du fil @cap:suivre-execution/ecran', (
     expect(lifted.reply).toBe('Fourteen issues.');
   });
 
+  it('un run RELU n’a pas de réponse en haut : le bloc Review est sa réponse', () => {
+    // Quentin, 18/09, après mesure : comparer la réponse au rapport ne marche
+    // pas — un modèle qui recopie « tel quel » ne recopie pas octet pour octet
+    // (divergence au caractère 341 sur 5 835, blancs normalisés). La règle est
+    // un FAIT : un verdict enregistré, donc pas de réponse en haut, quel que
+    // soit le texte.
+    const recopie = `Rapport de la relecture, tel quel :\n\n---\n\n${RAPPORT}`;
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: recopie }] })];
+    expect(liftReply(items, done, true).reply).toBeNull();
+    // Même une réponse qui ne ressemble en rien au rapport : c'est la relecture
+    // qui est la réponse de ce run.
+    const autre: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je livre.' }] })];
+    expect(liftReply(autre, done, true).reply).toBeNull();
+  });
+
+  it('un run relu GARDE tout dans sa chronologie : la prose reste dans son tour', () => {
+    // Sortir la prose pour ne pas l'afficher l'aurait fait disparaître des deux
+    // endroits.
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: 'Je livre.' }] })];
+    const lifted = liftReply(items, done, true);
+    expect(lifted.items).toHaveLength(1);
+    const reste = lifted.items[0];
+    expect(reste?.kind === 'turn' && reste.blocks).toEqual([{ kind: 'prose', text: 'Je livre.' }]);
+  });
+
+  it('sans verdict, la réponse sort comme avant', () => {
+    const propre = 'Reviewer C a fermé les deux majeurs. Je livre.';
+    const items: FeedItem[] = [turn({ blocks: [{ kind: 'prose', text: propre }] })];
+    expect(liftReply(items, done, false).reply).toBe(propre);
+    // Et le défaut du paramètre est « pas relu » : un appelant qui l'ignore
+    // obtient le comportement d'avant.
+    expect(liftReply(items, done).reply).toBe(propre);
+  });
+
+  it('un run relu qui a fini SANS un mot : son item `answer` quitte quand même le fil', () => {
+    const items: FeedItem[] = [turn(), { kind: 'answer', text: 'Digest posted.' }];
+    const lifted = liftReply(items, done, true);
+    expect(lifted.reply).toBeNull();
+    expect(lifted.items.some((i) => i.kind === 'answer')).toBe(false);
+  });
+
   it('rien ne sort tant que le run court : sa dernière phrase est une étape', () => {
     expect(liftReply([turn()], { completedAt: null }).reply).toBeNull();
   });
 
   it('rien ne sort d’un run qui a ÉCHOUÉ : la carte d’échec dit ce qui s’est passé', () => {
-    // `hint` est requis depuis #194 : un échec porte le GESTE qu'il appelle,
-    // `null` quand le harnais n'en nomme aucun — le cas ici.
     const items: FeedItem[] = [turn(), { kind: 'failure', text: 'boom', hint: null }];
     const lifted = liftReply(items, done);
     expect(lifted.reply).toBeNull();

@@ -106,6 +106,7 @@ function data(live: boolean): SpaceConversationView {
       scheduleName: 'every Monday 09:00',
     },
     feed: { items: [turn(1, STEP), turn(2, REPLY), delivered], totals },
+    verdicts: [],
     verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
     cost: {
       byAgent: [],
@@ -220,6 +221,47 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
     expect(html).toContain('0 verdicts');
   });
 
+  it('le verdict d’une relecture se montre ICI aussi, pas seulement depuis Code', () => {
+    // Le même run disait « aucune relecture » sur cette route et montrait le
+    // verdict sur /code : les deux chargeurs lisent la même chose depuis le
+    // 18/09, et la page dessine ce qu'elle reçoit.
+    const avecVerdict = data(false);
+    const page = renderToStaticMarkup(
+      <RunBody
+        data={{
+          ...avecVerdict,
+          verdicts: [
+            {
+              jobId: 'job-reviewer',
+              verdict: 'request_changes',
+              summary: 'Two majors closed, one minor left.',
+              findings: [{ file: 'apps/web/src/lib/actions.ts', line: 13398, severity: 'major' }],
+              counts: null,
+              report: null,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(page).toContain('1 verdict');
+    expect(page).toContain('Two majors closed, one minor left.');
+    expect(page).not.toContain('No review on this run');
+    // Et la réponse ne sort PLUS en haut : sur un run relu, le bloc Review EST
+    // la réponse (Quentin, 18/09). Sans cette règle, la relecture se lisait
+    // deux fois sur la même page.
+    expect(page).not.toContain('data-testid="run-reply"');
+    // Elle n'est pas perdue pour autant : elle reste dans la chronologie, à sa
+    // place, et une seule fois.
+    expect(page.replace(/<[^>]*>/g, ' ').split(REPLY)).toHaveLength(2);
+  });
+
+  it('la page dit DE QUEL run il s’agit', () => {
+    // Sans les liens de délégation, plus rien ne l'identifiait : deux pages
+    // ouvertes côte à côte se ressemblaient (Quentin, 18/09).
+    expect(html).toContain('run job-1');
+    expect(html).toContain('Copy');
+  });
+
   it('la preuve n’est jamais muette, même quand rien n’a tourné', () => {
     expect(html).toContain('No proof ran for this process.');
   });
@@ -233,8 +275,11 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
   });
 
   it('la demande ne se lit pas deux fois : la chronologie ne la reprend pas', () => {
-    // La carte de tête porte déjà la consigne en entier.
-    expect(html.split(TASK)).toHaveLength(3); // le titre et le corps de la carte
+    // Ce qu'un lecteur VOIT, pas ce que le balisage contient : le titre porte
+    // aussi la demande dans son attribut `title` (le texte au survol).
+    const lu = (page: string): string[] => page.replace(/<[^>]*>/g, ' ').split(TASK);
+    // La carte de tête la porte deux fois : en titre, et en entier dessous.
+    expect(lu(html)).toHaveLength(3);
     const avecDemande = data(false);
     const page = renderToStaticMarkup(
       <RunBody
@@ -251,7 +296,7 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
       />,
     );
     // Toujours deux fois, pas trois : l'item `request` a quitté la chronologie.
-    expect(page.split(TASK)).toHaveLength(3);
+    expect(lu(page)).toHaveLength(3);
   });
 
   it('une demande qui dit AUTRE CHOSE que la tâche reste dans la chronologie', () => {

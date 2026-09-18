@@ -1394,6 +1394,11 @@ tr:last-child td{border-bottom:0}
   border:1px solid var(--regle);border-radius:5px;padding:15px 16px 14px;
   text-decoration:none;color:var(--encre2);transition:border-color .15s ease}
 .ticket:hover{border-color:var(--encre)}
+/* Le filtre par release pose l'attribut hidden sur les cartes écartées, et la
+   règle display:flex ci-dessus BAT le [hidden]{display:none} du navigateur :
+   la pastille s'allumait, l'adresse changeait, le tableau ne bougeait pas
+   (#205). Une règle d'auteur, et l'attribut cache pour de bon. */
+.ticket[hidden]{display:none}
 .ticket--pr{box-shadow:inset 3px 0 0 var(--accent)}
 .ticket__tete{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .ticket__titre{font-size:15px;line-height:1.4;color:var(--encre)}

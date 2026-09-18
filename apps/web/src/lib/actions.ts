@@ -217,7 +217,8 @@ import {
 import { originOfRun, inTimeOrder, type RunOrigin } from './activity-runs.ts';
 import { aggregateSpaceCost, type SpaceCostView } from './space-cost.ts';
 import { assembleJobFeed, collectDescendants } from './job-feed.ts';
-import { redactPresented } from './redact-presented.ts';
+import { redactAuditRow, redactPresented } from './redact-presented.ts';
+import { readReviewVerdicts, type ReviewVerdictView } from './review-verdicts.ts';
 // P2bis — le récapitulatif de livraison d'un run est posé par la fonction du
 // fil d'une conversation, jamais par une seconde lecture des mêmes lignes.
 import { afterJobItems, type ThreadJob } from './conversation-thread.ts';
@@ -2417,6 +2418,18 @@ export async function listRoutineStatesAction(): Promise<
 // P4 — la forme du coût (`SpaceCostView`) vit dans space-cost.ts, avec sa
 // fonction : la déclarer ici faisait un cycle d'import (revue CI du 06/09).
 
+/**
+ * La RAISON d'un envoi qui n'est pas parti, lue sur son reçu
+ * (`{ messageId, reason }`, écrit par l'outbox du runner). `null` quand le
+ * reçu n'en porte pas — un envoi confirmé n'a rien à expliquer, et une forme
+ * inattendue ne devient pas une raison inventée.
+ */
+function deliveryReason(receipt: unknown): string | null {
+  if (receipt === null || typeof receipt !== 'object') return null;
+  const reason = (receipt as { reason?: unknown }).reason;
+  return typeof reason === 'string' && reason.trim() !== '' ? reason : null;
+}
+
 export type SpaceConversationView = {
   job: {
     id: string;
@@ -2444,12 +2457,22 @@ export type SpaceConversationView = {
     deliverables: DeliverableStatusView[];
   };
   cost: SpaceCostView;
+  /**
+   * 18/09 — CE QUE LA RELECTURE A DIT de ce travail et de ses délégués, par la
+   * MÊME lecture que le détail Code (`review-verdicts.ts`). Sans elle, le même
+   * run disait « aucune relecture » ici et montrait le verdict là-bas.
+   */
+  verdicts: ReviewVerdictView[];
   /** P3 — la file d'envoi de ce travail (`job_deliveries`), telle quelle. */
   deliveries: Array<{
     channel: string;
     chatId: string;
     outcome: string;
     attempts: number;
+    /** Le message envoyé, secrets masqués à l'affichage (SECRET-001). */
+    payload: string;
+    /** La raison écrite sur le reçu quand l'envoi n'est pas parti ; `null` sinon. */
+    reason: string | null;
     createdAt: Date | null;
     updatedAt: Date | null;
   }>;
@@ -2516,6 +2539,7 @@ export async function getSpaceConversationAction(
       classifiableRows,
       projectRows,
       workspaceRoots,
+      reviewVerdicts,
     ] = await Promise.all([
       db
         .select({
@@ -2570,6 +2594,11 @@ export async function getSpaceConversationAction(
           chatId: jobDeliveries.chatId,
           outcome: jobDeliveries.outcome,
           attempts: jobDeliveries.attempts,
+          // LE MESSAGE lui-même, et le reçu qui dit pourquoi il n'est pas parti
+          // (18/09) : la file d'envoi annonçait un message sans jamais le
+          // montrer. Le texte est masqué à l'AFFICHAGE, comme le reste.
+          payload: jobDeliveries.payload,
+          receipt: jobDeliveries.receipt,
           createdAt: jobDeliveries.createdAt,
           updatedAt: jobDeliveries.updatedAt,
         })
@@ -2641,6 +2670,13 @@ export async function getSpaceConversationAction(
       // ramène au relatif avant d'être compté, sinon le même fichier compte
       // deux fois (passe 57).
       entityWorkspaceRoots(db, session.entityId),
+      // La relecture de ce travail et de sa descendance — la lecture PARTAGÉE
+      // avec le détail Code, pour que les trois portes d'un run en disent la
+      // même chose. Ici et non après ce bloc : elle ne dépend d'aucune de ces
+      // lectures, et en série elle ajoutait son aller-retour à chaque ouverture
+      // de page (Reviewer C, passe 2). Ses deux requêtes à elle restent
+      // enchaînées : le rapport se lit sur les jobs que les verdicts désignent.
+      readReviewVerdicts(db, session.entityId, relevantIds),
     ]);
     const cost = aggregateSpaceCost({
       calls: costRows,
@@ -2681,10 +2717,11 @@ export async function getSpaceConversationAction(
     // La carte est masquée en entrant (#150) : le récapitulatif nomme les
     // fichiers et les envois qu'elle porte, c'est un chemin de lecture de plus
     // des mêmes lignes.
-    const auditRows = classifiableRows.map((r) => ({
-      ...r,
-      presented: redactPresented(r.presented),
-    }));
+    // Les TROIS lectures d'une même ligne passent par la même porte : la carte,
+    // la sortie brute et l'entrée (`redactAuditRow`). Masquer la carte seule
+    // laissait un jeton voyager dans `toolOutput` jusqu'au premier écran qui
+    // l'afficherait (Reviewer C, passe 2).
+    const auditRows = classifiableRows.map(redactAuditRow);
     const projectRow = projectRows[0];
     const runJob: ThreadJob = {
       jobId: job.id,
@@ -2736,9 +2773,23 @@ export async function getSpaceConversationAction(
         scheduleName,
       },
       feed: feedWithDelivery,
+      verdicts: reviewVerdicts.views,
       verification,
       cost,
-      deliveries: deliveryRows,
+      // Le message est masqué ICI, à l'affichage : un envoi peut porter un
+      // jeton que l'agent a recopié, et la file d'envoi est un troisième
+      // chemin de lecture des mêmes textes (#150). La RAISON vient du reçu,
+      // telle que le runner l'a écrite — jamais traduite en une phrase.
+      deliveries: deliveryRows.map((d) => ({
+        channel: d.channel,
+        chatId: d.chatId,
+        outcome: d.outcome,
+        attempts: d.attempts,
+        payload: redactSecretsInText(d.payload),
+        reason: deliveryReason(d.receipt),
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+      })),
     });
   } catch (err) {
     console.error('[getSpaceConversationAction]', err);
@@ -12341,21 +12392,6 @@ function truncateForList(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
-type VerdictJson = {
-  verdict?: string;
-  summary?: string;
-  findings?: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
-  counts?: Record<string, number>;
-};
-
-function parseVerdictJson(raw: string): VerdictJson | null {
-  try {
-    return JSON.parse(raw) as VerdictJson;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Stage derivation (the plan's exact rules):
  *   processing/pending            → 'coding'
@@ -13083,13 +13119,13 @@ export type CodingFileChangeGroup = {
   edits: CodingChangeView[];
 };
 
-export type CodingVerdictView = {
-  jobId: string;
-  verdict: string | null;
-  summary: string | null;
-  findings: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
-  counts: Record<string, number> | null;
-};
+/**
+ * Un verdict de relecture. Le type et sa lecture vivent dans
+ * `review-verdicts.ts` depuis le 18/09 : la page d'un run et le détail Code
+ * montrent LE MÊME run, et l'un disait « aucune relecture » là où l'autre
+ * montrait le verdict. Le nom reste, les importateurs ne bougent pas.
+ */
+export type CodingVerdictView = ReviewVerdictView;
 
 /**
  * One entry in the Activity trail: either a real tool_call (compact — no
@@ -13271,20 +13307,10 @@ export async function getCodingProcessDetailAction(
         .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.jobId, allRelevantIds)))
         .orderBy(toolCalls.createdAt);
 
-      // review_verdict — this job AND its direct children (same rule as the list).
-      const verdictRows =
-        allRelevantIds.length > 0
-          ? await db
-              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
-              .from(toolCalls)
-              .where(
-                and(
-                  eq(toolCalls.entityId, entityId),
-                  inArray(toolCalls.jobId, allRelevantIds),
-                  eq(toolCalls.toolName, 'review_verdict'),
-                ),
-              )
-          : [];
+      // review_verdict — ce job ET sa descendance, par la lecture PARTAGÉE avec
+      // la page d'un run (18/09) : le même travail ne peut pas dire deux choses
+      // de sa relecture selon la porte par laquelle on l'ouvre.
+      const reviewVerdicts = await readReviewVerdicts(db, entityId, allRelevantIds);
 
       // Tokens/cost, at the HONEST granularity (v4): per turn, never per
       // tool — that data doesn't exist. llm_calls carries the Nodal job
@@ -13349,13 +13375,9 @@ export async function getCodingProcessDetailAction(
         costUsd += r.costUsd ?? 0;
       }
 
-      const verdictOutputsByJob = new Map<string, string[]>();
-      for (const v of verdictRows) {
-        if (!v.jobId || !v.toolOutput) continue;
-        const arr = verdictOutputsByJob.get(v.jobId) ?? [];
-        arr.push(v.toolOutput);
-        verdictOutputsByJob.set(v.jobId, arr);
-      }
+      // La dérivation d'étape cherche le marqueur d'approbation dans la SORTIE
+      // brute : la lecture partagée la rend, rangée par job.
+      const verdictOutputsByJob = reviewVerdicts.rawByJob;
       // Les preuves du pipeline — lues par `allRelevantIds`, déjà bornées à
       // l'espace, et re-bornées par entity_id : la preuve d'un délégué remonte
       // à l'écran de la racine, celle d'un voisin jamais (T24).
@@ -13421,18 +13443,7 @@ export async function getCodingProcessDetailAction(
 
       const stage = deriveJobStage(job.status, job.id, childIds, verdictOutputsByJob);
 
-      const verdicts: CodingVerdictView[] = verdictRows
-        .filter((v): v is { jobId: string; toolOutput: string } => !!v.jobId && !!v.toolOutput)
-        .map((v) => {
-          const parsedVerdict = parseVerdictJson(v.toolOutput);
-          return {
-            jobId: v.jobId,
-            verdict: parsedVerdict?.verdict ?? null,
-            summary: parsedVerdict?.summary ?? null,
-            findings: parsedVerdict?.findings ?? [],
-            counts: parsedVerdict?.counts ?? null,
-          };
-        });
+      const verdicts: CodingVerdictView[] = reviewVerdicts.views;
 
       // Changes = the file-grouped view (v4 — Changes is now the MAIN
       // content, not a sidebar). Every edit-shaped tool_call across the
