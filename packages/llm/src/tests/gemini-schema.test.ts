@@ -117,6 +117,14 @@ describe('isGeminiModel @cap:choisir-modele/moteur', () => {
     expect(isGeminiModel('')).toBe(false);
   });
 
+  it('reconnaît la variante OpenRouter, la forme la plus courante du slug', () => {
+    // `:free`, `:nitro`, `:floor` … : OpenRouter suffixe le slug pour choisir
+    // la file d'exécution. C'est le même modèle, donc le même refus de schéma.
+    expect(isGeminiModel('google/gemini-3.7-flash:free')).toBe(true);
+    expect(isGeminiModel('google/gemini-3.7-flash:nitro')).toBe(true);
+    expect(isGeminiModel('google/gemini-3.1-pro-preview:floor')).toBe(true);
+  });
+
   it('lit le DERNIER segment, et Gemma n’est pas Gemini', () => {
     // Chercher « /gemini » n'importe où dans la chaîne accrochait un nom de
     // fournisseur ou de dossier sans qu'aucun modèle Gemini ne soit en jeu.
