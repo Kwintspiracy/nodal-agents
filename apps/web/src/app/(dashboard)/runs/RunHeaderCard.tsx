@@ -12,10 +12,12 @@
 import type { ReactNode } from 'react';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
+import CopyButton from '@/components/ui/CopyButton';
 import { plainText } from '@/components/Markdown.tsx';
 import type { RunStat } from './run-view.ts';
 
 export default function RunHeaderCard({
+  runId,
   task,
   agentName,
   origin,
@@ -25,6 +27,12 @@ export default function RunHeaderCard({
   stats,
   actions = null,
 }: {
+  /**
+   * L'identifiant du run. Il est à l'écran depuis le 18/09 : sans lui, rien
+   * sur la page ne dit DE QUEL run il s'agit, et deux pages ouvertes côte à
+   * côte ne se distinguaient pas (Quentin). Entier, sélectionnable, copiable.
+   */
+  runId: string;
   /** La demande, telle que le chargeur la rend (secrets déjà masqués). */
   task: string;
   agentName: string | null;
@@ -55,6 +63,16 @@ export default function RunHeaderCard({
         <StatusPill variant={statusVariant} label={statusLabel} />
         {actions !== null && <span className="ml-auto shrink-0">{actions}</span>}
       </div>
+      {/* L'IDENTITÉ du run, sous sa ligne de faits : l'identifiant entier, à
+          copier d'un clic. C'est ce qu'on colle dans une commande, dans une
+          issue, ou ce qu'on compare entre deux onglets. */}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 truncate text-mono-11 text-ink-4 select-all" title={runId}>
+          run {runId}
+        </span>
+        <CopyButton value={runId} label="Copy" successMessage="Run id copied" />
+      </div>
+
       {/* La demande ENTIÈRE, telle qu'elle a été écrite — le détail Code la
           rend de la même façon, et à la même taille. Ses retours à la ligne
           sont gardés (`whitespace-pre-line`) : une consigne d'automatisation

@@ -697,6 +697,73 @@ describe('getSpaceConversationAction', () => {
     expect(produced.summary.reviews.map((x) => x.ok)).toEqual([true]);
   });
 
+  it('18/09 : le verdict rendu par un DÉLÉGUÉ remonte au run, comme sur le détail Code', async () => {
+    // Le même travail — une demande de relecture déléguée à un relecteur — se
+    // lisait de deux façons : ouvert depuis Code il montrait le verdict, ouvert
+    // depuis son dossier il disait « aucune relecture ». Les deux chargeurs
+    // lisent maintenant les mêmes lignes.
+    const [j] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Peer review de la PR #185 de ce dépôt',
+        status: 'completed',
+        result: 'Relecture rendue.',
+        completedAt: new Date(),
+        messages: [{ role: 'user', content: 'Peer review de la PR #185 de ce dépôt' }],
+      })
+      .returning();
+    const [reviewer] = await testDb
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal',
+        task: 'relis la PR',
+        status: 'completed',
+        parentJobId: j!.id,
+      })
+      .returning();
+    await testDb.insert(toolCalls).values({
+      entityId: seed.entityId,
+      jobId: reviewer!.id,
+      toolName: 'review_verdict',
+      toolInput: {},
+      toolOutput: JSON.stringify({
+        verdict: 'request_changes',
+        summary: 'Two majors closed, one minor left.',
+        findings: [{ file: 'apps/web/src/lib/actions.ts', line: 13398, severity: 'major' }],
+      }),
+      durationMs: 5,
+      turn: 1,
+      toolCallId: 'c_rv',
+      card: null,
+      presented: null,
+    });
+
+    const { getSpaceConversationAction } = await actions();
+    const r = await getSpaceConversationAction(j!.id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.verdicts).toHaveLength(1);
+    expect(r.data.verdicts[0]).toMatchObject({
+      jobId: reviewer!.id,
+      verdict: 'request_changes',
+      summary: 'Two majors closed, one minor left.',
+    });
+    expect(r.data.verdicts[0]?.findings[0]?.line).toBe(13398);
+  });
+
+  it('un travail SANS relecture n’en invente pas', async () => {
+    const { getSpaceConversationAction } = await actions();
+    const sans = await getSpaceConversationAction(jobId);
+    expect(sans.ok).toBe(true);
+    if (!sans.ok) return;
+    expect(sans.data.verdicts).toEqual([]);
+  });
+
   it("P3 : la preuve d'un délégué remonte à la racine, et la file d'envoi se lit telle quelle", async () => {
     const { getSpaceConversationAction } = await actions();
     const r = await getSpaceConversationAction(jobId);

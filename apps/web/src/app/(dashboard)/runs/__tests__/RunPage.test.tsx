@@ -106,6 +106,7 @@ function data(live: boolean): SpaceConversationView {
       scheduleName: 'every Monday 09:00',
     },
     feed: { items: [turn(1, STEP), turn(2, REPLY), delivered], totals },
+    verdicts: [],
     verification: { sequences: [], skippedSurfaces: [], unconfigured: [], deliverables: [] },
     cost: {
       byAgent: [],
@@ -218,6 +219,39 @@ describe('RunPage — l’ordre du tableau @cap:suivre-execution/ecran', () => {
   it('la revue d’un run d’automatisation le dit, sans prétendre à un verdict', () => {
     expect(html).toContain('No review on this run');
     expect(html).toContain('0 verdicts');
+  });
+
+  it('le verdict d’une relecture se montre ICI aussi, pas seulement depuis Code', () => {
+    // Le même run disait « aucune relecture » sur cette route et montrait le
+    // verdict sur /code : les deux chargeurs lisent la même chose depuis le
+    // 18/09, et la page dessine ce qu'elle reçoit.
+    const avecVerdict = data(false);
+    const page = renderToStaticMarkup(
+      <RunBody
+        data={{
+          ...avecVerdict,
+          verdicts: [
+            {
+              jobId: 'job-reviewer',
+              verdict: 'request_changes',
+              summary: 'Two majors closed, one minor left.',
+              findings: [{ file: 'apps/web/src/lib/actions.ts', line: 13398, severity: 'major' }],
+              counts: null,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(page).toContain('1 verdict');
+    expect(page).toContain('Two majors closed, one minor left.');
+    expect(page).not.toContain('No review on this run');
+  });
+
+  it('la page dit DE QUEL run il s’agit', () => {
+    // Sans les liens de délégation, plus rien ne l'identifiait : deux pages
+    // ouvertes côte à côte se ressemblaient (Quentin, 18/09).
+    expect(html).toContain('run job-1');
+    expect(html).toContain('Copy');
   });
 
   it('la preuve n’est jamais muette, même quand rien n’a tourné', () => {
